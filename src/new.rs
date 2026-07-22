@@ -6,10 +6,13 @@ use std::process::Command;
 /// Port of the `spring-init` bash function: wraps start.spring.io's
 /// starter.zip API. baseDir wraps the archive in a `$name/` folder
 /// server-side, so extracting to "." lands the project at `./$name`.
-pub fn new(name: &str, deps: &str, java: &str, git: bool) -> Result<()> {
+pub fn new(name: &str, deps: &str, java: &str, git: bool, devtools: bool) -> Result<()> {
     if Path::new(name).exists() {
         return Err(format!("{name} already exists"));
     }
+
+    let deps = effective_deps(deps, devtools);
+    let deps = deps.as_str();
 
     let tmp = std::env::temp_dir().join(format!("jails-new-{}-{}", name, std::process::id()));
     fs::create_dir_all(&tmp).map_err(|e| format!("failed to create temp dir: {e}"))?;
@@ -106,6 +109,20 @@ fn git_init(root: &Path) {
         Ok(status) if status.success() => {}
         Ok(status) => eprintln!("jails: git init exited with {status}, skipping"),
         Err(e) => eprintln!("jails: failed to run git init: {e}"),
+    }
+}
+
+/// devtools is on by default (fast restart-on-recompile + LiveReload,
+/// needed for `jails run --watch` to do anything) -- append it unless
+/// already present or explicitly opted out.
+fn effective_deps(deps: &str, devtools: bool) -> String {
+    if !devtools || deps.split(',').any(|d| d.trim() == "devtools") {
+        return deps.to_string();
+    }
+    if deps.trim().is_empty() {
+        "devtools".to_string()
+    } else {
+        format!("{deps},devtools")
     }
 }
 
@@ -224,6 +241,27 @@ mod tests {
         ));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn effective_deps_appends_devtools_by_default() {
+        assert_eq!(effective_deps("web", true), "web,devtools");
+        assert_eq!(effective_deps("web,data-jpa", true), "web,data-jpa,devtools");
+    }
+
+    #[test]
+    fn effective_deps_skips_devtools_when_disabled() {
+        assert_eq!(effective_deps("web", false), "web");
+    }
+
+    #[test]
+    fn effective_deps_does_not_duplicate_an_explicit_devtools() {
+        assert_eq!(effective_deps("web,devtools", true), "web,devtools");
+    }
+
+    #[test]
+    fn effective_deps_handles_an_empty_deps_string() {
+        assert_eq!(effective_deps("", true), "devtools");
     }
 
     #[test]

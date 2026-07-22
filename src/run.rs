@@ -51,6 +51,81 @@ pub fn build() -> Result<()> {
     run_inherited(cmd)
 }
 
+/// Spawns `spring-boot:run` once and, on every change to a .java source
+/// file, re-runs `mvn compile`. spring-boot-devtools (if on the
+/// classpath) watches target/classes itself and restarts the already-
+/// running JVM -- jails never kills/restarts the app process, just keeps
+/// target/classes fresh. Without devtools this recompiles for nothing, so
+/// that's checked upfront.
+pub fn watch() -> Result<()> {
+    let root = find_project_root()?;
+    let pom = fs::read_to_string(root.join("pom.xml")).map_err(|e| format!("failed to read pom.xml: {e}"))?;
+    if !pom.contains("org.springframework.boot") {
+        return Err("--watch only supports Spring Boot projects".to_string());
+    }
+    if !pom.contains("devtools") {
+        eprintln!(
+            "jails: spring-boot-devtools not found in pom.xml -- recompiles won't trigger a restart. Add it: jails new --deps web,devtools"
+        );
+    }
+
+    let mut child = Command::new(maven_binary())
+        .arg("spring-boot:run")
+        .current_dir(&root)
+        .spawn()
+        .map_err(|e| format!("failed to start spring-boot:run: {e}"))?;
+
+    let src_root = root.join("src/main/java");
+    let mut last_change = latest_mtime(&src_root);
+    println!("jails: watching {} for changes (Ctrl-C to stop)", src_root.display());
+
+    loop {
+        std::thread::sleep(std::time::Duration::from_millis(750));
+
+        if let Ok(Some(status)) = child.try_wait() {
+            return if status.success() {
+                Ok(())
+            } else {
+                Err(format!("spring-boot:run exited with {status}"))
+            };
+        }
+
+        let change = latest_mtime(&src_root);
+        if change > last_change {
+            last_change = change;
+            println!("jails: change detected, recompiling...");
+            match Command::new(maven_binary()).arg("compile").current_dir(&root).status() {
+                Ok(s) if s.success() => println!("jails: recompiled -- devtools should restart shortly"),
+                Ok(s) => eprintln!("jails: recompile failed ({s})"),
+                Err(e) => eprintln!("jails: failed to run compile: {e}"),
+            }
+        }
+    }
+}
+
+fn latest_mtime(dir: &Path) -> std::time::SystemTime {
+    let mut latest = std::time::SystemTime::UNIX_EPOCH;
+    let Ok(entries) = fs::read_dir(dir) else {
+        return latest;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            let sub = latest_mtime(&path);
+            if sub > latest {
+                latest = sub;
+            }
+        } else if path.extension().is_some_and(|ext| ext == "java") {
+            if let Ok(modified) = fs::metadata(&path).and_then(|m| m.modified()) {
+                if modified > latest {
+                    latest = modified;
+                }
+            }
+        }
+    }
+    latest
+}
+
 pub fn run(no_build: bool) -> Result<()> {
     let root = find_project_root()?;
     let pom = fs::read_to_string(root.join("pom.xml")).map_err(|e| format!("failed to read pom.xml: {e}"))?;
@@ -149,6 +224,27 @@ mod tests {
         ));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn latest_mtime_ignores_non_java_files_and_recurses() {
+        let root = scratch("latest-mtime");
+        let nested = root.join("com/example");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(root.join("notes.txt"), "x").unwrap();
+        fs::write(nested.join("App.java"), "x").unwrap();
+
+        let before_touch = latest_mtime(&root);
+
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(nested.join("App.java"), "changed").unwrap();
+        let after_touch = latest_mtime(&root);
+        assert!(after_touch > before_touch);
+
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(root.join("notes.txt"), "changed too").unwrap();
+        let after_txt_touch = latest_mtime(&root);
+        assert_eq!(after_txt_touch, after_touch, "non-.java changes shouldn't move the watermark");
     }
 
     #[test]

@@ -12,22 +12,29 @@ cargo build --release
 
 ## Commands
 
-- `jails new <name> [--deps web,data-jpa] [--java 26]` — new Spring Boot
-  project via start.spring.io.
-- `jails new-cli <name>` — new plain Maven CLI project (hand-written
-  `pom.xml`, `App.java`, `AppTest.java`), no network required.
+- `jails new <name> [--deps web,data-jpa] [--java 26] [--no-git] [--no-devtools]`
+  — new Spring Boot project via start.spring.io. `git init` + `.gitignore`
+  and `spring-boot-devtools` (needed for `run --watch`) are on by default.
+- `jails new-cli <name> [--no-git]` — new plain Maven CLI project
+  (hand-written `pom.xml`, `App.java`, `AppTest.java`), no network required.
 - `jails generate|g scaffold <Name> [field:type ...]` — entity + repository
   + service + controller + controller test, in one shot.
-- `jails generate|g <controller|service|repository|entity|test> <Name> [field:type ...]`
-  — a single artifact. Only `entity` takes `field:type` args.
+- `jails generate|g <controller|service|entity> <Name> [field:type ...]`
+  — a single artifact plus its companion test (only `entity` takes
+  `field:type` args). `jails generate|g repository <Name>` and
+  `jails generate|g test <Name>` have no companion test of their own.
 - `jails destroy|d <type> <Name> [--force]` — deletes exactly what the
   matching `generate` call would have created.
 - `jails test [filter]` — `mvn test` (or `mvnd` if present), `filter` maps
   to `-Dtest=filter`.
 - `jails build` — `mvn package`.
-- `jails run` — finds the file with `static void main` under
-  `src/main/java` (or uses `spring-boot:run` for Spring projects), compiles
-  and runs it.
+- `jails run [--no-build] [--watch]` — finds the file with `static void
+  main` under `src/main/java` (or uses `spring-boot:run` for Spring
+  projects), compiles and runs it. `--no-build` skips straight to running
+  whatever's already in `target/`. `--watch` (Spring Boot + devtools only)
+  recompiles on every source change and lets devtools restart the
+  already-running app — no manual restarts.
+- `jails completion <bash|zsh|fish|elvish|powershell>` — shell completion.
 
 Field types: `string`, `text` (`@Lob`), `int`/`integer`, `long`, `boolean`,
 `date`, `datetime`, `double`.

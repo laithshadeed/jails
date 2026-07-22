@@ -34,6 +34,9 @@ enum Command {
         /// Skip `git init` and the .gitignore it normally sets up
         #[arg(long)]
         no_git: bool,
+        /// Skip adding spring-boot-devtools (needed for `run --watch`)
+        #[arg(long)]
+        no_devtools: bool,
     },
     /// Create a new plain Maven CLI project
     NewCli {
@@ -66,6 +69,11 @@ enum Command {
         /// Skip compiling/building -- run whatever's already in target/
         #[arg(long)]
         no_build: bool,
+        /// Recompile on source changes and keep the app running (Spring
+        /// Boot + spring-boot-devtools only -- devtools restarts itself
+        /// once target/classes changes)
+        #[arg(long)]
+        watch: bool,
     },
     /// Print a shell-completion script: source <(jails completion bash)
     Completion { shell: Shell },
@@ -75,13 +83,21 @@ fn main() {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Command::New { name, deps, java, no_git } => new::new(&name, &deps, &java, !no_git),
+        Command::New { name, deps, java, no_git, no_devtools } => {
+            new::new(&name, &deps, &java, !no_git, !no_devtools)
+        }
         Command::NewCli { name, no_git } => new::new_cli(&name, !no_git),
         Command::Generate { kind, name, fields } => generate::generate(kind, &name, &fields),
         Command::Destroy { kind, name, force } => generate::destroy(kind, &name, force),
         Command::Test { filter } => run::test(filter.as_deref()),
         Command::Build => run::build(),
-        Command::Run { no_build } => run::run(no_build),
+        Command::Run { no_build, watch } => {
+            if watch {
+                run::watch()
+            } else {
+                run::run(no_build)
+            }
+        }
         Command::Completion { shell } => {
             clap_complete::generate(shell, &mut Cli::command(), "jails", &mut std::io::stdout());
             Ok(())
