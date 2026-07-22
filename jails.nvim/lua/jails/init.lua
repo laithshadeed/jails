@@ -50,13 +50,26 @@ function M.run(args)
   end)
 end
 
---- Run a streaming subcommand (test, build, run) in a terminal split.
+-- Fixed bottom output panel for streaming commands, reused across calls
+-- instead of stacking a fresh split every invocation.
+local term_win = nil
+
+--- Run a streaming subcommand (test, build, run) in a shared terminal
+--- panel: same window every time, a fresh buffer/job per run.
 function M.run_terminal(args)
   local bin = jails_bin()
   if not bin then return end
   local cmd = { bin }
   vim.list_extend(cmd, args)
-  vim.cmd.split()
+
+  if term_win and vim.api.nvim_win_is_valid(term_win) then
+    vim.api.nvim_set_current_win(term_win)
+    vim.cmd.enew()
+  else
+    vim.cmd('botright split')
+    vim.api.nvim_win_set_height(0, 15)
+    term_win = vim.api.nvim_get_current_win()
+  end
   vim.fn.termopen(cmd)
   vim.cmd.startinsert()
 end
