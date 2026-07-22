@@ -78,6 +78,9 @@ fn generate_standalone_and_destroy_roundtrip() {
     assert!(file.is_file());
     let contents = fs::read_to_string(&file).unwrap();
     assert!(contents.contains("public class CommentController"));
+    // Rails generates a test alongside `generate controller`; jails matches that.
+    let test_file = root.join("src/test/java/com/example/demo/CommentControllerTest.java");
+    assert!(test_file.is_file(), "expected {}", test_file.display());
 
     let status = jails_cmd(&root, None)
         .args(["destroy", "controller", "comment", "--force"])
@@ -85,6 +88,7 @@ fn generate_standalone_and_destroy_roundtrip() {
         .unwrap();
     assert!(status.success());
     assert!(!file.is_file());
+    assert!(!test_file.is_file());
 }
 
 #[test]
@@ -376,4 +380,30 @@ fn generate_scaffold_produces_a_project_that_compiles_and_passes_tests() {
 
     let status = jails_cmd_with_path(&root, &path).arg("test").status().unwrap();
     assert!(status.success(), "mvn test failed for a freshly scaffolded Post resource");
+}
+
+/// Regression coverage for the reported bug (standalone `generate
+/// controller` not producing a test) plus real-compile verification of the
+/// new controller/service/entity companion test templates.
+#[test]
+fn standalone_generators_companion_tests_compile_and_pass() {
+    if !real_mvn_available() {
+        eprintln!("skipping: mvn not found on PATH");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let root = temp_dir("real-standalone-companion-tests");
+    write_spring_fixture(&root);
+
+    for args in [
+        vec!["generate", "controller", "Health"],
+        vec!["generate", "service", "Billing"],
+        vec!["generate", "entity", "Tag", "name:string", "createdAt:datetime"],
+    ] {
+        let status = jails_cmd_with_path(&root, &path).args(&args).status().unwrap();
+        assert!(status.success(), "{args:?} failed");
+    }
+
+    let status = jails_cmd_with_path(&root, &path).arg("test").status().unwrap();
+    assert!(status.success(), "mvn test failed for the standalone-generated companion tests");
 }

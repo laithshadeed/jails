@@ -184,16 +184,30 @@ pub fn generate(kind: ArtifactKind, name: &str, fields: &[String]) -> Result<()>
 
     let artifacts = match kind {
         ArtifactKind::Scaffold => scaffold_artifacts(&root, &pkg, &name, fields)?,
-        ArtifactKind::Controller => vec![Artifact {
-            kind: "controller",
-            path: main_dir(&root, &pkg).join(format!("{name}Controller.java")),
-            contents: stub_controller(&pkg, &name),
-        }],
-        ArtifactKind::Service => vec![Artifact {
-            kind: "service",
-            path: main_dir(&root, &pkg).join(format!("{name}Service.java")),
-            contents: stub_service(&pkg, &name),
-        }],
+        ArtifactKind::Controller => vec![
+            Artifact {
+                kind: "controller",
+                path: main_dir(&root, &pkg).join(format!("{name}Controller.java")),
+                contents: stub_controller(&pkg, &name),
+            },
+            Artifact {
+                kind: "controller test",
+                path: test_dir(&root, &pkg).join(format!("{name}ControllerTest.java")),
+                contents: controller_stub_test(&pkg, &name, mockmvc_autoconfigure_import(&root)),
+            },
+        ],
+        ArtifactKind::Service => vec![
+            Artifact {
+                kind: "service",
+                path: main_dir(&root, &pkg).join(format!("{name}Service.java")),
+                contents: stub_service(&pkg, &name),
+            },
+            Artifact {
+                kind: "service test",
+                path: test_dir(&root, &pkg).join(format!("{name}ServiceTest.java")),
+                contents: service_stub_test(&pkg, &name),
+            },
+        ],
         ArtifactKind::Repository => vec![Artifact {
             kind: "repository",
             path: main_dir(&root, &pkg).join(format!("{name}Repository.java")),
@@ -201,11 +215,18 @@ pub fn generate(kind: ArtifactKind, name: &str, fields: &[String]) -> Result<()>
         }],
         ArtifactKind::Entity => {
             let parsed = parse_fields(fields)?;
-            vec![Artifact {
-                kind: "entity",
-                path: main_dir(&root, &pkg).join(format!("{name}.java")),
-                contents: entity_java(&pkg, &name, &parsed, has_lombok(&root)),
-            }]
+            vec![
+                Artifact {
+                    kind: "entity",
+                    path: main_dir(&root, &pkg).join(format!("{name}.java")),
+                    contents: entity_java(&pkg, &name, &parsed, has_lombok(&root)),
+                },
+                Artifact {
+                    kind: "entity test",
+                    path: test_dir(&root, &pkg).join(format!("{name}Test.java")),
+                    contents: entity_test(&pkg, &name, &parsed),
+                },
+            ]
         }
         ArtifactKind::Test => vec![Artifact {
             kind: "test",
@@ -238,6 +259,11 @@ fn scaffold_artifacts(root: &Path, pkg: &str, name: &str, fields: &[String]) -> 
             contents: entity_java(pkg, name, &parsed, lombok),
         },
         Artifact {
+            kind: "entity test",
+            path: test_dir(root, pkg).join(format!("{name}Test.java")),
+            contents: entity_test(pkg, name, &parsed),
+        },
+        Artifact {
             kind: "repository",
             path: main_dir(root, pkg).join(format!("{name}Repository.java")),
             contents: stub_repository(pkg, name),
@@ -268,15 +294,25 @@ pub fn destroy(kind: ArtifactKind, name: &str, force: bool) -> Result<()> {
     let paths: Vec<PathBuf> = match kind {
         ArtifactKind::Scaffold => vec![
             main_dir(&root, &pkg).join(format!("{name}.java")),
+            test_dir(&root, &pkg).join(format!("{name}Test.java")),
             main_dir(&root, &pkg).join(format!("{name}Repository.java")),
             main_dir(&root, &pkg).join(format!("{name}Service.java")),
             main_dir(&root, &pkg).join(format!("{name}Controller.java")),
             test_dir(&root, &pkg).join(format!("{name}ControllerTest.java")),
         ],
-        ArtifactKind::Controller => vec![main_dir(&root, &pkg).join(format!("{name}Controller.java"))],
-        ArtifactKind::Service => vec![main_dir(&root, &pkg).join(format!("{name}Service.java"))],
+        ArtifactKind::Controller => vec![
+            main_dir(&root, &pkg).join(format!("{name}Controller.java")),
+            test_dir(&root, &pkg).join(format!("{name}ControllerTest.java")),
+        ],
+        ArtifactKind::Service => vec![
+            main_dir(&root, &pkg).join(format!("{name}Service.java")),
+            test_dir(&root, &pkg).join(format!("{name}ServiceTest.java")),
+        ],
         ArtifactKind::Repository => vec![main_dir(&root, &pkg).join(format!("{name}Repository.java"))],
-        ArtifactKind::Entity => vec![main_dir(&root, &pkg).join(format!("{name}.java"))],
+        ArtifactKind::Entity => vec![
+            main_dir(&root, &pkg).join(format!("{name}.java")),
+            test_dir(&root, &pkg).join(format!("{name}Test.java")),
+        ],
         ArtifactKind::Test => vec![test_dir(&root, &pkg).join(format!("{name}Test.java"))],
     };
 
@@ -377,6 +413,63 @@ class {name}Test {{
     )
 }
 
+// ---- companion tests for the bare `generate controller`/`service` stubs
+// (Rails generates a test alongside controller/model generators; we do the
+// same -- repository is a plain JpaRepository delegate with nothing of its
+// own to assert, so it gets no companion test) ----
+
+fn controller_stub_test(pkg: &str, name: &str, mockmvc_import: &str) -> String {
+    format!(
+        r#"package {pkg};
+
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import {mockmvc_import};
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.web.servlet.MockMvc;
+
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+@SpringBootTest
+@AutoConfigureMockMvc
+class {name}ControllerTest {{
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @Test
+    void getReturnsOk() throws Exception {{
+        mockMvc.perform(get("/{route}"))
+                .andExpect(status().isOk())
+                .andExpect(content().string("{name}"));
+    }}
+}}
+"#,
+        route = name.to_lowercase()
+    )
+}
+
+fn service_stub_test(pkg: &str, name: &str) -> String {
+    format!(
+        r#"package {pkg};
+
+import org.junit.jupiter.api.Test;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+class {name}ServiceTest {{
+
+    @Test
+    void instantiates() {{
+        assertThat(new {name}Service()).isNotNull();
+    }}
+}}
+"#
+    )
+}
+
 // ---- entity (shared by standalone `generate entity` and `generate scaffold`) ----
 
 fn entity_java(pkg: &str, name: &str, fields: &[Field], lombok: bool) -> String {
@@ -436,6 +529,54 @@ fn getter_setter(java_type: &str, name: &str) -> String {
     format!(
         "    public {java_type} get{cap}() {{\n        return {name};\n    }}\n\n    public void set{cap}({java_type} {name}) {{\n        this.{name} = {name};\n    }}\n"
     )
+}
+
+/// A companion test round-tripping every getter/setter (including
+/// Lombok's @Data-generated ones, which compile the same as hand-written).
+fn entity_test(pkg: &str, name: &str, fields: &[Field]) -> String {
+    let mut imports: Vec<&str> = fields.iter().filter_map(|f| f.import).collect();
+    imports.sort();
+    imports.dedup();
+
+    let mut out = format!("package {pkg};\n\n");
+    out += "import org.junit.jupiter.api.Test;\n";
+    if !imports.is_empty() {
+        out += "\n";
+        for imp in &imports {
+            out += &format!("import {imp};\n");
+        }
+    }
+    out += "\nimport static org.assertj.core.api.Assertions.assertThat;\n\n";
+    out += &format!("class {name}Test {{\n\n");
+    out += "    @Test\n    void gettersAndSettersRoundTrip() {\n";
+    out += &format!("        {name} entity = new {name}();\n");
+    out += "        entity.setId(1L);\n";
+    for field in fields {
+        out += &format!("        entity.set{}({});\n", capitalize(&field.name), sample_literal(&field.java_type));
+    }
+    out += "\n        assertThat(entity.getId()).isEqualTo(1L);\n";
+    for field in fields {
+        out += &format!(
+            "        assertThat(entity.get{}()).isEqualTo({});\n",
+            capitalize(&field.name),
+            sample_literal(&field.java_type)
+        );
+    }
+    out += "    }\n}\n";
+    out
+}
+
+fn sample_literal(java_type: &str) -> &'static str {
+    match java_type {
+        "String" => "\"sample\"",
+        "Integer" => "1",
+        "Long" => "1L",
+        "Boolean" => "true",
+        "Double" => "1.0",
+        "LocalDate" => "LocalDate.of(2024, 1, 1)",
+        "LocalDateTime" => "LocalDateTime.of(2024, 1, 1, 12, 0)",
+        _ => "null",
+    }
 }
 
 // ---- scaffold's fuller service/controller/test (beyond the bare stubs) ----
@@ -823,10 +964,85 @@ mod tests {
         result.unwrap();
 
         assert!(src.join("Post.java").is_file());
+        assert!(root.join("src/test/java/com/example/blog/PostTest.java").is_file());
         assert!(src.join("PostRepository.java").is_file());
         assert!(src.join("PostService.java").is_file());
         assert!(src.join("PostController.java").is_file());
         assert!(root.join("src/test/java/com/example/blog/PostControllerTest.java").is_file());
+    }
+
+    /// Regression test: standalone `generate controller` used to write only
+    /// the bare stub, unlike Rails (`rails generate controller` always
+    /// emits a matching test).
+    #[test]
+    fn generate_controller_also_creates_a_controller_test() {
+        let _guard = CWD_LOCK.lock().unwrap();
+        let root = scratch("controller-test-companion");
+        let src = root.join("src/main/java/com/example/blog");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(root.join("pom.xml"), "<project></project>").unwrap();
+        fs::write(
+            src.join("BlogApplication.java"),
+            "package com.example.blog;\n\npublic class BlogApplication {}\n",
+        )
+        .unwrap();
+
+        let original_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&root).unwrap();
+        let result = generate(ArtifactKind::Controller, "health", &[]);
+        std::env::set_current_dir(original_cwd).unwrap();
+        result.unwrap();
+
+        assert!(src.join("HealthController.java").is_file());
+        let test_file = root.join("src/test/java/com/example/blog/HealthControllerTest.java");
+        assert!(test_file.is_file(), "expected {}", test_file.display());
+        assert!(fs::read_to_string(test_file).unwrap().contains("class HealthControllerTest"));
+    }
+
+    #[test]
+    fn generate_service_also_creates_a_service_test() {
+        let _guard = CWD_LOCK.lock().unwrap();
+        let root = scratch("service-test-companion");
+        let src = root.join("src/main/java/com/example/blog");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(root.join("pom.xml"), "<project></project>").unwrap();
+        fs::write(
+            src.join("BlogApplication.java"),
+            "package com.example.blog;\n\npublic class BlogApplication {}\n",
+        )
+        .unwrap();
+
+        let original_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&root).unwrap();
+        let result = generate(ArtifactKind::Service, "billing", &[]);
+        std::env::set_current_dir(original_cwd).unwrap();
+        result.unwrap();
+
+        assert!(src.join("BillingService.java").is_file());
+        assert!(root.join("src/test/java/com/example/blog/BillingServiceTest.java").is_file());
+    }
+
+    #[test]
+    fn generate_repository_creates_no_companion_test() {
+        let _guard = CWD_LOCK.lock().unwrap();
+        let root = scratch("repository-no-test");
+        let src = root.join("src/main/java/com/example/blog");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(root.join("pom.xml"), "<project></project>").unwrap();
+        fs::write(
+            src.join("BlogApplication.java"),
+            "package com.example.blog;\n\npublic class BlogApplication {}\n",
+        )
+        .unwrap();
+
+        let original_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&root).unwrap();
+        let result = generate(ArtifactKind::Repository, "widget", &[]);
+        std::env::set_current_dir(original_cwd).unwrap();
+        result.unwrap();
+
+        assert!(src.join("WidgetRepository.java").is_file());
+        assert!(!root.join("src/test/java/com/example/blog/WidgetRepositoryTest.java").exists());
     }
 
     #[test]
@@ -873,6 +1089,7 @@ mod tests {
 
         result.unwrap();
         assert!(!src.join("Tag.java").is_file());
+        assert!(!root.join("src/test/java/com/example/blog/TagTest.java").exists());
         assert!(src.join("BlogApplication.java").is_file());
     }
 }

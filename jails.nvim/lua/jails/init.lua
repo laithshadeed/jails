@@ -1,0 +1,117 @@
+-- jails.nvim: thin Neovim wrapper around the `jails` CLI. Replaces
+-- springgen.nvim now that jails itself does all the generation (Rust,
+-- dependency-free templates) -- this plugin's only job is shelling out to
+-- the real binary and giving the result a decent editor UX, not
+-- reimplementing any of jails' own logic.
+local M = {}
+
+--- Streaming subcommands get a live terminal instead of buffered output --
+--- mvn/mvnd output is verbose and users may want to watch it or Ctrl-C it.
+local STREAMING = { test = true, build = true, run = true }
+
+local function jails_bin()
+  if vim.fn.executable('jails') == 0 then
+    vim.notify('jails.nvim: `jails` binary not found on PATH', vim.log.levels.ERROR)
+    return nil
+  end
+  return 'jails'
+end
+
+--- Parse jails' own `created <kind> <path>` lines and open each file.
+local function open_created_files(output)
+  for _, line in ipairs(vim.split(output, '\n')) do
+    local rest = line:match('^created%s+(.+)$')
+    local path = rest and rest:match('%S+$')
+    if path and vim.fn.filereadable(path) == 1 then
+      vim.cmd.edit(path)
+    end
+  end
+end
+
+--- Run a quick filesystem subcommand (generate, destroy, new, new-cli):
+--- async, buffered output, notify on completion, open any created files.
+function M.run(args)
+  local bin = jails_bin()
+  if not bin then return end
+  local cmd = { bin }
+  vim.list_extend(cmd, args)
+  vim.system(cmd, { text = true }, function(result)
+    vim.schedule(function()
+      if result.code ~= 0 then
+        vim.notify('jails ' .. table.concat(args, ' ') .. ' failed:\n' .. (result.stderr or ''), vim.log.levels.ERROR)
+        return
+      end
+      local out = (result.stdout or ''):gsub('%s+$', '')
+      if out ~= '' then vim.notify(out, vim.log.levels.INFO) end
+      if args[1] == 'generate' or args[1] == 'g' then
+        open_created_files(out)
+      end
+    end)
+  end)
+end
+
+--- Run a streaming subcommand (test, build, run) in a terminal split.
+function M.run_terminal(args)
+  local bin = jails_bin()
+  if not bin then return end
+  local cmd = { bin }
+  vim.list_extend(cmd, args)
+  vim.cmd.split()
+  vim.fn.termopen(cmd)
+  vim.cmd.startinsert()
+end
+
+--- destroy needs a yes/no, but piping stdin through an async job is
+--- fiddly -- Neovim owns the confirmation instead, then always passes
+--- --force since the confirmation already happened.
+function M.destroy(kind, name)
+  local choice = vim.fn.confirm(('destroy %s %s?'):format(kind, name), '&Yes\n&No', 2)
+  if choice ~= 1 then return end
+  M.run({ 'destroy', kind, name, '--force' })
+end
+
+--- Entry point for :Jails <fargs...>.
+function M.dispatch(fargs)
+  if #fargs == 0 then
+    vim.notify('jails.nvim: usage :Jails <new|new-cli|generate|g|destroy|d|test|build|run> ...', vim.log.levels.ERROR)
+    return
+  end
+  local sub = fargs[1]
+  if sub == 'destroy' or sub == 'd' then
+    if #fargs < 3 then
+      vim.notify('jails.nvim: usage :Jails destroy <kind> <Name>', vim.log.levels.ERROR)
+      return
+    end
+    M.destroy(fargs[2], fargs[3])
+    return
+  end
+  if STREAMING[sub] then
+    M.run_terminal(fargs)
+    return
+  end
+  M.run(fargs)
+end
+
+local KINDS = { 'scaffold', 'controller', 'service', 'repository', 'entity', 'test' }
+local SUBCOMMANDS = { 'new', 'new-cli', 'generate', 'g', 'destroy', 'd', 'test', 'build', 'run', 'completion' }
+
+--- Completion for :Jails -- subcommand first, artifact kind as the second
+--- word of generate/g/destroy/d, nothing after that (Name/fields are free
+--- text). `cmd_line` is the full command line up to the cursor, e.g.
+--- "Jails generate " or "Jails g sca".
+function M.complete(_, cmd_line)
+  local args = vim.split(vim.trim(cmd_line), '%s+')
+  table.remove(args, 1) -- drop the "Jails" command name itself
+  local completed = #args
+  if not cmd_line:match('%s$') and completed > 0 then
+    completed = completed - 1 -- last word is still being typed
+  end
+  if completed == 0 then return SUBCOMMANDS end
+  local sub = args[1]
+  if completed == 1 and (sub == 'generate' or sub == 'g' or sub == 'destroy' or sub == 'd') then
+    return KINDS
+  end
+  return {}
+end
+
+return M
