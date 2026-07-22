@@ -64,12 +64,17 @@ function M.run_terminal(args)
 
   if term_win and vim.api.nvim_win_is_valid(term_win) then
     vim.api.nvim_set_current_win(term_win)
-    vim.cmd.enew()
   else
     vim.cmd('botright split')
     vim.api.nvim_win_set_height(0, 15)
     term_win = vim.api.nvim_get_current_win()
   end
+  -- Unconditional: :split clones whichever buffer is currently focused
+  -- into the new window, so without this a leftover terminal buffer from
+  -- an earlier run could get cloned into the new split and displayed
+  -- alongside the reused one -- always start from a blank scratch buffer
+  -- before termopen, regardless of which branch above ran.
+  vim.cmd.enew()
   vim.fn.termopen(cmd)
   vim.cmd.startinsert()
 end
