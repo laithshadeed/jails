@@ -5,9 +5,14 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn find_on_path(bin: &str) -> bool {
-    std::env::var_os("PATH")
-        .map(|paths| std::env::split_paths(&paths).any(|dir| dir.join(bin).is_file()))
-        .unwrap_or(false)
+    let Some(paths) = std::env::var_os("PATH") else {
+        return false;
+    };
+    find_on_path_list(bin, std::env::split_paths(&paths))
+}
+
+fn find_on_path_list(bin: &str, dirs: impl Iterator<Item = PathBuf>) -> bool {
+    dirs.into_iter().any(|dir| dir.join(bin).is_file())
 }
 
 /// Prefer mvnd when it's on PATH (matches the dotfiles' mvnd wrapper),
@@ -46,11 +51,17 @@ pub fn build() -> Result<()> {
     run_inherited(cmd)
 }
 
-pub fn run() -> Result<()> {
+pub fn run(no_build: bool) -> Result<()> {
     let root = find_project_root()?;
     let pom = fs::read_to_string(root.join("pom.xml")).map_err(|e| format!("failed to read pom.xml: {e}"))?;
 
     if pom.contains("org.springframework.boot") {
+        if no_build {
+            let jar = find_built_jar(&root)?;
+            let mut run = Command::new("java");
+            run.args(["-jar"]).arg(&jar).current_dir(&root);
+            return run_inherited(run);
+        }
         let mut cmd = Command::new(maven_binary());
         cmd.arg("spring-boot:run").current_dir(&root);
         return run_inherited(cmd);
@@ -59,13 +70,32 @@ pub fn run() -> Result<()> {
     let (pkg, class_name) = find_main_class(&root)?;
     let fqcn = if pkg.is_empty() { class_name } else { format!("{pkg}.{class_name}") };
 
-    let mut compile = Command::new(maven_binary());
-    compile.arg("compile").current_dir(&root);
-    run_inherited(compile)?;
+    if !no_build {
+        let mut compile = Command::new(maven_binary());
+        compile.arg("compile").current_dir(&root);
+        run_inherited(compile)?;
+    } else if !root.join("target/classes").join(fqcn.replace('.', "/")).with_extension("class").is_file() {
+        return Err(format!("target/classes has no compiled {fqcn} -- run `jails build` or `jails run` (without --no-build) first"));
+    }
 
     let mut run = Command::new("java");
     run.args(["-cp", "target/classes", &fqcn]).current_dir(&root);
     run_inherited(run)
+}
+
+/// Picks a jar out of target/ for --no-build's Spring Boot path. Excludes
+/// spring-boot-maven-plugin's *.jar.original (its extension() is
+/// "original", not "jar", so a plain "jar" filter already skips it).
+fn find_built_jar(root: &Path) -> Result<PathBuf> {
+    let target = root.join("target");
+    let entries = fs::read_dir(&target).map_err(|_| {
+        "no target/ directory -- run `jails build` or `jails run` (without --no-build) first".to_string()
+    })?;
+    entries
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| p.extension().is_some_and(|ext| ext == "jar"))
+        .ok_or_else(|| "no jar under target/ -- run `jails build` or `jails run` (without --no-build) first".to_string())
 }
 
 /// Find the file with `static void main` under src/main/java and return
@@ -105,4 +135,67 @@ fn search_main_file(dir: &Path) -> Option<PathBuf> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "jails-run-test-{label}-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn find_on_path_list_finds_an_executable_in_one_of_the_dirs() {
+        let dir = scratch("find-on-path");
+        fs::write(dir.join("mvnd"), "").unwrap();
+        let other = scratch("find-on-path-other");
+
+        assert!(find_on_path_list("mvnd", [other.clone(), dir.clone()].into_iter()));
+        assert!(!find_on_path_list("mvn", [other, dir].into_iter()));
+    }
+
+    #[test]
+    fn find_main_class_extracts_package_and_class_name() {
+        let root = scratch("main-class");
+        let src = root.join("src/main/java/com/example/app");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("Cli.java"),
+            "package com.example.app;\n\npublic class Cli {\n    public static void main(String[] args) {}\n}\n",
+        )
+        .unwrap();
+
+        let (pkg, class_name) = find_main_class(&root).unwrap();
+        assert_eq!(pkg, "com.example.app");
+        assert_eq!(class_name, "Cli");
+    }
+
+    #[test]
+    fn find_main_class_ignores_files_without_a_main_method() {
+        let root = scratch("no-main-class");
+        let src = root.join("src/main/java/com/example/app");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("Helper.java"), "package com.example.app;\n\nclass Helper {}\n").unwrap();
+
+        assert!(find_main_class(&root).is_err());
+    }
+
+    #[test]
+    fn find_main_class_handles_default_package() {
+        let root = scratch("default-package");
+        let src = root.join("src/main/java");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("Cli.java"), "public class Cli {\n    public static void main(String[] args) {}\n}\n").unwrap();
+
+        let (pkg, class_name) = find_main_class(&root).unwrap();
+        assert_eq!(pkg, "");
+        assert_eq!(class_name, "Cli");
+    }
 }

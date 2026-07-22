@@ -1,7 +1,19 @@
 use crate::Result;
+use clap::ValueEnum;
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+
+#[derive(Clone, Copy, ValueEnum)]
+#[value(rename_all = "lowercase")]
+pub enum ArtifactKind {
+    Scaffold,
+    Controller,
+    Service,
+    Repository,
+    Entity,
+    Test,
+}
 
 pub struct Field {
     pub name: String,
@@ -165,29 +177,29 @@ fn write_new_file(path: &Path, contents: &str) -> Result<()> {
     fs::write(path, contents).map_err(|e| format!("failed to write {}: {e}", path.display()))
 }
 
-pub fn generate(kind: &str, name: &str, fields: &[String]) -> Result<()> {
+pub fn generate(kind: ArtifactKind, name: &str, fields: &[String]) -> Result<()> {
     let root = find_project_root()?;
     let pkg = base_package(&root)?;
     let name = capitalize(name);
 
     let artifacts = match kind {
-        "scaffold" => scaffold_artifacts(&root, &pkg, &name, fields)?,
-        "controller" => vec![Artifact {
+        ArtifactKind::Scaffold => scaffold_artifacts(&root, &pkg, &name, fields)?,
+        ArtifactKind::Controller => vec![Artifact {
             kind: "controller",
             path: main_dir(&root, &pkg).join(format!("{name}Controller.java")),
             contents: stub_controller(&pkg, &name),
         }],
-        "service" => vec![Artifact {
+        ArtifactKind::Service => vec![Artifact {
             kind: "service",
             path: main_dir(&root, &pkg).join(format!("{name}Service.java")),
             contents: stub_service(&pkg, &name),
         }],
-        "repository" => vec![Artifact {
+        ArtifactKind::Repository => vec![Artifact {
             kind: "repository",
             path: main_dir(&root, &pkg).join(format!("{name}Repository.java")),
             contents: stub_repository(&pkg, &name),
         }],
-        "entity" => {
+        ArtifactKind::Entity => {
             let parsed = parse_fields(fields)?;
             vec![Artifact {
                 kind: "entity",
@@ -195,16 +207,11 @@ pub fn generate(kind: &str, name: &str, fields: &[String]) -> Result<()> {
                 contents: entity_java(&pkg, &name, &parsed, has_lombok(&root)),
             }]
         }
-        "test" => vec![Artifact {
+        ArtifactKind::Test => vec![Artifact {
             kind: "test",
             path: test_dir(&root, &pkg).join(format!("{name}Test.java")),
             contents: stub_test(&pkg, &name),
         }],
-        other => {
-            return Err(format!(
-                "unknown generator '{other}' (expected: scaffold, controller, service, repository, entity, test)"
-            ))
-        }
     };
 
     for artifact in &artifacts {
@@ -253,29 +260,24 @@ fn scaffold_artifacts(root: &Path, pkg: &str, name: &str, fields: &[String]) -> 
     ])
 }
 
-pub fn destroy(kind: &str, name: &str, force: bool) -> Result<()> {
+pub fn destroy(kind: ArtifactKind, name: &str, force: bool) -> Result<()> {
     let root = find_project_root()?;
     let pkg = base_package(&root)?;
     let name = capitalize(name);
 
     let paths: Vec<PathBuf> = match kind {
-        "scaffold" => vec![
+        ArtifactKind::Scaffold => vec![
             main_dir(&root, &pkg).join(format!("{name}.java")),
             main_dir(&root, &pkg).join(format!("{name}Repository.java")),
             main_dir(&root, &pkg).join(format!("{name}Service.java")),
             main_dir(&root, &pkg).join(format!("{name}Controller.java")),
             test_dir(&root, &pkg).join(format!("{name}ControllerTest.java")),
         ],
-        "controller" => vec![main_dir(&root, &pkg).join(format!("{name}Controller.java"))],
-        "service" => vec![main_dir(&root, &pkg).join(format!("{name}Service.java"))],
-        "repository" => vec![main_dir(&root, &pkg).join(format!("{name}Repository.java"))],
-        "entity" => vec![main_dir(&root, &pkg).join(format!("{name}.java"))],
-        "test" => vec![test_dir(&root, &pkg).join(format!("{name}Test.java"))],
-        other => {
-            return Err(format!(
-                "unknown generator '{other}' (expected: scaffold, controller, service, repository, entity, test)"
-            ))
-        }
+        ArtifactKind::Controller => vec![main_dir(&root, &pkg).join(format!("{name}Controller.java"))],
+        ArtifactKind::Service => vec![main_dir(&root, &pkg).join(format!("{name}Service.java"))],
+        ArtifactKind::Repository => vec![main_dir(&root, &pkg).join(format!("{name}Repository.java"))],
+        ArtifactKind::Entity => vec![main_dir(&root, &pkg).join(format!("{name}.java"))],
+        ArtifactKind::Test => vec![test_dir(&root, &pkg).join(format!("{name}Test.java"))],
     };
 
     let existing: Vec<&PathBuf> = paths.iter().filter(|p| p.exists()).collect();
@@ -593,4 +595,284 @@ class {name}ControllerTest {{
 }}
 "#
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::CWD_LOCK;
+
+    fn scratch(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "jails-generate-test-{label}-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn capitalize_uppercases_first_letter_only() {
+        assert_eq!(capitalize("post"), "Post");
+        assert_eq!(capitalize("Post"), "Post");
+        assert_eq!(capitalize(""), "");
+    }
+
+    #[test]
+    fn field_type_maps_known_tokens() {
+        assert_eq!(field_type("string").unwrap().0, "String");
+        assert_eq!(field_type("text").unwrap(), ("String", true, None));
+        assert_eq!(field_type("int").unwrap().0, "Integer");
+        assert_eq!(field_type("integer").unwrap().0, "Integer");
+        assert_eq!(field_type("long").unwrap().0, "Long");
+        assert_eq!(field_type("boolean").unwrap().0, "Boolean");
+        assert_eq!(field_type("double").unwrap().0, "Double");
+        assert_eq!(field_type("date").unwrap(), ("LocalDate", false, Some("java.time.LocalDate")));
+        assert_eq!(
+            field_type("datetime").unwrap(),
+            ("LocalDateTime", false, Some("java.time.LocalDateTime"))
+        );
+    }
+
+    #[test]
+    fn field_type_rejects_unknown_tokens() {
+        assert!(field_type("uuid").is_err());
+    }
+
+    #[test]
+    fn parse_fields_splits_name_and_type() {
+        let fields = parse_fields(&["title:string".to_string(), "body:TEXT".to_string()]).unwrap();
+        assert_eq!(fields[0].name, "title");
+        assert_eq!(fields[0].java_type, "String");
+        assert!(!fields[0].needs_lob);
+        assert_eq!(fields[1].name, "body");
+        assert!(fields[1].needs_lob);
+    }
+
+    #[test]
+    fn parse_fields_rejects_args_without_a_colon() {
+        assert!(parse_fields(&["title".to_string()]).is_err());
+    }
+
+    #[test]
+    fn find_project_root_walks_up_to_pom_xml() {
+        let _guard = CWD_LOCK.lock().unwrap();
+        let root = scratch("project-root");
+        fs::write(root.join("pom.xml"), "<project/>").unwrap();
+        let nested = root.join("src/main/java/com/example");
+        fs::create_dir_all(&nested).unwrap();
+
+        let original_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&nested).unwrap();
+        let found = find_project_root();
+        std::env::set_current_dir(original_cwd).unwrap();
+
+        assert_eq!(found.unwrap(), root);
+    }
+
+    #[test]
+    fn base_package_reads_the_application_class_package() {
+        let root = scratch("base-package");
+        let src = root.join("src/main/java/com/example/blog");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("BlogApplication.java"),
+            "package com.example.blog;\n\npublic class BlogApplication {}\n",
+        )
+        .unwrap();
+
+        assert_eq!(base_package(&root).unwrap(), "com.example.blog");
+    }
+
+    #[test]
+    fn base_package_errors_without_an_application_class() {
+        let root = scratch("no-application");
+        fs::create_dir_all(root.join("src/main/java")).unwrap();
+        assert!(base_package(&root).is_err());
+    }
+
+    #[test]
+    fn has_lombok_checks_pom_for_the_dependency() {
+        let root = scratch("lombok");
+        fs::write(root.join("pom.xml"), "<project><artifactId>lombok</artifactId></project>").unwrap();
+        assert!(has_lombok(&root));
+
+        let root2 = scratch("no-lombok");
+        fs::write(root2.join("pom.xml"), "<project></project>").unwrap();
+        assert!(!has_lombok(&root2));
+    }
+
+    #[test]
+    fn mockmvc_import_picks_legacy_package_for_boot_3() {
+        let root = scratch("boot3");
+        fs::write(
+            root.join("pom.xml"),
+            "<parent><artifactId>spring-boot-starter-parent</artifactId><version>3.3.4</version></parent>",
+        )
+        .unwrap();
+        assert_eq!(
+            mockmvc_autoconfigure_import(&root),
+            "org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc"
+        );
+    }
+
+    #[test]
+    fn mockmvc_import_picks_current_package_for_boot_4() {
+        let root = scratch("boot4");
+        fs::write(
+            root.join("pom.xml"),
+            "<parent><artifactId>spring-boot-starter-parent</artifactId><version>4.1.0</version></parent>",
+        )
+        .unwrap();
+        assert_eq!(
+            mockmvc_autoconfigure_import(&root),
+            "org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc"
+        );
+    }
+
+    #[test]
+    fn mockmvc_import_defaults_to_legacy_when_pom_is_unreadable() {
+        let root = scratch("no-pom");
+        assert_eq!(
+            mockmvc_autoconfigure_import(&root),
+            "org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc"
+        );
+    }
+
+    #[test]
+    fn entity_java_without_lombok_includes_plain_getters_and_setters() {
+        let fields = parse_fields(&["title:string".to_string(), "body:text".to_string()]).unwrap();
+        let src = entity_java("com.example.blog", "Post", &fields, false);
+
+        assert!(src.contains("public class Post {"));
+        assert!(src.contains("@Id"));
+        assert!(src.contains("@GeneratedValue"));
+        assert!(src.contains("private String title;"));
+        assert!(src.contains("@Lob"));
+        assert!(src.contains("private String body;"));
+        assert!(src.contains("public String getTitle()"));
+        assert!(src.contains("public void setTitle(String title)"));
+        assert!(!src.contains("@Data"));
+    }
+
+    #[test]
+    fn entity_java_with_lombok_uses_data_and_skips_getters() {
+        let fields = parse_fields(&["title:string".to_string()]).unwrap();
+        let src = entity_java("com.example.blog", "Post", &fields, true);
+
+        assert!(src.contains("import lombok.Data;"));
+        assert!(src.contains("@Data"));
+        assert!(!src.contains("getTitle"));
+    }
+
+    #[test]
+    fn entity_java_imports_time_types_for_date_fields() {
+        let fields = parse_fields(&["postedAt:datetime".to_string()]).unwrap();
+        let src = entity_java("com.example.blog", "Post", &fields, false);
+        assert!(src.contains("import java.time.LocalDateTime;"));
+        assert!(src.contains("private LocalDateTime postedAt;"));
+    }
+
+    #[test]
+    fn stub_templates_use_the_package_and_class_name() {
+        assert!(stub_controller("com.example.blog", "Post").contains("public class PostController"));
+        assert!(stub_service("com.example.blog", "Post").contains("public class PostService"));
+        assert!(stub_repository("com.example.blog", "Post").contains("extends JpaRepository<Post, Long>"));
+        assert!(stub_test("com.example.blog", "Post").contains("class PostTest"));
+    }
+
+    #[test]
+    fn service_full_wraps_repository_crud() {
+        let src = service_full("com.example.blog", "Post");
+        assert!(src.contains("findAll()"));
+        assert!(src.contains("findById(Long id)"));
+        assert!(src.contains("save(Post post)"));
+        assert!(src.contains("deleteById(Long id)"));
+        assert!(src.contains("existsById(id)"));
+    }
+
+    #[test]
+    fn controller_full_exposes_full_crud_routes() {
+        let src = controller_full("com.example.blog", "Post", "posts");
+        assert!(src.contains(r#"@RequestMapping("/posts")"#));
+        assert!(src.contains("@GetMapping"));
+        assert!(src.contains("@PostMapping"));
+        assert!(src.contains("@PutMapping(\"/{id}\")"));
+        assert!(src.contains("@DeleteMapping(\"/{id}\")"));
+    }
+
+    #[test]
+    fn generate_scaffold_writes_all_five_files() {
+        let _guard = CWD_LOCK.lock().unwrap();
+        let root = scratch("scaffold");
+        let src = root.join("src/main/java/com/example/blog");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(root.join("pom.xml"), "<project></project>").unwrap();
+        fs::write(
+            src.join("BlogApplication.java"),
+            "package com.example.blog;\n\npublic class BlogApplication {}\n",
+        )
+        .unwrap();
+
+        let original_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&root).unwrap();
+        let result = generate(ArtifactKind::Scaffold, "post", &["title:string".to_string()]);
+        std::env::set_current_dir(original_cwd).unwrap();
+        result.unwrap();
+
+        assert!(src.join("Post.java").is_file());
+        assert!(src.join("PostRepository.java").is_file());
+        assert!(src.join("PostService.java").is_file());
+        assert!(src.join("PostController.java").is_file());
+        assert!(root.join("src/test/java/com/example/blog/PostControllerTest.java").is_file());
+    }
+
+    #[test]
+    fn generate_refuses_to_overwrite_an_existing_file() {
+        let _guard = CWD_LOCK.lock().unwrap();
+        let root = scratch("no-overwrite");
+        let src = root.join("src/main/java/com/example/blog");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(root.join("pom.xml"), "<project></project>").unwrap();
+        fs::write(
+            src.join("BlogApplication.java"),
+            "package com.example.blog;\n\npublic class BlogApplication {}\n",
+        )
+        .unwrap();
+        fs::write(src.join("CommentController.java"), "// already here").unwrap();
+
+        let original_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&root).unwrap();
+        let result = generate(ArtifactKind::Controller, "comment", &[]);
+        std::env::set_current_dir(original_cwd).unwrap();
+
+        assert!(result.is_err());
+        assert_eq!(fs::read_to_string(src.join("CommentController.java")).unwrap(), "// already here");
+    }
+
+    #[test]
+    fn destroy_removes_only_files_that_generate_would_have_created() {
+        let _guard = CWD_LOCK.lock().unwrap();
+        let root = scratch("destroy");
+        let src = root.join("src/main/java/com/example/blog");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(root.join("pom.xml"), "<project></project>").unwrap();
+        fs::write(
+            src.join("BlogApplication.java"),
+            "package com.example.blog;\n\npublic class BlogApplication {}\n",
+        )
+        .unwrap();
+
+        let original_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&root).unwrap();
+        generate(ArtifactKind::Entity, "tag", &["name:string".to_string()]).unwrap();
+        let result = destroy(ArtifactKind::Entity, "tag", true);
+        std::env::set_current_dir(original_cwd).unwrap();
+
+        result.unwrap();
+        assert!(!src.join("Tag.java").is_file());
+        assert!(src.join("BlogApplication.java").is_file());
+    }
 }
