@@ -1,0 +1,6 @@
+/target
+
+# Local reference checkout of the actual Rails framework source, used for
+# research only (see prompt.md) -- its own separate git repo, never part
+# of this one.
+/rails/
