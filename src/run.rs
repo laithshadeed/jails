@@ -25,7 +25,10 @@ fn maven_binary() -> &'static str {
     }
 }
 
-fn run_inherited(mut cmd: Command) -> Result<()> {
+fn run_inherited(mut cmd: Command, debug: bool) -> Result<()> {
+    if debug {
+        crate::debug_cmd(&cmd);
+    }
     let program = cmd.get_program().to_string_lossy().to_string();
     let status = cmd.status().map_err(|e| format!("failed to run {program}: {e}"))?;
     if !status.success() {
@@ -34,21 +37,21 @@ fn run_inherited(mut cmd: Command) -> Result<()> {
     Ok(())
 }
 
-pub fn test(filter: Option<&str>) -> Result<()> {
+pub fn test(filter: Option<&str>, debug: bool) -> Result<()> {
     let root = find_project_root()?;
     let mut cmd = Command::new(maven_binary());
     cmd.arg("test").current_dir(&root);
     if let Some(f) = filter {
         cmd.arg(format!("-Dtest={f}"));
     }
-    run_inherited(cmd)
+    run_inherited(cmd, debug)
 }
 
-pub fn build() -> Result<()> {
+pub fn build(debug: bool) -> Result<()> {
     let root = find_project_root()?;
     let mut cmd = Command::new(maven_binary());
     cmd.arg("package").current_dir(&root);
-    run_inherited(cmd)
+    run_inherited(cmd, debug)
 }
 
 /// Spawns `spring-boot:run` once and, on every change to a .java source
@@ -57,7 +60,7 @@ pub fn build() -> Result<()> {
 /// running JVM -- jails never kills/restarts the app process, just keeps
 /// target/classes fresh. Without devtools this recompiles for nothing, so
 /// that's checked upfront.
-pub fn watch() -> Result<()> {
+pub fn watch(debug: bool) -> Result<()> {
     let root = find_project_root()?;
     let pom = fs::read_to_string(root.join("pom.xml")).map_err(|e| format!("failed to read pom.xml: {e}"))?;
     if !pom.contains("org.springframework.boot") {
@@ -69,11 +72,12 @@ pub fn watch() -> Result<()> {
         );
     }
 
-    let mut child = Command::new(maven_binary())
-        .arg("spring-boot:run")
-        .current_dir(&root)
-        .spawn()
-        .map_err(|e| format!("failed to start spring-boot:run: {e}"))?;
+    let mut run_cmd = Command::new(maven_binary());
+    run_cmd.arg("spring-boot:run").current_dir(&root);
+    if debug {
+        crate::debug_cmd(&run_cmd);
+    }
+    let mut child = run_cmd.spawn().map_err(|e| format!("failed to start spring-boot:run: {e}"))?;
 
     let src_root = root.join("src/main/java");
     let mut last_change = latest_mtime(&src_root);
@@ -94,7 +98,12 @@ pub fn watch() -> Result<()> {
         if change > last_change {
             last_change = change;
             println!("jails: change detected, recompiling...");
-            match Command::new(maven_binary()).arg("compile").current_dir(&root).status() {
+            let mut compile = Command::new(maven_binary());
+            compile.arg("compile").current_dir(&root);
+            if debug {
+                crate::debug_cmd(&compile);
+            }
+            match compile.status() {
                 Ok(s) if s.success() => println!("jails: recompiled -- devtools should restart shortly"),
                 Ok(s) => eprintln!("jails: recompile failed ({s})"),
                 Err(e) => eprintln!("jails: failed to run compile: {e}"),
@@ -126,7 +135,7 @@ fn latest_mtime(dir: &Path) -> std::time::SystemTime {
     latest
 }
 
-pub fn run(no_build: bool) -> Result<()> {
+pub fn run(no_build: bool, debug: bool) -> Result<()> {
     let root = find_project_root()?;
     let pom = fs::read_to_string(root.join("pom.xml")).map_err(|e| format!("failed to read pom.xml: {e}"))?;
 
@@ -135,11 +144,11 @@ pub fn run(no_build: bool) -> Result<()> {
             let jar = find_built_jar(&root)?;
             let mut run = Command::new("java");
             run.args(["-jar"]).arg(&jar).current_dir(&root);
-            return run_inherited(run);
+            return run_inherited(run, debug);
         }
         let mut cmd = Command::new(maven_binary());
         cmd.arg("spring-boot:run").current_dir(&root);
-        return run_inherited(cmd);
+        return run_inherited(cmd, debug);
     }
 
     let (pkg, class_name) = find_main_class(&root)?;
@@ -148,14 +157,14 @@ pub fn run(no_build: bool) -> Result<()> {
     if !no_build {
         let mut compile = Command::new(maven_binary());
         compile.arg("compile").current_dir(&root);
-        run_inherited(compile)?;
+        run_inherited(compile, debug)?;
     } else if !root.join("target/classes").join(fqcn.replace('.', "/")).with_extension("class").is_file() {
         return Err(format!("target/classes has no compiled {fqcn} -- run `jails build` or `jails run` (without --no-build) first"));
     }
 
     let mut run = Command::new("java");
     run.args(["-cp", "target/classes", &fqcn]).current_dir(&root);
-    run_inherited(run)
+    run_inherited(run, debug)
 }
 
 /// Picks a jar out of target/ for --no-build's Spring Boot path. Excludes

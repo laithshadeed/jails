@@ -6,7 +6,7 @@ use std::process::Command;
 /// Port of the `spring-init` bash function: wraps start.spring.io's
 /// starter.zip API. baseDir wraps the archive in a `$name/` folder
 /// server-side, so extracting to "." lands the project at `./$name`.
-pub fn new(name: &str, deps: &str, java: &str, git: bool, devtools: bool) -> Result<()> {
+pub fn new(name: &str, deps: &str, java: &str, git: bool, devtools: bool, debug: bool) -> Result<()> {
     if Path::new(name).exists() {
         return Err(format!("{name} already exists"));
     }
@@ -18,8 +18,8 @@ pub fn new(name: &str, deps: &str, java: &str, git: bool, devtools: bool) -> Res
     fs::create_dir_all(&tmp).map_err(|e| format!("failed to create temp dir: {e}"))?;
     let zip_path = tmp.join("starter.zip");
 
-    let status = Command::new("curl")
-        .args(["-sf", "https://start.spring.io/starter.zip"])
+    let mut curl = Command::new("curl");
+    curl.args(["-sf", "https://start.spring.io/starter.zip"])
         .arg("-d")
         .arg(format!("dependencies={deps}"))
         .args(["-d", "type=maven-project"])
@@ -32,21 +32,23 @@ pub fn new(name: &str, deps: &str, java: &str, git: bool, devtools: bool) -> Res
         .arg("-d")
         .arg(format!("baseDir={name}"))
         .arg("-o")
-        .arg(&zip_path)
-        .status()
-        .map_err(|e| format!("failed to run curl: {e}"))?;
+        .arg(&zip_path);
+    if debug {
+        crate::debug_cmd(&curl);
+    }
+    let status = curl.status().map_err(|e| format!("failed to run curl: {e}"))?;
 
     if !status.success() {
         let _ = fs::remove_dir_all(&tmp);
         return Err("starter.zip request failed".to_string());
     }
 
-    let status = Command::new("unzip")
-        .args(["-q"])
-        .arg(&zip_path)
-        .args(["-d", "."])
-        .status()
-        .map_err(|e| format!("failed to run unzip: {e}"))?;
+    let mut unzip = Command::new("unzip");
+    unzip.args(["-q"]).arg(&zip_path).args(["-d", "."]);
+    if debug {
+        crate::debug_cmd(&unzip);
+    }
+    let status = unzip.status().map_err(|e| format!("failed to run unzip: {e}"))?;
 
     let _ = fs::remove_dir_all(&tmp);
 
@@ -56,7 +58,7 @@ pub fn new(name: &str, deps: &str, java: &str, git: bool, devtools: bool) -> Res
 
     // start.spring.io's zip already ships a .gitignore, so just init.
     if git {
-        git_init(Path::new(name));
+        git_init(Path::new(name), debug);
     }
 
     println!("Created ./{name} (deps: {deps}, Java {java})");
@@ -66,7 +68,7 @@ pub fn new(name: &str, deps: &str, java: &str, git: bool, devtools: bool) -> Res
 /// Plain Maven CLI project, written directly -- no `mvn archetype:generate`
 /// (slow, needs network, and falls into an interactive catalog picker
 /// without exact archetype coordinates).
-pub fn new_cli(name: &str, git: bool) -> Result<()> {
+pub fn new_cli(name: &str, git: bool, debug: bool) -> Result<()> {
     let root = Path::new(name);
     if root.exists() {
         return Err(format!("{name} already exists"));
@@ -93,7 +95,7 @@ pub fn new_cli(name: &str, git: bool) -> Result<()> {
 
     if git {
         fs::write(root.join(".gitignore"), GITIGNORE).map_err(|e| format!("failed to write .gitignore: {e}"))?;
-        git_init(root);
+        git_init(root, debug);
     }
 
     println!("Created ./{name} (package: {package}, Java {java})");
@@ -104,8 +106,13 @@ const GITIGNORE: &str = "target/\n*.class\n.idea/\n*.iml\n.DS_Store\n";
 
 /// Best-effort: a missing/broken git shouldn't fail project creation, just
 /// skip repo setup with a warning.
-fn git_init(root: &Path) {
-    match Command::new("git").args(["init", "-q"]).current_dir(root).status() {
+fn git_init(root: &Path, debug: bool) {
+    let mut cmd = Command::new("git");
+    cmd.args(["init", "-q"]).current_dir(root);
+    if debug {
+        crate::debug_cmd(&cmd);
+    }
+    match cmd.status() {
         Ok(status) if status.success() => {}
         Ok(status) => eprintln!("jails: git init exited with {status}, skipping"),
         Err(e) => eprintln!("jails: failed to run git init: {e}"),
@@ -157,7 +164,13 @@ fn pom_xml(artifact: &str, package: &str, java: &str) -> String {
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
-            <version>5.11.0</version>
+            <version>6.1.2</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <version>3.27.7</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
@@ -279,6 +292,13 @@ mod tests {
     }
 
     #[test]
+    fn pom_xml_declares_junit_and_assertj_as_test_dependencies() {
+        let pom = pom_xml("demo", "com.example.demo", "26");
+        assert!(pom.contains("<artifactId>junit-jupiter</artifactId>"));
+        assert!(pom.contains("<artifactId>assertj-core</artifactId>"));
+    }
+
+    #[test]
     fn app_java_prints_hello_world_from_main() {
         let src = app_java("com.example.demo");
         assert!(src.contains("package com.example.demo;"));
@@ -300,7 +320,7 @@ mod tests {
         let workdir = scratch("new-cli");
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&workdir).unwrap();
-        let result = new_cli("demo-app", false);
+        let result = new_cli("demo-app", false, false);
         std::env::set_current_dir(&original_cwd).unwrap();
         result.unwrap();
 
@@ -319,7 +339,7 @@ mod tests {
         fs::create_dir_all(workdir.join("demo-app")).unwrap();
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&workdir).unwrap();
-        let result = new_cli("demo-app", false);
+        let result = new_cli("demo-app", false, false);
         std::env::set_current_dir(&original_cwd).unwrap();
 
         assert!(result.is_err());
@@ -331,7 +351,7 @@ mod tests {
         let workdir = scratch("new-cli-no-git");
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&workdir).unwrap();
-        let result = new_cli("demo-app", false);
+        let result = new_cli("demo-app", false, false);
         std::env::set_current_dir(&original_cwd).unwrap();
         result.unwrap();
 
@@ -346,7 +366,7 @@ mod tests {
         let workdir = scratch("new-cli-git");
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&workdir).unwrap();
-        let result = new_cli("demo-app", true);
+        let result = new_cli("demo-app", true, false);
         std::env::set_current_dir(&original_cwd).unwrap();
         result.unwrap();
 

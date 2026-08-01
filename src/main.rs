@@ -8,6 +8,19 @@ use generate::ArtifactKind;
 
 pub type Result<T> = std::result::Result<T, String>;
 
+/// Prints the program, args and working directory of a command about to be
+/// run, for `--debug`. Called right before every `.status()`/`.spawn()` in
+/// run.rs/new.rs.
+pub(crate) fn debug_cmd(cmd: &std::process::Command) {
+    let program = cmd.get_program().to_string_lossy();
+    let args: Vec<String> = cmd.get_args().map(|a| a.to_string_lossy().to_string()).collect();
+    let dir = cmd
+        .get_current_dir()
+        .map(|d| format!("  (in {})", d.display()))
+        .unwrap_or_default();
+    eprintln!("+ {program} {}{dir}", args.join(" "));
+}
+
 /// All unit tests across the crate's modules share one test binary and thus
 /// one process-global current directory. Tests that need to change it (to
 /// exercise cwd-relative project lookup) must hold this lock for the
@@ -20,6 +33,10 @@ pub(crate) static CWD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 struct Cli {
     #[command(subcommand)]
     command: Command,
+
+    /// Print the mvn/mvnd/java/git/curl commands jails executes
+    #[arg(long, global = true)]
+    debug: bool,
 }
 
 #[derive(Subcommand)]
@@ -81,21 +98,22 @@ enum Command {
 
 fn main() {
     let cli = Cli::parse();
+    let debug = cli.debug;
 
     let result = match cli.command {
         Command::New { name, deps, java, no_git, no_devtools } => {
-            new::new(&name, &deps, &java, !no_git, !no_devtools)
+            new::new(&name, &deps, &java, !no_git, !no_devtools, debug)
         }
-        Command::NewCli { name, no_git } => new::new_cli(&name, !no_git),
+        Command::NewCli { name, no_git } => new::new_cli(&name, !no_git, debug),
         Command::Generate { kind, name, fields } => generate::generate(kind, &name, &fields),
         Command::Destroy { kind, name, force } => generate::destroy(kind, &name, force),
-        Command::Test { filter } => run::test(filter.as_deref()),
-        Command::Build => run::build(),
+        Command::Test { filter } => run::test(filter.as_deref(), debug),
+        Command::Build => run::build(debug),
         Command::Run { no_build, watch } => {
             if watch {
-                run::watch()
+                run::watch(debug)
             } else {
-                run::run(no_build)
+                run::run(no_build, debug)
             }
         }
         Command::Completion { shell } => {
