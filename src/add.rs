@@ -178,11 +178,24 @@ pub fn add(capability: Capability, name: Option<&str>, dry_run: bool, package: O
     // Installing a formatter that immediately fails `mvn verify` is a bad
     // trade: the wrapping it wants is not something a template can predict, so
     // run it once and leave the project green.
+    //
+    // And if it cannot run at all, undo the pom edit. A formatter bound to
+    // `verify` that crashes on this toolchain turns a working project into one
+    // that cannot build -- palantir-java-format does exactly that when its
+    // pinned version predates the JDK on PATH, which is a bad thing for a
+    // scaffolding tool to leave behind.
     if matches!(capability, Capability::Format) {
         if crate::run::fmt_quietly(&root) {
             println!("  format  applied to the existing sources");
         } else {
-            println!("note: could not run spotless:apply -- run `jails fmt` once before `jails check`");
+            std::fs::write(root.join("pom.xml"), &pom_text)
+                .map_err(|e| format!("failed to restore pom.xml: {e}"))?;
+            return Err(
+                "the formatter could not run on this toolchain, so pom.xml was left unchanged.\n       \
+                 palantir-java-format needs a JDK it was built against -- try a current LTS (Java 25),\n       \
+                 or configure Spotless yourself if you need a different formatter."
+                    .to_string(),
+            );
         }
     }
 
@@ -1240,6 +1253,7 @@ fn scripted_java(pkg: &str) -> String {
         r#"package {pkg};
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -1292,9 +1306,15 @@ public final class Scripted<T> {{
         return new Failure<>(error);
     }}
 
-    /** Records the arguments it was called with, then plays the next step. */
+    /**
+     * Records the arguments it was called with, then plays the next step.
+     *
+     * <p>{{@code Stream.toList()}} rather than {{@code List.of}}: a null argument
+     * is a perfectly ordinary thing to want to assert a collaborator was
+     * called with, and {{@code List.of}} rejects it.
+     */
     public T next(Object... arguments) {{
-        calls.add(List.of(arguments));
+        calls.add(Arrays.stream(arguments).toList());
         var step = script.get(Math.min(index++, script.size() - 1));
         return switch (step) {{
             case Value<T>(var value) -> value;
@@ -1409,6 +1429,7 @@ import java.io.UncheckedIOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
@@ -1449,7 +1470,39 @@ public final class {class} implements AutoCloseable {{
         }}
 
         public static Response badRequest(String message) {{
-            return new Response(400, "application/json", "{{\"error\":\"" + message + "\"}}");
+            return new Response(400, "application/json", "{{\"error\":\"" + escape(message) + "\"}}");
+        }}
+
+        /**
+         * Escapes exactly what a JSON string body needs. Deliberately not a JSON
+         * library: this class has no dependencies, and one interpolated message
+         * does not justify adding one. Build real payloads with a real
+         * serialiser -- {{@code jails add json}} gives you Jackson.
+         */
+        private static String escape(String text) {{
+            var out = new StringBuilder(text.length() + 16);
+            for (var c : text.toCharArray()) {{
+                switch (c) {{
+                    case '"' -> out.append("\\\"");
+                    case '\\' -> out.append("\\\\");
+                    case '\n' -> out.append("\\n");
+                    case '\r' -> out.append("\\r");
+                    case '\t' -> out.append("\\t");
+                    // Appended from a char rather than written as one literal:
+                    // Java translates a backslash-u escape before it even lexes
+                    // the file, and %04x is not four hex digits, so the obvious
+                    // spelling is an "illegal unicode escape" at compile time.
+                    // (Which applies to comments too -- hence this wording.)
+                    default -> {{
+                        if (c < 0x20) {{
+                            out.append('\\').append("u%04x".formatted((int) c));
+                        }} else {{
+                            out.append(c);
+                        }}
+                    }}
+                }}
+            }}
+            return out.toString();
         }}
     }}
 
@@ -1459,9 +1512,11 @@ public final class {class} implements AutoCloseable {{
     }}
 
     private final HttpServer http;
+    private final ExecutorService requests;
 
-    private {class}(HttpServer http) {{
+    private {class}(HttpServer http, ExecutorService requests) {{
         this.http = http;
+        this.requests = requests;
     }}
 
     /**
@@ -1473,9 +1528,10 @@ public final class {class} implements AutoCloseable {{
         try {{
             var http = HttpServer.create(new InetSocketAddress(port), 0);
             routes.forEach((path, handler) -> http.createContext(path, exchange -> dispatch(exchange, handler)));
-            http.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
+            var requests = Executors.newVirtualThreadPerTaskExecutor();
+            http.setExecutor(requests);
             http.start();
-            return new {class}(http);
+            return new {class}(http, requests);
         }} catch (IOException error) {{
             throw new UncheckedIOException("could not start the server on port " + port, error);
         }}
@@ -1510,14 +1566,26 @@ public final class {class} implements AutoCloseable {{
         try {{
             return handler.handle(request);
         }} catch (RuntimeException error) {{
+            // The client gets nothing useful (deliberately -- an exception
+            // message can carry internals), but swallowing it outright leaves
+            // nobody anything to debug from. Swap in a logger when you add one.
+            System.err.println("handler failed for " + request.method() + " " + request.path());
+            error.printStackTrace();
             return new Response(500, "application/json", "{{\"error\":\"internal error\"}}");
         }}
     }}
 
-    /** Stops accepting connections. {{@code AutoCloseable}}, so a test can use try-with-resources. */
+    /**
+     * Stops accepting connections and shuts the request executor down.
+     *
+     * <p>Both halves matter: {{@link HttpServer#stop}} does <em>not</em> shut down
+     * an executor the caller supplied, so stopping without this leaks one per
+     * server -- which a test that starts a server per case does many times over.
+     */
     @Override
     public void close() {{
         http.stop(0);
+        requests.close();
     }}
 }}
 "#

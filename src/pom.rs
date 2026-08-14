@@ -14,17 +14,28 @@
 use crate::Result;
 use std::path::Path;
 
-/// The Java release every generated project targets. Referenced by `new-cli`'s
-/// pom template, `new`'s `--java` default, and `add`'s precondition check --
-/// bumping the target is a one-line change here.
-pub const TARGET_RELEASE: &str = "27";
+/// The Java release every generated project targets by default. Referenced by
+/// `new-cli`'s `--release` default, `new`'s `--java` default, and the tier-3
+/// test gate.
+///
+/// **25, the current LTS -- not the newest JDK.** A scaffolding tool's default
+/// has to run on the toolchain people actually have. Defaulting to 27 broke in
+/// two directions at once: it is not GA until 2026-09-15, and pinning
+/// `release` above the JDK that runs the *forked* surefire JVM (or an mvnd
+/// daemon started under an older JDK) fails at class-load time with an error
+/// that says nothing about the release level. 25 also gets three years of
+/// updates where 27 gets six months.
+///
+/// Nothing in the generated code needs 27 -- see `MIN_RELEASE`. Pass
+/// `--release 27` when you want it.
+pub const TARGET_RELEASE: &str = "25";
 
 /// The oldest release the *generated* Java actually needs. Everything jails
 /// emits -- records, sealed interfaces, text blocks, pattern-matching switch,
 /// `SequencedMap`, `List.getFirst()`, virtual threads -- went final in 21, so
 /// that is the honest floor. `add` checks against this rather than
-/// `TARGET_RELEASE`: refusing to grow a project pinned at 25 (the current LTS)
-/// because jails' own *default* is 27 would be a fiction.
+/// `TARGET_RELEASE`, so a project pinned to an older release than jails'
+/// default is still one `add` can grow.
 pub const MIN_RELEASE: u32 = 21;
 
 /// Which kind of Maven project this is. Capabilities wire themselves up

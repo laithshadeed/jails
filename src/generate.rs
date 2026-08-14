@@ -68,6 +68,26 @@ fn capitalize(s: &str) -> String {
     }
 }
 
+/// The field table maps `long` to `Long` because a JPA entity has to be able
+/// to represent a null column. A `record` or a `value` has no such excuse:
+/// boxed components are nullable by construction, which is exactly what the
+/// compact constructor then has to spend a `requireNonNull` undoing. Primitives
+/// make the invalid state unrepresentable instead -- and cost no allocation.
+fn unboxed(java_type: &str) -> &str {
+    match java_type {
+        "Integer" => "int",
+        "Long" => "long",
+        "Boolean" => "boolean",
+        "Double" => "double",
+        other => other,
+    }
+}
+
+/// A primitive component cannot be null, so it needs no runtime check.
+fn is_reference_type(java_type: &str) -> bool {
+    !matches!(java_type, "int" | "long" | "boolean" | "double")
+}
+
 /// Walk up from the current directory looking for pom.xml.
 pub(crate) fn find_project_root() -> Result<PathBuf> {
     let mut dir = std::env::current_dir().map_err(|e| format!("failed to get cwd: {e}"))?;
@@ -868,9 +888,10 @@ fn entity_test(pkg: &str, name: &str, fields: &[Field]) -> String {
 // constructed in the first place. ----
 
 fn record_java(pkg: &str, name: &str, fields: &[Field]) -> String {
-    // Objects.requireNonNull is what the compact constructor is built from, so
-    // it is only imported when there is a field to check.
-    let needs_objects = !fields.is_empty();
+    // Only reference components can be null, so only they need a check -- and
+    // if none of them can, the compact constructor is dead weight.
+    let checked: Vec<&Field> = fields.iter().filter(|f| is_reference_type(unboxed(&f.java_type))).collect();
+    let needs_objects = !checked.is_empty();
     let mut imports: Vec<&str> = fields.iter().filter_map(|f| f.import).collect();
     if needs_objects {
         imports.push("java.util.Objects");
@@ -886,20 +907,28 @@ fn record_java(pkg: &str, name: &str, fields: &[Field]) -> String {
         out += "\n";
     }
 
-    let components =
-        fields.iter().map(|f| format!("{} {}", f.java_type, f.name)).collect::<Vec<_>>().join(", ");
+    let components = fields
+        .iter()
+        .map(|f| format!("{} {}", unboxed(&f.java_type), f.name))
+        .collect::<Vec<_>>()
+        .join(", ");
 
     out += "/**\n";
     out += &format!(" * An immutable {name} value.\n");
     out += " *\n";
-    out += " * <p>The compact constructor rejects nulls, so any instance that exists is\n";
-    out += " * a valid one and callers downstream do not have to re-check.\n";
+    if needs_objects {
+        out += " * <p>The compact constructor rejects nulls, so any instance that exists is\n";
+        out += " * a valid one and callers downstream do not have to re-check.\n";
+    } else {
+        out += " * <p>Every component is a primitive, so there is nothing to validate: no\n";
+        out += " * instance of this record can be in an invalid state.\n";
+    }
     out += " */\n";
     out += &format!("public record {name}({components}) {{\n");
 
     if needs_objects {
         out += &format!("\n    public {name} {{\n");
-        for field in fields {
+        for field in &checked {
             out += &format!(
                 "        Objects.requireNonNull({name}, \"{name}\");\n",
                 name = field.name
@@ -930,8 +959,12 @@ fn record_test(pkg: &str, name: &str, fields: &[Field]) -> String {
             out += &format!("import {imp};\n");
         }
     }
+    // Only a reference component can be passed null; against a primitive the
+    // test would not compile.
+    let first_reference = fields.iter().find(|f| is_reference_type(unboxed(&f.java_type)));
+
     out += "\nimport static org.assertj.core.api.Assertions.assertThat;\n";
-    if !fields.is_empty() {
+    if first_reference.is_some() {
         out += "import static org.assertj.core.api.Assertions.assertThatNullPointerException;\n";
     }
     out += &format!("\nclass {name}Test {{\n\n");
@@ -951,13 +984,18 @@ fn record_test(pkg: &str, name: &str, fields: &[Field]) -> String {
     }
     out += "    }\n";
 
-    if let Some(first) = fields.first() {
-        // Only the first component is nulled out: one case proves the compact
+    if let Some(first) = first_reference {
+        // Only one component is nulled out: one case proves the compact
         // constructor runs, and a case per field would just restate it.
         let nulled = fields
             .iter()
-            .enumerate()
-            .map(|(i, f)| if i == 0 { "null".to_string() } else { sample_literal(&f.java_type).to_string() })
+            .map(|f| {
+                if f.name == first.name {
+                    "null".to_string()
+                } else {
+                    sample_literal(&f.java_type).to_string()
+                }
+            })
             .collect::<Vec<_>>()
             .join(", ");
         out += "\n    @Test\n    void rejectsANullComponent() {\n";
@@ -990,17 +1028,12 @@ import java.io.PrintStream;
  * command in-process and assert on what it printed. Keep {{@code main}} the
  * only place that exits.
  *
- * <p>Wire it into your entry point's dispatch:
+ * <p>jails registered this in the project's dispatcher when it generated the
+ * class, so {{@code {word}}} already works. If you need to do it by hand -- a
+ * second dispatcher, or one jails could not find -- the line is:
  *
  * <pre>{{@code
- * public static void main(String[] args) {{
- *     String[] rest = args.length == 0 ? args : Arrays.copyOfRange(args, 1, args.length);
- *     int code = switch (args.length == 0 ? "" : args[0]) {{
- *         case {name}Command.NAME -> {name}Command.run(System.out, System.err, rest);
- *         default -> usage(System.err);
- *     }};
- *     System.exit(code);
- * }}
+ * commands.put({name}Command.NAME, {name}Command::run);
  * }}</pre>
  */
 public final class {name}Command {{
@@ -1076,10 +1109,10 @@ class {name}CommandTest {{
 fn sample_literal(java_type: &str) -> &'static str {
     match java_type {
         "String" => "\"sample\"",
-        "Integer" => "1",
-        "Long" => "1L",
-        "Boolean" => "true",
-        "Double" => "1.0",
+        "Integer" | "int" => "1",
+        "Long" | "long" => "1L",
+        "Boolean" | "boolean" => "true",
+        "Double" | "double" => "1.0",
         "LocalDate" => "LocalDate.of(2024, 1, 1)",
         "LocalDateTime" => "LocalDateTime.of(2024, 1, 1, 12, 0)",
         _ => "null",
@@ -1252,9 +1285,12 @@ class {name}ControllerTest {{
 
 fn value_java(pkg: &str, name: &str, fields: &[Field]) -> String {
     let strings: Vec<&Field> = fields.iter().filter(|f| f.java_type == "String").collect();
+    let checked: Vec<&Field> = fields.iter().filter(|f| is_reference_type(unboxed(&f.java_type))).collect();
 
     let mut imports: Vec<&str> = fields.iter().filter_map(|f| f.import).collect();
-    imports.push("java.util.Objects");
+    if !checked.is_empty() {
+        imports.push("java.util.Objects");
+    }
     imports.sort();
     imports.dedup();
 
@@ -1264,7 +1300,11 @@ fn value_java(pkg: &str, name: &str, fields: &[Field]) -> String {
     }
     out += "\n";
 
-    let components = fields.iter().map(|f| format!("{} {}", f.java_type, f.name)).collect::<Vec<_>>().join(", ");
+    let components = fields
+        .iter()
+        .map(|f| format!("{} {}", unboxed(&f.java_type), f.name))
+        .collect::<Vec<_>>()
+        .join(", ");
     let names = fields.iter().map(|f| f.name.clone()).collect::<Vec<_>>().join(", ");
 
     out += "/**\n";
@@ -1285,7 +1325,7 @@ fn value_java(pkg: &str, name: &str, fields: &[Field]) -> String {
     // Compact constructor: normalise first, then validate what normalising
     // produced, so " " fails the blank check rather than sneaking past it.
     out += &format!("    public {name} {{\n");
-    for field in fields {
+    for field in &checked {
         out += &format!("        Objects.requireNonNull({0}, \"{0} is required\");\n", field.name);
     }
     for field in &strings {
@@ -1355,14 +1395,17 @@ fn value_test(pkg: &str, name: &str, fields: &[Field]) -> String {
     }
     out += "    }\n\n";
 
-    let first = &fields[0];
-    out += "    @Test\n    void rejectsANullComponent() {\n";
-    out += &format!(
-        "        assertThatThrownBy(() -> {name}.of({}))\n                .isInstanceOf(NullPointerException.class)\n                .hasMessageContaining(\"{}\");\n",
-        args_with(&first.name, "null"),
-        first.name
-    );
-    out += "    }\n";
+    // A primitive component cannot be handed null, so there is nothing to
+    // assert about one -- and the generated test would not compile.
+    if let Some(first) = fields.iter().find(|f| is_reference_type(unboxed(&f.java_type))) {
+        out += "    @Test\n    void rejectsANullComponent() {\n";
+        out += &format!(
+            "        assertThatThrownBy(() -> {name}.of({}))\n                .isInstanceOf(NullPointerException.class)\n                .hasMessageContaining(\"{}\");\n",
+            args_with(&first.name, "null"),
+            first.name
+        );
+        out += "    }\n";
+    }
 
     if let Some(text) = strings.first() {
         out += "\n    @Test\n    void trimsSurroundingWhitespace() {\n";
@@ -1435,7 +1478,7 @@ public final class {class} {{
      * reorders itself between runs is a diff nobody wants:
      *
      * {{@snippet :
-     * commands.put(GreetCommand.NAME, GreetCommand::run);
+     * commands.put(ImportCommand.NAME, ImportCommand::run);
      * }}
      */
     public static SequencedMap<String, Command> commands() {{
@@ -1600,7 +1643,11 @@ fn register_command(root: &Path, base: &str, name: &str) -> Result<()> {
 
     let source = fs::read_to_string(dispatcher).map_err(|e| format!("failed to read {}: {e}", dispatcher.display()))?;
     let command_class = format!("{name}Command");
-    if source.contains(&format!("{command_class}::run")) {
+    // Scoped to the registry body, not the whole file: the dispatcher's own
+    // Javadoc shows an example `commands.put(...)` line, and a whole-file
+    // `contains` matched *that* -- so generating a command with the same name
+    // as the example silently skipped registration.
+    if registry_body(&source).is_some_and(|body| body.contains(&format!("{command_class}::run"))) {
         println!("  exists  {command_class} is already registered in {}", dispatcher.display());
         return Ok(());
     }
@@ -1646,6 +1693,14 @@ fn find_dispatchers(dir: &Path) -> Vec<PathBuf> {
     }
     found.sort();
     found
+}
+
+/// The statements inside `commands()`, between the map's creation and the
+/// `return` -- the only region where a registration counts.
+fn registry_body(source: &str) -> Option<&str> {
+    let anchor = source.find("return commands;")?;
+    let start = source[..anchor].rfind("new LinkedHashMap")?;
+    Some(&source[start..anchor])
 }
 
 /// What makes a file a jails command dispatcher: the registry type it
@@ -2103,14 +2158,28 @@ mod tests {
         let fields = parse_fields(&["amount:long".to_string(), "currency:string".to_string()]).unwrap();
         let src = record_java("com.example.demo", "Money", &fields);
 
-        assert!(src.contains("public record Money(Long amount, String currency) {"));
+        // Primitive components, not the boxed types the entity table uses: a
+        // `long` cannot be null, so it needs neither the box nor the check.
+        assert!(src.contains("public record Money(long amount, String currency) {"), "{src}");
         assert!(src.contains("public Money {"), "expected a compact constructor");
-        assert!(src.contains(r#"Objects.requireNonNull(amount, "amount");"#));
+        assert!(!src.contains("requireNonNull(amount"), "a primitive cannot be null");
         assert!(src.contains(r#"Objects.requireNonNull(currency, "currency");"#));
         // The plain-Java counterpart to `entity`: no Spring, no JPA.
         for forbidden in ["jakarta.persistence", "@Entity", "@Id", "org.springframework"] {
             assert!(!src.contains(forbidden), "{forbidden} should not appear in a plain record");
         }
+    }
+
+    /// A record whose components are all primitives cannot hold a null, so the
+    /// compact constructor would be empty -- and an empty one is noise.
+    #[test]
+    fn record_java_omits_the_compact_constructor_when_every_component_is_primitive() {
+        let fields = parse_fields(&["amount:long".to_string(), "count:int".to_string()]).unwrap();
+        let src = record_java("com.example.demo", "Tally", &fields);
+
+        assert!(src.contains("public record Tally(long amount, int count) {"), "{src}");
+        assert!(!src.contains("public Tally {"), "nothing to validate: {src}");
+        assert!(!src.contains("import java.util.Objects;"));
     }
 
     /// A no-field record has nothing to null-check, so the compact constructor
@@ -2144,7 +2213,9 @@ mod tests {
         assert!(test.contains("new Money(1L, \"sample\")"));
         assert!(test.contains("assertThat(money.amount()).isEqualTo(1L);"));
         assert!(test.contains("assertThatNullPointerException()"));
-        assert!(test.contains("new Money(null, \"sample\")"), "only the first component is nulled");
+        // `amount` is a primitive now, so the null case has to target the first
+        // *reference* component or the generated test would not compile.
+        assert!(test.contains("new Money(1L, null)"), "{test}");
     }
 
     /// With no fields there is no null to reject, so the test that asserts the

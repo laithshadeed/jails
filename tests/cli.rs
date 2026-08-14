@@ -667,6 +667,125 @@ fn every_capability_together_produces_a_project_that_compiles_and_passes_tests()
     assert!(status.success(), "mvn test failed after adding csv + sqlite + json");
 }
 
+/// The whole toolbox at once: every capability and every generator in one
+/// project, then its own suite. This is the only tier that answers "does what
+/// jails writes actually compile and pass" for the generated *test* code as
+/// well as the main code -- a template that emits an uncompilable assertion
+/// looks perfectly fine to every other tier.
+#[test]
+fn every_generator_and_capability_together_compiles_and_passes_tests() {
+    if !real_mvn_available() {
+        eprintln!("skipping: mvn not found on PATH");
+        return;
+    }
+    if !real_java_supports_target_release() {
+        eprintln!("skipping: javac on PATH does not support --release {TARGET_RELEASE}");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let workdir = temp_dir("real-everything");
+    jails_cmd_with_path(&workdir, &path).args(["new-cli", "tool"]).status().unwrap();
+    let root = workdir.join("tool");
+
+    for capability in ["csv", "sqlite", "json", "testkit", "fake", "http"] {
+        let status = jails_cmd_with_path(&root, &path).args(["add", capability]).status().unwrap();
+        assert!(status.success(), "add {capability} failed");
+    }
+
+    for args in [
+        vec!["generate", "command", "import"],
+        vec!["generate", "value", "money", "amount:long", "currency:string"],
+        vec!["generate", "record", "txn", "id:string", "on:date"],
+        // Every component primitive: the compact constructor and its import
+        // must both be omitted, or this does not compile.
+        vec!["generate", "record", "tally", "hits:int", "total:long"],
+    ] {
+        let status = jails_cmd_with_path(&root, &path).args(&args).status().unwrap();
+        assert!(status.success(), "{args:?} failed");
+    }
+
+    fs::write(root.join("brief.md"), "# Brief\n\n## Acceptance criteria\n\n- parses a `quoted` value\n- rejects **blank** ids\n").unwrap();
+    let status = jails_cmd_with_path(&root, &path).args(["generate", "cases", "brief.md"]).status().unwrap();
+    assert!(status.success(), "generate cases failed");
+
+    let status = jails_cmd_with_path(&root, &path).arg("test").status().unwrap();
+    assert!(status.success(), "the generated project failed its own tests");
+}
+
+/// The end-to-end path the tool exists for: generate a command, and have it
+/// reachable by name with its arguments. Covers three things no unit test can
+/// -- that `generate command` really registered itself in the dispatcher, that
+/// the project compiles, and that `run --` forwards argv to the program.
+#[test]
+fn a_generated_command_is_reachable_by_name_through_jails_run() {
+    if !real_mvn_available() {
+        eprintln!("skipping: mvn not found on PATH");
+        return;
+    }
+    if !real_java_supports_target_release() {
+        eprintln!("skipping: javac on PATH does not support --release {TARGET_RELEASE}");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let workdir = temp_dir("real-run-args");
+    jails_cmd_with_path(&workdir, &path).args(["new-cli", "tool"]).status().unwrap();
+    let root = workdir.join("tool");
+
+    let status = jails_cmd_with_path(&root, &path).args(["generate", "command", "greet"]).status().unwrap();
+    assert!(status.success());
+
+    let output = jails_cmd_with_path(&root, &path).args(["run", "--", "greet", "world"]).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("world"), "the command never saw its argument: {stdout}");
+
+    // And with no arguments at all, the dispatcher lists what it knows rather
+    // than failing -- `new-cli`'s App.java is a dispatcher, not a stub.
+    let output = jails_cmd_with_path(&root, &path).arg("run").output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("greet"), "help should list the registered command: {stdout}");
+}
+
+/// `add format` installs a formatter that checks the build. If jails' own
+/// output does not already satisfy it, a freshly generated project fails
+/// `jails check` on the first run -- a bad first impression, and the reason
+/// import order is normalised at write time.
+#[test]
+fn a_freshly_generated_project_passes_check_with_no_manual_formatting() {
+    if !real_mvn_available() {
+        eprintln!("skipping: mvn not found on PATH");
+        return;
+    }
+    if !real_java_supports_target_release() {
+        eprintln!("skipping: javac on PATH does not support --release {TARGET_RELEASE}");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let workdir = temp_dir("real-check-clean");
+    jails_cmd_with_path(&workdir, &path).args(["new-cli", "tool"]).status().unwrap();
+    let root = workdir.join("tool");
+
+    for args in [
+        vec!["generate", "command", "import"],
+        vec!["generate", "value", "money", "amount:long", "currency:string"],
+        vec!["add", "testkit"],
+    ] {
+        let status = jails_cmd_with_path(&root, &path).args(&args).status().unwrap();
+        assert!(status.success(), "{args:?} failed");
+    }
+
+    // `add format` is allowed to refuse: palantir-java-format cannot always run
+    // on the JDK that happens to be on PATH. What it is *not* allowed to do is
+    // leave a project that no longer builds -- so `check` must pass either way.
+    let formatted = jails_cmd_with_path(&root, &path).args(["add", "format"]).status().unwrap().success();
+
+    let status = jails_cmd_with_path(&root, &path).arg("check").status().unwrap();
+    assert!(
+        status.success(),
+        "`jails check` failed on a freshly generated project (formatter installed: {formatted})"
+    );
+}
+
 /// The Spring flavor branch: `add json` must *omit* the version so Spring
 /// Boot's parent supplies its curated Jackson, and the result must still
 /// compile. The shared Spring fixture stays pinned at an older release (it

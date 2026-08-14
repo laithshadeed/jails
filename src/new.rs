@@ -288,7 +288,12 @@ mod tests {
     #[test]
     fn pom_xml_pins_the_requested_java_release_and_main_class() {
         let pom = pom_xml("demo", "com.example.demo", crate::pom::TARGET_RELEASE);
-        assert!(pom.contains("<maven.compiler.release>27</maven.compiler.release>"));
+        assert!(pom.contains(&format!(
+            "<maven.compiler.release>{}</maven.compiler.release>",
+            crate::pom::TARGET_RELEASE
+        )));
+        // The release is whatever the caller asked for, not a baked-in constant.
+        assert!(pom_xml("demo", "com.example.demo", "21").contains("<maven.compiler.release>21</maven.compiler.release>"));
         assert!(pom.contains("<mainClass>com.example.demo.App</mainClass>"));
         assert!(pom.contains("<artifactId>demo</artifactId>"));
     }
