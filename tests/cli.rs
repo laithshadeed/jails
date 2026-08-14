@@ -755,7 +755,14 @@ fn generators_compose_through_user_owned_field_types() {
     assert!(value.contains("SourceRef source"), "{value}");
     assert!(value.contains("long amountMinor"), "built-ins stay primitive: {value}");
     assert!(value.contains(r#"throw new IllegalArgumentException("id must not be blank")"#), "! means non-blank: {value}");
-    assert!(!value.contains(r#"requireNonNull(note"#), "? means nothing is checked: {value}");
+    assert!(value.contains("Optional<String> note"), "? puts absence in the type: {value}");
+    assert!(value.contains("requireNonNullElse(note, Optional.empty())"), "a null Optional is normalised: {value}");
+
+    // `!` is a text rule; asking for it on a date is a mistake worth naming
+    // rather than silently ignoring.
+    let output = jails_cmd_with_path(&root, &path).args(["generate", "value", "bad", "when:date!"]).output().unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("only applies to text"));
 
     // An enum-typed component can be sampled; one whose constructor jails
     // cannot know must disable the test rather than guess.

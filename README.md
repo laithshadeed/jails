@@ -97,13 +97,15 @@ The Java spellings of the built-ins (`String`, `LocalDate`, …) still mean the
 built-in, so `id:String` behaves like `id:string`.
 
 **A suffix picks the validation.** `name:string!` is required *and* non-blank;
-`name:string?` may be null and is not checked; bare `name:string` is required
-but may be blank. Hardcoding one policy is what made every generated value type
-reject blank descriptions.
+`name:string?` becomes an `Optional<String>` component (pass `null` to mean
+absent); bare `name:string` is required but may be blank. Hardcoding one policy
+is what made every generated value type reject blank descriptions. `!` is a
+text rule, so `when:date!` is an error rather than a no-op.
 
 jails cannot invent a sample of a type you own, so a companion test that needs
-one is generated in full and `@Disabled`, naming the component it needs — an
-enum-typed component is filled in with `Currency.values()[0]` instead.
+one is generated in full and `@Disabled`, naming the component it needs. Two
+cases escape that: an enum is filled in with `Currency.values()[0]`, and a `?`
+component with `Optional.empty()`.
 
 ## What a new project looks like
 

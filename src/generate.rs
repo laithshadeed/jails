@@ -131,6 +131,13 @@ fn parse_fields(args: &[String]) -> Result<Vec<Field>> {
             }
 
             let (java_type, needs_lob, import) = field_type(ty.to_lowercase().as_str())?;
+            if optionality == Optionality::NonBlank && java_type != "String" {
+                return Err(format!(
+                    "'{arg}': the '!' suffix means non-blank, which only applies to text -- \
+                     drop it, or use '{}:{ty}' if you only meant required",
+                    name.trim()
+                ));
+            }
             Ok(Field {
                 name: name.trim().to_string(),
                 java_type: java_type.to_string(),
@@ -174,6 +181,47 @@ fn is_reference_type(java_type: &str) -> bool {
 /// A component gets a null check when it *can* be null and was not marked `?`.
 fn needs_null_check(field: &Field) -> bool {
     is_reference_type(unboxed(&field.java_type)) && field.optionality != Optionality::Nullable
+}
+
+/// The component's declared type. `?` wraps it in `Optional`, so absence is in
+/// the type rather than in a comment nobody reads.
+///
+/// This is the one place jails deliberately parts company with `java.md`'s
+/// "Optional as a return type only, never a field". A record component is both
+/// at once, and the alternative -- a nullable component plus a differently
+/// named `Optional`-returning method, since an accessor cannot be overridden
+/// to change its return type -- is worse on every axis that matters here.
+fn declared_type(field: &Field) -> String {
+    match field.optionality {
+        Optionality::Nullable => format!("Optional<{}>", boxed(&field.java_type)),
+        _ => unboxed(&field.java_type).to_string(),
+    }
+}
+
+/// `Optional<int>` does not exist, so an optional primitive takes its wrapper.
+fn boxed(java_type: &str) -> &str {
+    match java_type {
+        "int" => "Integer",
+        "long" => "Long",
+        "boolean" => "Boolean",
+        "double" => "Double",
+        other => other,
+    }
+}
+
+/// An `Optional` component still has to be non-null itself; a null `Optional`
+/// is the one thing worse than a null value. Normalise rather than reject:
+/// `of(..., null)` meaning "absent" is what every caller expects.
+fn optional_defaults(fields: &[Field]) -> String {
+    fields
+        .iter()
+        .filter(|f| f.optionality == Optionality::Nullable)
+        .map(|f| format!("        {0} = Objects.requireNonNullElse({0}, Optional.empty());\n", f.name))
+        .collect()
+}
+
+fn has_optional(fields: &[Field]) -> bool {
+    fields.iter().any(|f| f.optionality == Optionality::Nullable)
 }
 
 /// Only `!` asks for the blank check, and only text can be blank.
@@ -1015,11 +1063,15 @@ fn record_java(pkg: &str, name: &str, fields: &[Field]) -> String {
     // weight.
     let checked: Vec<&Field> = fields.iter().filter(|f| needs_null_check(f)).collect();
     let blank_checked: Vec<&Field> = fields.iter().filter(|f| needs_blank_check(f)).collect();
-    let needs_objects = !checked.is_empty();
+    let optional = has_optional(fields);
+    let needs_objects = !checked.is_empty() || optional;
     let needs_constructor = needs_objects || !blank_checked.is_empty();
     let mut imports: Vec<&str> = fields.iter().filter_map(|f| f.import).collect();
     if needs_objects {
         imports.push("java.util.Objects");
+    }
+    if optional {
+        imports.push("java.util.Optional");
     }
     imports.sort();
     imports.dedup();
@@ -1032,11 +1084,8 @@ fn record_java(pkg: &str, name: &str, fields: &[Field]) -> String {
         out += "\n";
     }
 
-    let components = fields
-        .iter()
-        .map(|f| format!("{} {}", unboxed(&f.java_type), f.name))
-        .collect::<Vec<_>>()
-        .join(", ");
+    let components =
+        fields.iter().map(|f| format!("{} {}", declared_type(f), f.name)).collect::<Vec<_>>().join(", ");
 
     out += "/**\n";
     out += &format!(" * An immutable {name} value.\n");
@@ -1049,8 +1098,9 @@ fn record_java(pkg: &str, name: &str, fields: &[Field]) -> String {
         out += " * <p>There is nothing to validate: no instance of this record can be in an\n";
         out += " * invalid state.\n";
     }
-    for field in fields.iter().filter(|f| f.optionality == Optionality::Nullable) {
-        out += &format!(" *\n * <p>{} may be null.\n", field.name);
+    if optional {
+        out += " *\n * <p>An {@code Optional} component is absence in the type rather than a\n";
+        out += " * null nobody checks. Passing {@code null} for one means absent.\n";
     }
     out += " */\n";
     out += &format!("public record {name}({components}) {{\n");
@@ -1063,6 +1113,7 @@ fn record_java(pkg: &str, name: &str, fields: &[Field]) -> String {
                 name = field.name
             );
         }
+        out += &optional_defaults(fields);
         out += &blank_checks(&blank_checked);
         out += "    }\n";
     }
@@ -1091,6 +1142,11 @@ fn record_test(root: &Path, pkg: &str, name: &str, fields: &[Field]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     let var = name.to_lowercase();
+    if has_optional(fields) {
+        imports.push("java.util.Optional");
+        imports.sort();
+        imports.dedup();
+    }
 
     let mut out = format!("package {pkg};\n\n");
     out += "import org.junit.jupiter.api.Test;\n";
@@ -1266,6 +1322,11 @@ class {name}CommandTest {{
 /// compile. The one case it *can* solve is an enum -- hence `generate enum`
 /// pulling its weight twice.
 fn sample_value(field: &Field, root: &Path, pkg: &str) -> Option<String> {
+    // An absent Optional is a sample of anything, so `?` rescues even a type
+    // jails knows nothing about.
+    if field.optionality == Optionality::Nullable {
+        return Some("Optional.empty()".to_string());
+    }
     if !field.owned {
         return Some(sample_literal(&field.java_type).to_string());
     }
@@ -1461,10 +1522,14 @@ class {name}ControllerTest {{
 fn value_java(pkg: &str, name: &str, fields: &[Field]) -> String {
     let strings: Vec<&Field> = fields.iter().filter(|f| needs_blank_check(f)).collect();
     let checked: Vec<&Field> = fields.iter().filter(|f| needs_null_check(f)).collect();
+    let optional = has_optional(fields);
 
     let mut imports: Vec<&str> = fields.iter().filter_map(|f| f.import).collect();
-    if !checked.is_empty() {
+    if !checked.is_empty() || optional {
         imports.push("java.util.Objects");
+    }
+    if optional {
+        imports.push("java.util.Optional");
     }
     imports.sort();
     imports.dedup();
@@ -1475,11 +1540,8 @@ fn value_java(pkg: &str, name: &str, fields: &[Field]) -> String {
     }
     out += "\n";
 
-    let components = fields
-        .iter()
-        .map(|f| format!("{} {}", unboxed(&f.java_type), f.name))
-        .collect::<Vec<_>>()
-        .join(", ");
+    let components =
+        fields.iter().map(|f| format!("{} {}", declared_type(f), f.name)).collect::<Vec<_>>().join(", ");
     let names = fields.iter().map(|f| f.name.clone()).collect::<Vec<_>>().join(", ");
 
     out += "/**\n";
@@ -1494,8 +1556,10 @@ fn value_java(pkg: &str, name: &str, fields: &[Field]) -> String {
         out += " * present-but-empty value passes every null check downstream, which is\n";
         out += " * exactly why it is worth rejecting here instead.\n";
     }
-    for field in fields.iter().filter(|f| f.optionality == Optionality::Nullable) {
-        out += &format!(" *\n * <p>{} may be null.\n", field.name);
+    if optional {
+        out += " *\n";
+        out += " * <p>An {@code Optional} component is absence in the type rather than a null\n";
+        out += " * nobody checks. Passing {@code null} for one means absent.\n";
     }
     out += " */\n";
     out += &format!("public record {name}({components}) {{\n\n");
@@ -1506,6 +1570,7 @@ fn value_java(pkg: &str, name: &str, fields: &[Field]) -> String {
     for field in &checked {
         out += &format!("        Objects.requireNonNull({0}, \"{0} is required\");\n", field.name);
     }
+    out += &optional_defaults(fields);
     out += &blank_checks(&strings);
     out += "    }\n\n";
 
@@ -1533,6 +1598,11 @@ fn value_test(root: &Path, pkg: &str, name: &str, fields: &[Field]) -> String {
     let samples: Vec<Option<String>> = fields.iter().map(|f| sample_value(f, root, pkg)).collect();
     let unfabricable: Vec<&str> =
         fields.iter().zip(&samples).filter(|(_, s)| s.is_none()).map(|(f, _)| f.name.as_str()).collect();
+    if has_optional(fields) {
+        imports.push("java.util.Optional");
+        imports.sort();
+        imports.dedup();
+    }
     let placeholder = |field: &Field| format!("/* TODO: a {} */ null", field.java_type);
     let args = samples
         .iter()

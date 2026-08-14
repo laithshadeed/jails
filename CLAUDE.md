@@ -97,9 +97,15 @@ impossible the companion test is emitted whole and `@Disabled`, naming the
 component; emitting a guess would produce a test that does not compile, and
 emitting nothing would silently drop coverage.
 
-**`?` does not emit `Optional`.** A record accessor cannot be overridden to
-return a different type, and `java.md` bans `Optional` as a field, so `?` means
-"nullable and unchecked, documented as such".
+**`?` emits an `Optional<T>` component**, and the compact constructor
+normalises a null one with `requireNonNullElse(x, Optional.empty())` -- a null
+`Optional` being the one thing worse than a null value. This is a deliberate
+departure from `java.md`'s "Optional as a return type only, never a field": a
+record component is both at once, and the alternative (a nullable component
+plus a differently *named* Optional-returning method, since an accessor cannot
+be overridden to change its return type) is worse on every axis. `?` also
+rescues the sample problem -- `Optional.empty()` is a valid sample of a type
+jails knows nothing about.
 
 ## Gotchas hit so far
 
