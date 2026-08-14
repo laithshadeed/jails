@@ -15,6 +15,7 @@ pub enum ArtifactKind {
     Record,
     Value,
     Enum,
+    Sealed,
     Command,
     Cli,
     Cases,
@@ -733,6 +734,22 @@ pub fn generate(kind: ArtifactKind, name: &str, fields: &[String], package: Opti
                 },
             ]
         }
+        ArtifactKind::Sealed => {
+            let variants = parse_variants(fields)?;
+            let domain = place(layout::DOMAIN);
+            vec![
+                Artifact {
+                    kind: "sealed type",
+                    path: main_dir(&root, &domain).join(format!("{name}.java")),
+                    contents: sealed_java(&domain, &name, &variants),
+                },
+                Artifact {
+                    kind: "sealed type test",
+                    path: test_dir(&root, &domain).join(format!("{name}Test.java")),
+                    contents: sealed_test(&domain, &name, &variants),
+                },
+            ]
+        }
         ArtifactKind::Command => {
             let cli = place(layout::CLI);
             vec![
@@ -898,7 +915,11 @@ pub fn destroy(kind: ArtifactKind, name: &str, force: bool, package: Option<&str
         }
         // An entity, a record and a value are three shapes of the same named
         // type, so they occupy -- and free -- exactly the same two paths.
-        ArtifactKind::Entity | ArtifactKind::Record | ArtifactKind::Value | ArtifactKind::Enum => vec![
+        ArtifactKind::Entity
+        | ArtifactKind::Record
+        | ArtifactKind::Value
+        | ArtifactKind::Enum
+        | ArtifactKind::Sealed => vec![
             main_dir(&root, &place(layout::DOMAIN)).join(format!("{name}.java")),
             test_dir(&root, &place(layout::DOMAIN)).join(format!("{name}Test.java")),
         ],
@@ -1891,6 +1912,93 @@ class {name}Test {{
     )
 }
 
+// ---- sealed: the closed set whose cases carry different data, which is the
+// one an enum cannot model. ----
+
+fn parse_variants(args: &[String]) -> Result<Vec<String>> {
+    if args.is_empty() {
+        return Err(
+            "a sealed type needs at least one variant, e.g. `generate sealed Result Ok Failed`".to_string()
+        );
+    }
+    let mut variants: Vec<String> = Vec::new();
+    for arg in args {
+        let variant = capitalize(arg.trim());
+        if variant.is_empty() || !variant.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return Err(format!("'{arg}' is not a usable variant name"));
+        }
+        if variants.contains(&variant) {
+            return Err(format!("duplicate variant '{variant}'"));
+        }
+        variants.push(variant);
+    }
+    Ok(variants)
+}
+
+fn sealed_java(pkg: &str, name: &str, variants: &[String]) -> String {
+    // The variants are nested, so the permits clause has to name them
+    // qualified. (It could be omitted entirely for same-file subtypes, but
+    // spelling it out is what makes the closed set obvious to a reader.)
+    let permits = variants.iter().map(|v| format!("{name}.{v}")).collect::<Vec<_>>().join(", ");
+    let mut out = format!("package {pkg};\n\n");
+    out += "/**\n";
+    out += &format!(" * The outcomes a {name} can have.\n");
+    out += " *\n";
+    out += " * <p>Sealed rather than an enum because each case carries its own data --\n";
+    out += " * give a variant the components it needs and no other case has to pretend\n";
+    out += " * to have them.\n";
+    out += " *\n";
+    out += " * <p>A switch over this is checked for exhaustiveness, so leave the\n";
+    out += " * {@code default} off: adding a variant should make the compiler point at\n";
+    out += " * every place that has to handle it.\n";
+    out += " *\n";
+    out += " * {@snippet :\n";
+    out += &format!(" * var summary = switch (result) {{\n");
+    for variant in variants {
+        out += &format!(" *     case {variant} v -> \"{}\";\n", variant.to_lowercase());
+    }
+    out += " * };\n";
+    out += " * }\n";
+    out += " */\n";
+    out += &format!("public sealed interface {name} permits {permits} {{\n");
+    for variant in variants {
+        out += &format!("\n    /** TODO: give {variant} the components it carries. */\n");
+        out += &format!("    record {variant}() implements {name} {{}}\n");
+    }
+    out += "}\n";
+    out
+}
+
+fn sealed_test(pkg: &str, name: &str, variants: &[String]) -> String {
+    let mut out = format!("package {pkg};\n\n");
+    out += "import org.junit.jupiter.api.Test;\n\n";
+    out += "import static org.assertj.core.api.Assertions.assertThat;\n\n";
+    out += "/**\n";
+    out += " * The switch below has no {@code default} on purpose: adding a variant\n";
+    out += " * should break this test at compile time, which is the whole reason to seal\n";
+    out += " * the type in the first place.\n";
+    out += " */\n";
+    out += &format!("class {name}Test {{\n\n");
+    out += &format!("    private String describe({name} result) {{\n");
+    out += "        return switch (result) {\n";
+    for variant in variants {
+        out += &format!("            case {name}.{variant} v -> \"{}\";\n", variant.to_lowercase());
+    }
+    out += "        };\n";
+    out += "    }\n";
+
+    for variant in variants {
+        out += &format!("\n    @Test\n    void describes{variant}() {{\n");
+        out += &format!(
+            "        assertThat(describe(new {name}.{variant}())).isEqualTo(\"{}\");\n",
+            variant.to_lowercase()
+        );
+        out += "    }\n";
+    }
+    out += "}\n";
+    out
+}
+
 // ---- cli: the dispatcher that `generate command` leaves you to write. ----
 
 pub(crate) fn cli_java(pkg: &str, class: &str, program: &str) -> String {
@@ -2502,6 +2610,36 @@ mod tests {
         assert_eq!(fields[0].java_type, "String");
         assert!(!fields[1].owned);
         assert!(fields[1].imports.contains(&"java.time.LocalDate"));
+    }
+
+    #[test]
+    fn sealed_emits_a_permits_clause_and_a_record_per_variant() {
+        let variants = parse_variants(&["verified".to_string(), "timeout".to_string()]).unwrap();
+        let src = sealed_java("com.example.demo", "VerificationResult", &variants);
+
+        // Nested variants have to be named qualified in the permits clause.
+        assert!(src.contains("permits VerificationResult.Verified, VerificationResult.Timeout"), "{src}");
+        assert!(src.contains("record Verified() implements VerificationResult"), "{src}");
+        assert!(src.contains("record Timeout() implements VerificationResult"), "{src}");
+    }
+
+    /// The companion test switches without a `default`, so adding a variant
+    /// breaks it at compile time -- which is the entire reason to seal a type.
+    #[test]
+    fn sealed_test_switches_exhaustively_without_a_default() {
+        let variants = parse_variants(&["ok".to_string(), "failed".to_string()]).unwrap();
+        let test = sealed_test("com.example.demo", "Result", &variants);
+
+        assert!(test.contains("switch (result)"), "{test}");
+        assert!(test.contains("case Result.Ok v ->"), "{test}");
+        assert!(!test.contains("default ->"), "an exhaustive switch must not have a default: {test}");
+    }
+
+    #[test]
+    fn parse_variants_rejects_unusable_names() {
+        assert!(parse_variants(&[]).is_err());
+        assert!(parse_variants(&["ok".to_string(), "Ok".to_string()]).is_err(), "duplicate after capitalising");
+        assert!(parse_variants(&["not a name".to_string()]).is_err());
     }
 
     #[test]

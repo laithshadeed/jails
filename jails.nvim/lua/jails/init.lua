@@ -114,7 +114,7 @@ end
 -- has to be added here too, or it silently won't complete. (`jails completion
 -- bash` derives its list from clap and cannot drift; this one can.)
 local KINDS =
-  { 'scaffold', 'controller', 'service', 'repository', 'entity', 'record', 'value', 'command', 'cli', 'cases', 'test' }
+  { 'scaffold', 'controller', 'service', 'repository', 'entity', 'record', 'value', 'enum', 'sealed', 'command', 'cli', 'cases', 'test' }
 local CAPABILITIES = { 'csv', 'sqlite', 'json', 'testkit', 'fake', 'http', 'format' }
 local SUBCOMMANDS = {
   'new',

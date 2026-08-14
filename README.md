@@ -73,6 +73,10 @@ the code lands; `--package ''` writes straight into the base package.
 Every command takes `--debug`, which prints the `mvn`/`mvnd`/`java`/`git`/`curl`
 command lines jails shells out to instead of running them silently.
 
+- `jails generate|g sealed <Name> <Variant...>` — a sealed interface with a
+  `permits` clause and one record per variant, plus a test whose `switch` has
+  no `default`, so adding a variant breaks the build. The closed set an enum
+  can't model, because each case carries its own data.
 - `jails generate|g enum <Name> <CONSTANT...>` — a plain enum plus its test.
   Also the one type jails can build a sample of, which is why an enum-typed
   component keeps its companion test working.
@@ -83,7 +87,10 @@ command lines jails shells out to instead of running them silently.
 
 **Case picks the table.** A lowercase type is one of jails' own — `string`,
 `text` (`@Lob` on an entity, a plain `String` elsewhere), `int`/`integer`,
-`long`, `boolean`, `date`, `datetime`, `double`. A **capitalised** one is a
+`long`, `boolean`, `date`, `datetime`, `instant`, `double`, plus `list<T>` and
+`map<K,V>` whose elements resolve the same way (`list<Match>`,
+`map<string,double>`). A collection component is defensively copied and
+defaults to empty rather than null, so no consumer has to guard a bucket. A **capitalised** one is a
 type this project owns and is used verbatim, so the generators compose:
 
 ```
