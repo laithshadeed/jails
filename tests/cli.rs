@@ -175,6 +175,26 @@ fn write_project_skeleton(root: &std::path::Path) {
     .unwrap();
 }
 
+/// Like `write_project_skeleton`, but with the pom `add` actually reads: a
+/// declared release level and a `<dependencies>` element to splice into.
+/// Still never handed to Maven.
+fn write_plain_fixture(root: &std::path::Path) {
+    let pkg_dir = root.join("src/main/java/com/example/demo");
+    fs::create_dir_all(&pkg_dir).unwrap();
+    fs::write(
+        root.join("pom.xml"),
+        format!(
+            "<project>\n    <groupId>com.example</groupId>\n    <artifactId>demo</artifactId>\n    <properties>\n        <maven.compiler.release>{TARGET_RELEASE}</maven.compiler.release>\n    </properties>\n    <dependencies>\n        <dependency>\n            <groupId>org.junit.jupiter</groupId>\n            <artifactId>junit-jupiter</artifactId>\n            <version>5.11.4</version>\n            <scope>test</scope>\n        </dependency>\n    </dependencies>\n</project>\n"
+        ),
+    )
+    .unwrap();
+    fs::write(
+        pkg_dir.join("DemoApplication.java"),
+        "package com.example.demo;\n\npublic class DemoApplication {}\n",
+    )
+    .unwrap();
+}
+
 // ---- mocked mvn/mvnd: verify jails' own command-construction logic
 // (which binary, which args) without needing real Maven. ----
 
@@ -353,6 +373,10 @@ fn new_cli_project_passes_real_mvn_test() {
         eprintln!("skipping: mvn not found on PATH");
         return;
     }
+    if !real_java_supports_target_release() {
+        eprintln!("skipping: javac on PATH does not support --release {TARGET_RELEASE}");
+        return;
+    }
     let path = real_path_without_mvnd();
     let workdir = temp_dir("real-new-cli-test");
     jails_cmd_with_path(&workdir, &path).args(["new-cli", "demo"]).status().unwrap();
@@ -406,4 +430,226 @@ fn standalone_generators_companion_tests_compile_and_pass() {
 
     let status = jails_cmd_with_path(&root, &path).arg("test").status().unwrap();
     assert!(status.success(), "mvn test failed for the standalone-generated companion tests");
+}
+
+// ---- add ----
+
+/// `jails add <TAB>` only offers completions because `Capability` is a
+/// `clap::ValueEnum` and the alias is `visible_alias` -- a hidden `alias` is
+/// invisible to clap_complete's bash generator (the same bug `generate`'s `g`
+/// hit). This guards both.
+#[test]
+fn completion_script_lists_add_and_its_capabilities() {
+    let root = temp_dir("completion-add");
+    fs::create_dir_all(&root).unwrap();
+    let output = jails_cmd(&root, None).args(["completion", "bash"]).output().unwrap();
+    assert!(output.status.success());
+    let script = String::from_utf8_lossy(&output.stdout);
+
+    assert!(script.contains("add"), "completion script never mentions `add`");
+    for capability in ["csv", "sqlite", "json"] {
+        assert!(script.contains(capability), "completion script never mentions the {capability} capability");
+    }
+}
+
+#[test]
+fn add_errors_outside_a_project() {
+    let root = temp_dir("add-no-project");
+    fs::create_dir_all(&root).unwrap();
+    let output = jails_cmd(&root, None).args(["add", "csv"]).output().unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("no pom.xml"));
+}
+
+#[test]
+fn add_refuses_a_project_targeting_an_older_release() {
+    let root = temp_dir("add-old-release");
+    let pkg_dir = root.join("src/main/java/com/example/demo");
+    fs::create_dir_all(&pkg_dir).unwrap();
+    fs::write(
+        root.join("pom.xml"),
+        "<project>\n    <properties>\n        <maven.compiler.release>21</maven.compiler.release>\n    </properties>\n    <dependencies>\n    </dependencies>\n</project>\n",
+    )
+    .unwrap();
+    fs::write(pkg_dir.join("DemoApplication.java"), "package com.example.demo;\npublic class DemoApplication {}\n").unwrap();
+
+    let output = jails_cmd(&root, None).args(["add", "csv"]).output().unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("targets Java 21"), "{stderr}");
+    assert!(stderr.contains(TARGET_RELEASE), "{stderr}");
+    // The pom is left exactly as it was.
+    assert!(!fs::read_to_string(root.join("pom.xml")).unwrap().contains("commons-csv"));
+}
+
+#[test]
+fn add_dry_run_changes_nothing() {
+    let root = temp_dir("add-dry-run");
+    write_plain_fixture(&root);
+    let before = fs::read_to_string(root.join("pom.xml")).unwrap();
+
+    let output = jails_cmd(&root, None).args(["add", "csv", "--dry-run"]).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("would add dependency"), "{stdout}");
+    assert!(stdout.contains("CsvReader.java"), "{stdout}");
+
+    assert_eq!(before, fs::read_to_string(root.join("pom.xml")).unwrap());
+    assert!(!root.join("src/main/java/com/example/demo/CsvReader.java").exists());
+}
+
+#[test]
+fn add_is_idempotent() {
+    let root = temp_dir("add-idempotent");
+    write_plain_fixture(&root);
+
+    assert!(jails_cmd(&root, None).args(["add", "csv"]).status().unwrap().success());
+    let after_first = fs::read_to_string(root.join("pom.xml")).unwrap();
+
+    let output = jails_cmd(&root, None).args(["add", "csv"]).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("exists"), "{stdout}");
+    assert!(stdout.contains("nothing to do"), "{stdout}");
+    assert_eq!(after_first, fs::read_to_string(root.join("pom.xml")).unwrap(), "second add rewrote the pom");
+    assert_eq!(1, after_first.matches("commons-csv").count(), "duplicate dependency");
+}
+
+#[test]
+fn add_name_override_renames_the_generated_class() {
+    let root = temp_dir("add-named");
+    write_plain_fixture(&root);
+
+    assert!(jails_cmd(&root, None).args(["add", "csv", "--name", "transaction"]).status().unwrap().success());
+    assert!(root.join("src/main/java/com/example/demo/TransactionReader.java").exists());
+    assert!(root.join("src/test/java/com/example/demo/TransactionReaderTest.java").exists());
+}
+
+/// The bar that matters: does `add csv` leave a project that actually
+/// compiles and passes its tests? Needs real Maven and a JDK new enough for
+/// the release jails targets.
+#[test]
+fn add_csv_produces_a_project_that_compiles_and_passes_tests() {
+    if !real_mvn_available() {
+        eprintln!("skipping: mvn not found on PATH");
+        return;
+    }
+    if !real_java_supports_target_release() {
+        eprintln!("skipping: javac on PATH does not support --release {TARGET_RELEASE}");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let workdir = temp_dir("real-add-csv");
+    jails_cmd_with_path(&workdir, &path).args(["new-cli", "demo"]).status().unwrap();
+    let root = workdir.join("demo");
+
+    let status = jails_cmd_with_path(&root, &path).args(["add", "csv"]).status().unwrap();
+    assert!(status.success());
+
+    let status = jails_cmd_with_path(&root, &path).arg("test").status().unwrap();
+    assert!(status.success(), "mvn test failed after `jails add csv`");
+}
+
+/// tests/common/mod.rs cannot import `pom::TARGET_RELEASE` (integration tests
+/// link against the binary, not a library), so it keeps its own copy. This
+/// makes the duplication safe.
+#[test]
+fn target_release_matches_the_binary() {
+    let source = fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/pom.rs")).unwrap();
+    let declared = format!(r#"pub const TARGET_RELEASE: &str = "{TARGET_RELEASE}";"#);
+    assert!(source.contains(&declared), "src/pom.rs no longer declares TARGET_RELEASE = {TARGET_RELEASE}");
+}
+
+#[test]
+fn add_sqlite_writes_a_first_migration_and_both_classes() {
+    let root = temp_dir("add-sqlite-files");
+    write_plain_fixture(&root);
+
+    assert!(jails_cmd(&root, None).args(["add", "sqlite"]).status().unwrap().success());
+    assert!(root.join("src/main/java/com/example/demo/Database.java").is_file());
+    assert!(root.join("src/main/java/com/example/demo/Migrations.java").is_file());
+    assert!(root.join("src/test/java/com/example/demo/DatabaseTest.java").is_file());
+    assert!(root.join("src/main/resources/db/migration/001_init.sql").is_file());
+}
+
+/// Capabilities have to compose: adding all three must leave one pom with
+/// three dependencies and no clobbered files.
+#[test]
+fn capabilities_stack_without_clobbering_each_other() {
+    let root = temp_dir("add-stacked");
+    write_plain_fixture(&root);
+
+    for capability in ["csv", "sqlite", "json"] {
+        let output = jails_cmd(&root, None).args(["add", capability]).output().unwrap();
+        assert!(output.status.success(), "add {capability}: {}", String::from_utf8_lossy(&output.stderr));
+    }
+
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    for artifact in ["commons-csv", "sqlite-jdbc", "jackson-databind"] {
+        assert_eq!(1, pom.matches(artifact).count(), "expected exactly one {artifact} dependency");
+    }
+    let pkg = root.join("src/main/java/com/example/demo");
+    assert!(pkg.join("CsvReader.java").is_file());
+    assert!(pkg.join("Database.java").is_file());
+    assert!(pkg.join("Json.java").is_file());
+}
+
+/// The real bar for the whole `add` surface: every capability, stacked into
+/// one project, compiles and passes its generated tests.
+#[test]
+fn every_capability_together_produces_a_project_that_compiles_and_passes_tests() {
+    if !real_mvn_available() {
+        eprintln!("skipping: mvn not found on PATH");
+        return;
+    }
+    if !real_java_supports_target_release() {
+        eprintln!("skipping: javac on PATH does not support --release {TARGET_RELEASE}");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let workdir = temp_dir("real-add-all");
+    jails_cmd_with_path(&workdir, &path).args(["new-cli", "demo"]).status().unwrap();
+    let root = workdir.join("demo");
+
+    for capability in ["csv", "sqlite", "json"] {
+        let status = jails_cmd_with_path(&root, &path).args(["add", capability]).status().unwrap();
+        assert!(status.success(), "add {capability} failed");
+    }
+
+    let status = jails_cmd_with_path(&root, &path).arg("test").status().unwrap();
+    assert!(status.success(), "mvn test failed after adding csv + sqlite + json");
+}
+
+/// The Spring flavor branch: `add json` must *omit* the version so Spring
+/// Boot's parent supplies its curated Jackson, and the result must still
+/// compile. The shared Spring fixture stays pinned at an older release (it
+/// exists to test `generate`, which is release-agnostic), so this raises it
+/// to the release `add` requires.
+#[test]
+fn add_json_on_a_spring_project_defers_to_the_parents_version_and_compiles() {
+    if !real_mvn_available() {
+        eprintln!("skipping: mvn not found on PATH");
+        return;
+    }
+    if !real_java_supports_target_release() {
+        eprintln!("skipping: javac on PATH does not support --release {TARGET_RELEASE}");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let root = temp_dir("real-add-json-spring");
+    write_spring_fixture(&root);
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    let pom = pom.replace("<java.version>26</java.version>", &format!("<java.version>{TARGET_RELEASE}</java.version>"));
+    fs::write(root.join("pom.xml"), pom).unwrap();
+
+    let status = jails_cmd_with_path(&root, &path).args(["add", "json"]).status().unwrap();
+    assert!(status.success());
+
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    let block_start = pom.find("jackson-databind").unwrap();
+    let block_end = pom[block_start..].find("</dependency>").unwrap() + block_start;
+    assert!(!pom[block_start..block_end].contains("<version>"), "should defer to the parent's managed version");
+
+    let status = jails_cmd_with_path(&root, &path).arg("test").status().unwrap();
+    assert!(status.success(), "mvn test failed after `jails add json` on a Spring project");
 }

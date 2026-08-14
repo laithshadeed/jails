@@ -65,6 +65,27 @@ pub fn real_java_available() -> bool {
     real_path_dirs().any(|dir| dir.join("java").is_file()) && real_path_dirs().any(|dir| dir.join("javac").is_file())
 }
 
+/// Whether the `javac` on PATH understands the release jails generates for
+/// (`pom::TARGET_RELEASE`). Presence of a JDK is not enough: a JDK older than
+/// the target rejects `--release N` outright, which is the normal state of
+/// the world in the months before a new Java GA. Tests that really compile
+/// generated code skip on this rather than going red until the toolchain
+/// catches up -- see mise.toml for how 27 is provided here.
+pub fn real_java_supports_target_release() -> bool {
+    Command::new("javac")
+        .arg(format!("--release={TARGET_RELEASE}"))
+        .arg("-version")
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(false)
+}
+
+/// Kept in step with `pom::TARGET_RELEASE` by
+/// `target_release_matches_the_binary` in tests/cli.rs -- the integration
+/// tests compile against the binary, not the library, so the constant cannot
+/// simply be imported.
+pub const TARGET_RELEASE: &str = "27";
+
 fn real_path_dirs() -> impl Iterator<Item = PathBuf> {
     std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect::<Vec<_>>().into_iter()
 }

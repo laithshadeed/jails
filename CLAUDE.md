@@ -13,6 +13,12 @@ not a place to grow a plugin system).
 - `src/generate.rs` — all Java templates (`format!`, no template engine) +
   `generate`/`destroy`. `ArtifactKind` is a `clap::ValueEnum` — keep it that
   way, see gotcha below.
+- `src/add.rs` — `add <capability>` (csv/sqlite/json): grows an existing
+  project by a whole slice (dependency + code + test). `Capability` is a `clap::ValueEnum` for
+  the same completion reason as `ArtifactKind`.
+- `src/pom.rs` — the only code that *edits* a file the user owns. Flavor
+  and release-level detection, plus a comment-preserving dependency splice.
+  `TARGET_RELEASE` lives here.
 - `src/run.rs` — `test`/`build`/`run`, shells to `mvn`/`mvnd`.
 - `tests/common/mod.rs` + `tests/cli.rs` — integration tests against the
   real compiled binary (`CARGO_BIN_EXE_jails`).
@@ -27,6 +33,30 @@ automatically (see `.claude/settings.json`) — don't skip it manually even
 though the hook exists, since the hook only fires on turn end, not mid-turn.
 
 ## Gotchas hit so far
+
+- **Generated projects target Java 27** (`pom::TARGET_RELEASE`), which is
+  not GA until 2026-09-15. mise's java registry carries *no* JDK 27 build
+  of any vendor, so the EA build is symlinked in — see `mise.toml`. This
+  shell does not run mise's activation hook, so `java` on a bare PATH is
+  still 26; use `mise exec` or an explicit `JAVA_HOME` when something has
+  to compile at release 27.
+- **Tier-3 tests gate on `real_java_supports_target_release()`, not just
+  on a JDK being present.** A JDK older than the target rejects
+  `--release N` outright, so presence is not enough. Without the gate the
+  suite goes red on any machine that hasn't installed the new JDK yet.
+- **`base_package()` falls back to the shallowest .java file.** It used to
+  require `*Application.java`, which only Spring projects have — `new-cli`
+  projects have `App.java`, so `add` failed on exactly the projects it's
+  most useful for.
+- **Commons CSV renamed `Builder.build()` to `Builder.get()` in 1.13.**
+  The pinned version and the generated call have to move together; a unit
+  test in `add.rs` asserts they do, because the mismatch only surfaces as
+  a compile error in the real-toolchain tier.
+- **Don't use preview features in generated Java.** Structured concurrency
+  is on its seventh preview and primitive patterns their fifth as of JDK
+  27 — anything preview needs `--enable-preview` wired into both compile
+  and surefire and breaks on the next JDK. String templates (`STR."..."`)
+  were withdrawn and do not exist at all.
 
 - **clap `alias` vs `visible_alias`**: hidden `alias` is invisible to
   `clap_complete`'s bash generator — `jails g <TAB>` fell back to top-level

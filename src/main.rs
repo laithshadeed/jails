@@ -1,7 +1,10 @@
+mod add;
 mod generate;
+mod pom;
 mod new;
 mod run;
 
+use add::Capability;
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
 use generate::ArtifactKind;
@@ -46,7 +49,7 @@ enum Command {
         name: String,
         #[arg(long, default_value = "web")]
         deps: String,
-        #[arg(long, default_value = "26")]
+        #[arg(long, default_value = pom::TARGET_RELEASE)]
         java: String,
         /// Skip `git init` and the .gitignore it normally sets up
         #[arg(long)]
@@ -68,6 +71,17 @@ enum Command {
         kind: ArtifactKind,
         name: String,
         fields: Vec<String>,
+    },
+    /// Add a capability to an existing project: dependency, code and a test
+    #[command(visible_alias = "a")]
+    Add {
+        capability: Capability,
+        /// Base name for the generated class (default: the capability's own)
+        #[arg(long)]
+        name: Option<String>,
+        /// Print what would change without touching the project
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Delete the file(s) a matching generate call would have created
     #[command(visible_alias = "d")]
@@ -106,6 +120,7 @@ fn main() {
         }
         Command::NewCli { name, no_git } => new::new_cli(&name, !no_git, debug),
         Command::Generate { kind, name, fields } => generate::generate(kind, &name, &fields),
+        Command::Add { capability, name, dry_run } => add::add(capability, name.as_deref(), dry_run),
         Command::Destroy { kind, name, force } => generate::destroy(kind, &name, force),
         Command::Test { filter } => run::test(filter.as_deref(), debug),
         Command::Build => run::build(debug),

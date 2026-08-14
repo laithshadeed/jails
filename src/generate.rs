@@ -78,10 +78,14 @@ pub(crate) fn find_project_root() -> Result<PathBuf> {
 
 /// Same logic as springgen.nvim's base_package(): read the package line off
 /// the project's *Application.java entry point rather than configuring it.
-fn base_package(root: &Path) -> Result<String> {
+pub(crate) fn base_package(root: &Path) -> Result<String> {
     let src_root = root.join("src/main/java");
+    // Spring projects have a *Application.java entry point; `new-cli` ones
+    // have App.java, so fall back to whatever source file sits closest to the
+    // source root rather than failing on plain Maven projects.
     let entry = find_application_file(&src_root)
-        .ok_or_else(|| "could not find *Application.java to infer the base package".to_string())?;
+        .or_else(|| shallowest_java_file(&src_root))
+        .ok_or_else(|| "could not find a .java file under src/main/java to infer the base package".to_string())?;
     let contents = fs::read_to_string(&entry).map_err(|e| format!("failed to read {}: {e}", entry.display()))?;
     for line in contents.lines() {
         let line = line.trim();
@@ -111,6 +115,28 @@ fn find_application_file(dir: &Path) -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// The .java file with the fewest path segments below `dir`, i.e. the one in
+/// the outermost package -- for a plain Maven project that is the base package
+/// by construction.
+fn shallowest_java_file(dir: &Path) -> Option<PathBuf> {
+    let mut best: Option<(usize, PathBuf)> = None;
+    let mut stack = vec![(dir.to_path_buf(), 0usize)];
+    while let Some((current, depth)) = stack.pop() {
+        for entry in fs::read_dir(&current).ok()?.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push((path, depth + 1));
+            } else if path.extension().is_some_and(|e| e == "java") {
+                let better = best.as_ref().is_none_or(|(d, _)| depth < *d);
+                if better {
+                    best = Some((depth, path));
+                }
+            }
+        }
+    }
+    best.map(|(_, path)| path)
 }
 
 fn has_lombok(root: &Path) -> bool {
@@ -153,11 +179,11 @@ fn pkg_dir(pkg: &str) -> String {
     pkg.replace('.', "/")
 }
 
-fn main_dir(root: &Path, pkg: &str) -> PathBuf {
+pub(crate) fn main_dir(root: &Path, pkg: &str) -> PathBuf {
     root.join("src/main/java").join(pkg_dir(pkg))
 }
 
-fn test_dir(root: &Path, pkg: &str) -> PathBuf {
+pub(crate) fn test_dir(root: &Path, pkg: &str) -> PathBuf {
     root.join("src/test/java").join(pkg_dir(pkg))
 }
 
@@ -167,7 +193,7 @@ struct Artifact {
     contents: String,
 }
 
-fn write_new_file(path: &Path, contents: &str) -> Result<()> {
+pub(crate) fn write_new_file(path: &Path, contents: &str) -> Result<()> {
     if path.exists() {
         return Err(format!("{} already exists", path.display()));
     }

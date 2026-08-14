@@ -75,7 +75,7 @@ pub fn new_cli(name: &str, git: bool, debug: bool) -> Result<()> {
     }
 
     let package = sanitize_package(name);
-    let java = "26";
+    let java = crate::pom::TARGET_RELEASE;
 
     let src_dir = root
         .join("src/main/java")
@@ -285,15 +285,15 @@ mod tests {
 
     #[test]
     fn pom_xml_pins_the_requested_java_release_and_main_class() {
-        let pom = pom_xml("demo", "com.example.demo", "26");
-        assert!(pom.contains("<maven.compiler.release>26</maven.compiler.release>"));
+        let pom = pom_xml("demo", "com.example.demo", crate::pom::TARGET_RELEASE);
+        assert!(pom.contains("<maven.compiler.release>27</maven.compiler.release>"));
         assert!(pom.contains("<mainClass>com.example.demo.App</mainClass>"));
         assert!(pom.contains("<artifactId>demo</artifactId>"));
     }
 
     #[test]
     fn pom_xml_declares_junit_and_assertj_as_test_dependencies() {
-        let pom = pom_xml("demo", "com.example.demo", "26");
+        let pom = pom_xml("demo", "com.example.demo", crate::pom::TARGET_RELEASE);
         assert!(pom.contains("<artifactId>junit-jupiter</artifactId>"));
         assert!(pom.contains("<artifactId>assertj-core</artifactId>"));
     }

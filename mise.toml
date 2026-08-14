@@ -1,0 +1,15 @@
+[tools]
+# jails generates projects targeting Java 27 (`TARGET_RELEASE`), so the
+# toolchain used to compile the real-toolchain integration tests must
+# understand `--release 27`. JDK 27 GA is 2026-09-15; until then the only
+# option is the early-access build, which mise's java registry does not
+# carry — it is symlinked in via:
+#
+#   mise link java@openjdk-27-ea34 ~/.local/share/jdk/jdk-27
+#
+# That means `mise install` alone cannot reproduce this pin on a fresh
+# machine. Swap this to a plain `java = "27"` once GA lands and the
+# registry picks it up, and delete the link.
+java = "openjdk-27-ea34"
+maven = "3.9.16"
+mvnd = "1.0.6"

@@ -12,7 +12,7 @@ cargo build --release
 
 ## Commands
 
-- `jails new <name> [--deps web,data-jpa] [--java 26] [--no-git] [--no-devtools]`
+- `jails new <name> [--deps web,data-jpa] [--java 27] [--no-git] [--no-devtools]`
   — new Spring Boot project via start.spring.io. `git init` + `.gitignore`
   and `spring-boot-devtools` (needed for `run --watch`) are on by default.
 - `jails new-cli <name> [--no-git]` — new plain Maven CLI project
@@ -23,6 +23,13 @@ cargo build --release
   — a single artifact plus its companion test (only `entity` takes
   `field:type` args). `jails generate|g repository <Name>` and
   `jails generate|g test <Name>` have no companion test of their own.
+- `jails add|a <csv|sqlite|json> [--name <Base>] [--dry-run]` — grows an
+  existing project by a whole capability: the dependency (spliced into
+  `pom.xml`, comments and formatting preserved), the code that uses it, and
+  a passing test. Idempotent, so re-running reports what is already there.
+  `csv` gives a record-based reader over Commons CSV; `sqlite` gives a
+  `Database` record plus a migration runner over plain JDBC (no ORM); `json`
+  gives a shared Jackson `ObjectMapper` wrapper.
 - `jails destroy|d <type> <Name> [--force]` — deletes exactly what the
   matching `generate` call would have created.
 - `jails test [filter]` — `mvn test` (or `mvnd` if present), `filter` maps
@@ -46,5 +53,4 @@ Deferred out of v1 on purpose — see `prompt.md`:
 - `jails console` — no clean Java equivalent to an app-booted REPL.
 - `jails routes` — needs real annotation scanning, v2 once v1 is proven.
 - Gradle support — Maven only for now.
-- Migrations / Liquibase.
 - Any kind of plugin system.
