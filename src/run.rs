@@ -274,11 +274,11 @@ fn dispatcher_main_file(dir: &Path) -> Option<PathBuf> {
             if let Some(nested) = dispatcher_main_file(&path) {
                 found.push(nested);
             }
-        } else if path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.ends_with("Cli.java")) {
-            let is_dispatcher = fs::read_to_string(&path)
-                .map(|s| s.contains("static void main") && s.contains("SequencedMap<String, Command>"))
+        } else if path.extension().is_some_and(|ext| ext == "java") {
+            let dispatches = fs::read_to_string(&path)
+                .map(|s| s.contains("static void main") && crate::generate::is_dispatcher(&s))
                 .unwrap_or(false);
-            if is_dispatcher {
+            if dispatches {
                 found.push(path);
             }
         }

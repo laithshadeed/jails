@@ -107,8 +107,12 @@ without Maven just gets a note).
   `entity` deliberately occupy the same two paths (`<Name>.java` +
   `<Name>Test.java`) — same named type, two shapes — so `destroy` treats them
   identically and `generate` refuses to write one over the other.
-  `command` **does** now register itself in the project's `*Cli.java`
-  dispatcher. The old rule ("only pom.rs edits a file the user owns") was a
+  `command` **does** now register itself in the project's dispatcher, which
+  `new-cli` provides as `App.java` (a Hello World stub would leave
+  `generate command` -- the obvious next step -- with nothing to wire into).
+  Dispatchers are found by *shape*, not filename: `is_dispatcher()` checks for
+  the registry type and the `return commands;` anchor, so both `App.java` and
+  `generate cli`'s `<Name>Cli.java` are found. The old rule ("only pom.rs edits a file the user owns") was a
   proxy for the real one -- *an edit must be surgical and leave every other
   byte alone* -- and hand-pasting a dispatch line after every `generate` was
   exactly the plumbing this tool exists to remove. `register_command` splices

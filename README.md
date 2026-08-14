@@ -18,8 +18,10 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
 - `jails new <name> [--deps web,data-jpa] [--java 27] [--no-git] [--no-devtools]`
   — new Spring Boot project via start.spring.io. `git init` + `.gitignore`
   and `spring-boot-devtools` (needed for `run --watch`) are on by default.
-- `jails new-cli <name> [--no-git]` — new plain Maven CLI project
-  (hand-written `pom.xml`, `App.java`, `AppTest.java`), no network required.
+- `jails new-cli <name> [--release 27] [--no-git]` — new plain Maven CLI
+  project (hand-written `pom.xml`, `App.java`, `AppTest.java`), no network
+  required. `App.java` is a working command dispatcher, not a Hello World
+  stub, so `generate command` has something to register into from the start.
 - `jails generate|g scaffold <Name> [field:type ...]` — entity + repository
   + service + controller + controller test, in one shot.
 - `jails generate|g <controller|service|entity> <Name> [field:type ...]`
@@ -31,11 +33,14 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
   rejects nulls, no Spring or JPA involved, plus a companion test. Same
   `field:type` table as `entity`.
 - `jails generate|g command <Name>` — a CLI subcommand for `new-cli`
-  projects: `run(PrintStream, PrintStream, String...)` returning an exit
+  projects, registered in the project's dispatcher automatically: `run(PrintStream, PrintStream, String...)` returning an exit
   code, with a `NAME` constant to dispatch on. Output streams are arguments
   and nothing calls `System.exit`, so the companion test drives the whole
-  command in-process. The class Javadoc shows how to wire it into `main`;
-  jails never edits your entry point.
+  command in-process. jails splices one line into the dispatcher's
+  `commands()`; if the project has no dispatcher (or more than one) it says
+  so and leaves the Javadoc's instructions as the fallback.
+- `jails generate|g cli <Name>` — a second dispatcher, for projects that
+  want one separate from `App.java`. `new-cli` already gives you one.
 - `jails add|a <csv|sqlite|json> [--name <Base>] [--dry-run]` — grows an
   existing project by a whole capability: the dependency (spliced into
   `pom.xml`, comments and formatting preserved), the code that uses it, and

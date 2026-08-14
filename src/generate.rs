@@ -448,12 +448,12 @@ pub fn generate(kind: ArtifactKind, name: &str, fields: &[String], package: Opti
                 Artifact {
                     kind: "cli",
                     path: main_dir(&root, &cli).join(format!("{name}Cli.java")),
-                    contents: cli_java(&cli, &name),
+                    contents: cli_java(&cli, &format!("{name}Cli"), &name.to_lowercase()),
                 },
                 Artifact {
                     kind: "cli test",
                     path: test_dir(&root, &cli).join(format!("{name}CliTest.java")),
-                    contents: cli_test(&cli, &name),
+                    contents: cli_test(&cli, &format!("{name}Cli")),
                 },
             ]
         }
@@ -1389,7 +1389,7 @@ fn value_test(pkg: &str, name: &str, fields: &[Field]) -> String {
 
 // ---- cli: the dispatcher that `generate command` leaves you to write. ----
 
-fn cli_java(pkg: &str, name: &str) -> String {
+pub(crate) fn cli_java(pkg: &str, class: &str, program: &str) -> String {
     format!(
         r#"package {pkg};
 
@@ -1398,7 +1398,7 @@ import java.util.LinkedHashMap;
 import java.util.SequencedMap;
 
 /**
- * Argv dispatch for the {name} command line: it owns argument routing, exit
+ * Argv dispatch for the {program} command line: it owns argument routing, exit
  * codes and streams, and nothing else.
  *
  * <p>The registry is a parameter of {{@link #run}}, not a static the method
@@ -1409,10 +1409,10 @@ import java.util.SequencedMap;
  *
  * {{@snippet :
  * var out = new ByteArrayOutputStream();
- * int code = {name}Cli.run({name}Cli.commands(), new PrintStream(out), System.err, "greet", "world");
+ * int code = {class}.run({class}.commands(), new PrintStream(out), System.err, "greet", "world");
  * }}
  */
-public final class {name}Cli {{
+public final class {class} {{
 
     /**
      * One subcommand. Matches the shape {{@code jails generate command}} emits,
@@ -1426,7 +1426,7 @@ public final class {name}Cli {{
     /** Conventional exit code for "you invoked this wrong". */
     public static final int USAGE_ERROR = 2;
 
-    private {name}Cli() {{}}
+    private {class}() {{}}
 
     /**
      * The commands this CLI answers to, in the order they should be listed.
@@ -1466,7 +1466,7 @@ public final class {name}Cli {{
     }}
 
     private static void usage(SequencedMap<String, Command> commands, PrintStream to) {{
-        to.println("usage: {word} <command> [args]");
+        to.println("usage: {program} <command> [args]");
         to.println();
         to.println("commands:");
         to.println("  help");
@@ -1478,11 +1478,11 @@ public final class {name}Cli {{
     }}
 }}
 "#,
-        word = name.to_lowercase()
+        program = program,
     )
 }
 
-fn cli_test(pkg: &str, name: &str) -> String {
+pub(crate) fn cli_test(pkg: &str, class: &str) -> String {
     format!(
         r#"package {pkg};
 
@@ -1495,7 +1495,7 @@ import java.util.SequencedMap;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-class {name}CliTest {{
+class {class}Test {{
 
     private final ByteArrayOutputStream out = new ByteArrayOutputStream();
     private final ByteArrayOutputStream err = new ByteArrayOutputStream();
@@ -1505,8 +1505,8 @@ class {name}CliTest {{
      * argument, the dispatcher is testable on its own -- these assertions hold
      * before a single real command exists.
      */
-    private SequencedMap<String, {name}Cli.Command> commands() {{
-        var commands = new LinkedHashMap<String, {name}Cli.Command>();
+    private SequencedMap<String, {class}.Command> commands() {{
+        var commands = new LinkedHashMap<String, {class}.Command>();
         commands.put("echo", (out, err, args) -> {{
             out.println(String.join(" ", args));
             return 0;
@@ -1519,7 +1519,7 @@ class {name}CliTest {{
     }}
 
     private int run(String... args) {{
-        return {name}Cli.run(commands(), new PrintStream(out), new PrintStream(err), args);
+        return {class}.run(commands(), new PrintStream(out), new PrintStream(err), args);
     }}
 
     @Test
@@ -1548,7 +1548,7 @@ class {name}CliTest {{
 
     @Test
     void namesTheUnknownCommandAndExitsTwo() {{
-        assertThat(run("nope")).isEqualTo({name}Cli.USAGE_ERROR);
+        assertThat(run("nope")).isEqualTo({class}.USAGE_ERROR);
         assertThat(err.toString()).contains("nope");
     }}
 
@@ -1623,8 +1623,11 @@ fn register_command(root: &Path, base: &str, name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Every `*Cli.java` under the source root that actually looks like a jails
-/// dispatcher -- a file merely *named* that way is not enough to edit.
+/// Every dispatcher under the source root.
+///
+/// Recognised by shape, not by filename: `new-cli` writes one called
+/// `App.java` and `generate cli` writes one called `<Name>Cli.java`, and both
+/// have to be findable. A file merely *named* like one is not enough to edit.
 fn find_dispatchers(dir: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     let mut stack = vec![dir.to_path_buf()];
@@ -1634,11 +1637,8 @@ fn find_dispatchers(dir: &Path) -> Vec<PathBuf> {
             let path = entry.path();
             if path.is_dir() {
                 stack.push(path);
-            } else if path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.ends_with("Cli.java")) {
-                let looks_right = fs::read_to_string(&path)
-                    .map(|s| s.contains("SequencedMap<String, Command>") && s.contains("return commands;"))
-                    .unwrap_or(false);
-                if looks_right {
+            } else if path.extension().is_some_and(|e| e == "java") {
+                if fs::read_to_string(&path).map(|s| is_dispatcher(&s)).unwrap_or(false) {
                     found.push(path);
                 }
             }
@@ -1646,6 +1646,13 @@ fn find_dispatchers(dir: &Path) -> Vec<PathBuf> {
     }
     found.sort();
     found
+}
+
+/// What makes a file a jails command dispatcher: the registry type it
+/// dispatches over, and the line `register_command` splices above. Both are
+/// checked, because either alone shows up in files that are not dispatchers.
+pub(crate) fn is_dispatcher(source: &str) -> bool {
+    source.contains("SequencedMap<String, Command>") && source.contains("return commands;")
 }
 
 fn package_of(source: &str) -> Option<String> {

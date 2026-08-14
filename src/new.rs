@@ -105,8 +105,14 @@ pub fn new_cli(name: &str, java: &str, git: bool, debug: bool) -> Result<()> {
     // Through write_new_file, not fs::write, so the entry point and its test
     // get the same import ordering as everything jails generates later --
     // otherwise `add format` finds violations in files jails itself wrote.
-    crate::generate::write_new_file(&src_dir.join("App.java"), &app_java(&package))?;
-    crate::generate::write_new_file(&test_dir.join("AppTest.java"), &app_test_java(&package))?;
+    //
+    // App.java *is* the command dispatcher, not a Hello World stub. A command
+    // called `new-cli` that produces a project unable to dispatch commands
+    // makes `jails generate command` -- the obvious next step -- report that
+    // it has nothing to register into, and leaves you with two `main`s the
+    // moment you fix that by hand.
+    crate::generate::write_new_file(&src_dir.join("App.java"), &crate::generate::cli_java(&package, "App", name))?;
+    crate::generate::write_new_file(&test_dir.join("AppTest.java"), &crate::generate::cli_test(&package, "App"))?;
 
     write_fixtures_dir(root)?;
 
@@ -235,38 +241,6 @@ fn pom_xml(artifact: &str, package: &str, java: &str) -> String {
     )
 }
 
-fn app_java(package: &str) -> String {
-    format!(
-        r#"package {package};
-
-public class App {{
-
-    public static void main(String[] args) {{
-        System.out.println("Hello, World!");
-    }}
-}}
-"#
-    )
-}
-
-fn app_test_java(package: &str) -> String {
-    format!(
-        r#"package {package};
-
-import org.junit.jupiter.api.Test;
-
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
-class AppTest {{
-
-    @Test
-    void shouldDoSomething() {{
-        assertTrue(true);
-    }}
-}}
-"#
-    )
-}
 
 #[cfg(test)]
 mod tests {
@@ -326,20 +300,25 @@ mod tests {
         assert!(pom.contains("<artifactId>assertj-core</artifactId>"));
     }
 
+    /// The entry point is a dispatcher, not a Hello World stub -- otherwise
+    /// `generate command` has nothing to register into, which is the whole
+    /// point of `new-cli`.
     #[test]
-    fn app_java_prints_hello_world_from_main() {
-        let src = app_java("com.example.demo");
+    fn app_java_is_a_command_dispatcher() {
+        let src = crate::generate::cli_java("com.example.demo", "App", "demo");
         assert!(src.contains("package com.example.demo;"));
         assert!(src.contains("public static void main(String[] args)"));
-        assert!(src.contains("Hello, World!"));
+        assert!(src.contains("public final class App"), "{src}");
+        assert!(src.contains("usage: demo <command> [args]"), "the program name should be the project's");
+        assert!(crate::generate::is_dispatcher(&src), "generate command must be able to find this");
     }
 
     #[test]
-    fn app_test_java_has_one_passing_junit5_test() {
-        let src = app_test_java("com.example.demo");
+    fn app_test_java_drives_the_dispatcher() {
+        let src = crate::generate::cli_test("com.example.demo", "App");
         assert!(src.contains("import org.junit.jupiter.api.Test;"));
-        assert!(src.contains("@Test"));
-        assert!(src.contains("assertTrue(true)"));
+        assert!(src.contains("class AppTest"));
+        assert!(src.contains("App.run("));
     }
 
     #[test]
