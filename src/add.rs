@@ -698,6 +698,7 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -743,6 +744,24 @@ public final class {class} {{
     /** Binds one already-parsed tree node to {{@code type}}. */
     public static <T> T convert(JsonNode node, Class<T> type) {{
         return MAPPER.convertValue(node, type);
+    }}
+
+    /**
+     * Reads a JSON Lines file: one JSON value per line, blank lines skipped.
+     *
+     * <p>The format event logs and streaming exports use, because appending a
+     * line is cheap where appending to an array is not. Returned as trees
+     * rather than bound values for the same reason {{@link #readTree}} exists --
+     * one malformed line should not cost you the whole file.
+     */
+    public static List<JsonNode> readJsonl(Path path) throws IOException {{
+        try (var lines = Files.lines(path)) {{
+            var nodes = new ArrayList<JsonNode>();
+            for (var line : lines.filter(text -> !text.isBlank()).toList()) {{
+                nodes.add(MAPPER.readTree(line));
+            }}
+            return List.copyOf(nodes);
+        }}
     }}
 
     /** Reads a top-level JSON array into a list of {{@code element}}. */
@@ -829,6 +848,26 @@ class {class}Test {{
 
         assertTrue(json.contains("\"2026-08-01\""), "expected an ISO date in " + json);
         assertEquals(new Dated("invoice", LocalDate.of(2026, 8, 1)), {class}.parse(json, Dated.class));
+    }}
+
+    @Test
+    void readsOneJsonValuePerLine() throws Exception {{
+        var path = tmp.resolve("events.jsonl");
+        Files.writeString(path, "{{\"id\":1}}\n\n{{\"id\":2}}\n");
+
+        var events = {class}.readJsonl(path);
+
+        assertEquals(2, events.size(), "blank lines should be skipped");
+        assertEquals(1, events.getFirst().get("id").asInt());
+        assertEquals(2, events.getLast().get("id").asInt());
+    }}
+
+    @Test
+    void readsAnEmptyJsonlFileAsNoEvents() throws Exception {{
+        var path = tmp.resolve("empty.jsonl");
+        Files.writeString(path, "");
+
+        assertEquals(List.of(), {class}.readJsonl(path));
     }}
 
     @Test
@@ -1241,8 +1280,8 @@ fn fake_plan(root: &std::path::Path, testkit: &str) -> Result<Plan> {
 
     Ok(Plan {
         files: vec![
-            NewFile { path: dir.join("Scripted.java"), contents: scripted_java(testkit) },
-            NewFile { path: dir.join("ScriptedTest.java"), contents: scripted_test_java(testkit) },
+            NewFile { path: dir.join("Fake.java"), contents: scripted_java(testkit) },
+            NewFile { path: dir.join("FakeTest.java"), contents: scripted_test_java(testkit) },
         ],
         ..Plan::default()
     })
@@ -1263,7 +1302,7 @@ import java.util.List;
  * rather than one fake per interface, and why it needs no mocking framework:
  *
  * {{@snippet :
- * var model = Scripted.of(Scripted.value("ok"), Scripted.failure(new IllegalStateException("timeout")));
+ * var model = Fake.of(Fake.value("ok"), Fake.failure(new IllegalStateException("timeout")));
  * ModelProvider provider = prompt -> model.next(prompt);
  *
  * assertThat(provider.generate("hello")).isEqualTo("ok");
@@ -1273,7 +1312,7 @@ import java.util.List;
  * <p>Once the script runs out the last step repeats, so a test that only cares
  * about the first response does not have to pad the script to match.
  */
-public final class Scripted<T> {{
+public final class Fake<T> {{
 
     /** One scripted turn. Sealed, so a switch over it is checked for exhaustiveness. */
     public sealed interface Step<T> {{}}
@@ -1286,16 +1325,16 @@ public final class Scripted<T> {{
     private final List<List<Object>> calls = new ArrayList<>();
     private int index = 0;
 
-    private Scripted(List<Step<T>> script) {{
+    private Fake(List<Step<T>> script) {{
         if (script.isEmpty()) {{
-            throw new IllegalArgumentException("a scripted double needs at least one step");
+            throw new IllegalArgumentException("a fake needs at least one step");
         }}
         this.script = List.copyOf(script);
     }}
 
     @SafeVarargs
-    public static <T> Scripted<T> of(Step<T>... steps) {{
-        return new Scripted<>(List.of(steps));
+    public static <T> Fake<T> of(Step<T>... steps) {{
+        return new Fake<>(List.of(steps));
     }}
 
     public static <T> Step<T> value(T value) {{
@@ -1346,45 +1385,45 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-class ScriptedTest {{
+class FakeTest {{
 
     @Test
     void playsEachStepInOrder() {{
-        var scripted = Scripted.of(Scripted.value("first"), Scripted.value("second"));
+        var fake = Fake.of(Fake.value("first"), Fake.value("second"));
 
-        assertThat(scripted.next()).isEqualTo("first");
-        assertThat(scripted.next()).isEqualTo("second");
+        assertThat(fake.next()).isEqualTo("first");
+        assertThat(fake.next()).isEqualTo("second");
     }}
 
     @Test
     void repeatsTheLastStepOnceTheScriptRunsOut() {{
-        var scripted = Scripted.of(Scripted.value("only"));
+        var fake = Fake.of(Fake.value("only"));
 
-        assertThat(scripted.next()).isEqualTo("only");
-        assertThat(scripted.next()).isEqualTo("only");
+        assertThat(fake.next()).isEqualTo("only");
+        assertThat(fake.next()).isEqualTo("only");
     }}
 
     @Test
     void throwsWhateverTheScriptSaysToThrow() {{
-        var scripted = Scripted.<String>of(Scripted.failure(new IllegalStateException("simulated timeout")));
+        var fake = Fake.<String>of(Fake.failure(new IllegalStateException("simulated timeout")));
 
-        assertThatThrownBy(scripted::next).isInstanceOf(IllegalStateException.class).hasMessage("simulated timeout");
+        assertThatThrownBy(fake::next).isInstanceOf(IllegalStateException.class).hasMessage("simulated timeout");
     }}
 
     @Test
     void recordsHowItWasCalled() {{
-        var scripted = Scripted.of(Scripted.value(1));
+        var fake = Fake.of(Fake.value(1));
 
-        scripted.next("a", 2);
-        scripted.next("b");
+        fake.next("a", 2);
+        fake.next("b");
 
-        assertThat(scripted.calls()).containsExactly(List.of("a", 2), List.of("b"));
-        assertThat(scripted.callCount()).isEqualTo(2);
+        assertThat(fake.calls()).containsExactly(List.of("a", 2), List.of("b"));
+        assertThat(fake.callCount()).isEqualTo(2);
     }}
 
     @Test
     void rejectsAnEmptyScript() {{
-        assertThatThrownBy(Scripted::of).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(Fake::of).isInstanceOf(IllegalArgumentException.class);
     }}
 }}
 "#
@@ -1829,6 +1868,19 @@ mod tests {
         assert!(test.contains("writesDatesAsIsoStringsNotObjects"));
     }
 
+    /// JSON Lines is the format event logs use, and one malformed line must
+    /// not cost the whole file -- so it returns trees, like readTree.
+    #[test]
+    fn json_reads_jsonl_as_a_list_of_trees() {
+        let src = json_java("com.example.demo", "Json");
+        assert!(src.contains("public static List<JsonNode> readJsonl(Path path)"), "{src}");
+        assert!(src.contains("isBlank"), "blank lines should be skipped: {src}");
+
+        let test = json_test_java("com.example.demo", "Json");
+        assert!(test.contains("readJsonl"));
+        assert!(test.contains("readsAnEmptyJsonlFileAsNoEvents"));
+    }
+
     #[test]
     fn json_uses_nio_streams_rather_than_file() {
         let src = json_java("com.example.demo", "Json");
@@ -1836,6 +1888,19 @@ mod tests {
         assert!(src.contains("Files.newOutputStream"));
         assert!(!src.contains("java.io.File"), "should not fall back to java.io.File");
         assert!(src.contains("private static final ObjectMapper MAPPER"), "mapper should be shared");
+    }
+
+    /// validation/09 addresses the scripted double as `Fake`; the class and
+    /// its file have to agree with that.
+    #[test]
+    fn the_scripted_double_is_called_fake() {
+        let src = scripted_java("com.example.demo.testkit");
+        assert!(src.contains("public final class Fake<T>"), "{src}");
+        assert!(!src.contains("Scripted"), "no trace of the old name: {src}");
+
+        let test = scripted_test_java("com.example.demo.testkit");
+        assert!(test.contains("class FakeTest"));
+        assert!(!test.contains("Scripted"));
     }
 
     #[test]
