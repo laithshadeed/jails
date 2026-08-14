@@ -25,11 +25,14 @@ pub struct Field {
     pub name: String,
     pub java_type: String,
     pub needs_lob: bool,
-    pub import: Option<&'static str>,
+    pub imports: Vec<&'static str>,
     pub optionality: Optionality,
     /// True when the type came from the project rather than the built-in
     /// table, so jails knows the shape of exactly nothing about it.
     pub owned: bool,
+    /// A `List` or `Map` component: copied defensively and defaulted to empty
+    /// rather than null-checked.
+    pub collection: bool,
 }
 
 /// What a `!` or `?` suffix on a field type means.
@@ -48,6 +51,116 @@ pub enum Optionality {
     Nullable,
 }
 
+/// One resolved type: how to spell it in Java, and what it needs imported.
+struct Resolved {
+    java_type: String,
+    needs_lob: bool,
+    imports: Vec<&'static str>,
+    owned: bool,
+    collection: bool,
+}
+
+/// Resolve a type token, recursing through `list<...>` and `map<..,..>`.
+///
+/// Recursion is what makes the collection types worth having: `list<Match>`
+/// and `map<string,double>` cost nothing extra once the element goes through
+/// the same resolver as a bare field.
+fn resolve_type(token: &str) -> Result<Resolved> {
+    let token = token.trim();
+
+    if let Some(inner) = generic_argument(token, "list") {
+        let element = resolve_element(inner, token)?;
+        let mut imports = element.imports;
+        imports.push("java.util.List");
+        return Ok(Resolved {
+            java_type: format!("List<{}>", boxed(&element.java_type)),
+            needs_lob: false,
+            imports,
+            owned: false,
+            collection: true,
+        });
+    }
+
+    if let Some(inner) = generic_argument(token, "map") {
+        let (key, value) = inner
+            .split_once(',')
+            .ok_or_else(|| format!("'{token}' needs a key and a value type, e.g. map<string,double>"))?;
+        let key = resolve_element(key, token)?;
+        let value = resolve_element(value, token)?;
+        let mut imports = key.imports;
+        imports.extend(value.imports);
+        imports.push("java.util.Map");
+        return Ok(Resolved {
+            java_type: format!("Map<{}, {}>", boxed(&key.java_type), boxed(&value.java_type)),
+            needs_lob: false,
+            imports,
+            owned: false,
+            collection: true,
+        });
+    }
+
+    // The Java spellings of the built-ins, so `date:LocalDate` and `date:date`
+    // mean the same thing and `id:String` is not read as a project type.
+    if let Some((java_type, import)) = builtin_by_java_name(token) {
+        return Ok(Resolved {
+            java_type: java_type.to_string(),
+            needs_lob: false,
+            imports: import.into_iter().collect(),
+            owned: false,
+            collection: false,
+        });
+    }
+
+    // Case is the whole rule: capitalised means a type this project owns.
+    if token.starts_with(|c: char| c.is_uppercase()) {
+        return Ok(Resolved {
+            java_type: token.to_string(),
+            needs_lob: false,
+            imports: Vec::new(),
+            owned: true,
+            collection: false,
+        });
+    }
+
+    let lower = token.to_lowercase();
+    if lower == "list" || lower == "map" {
+        return Err(format!(
+            "'{token}' needs its element type(s) -- list<string>, list<Match>, map<string,double>"
+        ));
+    }
+
+    let (java_type, needs_lob, import) = field_type(&lower)?;
+    Ok(Resolved {
+        java_type: java_type.to_string(),
+        needs_lob,
+        imports: import.into_iter().collect(),
+        owned: false,
+        collection: false,
+    })
+}
+
+/// A collection's element type, with a message that names the collection it
+/// came from -- `unknown field type 'nope'` alone is not much help when it
+/// came out of `list<nope>`.
+fn resolve_element(token: &str, outer: &str) -> Result<Resolved> {
+    let token = token.trim();
+    if token.is_empty() {
+        return Err(format!("'{outer}' is missing an element type"));
+    }
+    let resolved = resolve_type(token).map_err(|e| format!("in '{outer}': {e}"))?;
+    if resolved.collection {
+        return Err(format!("'{outer}': nested collections are not supported -- introduce a type for the inner one"));
+    }
+    Ok(resolved)
+}
+
+/// The text inside `name<...>`, if the token is that shape. A bare `list` has
+/// no element type and is meaningless, so it is not matched here and falls
+/// through to the unknown-type error.
+fn generic_argument<'a>(token: &'a str, name: &str) -> Option<&'a str> {
+    token.strip_prefix(name)?.strip_prefix('<')?.strip_suffix('>')
+}
+
 fn field_type(token: &str) -> Result<(&'static str, bool, Option<&'static str>)> {
     match token {
         "string" => Ok(("String", false, None)),
@@ -57,9 +170,10 @@ fn field_type(token: &str) -> Result<(&'static str, bool, Option<&'static str>)>
         "boolean" => Ok(("Boolean", false, None)),
         "date" => Ok(("LocalDate", false, Some("java.time.LocalDate"))),
         "datetime" => Ok(("LocalDateTime", false, Some("java.time.LocalDateTime"))),
+        "instant" => Ok(("Instant", false, Some("java.time.Instant"))),
         "double" => Ok(("Double", false, None)),
         other => Err(format!(
-            "unknown field type '{other}' (known: string, text, int/integer, long, boolean, date, datetime, double).\n       \
+            "unknown field type '{other}' (known: string, text, int/integer, long, boolean, date, datetime, instant, double, list<T>, map<K,V>).\n       \
              Capitalise it -- {}:{} -- to mean a type this project owns.",
             other, capitalize(other)
         )),
@@ -100,51 +214,28 @@ fn parse_fields(args: &[String]) -> Result<Vec<Field>> {
                 return Err(format!("field '{arg}' has a suffix but no type"));
             }
 
-            // Case is the whole rule: a lowercase token is one of jails' own
-            // types, a capitalised one is a type this project owns and is
-            // passed through verbatim. No new syntax, and it makes the
-            // generators compose -- `generate record SourceRef`, then
-            // reference `source:SourceRef` from the next one.
-            // ...with one exception: the Java names the table itself produces.
-            // `id:String` is a natural thing to type, and treating it as an
-            // unknown project type would quietly disable the generated test.
-            if let Some(builtin) = builtin_by_java_name(ty) {
-                return Ok(Field {
-                    name: name.trim().to_string(),
-                    java_type: builtin.0.to_string(),
-                    needs_lob: false,
-                    import: builtin.1,
-                    optionality,
-                    owned: false,
-                });
-            }
-
-            if ty.starts_with(|c: char| c.is_uppercase()) {
-                return Ok(Field {
-                    name: name.trim().to_string(),
-                    java_type: ty.to_string(),
-                    needs_lob: false,
-                    import: None,
-                    optionality,
-                    owned: true,
-                });
-            }
-
-            let (java_type, needs_lob, import) = field_type(ty.to_lowercase().as_str())?;
-            if optionality == Optionality::NonBlank && java_type != "String" {
+            let resolved = resolve_type(ty)?;
+            if optionality == Optionality::NonBlank && resolved.java_type != "String" {
                 return Err(format!(
                     "'{arg}': the '!' suffix means non-blank, which only applies to text -- \
                      drop it, or use '{}:{ty}' if you only meant required",
                     name.trim()
                 ));
             }
+            if optionality == Optionality::Nullable && resolved.collection {
+                return Err(format!(
+                    "'{arg}': a collection already models absence as an empty one -- drop the '?'"
+                ));
+            }
+
             Ok(Field {
                 name: name.trim().to_string(),
-                java_type: java_type.to_string(),
-                needs_lob,
-                import,
+                java_type: resolved.java_type,
+                needs_lob: resolved.needs_lob,
+                imports: resolved.imports,
                 optionality,
-                owned: false,
+                owned: resolved.owned,
+                collection: resolved.collection,
             })
         })
         .collect()
@@ -180,7 +271,31 @@ fn is_reference_type(java_type: &str) -> bool {
 
 /// A component gets a null check when it *can* be null and was not marked `?`.
 fn needs_null_check(field: &Field) -> bool {
-    is_reference_type(unboxed(&field.java_type)) && field.optionality != Optionality::Nullable
+    !field.collection
+        && is_reference_type(unboxed(&field.java_type))
+        && field.optionality != Optionality::Nullable
+}
+
+/// Defensive copy plus an empty default, in one statement per collection.
+///
+/// Both halves matter and both are about the caller: a component holding the
+/// list the caller passed in is not actually immutable, and a null bucket
+/// makes every consumer downstream write a null check that should never have
+/// been their problem.
+fn collection_defaults(fields: &[Field]) -> String {
+    fields
+        .iter()
+        .filter(|f| f.collection)
+        .map(|f| {
+            let empty = if f.java_type.starts_with("Map") { "Map.of()" } else { "List.of()" };
+            let copy = if f.java_type.starts_with("Map") { "Map.copyOf" } else { "List.copyOf" };
+            format!("        {0} = {0} == null ? {empty} : {copy}({0});\n", f.name)
+        })
+        .collect()
+}
+
+fn has_collection(fields: &[Field]) -> bool {
+    fields.iter().any(|f| f.collection)
 }
 
 /// The component's declared type. `?` wraps it in `Optional`, so absence is in
@@ -194,6 +309,7 @@ fn needs_null_check(field: &Field) -> bool {
 fn declared_type(field: &Field) -> String {
     match field.optionality {
         Optionality::Nullable => format!("Optional<{}>", boxed(&field.java_type)),
+        _ if field.collection => field.java_type.clone(),
         _ => unboxed(&field.java_type).to_string(),
     }
 }
@@ -972,7 +1088,7 @@ fn entity_java(pkg: &str, name: &str, fields: &[Field], lombok: bool) -> String 
     if lombok {
         out += "import lombok.Data;\n";
     }
-    let mut time_imports: Vec<&str> = fields.iter().filter_map(|f| f.import).collect();
+    let mut time_imports: Vec<&str> = fields.iter().flat_map(|f| f.imports.clone()).collect();
     time_imports.sort();
     time_imports.dedup();
     if !time_imports.is_empty() {
@@ -1020,7 +1136,7 @@ fn getter_setter(java_type: &str, name: &str) -> String {
 /// A companion test round-tripping every getter/setter (including
 /// Lombok's @Data-generated ones, which compile the same as hand-written).
 fn entity_test(pkg: &str, name: &str, fields: &[Field]) -> String {
-    let mut imports: Vec<&str> = fields.iter().filter_map(|f| f.import).collect();
+    let mut imports: Vec<&str> = fields.iter().flat_map(|f| f.imports.clone()).collect();
     imports.sort();
     imports.dedup();
 
@@ -1065,8 +1181,8 @@ fn record_java(pkg: &str, name: &str, fields: &[Field]) -> String {
     let blank_checked: Vec<&Field> = fields.iter().filter(|f| needs_blank_check(f)).collect();
     let optional = has_optional(fields);
     let needs_objects = !checked.is_empty() || optional;
-    let needs_constructor = needs_objects || !blank_checked.is_empty();
-    let mut imports: Vec<&str> = fields.iter().filter_map(|f| f.import).collect();
+    let needs_constructor = needs_objects || !blank_checked.is_empty() || has_collection(fields);
+    let mut imports: Vec<&str> = fields.iter().flat_map(|f| f.imports.clone()).collect();
     if needs_objects {
         imports.push("java.util.Objects");
     }
@@ -1114,6 +1230,7 @@ fn record_java(pkg: &str, name: &str, fields: &[Field]) -> String {
             );
         }
         out += &optional_defaults(fields);
+        out += &collection_defaults(fields);
         out += &blank_checks(&blank_checked);
         out += "    }\n";
     }
@@ -1125,7 +1242,7 @@ fn record_java(pkg: &str, name: &str, fields: &[Field]) -> String {
 /// A companion test asserting the accessors return what was passed and that
 /// the compact constructor actually rejects a null.
 fn record_test(root: &Path, pkg: &str, name: &str, fields: &[Field]) -> String {
-    let mut imports: Vec<&str> = fields.iter().filter_map(|f| f.import).collect();
+    let mut imports: Vec<&str> = fields.iter().flat_map(|f| f.imports.clone()).collect();
     imports.sort();
     imports.dedup();
 
@@ -1327,6 +1444,10 @@ fn sample_value(field: &Field, root: &Path, pkg: &str) -> Option<String> {
     if field.optionality == Optionality::Nullable {
         return Some("Optional.empty()".to_string());
     }
+    // An empty collection is a sample of any element type, known or not.
+    if field.collection {
+        return Some(if field.java_type.starts_with("Map") { "Map.of()".to_string() } else { "List.of()".to_string() });
+    }
     if !field.owned {
         return Some(sample_literal(&field.java_type).to_string());
     }
@@ -1351,6 +1472,7 @@ fn sample_literal(java_type: &str) -> &'static str {
         "Double" | "double" => "1.0",
         "LocalDate" => "LocalDate.of(2024, 1, 1)",
         "LocalDateTime" => "LocalDateTime.of(2024, 1, 1, 12, 0)",
+        "Instant" => "Instant.parse(\"2024-01-01T00:00:00Z\")",
         _ => "null",
     }
 }
@@ -1524,7 +1646,7 @@ fn value_java(pkg: &str, name: &str, fields: &[Field]) -> String {
     let checked: Vec<&Field> = fields.iter().filter(|f| needs_null_check(f)).collect();
     let optional = has_optional(fields);
 
-    let mut imports: Vec<&str> = fields.iter().filter_map(|f| f.import).collect();
+    let mut imports: Vec<&str> = fields.iter().flat_map(|f| f.imports.clone()).collect();
     if !checked.is_empty() || optional {
         imports.push("java.util.Objects");
     }
@@ -1571,6 +1693,7 @@ fn value_java(pkg: &str, name: &str, fields: &[Field]) -> String {
         out += &format!("        Objects.requireNonNull({0}, \"{0} is required\");\n", field.name);
     }
     out += &optional_defaults(fields);
+    out += &collection_defaults(fields);
     out += &blank_checks(&strings);
     out += "    }\n\n";
 
@@ -1591,7 +1714,7 @@ fn value_test(root: &Path, pkg: &str, name: &str, fields: &[Field]) -> String {
     // behaviours to assert.
     let strings: Vec<&Field> = fields.iter().filter(|f| needs_blank_check(f)).collect();
 
-    let mut imports: Vec<&str> = fields.iter().filter_map(|f| f.import).collect();
+    let mut imports: Vec<&str> = fields.iter().flat_map(|f| f.imports.clone()).collect();
     imports.sort();
     imports.dedup();
 
@@ -2378,7 +2501,52 @@ mod tests {
         assert!(!fields[0].owned);
         assert_eq!(fields[0].java_type, "String");
         assert!(!fields[1].owned);
-        assert_eq!(fields[1].import, Some("java.time.LocalDate"));
+        assert!(fields[1].imports.contains(&"java.time.LocalDate"));
+    }
+
+    #[test]
+    fn parse_fields_resolves_collection_types() {
+        let fields = parse_fields(&[
+            "matched:list<Match>".to_string(),
+            "ids:list<string>".to_string(),
+            "rates:map<string,double>".to_string(),
+            "at:instant".to_string(),
+        ])
+        .unwrap();
+
+        assert_eq!(fields[0].java_type, "List<Match>");
+        assert!(fields[0].collection);
+        assert_eq!(fields[1].java_type, "List<String>");
+        // Generics cannot hold a primitive, so the element is the wrapper.
+        assert_eq!(fields[2].java_type, "Map<String, Double>");
+        assert!(fields[2].imports.contains(&"java.util.Map"));
+        assert_eq!(fields[3].java_type, "Instant");
+        assert!(fields[3].imports.contains(&"java.time.Instant"));
+    }
+
+    #[test]
+    fn parse_fields_rejects_malformed_collection_types() {
+        // A bare `list` would otherwise become List<Object>, silently.
+        assert!(parse_fields(&["items:list".to_string()]).is_err());
+        assert!(parse_fields(&["items:list<nope>".to_string()]).is_err());
+        assert!(parse_fields(&["items:map<string>".to_string()]).is_err());
+        assert!(parse_fields(&["items:list<list<string>>".to_string()]).is_err());
+        // A collection already models absence; `?` on one is a mistake.
+        assert!(parse_fields(&["items:list<string>?".to_string()]).is_err());
+    }
+
+    /// A collection component must be copied (so the record is genuinely
+    /// immutable) and default to empty (so no consumer has to null-check a
+    /// bucket).
+    #[test]
+    fn collection_components_are_copied_and_default_to_empty() {
+        let fields = parse_fields(&["matched:list<Match>".to_string(), "rates:map<string,double>".to_string()]).unwrap();
+        let src = value_java("com.example.demo", "Result", &fields);
+
+        assert!(src.contains("List<Match> matched"), "{src}");
+        assert!(src.contains("matched = matched == null ? List.of() : List.copyOf(matched);"), "{src}");
+        assert!(src.contains("rates = rates == null ? Map.of() : Map.copyOf(rates);"), "{src}");
+        assert!(!src.contains("requireNonNull(matched"), "a collection is defaulted, not rejected: {src}");
     }
 
     #[test]
