@@ -14,6 +14,7 @@ pub enum ArtifactKind {
     Entity,
     Record,
     Value,
+    Enum,
     Command,
     Cli,
     Cases,
@@ -25,6 +26,26 @@ pub struct Field {
     pub java_type: String,
     pub needs_lob: bool,
     pub import: Option<&'static str>,
+    pub optionality: Optionality,
+    /// True when the type came from the project rather than the built-in
+    /// table, so jails knows the shape of exactly nothing about it.
+    pub owned: bool,
+}
+
+/// What a `!` or `?` suffix on a field type means.
+///
+/// Hardcoding one policy is what made `value` reject every blank string,
+/// including the description fields where blank is perfectly legal. Every
+/// value type in every project has this distinction, so it belongs in the
+/// syntax rather than in jails' opinion.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Optionality {
+    /// `name:string` -- must not be null.
+    Required,
+    /// `name:string!` -- must not be null, and must not be blank.
+    NonBlank,
+    /// `name:string?` -- may be null; nothing is checked.
+    Nullable,
 }
 
 fn field_type(token: &str) -> Result<(&'static str, bool, Option<&'static str>)> {
@@ -38,8 +59,25 @@ fn field_type(token: &str) -> Result<(&'static str, bool, Option<&'static str>)>
         "datetime" => Ok(("LocalDateTime", false, Some("java.time.LocalDateTime"))),
         "double" => Ok(("Double", false, None)),
         other => Err(format!(
-            "unknown field type '{other}' (known: string, text, int/integer, long, boolean, date, datetime, double)"
+            "unknown field type '{other}' (known: string, text, int/integer, long, boolean, date, datetime, double).\n       \
+             Capitalise it -- {}:{} -- to mean a type this project owns.",
+            other, capitalize(other)
         )),
+    }
+}
+
+/// The Java spellings of the built-in table, so `date:LocalDate` and
+/// `date:date` mean the same thing.
+fn builtin_by_java_name(ty: &str) -> Option<(&'static str, Option<&'static str>)> {
+    match ty {
+        "String" => Some(("String", None)),
+        "Integer" | "int" => Some(("Integer", None)),
+        "Long" | "long" => Some(("Long", None)),
+        "Boolean" | "boolean" => Some(("Boolean", None)),
+        "Double" | "double" => Some(("Double", None)),
+        "LocalDate" => Some(("LocalDate", Some("java.time.LocalDate"))),
+        "LocalDateTime" => Some(("LocalDateTime", Some("java.time.LocalDateTime"))),
+        _ => None,
     }
 }
 
@@ -49,12 +87,57 @@ fn parse_fields(args: &[String]) -> Result<Vec<Field>> {
             let (name, ty) = arg
                 .split_once(':')
                 .ok_or_else(|| format!("field '{arg}' must be name:type"))?;
-            let (java_type, needs_lob, import) = field_type(ty.trim().to_lowercase().as_str())?;
+
+            let ty = ty.trim();
+            let (ty, optionality) = match ty.strip_suffix('!') {
+                Some(rest) => (rest, Optionality::NonBlank),
+                None => match ty.strip_suffix('?') {
+                    Some(rest) => (rest, Optionality::Nullable),
+                    None => (ty, Optionality::Required),
+                },
+            };
+            if ty.is_empty() {
+                return Err(format!("field '{arg}' has a suffix but no type"));
+            }
+
+            // Case is the whole rule: a lowercase token is one of jails' own
+            // types, a capitalised one is a type this project owns and is
+            // passed through verbatim. No new syntax, and it makes the
+            // generators compose -- `generate record SourceRef`, then
+            // reference `source:SourceRef` from the next one.
+            // ...with one exception: the Java names the table itself produces.
+            // `id:String` is a natural thing to type, and treating it as an
+            // unknown project type would quietly disable the generated test.
+            if let Some(builtin) = builtin_by_java_name(ty) {
+                return Ok(Field {
+                    name: name.trim().to_string(),
+                    java_type: builtin.0.to_string(),
+                    needs_lob: false,
+                    import: builtin.1,
+                    optionality,
+                    owned: false,
+                });
+            }
+
+            if ty.starts_with(|c: char| c.is_uppercase()) {
+                return Ok(Field {
+                    name: name.trim().to_string(),
+                    java_type: ty.to_string(),
+                    needs_lob: false,
+                    import: None,
+                    optionality,
+                    owned: true,
+                });
+            }
+
+            let (java_type, needs_lob, import) = field_type(ty.to_lowercase().as_str())?;
             Ok(Field {
                 name: name.trim().to_string(),
                 java_type: java_type.to_string(),
                 needs_lob,
                 import,
+                optionality,
+                owned: false,
             })
         })
         .collect()
@@ -86,6 +169,29 @@ fn unboxed(java_type: &str) -> &str {
 /// A primitive component cannot be null, so it needs no runtime check.
 fn is_reference_type(java_type: &str) -> bool {
     !matches!(java_type, "int" | "long" | "boolean" | "double")
+}
+
+/// A component gets a null check when it *can* be null and was not marked `?`.
+fn needs_null_check(field: &Field) -> bool {
+    is_reference_type(unboxed(&field.java_type)) && field.optionality != Optionality::Nullable
+}
+
+/// Only `!` asks for the blank check, and only text can be blank.
+fn needs_blank_check(field: &Field) -> bool {
+    field.optionality == Optionality::NonBlank && field.java_type == "String"
+}
+
+/// Trim-then-reject, in that order, so " " fails rather than sneaking past.
+fn blank_checks(fields: &[&Field]) -> String {
+    let mut out = String::new();
+    for field in fields {
+        out += &format!("        {0} = {0}.trim();\n", field.name);
+        out += &format!(
+            "        if ({0}.isEmpty()) {{\n            throw new IllegalArgumentException(\"{0} must not be blank\");\n        }}\n",
+            field.name
+        );
+    }
+    out
 }
 
 /// Walk up from the current directory looking for pom.xml.
@@ -424,7 +530,7 @@ pub fn generate(kind: ArtifactKind, name: &str, fields: &[String], package: Opti
                 Artifact {
                     kind: "record test",
                     path: test_dir(&root, &domain).join(format!("{name}Test.java")),
-                    contents: record_test(&domain, &name, &parsed),
+                    contents: record_test(&root, &domain, &name, &parsed),
                 },
             ]
         }
@@ -443,7 +549,23 @@ pub fn generate(kind: ArtifactKind, name: &str, fields: &[String], package: Opti
                 Artifact {
                     kind: "value test",
                     path: test_dir(&root, &domain).join(format!("{name}Test.java")),
-                    contents: value_test(&domain, &name, &parsed),
+                    contents: value_test(&root, &domain, &name, &parsed),
+                },
+            ]
+        }
+        ArtifactKind::Enum => {
+            let constants = parse_constants(fields)?;
+            let domain = place(layout::DOMAIN);
+            vec![
+                Artifact {
+                    kind: "enum",
+                    path: main_dir(&root, &domain).join(format!("{name}.java")),
+                    contents: enum_java(&domain, &name, &constants),
+                },
+                Artifact {
+                    kind: "enum test",
+                    path: test_dir(&root, &domain).join(format!("{name}Test.java")),
+                    contents: enum_test(&domain, &name, &constants),
                 },
             ]
         }
@@ -612,7 +734,7 @@ pub fn destroy(kind: ArtifactKind, name: &str, force: bool, package: Option<&str
         }
         // An entity, a record and a value are three shapes of the same named
         // type, so they occupy -- and free -- exactly the same two paths.
-        ArtifactKind::Entity | ArtifactKind::Record | ArtifactKind::Value => vec![
+        ArtifactKind::Entity | ArtifactKind::Record | ArtifactKind::Value | ArtifactKind::Enum => vec![
             main_dir(&root, &place(layout::DOMAIN)).join(format!("{name}.java")),
             test_dir(&root, &place(layout::DOMAIN)).join(format!("{name}Test.java")),
         ],
@@ -888,10 +1010,13 @@ fn entity_test(pkg: &str, name: &str, fields: &[Field]) -> String {
 // constructed in the first place. ----
 
 fn record_java(pkg: &str, name: &str, fields: &[Field]) -> String {
-    // Only reference components can be null, so only they need a check -- and
-    // if none of them can, the compact constructor is dead weight.
-    let checked: Vec<&Field> = fields.iter().filter(|f| is_reference_type(unboxed(&f.java_type))).collect();
+    // Only reference components can be null, and only ones not marked `?`
+    // are checked -- if that leaves nothing, the compact constructor is dead
+    // weight.
+    let checked: Vec<&Field> = fields.iter().filter(|f| needs_null_check(f)).collect();
+    let blank_checked: Vec<&Field> = fields.iter().filter(|f| needs_blank_check(f)).collect();
     let needs_objects = !checked.is_empty();
+    let needs_constructor = needs_objects || !blank_checked.is_empty();
     let mut imports: Vec<&str> = fields.iter().filter_map(|f| f.import).collect();
     if needs_objects {
         imports.push("java.util.Objects");
@@ -916,17 +1041,21 @@ fn record_java(pkg: &str, name: &str, fields: &[Field]) -> String {
     out += "/**\n";
     out += &format!(" * An immutable {name} value.\n");
     out += " *\n";
-    if needs_objects {
-        out += " * <p>The compact constructor rejects nulls, so any instance that exists is\n";
-        out += " * a valid one and callers downstream do not have to re-check.\n";
+    if needs_constructor {
+        out += " * <p>The compact constructor rejects what the field spec said to reject, so\n";
+        out += " * any instance that exists is a valid one and callers downstream do not\n";
+        out += " * have to re-check.\n";
     } else {
-        out += " * <p>Every component is a primitive, so there is nothing to validate: no\n";
-        out += " * instance of this record can be in an invalid state.\n";
+        out += " * <p>There is nothing to validate: no instance of this record can be in an\n";
+        out += " * invalid state.\n";
+    }
+    for field in fields.iter().filter(|f| f.optionality == Optionality::Nullable) {
+        out += &format!(" *\n * <p>{} may be null.\n", field.name);
     }
     out += " */\n";
     out += &format!("public record {name}({components}) {{\n");
 
-    if needs_objects {
+    if needs_constructor {
         out += &format!("\n    public {name} {{\n");
         for field in &checked {
             out += &format!(
@@ -934,6 +1063,7 @@ fn record_java(pkg: &str, name: &str, fields: &[Field]) -> String {
                 name = field.name
             );
         }
+        out += &blank_checks(&blank_checked);
         out += "    }\n";
     }
 
@@ -943,12 +1073,23 @@ fn record_java(pkg: &str, name: &str, fields: &[Field]) -> String {
 
 /// A companion test asserting the accessors return what was passed and that
 /// the compact constructor actually rejects a null.
-fn record_test(pkg: &str, name: &str, fields: &[Field]) -> String {
+fn record_test(root: &Path, pkg: &str, name: &str, fields: &[Field]) -> String {
     let mut imports: Vec<&str> = fields.iter().filter_map(|f| f.import).collect();
     imports.sort();
     imports.dedup();
 
-    let args = fields.iter().map(|f| sample_literal(&f.java_type).to_string()).collect::<Vec<_>>().join(", ");
+    // A component whose type this project owns has no literal jails can write.
+    // Rather than invent a constructor call that will not compile, the test is
+    // generated in full and disabled, naming exactly what it needs.
+    let samples: Vec<Option<String>> = fields.iter().map(|f| sample_value(f, root, pkg)).collect();
+    let unfabricable: Vec<&str> =
+        fields.iter().zip(&samples).filter(|(_, s)| s.is_none()).map(|(f, _)| f.name.as_str()).collect();
+    let args = samples
+        .iter()
+        .zip(fields)
+        .map(|(sample, field)| sample.clone().unwrap_or_else(|| format!("/* TODO: a {} */ null", field.java_type)))
+        .collect::<Vec<_>>()
+        .join(", ");
     let var = name.to_lowercase();
 
     let mut out = format!("package {pkg};\n\n");
@@ -959,27 +1100,38 @@ fn record_test(pkg: &str, name: &str, fields: &[Field]) -> String {
             out += &format!("import {imp};\n");
         }
     }
-    // Only a reference component can be passed null; against a primitive the
-    // test would not compile.
-    let first_reference = fields.iter().find(|f| is_reference_type(unboxed(&f.java_type)));
+    // The nulled component must be one the constructor actually checks: a
+    // primitive cannot take null at all, and a `?` one is allowed to be null.
+    let first_reference = fields.iter().find(|f| needs_null_check(f));
 
     out += "\nimport static org.assertj.core.api.Assertions.assertThat;\n";
     if first_reference.is_some() {
         out += "import static org.assertj.core.api.Assertions.assertThatNullPointerException;\n";
     }
-    out += &format!("\nclass {name}Test {{\n\n");
+    if !unfabricable.is_empty() {
+        out += "\nimport org.junit.jupiter.api.Disabled;\n";
+    }
+    out += "\n";
+    if !unfabricable.is_empty() {
+        out += &format!(
+            "@Disabled(\"todo: supply a sample for {} -- jails cannot know how to build one\")\n",
+            unfabricable.join(", ")
+        );
+    }
+    out += &format!("class {name}Test {{\n\n");
 
     out += "    @Test\n    void accessorsReturnWhatWasConstructed() {\n";
     out += &format!("        {name} {var} = new {name}({args});\n\n");
     if fields.is_empty() {
         out += &format!("        assertThat({var}).isEqualTo(new {name}());\n");
     } else {
-        for field in fields {
-            out += &format!(
-                "        assertThat({var}.{}()).isEqualTo({});\n",
-                field.name,
-                sample_literal(&field.java_type)
-            );
+        for (field, sample) in fields.iter().zip(&samples) {
+            match sample {
+                Some(value) => {
+                    out += &format!("        assertThat({var}.{}()).isEqualTo({value});\n", field.name)
+                }
+                None => out += &format!("        // TODO: assert on {}\n", field.name),
+            }
         }
     }
     out += "    }\n";
@@ -989,11 +1141,12 @@ fn record_test(pkg: &str, name: &str, fields: &[Field]) -> String {
         // constructor runs, and a case per field would just restate it.
         let nulled = fields
             .iter()
-            .map(|f| {
+            .zip(&samples)
+            .map(|(f, sample)| {
                 if f.name == first.name {
                     "null".to_string()
                 } else {
-                    sample_literal(&f.java_type).to_string()
+                    sample.clone().unwrap_or_else(|| "null".to_string())
                 }
             })
             .collect::<Vec<_>>()
@@ -1104,6 +1257,28 @@ class {name}CommandTest {{
 }}
 "#
     )
+}
+
+/// A literal a generated test can construct the component from.
+///
+/// `None` means jails cannot fabricate one: a type this project owns could
+/// have any constructor at all, and guessing produces a test that does not
+/// compile. The one case it *can* solve is an enum -- hence `generate enum`
+/// pulling its weight twice.
+fn sample_value(field: &Field, root: &Path, pkg: &str) -> Option<String> {
+    if !field.owned {
+        return Some(sample_literal(&field.java_type).to_string());
+    }
+    is_enum(root, pkg, &field.java_type).then(|| format!("{}.values()[0]", field.java_type))
+}
+
+/// Whether `<Type>.java` in this package declares an enum. Reading the file is
+/// the only honest way to know: jails has no type model, and guessing from the
+/// name would be worse than admitting ignorance.
+fn is_enum(root: &Path, pkg: &str, type_name: &str) -> bool {
+    fs::read_to_string(main_dir(root, pkg).join(format!("{type_name}.java")))
+        .map(|src| src.contains(&format!("enum {type_name}")))
+        .unwrap_or(false)
 }
 
 fn sample_literal(java_type: &str) -> &'static str {
@@ -1284,8 +1459,8 @@ class {name}ControllerTest {{
 // identifier that is present but empty passes every null check downstream. ----
 
 fn value_java(pkg: &str, name: &str, fields: &[Field]) -> String {
-    let strings: Vec<&Field> = fields.iter().filter(|f| f.java_type == "String").collect();
-    let checked: Vec<&Field> = fields.iter().filter(|f| is_reference_type(unboxed(&f.java_type))).collect();
+    let strings: Vec<&Field> = fields.iter().filter(|f| needs_blank_check(f)).collect();
+    let checked: Vec<&Field> = fields.iter().filter(|f| needs_null_check(f)).collect();
 
     let mut imports: Vec<&str> = fields.iter().filter_map(|f| f.import).collect();
     if !checked.is_empty() {
@@ -1315,9 +1490,12 @@ fn value_java(pkg: &str, name: &str, fields: &[Field]) -> String {
     out += " * skipped it, not even through deserialisation or a copy.\n";
     if !strings.is_empty() {
         out += " *\n";
-        out += " * <p>Text is trimmed and then required to be non-blank: a present-but-empty\n";
-        out += " * value passes every null check downstream, which is exactly why it is\n";
-        out += " * worth rejecting here instead.\n";
+        out += " * <p>Text marked {@code !} is trimmed and then required to be non-blank: a\n";
+        out += " * present-but-empty value passes every null check downstream, which is\n";
+        out += " * exactly why it is worth rejecting here instead.\n";
+    }
+    for field in fields.iter().filter(|f| f.optionality == Optionality::Nullable) {
+        out += &format!(" *\n * <p>{} may be null.\n", field.name);
     }
     out += " */\n";
     out += &format!("public record {name}({components}) {{\n\n");
@@ -1328,13 +1506,7 @@ fn value_java(pkg: &str, name: &str, fields: &[Field]) -> String {
     for field in &checked {
         out += &format!("        Objects.requireNonNull({0}, \"{0} is required\");\n", field.name);
     }
-    for field in &strings {
-        out += &format!("        {0} = {0}.trim();\n", field.name);
-        out += &format!(
-            "        if ({0}.isEmpty()) {{\n            throw new IllegalArgumentException(\"{0} must not be blank\");\n        }}\n",
-            field.name
-        );
-    }
+    out += &blank_checks(&strings);
     out += "    }\n\n";
 
     out += "    /**\n";
@@ -1349,23 +1521,35 @@ fn value_java(pkg: &str, name: &str, fields: &[Field]) -> String {
     out
 }
 
-fn value_test(pkg: &str, name: &str, fields: &[Field]) -> String {
-    let strings: Vec<&Field> = fields.iter().filter(|f| f.java_type == "String").collect();
+fn value_test(root: &Path, pkg: &str, name: &str, fields: &[Field]) -> String {
+    // Only `!` fields are trimmed and blank-checked, so only they have those
+    // behaviours to assert.
+    let strings: Vec<&Field> = fields.iter().filter(|f| needs_blank_check(f)).collect();
 
     let mut imports: Vec<&str> = fields.iter().filter_map(|f| f.import).collect();
     imports.sort();
     imports.dedup();
 
-    let args = fields.iter().map(|f| sample_literal(&f.java_type).to_string()).collect::<Vec<_>>().join(", ");
+    let samples: Vec<Option<String>> = fields.iter().map(|f| sample_value(f, root, pkg)).collect();
+    let unfabricable: Vec<&str> =
+        fields.iter().zip(&samples).filter(|(_, s)| s.is_none()).map(|(f, _)| f.name.as_str()).collect();
+    let placeholder = |field: &Field| format!("/* TODO: a {} */ null", field.java_type);
+    let args = samples
+        .iter()
+        .zip(fields)
+        .map(|(sample, field)| sample.clone().unwrap_or_else(|| placeholder(field)))
+        .collect::<Vec<_>>()
+        .join(", ");
     // Same argument list, but with one named component swapped out.
     let args_with = |target: &str, replacement: &str| {
         fields
             .iter()
-            .map(|f| {
+            .zip(&samples)
+            .map(|(f, sample)| {
                 if f.name == target {
                     replacement.to_string()
                 } else {
-                    sample_literal(&f.java_type).to_string()
+                    sample.clone().unwrap_or_else(|| placeholder(f))
                 }
             })
             .collect::<Vec<_>>()
@@ -1381,23 +1565,32 @@ fn value_test(pkg: &str, name: &str, fields: &[Field]) -> String {
         }
     }
     out += "\nimport static org.assertj.core.api.Assertions.assertThat;\n";
-    out += "import static org.assertj.core.api.Assertions.assertThatThrownBy;\n\n";
+    out += "import static org.assertj.core.api.Assertions.assertThatThrownBy;\n";
+    if !unfabricable.is_empty() {
+        out += "\nimport org.junit.jupiter.api.Disabled;\n";
+    }
+    out += "\n";
+    if !unfabricable.is_empty() {
+        out += &format!(
+            "@Disabled(\"todo: supply a sample for {} -- jails cannot know how to build one\")\n",
+            unfabricable.join(", ")
+        );
+    }
     out += &format!("class {name}Test {{\n\n");
 
     out += "    @Test\n    void keepsWhatItWasGiven() {\n";
     out += &format!("        var value = {name}.of({args});\n\n");
-    for field in fields {
-        out += &format!(
-            "        assertThat(value.{}()).isEqualTo({});\n",
-            field.name,
-            sample_literal(&field.java_type)
-        );
+    for (field, sample) in fields.iter().zip(&samples) {
+        match sample {
+            Some(value) => out += &format!("        assertThat(value.{}()).isEqualTo({value});\n", field.name),
+            None => out += &format!("        // TODO: assert on {}\n", field.name),
+        }
     }
     out += "    }\n\n";
 
-    // A primitive component cannot be handed null, so there is nothing to
-    // assert about one -- and the generated test would not compile.
-    if let Some(first) = fields.iter().find(|f| is_reference_type(unboxed(&f.java_type))) {
+    // Only a component the constructor actually checks: a primitive cannot be
+    // handed null, and a `?` one is allowed to be.
+    if let Some(first) = fields.iter().find(|f| needs_null_check(f)) {
         out += "    @Test\n    void rejectsANullComponent() {\n";
         out += &format!(
             "        assertThatThrownBy(() -> {name}.of({}))\n                .isInstanceOf(NullPointerException.class)\n                .hasMessageContaining(\"{}\");\n",
@@ -1428,6 +1621,81 @@ fn value_test(pkg: &str, name: &str, fields: &[Field]) -> String {
 
     out += "}\n";
     out
+}
+
+// ---- enum: the closed set of alternatives, and the one owned type whose
+// shape jails can work out without being told. ----
+
+/// Enum constants are `SCREAMING_SNAKE_CASE` by convention, and a generated
+/// file that ignores the convention is one the reader has to think about.
+fn parse_constants(args: &[String]) -> Result<Vec<String>> {
+    if args.is_empty() {
+        return Err("an enum needs at least one constant, e.g. `generate enum Currency GBP EUR`".to_string());
+    }
+    let mut constants = Vec::new();
+    for arg in args {
+        let constant: String = arg
+            .trim()
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_uppercase() } else { '_' })
+            .collect();
+        if constant.is_empty() || constant.starts_with(|c: char| c.is_ascii_digit()) {
+            return Err(format!("'{arg}' is not a usable enum constant"));
+        }
+        if constants.contains(&constant) {
+            return Err(format!("duplicate enum constant '{constant}'"));
+        }
+        constants.push(constant);
+    }
+    Ok(constants)
+}
+
+fn enum_java(pkg: &str, name: &str, constants: &[String]) -> String {
+    let mut out = format!("package {pkg};\n\n");
+    out += "/**\n";
+    out += &format!(" * The {name} values this application understands.\n");
+    out += " *\n";
+    out += " * <p>A closed set, so a switch over it is checked for exhaustiveness and\n";
+    out += " * adding a constant makes the compiler point at every place that has to\n";
+    out += " * handle it.\n";
+    out += " */\n";
+    out += &format!("public enum {name} {{\n");
+    out += &format!("    {}\n", constants.join(",\n    "));
+    out += "}\n";
+    out
+}
+
+fn enum_test(pkg: &str, name: &str, constants: &[String]) -> String {
+    let first = &constants[0];
+    format!(
+        r#"package {pkg};
+
+import org.junit.jupiter.api.Test;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
+
+class {name}Test {{
+
+    @Test
+    void parsesItsOwnNames() {{
+        assertThat({name}.valueOf("{first}")).isEqualTo({name}.{first});
+    }}
+
+    /** The failure mode worth pinning: valueOf throws, it does not return null. */
+    @Test
+    void rejectsAnUnknownName() {{
+        assertThatIllegalArgumentException().isThrownBy(() -> {name}.valueOf("NOPE"));
+    }}
+
+    @Test
+    void declaresEveryConstantExactlyOnce() {{
+        assertThat({name}.values()).hasSize({count}).doesNotHaveDuplicates();
+    }}
+}}
+"#,
+        count = constants.len()
+    )
 }
 
 // ---- cli: the dispatcher that `generate command` leaves you to write. ----
@@ -2021,12 +2289,43 @@ mod tests {
 
     #[test]
     fn parse_fields_splits_name_and_type() {
-        let fields = parse_fields(&["title:string".to_string(), "body:TEXT".to_string()]).unwrap();
+        let fields = parse_fields(&["title:string".to_string(), "body:Text".to_string()]).unwrap();
         assert_eq!(fields[0].name, "title");
         assert_eq!(fields[0].java_type, "String");
         assert!(!fields[0].needs_lob);
-        assert_eq!(fields[1].name, "body");
-        assert!(fields[1].needs_lob);
+        // Capitalised means "a type this project owns", so `Text` is no longer
+        // the built-in -- that is the whole point of the rule.
+        assert_eq!(fields[1].java_type, "Text");
+        assert!(fields[1].owned);
+        assert!(parse_fields(&["body:text".to_string()]).unwrap()[0].needs_lob);
+    }
+
+    /// The Java spellings of the built-in types stay built-in: `id:String`
+    /// must not be read as an unknown project type.
+    #[test]
+    fn parse_fields_treats_java_type_names_as_builtins() {
+        let fields = parse_fields(&["id:String".to_string(), "on:LocalDate".to_string()]).unwrap();
+        assert!(!fields[0].owned);
+        assert_eq!(fields[0].java_type, "String");
+        assert!(!fields[1].owned);
+        assert_eq!(fields[1].import, Some("java.time.LocalDate"));
+    }
+
+    #[test]
+    fn parse_fields_reads_the_optionality_suffixes() {
+        let fields = parse_fields(&[
+            "id:string!".to_string(),
+            "note:string?".to_string(),
+            "name:string".to_string(),
+            "source:SourceRef?".to_string(),
+        ])
+        .unwrap();
+        assert_eq!(fields[0].optionality, Optionality::NonBlank);
+        assert_eq!(fields[1].optionality, Optionality::Nullable);
+        assert_eq!(fields[2].optionality, Optionality::Required);
+        assert_eq!(fields[3].optionality, Optionality::Nullable);
+        assert!(fields[3].owned);
+        assert_eq!(fields[3].java_type, "SourceRef");
     }
 
     #[test]
@@ -2207,7 +2506,7 @@ mod tests {
     #[test]
     fn record_test_covers_the_accessors_and_the_null_rejection() {
         let fields = parse_fields(&["amount:long".to_string(), "currency:string".to_string()]).unwrap();
-        let test = record_test("com.example.demo", "Money", &fields);
+        let test = record_test(Path::new("/nonexistent"), "com.example.demo", "Money", &fields);
 
         assert!(test.contains("class MoneyTest"));
         assert!(test.contains("new Money(1L, \"sample\")"));
@@ -2222,7 +2521,7 @@ mod tests {
     /// rejection would not compile -- it must not be emitted.
     #[test]
     fn record_test_skips_the_null_case_for_a_no_field_record() {
-        let test = record_test("com.example.demo", "Marker", &[]);
+        let test = record_test(Path::new("/nonexistent"), "com.example.demo", "Marker", &[]);
 
         assert!(!test.contains("assertThatNullPointerException"));
         assert!(!test.contains("import static org.assertj.core.api.Assertions.assertThatNullPointerException;"));

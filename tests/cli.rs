@@ -712,6 +712,61 @@ fn every_generator_and_capability_together_compiles_and_passes_tests() {
     assert!(status.success(), "the generated project failed its own tests");
 }
 
+/// The generators composing: an enum and a record, then a value type that
+/// references both by name. Proves the three halves of the field syntax --
+/// capitalised = a type this project owns, `!`/`?` optionality, and the
+/// enum-aware sample values -- produce a project that actually compiles.
+#[test]
+fn generators_compose_through_user_owned_field_types() {
+    if !real_mvn_available() {
+        eprintln!("skipping: mvn not found on PATH");
+        return;
+    }
+    if !real_java_supports_target_release() {
+        eprintln!("skipping: javac on PATH does not support --release {TARGET_RELEASE}");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let workdir = temp_dir("real-compose");
+    jails_cmd_with_path(&workdir, &path).args(["new-cli", "gym"]).status().unwrap();
+    let root = workdir.join("gym");
+
+    for args in [
+        vec!["generate", "enum", "currency", "GBP", "EUR"],
+        vec!["generate", "record", "sourceRef", "system:string", "externalId:string"],
+        vec![
+            "generate",
+            "value",
+            "canonicalTransaction",
+            "id:string!",
+            "date:date",
+            "amountMinor:long",
+            "currency:Currency",
+            "source:SourceRef",
+            "note:string?",
+        ],
+    ] {
+        let status = jails_cmd_with_path(&root, &path).args(&args).status().unwrap();
+        assert!(status.success(), "{args:?} failed");
+    }
+
+    let value = fs::read_to_string(root.join("src/main/java/com/example/gym/domain/CanonicalTransaction.java")).unwrap();
+    assert!(value.contains("Currency currency"), "an owned type is used verbatim: {value}");
+    assert!(value.contains("SourceRef source"), "{value}");
+    assert!(value.contains("long amountMinor"), "built-ins stay primitive: {value}");
+    assert!(value.contains(r#"throw new IllegalArgumentException("id must not be blank")"#), "! means non-blank: {value}");
+    assert!(!value.contains(r#"requireNonNull(note"#), "? means nothing is checked: {value}");
+
+    // An enum-typed component can be sampled; one whose constructor jails
+    // cannot know must disable the test rather than guess.
+    let test = fs::read_to_string(root.join("src/test/java/com/example/gym/domain/CanonicalTransactionTest.java")).unwrap();
+    assert!(test.contains("Currency.values()[0]"), "{test}");
+    assert!(test.contains("@Disabled"), "an unfabricable component must disable the test: {test}");
+
+    let status = jails_cmd_with_path(&root, &path).arg("test").status().unwrap();
+    assert!(status.success(), "the composed project failed to compile or test");
+}
+
 /// The end-to-end path the tool exists for: generate a command, and have it
 /// reachable by name with its arguments. Covers three things no unit test can
 /// -- that `generate command` really registered itself in the dispatcher, that

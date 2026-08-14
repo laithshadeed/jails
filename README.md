@@ -73,9 +73,37 @@ the code lands; `--package ''` writes straight into the base package.
 Every command takes `--debug`, which prints the `mvn`/`mvnd`/`java`/`git`/`curl`
 command lines jails shells out to instead of running them silently.
 
-Field types: `string`, `text` (`@Lob` on an entity, a plain `String`
-everywhere else), `int`/`integer`, `long`, `boolean`, `date`, `datetime`,
-`double`.
+- `jails generate|g enum <Name> <CONSTANT...>` — a plain enum plus its test.
+  Also the one type jails can build a sample of, which is why an enum-typed
+  component keeps its companion test working.
+
+## Field syntax
+
+`name:type`, with two modifiers:
+
+**Case picks the table.** A lowercase type is one of jails' own — `string`,
+`text` (`@Lob` on an entity, a plain `String` elsewhere), `int`/`integer`,
+`long`, `boolean`, `date`, `datetime`, `double`. A **capitalised** one is a
+type this project owns and is used verbatim, so the generators compose:
+
+```
+jails g enum Currency GBP EUR USD
+jails g record SourceRef system:string externalId:string
+jails g value CanonicalTransaction id:string! amountMinor:long \
+    currency:Currency source:SourceRef note:string?
+```
+
+The Java spellings of the built-ins (`String`, `LocalDate`, …) still mean the
+built-in, so `id:String` behaves like `id:string`.
+
+**A suffix picks the validation.** `name:string!` is required *and* non-blank;
+`name:string?` may be null and is not checked; bare `name:string` is required
+but may be blank. Hardcoding one policy is what made every generated value type
+reject blank descriptions.
+
+jails cannot invent a sample of a type you own, so a companion test that needs
+one is generated in full and `@Disabled`, naming the component it needs — an
+enum-typed component is filled in with `Currency.values()[0]` instead.
 
 ## What a new project looks like
 

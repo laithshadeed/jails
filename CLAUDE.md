@@ -78,6 +78,29 @@ Formatter *wrapping* is a different matter and cannot be predicted from a
 template, so `add format` runs `spotless:apply` once (best-effort -- a machine
 without Maven just gets a note).
 
+## Field syntax: case is the rule
+
+`parse_fields` reads `name:type[!?]`. **Lowercase = jails' table, capitalised =
+a type the project owns**, passed through verbatim with no import (same
+package). `builtin_by_java_name` is the exception that keeps `id:String`
+working; without it a natural spelling would be read as an unknown project type
+and silently disable the generated test.
+
+The suffix sets `Optionality`: `!` non-blank, `?` unchecked/nullable, bare
+non-null. `needs_null_check`/`needs_blank_check` are the only two places that
+decide, so `record` and `value` cannot drift apart.
+
+**`sample_value` returns `Option`** because jails has no type model: it cannot
+know a `SourceRef` constructor. An enum it *can* handle -- `is_enum` reads the
+file -- which is why `generate enum` earns its place twice. When a sample is
+impossible the companion test is emitted whole and `@Disabled`, naming the
+component; emitting a guess would produce a test that does not compile, and
+emitting nothing would silently drop coverage.
+
+**`?` does not emit `Optional`.** A record accessor cannot be overridden to
+return a different type, and `java.md` bans `Optional` as a field, so `?` means
+"nullable and unchecked, documented as such".
+
 ## Gotchas hit so far
 
 - **Generated projects target Java 27** (`pom::TARGET_RELEASE`), which is
