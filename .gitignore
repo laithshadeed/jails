@@ -1,6 +1,6 @@
 /target
 
-# Local reference checkouts used for research only (see prompt.md) -- each
+# Local reference checkouts used for research only -- each
 # is its own separate git repo, never part of this one.
 /rails/
 /start.spring.io/

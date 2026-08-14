@@ -110,7 +110,7 @@ function M.dispatch(fargs)
   M.run(fargs)
 end
 
-local KINDS = { 'scaffold', 'controller', 'service', 'repository', 'entity', 'test' }
+local KINDS = { 'scaffold', 'controller', 'service', 'repository', 'entity', 'record', 'command', 'test' }
 local SUBCOMMANDS = { 'new', 'new-cli', 'generate', 'g', 'destroy', 'd', 'test', 'build', 'run', 'completion' }
 
 --- Completion for :Jails -- subcommand first, artifact kind as the second

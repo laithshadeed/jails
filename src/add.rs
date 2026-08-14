@@ -565,10 +565,25 @@ class {database}Test {{
 // json
 // ---------------------------------------------------------------------------
 
+const JACKSON_VERSION: &str = "2.19.0";
+
 const JACKSON: Dependency = Dependency {
     group_id: "com.fasterxml.jackson.core",
     artifact_id: "jackson-databind",
-    version: Some("2.19.0"),
+    version: Some(JACKSON_VERSION),
+    scope: None,
+};
+
+/// `findAndRegisterModules()` only finds modules that are actually on the
+/// classpath, and plain `jackson-databind` ships no `java.time` support. Since
+/// `generate`'s field-type table maps `date`/`datetime` to `LocalDate` and
+/// `LocalDateTime`, leaving this out means every generated date serialises as
+/// a nested `{"year":...}` object instead of an ISO string. Spring Boot pulls
+/// it in transitively, so only the plain-Maven flavor felt it.
+const JACKSON_JSR310: Dependency = Dependency {
+    group_id: "com.fasterxml.jackson.datatype",
+    artifact_id: "jackson-datatype-jsr310",
+    version: Some(JACKSON_VERSION),
     scope: None,
 };
 
@@ -579,13 +594,16 @@ fn json_plan(root: &std::path::Path, pkg: &str, flavor: Flavor, name: Option<&st
     // Spring Boot's dependency management already pins Jackson (and the web
     // starter pulls it in transitively), so declaring a version here would
     // fight the parent pom.
-    let dep = match flavor {
-        Flavor::SpringBoot => Dependency { version: None, ..JACKSON },
-        Flavor::PlainMaven => JACKSON,
+    let deps = match flavor {
+        Flavor::SpringBoot => vec![
+            Dependency { version: None, ..JACKSON },
+            Dependency { version: None, ..JACKSON_JSR310 },
+        ],
+        Flavor::PlainMaven => vec![JACKSON, JACKSON_JSR310],
     };
 
     Ok(Plan {
-        deps: vec![dep],
+        deps,
         files: vec![
             NewFile {
                 path: main_dir(root, pkg).join(format!("{class}.java")),
@@ -604,6 +622,7 @@ fn json_java(pkg: &str, class: &str) -> String {
         r#"package {pkg};
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import java.io.IOException;
@@ -615,8 +634,14 @@ import java.util.List;
  * JSON reading and writing over one shared, thread-safe {{@link ObjectMapper}}.
  *
  * <p>Records map to JSON objects without any annotations, and
- * {{@code findAndRegisterModules()}} picks up whatever Jackson modules are on
- * the classpath (java.time support, for one).
+ * {{@code findAndRegisterModules()}} picks up the java.time module that ships
+ * alongside this class, so {{@code LocalDate}} round-trips as an ISO string.
+ *
+ * <p>Two ways in, for two situations. {{@link #read}} binds the whole document
+ * to a type -- right for input you control, wrong for input you do not, since
+ * one bad element fails the entire parse. For untrusted input use
+ * {{@link #readTree}} and {{@link #convert}} to validate element by element,
+ * keeping the good records and reporting the bad ones.
  */
 public final class {class} {{
 
@@ -630,6 +655,24 @@ public final class {class} {{
         try (var in = Files.newInputStream(path)) {{
             return MAPPER.readValue(in, type);
         }}
+    }}
+
+    /**
+     * Reads the whole document as a tree, without binding it to any type.
+     *
+     * <p>Use this when the shape cannot be trusted: walk the tree, check each
+     * node with {{@code isObject()}} and friends, and {{@link #convert}} the ones
+     * that look right. Nothing is lost to a single malformed element.
+     */
+    public static JsonNode readTree(Path path) throws IOException {{
+        try (var in = Files.newInputStream(path)) {{
+            return MAPPER.readTree(in);
+        }}
+    }}
+
+    /** Binds one already-parsed tree node to {{@code type}}. */
+    public static <T> T convert(JsonNode node, Class<T> type) {{
+        return MAPPER.convertValue(node, type);
     }}
 
     /** Reads a top-level JSON array into a list of {{@code element}}. */
@@ -664,9 +707,12 @@ fn json_test_java(pkg: &str, class: &str) -> String {
         r#"package {pkg};
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -675,6 +721,8 @@ class {class}Test {{
 
     /** Records need no annotations to round-trip. */
     record Item(String name, int qty) {{}}
+
+    record Dated(String name, LocalDate on) {{}}
 
     @TempDir
     Path tmp;
@@ -698,6 +746,53 @@ class {class}Test {{
     @Test
     void roundTripsThroughAString() throws Exception {{
         assertEquals(new Item("bolt", 7), {class}.parse({class}.toJson(new Item("bolt", 7)), Item.class));
+    }}
+
+    /**
+     * Without the java.time module on the classpath this writes
+     * {{@code {{"year":2026,...}}}} instead of an ISO string, and reading it back
+     * fails outright.
+     */
+    @Test
+    void writesDatesAsIsoStringsNotObjects() throws Exception {{
+        var json = {class}.toJson(new Dated("invoice", LocalDate.of(2026, 8, 1)));
+
+        assertTrue(json.contains("\"2026-08-01\""), "expected an ISO date in " + json);
+        assertEquals(new Dated("invoice", LocalDate.of(2026, 8, 1)), {class}.parse(json, Dated.class));
+    }}
+
+    @Test
+    void readsATreeWithoutBindingItToAType() throws Exception {{
+        var path = tmp.resolve("tree.json");
+        Files.writeString(path, "{{\"items\":[{{\"name\":\"bolt\",\"qty\":7}}]}}");
+
+        var root = {class}.readTree(path);
+
+        assertTrue(root.isObject());
+        assertEquals("bolt", root.get("items").get(0).get("name").asText());
+    }}
+
+    /**
+     * The reason the tree API exists: a document with junk mixed into an array
+     * still yields every well-formed element, rather than failing as a whole.
+     */
+    @Test
+    void keepsGoodElementsWhenSiblingsAreMalformed() throws Exception {{
+        var path = tmp.resolve("mixed.json");
+        Files.writeString(path, "[{{\"name\":\"bolt\",\"qty\":7}},\"not-an-object\",{{\"name\":\"nut\",\"qty\":3}}]");
+
+        var good = new ArrayList<Item>();
+        var skipped = 0;
+        for (var node : {class}.readTree(path)) {{
+            if (node.isObject()) {{
+                good.add({class}.convert(node, Item.class));
+            }} else {{
+                skipped++;
+            }}
+        }}
+
+        assertEquals(List.of(new Item("bolt", 7), new Item("nut", 3)), good);
+        assertEquals(1, skipped);
     }}
 }}
 "#
@@ -779,9 +874,45 @@ mod tests {
         assert_eq!(JACKSON.version, Some("2.19.0"));
         let root = std::path::Path::new("/tmp/does-not-matter");
         let spring = json_plan(root, "com.example.demo", Flavor::SpringBoot, None).unwrap();
-        assert_eq!(spring.deps[0].version, None);
+        assert!(spring.deps.iter().all(|d| d.version.is_none()));
         let plain = json_plan(root, "com.example.demo", Flavor::PlainMaven, None).unwrap();
-        assert_eq!(plain.deps[0].version, Some("2.19.0"));
+        assert!(plain.deps.iter().all(|d| d.version == Some(JACKSON_VERSION)));
+    }
+
+    /// Without jackson-datatype-jsr310 on the classpath,
+    /// `findAndRegisterModules()` finds no java.time support and every
+    /// LocalDate -- a type `generate`'s own field table emits -- serialises as
+    /// a nested object instead of an ISO string.
+    #[test]
+    fn json_ships_the_java_time_module_alongside_databind() {
+        let root = std::path::Path::new("/tmp/does-not-matter");
+        for flavor in [Flavor::SpringBoot, Flavor::PlainMaven] {
+            let plan = json_plan(root, "com.example.demo", flavor, None).unwrap();
+            let artifacts: Vec<&str> = plan.deps.iter().map(|d| d.artifact_id).collect();
+            assert!(artifacts.contains(&"jackson-databind"), "{flavor:?} is missing databind");
+            assert!(artifacts.contains(&"jackson-datatype-jsr310"), "{flavor:?} is missing java.time support");
+        }
+    }
+
+    /// The two Jackson artifacts are released in lockstep and mixing versions
+    /// across them is a documented source of NoSuchMethodError.
+    #[test]
+    fn json_pins_both_jackson_artifacts_to_one_version() {
+        assert_eq!(JACKSON.version, JACKSON_JSR310.version);
+    }
+
+    /// `read(path, type)` loses the whole document to one bad element, so the
+    /// generated class has to offer a tree route for untrusted input.
+    #[test]
+    fn json_offers_a_tree_api_for_input_whose_shape_is_not_trusted() {
+        let src = json_java("com.example.demo", "Json");
+        assert!(src.contains("public static JsonNode readTree(Path path)"));
+        assert!(src.contains("public static <T> T convert(JsonNode node, Class<T> type)"));
+        assert!(src.contains("import com.fasterxml.jackson.databind.JsonNode;"));
+
+        let test = json_test_java("com.example.demo", "Json");
+        assert!(test.contains("keepsGoodElementsWhenSiblingsAreMalformed"));
+        assert!(test.contains("writesDatesAsIsoStringsNotObjects"));
     }
 
     #[test]

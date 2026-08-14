@@ -31,7 +31,7 @@ fn completion_offers_artifact_kinds_for_generate_destroy_and_their_aliases() {
 
     let generate_opts = opts_line_for(&script, "jails__subcmd__generate)");
     let destroy_opts = opts_line_for(&script, "jails__subcmd__destroy)");
-    for kind in ["scaffold", "controller", "service", "repository", "entity", "test"] {
+    for kind in ["scaffold", "controller", "service", "repository", "entity", "record", "command", "test"] {
         assert!(generate_opts.contains(kind), "expected generate's opts ({generate_opts:?}) to include {kind}");
         assert!(destroy_opts.contains(kind), "expected destroy's opts ({destroy_opts:?}) to include {kind}");
     }
@@ -362,8 +362,8 @@ fn run_no_build_runs_already_compiled_plain_classes_without_mvn() {
 }
 
 // ---- real Maven + JDK 26, no network beyond Maven Central artifact
-// resolution (never start.spring.io): verify the actual bar from
-// prompt.md -- "does new-cli produce a project that passes mvn test?" and
+// resolution (never start.spring.io): verify the actual bar the tool
+// exists for -- "does new-cli produce a project that passes mvn test?" and
 // "does generate scaffold produce a project that compiles?". Skipped
 // automatically if mvn isn't on PATH. ----
 
@@ -430,6 +430,36 @@ fn standalone_generators_companion_tests_compile_and_pass() {
 
     let status = jails_cmd_with_path(&root, &path).arg("test").status().unwrap();
     assert!(status.success(), "mvn test failed for the standalone-generated companion tests");
+}
+
+/// `record` and `command` are the two plain-Java kinds, so the bar for them is
+/// a `new-cli` project -- no Spring anywhere -- that still compiles and passes
+/// the tests they generate.
+#[test]
+fn record_and_command_compile_and_pass_in_a_plain_cli_project() {
+    if !real_mvn_available() {
+        eprintln!("skipping: mvn not found on PATH");
+        return;
+    }
+    if !real_java_supports_target_release() {
+        eprintln!("skipping: javac on PATH does not support --release {TARGET_RELEASE}");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let workdir = temp_dir("real-record-command");
+    jails_cmd_with_path(&workdir, &path).args(["new-cli", "demo"]).status().unwrap();
+    let root = workdir.join("demo");
+
+    for args in [
+        vec!["generate", "record", "Money", "amount:long", "currency:string", "on:date"],
+        vec!["generate", "command", "Greet"],
+    ] {
+        let status = jails_cmd_with_path(&root, &path).args(&args).status().unwrap();
+        assert!(status.success(), "{args:?} failed");
+    }
+
+    let status = jails_cmd_with_path(&root, &path).arg("test").status().unwrap();
+    assert!(status.success(), "mvn test failed for a generated record + command");
 }
 
 // ---- add ----

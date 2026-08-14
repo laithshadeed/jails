@@ -1,15 +1,21 @@
 # jails
 
 Rails-CLI-inspired scaffolding tool for Spring Boot / plain Maven projects.
-Full spec: `prompt.md` (non-goals, command list, field-type table — read it
-before adding anything not already there; this is a deliberately small v1,
-not a place to grow a plugin system).
+`README.md` is the user-facing surface (command list, field types, what's
+deliberately deferred) — treat it as the spec, and update it in the same
+change as the code. The original `prompt.md` spec was deleted once the
+commands it described all shipped; don't go looking for it.
+
+The scope bar: this is a deliberately small v1. No `console`, no `routes`, no
+Gradle, no plugin system. Check `README.md`'s "Not yet" before adding a
+command that isn't already there.
 
 ## Layout
 
 - `src/main.rs` — clap derive CLI, dispatch only.
 - `src/new.rs` — `new` (start.spring.io wrapper, real network) and `new-cli`
-  (hand-written pom/App/AppTest, no network).
+  (hand-written pom/App/AppTest, no network). Both also seed
+  `src/test/resources/fixtures/.gitkeep`.
 - `src/generate.rs` — all Java templates (`format!`, no template engine) +
   `generate`/`destroy`. `ArtifactKind` is a `clap::ValueEnum` — keep it that
   way, see gotcha below.
@@ -22,6 +28,16 @@ not a place to grow a plugin system).
 - `src/run.rs` — `test`/`build`/`run`, shells to `mvn`/`mvnd`.
 - `tests/common/mod.rs` + `tests/cli.rs` — integration tests against the
   real compiled binary (`CARGO_BIN_EXE_jails`).
+- `jails.nvim/` — tracked in this repo, but Lua, not Rust: a thin `:Jails`
+  wrapper that shells out to the binary on PATH. It keeps its own hand-
+  maintained `SUBCOMMANDS`/`KINDS` lists for `:Jails` completion, so a new
+  subcommand or artifact kind has to be added there too or it silently
+  won't complete (`add`/`a` is missing from that list today).
+
+Untracked siblings in this directory are **not** part of the project:
+`rails/` and `start.spring.io/` are gitignored reference checkouts (separate
+upstream repos, read-only research), and `demo/`/`stacks/` are scratch. Never
+edit or document them as if they were jails'.
 
 ## Workflow (every change, no exceptions)
 
@@ -48,6 +64,22 @@ though the hook exists, since the hook only fires on turn end, not mid-turn.
   require `*Application.java`, which only Spring projects have — `new-cli`
   projects have `App.java`, so `add` failed on exactly the projects it's
   most useful for.
+- **`add json` needs two Jackson artifacts, not one.**
+  `findAndRegisterModules()` only finds modules already on the classpath, and
+  `jackson-databind` alone has no `java.time` support — so without
+  `jackson-datatype-jsr310` every `LocalDate` (a type `generate`'s own field
+  table emits) serialises as `{"year":…}` instead of an ISO string. Spring
+  pulls it in transitively, so this only ever bit the plain-Maven flavor.
+  Keep both artifacts pinned to the same `JACKSON_VERSION`; mixing versions
+  across them is a documented `NoSuchMethodError`.
+- **`record`/`command` are the plain-Java kinds.** Every other `ArtifactKind`
+  emits Spring or JPA, which is useless in a `new-cli` project. `record` and
+  `entity` deliberately occupy the same two paths (`<Name>.java` +
+  `<Name>Test.java`) — same named type, two shapes — so `destroy` treats them
+  identically and `generate` refuses to write one over the other.
+  `command` does *not* edit `App.java`: `pom.rs` stays the only code that
+  touches a file the user owns, so the generated class documents the
+  `main` dispatch rather than installing it.
 - **Commons CSV renamed `Builder.build()` to `Builder.get()` in 1.13.**
   The pinned version and the generated call have to move together; a unit
   test in `add.rs` asserts they do, because the mismatch only surfaces as
@@ -97,9 +129,8 @@ though the hook exists, since the hook only fires on turn end, not mid-turn.
   rustc)** in this environment — a toolchain/rustup mismatch between
   `cargo build`'s and clippy's driver, not a real code issue. Don't chase
   it; `cargo build`/`cargo test` are the real signal here.
-- **`cargo init` gave edition `"2024"`**, not `"2026"` as prompt.md
-  aspirationally says — edition 2026 doesn't exist yet as of this
-  writing. Leave it on 2024.
+- **The crate is on edition `"2024"`, deliberately** — edition 2026 doesn't
+  exist yet, whatever the version number suggests. Leave it alone.
 - Install target is `~/.cargo/bin/jails` via `cargo install --path .`
   (already on PATH) — not a symlink into `~/.local/bin` or `~/bin`, which
   is how some other tools in `~/code/my-dotfiles` are wired. Don't
@@ -111,7 +142,7 @@ though the hook exists, since the hook only fires on turn end, not mid-turn.
   bash)`. That's a separate repo — changes there aren't tracked by this
   project's git history.
 
-## Testing philosophy (see prompt.md's own bar)
+## Testing philosophy
 
 Three tiers, don't blur them:
 1. **Unit tests** (colocated `#[cfg(test)] mod tests` per file) — pure
@@ -122,5 +153,6 @@ Three tiers, don't blur them:
 3. **Real-toolchain integration tests** — actually invoke `mvn`/`javac`
    against a fixture project, gated on `mvn`/`java` being on PATH (skip
    gracefully, don't fail, if absent). This is the only tier that answers
-   prompt.md's literal question: "does it produce a project that
-   compiles/passes tests?" Don't let tier 2 masquerade as tier 3.
+   the question the whole tool exists for — "does it produce a project that
+   actually compiles and passes tests?" Don't let tier 2 masquerade as
+   tier 3.

@@ -56,6 +56,8 @@ pub fn new(name: &str, deps: &str, java: &str, git: bool, devtools: bool, debug:
         return Err("failed to extract starter.zip".to_string());
     }
 
+    write_fixtures_dir(Path::new(name))?;
+
     // start.spring.io's zip already ships a .gitignore, so just init.
     if git {
         git_init(Path::new(name), debug);
@@ -93,6 +95,8 @@ pub fn new_cli(name: &str, git: bool, debug: bool) -> Result<()> {
     fs::write(test_dir.join("AppTest.java"), app_test_java(&package))
         .map_err(|e| format!("failed to write AppTest.java: {e}"))?;
 
+    write_fixtures_dir(root)?;
+
     if git {
         fs::write(root.join(".gitignore"), GITIGNORE).map_err(|e| format!("failed to write .gitignore: {e}"))?;
         git_init(root, debug);
@@ -102,7 +106,18 @@ pub fn new_cli(name: &str, git: bool, debug: bool) -> Result<()> {
     Ok(())
 }
 
-const GITIGNORE: &str = "target/\n*.class\n.idea/\n*.iml\n.DS_Store\n";
+/// Test fixtures land on the test classpath, so they belong under
+/// `src/test/resources`. Git can't track an empty directory, so seed it with
+/// a `.gitkeep` -- otherwise the folder vanishes on the first clone.
+fn write_fixtures_dir(root: &Path) -> Result<()> {
+    let dir = root.join("src/test/resources/fixtures");
+    fs::create_dir_all(&dir).map_err(|e| format!("failed to create {}: {e}", dir.display()))?;
+    fs::write(dir.join(".gitkeep"), "")
+        .map_err(|e| format!("failed to write {}/.gitkeep: {e}", dir.display()))?;
+    Ok(())
+}
+
+const GITIGNORE: &str ="target/\n*.class\n.idea/\n*.iml\n.DS_Store\n";
 
 /// Best-effort: a missing/broken git shouldn't fail project creation, just
 /// skip repo setup with a warning.
@@ -330,6 +345,9 @@ mod tests {
         let test = root.join("src/test/java/com/example/demoapp/AppTest.java");
         assert!(app.is_file(), "expected {}", app.display());
         assert!(test.is_file(), "expected {}", test.display());
+        let fixtures = root.join("src/test/resources/fixtures");
+        assert!(fixtures.is_dir(), "expected {}", fixtures.display());
+        assert!(fixtures.join(".gitkeep").is_file(), "fixtures dir needs a .gitkeep to survive a clone");
     }
 
     #[test]

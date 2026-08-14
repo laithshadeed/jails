@@ -7,8 +7,11 @@ tested vertical slice in one command.
 ## Build
 
 ```
-cargo build --release
+cargo build && cargo test && cargo install --path .
 ```
+
+Installs to `~/.cargo/bin/jails`. Shell completion:
+`source <(jails completion bash)`.
 
 ## Commands
 
@@ -23,13 +26,24 @@ cargo build --release
   — a single artifact plus its companion test (only `entity` takes
   `field:type` args). `jails generate|g repository <Name>` and
   `jails generate|g test <Name>` have no companion test of their own.
+- `jails generate|g record <Name> [field:type ...]` — the plain-Java
+  counterpart to `entity`: an immutable record whose compact constructor
+  rejects nulls, no Spring or JPA involved, plus a companion test. Same
+  `field:type` table as `entity`.
+- `jails generate|g command <Name>` — a CLI subcommand for `new-cli`
+  projects: `run(PrintStream, PrintStream, String...)` returning an exit
+  code, with a `NAME` constant to dispatch on. Output streams are arguments
+  and nothing calls `System.exit`, so the companion test drives the whole
+  command in-process. The class Javadoc shows how to wire it into `main`;
+  jails never edits your entry point.
 - `jails add|a <csv|sqlite|json> [--name <Base>] [--dry-run]` — grows an
   existing project by a whole capability: the dependency (spliced into
   `pom.xml`, comments and formatting preserved), the code that uses it, and
   a passing test. Idempotent, so re-running reports what is already there.
   `csv` gives a record-based reader over Commons CSV; `sqlite` gives a
   `Database` record plus a migration runner over plain JDBC (no ORM); `json`
-  gives a shared Jackson `ObjectMapper` wrapper.
+  gives a shared Jackson `ObjectMapper` wrapper, with `java.time` support
+  wired in and a tree API for input whose shape you can't trust.
 - `jails destroy|d <type> <Name> [--force]` — deletes exactly what the
   matching `generate` call would have created.
 - `jails test [filter]` — `mvn test` (or `mvnd` if present), `filter` maps
@@ -43,12 +57,33 @@ cargo build --release
   already-running app — no manual restarts.
 - `jails completion <bash|zsh|fish|elvish|powershell>` — shell completion.
 
-Field types: `string`, `text` (`@Lob`), `int`/`integer`, `long`, `boolean`,
-`date`, `datetime`, `double`.
+Every command takes `--debug`, which prints the `mvn`/`mvnd`/`java`/`git`/`curl`
+command lines jails shells out to instead of running them silently.
+
+Field types: `string`, `text` (`@Lob` on an entity, a plain `String`
+everywhere else), `int`/`integer`, `long`, `boolean`, `date`, `datetime`,
+`double`.
+
+## What a new project looks like
+
+Both `new` and `new-cli` lay down the standard Maven tree plus an empty
+`src/test/resources/fixtures/` (with a `.gitkeep`, since git won't track an
+empty directory) — the conventional home for sample CSV/JSON/SQL files that
+tests read off the classpath, which is exactly what the `add csv|json|sqlite`
+capabilities want.
+
+## Neovim
+
+`jails.nvim/` in this repo is a thin wrapper around the binary: add it to your
+runtimepath and use `:Jails <subcommand> ...`. It completes subcommands and
+artifact kinds, opens whatever `generate` created, confirms `destroy` in the
+editor, and streams `test`/`build`/`run` into a reused terminal panel. It
+shells out to the real `jails` on PATH and deliberately reimplements none of
+its logic.
 
 ## Not yet
 
-Deferred out of v1 on purpose — see `prompt.md`:
+Deferred out of v1 on purpose — this is meant to stay a small tool:
 
 - `jails console` — no clean Java equivalent to an app-booted REPL.
 - `jails routes` — needs real annotation scanning, v2 once v1 is proven.

@@ -12,6 +12,8 @@ pub enum ArtifactKind {
     Service,
     Repository,
     Entity,
+    Record,
+    Command,
     Test,
 }
 
@@ -254,6 +256,33 @@ pub fn generate(kind: ArtifactKind, name: &str, fields: &[String]) -> Result<()>
                 },
             ]
         }
+        ArtifactKind::Record => {
+            let parsed = parse_fields(fields)?;
+            vec![
+                Artifact {
+                    kind: "record",
+                    path: main_dir(&root, &pkg).join(format!("{name}.java")),
+                    contents: record_java(&pkg, &name, &parsed),
+                },
+                Artifact {
+                    kind: "record test",
+                    path: test_dir(&root, &pkg).join(format!("{name}Test.java")),
+                    contents: record_test(&pkg, &name, &parsed),
+                },
+            ]
+        }
+        ArtifactKind::Command => vec![
+            Artifact {
+                kind: "command",
+                path: main_dir(&root, &pkg).join(format!("{name}Command.java")),
+                contents: command_java(&pkg, &name),
+            },
+            Artifact {
+                kind: "command test",
+                path: test_dir(&root, &pkg).join(format!("{name}CommandTest.java")),
+                contents: command_test(&pkg, &name),
+            },
+        ],
         ArtifactKind::Test => vec![Artifact {
             kind: "test",
             path: test_dir(&root, &pkg).join(format!("{name}Test.java")),
@@ -335,9 +364,15 @@ pub fn destroy(kind: ArtifactKind, name: &str, force: bool) -> Result<()> {
             test_dir(&root, &pkg).join(format!("{name}ServiceTest.java")),
         ],
         ArtifactKind::Repository => vec![main_dir(&root, &pkg).join(format!("{name}Repository.java"))],
-        ArtifactKind::Entity => vec![
+        // A record and an entity are two shapes of the same named type, so
+        // they occupy -- and free -- exactly the same two paths.
+        ArtifactKind::Entity | ArtifactKind::Record => vec![
             main_dir(&root, &pkg).join(format!("{name}.java")),
             test_dir(&root, &pkg).join(format!("{name}Test.java")),
+        ],
+        ArtifactKind::Command => vec![
+            main_dir(&root, &pkg).join(format!("{name}Command.java")),
+            test_dir(&root, &pkg).join(format!("{name}CommandTest.java")),
         ],
         ArtifactKind::Test => vec![test_dir(&root, &pkg).join(format!("{name}Test.java"))],
     };
@@ -590,6 +625,217 @@ fn entity_test(pkg: &str, name: &str, fields: &[Field]) -> String {
     }
     out += "    }\n}\n";
     out
+}
+
+// ---- record: the plain-Java counterpart to `entity`, for projects with no
+// Spring or JPA in sight (`new-cli` ones, mostly). Same field:type parsing,
+// no annotations, and a compact constructor so an invalid value cannot be
+// constructed in the first place. ----
+
+fn record_java(pkg: &str, name: &str, fields: &[Field]) -> String {
+    // Objects.requireNonNull is what the compact constructor is built from, so
+    // it is only imported when there is a field to check.
+    let needs_objects = !fields.is_empty();
+    let mut imports: Vec<&str> = fields.iter().filter_map(|f| f.import).collect();
+    if needs_objects {
+        imports.push("java.util.Objects");
+    }
+    imports.sort();
+    imports.dedup();
+
+    let mut out = format!("package {pkg};\n\n");
+    for imp in &imports {
+        out += &format!("import {imp};\n");
+    }
+    if !imports.is_empty() {
+        out += "\n";
+    }
+
+    let components =
+        fields.iter().map(|f| format!("{} {}", f.java_type, f.name)).collect::<Vec<_>>().join(", ");
+
+    out += "/**\n";
+    out += &format!(" * An immutable {name} value.\n");
+    out += " *\n";
+    out += " * <p>The compact constructor rejects nulls, so any instance that exists is\n";
+    out += " * a valid one and callers downstream do not have to re-check.\n";
+    out += " */\n";
+    out += &format!("public record {name}({components}) {{\n");
+
+    if needs_objects {
+        out += &format!("\n    public {name} {{\n");
+        for field in fields {
+            out += &format!(
+                "        Objects.requireNonNull({name}, \"{name}\");\n",
+                name = field.name
+            );
+        }
+        out += "    }\n";
+    }
+
+    out += "}\n";
+    out
+}
+
+/// A companion test asserting the accessors return what was passed and that
+/// the compact constructor actually rejects a null.
+fn record_test(pkg: &str, name: &str, fields: &[Field]) -> String {
+    let mut imports: Vec<&str> = fields.iter().filter_map(|f| f.import).collect();
+    imports.sort();
+    imports.dedup();
+
+    let args = fields.iter().map(|f| sample_literal(&f.java_type).to_string()).collect::<Vec<_>>().join(", ");
+    let var = name.to_lowercase();
+
+    let mut out = format!("package {pkg};\n\n");
+    out += "import org.junit.jupiter.api.Test;\n";
+    if !imports.is_empty() {
+        out += "\n";
+        for imp in &imports {
+            out += &format!("import {imp};\n");
+        }
+    }
+    out += "\nimport static org.assertj.core.api.Assertions.assertThat;\n";
+    if !fields.is_empty() {
+        out += "import static org.assertj.core.api.Assertions.assertThatNullPointerException;\n";
+    }
+    out += &format!("\nclass {name}Test {{\n\n");
+
+    out += "    @Test\n    void accessorsReturnWhatWasConstructed() {\n";
+    out += &format!("        {name} {var} = new {name}({args});\n\n");
+    if fields.is_empty() {
+        out += &format!("        assertThat({var}).isEqualTo(new {name}());\n");
+    } else {
+        for field in fields {
+            out += &format!(
+                "        assertThat({var}.{}()).isEqualTo({});\n",
+                field.name,
+                sample_literal(&field.java_type)
+            );
+        }
+    }
+    out += "    }\n";
+
+    if let Some(first) = fields.first() {
+        // Only the first component is nulled out: one case proves the compact
+        // constructor runs, and a case per field would just restate it.
+        let nulled = fields
+            .iter()
+            .enumerate()
+            .map(|(i, f)| if i == 0 { "null".to_string() } else { sample_literal(&f.java_type).to_string() })
+            .collect::<Vec<_>>()
+            .join(", ");
+        out += "\n    @Test\n    void rejectsANullComponent() {\n";
+        out += &format!("        assertThatNullPointerException()\n");
+        out += &format!("                .isThrownBy(() -> new {name}({nulled}))\n");
+        out += &format!("                .withMessageContaining(\"{}\");\n", first.name);
+        out += "    }\n";
+    }
+
+    out += "}\n";
+    out
+}
+
+// ---- command: a CLI subcommand for `new-cli` projects, which otherwise get
+// a Hello World `main` and no pattern for growing past it. ----
+
+fn command_java(pkg: &str, name: &str) -> String {
+    let word = name.to_lowercase();
+    format!(
+        r#"package {pkg};
+
+import java.io.PrintStream;
+
+/**
+ * The {{@code {word}}} subcommand.
+ *
+ * <p>{{@link #run}} returns an exit code instead of calling
+ * {{@code System.exit}}, and takes its output streams as arguments instead of
+ * reaching for {{@code System.out}}. Both exist so a test can drive the whole
+ * command in-process and assert on what it printed. Keep {{@code main}} the
+ * only place that exits.
+ *
+ * <p>Wire it into your entry point's dispatch:
+ *
+ * <pre>{{@code
+ * public static void main(String[] args) {{
+ *     String[] rest = args.length == 0 ? args : Arrays.copyOfRange(args, 1, args.length);
+ *     int code = switch (args.length == 0 ? "" : args[0]) {{
+ *         case {name}Command.NAME -> {name}Command.run(System.out, System.err, rest);
+ *         default -> usage(System.err);
+ *     }};
+ *     System.exit(code);
+ * }}
+ * }}</pre>
+ */
+public final class {name}Command {{
+
+    /** The word that selects this command on the command line. */
+    public static final String NAME = "{word}";
+
+    public static final String USAGE = "usage: {word} <argument>";
+
+    /** Conventional exit code for "you invoked this wrong". */
+    public static final int USAGE_ERROR = 2;
+
+    private {name}Command() {{}}
+
+    /** Runs the command, returning the exit code the process should end with. */
+    public static int run(PrintStream out, PrintStream err, String... args) {{
+        if (args.length != 1) {{
+            err.println(USAGE);
+            return USAGE_ERROR;
+        }}
+
+        out.println(args[0]);
+        return 0;
+    }}
+}}
+"#
+    )
+}
+
+fn command_test(pkg: &str, name: &str) -> String {
+    format!(
+        r#"package {pkg};
+
+import org.junit.jupiter.api.Test;
+
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+class {name}CommandTest {{
+
+    private final ByteArrayOutputStream out = new ByteArrayOutputStream();
+    private final ByteArrayOutputStream err = new ByteArrayOutputStream();
+
+    private int run(String... args) {{
+        return {name}Command.run(new PrintStream(out), new PrintStream(err), args);
+    }}
+
+    @Test
+    void succeedsAndPrintsItsArgument() {{
+        assertThat(run("hello")).isZero();
+        assertThat(out.toString()).contains("hello");
+        assertThat(err.toString()).isEmpty();
+    }}
+
+    @Test
+    void reportsUsageOnStderrWhenCalledWithoutArguments() {{
+        assertThat(run()).isEqualTo({name}Command.USAGE_ERROR);
+        assertThat(err.toString()).contains({name}Command.USAGE);
+        assertThat(out.toString()).isEmpty();
+    }}
+
+    @Test
+    void rejectsTooManyArguments() {{
+        assertThat(run("one", "two")).isEqualTo({name}Command.USAGE_ERROR);
+    }}
+}}
+"#
+    )
 }
 
 fn sample_literal(java_type: &str) -> &'static str {
@@ -943,6 +1189,95 @@ mod tests {
     }
 
     #[test]
+    fn record_java_emits_a_record_with_a_null_rejecting_compact_constructor() {
+        let fields = parse_fields(&["amount:long".to_string(), "currency:string".to_string()]).unwrap();
+        let src = record_java("com.example.demo", "Money", &fields);
+
+        assert!(src.contains("public record Money(Long amount, String currency) {"));
+        assert!(src.contains("public Money {"), "expected a compact constructor");
+        assert!(src.contains(r#"Objects.requireNonNull(amount, "amount");"#));
+        assert!(src.contains(r#"Objects.requireNonNull(currency, "currency");"#));
+        // The plain-Java counterpart to `entity`: no Spring, no JPA.
+        for forbidden in ["jakarta.persistence", "@Entity", "@Id", "org.springframework"] {
+            assert!(!src.contains(forbidden), "{forbidden} should not appear in a plain record");
+        }
+    }
+
+    /// A no-field record has nothing to null-check, so the compact constructor
+    /// (and the Objects import that only exists to serve it) must be omitted
+    /// rather than emitted empty.
+    #[test]
+    fn record_java_omits_the_compact_constructor_when_there_are_no_fields() {
+        let src = record_java("com.example.demo", "Marker", &[]);
+
+        assert!(src.contains("public record Marker() {"));
+        assert!(!src.contains("public Marker {"));
+        assert!(!src.contains("import java.util.Objects;"));
+    }
+
+    #[test]
+    fn record_java_sorts_time_imports_with_the_objects_import() {
+        let fields = parse_fields(&["on:date".to_string()]).unwrap();
+        let src = record_java("com.example.demo", "Entry", &fields);
+
+        let time = src.find("import java.time.LocalDate;").unwrap();
+        let objects = src.find("import java.util.Objects;").unwrap();
+        assert!(time < objects, "java.time should sort before java.util");
+    }
+
+    #[test]
+    fn record_test_covers_the_accessors_and_the_null_rejection() {
+        let fields = parse_fields(&["amount:long".to_string(), "currency:string".to_string()]).unwrap();
+        let test = record_test("com.example.demo", "Money", &fields);
+
+        assert!(test.contains("class MoneyTest"));
+        assert!(test.contains("new Money(1L, \"sample\")"));
+        assert!(test.contains("assertThat(money.amount()).isEqualTo(1L);"));
+        assert!(test.contains("assertThatNullPointerException()"));
+        assert!(test.contains("new Money(null, \"sample\")"), "only the first component is nulled");
+    }
+
+    /// With no fields there is no null to reject, so the test that asserts the
+    /// rejection would not compile -- it must not be emitted.
+    #[test]
+    fn record_test_skips_the_null_case_for_a_no_field_record() {
+        let test = record_test("com.example.demo", "Marker", &[]);
+
+        assert!(!test.contains("assertThatNullPointerException"));
+        assert!(!test.contains("import static org.assertj.core.api.Assertions.assertThatNullPointerException;"));
+        assert!(test.contains("new Marker()"));
+    }
+
+    #[test]
+    fn command_java_returns_an_exit_code_and_never_exits_the_process() {
+        let src = command_java("com.example.demo", "Greet");
+
+        assert!(src.contains("public final class GreetCommand"));
+        assert!(src.contains(r#"public static final String NAME = "greet";"#));
+        assert!(src.contains("public static int run(PrintStream out, PrintStream err, String... args)"));
+        // A CLI command has no business depending on Spring.
+        assert!(!src.contains("org.springframework"));
+
+        // The whole point: main owns the exit, so the command stays testable
+        // in-process, and output goes to injected streams, not System.out.
+        // Only the class body is checked -- the Javadoc deliberately shows a
+        // `main` that does call System.exit, since that is where it belongs.
+        let body = &src[src.find("public final class").unwrap()..];
+        assert!(!body.contains("System.exit"), "run() must not exit the process");
+        assert!(!body.contains("System.out"), "output should go to the injected stream");
+    }
+
+    #[test]
+    fn command_test_drives_the_command_through_captured_streams() {
+        let test = command_test("com.example.demo", "Greet");
+
+        assert!(test.contains("class GreetCommandTest"));
+        assert!(test.contains("ByteArrayOutputStream"));
+        assert!(test.contains("GreetCommand.run(new PrintStream(out), new PrintStream(err), args)"));
+        assert!(test.contains("GreetCommand.USAGE_ERROR"));
+    }
+
+    #[test]
     fn stub_templates_use_the_package_and_class_name() {
         assert!(stub_controller("com.example.blog", "Post").contains("public class PostController"));
         assert!(stub_service("com.example.blog", "Post").contains("public class PostService"));
@@ -1069,6 +1404,78 @@ mod tests {
 
         assert!(src.join("WidgetRepository.java").is_file());
         assert!(!root.join("src/test/java/com/example/blog/WidgetRepositoryTest.java").exists());
+    }
+
+    /// `record` and `command` target plain Maven projects, whose entry point
+    /// is App.java rather than *Application.java -- the case base_package()
+    /// falls back for.
+    #[test]
+    fn generate_record_and_command_work_in_a_plain_cli_project() {
+        let _guard = CWD_LOCK.lock().unwrap();
+        let root = scratch("plain-record-command");
+        let src = root.join("src/main/java/com/example/demo");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(root.join("pom.xml"), "<project></project>").unwrap();
+        fs::write(src.join("App.java"), "package com.example.demo;\n\npublic class App {}\n").unwrap();
+
+        let original_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&root).unwrap();
+        let record = generate(ArtifactKind::Record, "money", &["amount:long".to_string()]);
+        let command = generate(ArtifactKind::Command, "greet", &[]);
+        std::env::set_current_dir(original_cwd).unwrap();
+        record.unwrap();
+        command.unwrap();
+
+        assert!(src.join("Money.java").is_file());
+        assert!(root.join("src/test/java/com/example/demo/MoneyTest.java").is_file());
+        assert!(src.join("GreetCommand.java").is_file());
+        assert!(root.join("src/test/java/com/example/demo/GreetCommandTest.java").is_file());
+    }
+
+    #[test]
+    fn destroy_command_removes_both_of_its_files() {
+        let _guard = CWD_LOCK.lock().unwrap();
+        let root = scratch("destroy-command");
+        let src = root.join("src/main/java/com/example/demo");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(root.join("pom.xml"), "<project></project>").unwrap();
+        fs::write(src.join("App.java"), "package com.example.demo;\n\npublic class App {}\n").unwrap();
+
+        let original_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&root).unwrap();
+        generate(ArtifactKind::Command, "greet", &[]).unwrap();
+        let result = destroy(ArtifactKind::Command, "greet", true);
+        std::env::set_current_dir(original_cwd).unwrap();
+
+        result.unwrap();
+        assert!(!src.join("GreetCommand.java").exists());
+        assert!(!root.join("src/test/java/com/example/demo/GreetCommandTest.java").exists());
+        assert!(src.join("App.java").is_file());
+    }
+
+    /// A record and an entity are the same named type in two shapes, so
+    /// generating one and destroying "the other" clears the same two paths --
+    /// and `generate` still refuses to write over either.
+    #[test]
+    fn record_and_entity_occupy_the_same_paths() {
+        let _guard = CWD_LOCK.lock().unwrap();
+        let root = scratch("record-entity-paths");
+        let src = root.join("src/main/java/com/example/demo");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(root.join("pom.xml"), "<project></project>").unwrap();
+        fs::write(src.join("App.java"), "package com.example.demo;\n\npublic class App {}\n").unwrap();
+
+        let original_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&root).unwrap();
+        generate(ArtifactKind::Record, "tag", &["name:string".to_string()]).unwrap();
+        let clash = generate(ArtifactKind::Entity, "tag", &["name:string".to_string()]);
+        let result = destroy(ArtifactKind::Record, "tag", true);
+        std::env::set_current_dir(original_cwd).unwrap();
+
+        assert!(clash.is_err(), "generate must not overwrite the record with an entity");
+        result.unwrap();
+        assert!(!src.join("Tag.java").exists());
+        assert!(!root.join("src/test/java/com/example/demo/TagTest.java").exists());
     }
 
     #[test]
