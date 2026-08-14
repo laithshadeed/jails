@@ -61,6 +61,9 @@ enum Command {
     /// Create a new plain Maven CLI project
     NewCli {
         name: String,
+        /// Java release to compile against (>= 21)
+        #[arg(long, default_value = pom::TARGET_RELEASE)]
+        release: String,
         /// Skip `git init` and the .gitignore it normally sets up
         #[arg(long)]
         no_git: bool,
@@ -95,6 +98,10 @@ enum Command {
     Test { filter: Option<String> },
     /// Build the project (mvn package)
     Build,
+    /// Reformat every source file in place (needs `jails add format`)
+    Fmt,
+    /// Format check + compile + tests (mvn verify)
+    Check,
     /// Find, compile and run the project's main class
     Run {
         /// Skip compiling/building -- run whatever's already in target/
@@ -118,12 +125,14 @@ fn main() {
         Command::New { name, deps, java, no_git, no_devtools } => {
             new::new(&name, &deps, &java, !no_git, !no_devtools, debug)
         }
-        Command::NewCli { name, no_git } => new::new_cli(&name, !no_git, debug),
+        Command::NewCli { name, release, no_git } => new::new_cli(&name, &release, !no_git, debug),
         Command::Generate { kind, name, fields } => generate::generate(kind, &name, &fields),
         Command::Add { capability, name, dry_run } => add::add(capability, name.as_deref(), dry_run),
         Command::Destroy { kind, name, force } => generate::destroy(kind, &name, force),
         Command::Test { filter } => run::test(filter.as_deref(), debug),
         Command::Build => run::build(debug),
+        Command::Fmt => run::fmt(debug),
+        Command::Check => run::check(debug),
         Command::Run { no_build, watch } => {
             if watch {
                 run::watch(debug)

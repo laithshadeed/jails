@@ -70,14 +70,26 @@ pub fn new(name: &str, deps: &str, java: &str, git: bool, devtools: bool, debug:
 /// Plain Maven CLI project, written directly -- no `mvn archetype:generate`
 /// (slow, needs network, and falls into an interactive catalog picker
 /// without exact archetype coordinates).
-pub fn new_cli(name: &str, git: bool, debug: bool) -> Result<()> {
+pub fn new_cli(name: &str, java: &str, git: bool, debug: bool) -> Result<()> {
     let root = Path::new(name);
     if root.exists() {
         return Err(format!("{name} already exists"));
     }
 
+    // A generic tool cannot hardcode one release level: the LTS most people
+    // run and the newest JDK are rarely the same number.
+    match java.parse::<u32>() {
+        Ok(level) if level < crate::pom::MIN_RELEASE => {
+            return Err(format!(
+                "--release {java} is below Java {}, which is what jails' generated code needs",
+                crate::pom::MIN_RELEASE
+            ));
+        }
+        Ok(_) => {}
+        Err(_) => return Err(format!("--release must be a number, got '{java}'")),
+    }
+
     let package = sanitize_package(name);
-    let java = crate::pom::TARGET_RELEASE;
 
     let src_dir = root
         .join("src/main/java")
@@ -335,7 +347,7 @@ mod tests {
         let workdir = scratch("new-cli");
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&workdir).unwrap();
-        let result = new_cli("demo-app", false, false);
+        let result = new_cli("demo-app", crate::pom::TARGET_RELEASE, false, false);
         std::env::set_current_dir(&original_cwd).unwrap();
         result.unwrap();
 
@@ -357,7 +369,7 @@ mod tests {
         fs::create_dir_all(workdir.join("demo-app")).unwrap();
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&workdir).unwrap();
-        let result = new_cli("demo-app", false, false);
+        let result = new_cli("demo-app", crate::pom::TARGET_RELEASE, false, false);
         std::env::set_current_dir(&original_cwd).unwrap();
 
         assert!(result.is_err());
@@ -369,7 +381,7 @@ mod tests {
         let workdir = scratch("new-cli-no-git");
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&workdir).unwrap();
-        let result = new_cli("demo-app", false, false);
+        let result = new_cli("demo-app", crate::pom::TARGET_RELEASE, false, false);
         std::env::set_current_dir(&original_cwd).unwrap();
         result.unwrap();
 
@@ -384,7 +396,7 @@ mod tests {
         let workdir = scratch("new-cli-git");
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&workdir).unwrap();
-        let result = new_cli("demo-app", true, false);
+        let result = new_cli("demo-app", crate::pom::TARGET_RELEASE, true, false);
         std::env::set_current_dir(&original_cwd).unwrap();
         result.unwrap();
 

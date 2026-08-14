@@ -54,6 +54,34 @@ pub fn build(debug: bool) -> Result<()> {
     run_inherited(cmd, debug)
 }
 
+/// Reformat in place. Spotless is a plugin, not a dependency, so an
+/// unconfigured project fails with a Maven stack trace about an unknown
+/// prefix -- checking first turns that into one actionable line.
+pub fn fmt(debug: bool) -> Result<()> {
+    let root = find_project_root()?;
+    require_spotless(&root)?;
+    let mut cmd = Command::new(maven_binary());
+    cmd.args(["spotless:apply"]).current_dir(&root);
+    run_inherited(cmd, debug)
+}
+
+/// Everything the build has to say: format check, compile, tests. `verify`
+/// rather than `test` because that is the phase `add format` binds to.
+pub fn check(debug: bool) -> Result<()> {
+    let root = find_project_root()?;
+    let mut cmd = Command::new(maven_binary());
+    cmd.arg("verify").current_dir(&root);
+    run_inherited(cmd, debug)
+}
+
+fn require_spotless(root: &std::path::Path) -> Result<()> {
+    let pom = fs::read_to_string(root.join("pom.xml")).map_err(|e| format!("failed to read pom.xml: {e}"))?;
+    if pom.contains("spotless-maven-plugin") {
+        return Ok(());
+    }
+    Err("this project has no formatter configured -- run `jails add format` first".to_string())
+}
+
 /// Spawns `spring-boot:run` once and, on every change to a .java source
 /// file, re-runs `mvn compile`. spring-boot-devtools (if on the
 /// classpath) watches target/classes itself and restarts the already-

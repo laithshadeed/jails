@@ -13,7 +13,10 @@ pub enum ArtifactKind {
     Repository,
     Entity,
     Record,
+    Value,
     Command,
+    Cli,
+    Cases,
     Test,
 }
 
@@ -208,6 +211,14 @@ pub(crate) fn write_new_file(path: &Path, contents: &str) -> Result<()> {
 pub fn generate(kind: ArtifactKind, name: &str, fields: &[String]) -> Result<()> {
     let root = find_project_root()?;
     let pkg = base_package(&root)?;
+
+    // `cases` is the one kind whose <NAME> is a path, not a class name: the
+    // class is derived from the file it reads. Handle it before the shared
+    // capitalize, which would mangle a path.
+    if matches!(kind, ArtifactKind::Cases) {
+        return generate_cases(&root, &pkg, Path::new(name));
+    }
+
     let name = capitalize(name);
 
     let artifacts = match kind {
@@ -271,6 +282,24 @@ pub fn generate(kind: ArtifactKind, name: &str, fields: &[String]) -> Result<()>
                 },
             ]
         }
+        ArtifactKind::Value => {
+            let parsed = parse_fields(fields)?;
+            if parsed.is_empty() {
+                return Err("a value type needs at least one field, e.g. `generate value Money amount:long`".to_string());
+            }
+            vec![
+                Artifact {
+                    kind: "value",
+                    path: main_dir(&root, &pkg).join(format!("{name}.java")),
+                    contents: value_java(&pkg, &name, &parsed),
+                },
+                Artifact {
+                    kind: "value test",
+                    path: test_dir(&root, &pkg).join(format!("{name}Test.java")),
+                    contents: value_test(&pkg, &name, &parsed),
+                },
+            ]
+        }
         ArtifactKind::Command => vec![
             Artifact {
                 kind: "command",
@@ -283,6 +312,19 @@ pub fn generate(kind: ArtifactKind, name: &str, fields: &[String]) -> Result<()>
                 contents: command_test(&pkg, &name),
             },
         ],
+        ArtifactKind::Cli => vec![
+            Artifact {
+                kind: "cli",
+                path: main_dir(&root, &pkg).join(format!("{name}Cli.java")),
+                contents: cli_java(&pkg, &name),
+            },
+            Artifact {
+                kind: "cli test",
+                path: test_dir(&root, &pkg).join(format!("{name}CliTest.java")),
+                contents: cli_test(&pkg, &name),
+            },
+        ],
+        ArtifactKind::Cases => unreachable!("handled above -- its NAME is a path, not a class"),
         ArtifactKind::Test => vec![Artifact {
             kind: "test",
             path: test_dir(&root, &pkg).join(format!("{name}Test.java")),
@@ -344,6 +386,9 @@ fn scaffold_artifacts(root: &Path, pkg: &str, name: &str, fields: &[String]) -> 
 pub fn destroy(kind: ArtifactKind, name: &str, force: bool) -> Result<()> {
     let root = find_project_root()?;
     let pkg = base_package(&root)?;
+    // `cases` is addressed by the markdown path it was generated from, which
+    // must not be run through capitalize like a class name.
+    let raw_name = name.to_string();
     let name = capitalize(name);
 
     let paths: Vec<PathBuf> = match kind {
@@ -364,9 +409,9 @@ pub fn destroy(kind: ArtifactKind, name: &str, force: bool) -> Result<()> {
             test_dir(&root, &pkg).join(format!("{name}ServiceTest.java")),
         ],
         ArtifactKind::Repository => vec![main_dir(&root, &pkg).join(format!("{name}Repository.java"))],
-        // A record and an entity are two shapes of the same named type, so
-        // they occupy -- and free -- exactly the same two paths.
-        ArtifactKind::Entity | ArtifactKind::Record => vec![
+        // An entity, a record and a value are three shapes of the same named
+        // type, so they occupy -- and free -- exactly the same two paths.
+        ArtifactKind::Entity | ArtifactKind::Record | ArtifactKind::Value => vec![
             main_dir(&root, &pkg).join(format!("{name}.java")),
             test_dir(&root, &pkg).join(format!("{name}Test.java")),
         ],
@@ -374,6 +419,15 @@ pub fn destroy(kind: ArtifactKind, name: &str, force: bool) -> Result<()> {
             main_dir(&root, &pkg).join(format!("{name}Command.java")),
             test_dir(&root, &pkg).join(format!("{name}CommandTest.java")),
         ],
+        ArtifactKind::Cli => vec![
+            main_dir(&root, &pkg).join(format!("{name}Cli.java")),
+            test_dir(&root, &pkg).join(format!("{name}CliTest.java")),
+        ],
+        // `cases` derives its class from a markdown file's name, so destroy
+        // takes that same path and resolves it the same way generate did.
+        ArtifactKind::Cases => {
+            vec![test_dir(&root, &pkg).join(format!("{}.java", cases_class_name(Path::new(&raw_name))?))]
+        }
         ArtifactKind::Test => vec![test_dir(&root, &pkg).join(format!("{name}Test.java"))],
     };
 
@@ -1008,6 +1062,556 @@ class {name}ControllerTest {{
 }}
 "#
     )
+}
+
+// ---- value: a record that not only rejects nulls (which `record` already
+// does) but normalises and validates, so an instance is *meaningful*, not just
+// non-null. Blank strings are the case that bites in practice -- a required
+// identifier that is present but empty passes every null check downstream. ----
+
+fn value_java(pkg: &str, name: &str, fields: &[Field]) -> String {
+    let strings: Vec<&Field> = fields.iter().filter(|f| f.java_type == "String").collect();
+
+    let mut imports: Vec<&str> = fields.iter().filter_map(|f| f.import).collect();
+    imports.push("java.util.Objects");
+    imports.sort();
+    imports.dedup();
+
+    let mut out = format!("package {pkg};\n\n");
+    for imp in &imports {
+        out += &format!("import {imp};\n");
+    }
+    out += "\n";
+
+    let components = fields.iter().map(|f| format!("{} {}", f.java_type, f.name)).collect::<Vec<_>>().join(", ");
+    let names = fields.iter().map(|f| f.name.clone()).collect::<Vec<_>>().join(", ");
+
+    out += "/**\n";
+    out += &format!(" * A validated {name} value.\n");
+    out += " *\n";
+    out += " * <p>All validation lives in the compact constructor, which runs before the\n";
+    out += " * components are assigned -- so there is no way to reach an instance that\n";
+    out += " * skipped it, not even through deserialisation or a copy.\n";
+    if !strings.is_empty() {
+        out += " *\n";
+        out += " * <p>Text is trimmed and then required to be non-blank: a present-but-empty\n";
+        out += " * value passes every null check downstream, which is exactly why it is\n";
+        out += " * worth rejecting here instead.\n";
+    }
+    out += " */\n";
+    out += &format!("public record {name}({components}) {{\n\n");
+
+    // Compact constructor: normalise first, then validate what normalising
+    // produced, so " " fails the blank check rather than sneaking past it.
+    out += &format!("    public {name} {{\n");
+    for field in fields {
+        out += &format!("        Objects.requireNonNull({0}, \"{0} is required\");\n", field.name);
+    }
+    for field in &strings {
+        out += &format!("        {0} = {0}.trim();\n", field.name);
+        out += &format!(
+            "        if ({0}.isEmpty()) {{\n            throw new IllegalArgumentException(\"{0} must not be blank\");\n        }}\n",
+            field.name
+        );
+    }
+    out += "    }\n\n";
+
+    out += "    /**\n";
+    out += &format!("     * Builds a {name}. Identical to the constructor today; it exists so that\n");
+    out += "     * parsing, defaulting or a cache can be added later without changing a\n";
+    out += "     * single call site.\n";
+    out += "     */\n";
+    out += &format!("    public static {name} of({components}) {{\n");
+    out += &format!("        return new {name}({names});\n");
+    out += "    }\n";
+    out += "}\n";
+    out
+}
+
+fn value_test(pkg: &str, name: &str, fields: &[Field]) -> String {
+    let strings: Vec<&Field> = fields.iter().filter(|f| f.java_type == "String").collect();
+
+    let mut imports: Vec<&str> = fields.iter().filter_map(|f| f.import).collect();
+    imports.sort();
+    imports.dedup();
+
+    let args = fields.iter().map(|f| sample_literal(&f.java_type).to_string()).collect::<Vec<_>>().join(", ");
+    // Same argument list, but with one named component swapped out.
+    let args_with = |target: &str, replacement: &str| {
+        fields
+            .iter()
+            .map(|f| {
+                if f.name == target {
+                    replacement.to_string()
+                } else {
+                    sample_literal(&f.java_type).to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+
+    let mut out = format!("package {pkg};\n\n");
+    out += "import org.junit.jupiter.api.Test;\n";
+    if !imports.is_empty() {
+        out += "\n";
+        for imp in &imports {
+            out += &format!("import {imp};\n");
+        }
+    }
+    out += "\nimport static org.assertj.core.api.Assertions.assertThat;\n";
+    out += "import static org.assertj.core.api.Assertions.assertThatThrownBy;\n\n";
+    out += &format!("class {name}Test {{\n\n");
+
+    out += "    @Test\n    void keepsWhatItWasGiven() {\n";
+    out += &format!("        var value = {name}.of({args});\n\n");
+    for field in fields {
+        out += &format!(
+            "        assertThat(value.{}()).isEqualTo({});\n",
+            field.name,
+            sample_literal(&field.java_type)
+        );
+    }
+    out += "    }\n\n";
+
+    let first = &fields[0];
+    out += "    @Test\n    void rejectsANullComponent() {\n";
+    out += &format!(
+        "        assertThatThrownBy(() -> {name}.of({}))\n                .isInstanceOf(NullPointerException.class)\n                .hasMessageContaining(\"{}\");\n",
+        args_with(&first.name, "null"),
+        first.name
+    );
+    out += "    }\n";
+
+    if let Some(text) = strings.first() {
+        out += "\n    @Test\n    void trimsSurroundingWhitespace() {\n";
+        out += &format!(
+            "        assertThat({name}.of({}).{}()).isEqualTo(\"trimmed\");\n",
+            args_with(&text.name, "\"  trimmed  \""),
+            text.name
+        );
+        out += "    }\n";
+
+        out += "\n    /** Blank is the failure a null check never catches. */\n";
+        out += "    @Test\n    void rejectsBlankText() {\n";
+        out += &format!(
+            "        assertThatThrownBy(() -> {name}.of({}))\n                .isInstanceOf(IllegalArgumentException.class)\n                .hasMessageContaining(\"{}\");\n",
+            args_with(&text.name, "\"   \""),
+            text.name
+        );
+        out += "    }\n";
+    }
+
+    out += "}\n";
+    out
+}
+
+// ---- cli: the dispatcher that `generate command` leaves you to write. ----
+
+fn cli_java(pkg: &str, name: &str) -> String {
+    format!(
+        r#"package {pkg};
+
+import java.io.PrintStream;
+import java.util.LinkedHashMap;
+import java.util.SequencedMap;
+
+/**
+ * Argv dispatch for the {name} command line: it owns argument routing, exit
+ * codes and streams, and nothing else.
+ *
+ * <p>The registry is a parameter of {{@link #run}}, not a static the method
+ * reaches for. That is what lets a test drive the whole dispatcher with its own
+ * commands, without a real one existing and without touching
+ * {{@code System.out}}. {{@link #commands()}} is the one place to edit as you add
+ * commands; {{@code main}} is the only place that exits.
+ *
+ * {{@snippet :
+ * var out = new ByteArrayOutputStream();
+ * int code = {name}Cli.run({name}Cli.commands(), new PrintStream(out), System.err, "greet", "world");
+ * }}
+ */
+public final class {name}Cli {{
+
+    /**
+     * One subcommand. Matches the shape {{@code jails generate command}} emits,
+     * so {{@code SomethingCommand::run}} is a method reference away.
+     */
+    @FunctionalInterface
+    public interface Command {{
+        int run(PrintStream out, PrintStream err, String... args);
+    }}
+
+    /** Conventional exit code for "you invoked this wrong". */
+    public static final int USAGE_ERROR = 2;
+
+    private {name}Cli() {{}}
+
+    /**
+     * The commands this CLI answers to, in the order they should be listed.
+     *
+     * <p>Add yours here -- a {{@code SequencedMap}} because help output that
+     * reorders itself between runs is a diff nobody wants:
+     *
+     * {{@snippet :
+     * commands.put(GreetCommand.NAME, GreetCommand::run);
+     * }}
+     */
+    public static SequencedMap<String, Command> commands() {{
+        var commands = new LinkedHashMap<String, Command>();
+        return commands;
+    }}
+
+    /** Runs one invocation and returns the exit code the process should end with. */
+    public static int run(SequencedMap<String, Command> commands, PrintStream out, PrintStream err, String... args) {{
+        var name = args.length == 0 ? "help" : args[0];
+
+        if (name.equals("help") || name.equals("--help") || name.equals("-h")) {{
+            usage(commands, out);
+            return 0;
+        }}
+
+        var command = commands.get(name);
+        if (command == null) {{
+            err.println("unknown command: " + name);
+            usage(commands, err);
+            return USAGE_ERROR;
+        }}
+
+        // Everything after the command word belongs to the command itself.
+        var rest = new String[args.length - 1];
+        System.arraycopy(args, 1, rest, 0, rest.length);
+        return command.run(out, err, rest);
+    }}
+
+    private static void usage(SequencedMap<String, Command> commands, PrintStream to) {{
+        to.println("usage: {word} <command> [args]");
+        to.println();
+        to.println("commands:");
+        to.println("  help");
+        commands.keySet().forEach(name -> to.println("  " + name));
+    }}
+
+    public static void main(String[] args) {{
+        System.exit(run(commands(), System.out, System.err, args));
+    }}
+}}
+"#,
+        word = name.to_lowercase()
+    )
+}
+
+fn cli_test(pkg: &str, name: &str) -> String {
+    format!(
+        r#"package {pkg};
+
+import org.junit.jupiter.api.Test;
+
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
+import java.util.LinkedHashMap;
+import java.util.SequencedMap;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+class {name}CliTest {{
+
+    private final ByteArrayOutputStream out = new ByteArrayOutputStream();
+    private final ByteArrayOutputStream err = new ByteArrayOutputStream();
+
+    /**
+     * A registry of test doubles. Because {{@code run}} takes the commands as an
+     * argument, the dispatcher is testable on its own -- these assertions hold
+     * before a single real command exists.
+     */
+    private SequencedMap<String, {name}Cli.Command> commands() {{
+        var commands = new LinkedHashMap<String, {name}Cli.Command>();
+        commands.put("echo", (out, err, args) -> {{
+            out.println(String.join(" ", args));
+            return 0;
+        }});
+        commands.put("boom", (out, err, args) -> {{
+            err.println("failed");
+            return 1;
+        }});
+        return commands;
+    }}
+
+    private int run(String... args) {{
+        return {name}Cli.run(commands(), new PrintStream(out), new PrintStream(err), args);
+    }}
+
+    @Test
+    void routesToTheNamedCommandAndPassesTheRestOfArgv() {{
+        assertThat(run("echo", "hello", "world")).isZero();
+        assertThat(out.toString()).contains("hello world");
+    }}
+
+    @Test
+    void returnsWhateverTheCommandReturned() {{
+        assertThat(run("boom")).isEqualTo(1);
+        assertThat(err.toString()).contains("failed");
+    }}
+
+    @Test
+    void listsEveryCommandInHelp() {{
+        assertThat(run("help")).isZero();
+        assertThat(out.toString()).contains("echo").contains("boom");
+    }}
+
+    @Test
+    void treatsNoArgumentsAsHelpRatherThanAnError() {{
+        assertThat(run()).isZero();
+        assertThat(out.toString()).contains("usage:");
+    }}
+
+    @Test
+    void namesTheUnknownCommandAndExitsTwo() {{
+        assertThat(run("nope")).isEqualTo({name}Cli.USAGE_ERROR);
+        assertThat(err.toString()).contains("nope");
+    }}
+
+    /** Help ordering is part of the contract, hence SequencedMap. */
+    @Test
+    void listsCommandsInRegistrationOrder() {{
+        run("help");
+        var text = out.toString();
+        assertThat(text.indexOf("echo")).isLessThan(text.indexOf("boom"));
+    }}
+}}
+"#
+    )
+}
+
+// ---- cases: a markdown checklist in, a pending JUnit class out. ----
+
+/// Turn a brief's checklist into a `@Disabled` test class -- the todo list you
+/// delete one `@Disabled` at a time.
+fn generate_cases(root: &Path, pkg: &str, brief: &Path) -> Result<()> {
+    let text = fs::read_to_string(brief).map_err(|e| format!("failed to read {}: {e}", brief.display()))?;
+    let cases = parse_cases(&text);
+    if cases.is_empty() {
+        return Err(format!(
+            "no list items found in {} -- `generate cases` turns markdown bullets into test cases",
+            brief.display()
+        ));
+    }
+
+    let class = cases_class_name(brief)?;
+    let path = test_dir(root, pkg).join(format!("{class}.java"));
+    if path.exists() {
+        return Err(format!("{} already exists", path.display()));
+    }
+    write_new_file(&path, &cases_java(pkg, &class, brief, &cases))?;
+    println!("created cases {} ({} case{})", path.display(), cases.len(), if cases.len() == 1 { "" } else { "s" });
+    Ok(())
+}
+
+/// Bullets under an acceptance/criteria/cases/checklist heading if the brief
+/// has one, otherwise every bullet in the file.
+///
+/// Deliberately the whole of the markdown support: a heading and a bullet. The
+/// moment this grows a second rule it starts being a markdown parser, and that
+/// is not what jails is.
+fn parse_cases(markdown: &str) -> Vec<String> {
+    let scoped = cases_section(markdown);
+    let source = scoped.as_deref().unwrap_or(markdown);
+
+    let mut cases = Vec::new();
+    let mut in_fence = false;
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        if let Some(item) = list_item(trimmed) {
+            let cleaned = clean_markdown(item);
+            if !cleaned.is_empty() {
+                cases.push(cleaned);
+            }
+        }
+    }
+    cases
+}
+
+/// The body under the first heading that looks like a list of expectations,
+/// up to the next heading of the same or a higher level.
+fn cases_section(markdown: &str) -> Option<String> {
+    const MARKERS: [&str; 5] = ["acceptance", "criteria", "cases", "checklist", "requirements"];
+
+    let mut lines = markdown.lines().enumerate();
+    let (start, level) = loop {
+        let (i, line) = lines.next()?;
+        let trimmed = line.trim_start();
+        if !trimmed.starts_with('#') {
+            continue;
+        }
+        let level = trimmed.chars().take_while(|c| *c == '#').count();
+        let title = trimmed[level..].to_lowercase();
+        if MARKERS.iter().any(|m| title.contains(m)) {
+            break (i + 1, level);
+        }
+    };
+
+    let body: Vec<&str> = markdown
+        .lines()
+        .skip(start)
+        .take_while(|line| {
+            let trimmed = line.trim_start();
+            let depth = trimmed.chars().take_while(|c| *c == '#').count();
+            depth == 0 || depth > level
+        })
+        .collect();
+    Some(body.join("\n"))
+}
+
+/// The content of a `-`/`*`/`1.` list item, checkbox marker stripped.
+fn list_item(line: &str) -> Option<&str> {
+    let rest = line
+        .strip_prefix("- ")
+        .or_else(|| line.strip_prefix("* "))
+        .or_else(|| line.strip_prefix("+ "))
+        .or_else(|| {
+            let digits: String = line.chars().take_while(|c| c.is_ascii_digit()).collect();
+            (!digits.is_empty()).then(|| line[digits.len()..].strip_prefix(". ")).flatten()
+        })?;
+    let rest = rest.trim();
+    // `- [ ]` / `- [x]` checkboxes: the box is not part of the case.
+    let rest = rest.strip_prefix("[ ]").or_else(|| rest.strip_prefix("[x]")).or_else(|| rest.strip_prefix("[X]")).unwrap_or(rest);
+    Some(rest.trim())
+}
+
+/// Strip the inline markup that would otherwise end up inside a `@DisplayName`
+/// string: emphasis, code ticks, and link syntax (keeping the link text).
+fn clean_markdown(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '*' | '_' | '`' | '#' => {}
+            '[' => {}
+            ']' => {
+                // `](url)` -- drop the target, keep the text already emitted.
+                if chars.peek() == Some(&'(') {
+                    for skipped in chars.by_ref() {
+                        if skipped == ')' {
+                            break;
+                        }
+                    }
+                }
+            }
+            '"' => out.push('\''),
+            '\\' => out.push('/'),
+            _ => out.push(c),
+        }
+    }
+    out.trim().to_string()
+}
+
+/// `01-normalise.md` -> `Workout01NormaliseTest`? No -- `Normalise01Test` would
+/// be a guess. The stem is turned into a class name verbatim (minus the
+/// separators), with a leading `Case` when it starts with a digit, since a Java
+/// identifier cannot.
+fn cases_class_name(brief: &Path) -> Result<String> {
+    let stem = brief
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| format!("{} has no file name to derive a class from", brief.display()))?;
+
+    let mut class = String::new();
+    let mut capitalize_next = true;
+    for c in stem.chars() {
+        if c.is_ascii_alphanumeric() {
+            if capitalize_next {
+                class.extend(c.to_uppercase());
+                capitalize_next = false;
+            } else {
+                class.push(c);
+            }
+        } else {
+            capitalize_next = true;
+        }
+    }
+    if class.is_empty() {
+        return Err(format!("cannot derive a class name from {}", brief.display()));
+    }
+    if class.starts_with(|c: char| c.is_ascii_digit()) {
+        class.insert_str(0, "Case");
+    }
+    if !class.ends_with("Test") {
+        class.push_str("Test");
+    }
+    Ok(class)
+}
+
+/// A markdown bullet as a Java method name: camelCase, alphanumerics only.
+fn case_method_name(case: &str) -> String {
+    let mut name = String::new();
+    let mut capitalize_next = false;
+    for c in case.chars() {
+        if c.is_ascii_alphanumeric() {
+            if capitalize_next && !name.is_empty() {
+                name.extend(c.to_uppercase());
+            } else if name.is_empty() {
+                name.extend(c.to_lowercase());
+            } else {
+                name.push(c);
+            }
+            capitalize_next = false;
+        } else {
+            capitalize_next = true;
+        }
+    }
+    if name.is_empty() {
+        name.push_str("case");
+    }
+    if name.starts_with(|c: char| c.is_ascii_digit()) {
+        name.insert(0, 'c');
+    }
+    name
+}
+
+fn cases_java(pkg: &str, class: &str, brief: &Path, cases: &[String]) -> String {
+    let mut out = format!("package {pkg};\n\n");
+    out += "import org.junit.jupiter.api.Disabled;\n";
+    out += "import org.junit.jupiter.api.DisplayName;\n";
+    out += "import org.junit.jupiter.api.Test;\n\n";
+    out += "/**\n";
+    out += &format!(" * Pending cases generated from {}.\n", brief.display());
+    out += " *\n";
+    out += " * <p>This is a todo list the build can read: every case fails loudly rather\n";
+    out += " * than passing vacuously, and the class-level @Disabled keeps the suite green\n";
+    out += " * meanwhile. Delete one @Disabled, make that case pass, move to the next.\n";
+    out += " */\n";
+    out += &format!("@DisplayName(\"{}\")\n", clean_markdown(&brief.file_stem().unwrap_or_default().to_string_lossy()));
+    out += "@Disabled(\"todo: implement these cases\")\n";
+    out += &format!("class {class} {{\n");
+
+    // Two bullets can easily reduce to the same identifier; a suffix keeps the
+    // class compiling rather than silently dropping a case.
+    let mut seen: Vec<String> = Vec::new();
+    for case in cases {
+        let base = case_method_name(case);
+        let mut method = base.clone();
+        let mut n = 2;
+        while seen.contains(&method) {
+            method = format!("{base}{n}");
+            n += 1;
+        }
+        seen.push(method.clone());
+
+        out += "\n    @Test\n";
+        out += &format!("    @DisplayName(\"{case}\")\n");
+        out += &format!("    void {method}() {{\n");
+        out += "        throw new UnsupportedOperationException(\"todo\");\n";
+        out += "    }\n";
+    }
+    out += "}\n";
+    out
 }
 
 #[cfg(test)]

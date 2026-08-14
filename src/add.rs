@@ -13,7 +13,7 @@
 //! completion description.
 
 use crate::generate::{base_package, find_project_root, main_dir, test_dir, write_new_file};
-use crate::pom::{self, Dependency, Flavor, TARGET_RELEASE};
+use crate::pom::{self, Dependency, Flavor, MIN_RELEASE, TARGET_RELEASE};
 use crate::Result;
 use clap::ValueEnum;
 use std::path::PathBuf;
@@ -26,6 +26,14 @@ pub enum Capability {
     Sqlite,
     /// Read and write JSON (Jackson databind)
     Json,
+    /// Deterministic test helpers: clocks, ids, fixtures, in-process CLI runs
+    Testkit,
+    /// A scripted test double for any interface, driven by a lambda
+    Fake,
+    /// An HTTP server on the JDK's own httpserver -- no framework
+    Http,
+    /// Automatic formatting on `mvn verify` (Spotless + palantir-java-format)
+    Format,
 }
 
 impl Capability {
@@ -34,6 +42,10 @@ impl Capability {
             Capability::Csv => "csv",
             Capability::Sqlite => "sqlite",
             Capability::Json => "json",
+            Capability::Testkit => "testkit",
+            Capability::Fake => "fake",
+            Capability::Http => "http",
+            Capability::Format => "format",
         }
     }
 }
@@ -46,8 +58,13 @@ struct NewFile {
 
 /// Everything a capability wants to do to the project, computed before
 /// anything is written so `--dry-run` can describe it without side effects.
+#[derive(Default)]
 struct Plan {
     deps: Vec<Dependency>,
+    /// Build plugins to splice, as (artifactId, rendered `<plugin>` block).
+    /// Plugin configuration is far too varied to model as a struct, so the
+    /// capability renders the XML and pom.rs only places it.
+    plugins: Vec<(&'static str, String)>,
     files: Vec<NewFile>,
 }
 
@@ -58,18 +75,18 @@ pub fn add(capability: Capability, name: Option<&str>, dry_run: bool) -> Result<
 
     // Emitting records and pattern-matching switches into a project pinned at
     // an older release produces code that cannot compile, so fail with
-    // something actionable instead.
-    let target: u32 = TARGET_RELEASE.parse().expect("TARGET_RELEASE is numeric");
+    // something actionable instead. The bar is what the generated code needs
+    // (MIN_RELEASE), not what jails happens to default new projects to.
     match pom::release_level(&pom_text) {
-        Some(level) if level < target => {
+        Some(level) if level < MIN_RELEASE => {
             return Err(format!(
-                "this project targets Java {level}, but jails generates Java {TARGET_RELEASE} code.\n       \
-                 Raise <maven.compiler.release> (or <java.version>) to {TARGET_RELEASE} in pom.xml and try again."
+                "this project targets Java {level}, but jails generates Java {MIN_RELEASE}+ code.\n       \
+                 Raise <maven.compiler.release> (or <java.version>) to at least {MIN_RELEASE} in pom.xml and try again."
             ));
         }
         None => {
             return Err(format!(
-                "pom.xml does not set a Java release level, and jails generates Java {TARGET_RELEASE} code.\n       \
+                "pom.xml does not set a Java release level, and jails generates Java {MIN_RELEASE}+ code.\n       \
                  Add <maven.compiler.release>{TARGET_RELEASE}</maven.compiler.release> to <properties> and try again."
             ));
         }
@@ -81,6 +98,10 @@ pub fn add(capability: Capability, name: Option<&str>, dry_run: bool) -> Result<
         Capability::Csv => csv_plan(&root, &pkg, flavor, name)?,
         Capability::Sqlite => sqlite_plan(&root, &pkg, flavor, name)?,
         Capability::Json => json_plan(&root, &pkg, flavor, name)?,
+        Capability::Testkit => testkit_plan(&root, &pkg)?,
+        Capability::Fake => fake_plan(&root, &pkg)?,
+        Capability::Http => http_plan(&root, &pkg, name)?,
+        Capability::Format => format_plan()?,
     };
 
     // Work out the pom edit up front, so a dry run can say whether the
@@ -97,9 +118,23 @@ pub fn add(capability: Capability, name: Option<&str>, dry_run: bool) -> Result<
         }
     }
 
+    let mut spliced_plugins: Vec<&str> = Vec::new();
+    for (artifact_id, body) in &plan.plugins {
+        match pom::add_plugin(&updated_pom, artifact_id, body)? {
+            Some(next) => {
+                updated_pom = next;
+                spliced_plugins.push(artifact_id);
+            }
+            None => println!("  exists  plugin {artifact_id}"),
+        }
+    }
+
     if dry_run {
         for dep in &spliced {
             println!("  would add dependency  {}:{}", dep.group_id, dep.artifact_id);
+        }
+        for artifact_id in &spliced_plugins {
+            println!("  would add plugin  {artifact_id}");
         }
         for file in &plan.files {
             let verb = if file.path.exists() { "would skip (exists)" } else { "would create" };
@@ -108,11 +143,14 @@ pub fn add(capability: Capability, name: Option<&str>, dry_run: bool) -> Result<
         return Ok(());
     }
 
-    if !spliced.is_empty() {
+    if !spliced.is_empty() || !spliced_plugins.is_empty() {
         std::fs::write(root.join("pom.xml"), &updated_pom)
             .map_err(|e| format!("failed to write pom.xml: {e}"))?;
         for dep in &spliced {
             println!("     dep  {}:{}", dep.group_id, dep.artifact_id);
+        }
+        for artifact_id in &spliced_plugins {
+            println!("  plugin  {artifact_id}");
         }
     }
 
@@ -127,7 +165,7 @@ pub fn add(capability: Capability, name: Option<&str>, dry_run: bool) -> Result<
         created += 1;
     }
 
-    if created == 0 && spliced.is_empty() {
+    if created == 0 && spliced.is_empty() && spliced_plugins.is_empty() {
         println!("{} is already set up -- nothing to do", capability.label());
         return Ok(());
     }
@@ -176,6 +214,7 @@ fn csv_plan(root: &std::path::Path, pkg: &str, _flavor: Flavor, name: Option<&st
         // Spring Boot's dependency management does not cover commons-csv, so
         // the version is pinned in both flavors.
         deps: vec![COMMONS_CSV],
+        plugins: vec![],
         files: vec![
             NewFile {
                 path: main_dir(root, pkg).join(format!("{class}.java")),
@@ -331,6 +370,7 @@ fn sqlite_plan(root: &std::path::Path, pkg: &str, _flavor: Flavor, name: Option<
 
     Ok(Plan {
         deps: vec![SQLITE_JDBC],
+        plugins: vec![],
         files: vec![
             NewFile {
                 path: main_dir(root, pkg).join(format!("{database}.java")),
@@ -604,6 +644,7 @@ fn json_plan(root: &std::path::Path, pkg: &str, flavor: Flavor, name: Option<&st
 
     Ok(Plan {
         deps,
+        plugins: vec![],
         files: vec![
             NewFile {
                 path: main_dir(root, pkg).join(format!("{class}.java")),
@@ -798,6 +839,797 @@ class {class}Test {{
 "#
     )
 }
+
+// ---------------------------------------------------------------------------
+// testkit
+// ---------------------------------------------------------------------------
+
+/// The four things every testable CLI needs and nobody enjoys writing twice.
+/// No dependency: JUnit and AssertJ are already there, and everything here is
+/// plain JDK.
+///
+/// These helpers also apply pressure in the right direction. `Clocks` and
+/// `Ids` are only usable by code that *takes* a `Clock` and a
+/// `Supplier<String>` instead of calling `Instant.now()` and
+/// `UUID.randomUUID()` -- so generating them nudges the design toward the one
+/// that can be tested deterministically at all.
+fn testkit_plan(root: &std::path::Path, pkg: &str) -> Result<Plan> {
+    let testkit = format!("{pkg}.testkit");
+    let dir = test_dir(root, &testkit);
+
+    Ok(Plan {
+        files: vec![
+            NewFile { path: dir.join("Clocks.java"), contents: clocks_java(&testkit) },
+            NewFile { path: dir.join("Ids.java"), contents: ids_java(&testkit) },
+            NewFile { path: dir.join("Fixtures.java"), contents: fixtures_java(&testkit) },
+            NewFile { path: dir.join("Cli.java"), contents: testkit_cli_java(&testkit) },
+            NewFile { path: dir.join("TestkitTest.java"), contents: testkit_test_java(&testkit) },
+            NewFile {
+                path: root.join("src/test/resources/fixtures/example.json"),
+                contents: EXAMPLE_FIXTURE.to_string(),
+            },
+        ],
+        ..Plan::default()
+    })
+}
+
+const EXAMPLE_FIXTURE: &str = "{\n  \"name\": \"bolt\",\n  \"qty\": 7\n}\n";
+
+fn clocks_java(pkg: &str) -> String {
+    format!(
+        r#"package {pkg};
+
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+
+/**
+ * Deterministic clocks.
+ *
+ * <p>These only work on code that accepts a {{@link Clock}} rather than calling
+ * {{@code Instant.now()}}. That is the point: taking the clock as a parameter is
+ * what makes a timestamp assertable at all.
+ *
+ * <p>{{@code Clock.fixed}} is already in the JDK, so only the stepping clock --
+ * for asserting that events are ordered and distinct -- needs writing.
+ */
+public final class Clocks {{
+
+    /** An arbitrary, memorable instant. Deterministic is the only requirement. */
+    public static final Instant DEFAULT_START = Instant.parse("2026-01-01T00:00:00Z");
+
+    private Clocks() {{}}
+
+    public static Clock fixed(Instant instant) {{
+        return Clock.fixed(instant, ZoneOffset.UTC);
+    }}
+
+    public static Clock fixed() {{
+        return fixed(DEFAULT_START);
+    }}
+
+    /** A clock that advances by {{@code step}} on every read. */
+    public static Clock stepping(Instant start, Duration step) {{
+        return new SteppingClock(start, step, ZoneOffset.UTC);
+    }}
+
+    public static Clock stepping() {{
+        return stepping(DEFAULT_START, Duration.ofSeconds(1));
+    }}
+
+    private static final class SteppingClock extends Clock {{
+
+        private final Duration step;
+        private final ZoneId zone;
+        private Instant current;
+
+        private SteppingClock(Instant start, Duration step, ZoneId zone) {{
+            this.current = start;
+            this.step = step;
+            this.zone = zone;
+        }}
+
+        @Override
+        public ZoneId getZone() {{
+            return zone;
+        }}
+
+        @Override
+        public Clock withZone(ZoneId other) {{
+            return new SteppingClock(current, step, other);
+        }}
+
+        @Override
+        public synchronized Instant instant() {{
+            var value = current;
+            current = current.plus(step);
+            return value;
+        }}
+    }}
+}}
+"#
+    )
+}
+
+fn ids_java(pkg: &str) -> String {
+    format!(
+        r#"package {pkg};
+
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
+
+/**
+ * Deterministic identifiers.
+ *
+ * <p>The counterpart to {{@link Clocks}}: code that takes a
+ * {{@code Supplier<String>}} instead of calling {{@code UUID.randomUUID()}} can
+ * have its output asserted in full, identifiers included.
+ */
+public final class Ids {{
+
+    private Ids() {{}}
+
+    /** Yields {{@code prefix-1}}, {{@code prefix-2}}, ... */
+    public static Supplier<String> sequential(String prefix, int start) {{
+        var next = new AtomicInteger(start);
+        return () -> prefix + "-" + next.getAndIncrement();
+    }}
+
+    public static Supplier<String> sequential(String prefix) {{
+        return sequential(prefix, 1);
+    }}
+}}
+"#
+    )
+}
+
+fn fixtures_java(pkg: &str) -> String {
+    format!(
+        r#"package {pkg};
+
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+
+/**
+ * Loads sample files from {{@code src/test/resources/fixtures}}.
+ *
+ * <p>Off the classpath, not by walking relative paths from the working
+ * directory: {{@code Path.of("../fixtures")}} works until something runs the
+ * suite from elsewhere, and then fails in a way that looks like a test bug.
+ *
+ * <p>A missing fixture fails immediately, naming what it looked for. Silently
+ * returning empty input turns a typo into a passing test.
+ */
+public final class Fixtures {{
+
+    private static final String ROOT = "/fixtures/";
+
+    private Fixtures() {{}}
+
+    /** Raw bytes of a fixture, e.g. {{@code bytes("example.json")}}. */
+    public static byte[] bytes(String name) {{
+        try (var in = Fixtures.class.getResourceAsStream(ROOT + name)) {{
+            if (in == null) {{
+                throw new IllegalArgumentException("no fixture named '" + name + "' under src/test/resources" + ROOT);
+            }}
+            return in.readAllBytes();
+        }} catch (IOException error) {{
+            throw new UncheckedIOException("unreadable fixture: " + name, error);
+        }}
+    }}
+
+    public static String text(String name) {{
+        return new String(bytes(name), StandardCharsets.UTF_8);
+    }}
+
+    /** Non-blank lines, for line-oriented formats like CSV and JSONL. */
+    public static List<String> lines(String name) {{
+        return text(name).lines().filter(line -> !line.isBlank()).toList();
+    }}
+
+    /** Real filesystem path, for code under test that insists on a {{@link Path}}. */
+    public static Path path(String name) {{
+        var url = Fixtures.class.getResource(ROOT + name);
+        if (url == null) {{
+            throw new IllegalArgumentException("no fixture named '" + name + "' under src/test/resources" + ROOT);
+        }}
+        try {{
+            return Path.of(url.toURI());
+        }} catch (URISyntaxException error) {{
+            throw new IllegalStateException("fixture path is not a file: " + name, error);
+        }}
+    }}
+
+    /** Copies a fixture into {{@code directory}}, for tests that mutate their input. */
+    public static Path copyTo(String name, Path directory) {{
+        try {{
+            Files.createDirectories(directory);
+            var target = directory.resolve(Path.of(name).getFileName().toString());
+            Files.write(target, bytes(name));
+            return target;
+        }} catch (IOException error) {{
+            throw new UncheckedIOException("could not copy fixture " + name, error);
+        }}
+    }}
+}}
+"#
+    )
+}
+
+fn testkit_cli_java(pkg: &str) -> String {
+    format!(
+        r#"package {pkg};
+
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
+
+/**
+ * Runs a command in-process and captures what a user would have seen.
+ *
+ * <p>No {{@code System.setOut}} anywhere: the command under test takes its
+ * streams as arguments, so capturing them is just passing different ones. That
+ * keeps these tests safe to run in parallel, which the swap-the-global approach
+ * never is.
+ *
+ * <p>{{@link Command}} matches the shape {{@code jails generate command}} and
+ * {{@code jails generate cli}} emit, so a real command is a method reference:
+ *
+ * {{@snippet :
+ * var run = Cli.run(GreetCommand::run, "world");
+ * assertThat(run.exitCode()).isZero();
+ * assertThat(run.out()).contains("hello world");
+ * }}
+ */
+public final class Cli {{
+
+    /** Anything that takes streams plus argv and returns an exit code. */
+    @FunctionalInterface
+    public interface Command {{
+        int run(PrintStream out, PrintStream err, String... args);
+    }}
+
+    /** What one invocation produced. */
+    public record Run(String out, String err, int exitCode) {{
+
+        /** Stdout split into non-blank lines, for asserting line by line. */
+        public List<String> outLines() {{
+            return out.lines().filter(line -> !line.isBlank()).toList();
+        }}
+
+        public boolean succeeded() {{
+            return exitCode == 0;
+        }}
+    }}
+
+    private Cli() {{}}
+
+    public static Run run(Command command, String... args) {{
+        var out = new ByteArrayOutputStream();
+        var err = new ByteArrayOutputStream();
+        int exitCode;
+        try (var capturedOut = new PrintStream(out, true, StandardCharsets.UTF_8);
+                var capturedErr = new PrintStream(err, true, StandardCharsets.UTF_8)) {{
+            exitCode = command.run(capturedOut, capturedErr, args);
+        }}
+        return new Run(out.toString(StandardCharsets.UTF_8), err.toString(StandardCharsets.UTF_8), exitCode);
+    }}
+}}
+"#
+    )
+}
+
+fn testkit_test_java(pkg: &str) -> String {
+    format!(
+        r#"package {pkg};
+
+import org.junit.jupiter.api.Test;
+
+import java.time.Duration;
+import java.time.Instant;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+/** Proves the test kit itself works, so a failure elsewhere is never its fault. */
+class TestkitTest {{
+
+    @Test
+    void fixedClockDoesNotMove() {{
+        var clock = Clocks.fixed();
+
+        assertThat(clock.instant()).isEqualTo(Clocks.DEFAULT_START).isEqualTo(clock.instant());
+    }}
+
+    @Test
+    void steppingClockAdvancesOnEveryRead() {{
+        var clock = Clocks.stepping(Instant.parse("2026-01-01T00:00:00Z"), Duration.ofMinutes(1));
+
+        assertThat(clock.instant()).isEqualTo(Instant.parse("2026-01-01T00:00:00Z"));
+        assertThat(clock.instant()).isEqualTo(Instant.parse("2026-01-01T00:01:00Z"));
+    }}
+
+    @Test
+    void idsAreSequentialAndPrefixed() {{
+        var ids = Ids.sequential("txn");
+
+        assertThat(ids.get()).isEqualTo("txn-1");
+        assertThat(ids.get()).isEqualTo("txn-2");
+    }}
+
+    @Test
+    void fixturesLoadOffTheClasspath() {{
+        assertThat(Fixtures.text("example.json")).contains("bolt");
+        assertThat(Fixtures.path("example.json")).exists();
+    }}
+
+    /** A typo in a fixture name must fail, not quietly read nothing. */
+    @Test
+    void aMissingFixtureNamesWhatItLookedFor() {{
+        assertThatThrownBy(() -> Fixtures.text("nope.json"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("nope.json");
+    }}
+
+    @Test
+    void cliCapturesBothStreamsAndTheExitCode() {{
+        var run = Cli.run(
+                (out, err, args) -> {{
+                    out.println("out: " + String.join(",", args));
+                    err.println("err");
+                    return 3;
+                }},
+                "a",
+                "b");
+
+        assertThat(run.out()).contains("out: a,b");
+        assertThat(run.err()).contains("err");
+        assertThat(run.exitCode()).isEqualTo(3);
+        assertThat(run.succeeded()).isFalse();
+    }}
+}}
+"#
+    )
+}
+
+// ---------------------------------------------------------------------------
+// fake
+// ---------------------------------------------------------------------------
+
+/// A scripted test double. Generic by construction: jails has no Java parser
+/// and no business acquiring one, so rather than generating a fake *of* some
+/// interface, this generates the replay engine and you attach it to any
+/// interface with a lambda. One class covers every collaborator in the project.
+fn fake_plan(root: &std::path::Path, pkg: &str) -> Result<Plan> {
+    let testkit = format!("{pkg}.testkit");
+    let dir = test_dir(root, &testkit);
+
+    Ok(Plan {
+        files: vec![
+            NewFile { path: dir.join("Scripted.java"), contents: scripted_java(&testkit) },
+            NewFile { path: dir.join("ScriptedTest.java"), contents: scripted_test_java(&testkit) },
+        ],
+        ..Plan::default()
+    })
+}
+
+fn scripted_java(pkg: &str) -> String {
+    format!(
+        r#"package {pkg};
+
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * A collaborator that replays a fixed script and records how it was called.
+ *
+ * <p>Attach it to any interface with a lambda -- which is why this is one class
+ * rather than one fake per interface, and why it needs no mocking framework:
+ *
+ * {{@snippet :
+ * var model = Scripted.of(Scripted.value("ok"), Scripted.failure(new IllegalStateException("timeout")));
+ * ModelProvider provider = prompt -> model.next(prompt);
+ *
+ * assertThat(provider.generate("hello")).isEqualTo("ok");
+ * assertThat(model.calls()).containsExactly(List.of("hello"));
+ * }}
+ *
+ * <p>Once the script runs out the last step repeats, so a test that only cares
+ * about the first response does not have to pad the script to match.
+ */
+public final class Scripted<T> {{
+
+    /** One scripted turn. Sealed, so a switch over it is checked for exhaustiveness. */
+    public sealed interface Step<T> {{}}
+
+    public record Value<T>(T value) implements Step<T> {{}}
+
+    public record Failure<T>(RuntimeException error) implements Step<T> {{}}
+
+    private final List<Step<T>> script;
+    private final List<List<Object>> calls = new ArrayList<>();
+    private int index = 0;
+
+    private Scripted(List<Step<T>> script) {{
+        if (script.isEmpty()) {{
+            throw new IllegalArgumentException("a scripted double needs at least one step");
+        }}
+        this.script = List.copyOf(script);
+    }}
+
+    @SafeVarargs
+    public static <T> Scripted<T> of(Step<T>... steps) {{
+        return new Scripted<>(List.of(steps));
+    }}
+
+    public static <T> Step<T> value(T value) {{
+        return new Value<>(value);
+    }}
+
+    public static <T> Step<T> failure(RuntimeException error) {{
+        return new Failure<>(error);
+    }}
+
+    /** Records the arguments it was called with, then plays the next step. */
+    public T next(Object... arguments) {{
+        calls.add(List.of(arguments));
+        var step = script.get(Math.min(index++, script.size() - 1));
+        return switch (step) {{
+            case Value<T>(var value) -> value;
+            case Failure<T>(var error) -> throw error;
+        }};
+    }}
+
+    /** Every call so far, in order, each as its argument list. */
+    public List<List<Object>> calls() {{
+        return List.copyOf(calls);
+    }}
+
+    public int callCount() {{
+        return calls.size();
+    }}
+}}
+"#
+    )
+}
+
+fn scripted_test_java(pkg: &str) -> String {
+    format!(
+        r#"package {pkg};
+
+import org.junit.jupiter.api.Test;
+
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+class ScriptedTest {{
+
+    @Test
+    void playsEachStepInOrder() {{
+        var scripted = Scripted.of(Scripted.value("first"), Scripted.value("second"));
+
+        assertThat(scripted.next()).isEqualTo("first");
+        assertThat(scripted.next()).isEqualTo("second");
+    }}
+
+    @Test
+    void repeatsTheLastStepOnceTheScriptRunsOut() {{
+        var scripted = Scripted.of(Scripted.value("only"));
+
+        assertThat(scripted.next()).isEqualTo("only");
+        assertThat(scripted.next()).isEqualTo("only");
+    }}
+
+    @Test
+    void throwsWhateverTheScriptSaysToThrow() {{
+        var scripted = Scripted.<String>of(Scripted.failure(new IllegalStateException("simulated timeout")));
+
+        assertThatThrownBy(scripted::next).isInstanceOf(IllegalStateException.class).hasMessage("simulated timeout");
+    }}
+
+    @Test
+    void recordsHowItWasCalled() {{
+        var scripted = Scripted.of(Scripted.value(1));
+
+        scripted.next("a", 2);
+        scripted.next("b");
+
+        assertThat(scripted.calls()).containsExactly(List.of("a", 2), List.of("b"));
+        assertThat(scripted.callCount()).isEqualTo(2);
+    }}
+
+    @Test
+    void rejectsAnEmptyScript() {{
+        assertThatThrownBy(Scripted::of).isInstanceOf(IllegalArgumentException.class);
+    }}
+}}
+"#
+    )
+}
+
+// ---------------------------------------------------------------------------
+// http
+// ---------------------------------------------------------------------------
+
+/// An HTTP server with no dependency at all: `com.sun.net.httpserver` has
+/// shipped in the JDK since 6 and is a supported API, and `java.net.http`
+/// gives the test its client. A framework here would be the biggest dependency
+/// in the project and buy nothing a route map does not.
+fn http_plan(root: &std::path::Path, pkg: &str, name: Option<&str>) -> Result<Plan> {
+    let base = name.map(capitalize).unwrap_or_default();
+    let class = format!("{base}Server");
+
+    Ok(Plan {
+        files: vec![
+            NewFile {
+                path: main_dir(root, pkg).join(format!("{class}.java")),
+                contents: http_server_java(pkg, &class),
+            },
+            NewFile {
+                path: test_dir(root, pkg).join(format!("{class}Test.java")),
+                contents: http_server_test_java(pkg, &class),
+            },
+        ],
+        ..Plan::default()
+    })
+}
+
+fn http_server_java(pkg: &str, class: &str) -> String {
+    format!(
+        r#"package {pkg};
+
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpServer;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.util.Map;
+import java.util.concurrent.Executors;
+
+/**
+ * A small HTTP server on the JDK's own {{@code com.sun.net.httpserver}} -- no
+ * framework, no container, no dependency.
+ *
+ * <p>Handlers are pure functions from {{@link Request}} to {{@link Response}}, so
+ * the interesting half can be unit-tested without any socket at all; this class
+ * only maps them onto HTTP.
+ *
+ * <p>Requests are served on virtual threads, so a handler that blocks on I/O
+ * costs a stack, not a platform thread.
+ *
+ * {{@snippet :
+ * try (var server = {class}.start(0, Map.of("/health", request -> Response.ok("{{\"status\":\"up\"}}")))) {{
+ *     var uri = URI.create("http://localhost:" + server.port() + "/health");
+ * }}
+ * }}
+ */
+public final class {class} implements AutoCloseable {{
+
+    /** Everything a handler is allowed to see. */
+    public record Request(String method, String path, String query, String body) {{}}
+
+    /** Everything a handler can say. JSON by default -- override for anything else. */
+    public record Response(int status, String contentType, String body) {{
+
+        public static Response ok(String body) {{
+            return new Response(200, "application/json", body);
+        }}
+
+        public static Response text(String body) {{
+            return new Response(200, "text/plain; charset=utf-8", body);
+        }}
+
+        public static Response notFound() {{
+            return new Response(404, "application/json", "{{\"error\":\"not found\"}}");
+        }}
+
+        public static Response badRequest(String message) {{
+            return new Response(400, "application/json", "{{\"error\":\"" + message + "\"}}");
+        }}
+    }}
+
+    @FunctionalInterface
+    public interface Handler {{
+        Response handle(Request request);
+    }}
+
+    private final HttpServer http;
+
+    private {class}(HttpServer http) {{
+        this.http = http;
+    }}
+
+    /**
+     * Binds and starts. Pass port 0 to let the OS pick a free one and read it
+     * back from {{@link #port()}} -- which is what makes tests safe to run in
+     * parallel, and CI safe from whatever else is listening on 8080.
+     */
+    public static {class} start(int port, Map<String, Handler> routes) {{
+        try {{
+            var http = HttpServer.create(new InetSocketAddress(port), 0);
+            routes.forEach((path, handler) -> http.createContext(path, exchange -> dispatch(exchange, handler)));
+            http.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
+            http.start();
+            return new {class}(http);
+        }} catch (IOException error) {{
+            throw new UncheckedIOException("could not start the server on port " + port, error);
+        }}
+    }}
+
+    public int port() {{
+        return http.getAddress().getPort();
+    }}
+
+    private static void dispatch(HttpExchange exchange, Handler handler) throws IOException {{
+        try (exchange) {{
+            var uri = exchange.getRequestURI();
+            Response response;
+            try (var in = exchange.getRequestBody()) {{
+                var body = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+                var request = new Request(exchange.getRequestMethod(), uri.getPath(), uri.getQuery(), body);
+                // A handler that throws must not leave the connection hanging:
+                // the client would block until it timed out, with nothing said.
+                response = handle(handler, request);
+            }}
+
+            var bytes = response.body().getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", response.contentType());
+            exchange.sendResponseHeaders(response.status(), bytes.length);
+            try (var out = exchange.getResponseBody()) {{
+                out.write(bytes);
+            }}
+        }}
+    }}
+
+    private static Response handle(Handler handler, Request request) {{
+        try {{
+            return handler.handle(request);
+        }} catch (RuntimeException error) {{
+            return new Response(500, "application/json", "{{\"error\":\"internal error\"}}");
+        }}
+    }}
+
+    /** Stops accepting connections. {{@code AutoCloseable}}, so a test can use try-with-resources. */
+    @Override
+    public void close() {{
+        http.stop(0);
+    }}
+}}
+"#
+    )
+}
+
+fn http_server_test_java(pkg: &str, class: &str) -> String {
+    format!(
+        r#"package {pkg};
+
+import org.junit.jupiter.api.Test;
+
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.util.Map;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/** End-to-end over a real socket, on an ephemeral port so nothing collides. */
+class {class}Test {{
+
+    private static final Map<String, {class}.Handler> ROUTES = Map.of(
+            "/health", request -> {class}.Response.ok("{{\"status\":\"up\"}}"),
+            "/echo", request -> {class}.Response.text(request.method() + " " + request.body()),
+            "/boom", request -> {{
+                throw new IllegalStateException("handler blew up");
+            }});
+
+    private HttpResponse<String> call(int port, String path, String body) throws Exception {{
+        var request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
+                .method(body == null ? "GET" : "POST", body == null
+                        ? HttpRequest.BodyPublishers.noBody()
+                        : HttpRequest.BodyPublishers.ofString(body))
+                .build();
+        try (var client = HttpClient.newHttpClient()) {{
+            return client.send(request, HttpResponse.BodyHandlers.ofString());
+        }}
+    }}
+
+    @Test
+    void servesARegisteredRoute() throws Exception {{
+        try (var server = {class}.start(0, ROUTES)) {{
+            var response = call(server.port(), "/health", null);
+
+            assertThat(response.statusCode()).isEqualTo(200);
+            assertThat(response.body()).contains("up");
+            assertThat(response.headers().firstValue("Content-Type")).hasValue("application/json");
+        }}
+    }}
+
+    @Test
+    void handsTheHandlerTheMethodAndBody() throws Exception {{
+        try (var server = {class}.start(0, ROUTES)) {{
+            assertThat(call(server.port(), "/echo", "hello").body()).isEqualTo("POST hello");
+        }}
+    }}
+
+    @Test
+    void answersUnknownPathsWithFourOhFour() throws Exception {{
+        try (var server = {class}.start(0, ROUTES)) {{
+            assertThat(call(server.port(), "/nope", null).statusCode()).isEqualTo(404);
+        }}
+    }}
+
+    /** A throwing handler must still answer, or the client just hangs. */
+    @Test
+    void turnsAHandlerExceptionIntoAFiveHundred() throws Exception {{
+        try (var server = {class}.start(0, ROUTES)) {{
+            assertThat(call(server.port(), "/boom", null).statusCode()).isEqualTo(500);
+        }}
+    }}
+
+    @Test
+    void picksAFreePortWhenAskedForZero() {{
+        try (var server = {class}.start(0, ROUTES)) {{
+            assertThat(server.port()).isPositive();
+        }}
+    }}
+}}
+"#
+    )
+}
+
+// ---------------------------------------------------------------------------
+// format
+// ---------------------------------------------------------------------------
+
+/// Spotless, bound to `verify` as a check and available as `jails fmt` to
+/// apply. Formatting nobody has to think about is the only kind that survives.
+const SPOTLESS_ARTIFACT: &str = "spotless-maven-plugin";
+
+fn format_plan() -> Result<Plan> {
+    Ok(Plan {
+        plugins: vec![(SPOTLESS_ARTIFACT, SPOTLESS_PLUGIN.to_string())],
+        ..Plan::default()
+    })
+}
+
+/// palantir-java-format over google-java-format: it keeps a 120-column line,
+/// which the generated code (records with several components, fluent AssertJ
+/// chains) reads far better at than 100. Both are pinned -- a formatter that
+/// drifts version rewrites files nobody touched.
+const SPOTLESS_PLUGIN: &str = r#"<plugin>
+    <groupId>com.diffplug.spotless</groupId>
+    <artifactId>spotless-maven-plugin</artifactId>
+    <version>3.9.0</version>
+    <configuration>
+        <java>
+            <palantirJavaFormat>
+                <version>2.97.0</version>
+            </palantirJavaFormat>
+            <removeUnusedImports/>
+        </java>
+    </configuration>
+    <executions>
+        <execution>
+            <id>spotless-check</id>
+            <phase>verify</phase>
+            <goals>
+                <goal>check</goal>
+            </goals>
+        </execution>
+    </executions>
+</plugin>"#;
 
 #[cfg(test)]
 mod tests {

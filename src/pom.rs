@@ -19,6 +19,14 @@ use std::path::Path;
 /// bumping the target is a one-line change here.
 pub const TARGET_RELEASE: &str = "27";
 
+/// The oldest release the *generated* Java actually needs. Everything jails
+/// emits -- records, sealed interfaces, text blocks, pattern-matching switch,
+/// `SequencedMap`, `List.getFirst()`, virtual threads -- went final in 21, so
+/// that is the honest floor. `add` checks against this rather than
+/// `TARGET_RELEASE`: refusing to grow a project pinned at 25 (the current LTS)
+/// because jails' own *default* is 27 would be a fiction.
+pub const MIN_RELEASE: u32 = 21;
+
 /// Which kind of Maven project this is. Capabilities wire themselves up
 /// differently in each (a Spring project gets starters and autoconfiguration;
 /// a plain one gets the library plus hand-rolled glue), and this is always
@@ -277,6 +285,115 @@ fn last_child_indent(pom: &str, close: usize) -> Option<String> {
     line_indent(pom, at).map(|s| s.to_string())
 }
 
+// ---------------------------------------------------------------------------
+// build plugins
+// ---------------------------------------------------------------------------
+
+/// Byte offset of the `</plugins>` closing the `project/build/plugins`
+/// element. `pluginManagement`, `profiles` and `reporting` all nest an
+/// identically named element, so this walks the stack rather than matching
+/// text -- same reasoning as `project_dependencies_close`.
+fn build_plugins_close(xml: &str) -> Option<usize> {
+    let tags = scan_tags(xml);
+    let mut stack: Vec<&str> = Vec::new();
+    let mut depth_of_target: Option<usize> = None;
+
+    for tag in &tags {
+        if tag.closing {
+            if let Some(target_depth) = depth_of_target {
+                if stack.len() == target_depth && tag.name == "plugins" {
+                    return Some(tag.start);
+                }
+            }
+            stack.pop();
+            continue;
+        }
+        if tag.self_closing {
+            continue;
+        }
+        if tag.name == "plugins" && stack.as_slice() == ["project", "build"] && depth_of_target.is_none() {
+            depth_of_target = Some(stack.len() + 1);
+        }
+        stack.push(&tag.name);
+    }
+    None
+}
+
+/// True when `artifact_id` is already declared as a build plugin.
+pub fn has_plugin(pom: &str, artifact_id: &str) -> bool {
+    let needle = format!("<artifactId>{artifact_id}</artifactId>");
+    let mut from = 0;
+    while let Some(rel) = pom[from..].find(&needle) {
+        let at = from + rel;
+        if !inside_comment(pom, at) {
+            return true;
+        }
+        from = at + needle.len();
+    }
+    false
+}
+
+/// Splice a whole `<plugin>` block (rendered by the caller, since plugin
+/// configuration is far too varied to model as a struct) into
+/// `project/build/plugins`, creating `<build>`/`<plugins>` if absent.
+/// `Ok(None)` when the plugin is already declared.
+pub fn add_plugin(pom: &str, artifact_id: &str, body: &str) -> Result<Option<String>> {
+    if has_plugin(pom, artifact_id) {
+        return Ok(None);
+    }
+
+    if let Some(close) = build_plugins_close(pom) {
+        let child_indent = pom[..close]
+            .rfind("<plugin>")
+            .and_then(|at| line_indent(pom, at))
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("{}    ", line_indent(pom, close).unwrap_or("        ")));
+        let line_start = pom[..close].rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let mut out = String::with_capacity(pom.len() + body.len() + 128);
+        out.push_str(&pom[..line_start]);
+        out.push_str(&indent_block(body, &child_indent));
+        out.push_str(&pom[line_start..]);
+        return Ok(Some(out));
+    }
+
+    // No <build><plugins> yet: create the whole nest before </project>.
+    let close_project = pom
+        .rfind("</project>")
+        .ok_or_else(|| "pom.xml has no </project> -- is it a valid Maven pom?".to_string())?;
+    let line_start = pom[..close_project].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let indent = line_indent(pom, close_project).unwrap_or("").to_string();
+    let step = format!("{indent}    ");
+
+    let mut block = String::new();
+    block.push_str(&format!("{step}<build>\n"));
+    block.push_str(&format!("{step}    <plugins>\n"));
+    block.push_str(&indent_block(body, &format!("{step}        ")));
+    block.push_str(&format!("{step}    </plugins>\n"));
+    block.push_str(&format!("{step}</build>\n"));
+
+    let mut out = String::with_capacity(pom.len() + block.len());
+    out.push_str(&pom[..line_start]);
+    out.push_str(&block);
+    out.push_str(&pom[line_start..]);
+    Ok(Some(out))
+}
+
+/// Re-indent a multi-line block so its first line sits at `indent` and the
+/// rest keep their relative shape.
+fn indent_block(body: &str, indent: &str) -> String {
+    let mut out = String::with_capacity(body.len() + 64);
+    for line in body.trim_end().lines() {
+        if line.trim().is_empty() {
+            out.push('\n');
+        } else {
+            out.push_str(indent);
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -422,5 +539,57 @@ mod tests {
     #[test]
     fn add_dependency_errors_on_a_pom_without_a_project_element() {
         assert!(add_dependency("nonsense", &CSV).is_err());
+    }
+
+    const SPOTLESS: &str = "<plugin>\n    <artifactId>spotless-maven-plugin</artifactId>\n</plugin>";
+
+    #[test]
+    fn add_plugin_is_idempotent() {
+        let pom = "<project>\n    <build>\n        <plugins>\n        </plugins>\n    </build>\n</project>\n";
+        let once = add_plugin(pom, "spotless-maven-plugin", SPOTLESS).unwrap().unwrap();
+        assert!(add_plugin(&once, "spotless-maven-plugin", SPOTLESS).unwrap().is_none());
+    }
+
+    #[test]
+    fn add_plugin_creates_the_build_nest_when_absent() {
+        let pom = "<project>\n    <artifactId>demo</artifactId>\n</project>\n";
+        let out = add_plugin(pom, "spotless-maven-plugin", SPOTLESS).unwrap().unwrap();
+        assert!(out.contains("    <build>\n        <plugins>\n"));
+        assert!(out.contains("spotless-maven-plugin"));
+        assert!(out.contains("        </plugins>\n    </build>\n</project>"));
+    }
+
+    /// `pluginManagement` nests an identically named `<plugins>`; landing in it
+    /// would declare a version without ever running the plugin.
+    #[test]
+    fn add_plugin_skips_the_plugin_management_block() {
+        let pom = r#"<project>
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <artifactId>managed</artifactId>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+        <plugins>
+            <plugin>
+                <artifactId>real</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>
+"#;
+        let out = add_plugin(pom, "spotless-maven-plugin", SPOTLESS).unwrap().unwrap();
+        let managed_end = out.find("</pluginManagement>").unwrap();
+        assert!(out.find("spotless-maven-plugin").unwrap() > managed_end);
+    }
+
+    #[test]
+    fn add_plugin_matches_sibling_indentation() {
+        let pom = "<project>\n    <build>\n        <plugins>\n            <plugin>\n                <artifactId>real</artifactId>\n            </plugin>\n        </plugins>\n    </build>\n</project>\n";
+        let out = add_plugin(pom, "spotless-maven-plugin", SPOTLESS).unwrap().unwrap();
+        assert!(out.contains("            <plugin>\n                <artifactId>spotless-maven-plugin</artifactId>\n            </plugin>\n"));
+        assert!(out.contains("<artifactId>real</artifactId>"), "existing plugins survive");
     }
 }

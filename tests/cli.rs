@@ -491,25 +491,42 @@ fn add_errors_outside_a_project() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("no pom.xml"));
 }
 
+/// The bar is what the *generated code* needs, not what jails defaults new
+/// projects to. 17 has no records-with-sealed-switch, so it is refused; 21 is
+/// the floor and must be accepted even though TARGET_RELEASE is higher.
 #[test]
 fn add_refuses_a_project_targeting_an_older_release() {
     let root = temp_dir("add-old-release");
-    let pkg_dir = root.join("src/main/java/com/example/demo");
-    fs::create_dir_all(&pkg_dir).unwrap();
-    fs::write(
-        root.join("pom.xml"),
-        "<project>\n    <properties>\n        <maven.compiler.release>21</maven.compiler.release>\n    </properties>\n    <dependencies>\n    </dependencies>\n</project>\n",
-    )
-    .unwrap();
-    fs::write(pkg_dir.join("DemoApplication.java"), "package com.example.demo;\npublic class DemoApplication {}\n").unwrap();
+    write_release_fixture(&root, "17");
 
     let output = jails_cmd(&root, None).args(["add", "csv"]).output().unwrap();
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("targets Java 21"), "{stderr}");
-    assert!(stderr.contains(TARGET_RELEASE), "{stderr}");
+    assert!(stderr.contains("targets Java 17"), "{stderr}");
+    assert!(stderr.contains("21"), "the message should name the floor, not the default: {stderr}");
     // The pom is left exactly as it was.
     assert!(!fs::read_to_string(root.join("pom.xml")).unwrap().contains("commons-csv"));
+}
+
+#[test]
+fn add_accepts_a_project_pinned_to_an_lts_below_the_jails_default() {
+    let root = temp_dir("add-lts-release");
+    write_release_fixture(&root, "21");
+
+    let output = jails_cmd(&root, None).args(["add", "csv"]).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(fs::read_to_string(root.join("pom.xml")).unwrap().contains("commons-csv"));
+}
+
+fn write_release_fixture(root: &std::path::Path, release: &str) {
+    let pkg_dir = root.join("src/main/java/com/example/demo");
+    fs::create_dir_all(&pkg_dir).unwrap();
+    fs::write(
+        root.join("pom.xml"),
+        format!("<project>\n    <properties>\n        <maven.compiler.release>{release}</maven.compiler.release>\n    </properties>\n    <dependencies>\n    </dependencies>\n</project>\n"),
+    )
+    .unwrap();
+    fs::write(pkg_dir.join("DemoApplication.java"), "package com.example.demo;\npublic class DemoApplication {}\n").unwrap();
 }
 
 #[test]
