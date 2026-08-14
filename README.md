@@ -73,6 +73,12 @@ the code lands; `--package ''` writes straight into the base package.
 Every command takes `--debug`, which prints the `mvn`/`mvnd`/`java`/`git`/`curl`
 command lines jails shells out to instead of running them silently.
 
+- `jails generate|g handler <Name>` — an `HttpHandler` in `api/` for one
+  resource: derives its path (`WorkItem` → `/work-items`), takes its service as
+  a constructor dependency so the same code path serves CLI and HTTP, and maps
+  outcomes to 400 / 404 / 422 through a shared `ApiError` envelope (generated
+  if absent). The companion test drives it over a real loopback socket on an
+  ephemeral port.
 - `jails generate|g repo <Name>` — a port interface in `app/` (no JDBC types,
   `Optional`/empty-list returns), a plain-JDBC SQLite adapter in `adapters/`
   (`PreparedStatement`, try-with-resources, no ORM), and a round-trip test
@@ -141,7 +147,7 @@ into one flat pile beside `App.java`:
 | `repo` (port) | `app` |
 | `repo` (adapter) | `adapters` |
 | `add csv`/`json`/`sqlite` | `adapters` |
-| `add http` | `api` |
+| `add http`, `handler` | `api` |
 | `add testkit`/`fake` | `testkit` (test tree) |
 
 `scaffold` spans four of them in one command and adds the imports that

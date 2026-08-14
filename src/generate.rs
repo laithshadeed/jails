@@ -17,6 +17,7 @@ pub enum ArtifactKind {
     Enum,
     Sealed,
     Repo,
+    Handler,
     Command,
     Cli,
     Cases,
@@ -787,6 +788,43 @@ pub fn generate(kind: ArtifactKind, name: &str, fields: &[String], package: Opti
             });
             artifacts
         }
+        ArtifactKind::Handler => {
+            let api = place(layout::API);
+            let domain = place(layout::DOMAIN);
+            let mut artifacts = Vec::new();
+
+            // Every handler renders failures through the same envelope, so the
+            // first one lays it down and the rest reuse it.
+            if !main_dir(&root, &domain).join("ApiError.java").exists() {
+                let fields = parse_fields(&[
+                    "code:string!".to_string(),
+                    "message:string!".to_string(),
+                    "details:map<string,string>".to_string(),
+                ])?;
+                artifacts.push(Artifact {
+                    kind: "error envelope",
+                    path: main_dir(&root, &domain).join("ApiError.java"),
+                    contents: value_java(&domain, "ApiError", &fields),
+                });
+                artifacts.push(Artifact {
+                    kind: "error envelope test",
+                    path: test_dir(&root, &domain).join("ApiErrorTest.java"),
+                    contents: value_test(&root, &domain, "ApiError", &fields),
+                });
+            }
+
+            artifacts.push(Artifact {
+                kind: "handler",
+                path: main_dir(&root, &api).join(format!("{name}Handler.java")),
+                contents: handler_java(&api, &name, &import_of(&api, &domain, "ApiError")),
+            });
+            artifacts.push(Artifact {
+                kind: "handler test",
+                path: test_dir(&root, &api).join(format!("{name}HandlerTest.java")),
+                contents: handler_test(&api, &name),
+            });
+            artifacts
+        }
         ArtifactKind::Sealed => {
             let variants = parse_variants(fields)?;
             let domain = place(layout::DOMAIN);
@@ -979,6 +1017,10 @@ pub fn destroy(kind: ArtifactKind, name: &str, force: bool, package: Option<&str
         ArtifactKind::Command => vec![
             main_dir(&root, &place(layout::CLI)).join(format!("{name}Command.java")),
             test_dir(&root, &place(layout::CLI)).join(format!("{name}CommandTest.java")),
+        ],
+        ArtifactKind::Handler => vec![
+            main_dir(&root, &place(layout::API)).join(format!("{name}Handler.java")),
+            test_dir(&root, &place(layout::API)).join(format!("{name}HandlerTest.java")),
         ],
         ArtifactKind::Repo => vec![
             main_dir(&root, &place(layout::APP)).join(format!("{name}Repository.java")),
@@ -1970,6 +2012,301 @@ class {name}Test {{
     )
 }
 
+// ---- handler: HTTP for one resource, thin by construction. ----
+
+/// `WorkItem` -> `/work-items`. The URL convention is kebab-case and plural,
+/// and deriving it beats making every caller remember to type it.
+fn resource_path(name: &str) -> String {
+    let mut path = String::from("/");
+    for (i, c) in name.chars().enumerate() {
+        if c.is_uppercase() && i > 0 {
+            path.push('-');
+        }
+        path.extend(c.to_lowercase());
+    }
+    path.push('s');
+    path
+}
+
+fn handler_java(pkg: &str, name: &str, extra: &str) -> String {
+    let path = resource_path(name);
+    format!(
+        r#"package {pkg};
+
+{extra}import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+
+/**
+ * HTTP for the {{@code {path}}} resource.
+ *
+ * <p>Thin by construction: this class binds, routes, and maps outcomes to
+ * status codes. It holds no rules of its own, so the same {{@link Service}} can
+ * be driven from the CLI without any of this.
+ *
+ * <p>{{@link Service}} deals in JSON strings because a scaffold cannot know
+ * your types. Narrowing it to real ones is the first thing worth doing here.
+ *
+ * <p>Status codes are the contract:
+ * <ul>
+ *   <li>400 -- the body is not JSON, or a query parameter is not a number
+ *   <li>404 -- no such resource
+ *   <li>422 -- well-formed, but the domain rejected it
+ * </ul>
+ */
+public final class {name}Handler implements HttpHandler {{
+
+    /** The path this handler is registered under. */
+    public static final String PATH = "{path}";
+
+    /** What this handler needs from the application behind it. */
+    public interface Service {{
+
+        /** @return a JSON array of items, never null. */
+        String list(int offset, int limit);
+
+        /** @return the item as JSON, or empty when there is no such id. */
+        Optional<String> find(String id);
+
+        /**
+         * @param body the raw request body
+         * @return the created item as JSON
+         * @throws IllegalArgumentException when the domain rejects it -- becomes a 422
+         */
+        String create(String body);
+    }}
+
+    private final Service service;
+
+    public {name}Handler(Service service) {{
+        this.service = Objects.requireNonNull(service, "service is required");
+    }}
+
+    @Override
+    public void handle(HttpExchange exchange) throws IOException {{
+        try (exchange) {{
+            var path = exchange.getRequestURI().getPath();
+            var id = idFrom(path);
+
+            var response =
+                    switch (exchange.getRequestMethod()) {{
+                        case "GET" -> id.isEmpty() ? list(exchange) : find(id);
+                        case "POST" -> create(body(exchange));
+                        default -> error(405, "method_not_allowed", "use GET or POST");
+                    }};
+
+            send(exchange, response);
+        }}
+    }}
+
+    /** The trailing path segment, or empty for a request against the collection. */
+    private String idFrom(String path) {{
+        var rest = path.length() > PATH.length() ? path.substring(PATH.length()) : "";
+        return rest.startsWith("/") ? rest.substring(1) : rest;
+    }}
+
+    private Response list(HttpExchange exchange) {{
+        var query = query(exchange);
+        try {{
+            var offset = Integer.parseInt(query.getOrDefault("offset", "0"));
+            var limit = Integer.parseInt(query.getOrDefault("limit", "50"));
+            return new Response(200, service.list(offset, limit));
+        }} catch (NumberFormatException malformed) {{
+            return error(400, "bad_request", "offset and limit must be whole numbers");
+        }}
+    }}
+
+    private Response find(String id) {{
+        return service.find(id)
+                .map(json -> new Response(200, json))
+                .orElseGet(() -> error(404, "not_found", "no {path} with id " + id));
+    }}
+
+    private Response create(String body) {{
+        if (body.isBlank() || !body.stripLeading().startsWith("{{")) {{
+            return error(400, "bad_request", "expected a JSON object");
+        }}
+        try {{
+            return new Response(201, service.create(body));
+        }} catch (IllegalArgumentException rejected) {{
+            // Well-formed but wrong: the client sent something the domain will
+            // not accept, which is 422 rather than 400.
+            return error(422, "unprocessable", rejected.getMessage());
+        }}
+    }}
+
+    /** An {{@link ApiError}} rendered as the response body. */
+    private Response error(int status, String code, String message) {{
+        var envelope = new ApiError(code, message == null ? code : message, Map.of());
+        return new Response(
+                status,
+                "{{\"code\":\"" + envelope.code() + "\",\"message\":\"" + envelope.message() + "\"}}");
+    }}
+
+    private record Response(int status, String body) {{}}
+
+    private static String body(HttpExchange exchange) throws IOException {{
+        try (var in = exchange.getRequestBody()) {{
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        }}
+    }}
+
+    private static Map<String, String> query(HttpExchange exchange) {{
+        var raw = exchange.getRequestURI().getQuery();
+        if (raw == null || raw.isBlank()) {{
+            return Map.of();
+        }}
+        var parsed = new java.util.LinkedHashMap<String, String>();
+        for (var pair : raw.split("&")) {{
+            var split = pair.split("=", 2);
+            if (split.length == 2) {{
+                parsed.put(split[0], split[1]);
+            }}
+        }}
+        return Map.copyOf(parsed);
+    }}
+
+    private static void send(HttpExchange exchange, Response response) throws IOException {{
+        var bytes = response.body().getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().set("Content-Type", "application/json");
+        exchange.sendResponseHeaders(response.status(), bytes.length);
+        try (var out = exchange.getResponseBody()) {{
+            out.write(bytes);
+        }}
+    }}
+}}
+"#
+    )
+}
+
+fn handler_test(pkg: &str, name: &str) -> String {
+    let path = resource_path(name);
+    format!(
+        r#"package {pkg};
+
+import com.sun.net.httpserver.HttpServer;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+import java.net.InetSocketAddress;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.util.Optional;
+import java.util.concurrent.Executors;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * Drives the handler over a real loopback socket, because the interesting
+ * half -- status codes, bodies, headers -- only exists once HTTP is involved.
+ *
+ * <p>Port 0 lets the OS pick a free one, so these tests are safe to run in
+ * parallel and safe from whatever else is on 8080.
+ */
+class {name}HandlerTest {{
+
+    private HttpServer server;
+
+    /** A stand-in service: enough behaviour to exercise every status code. */
+    private final {name}Handler.Service service = new {name}Handler.Service() {{
+        @Override
+        public String list(int offset, int limit) {{
+            return "[{{\"id\":\"a\"}}]";
+        }}
+
+        @Override
+        public Optional<String> find(String id) {{
+            return id.equals("a") ? Optional.of("{{\"id\":\"a\"}}") : Optional.empty();
+        }}
+
+        @Override
+        public String create(String body) {{
+            if (body.contains("\"invalid\"")) {{
+                throw new IllegalArgumentException("id must not be blank");
+            }}
+            return body;
+        }}
+    }};
+
+    @BeforeEach
+    void start() throws Exception {{
+        server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext({name}Handler.PATH, new {name}Handler(service));
+        server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
+        server.start();
+    }}
+
+    @AfterEach
+    void stop() {{
+        server.stop(0);
+    }}
+
+    private HttpResponse<String> send(String path, String body) throws Exception {{
+        var uri = URI.create("http://localhost:" + server.getAddress().getPort() + path);
+        var request = HttpRequest.newBuilder(uri)
+                .method(
+                        body == null ? "GET" : "POST",
+                        body == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(body))
+                .build();
+        try (var client = HttpClient.newHttpClient()) {{
+            return client.send(request, HttpResponse.BodyHandlers.ofString());
+        }}
+    }}
+
+    @Test
+    void listsTheCollection() throws Exception {{
+        var response = send("{path}", null);
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(response.body()).contains("\"id\":\"a\"");
+    }}
+
+    @Test
+    void findsOneById() throws Exception {{
+        assertThat(send("{path}/a", null).statusCode()).isEqualTo(200);
+    }}
+
+    @Test
+    void answersFourOhFourForAnUnknownId() throws Exception {{
+        var response = send("{path}/nope", null);
+
+        assertThat(response.statusCode()).isEqualTo(404);
+        assertThat(response.body()).contains("not_found");
+    }}
+
+    @Test
+    void answersFourHundredForABodyThatIsNotJson() throws Exception {{
+        var response = send("{path}", "not json");
+
+        assertThat(response.statusCode()).isEqualTo(400);
+        assertThat(response.body()).contains("bad_request");
+    }}
+
+    /** Well-formed but rejected by the domain is 422, not 400. */
+    @Test
+    void answersFourTwentyTwoWhenTheDomainRejectsIt() throws Exception {{
+        var response = send("{path}", "{{\"invalid\":true}}");
+
+        assertThat(response.statusCode()).isEqualTo(422);
+        assertThat(response.body()).contains("unprocessable");
+    }}
+
+    @Test
+    void answersFourHundredForANonNumericPageWindow() throws Exception {{
+        assertThat(send("{path}?offset=x", null).statusCode()).isEqualTo(400);
+    }}
+}}
+"#
+    )
+}
+
 // ---- repo: a port the application depends on, and the JDBC adapter that
 // implements it. The one pattern java.md names by name. ----
 
@@ -2895,6 +3232,36 @@ mod tests {
         assert_eq!(fields[0].java_type, "String");
         assert!(!fields[1].owned);
         assert!(fields[1].imports.contains(&"java.time.LocalDate"));
+    }
+
+    #[test]
+    fn resource_path_is_kebab_case_and_plural() {
+        assert_eq!(resource_path("WorkItem"), "/work-items");
+        assert_eq!(resource_path("Import"), "/imports");
+    }
+
+    /// A handler binds, routes and maps outcomes to status codes -- and holds
+    /// no rules, so the same service can be driven from the CLI.
+    #[test]
+    fn handler_maps_outcomes_to_status_codes() {
+        let src = handler_java("com.example.demo.api", "WorkItem", "");
+
+        assert!(src.contains("implements HttpHandler"), "{src}");
+        assert!(src.contains(r#"PATH = "/work-items""#), "{src}");
+        assert!(src.contains("private final Service service"), "the service is a dependency: {src}");
+        assert!(src.contains("error(404"), "{src}");
+        assert!(src.contains("error(422"), "well-formed but rejected is not a 400: {src}");
+        assert!(src.contains("ApiError"), "failures share one envelope: {src}");
+        assert!(!src.contains("java.sql"), "no storage in a handler: {src}");
+    }
+
+    #[test]
+    fn handler_test_drives_it_over_a_real_socket() {
+        let test = handler_test("com.example.demo.api", "WorkItem");
+
+        assert!(test.contains("java.net.http.HttpClient"), "{test}");
+        assert!(test.contains("new InetSocketAddress(0)"), "an ephemeral port: {test}");
+        assert!(test.contains("isEqualTo(422)"), "{test}");
     }
 
     /// The whole point of a port: application code must be able to depend on
