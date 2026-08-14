@@ -65,6 +65,22 @@ pub fn fmt(debug: bool) -> Result<()> {
     run_inherited(cmd, debug)
 }
 
+/// Reformat quietly, for `add format` to call the moment it installs the
+/// plugin. A formatter has an opinion about line wrapping that no amount of
+/// careful templating can predict, so the only way to leave the project
+/// passing its own `verify` is to actually run it once.
+///
+/// Best-effort: a project without Maven on PATH is not a reason to fail the
+/// capability, it just means the first `jails fmt` has work to do.
+pub fn fmt_quietly(root: &std::path::Path) -> bool {
+    Command::new(maven_binary())
+        .args(["-q", "spotless:apply"])
+        .current_dir(root)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 /// Everything the build has to say: format check, compile, tests. `verify`
 /// rather than `test` because that is the phase `add format` binds to.
 pub fn check(debug: bool) -> Result<()> {
@@ -163,7 +179,10 @@ fn latest_mtime(dir: &Path) -> std::time::SystemTime {
     latest
 }
 
-pub fn run(no_build: bool, debug: bool) -> Result<()> {
+/// `args` is everything after `--`, forwarded verbatim to the program. A tool
+/// that scaffolds CLI projects has to be able to *run* one with arguments, or
+/// the edit loop drops out to raw `mvn` the moment the program takes input.
+pub fn run(no_build: bool, args: &[String], debug: bool) -> Result<()> {
     let root = find_project_root()?;
     let pom = fs::read_to_string(root.join("pom.xml")).map_err(|e| format!("failed to read pom.xml: {e}"))?;
 
@@ -171,11 +190,16 @@ pub fn run(no_build: bool, debug: bool) -> Result<()> {
         if no_build {
             let jar = find_built_jar(&root)?;
             let mut run = Command::new("java");
-            run.args(["-jar"]).arg(&jar).current_dir(&root);
+            run.args(["-jar"]).arg(&jar).args(args).current_dir(&root);
             return run_inherited(run, debug);
         }
         let mut cmd = Command::new(maven_binary());
         cmd.arg("spring-boot:run").current_dir(&root);
+        // spring-boot:run forks a JVM, so argv cannot simply be appended: the
+        // plugin takes them as one space-joined property instead.
+        if !args.is_empty() {
+            cmd.arg(format!("-Dspring-boot.run.arguments={}", args.join(" ")));
+        }
         return run_inherited(cmd, debug);
     }
 
@@ -191,7 +215,7 @@ pub fn run(no_build: bool, debug: bool) -> Result<()> {
     }
 
     let mut run = Command::new("java");
-    run.args(["-cp", "target/classes", &fqcn]).current_dir(&root);
+    run.args(["-cp", "target/classes", &fqcn]).args(args).current_dir(&root);
     run_inherited(run, debug)
 }
 
@@ -230,12 +254,46 @@ fn find_main_class(root: &Path) -> Result<(String, String)> {
     Ok((pkg, class_name))
 }
 
+/// Prefer a jails CLI dispatcher when the project has one.
+///
+/// `generate cli` adds a second `static void main` to a project that already
+/// has `App.java`, and picking whichever the directory walk reached first
+/// would make `jails run` a coin toss -- usually landing on the Hello World
+/// stub that ignores argv entirely. The dispatcher is the one that routes
+/// arguments, so it wins.
 fn search_main_file(dir: &Path) -> Option<PathBuf> {
+    dispatcher_main_file(dir).or_else(|| any_main_file(dir))
+}
+
+fn dispatcher_main_file(dir: &Path) -> Option<PathBuf> {
+    let entries = fs::read_dir(dir).ok()?;
+    let mut found = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if let Some(nested) = dispatcher_main_file(&path) {
+                found.push(nested);
+            }
+        } else if path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.ends_with("Cli.java")) {
+            let is_dispatcher = fs::read_to_string(&path)
+                .map(|s| s.contains("static void main") && s.contains("SequencedMap<String, Command>"))
+                .unwrap_or(false);
+            if is_dispatcher {
+                found.push(path);
+            }
+        }
+    }
+    // More than one is not a preference jails can express for the user.
+    found.sort();
+    (found.len() == 1).then(|| found.remove(0))
+}
+
+fn any_main_file(dir: &Path) -> Option<PathBuf> {
     let entries = fs::read_dir(dir).ok()?;
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            if let Some(found) = search_main_file(&path) {
+            if let Some(found) = any_main_file(&path) {
                 return Some(found);
             }
         } else if path.extension().is_some_and(|ext| ext == "java") {

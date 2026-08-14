@@ -102,10 +102,11 @@ pub fn new_cli(name: &str, java: &str, git: bool, debug: bool) -> Result<()> {
 
     fs::write(root.join("pom.xml"), pom_xml(name, &package, java))
         .map_err(|e| format!("failed to write pom.xml: {e}"))?;
-    fs::write(src_dir.join("App.java"), app_java(&package))
-        .map_err(|e| format!("failed to write App.java: {e}"))?;
-    fs::write(test_dir.join("AppTest.java"), app_test_java(&package))
-        .map_err(|e| format!("failed to write AppTest.java: {e}"))?;
+    // Through write_new_file, not fs::write, so the entry point and its test
+    // get the same import ordering as everything jails generates later --
+    // otherwise `add format` finds violations in files jails itself wrote.
+    crate::generate::write_new_file(&src_dir.join("App.java"), &app_java(&package))?;
+    crate::generate::write_new_file(&test_dir.join("AppTest.java"), &app_test_java(&package))?;
 
     write_fixtures_dir(root)?;
 

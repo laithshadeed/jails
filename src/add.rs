@@ -12,7 +12,7 @@
 //! `jails add <TAB>`, and the doc comment on each variant becomes its
 //! completion description.
 
-use crate::generate::{base_package, find_project_root, main_dir, test_dir, write_new_file};
+use crate::generate::{base_package, find_project_root, layout, main_dir, subpackage, test_dir, write_new_file};
 use crate::pom::{self, Dependency, Flavor, MIN_RELEASE, TARGET_RELEASE};
 use crate::Result;
 use clap::ValueEnum;
@@ -68,7 +68,7 @@ struct Plan {
     files: Vec<NewFile>,
 }
 
-pub fn add(capability: Capability, name: Option<&str>, dry_run: bool) -> Result<()> {
+pub fn add(capability: Capability, name: Option<&str>, dry_run: bool, package: Option<&str>) -> Result<()> {
     let root = find_project_root()?;
     let pom_text = pom::read(&root)?;
     let flavor = pom::flavor(&pom_text);
@@ -93,14 +93,19 @@ pub fn add(capability: Capability, name: Option<&str>, dry_run: bool) -> Result<
         Some(_) => {}
     }
 
-    let pkg = base_package(&root)?;
+    let base = base_package(&root)?;
+    // Capabilities land in the package their layer conventionally owns --
+    // adapters for the file/database readers, api for the HTTP server -- so a
+    // project that has grown a few of them still reads as a laid-out project
+    // rather than a heap. `--package` overrides, and `--package ''` opts out.
+    let place = |default: &str| subpackage(&base, package.unwrap_or(default));
     let plan = match capability {
-        Capability::Csv => csv_plan(&root, &pkg, flavor, name)?,
-        Capability::Sqlite => sqlite_plan(&root, &pkg, flavor, name)?,
-        Capability::Json => json_plan(&root, &pkg, flavor, name)?,
-        Capability::Testkit => testkit_plan(&root, &pkg)?,
-        Capability::Fake => fake_plan(&root, &pkg)?,
-        Capability::Http => http_plan(&root, &pkg, name)?,
+        Capability::Csv => csv_plan(&root, &place(layout::ADAPTERS), flavor, name)?,
+        Capability::Sqlite => sqlite_plan(&root, &place(layout::ADAPTERS), flavor, name)?,
+        Capability::Json => json_plan(&root, &place(layout::ADAPTERS), flavor, name)?,
+        Capability::Testkit => testkit_plan(&root, &place(layout::TESTKIT))?,
+        Capability::Fake => fake_plan(&root, &place(layout::TESTKIT))?,
+        Capability::Http => http_plan(&root, &place(layout::API), name)?,
         Capability::Format => format_plan()?,
     };
 
@@ -168,6 +173,17 @@ pub fn add(capability: Capability, name: Option<&str>, dry_run: bool) -> Result<
     if created == 0 && spliced.is_empty() && spliced_plugins.is_empty() {
         println!("{} is already set up -- nothing to do", capability.label());
         return Ok(());
+    }
+
+    // Installing a formatter that immediately fails `mvn verify` is a bad
+    // trade: the wrapping it wants is not something a template can predict, so
+    // run it once and leave the project green.
+    if matches!(capability, Capability::Format) {
+        if crate::run::fmt_quietly(&root) {
+            println!("  format  applied to the existing sources");
+        } else {
+            println!("note: could not run spotless:apply -- run `jails fmt` once before `jails check`");
+        }
     }
 
     println!(
@@ -853,17 +869,16 @@ class {class}Test {{
 /// `Supplier<String>` instead of calling `Instant.now()` and
 /// `UUID.randomUUID()` -- so generating them nudges the design toward the one
 /// that can be tested deterministically at all.
-fn testkit_plan(root: &std::path::Path, pkg: &str) -> Result<Plan> {
-    let testkit = format!("{pkg}.testkit");
-    let dir = test_dir(root, &testkit);
+fn testkit_plan(root: &std::path::Path, testkit: &str) -> Result<Plan> {
+    let dir = test_dir(root, testkit);
 
     Ok(Plan {
         files: vec![
-            NewFile { path: dir.join("Clocks.java"), contents: clocks_java(&testkit) },
-            NewFile { path: dir.join("Ids.java"), contents: ids_java(&testkit) },
-            NewFile { path: dir.join("Fixtures.java"), contents: fixtures_java(&testkit) },
-            NewFile { path: dir.join("Cli.java"), contents: testkit_cli_java(&testkit) },
-            NewFile { path: dir.join("TestkitTest.java"), contents: testkit_test_java(&testkit) },
+            NewFile { path: dir.join("Clocks.java"), contents: clocks_java(testkit) },
+            NewFile { path: dir.join("Ids.java"), contents: ids_java(testkit) },
+            NewFile { path: dir.join("Fixtures.java"), contents: fixtures_java(testkit) },
+            NewFile { path: dir.join("Cli.java"), contents: testkit_cli_java(testkit) },
+            NewFile { path: dir.join("TestkitTest.java"), contents: testkit_test_java(testkit) },
             NewFile {
                 path: root.join("src/test/resources/fixtures/example.json"),
                 contents: EXAMPLE_FIXTURE.to_string(),
@@ -1208,14 +1223,13 @@ class TestkitTest {{
 /// and no business acquiring one, so rather than generating a fake *of* some
 /// interface, this generates the replay engine and you attach it to any
 /// interface with a lambda. One class covers every collaborator in the project.
-fn fake_plan(root: &std::path::Path, pkg: &str) -> Result<Plan> {
-    let testkit = format!("{pkg}.testkit");
-    let dir = test_dir(root, &testkit);
+fn fake_plan(root: &std::path::Path, testkit: &str) -> Result<Plan> {
+    let dir = test_dir(root, testkit);
 
     Ok(Plan {
         files: vec![
-            NewFile { path: dir.join("Scripted.java"), contents: scripted_java(&testkit) },
-            NewFile { path: dir.join("ScriptedTest.java"), contents: scripted_test_java(&testkit) },
+            NewFile { path: dir.join("Scripted.java"), contents: scripted_java(testkit) },
+            NewFile { path: dir.join("ScriptedTest.java"), contents: scripted_test_java(testkit) },
         ],
         ..Plan::default()
     })

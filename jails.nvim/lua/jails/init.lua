@@ -7,7 +7,7 @@ local M = {}
 
 --- Streaming subcommands get a live terminal instead of buffered output --
 --- mvn/mvnd output is verbose and users may want to watch it or Ctrl-C it.
-local STREAMING = { test = true, build = true, run = true }
+local STREAMING = { test = true, build = true, run = true, check = true, fmt = true }
 
 local function jails_bin()
   if vim.fn.executable('jails') == 0 then
@@ -91,7 +91,7 @@ end
 --- Entry point for :Jails <fargs...>.
 function M.dispatch(fargs)
   if #fargs == 0 then
-    vim.notify('jails.nvim: usage :Jails <new|new-cli|generate|g|destroy|d|test|build|run> ...', vim.log.levels.ERROR)
+    vim.notify('jails.nvim: usage :Jails <new|new-cli|generate|g|add|a|destroy|d|test|build|check|fmt|run> ...', vim.log.levels.ERROR)
     return
   end
   local sub = fargs[1]
@@ -110,13 +110,33 @@ function M.dispatch(fargs)
   M.run(fargs)
 end
 
-local KINDS = { 'scaffold', 'controller', 'service', 'repository', 'entity', 'record', 'command', 'test' }
-local SUBCOMMANDS = { 'new', 'new-cli', 'generate', 'g', 'destroy', 'd', 'test', 'build', 'run', 'completion' }
+-- Hand-maintained mirrors of jails' own ValueEnums: a new kind or capability
+-- has to be added here too, or it silently won't complete. (`jails completion
+-- bash` derives its list from clap and cannot drift; this one can.)
+local KINDS =
+  { 'scaffold', 'controller', 'service', 'repository', 'entity', 'record', 'value', 'command', 'cli', 'cases', 'test' }
+local CAPABILITIES = { 'csv', 'sqlite', 'json', 'testkit', 'fake', 'http', 'format' }
+local SUBCOMMANDS = {
+  'new',
+  'new-cli',
+  'generate',
+  'g',
+  'add',
+  'a',
+  'destroy',
+  'd',
+  'test',
+  'build',
+  'fmt',
+  'check',
+  'run',
+  'completion',
+}
 
---- Completion for :Jails -- subcommand first, artifact kind as the second
---- word of generate/g/destroy/d, nothing after that (Name/fields are free
---- text). `cmd_line` is the full command line up to the cursor, e.g.
---- "Jails generate " or "Jails g sca".
+--- Completion for :Jails -- subcommand first, then the artifact kind for
+--- generate/destroy or the capability for add, nothing after that (Name and
+--- fields are free text). `cmd_line` is the full command line up to the
+--- cursor, e.g. "Jails generate " or "Jails g sca".
 function M.complete(_, cmd_line)
   local args = vim.split(vim.trim(cmd_line), '%s+')
   table.remove(args, 1) -- drop the "Jails" command name itself
@@ -126,8 +146,9 @@ function M.complete(_, cmd_line)
   end
   if completed == 0 then return SUBCOMMANDS end
   local sub = args[1]
-  if completed == 1 and (sub == 'generate' or sub == 'g' or sub == 'destroy' or sub == 'd') then
-    return KINDS
+  if completed == 1 then
+    if sub == 'generate' or sub == 'g' or sub == 'destroy' or sub == 'd' then return KINDS end
+    if sub == 'add' or sub == 'a' then return CAPABILITIES end
   end
   return {}
 end

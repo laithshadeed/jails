@@ -74,6 +74,11 @@ enum Command {
         kind: ArtifactKind,
         name: String,
         fields: Vec<String>,
+        /// Subpackage to place the generated code in, relative to the base
+        /// package -- overrides the conventional one for the kind. Pass an
+        /// empty string to write straight into the base package.
+        #[arg(long)]
+        package: Option<String>,
     },
     /// Add a capability to an existing project: dependency, code and a test
     #[command(visible_alias = "a")]
@@ -85,6 +90,11 @@ enum Command {
         /// Print what would change without touching the project
         #[arg(long)]
         dry_run: bool,
+        /// Subpackage to place the generated code in, relative to the base
+        /// package -- overrides the conventional one for the kind. Pass an
+        /// empty string to write straight into the base package.
+        #[arg(long)]
+        package: Option<String>,
     },
     /// Delete the file(s) a matching generate call would have created
     #[command(visible_alias = "d")]
@@ -93,6 +103,11 @@ enum Command {
         name: String,
         #[arg(long)]
         force: bool,
+        /// Subpackage to place the generated code in, relative to the base
+        /// package -- overrides the conventional one for the kind. Pass an
+        /// empty string to write straight into the base package.
+        #[arg(long)]
+        package: Option<String>,
     },
     /// Run the test suite (mvn/mvnd test)
     Test { filter: Option<String> },
@@ -112,6 +127,12 @@ enum Command {
         /// once target/classes changes)
         #[arg(long)]
         watch: bool,
+        /// Everything after `--` is forwarded to the program itself:
+        /// `jails run -- normalise input.json`. `last` rather than
+        /// `trailing_var_arg` (clap rejects both together) so that a forwarded
+        /// `--help` reaches the program instead of being eaten by jails.
+        #[arg(last = true, allow_hyphen_values = true)]
+        args: Vec<String>,
     },
     /// Print a shell-completion script: source <(jails completion bash)
     Completion { shell: Shell },
@@ -126,18 +147,18 @@ fn main() {
             new::new(&name, &deps, &java, !no_git, !no_devtools, debug)
         }
         Command::NewCli { name, release, no_git } => new::new_cli(&name, &release, !no_git, debug),
-        Command::Generate { kind, name, fields } => generate::generate(kind, &name, &fields),
-        Command::Add { capability, name, dry_run } => add::add(capability, name.as_deref(), dry_run),
-        Command::Destroy { kind, name, force } => generate::destroy(kind, &name, force),
+        Command::Generate { kind, name, fields, package } => generate::generate(kind, &name, &fields, package.as_deref()),
+        Command::Add { capability, name, dry_run, package } => add::add(capability, name.as_deref(), dry_run, package.as_deref()),
+        Command::Destroy { kind, name, force, package } => generate::destroy(kind, &name, force, package.as_deref()),
         Command::Test { filter } => run::test(filter.as_deref(), debug),
         Command::Build => run::build(debug),
         Command::Fmt => run::fmt(debug),
         Command::Check => run::check(debug),
-        Command::Run { no_build, watch } => {
+        Command::Run { no_build, watch, args } => {
             if watch {
                 run::watch(debug)
             } else {
-                run::run(no_build, debug)
+                run::run(no_build, &args, debug)
             }
         }
         Command::Completion { shell } => {

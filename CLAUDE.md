@@ -48,6 +48,36 @@ Tests must stay green before installing. A Stop hook runs this
 automatically (see `.claude/settings.json`) — don't skip it manually even
 though the hook exists, since the hook only fires on turn end, not mid-turn.
 
+## Package layout
+
+Generated code does **not** all land in the base package. `generate::layout`
+maps each kind to the subpackage its layer conventionally owns (`domain`,
+`repository`, `service`, `web`, `cli`, `adapters`, `api`, `testkit`), and
+`--package` overrides it. Two consequences worth knowing before editing
+templates:
+
+- **`scaffold` now crosses package boundaries**, so `stub_repository`,
+  `service_full`, `controller_full` and `controller_test` take an `extra`
+  parameter holding the imports that costs. `import_of` returns an empty
+  string when the two packages match, which is what keeps `--package ''`
+  (everything flat) compiling.
+- **`destroy` has to resolve the same subpackage `generate` used**, so both
+  build their paths through the same `place()` closure. A kind added to one
+  and not the other silently strands files.
+
+## Import order is normalised at write time, not in templates
+
+`write_new_file` runs every `.java` file through `normalize_imports`: static
+imports first, blank line, then the rest sorted -- which is what
+palantir-java-format produces, so `add format` leaves a project that passes
+`jails check` with no manual `jails fmt`. Don't hand-order imports in
+templates; it decays the moment someone adds a template and nobody notices
+until spotless fails on a freshly generated project.
+
+Formatter *wrapping* is a different matter and cannot be predicted from a
+template, so `add format` runs `spotless:apply` once (best-effort -- a machine
+without Maven just gets a note).
+
 ## Gotchas hit so far
 
 - **Generated projects target Java 27** (`pom::TARGET_RELEASE`), which is
@@ -77,9 +107,13 @@ though the hook exists, since the hook only fires on turn end, not mid-turn.
   `entity` deliberately occupy the same two paths (`<Name>.java` +
   `<Name>Test.java`) — same named type, two shapes — so `destroy` treats them
   identically and `generate` refuses to write one over the other.
-  `command` does *not* edit `App.java`: `pom.rs` stays the only code that
-  touches a file the user owns, so the generated class documents the
-  `main` dispatch rather than installing it.
+  `command` **does** now register itself in the project's `*Cli.java`
+  dispatcher. The old rule ("only pom.rs edits a file the user owns") was a
+  proxy for the real one -- *an edit must be surgical and leave every other
+  byte alone* -- and hand-pasting a dispatch line after every `generate` was
+  exactly the plumbing this tool exists to remove. `register_command` splices
+  one line above `return commands;`, idempotently, and falls back to the
+  Javadoc instructions when there is no dispatcher or more than one.
 - **Commons CSV renamed `Builder.build()` to `Builder.get()` in 1.13.**
   The pinned version and the generated call have to move together; a unit
   test in `add.rs` asserts they do, because the mismatch only surfaces as

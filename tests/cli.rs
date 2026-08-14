@@ -74,12 +74,12 @@ fn generate_standalone_and_destroy_roundtrip() {
 
     let status = jails_cmd(&root, None).args(["generate", "controller", "comment"]).status().unwrap();
     assert!(status.success());
-    let file = root.join("src/main/java/com/example/demo/CommentController.java");
+    let file = root.join("src/main/java/com/example/demo/web/CommentController.java");
     assert!(file.is_file());
     let contents = fs::read_to_string(&file).unwrap();
     assert!(contents.contains("public class CommentController"));
     // Rails generates a test alongside `generate controller`; jails matches that.
-    let test_file = root.join("src/test/java/com/example/demo/CommentControllerTest.java");
+    let test_file = root.join("src/test/java/com/example/demo/web/CommentControllerTest.java");
     assert!(test_file.is_file(), "expected {}", test_file.display());
 
     let status = jails_cmd(&root, None)
@@ -103,11 +103,11 @@ fn generate_scaffold_writes_all_five_files() {
     assert!(status.success());
 
     let pkg = root.join("src/main/java/com/example/demo");
-    assert!(pkg.join("Post.java").is_file());
-    assert!(pkg.join("PostRepository.java").is_file());
-    assert!(pkg.join("PostService.java").is_file());
-    assert!(pkg.join("PostController.java").is_file());
-    assert!(root.join("src/test/java/com/example/demo/PostControllerTest.java").is_file());
+    assert!(pkg.join("domain/Post.java").is_file());
+    assert!(pkg.join("repository/PostRepository.java").is_file());
+    assert!(pkg.join("service/PostService.java").is_file());
+    assert!(pkg.join("web/PostController.java").is_file());
+    assert!(root.join("src/test/java/com/example/demo/web/PostControllerTest.java").is_file());
 }
 
 #[test]
@@ -115,7 +115,7 @@ fn destroy_without_force_prompts_and_aborts_on_no() {
     let root = temp_dir("destroy-prompt");
     write_project_skeleton(&root);
     jails_cmd(&root, None).args(["generate", "controller", "comment"]).status().unwrap();
-    let file = root.join("src/main/java/com/example/demo/CommentController.java");
+    let file = root.join("src/main/java/com/example/demo/web/CommentController.java");
     assert!(file.is_file());
 
     let mut child = jails_cmd(&root, None)
@@ -568,8 +568,8 @@ fn add_name_override_renames_the_generated_class() {
     write_plain_fixture(&root);
 
     assert!(jails_cmd(&root, None).args(["add", "csv", "--name", "transaction"]).status().unwrap().success());
-    assert!(root.join("src/main/java/com/example/demo/TransactionReader.java").exists());
-    assert!(root.join("src/test/java/com/example/demo/TransactionReaderTest.java").exists());
+    assert!(root.join("src/main/java/com/example/demo/adapters/TransactionReader.java").exists());
+    assert!(root.join("src/test/java/com/example/demo/adapters/TransactionReaderTest.java").exists());
 }
 
 /// The bar that matters: does `add csv` leave a project that actually
@@ -613,9 +613,9 @@ fn add_sqlite_writes_a_first_migration_and_both_classes() {
     write_plain_fixture(&root);
 
     assert!(jails_cmd(&root, None).args(["add", "sqlite"]).status().unwrap().success());
-    assert!(root.join("src/main/java/com/example/demo/Database.java").is_file());
-    assert!(root.join("src/main/java/com/example/demo/Migrations.java").is_file());
-    assert!(root.join("src/test/java/com/example/demo/DatabaseTest.java").is_file());
+    assert!(root.join("src/main/java/com/example/demo/adapters/Database.java").is_file());
+    assert!(root.join("src/main/java/com/example/demo/adapters/Migrations.java").is_file());
+    assert!(root.join("src/test/java/com/example/demo/adapters/DatabaseTest.java").is_file());
     assert!(root.join("src/main/resources/db/migration/001_init.sql").is_file());
 }
 
@@ -636,9 +636,9 @@ fn capabilities_stack_without_clobbering_each_other() {
         assert_eq!(1, pom.matches(artifact).count(), "expected exactly one {artifact} dependency");
     }
     let pkg = root.join("src/main/java/com/example/demo");
-    assert!(pkg.join("CsvReader.java").is_file());
-    assert!(pkg.join("Database.java").is_file());
-    assert!(pkg.join("Json.java").is_file());
+    assert!(pkg.join("adapters/CsvReader.java").is_file());
+    assert!(pkg.join("adapters/Database.java").is_file());
+    assert!(pkg.join("adapters/Json.java").is_file());
 }
 
 /// The real bar for the whole `add` surface: every capability, stacked into

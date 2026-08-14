@@ -180,6 +180,38 @@ fn mockmvc_autoconfigure_import(root: &Path) -> &'static str {
     }
 }
 
+/// Where each kind of artifact lives, relative to the project's base package.
+///
+/// A generated project should look like one a person laid out, and nobody
+/// lays out thirty classes as siblings of `App.java`. The names are the ones
+/// the Java ecosystem already uses, so the layout reads as conventional rather
+/// than as jails' invention -- and every one of them is a package a human
+/// would have created by hand on about the third file.
+///
+/// This is a default, not a policy: `--package` overrides it, and `--package
+/// ''` puts everything back in the base package for a project small enough not
+/// to want the ceremony.
+pub(crate) mod layout {
+    pub const DOMAIN: &str = "domain";
+    pub const REPOSITORY: &str = "repository";
+    pub const SERVICE: &str = "service";
+    pub const WEB: &str = "web";
+    pub const CLI: &str = "cli";
+    pub const ADAPTERS: &str = "adapters";
+    pub const API: &str = "api";
+    pub const TESTKIT: &str = "testkit";
+}
+
+/// `com.example.demo` + `domain` -> `com.example.demo.domain`. An empty
+/// subpackage leaves the base package alone.
+pub(crate) fn subpackage(base: &str, sub: &str) -> String {
+    if sub.is_empty() {
+        base.to_string()
+    } else {
+        format!("{base}.{sub}")
+    }
+}
+
 fn pkg_dir(pkg: &str) -> String {
     pkg.replace('.', "/")
 }
@@ -205,80 +237,174 @@ pub(crate) fn write_new_file(path: &Path, contents: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
     }
-    fs::write(path, contents).map_err(|e| format!("failed to write {}: {e}", path.display()))
+    let contents = if path.extension().is_some_and(|e| e == "java") {
+        normalize_imports(contents)
+    } else {
+        contents.to_string()
+    };
+    fs::write(path, &contents).map_err(|e| format!("failed to write {}: {e}", path.display()))
 }
 
-pub fn generate(kind: ArtifactKind, name: &str, fields: &[String]) -> Result<()> {
+/// Rewrite a generated file's import block into the order
+/// palantir-java-format produces: static imports first, a blank line, then
+/// everything else sorted.
+///
+/// Done here, once, rather than by hand in each of the twenty-odd templates.
+/// Hand-ordering is a rule that decays -- the next template gets it wrong and
+/// nobody notices until `jails add format` makes `mvn verify` fail on a
+/// freshly generated project, which is a bad first impression for a scaffold
+/// to make.
+pub(crate) fn normalize_imports(source: &str) -> String {
+    let lines: Vec<&str> = source.lines().collect();
+
+    let Some(package_at) = lines.iter().position(|l| l.trim_start().starts_with("package ")) else {
+        return source.to_string();
+    };
+
+    // Imports are only ever between the package declaration and the first
+    // other construct, so scanning stops at the first line that is neither an
+    // import nor blank -- a Javadoc block, an annotation, the type itself.
+    let mut statics: Vec<&str> = Vec::new();
+    let mut plain: Vec<&str> = Vec::new();
+    let mut end = package_at + 1;
+    for (offset, line) in lines[package_at + 1..].iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("import ") {
+            if rest.starts_with("static ") {
+                statics.push(trimmed);
+            } else {
+                plain.push(trimmed);
+            }
+            end = package_at + 1 + offset + 1;
+            continue;
+        }
+        break;
+    }
+
+    if statics.is_empty() && plain.is_empty() {
+        return source.to_string();
+    }
+
+    statics.sort_unstable();
+    statics.dedup();
+    plain.sort_unstable();
+    plain.dedup();
+
+    let mut out = String::with_capacity(source.len() + 32);
+    for line in &lines[..=package_at] {
+        out.push_str(line);
+        out.push('\n');
+    }
+    out.push('\n');
+    for group in [&statics, &plain] {
+        if group.is_empty() {
+            continue;
+        }
+        for line in group.iter() {
+            out.push_str(line);
+            out.push('\n');
+        }
+        out.push('\n');
+    }
+    // Whatever followed the imports, with any blank lines it was padded with
+    // already consumed above.
+    for line in lines[end..].iter().skip_while(|l| l.trim().is_empty()) {
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
+pub fn generate(kind: ArtifactKind, name: &str, fields: &[String], package: Option<&str>) -> Result<()> {
     let root = find_project_root()?;
-    let pkg = base_package(&root)?;
+    let base = base_package(&root)?;
 
     // `cases` is the one kind whose <NAME> is a path, not a class name: the
     // class is derived from the file it reads. Handle it before the shared
     // capitalize, which would mangle a path.
     if matches!(kind, ArtifactKind::Cases) {
-        return generate_cases(&root, &pkg, Path::new(name));
+        return generate_cases(&root, &subpackage(&base, package.unwrap_or("")), Path::new(name));
     }
 
     let name = capitalize(name);
+    // `--package` replaces the conventional home for every artifact in this
+    // call; without it each kind goes where its convention says.
+    let place = |default: &str| subpackage(&base, package.unwrap_or(default));
 
     let artifacts = match kind {
-        ArtifactKind::Scaffold => scaffold_artifacts(&root, &pkg, &name, fields)?,
-        ArtifactKind::Controller => vec![
-            Artifact {
-                kind: "controller",
-                path: main_dir(&root, &pkg).join(format!("{name}Controller.java")),
-                contents: stub_controller(&pkg, &name),
-            },
-            Artifact {
-                kind: "controller test",
-                path: test_dir(&root, &pkg).join(format!("{name}ControllerTest.java")),
-                contents: controller_stub_test(&pkg, &name, mockmvc_autoconfigure_import(&root)),
-            },
-        ],
-        ArtifactKind::Service => vec![
-            Artifact {
-                kind: "service",
-                path: main_dir(&root, &pkg).join(format!("{name}Service.java")),
-                contents: stub_service(&pkg, &name),
-            },
-            Artifact {
-                kind: "service test",
-                path: test_dir(&root, &pkg).join(format!("{name}ServiceTest.java")),
-                contents: service_stub_test(&pkg, &name),
-            },
-        ],
-        ArtifactKind::Repository => vec![Artifact {
-            kind: "repository",
-            path: main_dir(&root, &pkg).join(format!("{name}Repository.java")),
-            contents: stub_repository(&pkg, &name),
-        }],
+        ArtifactKind::Scaffold => scaffold_artifacts(&root, &base, &name, fields, package)?,
+        ArtifactKind::Controller => {
+            let web = place(layout::WEB);
+            vec![
+                Artifact {
+                    kind: "controller",
+                    path: main_dir(&root, &web).join(format!("{name}Controller.java")),
+                    contents: stub_controller(&web, &name),
+                },
+                Artifact {
+                    kind: "controller test",
+                    path: test_dir(&root, &web).join(format!("{name}ControllerTest.java")),
+                    contents: controller_stub_test(&web, &name, mockmvc_autoconfigure_import(&root)),
+                },
+            ]
+        }
+        ArtifactKind::Service => {
+            let service = place(layout::SERVICE);
+            vec![
+                Artifact {
+                    kind: "service",
+                    path: main_dir(&root, &service).join(format!("{name}Service.java")),
+                    contents: stub_service(&service, &name),
+                },
+                Artifact {
+                    kind: "service test",
+                    path: test_dir(&root, &service).join(format!("{name}ServiceTest.java")),
+                    contents: service_stub_test(&service, &name),
+                },
+            ]
+        }
+        ArtifactKind::Repository => {
+            let repository = place(layout::REPOSITORY);
+            // The entity it is a repository *of* now lives one package over.
+            let domain = place(layout::DOMAIN);
+            vec![Artifact {
+                kind: "repository",
+                path: main_dir(&root, &repository).join(format!("{name}Repository.java")),
+                contents: stub_repository(&repository, &name, &import_of(&repository, &domain, &name)),
+            }]
+        }
         ArtifactKind::Entity => {
             let parsed = parse_fields(fields)?;
+            let domain = place(layout::DOMAIN);
             vec![
                 Artifact {
                     kind: "entity",
-                    path: main_dir(&root, &pkg).join(format!("{name}.java")),
-                    contents: entity_java(&pkg, &name, &parsed, has_lombok(&root)),
+                    path: main_dir(&root, &domain).join(format!("{name}.java")),
+                    contents: entity_java(&domain, &name, &parsed, has_lombok(&root)),
                 },
                 Artifact {
                     kind: "entity test",
-                    path: test_dir(&root, &pkg).join(format!("{name}Test.java")),
-                    contents: entity_test(&pkg, &name, &parsed),
+                    path: test_dir(&root, &domain).join(format!("{name}Test.java")),
+                    contents: entity_test(&domain, &name, &parsed),
                 },
             ]
         }
         ArtifactKind::Record => {
             let parsed = parse_fields(fields)?;
+            let domain = place(layout::DOMAIN);
             vec![
                 Artifact {
                     kind: "record",
-                    path: main_dir(&root, &pkg).join(format!("{name}.java")),
-                    contents: record_java(&pkg, &name, &parsed),
+                    path: main_dir(&root, &domain).join(format!("{name}.java")),
+                    contents: record_java(&domain, &name, &parsed),
                 },
                 Artifact {
                     kind: "record test",
-                    path: test_dir(&root, &pkg).join(format!("{name}Test.java")),
-                    contents: record_test(&pkg, &name, &parsed),
+                    path: test_dir(&root, &domain).join(format!("{name}Test.java")),
+                    contents: record_test(&domain, &name, &parsed),
                 },
             ]
         }
@@ -287,49 +413,59 @@ pub fn generate(kind: ArtifactKind, name: &str, fields: &[String]) -> Result<()>
             if parsed.is_empty() {
                 return Err("a value type needs at least one field, e.g. `generate value Money amount:long`".to_string());
             }
+            let domain = place(layout::DOMAIN);
             vec![
                 Artifact {
                     kind: "value",
-                    path: main_dir(&root, &pkg).join(format!("{name}.java")),
-                    contents: value_java(&pkg, &name, &parsed),
+                    path: main_dir(&root, &domain).join(format!("{name}.java")),
+                    contents: value_java(&domain, &name, &parsed),
                 },
                 Artifact {
                     kind: "value test",
-                    path: test_dir(&root, &pkg).join(format!("{name}Test.java")),
-                    contents: value_test(&pkg, &name, &parsed),
+                    path: test_dir(&root, &domain).join(format!("{name}Test.java")),
+                    contents: value_test(&domain, &name, &parsed),
                 },
             ]
         }
-        ArtifactKind::Command => vec![
-            Artifact {
-                kind: "command",
-                path: main_dir(&root, &pkg).join(format!("{name}Command.java")),
-                contents: command_java(&pkg, &name),
-            },
-            Artifact {
-                kind: "command test",
-                path: test_dir(&root, &pkg).join(format!("{name}CommandTest.java")),
-                contents: command_test(&pkg, &name),
-            },
-        ],
-        ArtifactKind::Cli => vec![
-            Artifact {
-                kind: "cli",
-                path: main_dir(&root, &pkg).join(format!("{name}Cli.java")),
-                contents: cli_java(&pkg, &name),
-            },
-            Artifact {
-                kind: "cli test",
-                path: test_dir(&root, &pkg).join(format!("{name}CliTest.java")),
-                contents: cli_test(&pkg, &name),
-            },
-        ],
+        ArtifactKind::Command => {
+            let cli = place(layout::CLI);
+            vec![
+                Artifact {
+                    kind: "command",
+                    path: main_dir(&root, &cli).join(format!("{name}Command.java")),
+                    contents: command_java(&cli, &name),
+                },
+                Artifact {
+                    kind: "command test",
+                    path: test_dir(&root, &cli).join(format!("{name}CommandTest.java")),
+                    contents: command_test(&cli, &name),
+                },
+            ]
+        }
+        ArtifactKind::Cli => {
+            let cli = place(layout::CLI);
+            vec![
+                Artifact {
+                    kind: "cli",
+                    path: main_dir(&root, &cli).join(format!("{name}Cli.java")),
+                    contents: cli_java(&cli, &name),
+                },
+                Artifact {
+                    kind: "cli test",
+                    path: test_dir(&root, &cli).join(format!("{name}CliTest.java")),
+                    contents: cli_test(&cli, &name),
+                },
+            ]
+        }
         ArtifactKind::Cases => unreachable!("handled above -- its NAME is a path, not a class"),
-        ArtifactKind::Test => vec![Artifact {
-            kind: "test",
-            path: test_dir(&root, &pkg).join(format!("{name}Test.java")),
-            contents: stub_test(&pkg, &name),
-        }],
+        ArtifactKind::Test => {
+            let pkg = place("");
+            vec![Artifact {
+                kind: "test",
+                path: test_dir(&root, &pkg).join(format!("{name}Test.java")),
+                contents: stub_test(&pkg, &name),
+            }]
+        }
     };
 
     for artifact in &artifacts {
@@ -341,51 +477,94 @@ pub fn generate(kind: ArtifactKind, name: &str, fields: &[String]) -> Result<()>
         write_new_file(&artifact.path, &artifact.contents)?;
         println!("created {} {}", artifact.kind, artifact.path.display());
     }
+
+    if matches!(kind, ArtifactKind::Command) {
+        register_command(&root, &base, &name)?;
+    }
     Ok(())
 }
 
-fn scaffold_artifacts(root: &Path, pkg: &str, name: &str, fields: &[String]) -> Result<Vec<Artifact>> {
+/// An `import` line for `{from}.{class}`, or nothing at all when the two
+/// packages are the same -- importing a sibling is a compile error.
+fn import_of(user: &str, owner: &str, class: &str) -> String {
+    if user == owner {
+        String::new()
+    } else {
+        format!("import {owner}.{class};\n")
+    }
+}
+
+/// The one command that spans layers, and so the only place that has to say
+/// out loud which package each half of a vertical slice lives in -- and add
+/// the imports that crossing those boundaries now costs.
+fn scaffold_artifacts(
+    root: &Path,
+    base: &str,
+    name: &str,
+    fields: &[String],
+    package: Option<&str>,
+) -> Result<Vec<Artifact>> {
     let parsed = parse_fields(fields)?;
     let lombok = has_lombok(root);
     let route = name.to_lowercase() + "s";
 
+    let place = |default: &str| subpackage(base, package.unwrap_or(default));
+    let domain = place(layout::DOMAIN);
+    let repository = place(layout::REPOSITORY);
+    let service = place(layout::SERVICE);
+    let web = place(layout::WEB);
+
+    let entity_in = |user: &str| import_of(user, &domain, name);
+    let repository_in = |user: &str| import_of(user, &repository, &format!("{name}Repository"));
+    let service_in = |user: &str| import_of(user, &service, &format!("{name}Service"));
+
     Ok(vec![
         Artifact {
             kind: "entity",
-            path: main_dir(root, pkg).join(format!("{name}.java")),
-            contents: entity_java(pkg, name, &parsed, lombok),
+            path: main_dir(root, &domain).join(format!("{name}.java")),
+            contents: entity_java(&domain, name, &parsed, lombok),
         },
         Artifact {
             kind: "entity test",
-            path: test_dir(root, pkg).join(format!("{name}Test.java")),
-            contents: entity_test(pkg, name, &parsed),
+            path: test_dir(root, &domain).join(format!("{name}Test.java")),
+            contents: entity_test(&domain, name, &parsed),
         },
         Artifact {
             kind: "repository",
-            path: main_dir(root, pkg).join(format!("{name}Repository.java")),
-            contents: stub_repository(pkg, name),
+            path: main_dir(root, &repository).join(format!("{name}Repository.java")),
+            contents: stub_repository(&repository, name, &entity_in(&repository)),
         },
         Artifact {
             kind: "service",
-            path: main_dir(root, pkg).join(format!("{name}Service.java")),
-            contents: service_full(pkg, name),
+            path: main_dir(root, &service).join(format!("{name}Service.java")),
+            contents: service_full(
+                &service,
+                name,
+                &format!("{}{}", entity_in(&service), repository_in(&service)),
+            ),
         },
         Artifact {
             kind: "controller",
-            path: main_dir(root, pkg).join(format!("{name}Controller.java")),
-            contents: controller_full(pkg, name, &route),
+            path: main_dir(root, &web).join(format!("{name}Controller.java")),
+            contents: controller_full(
+                &web,
+                name,
+                &route,
+                &format!("{}{}", entity_in(&web), service_in(&web)),
+            ),
         },
         Artifact {
             kind: "controller test",
-            path: test_dir(root, pkg).join(format!("{name}ControllerTest.java")),
-            contents: controller_test(pkg, name, &route, mockmvc_autoconfigure_import(root)),
+            path: test_dir(root, &web).join(format!("{name}ControllerTest.java")),
+            contents: controller_test(&web, name, &route, mockmvc_autoconfigure_import(root), &entity_in(&web)),
         },
     ])
 }
 
-pub fn destroy(kind: ArtifactKind, name: &str, force: bool) -> Result<()> {
+pub fn destroy(kind: ArtifactKind, name: &str, force: bool, package: Option<&str>) -> Result<()> {
     let root = find_project_root()?;
-    let pkg = base_package(&root)?;
+    let base = base_package(&root)?;
+    let place = |default: &str| subpackage(&base, package.unwrap_or(default));
     // `cases` is addressed by the markdown path it was generated from, which
     // must not be run through capitalize like a class name.
     let raw_name = name.to_string();
@@ -393,42 +572,44 @@ pub fn destroy(kind: ArtifactKind, name: &str, force: bool) -> Result<()> {
 
     let paths: Vec<PathBuf> = match kind {
         ArtifactKind::Scaffold => vec![
-            main_dir(&root, &pkg).join(format!("{name}.java")),
-            test_dir(&root, &pkg).join(format!("{name}Test.java")),
-            main_dir(&root, &pkg).join(format!("{name}Repository.java")),
-            main_dir(&root, &pkg).join(format!("{name}Service.java")),
-            main_dir(&root, &pkg).join(format!("{name}Controller.java")),
-            test_dir(&root, &pkg).join(format!("{name}ControllerTest.java")),
+            main_dir(&root, &place(layout::DOMAIN)).join(format!("{name}.java")),
+            test_dir(&root, &place(layout::DOMAIN)).join(format!("{name}Test.java")),
+            main_dir(&root, &place(layout::REPOSITORY)).join(format!("{name}Repository.java")),
+            main_dir(&root, &place(layout::SERVICE)).join(format!("{name}Service.java")),
+            main_dir(&root, &place(layout::WEB)).join(format!("{name}Controller.java")),
+            test_dir(&root, &place(layout::WEB)).join(format!("{name}ControllerTest.java")),
         ],
         ArtifactKind::Controller => vec![
-            main_dir(&root, &pkg).join(format!("{name}Controller.java")),
-            test_dir(&root, &pkg).join(format!("{name}ControllerTest.java")),
+            main_dir(&root, &place(layout::WEB)).join(format!("{name}Controller.java")),
+            test_dir(&root, &place(layout::WEB)).join(format!("{name}ControllerTest.java")),
         ],
         ArtifactKind::Service => vec![
-            main_dir(&root, &pkg).join(format!("{name}Service.java")),
-            test_dir(&root, &pkg).join(format!("{name}ServiceTest.java")),
+            main_dir(&root, &place(layout::SERVICE)).join(format!("{name}Service.java")),
+            test_dir(&root, &place(layout::SERVICE)).join(format!("{name}ServiceTest.java")),
         ],
-        ArtifactKind::Repository => vec![main_dir(&root, &pkg).join(format!("{name}Repository.java"))],
+        ArtifactKind::Repository => {
+            vec![main_dir(&root, &place(layout::REPOSITORY)).join(format!("{name}Repository.java"))]
+        }
         // An entity, a record and a value are three shapes of the same named
         // type, so they occupy -- and free -- exactly the same two paths.
         ArtifactKind::Entity | ArtifactKind::Record | ArtifactKind::Value => vec![
-            main_dir(&root, &pkg).join(format!("{name}.java")),
-            test_dir(&root, &pkg).join(format!("{name}Test.java")),
+            main_dir(&root, &place(layout::DOMAIN)).join(format!("{name}.java")),
+            test_dir(&root, &place(layout::DOMAIN)).join(format!("{name}Test.java")),
         ],
         ArtifactKind::Command => vec![
-            main_dir(&root, &pkg).join(format!("{name}Command.java")),
-            test_dir(&root, &pkg).join(format!("{name}CommandTest.java")),
+            main_dir(&root, &place(layout::CLI)).join(format!("{name}Command.java")),
+            test_dir(&root, &place(layout::CLI)).join(format!("{name}CommandTest.java")),
         ],
         ArtifactKind::Cli => vec![
-            main_dir(&root, &pkg).join(format!("{name}Cli.java")),
-            test_dir(&root, &pkg).join(format!("{name}CliTest.java")),
+            main_dir(&root, &place(layout::CLI)).join(format!("{name}Cli.java")),
+            test_dir(&root, &place(layout::CLI)).join(format!("{name}CliTest.java")),
         ],
         // `cases` derives its class from a markdown file's name, so destroy
         // takes that same path and resolves it the same way generate did.
         ArtifactKind::Cases => {
-            vec![test_dir(&root, &pkg).join(format!("{}.java", cases_class_name(Path::new(&raw_name))?))]
+            vec![test_dir(&root, &place("")).join(format!("{}.java", cases_class_name(Path::new(&raw_name))?))]
         }
-        ArtifactKind::Test => vec![test_dir(&root, &pkg).join(format!("{name}Test.java"))],
+        ArtifactKind::Test => vec![test_dir(&root, &place("")).join(format!("{name}Test.java"))],
     };
 
     let existing: Vec<&PathBuf> = paths.iter().filter(|p| p.exists()).collect();
@@ -496,10 +677,10 @@ public class {name}Service {{
     )
 }
 
-fn stub_repository(pkg: &str, name: &str) -> String {
+fn stub_repository(pkg: &str, name: &str, extra: &str) -> String {
     format!(
         r#"package {pkg};
-
+{extra}
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface {name}Repository extends JpaRepository<{name}, Long> {{
@@ -907,11 +1088,11 @@ fn sample_literal(java_type: &str) -> &'static str {
 
 // ---- scaffold's fuller service/controller/test (beyond the bare stubs) ----
 
-fn service_full(pkg: &str, name: &str) -> String {
+fn service_full(pkg: &str, name: &str, extra: &str) -> String {
     let var = name.to_lowercase();
     format!(
         r#"package {pkg};
-
+{extra}
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
@@ -950,11 +1131,11 @@ public class {name}Service {{
     )
 }
 
-fn controller_full(pkg: &str, name: &str, route: &str) -> String {
+fn controller_full(pkg: &str, name: &str, route: &str, extra: &str) -> String {
     let var = name.to_lowercase();
     format!(
         r#"package {pkg};
-
+{extra}
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -1006,10 +1187,10 @@ public class {name}Controller {{
     )
 }
 
-fn controller_test(pkg: &str, name: &str, route: &str, mockmvc_import: &str) -> String {
+fn controller_test(pkg: &str, name: &str, route: &str, mockmvc_import: &str, extra: &str) -> String {
     format!(
         r#"package {pkg};
-
+{extra}
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import {mockmvc_import};
@@ -1381,6 +1562,124 @@ class {name}CliTest {{
 }}
 "#
     )
+}
+
+// ---- registering a generated command with the dispatcher ----
+
+/// Splice `commands.put(FooCommand.NAME, FooCommand::run);` into the
+/// project's `*Cli.java`.
+///
+/// jails' rule used to be that only `pom.rs` edits a file the user owns, and
+/// so `generate command` merely *documented* the dispatch line for you to
+/// paste. But that rule was always a proxy for the real one -- an edit must be
+/// surgical and leave every other byte alone -- and pasting a line by hand
+/// after every single `generate` is exactly the plumbing this tool exists to
+/// remove. The splice is idempotent and touches one line inside one method.
+///
+/// No dispatcher, or more than one, means jails cannot know where it goes: it
+/// says so and leaves the Javadoc instructions as the fallback.
+fn register_command(root: &Path, base: &str, name: &str) -> Result<()> {
+    let dispatchers = find_dispatchers(&root.join("src/main/java"));
+    let dispatcher = match dispatchers.as_slice() {
+        [one] => one,
+        [] => {
+            println!(
+                "note: no *Cli.java dispatcher found -- see {name}Command's Javadoc for the dispatch line,\n      \
+                 or run `jails generate cli <Name>` to get one that registers commands for you"
+            );
+            return Ok(());
+        }
+        many => {
+            println!(
+                "note: {} dispatchers found, so {name}Command was not registered automatically -- add it to the one you meant",
+                many.len()
+            );
+            return Ok(());
+        }
+    };
+
+    let source = fs::read_to_string(dispatcher).map_err(|e| format!("failed to read {}: {e}", dispatcher.display()))?;
+    let command_class = format!("{name}Command");
+    if source.contains(&format!("{command_class}::run")) {
+        println!("  exists  {command_class} is already registered in {}", dispatcher.display());
+        return Ok(());
+    }
+
+    // The dispatcher and the command can be in different packages once
+    // `--package` is involved, so the registration may need an import too.
+    let dispatcher_pkg = package_of(&source).unwrap_or_else(|| base.to_string());
+    let command_pkg = subpackage(base, layout::CLI);
+
+    let Some(spliced) = splice_registration(&source, &command_class, &import_of(&dispatcher_pkg, &command_pkg, &command_class)) else {
+        println!(
+            "note: could not find the `return commands;` line in {} -- add {command_class} by hand",
+            dispatcher.display()
+        );
+        return Ok(());
+    };
+
+    fs::write(dispatcher, spliced).map_err(|e| format!("failed to write {}: {e}", dispatcher.display()))?;
+    println!("registered {command_class} in {}", dispatcher.display());
+    Ok(())
+}
+
+/// Every `*Cli.java` under the source root that actually looks like a jails
+/// dispatcher -- a file merely *named* that way is not enough to edit.
+fn find_dispatchers(dir: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&current) else { continue };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.ends_with("Cli.java")) {
+                let looks_right = fs::read_to_string(&path)
+                    .map(|s| s.contains("SequencedMap<String, Command>") && s.contains("return commands;"))
+                    .unwrap_or(false);
+                if looks_right {
+                    found.push(path);
+                }
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+fn package_of(source: &str) -> Option<String> {
+    source
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("package ")?.trim().strip_suffix(';').map(|s| s.trim().to_string()))
+}
+
+/// Insert the registration immediately above `return commands;`, matching that
+/// line's indentation, and add `import` if the command lives elsewhere.
+/// Returns `None` when the anchor is missing, so the caller can say so rather
+/// than write a mangled file.
+fn splice_registration(source: &str, command_class: &str, import: &str) -> Option<String> {
+    let anchor = source.find("return commands;")?;
+    let line_start = source[..anchor].rfind('\n').map(|i| i + 1)?;
+    let indent: String = source[line_start..anchor].to_string();
+
+    let mut out = String::with_capacity(source.len() + import.len() + 96);
+    out.push_str(&source[..line_start]);
+    out.push_str(&format!("{indent}commands.put({command_class}.NAME, {command_class}::run);\n"));
+    out.push_str(&source[line_start..]);
+
+    if import.is_empty() {
+        return Some(out);
+    }
+    // Imports go after the package line; ordering is the normaliser's problem,
+    // but this file already exists, so re-sort it here too.
+    let package_end = out.find(";\n").map(|i| i + 2)?;
+    let mut with_import = String::with_capacity(out.len() + import.len());
+    with_import.push_str(&out[..package_end]);
+    with_import.push('\n');
+    with_import.push_str(import);
+    with_import.push_str(&out[package_end..]);
+    Some(normalize_imports(&with_import))
 }
 
 // ---- cases: a markdown checklist in, a pending JUnit class out. ----
@@ -1885,13 +2184,13 @@ mod tests {
     fn stub_templates_use_the_package_and_class_name() {
         assert!(stub_controller("com.example.blog", "Post").contains("public class PostController"));
         assert!(stub_service("com.example.blog", "Post").contains("public class PostService"));
-        assert!(stub_repository("com.example.blog", "Post").contains("extends JpaRepository<Post, Long>"));
+        assert!(stub_repository("com.example.blog", "Post", "").contains("extends JpaRepository<Post, Long>"));
         assert!(stub_test("com.example.blog", "Post").contains("class PostTest"));
     }
 
     #[test]
     fn service_full_wraps_repository_crud() {
-        let src = service_full("com.example.blog", "Post");
+        let src = service_full("com.example.blog", "Post", "");
         assert!(src.contains("findAll()"));
         assert!(src.contains("findById(Long id)"));
         assert!(src.contains("save(Post post)"));
@@ -1901,7 +2200,7 @@ mod tests {
 
     #[test]
     fn controller_full_exposes_full_crud_routes() {
-        let src = controller_full("com.example.blog", "Post", "posts");
+        let src = controller_full("com.example.blog", "Post", "posts", "");
         assert!(src.contains(r#"@RequestMapping("/posts")"#));
         assert!(src.contains("@GetMapping"));
         assert!(src.contains("@PostMapping"));
@@ -1924,16 +2223,21 @@ mod tests {
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        let result = generate(ArtifactKind::Scaffold, "post", &["title:string".to_string()]);
+        let result = generate(ArtifactKind::Scaffold, "post", &["title:string".to_string()], None);
         std::env::set_current_dir(original_cwd).unwrap();
         result.unwrap();
 
-        assert!(src.join("Post.java").is_file());
-        assert!(root.join("src/test/java/com/example/blog/PostTest.java").is_file());
-        assert!(src.join("PostRepository.java").is_file());
-        assert!(src.join("PostService.java").is_file());
-        assert!(src.join("PostController.java").is_file());
-        assert!(root.join("src/test/java/com/example/blog/PostControllerTest.java").is_file());
+        assert!(root.join("src/main/java/com/example/blog/domain/Post.java").is_file());
+        assert!(root.join("src/test/java/com/example/blog/domain/PostTest.java").is_file());
+        assert!(root.join("src/main/java/com/example/blog/repository/PostRepository.java").is_file());
+        assert!(root.join("src/main/java/com/example/blog/service/PostService.java").is_file());
+        assert!(root.join("src/main/java/com/example/blog/web/PostController.java").is_file());
+        assert!(root.join("src/test/java/com/example/blog/web/PostControllerTest.java").is_file());
+
+        // Crossing a package boundary costs an import; the scaffold has to pay it.
+        let service = fs::read_to_string(root.join("src/main/java/com/example/blog/service/PostService.java")).unwrap();
+        assert!(service.contains("import com.example.blog.domain.Post;"), "{service}");
+        assert!(service.contains("import com.example.blog.repository.PostRepository;"), "{service}");
     }
 
     /// Regression test: standalone `generate controller` used to write only
@@ -1954,12 +2258,12 @@ mod tests {
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        let result = generate(ArtifactKind::Controller, "health", &[]);
+        let result = generate(ArtifactKind::Controller, "health", &[], None);
         std::env::set_current_dir(original_cwd).unwrap();
         result.unwrap();
 
-        assert!(src.join("HealthController.java").is_file());
-        let test_file = root.join("src/test/java/com/example/blog/HealthControllerTest.java");
+        assert!(root.join("src/main/java/com/example/blog/web/HealthController.java").is_file());
+        let test_file = root.join("src/test/java/com/example/blog/web/HealthControllerTest.java");
         assert!(test_file.is_file(), "expected {}", test_file.display());
         assert!(fs::read_to_string(test_file).unwrap().contains("class HealthControllerTest"));
     }
@@ -1979,12 +2283,12 @@ mod tests {
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        let result = generate(ArtifactKind::Service, "billing", &[]);
+        let result = generate(ArtifactKind::Service, "billing", &[], None);
         std::env::set_current_dir(original_cwd).unwrap();
         result.unwrap();
 
-        assert!(src.join("BillingService.java").is_file());
-        assert!(root.join("src/test/java/com/example/blog/BillingServiceTest.java").is_file());
+        assert!(root.join("src/main/java/com/example/blog/service/BillingService.java").is_file());
+        assert!(root.join("src/test/java/com/example/blog/service/BillingServiceTest.java").is_file());
     }
 
     #[test]
@@ -2002,12 +2306,12 @@ mod tests {
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        let result = generate(ArtifactKind::Repository, "widget", &[]);
+        let result = generate(ArtifactKind::Repository, "widget", &[], None);
         std::env::set_current_dir(original_cwd).unwrap();
         result.unwrap();
 
-        assert!(src.join("WidgetRepository.java").is_file());
-        assert!(!root.join("src/test/java/com/example/blog/WidgetRepositoryTest.java").exists());
+        assert!(root.join("src/main/java/com/example/blog/repository/WidgetRepository.java").is_file());
+        assert!(!root.join("src/test/java/com/example/blog/repository/WidgetRepositoryTest.java").exists());
     }
 
     /// `record` and `command` target plain Maven projects, whose entry point
@@ -2024,16 +2328,16 @@ mod tests {
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        let record = generate(ArtifactKind::Record, "money", &["amount:long".to_string()]);
-        let command = generate(ArtifactKind::Command, "greet", &[]);
+        let record = generate(ArtifactKind::Record, "money", &["amount:long".to_string()], None);
+        let command = generate(ArtifactKind::Command, "greet", &[], None);
         std::env::set_current_dir(original_cwd).unwrap();
         record.unwrap();
         command.unwrap();
 
-        assert!(src.join("Money.java").is_file());
-        assert!(root.join("src/test/java/com/example/demo/MoneyTest.java").is_file());
-        assert!(src.join("GreetCommand.java").is_file());
-        assert!(root.join("src/test/java/com/example/demo/GreetCommandTest.java").is_file());
+        assert!(root.join("src/main/java/com/example/demo/domain/Money.java").is_file());
+        assert!(root.join("src/test/java/com/example/demo/domain/MoneyTest.java").is_file());
+        assert!(root.join("src/main/java/com/example/demo/cli/GreetCommand.java").is_file());
+        assert!(root.join("src/test/java/com/example/demo/cli/GreetCommandTest.java").is_file());
     }
 
     #[test]
@@ -2047,8 +2351,8 @@ mod tests {
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        generate(ArtifactKind::Command, "greet", &[]).unwrap();
-        let result = destroy(ArtifactKind::Command, "greet", true);
+        generate(ArtifactKind::Command, "greet", &[], None).unwrap();
+        let result = destroy(ArtifactKind::Command, "greet", true, None);
         std::env::set_current_dir(original_cwd).unwrap();
 
         result.unwrap();
@@ -2071,9 +2375,9 @@ mod tests {
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        generate(ArtifactKind::Record, "tag", &["name:string".to_string()]).unwrap();
-        let clash = generate(ArtifactKind::Entity, "tag", &["name:string".to_string()]);
-        let result = destroy(ArtifactKind::Record, "tag", true);
+        generate(ArtifactKind::Record, "tag", &["name:string".to_string()], None).unwrap();
+        let clash = generate(ArtifactKind::Entity, "tag", &["name:string".to_string()], None);
+        let result = destroy(ArtifactKind::Record, "tag", true, None);
         std::env::set_current_dir(original_cwd).unwrap();
 
         assert!(clash.is_err(), "generate must not overwrite the record with an entity");
@@ -2094,15 +2398,17 @@ mod tests {
             "package com.example.blog;\n\npublic class BlogApplication {}\n",
         )
         .unwrap();
-        fs::write(src.join("CommentController.java"), "// already here").unwrap();
+        let web = root.join("src/main/java/com/example/blog/web");
+        fs::create_dir_all(&web).unwrap();
+        fs::write(web.join("CommentController.java"), "// already here").unwrap();
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        let result = generate(ArtifactKind::Controller, "comment", &[]);
+        let result = generate(ArtifactKind::Controller, "comment", &[], None);
         std::env::set_current_dir(original_cwd).unwrap();
 
         assert!(result.is_err());
-        assert_eq!(fs::read_to_string(src.join("CommentController.java")).unwrap(), "// already here");
+        assert_eq!(fs::read_to_string(web.join("CommentController.java")).unwrap(), "// already here");
     }
 
     #[test]
@@ -2120,8 +2426,8 @@ mod tests {
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        generate(ArtifactKind::Entity, "tag", &["name:string".to_string()]).unwrap();
-        let result = destroy(ArtifactKind::Entity, "tag", true);
+        generate(ArtifactKind::Entity, "tag", &["name:string".to_string()], None).unwrap();
+        let result = destroy(ArtifactKind::Entity, "tag", true, None);
         std::env::set_current_dir(original_cwd).unwrap();
 
         result.unwrap();

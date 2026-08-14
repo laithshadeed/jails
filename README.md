@@ -49,13 +49,21 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
 - `jails test [filter]` — `mvn test` (or `mvnd` if present), `filter` maps
   to `-Dtest=filter`.
 - `jails build` — `mvn package`.
-- `jails run [--no-build] [--watch]` — finds the file with `static void
-  main` under `src/main/java` (or uses `spring-boot:run` for Spring
-  projects), compiles and runs it. `--no-build` skips straight to running
-  whatever's already in `target/`. `--watch` (Spring Boot + devtools only)
-  recompiles on every source change and lets devtools restart the
+- `jails run [--no-build] [--watch] [-- <args>...]` — finds the file with
+  `static void main` under `src/main/java` (or uses `spring-boot:run` for
+  Spring projects), compiles and runs it. Everything after `--` is forwarded
+  to the program: `jails run -- normalise input.json`. When the project has a
+  `generate cli` dispatcher, that wins over a leftover `App.java`, so argv
+  actually reaches something that routes it. `--no-build` skips straight to
+  running whatever's already in `target/`. `--watch` (Spring Boot + devtools
+  only) recompiles on every source change and lets devtools restart the
   already-running app — no manual restarts.
+- `jails fmt` — reformat in place (Spotless); `jails check` — format check +
+  compile + tests (`mvn verify`). Both need `jails add format`.
 - `jails completion <bash|zsh|fish|elvish|powershell>` — shell completion.
+
+`generate`, `destroy` and `add` all take `--package <sub>` to override where
+the code lands; `--package ''` writes straight into the base package.
 
 Every command takes `--debug`, which prints the `mvn`/`mvnd`/`java`/`git`/`curl`
 command lines jails shells out to instead of running them silently.
@@ -69,8 +77,27 @@ everywhere else), `int`/`integer`, `long`, `boolean`, `date`, `datetime`,
 Both `new` and `new-cli` lay down the standard Maven tree plus an empty
 `src/test/resources/fixtures/` (with a `.gitkeep`, since git won't track an
 empty directory) — the conventional home for sample CSV/JSON/SQL files that
-tests read off the classpath, which is exactly what the `add csv|json|sqlite`
-capabilities want.
+tests read off the classpath, which is exactly what `add testkit`'s `Fixtures`
+helper and the `add csv|json|sqlite` capabilities want.
+
+Generated code goes into the subpackage its layer conventionally owns, not
+into one flat pile beside `App.java`:
+
+| Kind | Package |
+| --- | --- |
+| `entity`, `record`, `value` | `domain` |
+| `repository` | `repository` |
+| `service` | `service` |
+| `controller` | `web` |
+| `command`, `cli` | `cli` |
+| `add csv`/`json`/`sqlite` | `adapters` |
+| `add http` | `api` |
+| `add testkit`/`fake` | `testkit` (test tree) |
+
+`scaffold` spans four of them in one command and adds the imports that
+crossing those boundaries costs. Everything jails writes is emitted in the
+import order palantir-java-format wants, so `add format` leaves a project that
+passes `jails check` immediately.
 
 ## Neovim
 
