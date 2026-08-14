@@ -16,6 +16,7 @@ pub enum ArtifactKind {
     Value,
     Enum,
     Sealed,
+    Repo,
     Command,
     Cli,
     Cases,
@@ -485,6 +486,9 @@ fn mockmvc_autoconfigure_import(root: &Path) -> &'static str {
 pub(crate) mod layout {
     pub const DOMAIN: &str = "domain";
     pub const REPOSITORY: &str = "repository";
+    /// Ports -- the interfaces the application depends on, kept free of the
+    /// technology that implements them.
+    pub const APP: &str = "app";
     pub const SERVICE: &str = "service";
     pub const WEB: &str = "web";
     pub const CLI: &str = "cli";
@@ -734,6 +738,55 @@ pub fn generate(kind: ArtifactKind, name: &str, fields: &[String], package: Opti
                 },
             ]
         }
+        ArtifactKind::Repo => {
+            let app = place(layout::APP);
+            let adapters = place(layout::ADAPTERS);
+            let domain = place(layout::DOMAIN);
+            let mut artifacts = Vec::new();
+
+            // A repository of a type that does not exist is meaningless, and
+            // the port would not compile. Rather than fail, lay down the
+            // smallest record that could be one -- it is a starting point the
+            // reader will obviously edit, the same way `scaffold` works.
+            if !main_dir(&root, &domain).join(format!("{name}.java")).exists() {
+                let id = parse_fields(&["id:string!".to_string()])?;
+                artifacts.push(Artifact {
+                    kind: "record (placeholder for the repository)",
+                    path: main_dir(&root, &domain).join(format!("{name}.java")),
+                    contents: record_java(&domain, &name, &id),
+                });
+                artifacts.push(Artifact {
+                    kind: "record test",
+                    path: test_dir(&root, &domain).join(format!("{name}Test.java")),
+                    contents: record_test(&root, &domain, &name, &id),
+                });
+            }
+
+            artifacts.push(Artifact {
+                kind: "repository port",
+                path: main_dir(&root, &app).join(format!("{name}Repository.java")),
+                contents: repository_port(&app, &name, &import_of(&app, &domain, &name)),
+            });
+            artifacts.push(Artifact {
+                kind: "sqlite adapter",
+                path: main_dir(&root, &adapters).join(format!("Sqlite{name}Repository.java")),
+                contents: sqlite_repository(
+                    &adapters,
+                    &name,
+                    &format!(
+                        "{}{}",
+                        import_of(&adapters, &domain, &name),
+                        import_of(&adapters, &app, &format!("{name}Repository"))
+                    ),
+                ),
+            });
+            artifacts.push(Artifact {
+                kind: "sqlite adapter test",
+                path: test_dir(&root, &adapters).join(format!("Sqlite{name}RepositoryTest.java")),
+                contents: sqlite_repository_test(&adapters, &name, &import_of(&adapters, &domain, &name)),
+            });
+            artifacts
+        }
         ArtifactKind::Sealed => {
             let variants = parse_variants(fields)?;
             let domain = place(layout::DOMAIN);
@@ -926,6 +979,11 @@ pub fn destroy(kind: ArtifactKind, name: &str, force: bool, package: Option<&str
         ArtifactKind::Command => vec![
             main_dir(&root, &place(layout::CLI)).join(format!("{name}Command.java")),
             test_dir(&root, &place(layout::CLI)).join(format!("{name}CommandTest.java")),
+        ],
+        ArtifactKind::Repo => vec![
+            main_dir(&root, &place(layout::APP)).join(format!("{name}Repository.java")),
+            main_dir(&root, &place(layout::ADAPTERS)).join(format!("Sqlite{name}Repository.java")),
+            test_dir(&root, &place(layout::ADAPTERS)).join(format!("Sqlite{name}RepositoryTest.java")),
         ],
         ArtifactKind::Cli => vec![
             main_dir(&root, &place(layout::CLI)).join(format!("{name}Cli.java")),
@@ -1912,6 +1970,233 @@ class {name}Test {{
     )
 }
 
+// ---- repo: a port the application depends on, and the JDBC adapter that
+// implements it. The one pattern java.md names by name. ----
+
+fn repository_port(pkg: &str, name: &str, extra: &str) -> String {
+    let var = name.to_lowercase();
+    format!(
+        r#"package {pkg};
+
+{extra}import java.util.List;
+import java.util.Optional;
+
+/**
+ * Storage for {{@link {name}}}, as the application sees it.
+ *
+ * <p>A port: no JDBC types, no driver, no dialect. Application code depends on
+ * this interface, an adapter implements it, and a test can supply an in-memory
+ * one without a database anywhere in sight.
+ *
+ * <p>{{@code findById}} returns {{@link Optional}} rather than null, and
+ * {{@code findAll}} an empty list rather than null, so no caller has to guard.
+ */
+public interface {name}Repository {{
+
+    Optional<{name}> findById(String id);
+
+    List<{name}> findAll();
+
+    /** Inserts, or replaces the row with the same id. */
+    void save({name} {var});
+
+    /** @return true when a row was actually removed. */
+    boolean deleteById(String id);
+}}
+"#
+    )
+}
+
+fn sqlite_repository(pkg: &str, name: &str, extra: &str) -> String {
+    let var = name.to_lowercase();
+    let table = format!("{}s", name.to_lowercase());
+    format!(
+        r#"package {pkg};
+
+{extra}import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+
+/**
+ * {{@link {name}Repository}} over plain JDBC. No ORM: the queries are visible,
+ * and a {{@code PreparedStatement}} is the whole abstraction.
+ *
+ * <p>The caller owns the {{@link Connection}} -- this class neither opens nor
+ * closes it, so one transaction can span several repositories.
+ *
+ * <p>{{@link #map}} and {{@link #bind}} are yours to finish: jails knows the
+ * columns of exactly nothing. Until then the companion test is disabled.
+ */
+public final class Sqlite{name}Repository implements {name}Repository {{
+
+    private static final String TABLE = "{table}";
+
+    private final Connection connection;
+
+    public Sqlite{name}Repository(Connection connection) {{
+        this.connection = Objects.requireNonNull(connection, "connection is required");
+    }}
+
+    @Override
+    public Optional<{name}> findById(String id) {{
+        Objects.requireNonNull(id, "id is required");
+        var sql = "select * from " + TABLE + " where id = ?";
+        try (var query = connection.prepareStatement(sql)) {{
+            query.setString(1, id);
+            try (var rows = query.executeQuery()) {{
+                return rows.next() ? Optional.of(map(rows)) : Optional.empty();
+            }}
+        }} catch (SQLException error) {{
+            throw new IllegalStateException("could not read " + TABLE + " " + id, error);
+        }}
+    }}
+
+    @Override
+    public List<{name}> findAll() {{
+        // Ordered explicitly: without it the row order is whatever SQLite
+        // feels like, and a test that asserts on a list would flake.
+        var sql = "select * from " + TABLE + " order by id";
+        try (var query = connection.prepareStatement(sql);
+                var rows = query.executeQuery()) {{
+            var all = new ArrayList<{name}>();
+            while (rows.next()) {{
+                all.add(map(rows));
+            }}
+            return List.copyOf(all);
+        }} catch (SQLException error) {{
+            throw new IllegalStateException("could not read " + TABLE, error);
+        }}
+    }}
+
+    @Override
+    public void save({name} {var}) {{
+        Objects.requireNonNull({var}, "{var} is required");
+        // `insert or replace` makes save idempotent, which is what a caller
+        // replaying an event stream needs.
+        var sql = "insert or replace into " + TABLE + " (id) values (?)";
+        try (var insert = connection.prepareStatement(sql)) {{
+            bind(insert, {var});
+            insert.executeUpdate();
+        }} catch (SQLException error) {{
+            throw new IllegalStateException("could not save to " + TABLE, error);
+        }}
+    }}
+
+    @Override
+    public boolean deleteById(String id) {{
+        Objects.requireNonNull(id, "id is required");
+        try (var delete = connection.prepareStatement("delete from " + TABLE + " where id = ?")) {{
+            delete.setString(1, id);
+            return delete.executeUpdate() > 0;
+        }} catch (SQLException error) {{
+            throw new IllegalStateException("could not delete from " + TABLE + " " + id, error);
+        }}
+    }}
+
+    /** TODO: build a {name} from the current row. */
+    private {name} map(ResultSet rows) throws SQLException {{
+        throw new UnsupportedOperationException("TODO: map a " + TABLE + " row to {name}");
+    }}
+
+    /** TODO: set every column the insert above declares. */
+    private void bind(java.sql.PreparedStatement insert, {name} {var}) throws SQLException {{
+        throw new UnsupportedOperationException("TODO: bind {name} to the insert");
+    }}
+}}
+"#
+    )
+}
+
+fn sqlite_repository_test(pkg: &str, name: &str, extra: &str) -> String {
+    let var = name.to_lowercase();
+    format!(
+        r#"package {pkg};
+
+{extra}import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
+
+import java.sql.Connection;
+import java.sql.DriverManager;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * Round-trips against a real SQLite database held in memory: fast enough for
+ * a unit test, and still the actual driver rather than a fake.
+ *
+ * <p>Disabled until {{@code map}} and {{@code bind}} are written -- jails cannot
+ * know the columns, and a test asserting on a TODO would only ever be noise.
+ */
+@Disabled("todo: finish map/bind in Sqlite{name}Repository, then delete this")
+class Sqlite{name}RepositoryTest {{
+
+    private Connection connection;
+    private Sqlite{name}Repository repository;
+
+    @BeforeEach
+    void openInMemoryDatabase() throws Exception {{
+        // A fresh, empty database per test -- it exists only as long as the
+        // connection does.
+        connection = DriverManager.getConnection("jdbc:sqlite::memory:");
+        try (var schema = connection.createStatement()) {{
+            schema.execute("create table {table} (id text primary key)");
+        }}
+        repository = new Sqlite{name}Repository(connection);
+    }}
+
+    @AfterEach
+    void close() throws Exception {{
+        connection.close();
+    }}
+
+    @Test
+    void savesAndReadsBack() {{
+        var {var} = sample();
+
+        repository.save({var});
+
+        assertThat(repository.findById({var}.id())).contains({var});
+        assertThat(repository.findAll()).containsExactly({var});
+    }}
+
+    @Test
+    void findByIdIsEmptyForAnUnknownId() {{
+        assertThat(repository.findById("nope")).isEmpty();
+    }}
+
+    @Test
+    void saveReplacesARowWithTheSameId() {{
+        repository.save(sample());
+        repository.save(sample());
+
+        assertThat(repository.findAll()).hasSize(1);
+    }}
+
+    @Test
+    void deleteReportsWhetherARowWentAway() {{
+        var {var} = sample();
+        repository.save({var});
+
+        assertThat(repository.deleteById({var}.id())).isTrue();
+        assertThat(repository.deleteById({var}.id())).isFalse();
+    }}
+
+    /** TODO: build a {name} to round-trip. */
+    private {name} sample() {{
+        throw new UnsupportedOperationException("TODO: build a sample {name}");
+    }}
+}}
+"#,
+        table = format!("{}s", name.to_lowercase())
+    )
+}
+
 // ---- sealed: the closed set whose cases carry different data, which is the
 // one an enum cannot model. ----
 
@@ -2610,6 +2895,43 @@ mod tests {
         assert_eq!(fields[0].java_type, "String");
         assert!(!fields[1].owned);
         assert!(fields[1].imports.contains(&"java.time.LocalDate"));
+    }
+
+    /// The whole point of a port: application code must be able to depend on
+    /// it without dragging JDBC along -- including in the prose, since a
+    /// reader grepping for java.sql should find only the adapter.
+    #[test]
+    fn repository_port_is_free_of_jdbc() {
+        let src = repository_port("com.example.demo.app", "Transaction", "import com.example.demo.domain.Transaction;\n");
+
+        assert!(src.contains("public interface TransactionRepository"), "{src}");
+        assert!(src.contains("Optional<Transaction> findById(String id)"), "{src}");
+        assert!(src.contains("List<Transaction> findAll()"), "{src}");
+        assert!(!src.contains("java.sql"), "not even in a comment: {src}");
+    }
+
+    #[test]
+    fn sqlite_adapter_uses_plain_jdbc_and_no_orm() {
+        let src = sqlite_repository("com.example.demo.adapters", "Transaction", "");
+
+        assert!(src.contains("implements TransactionRepository"), "{src}");
+        assert!(src.contains("connection.prepareStatement"), "{src}");
+        assert!(src.contains("try (var query"), "try-with-resources: {src}");
+        assert!(src.contains("order by id"), "unordered findAll would flake a test: {src}");
+        for forbidden in ["hibernate", "jakarta.persistence", "JpaRepository", "org.springframework"] {
+            assert!(!src.contains(forbidden), "{forbidden} should not appear");
+        }
+    }
+
+    /// jails cannot know the columns, so map/bind are TODOs -- and a test that
+    /// asserts on a TODO is noise until they are written.
+    #[test]
+    fn sqlite_adapter_test_is_disabled_until_the_mapping_is_written() {
+        let test = sqlite_repository_test("com.example.demo.adapters", "Transaction", "");
+
+        assert!(test.contains("@Disabled"), "{test}");
+        assert!(test.contains("jdbc:sqlite::memory:"), "{test}");
+        assert!(test.contains("savesAndReadsBack"), "{test}");
     }
 
     #[test]

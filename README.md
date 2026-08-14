@@ -73,6 +73,12 @@ the code lands; `--package ''` writes straight into the base package.
 Every command takes `--debug`, which prints the `mvn`/`mvnd`/`java`/`git`/`curl`
 command lines jails shells out to instead of running them silently.
 
+- `jails generate|g repo <Name>` — a port interface in `app/` (no JDBC types,
+  `Optional`/empty-list returns), a plain-JDBC SQLite adapter in `adapters/`
+  (`PreparedStatement`, try-with-resources, no ORM), and a round-trip test
+  against an in-memory database. `map`/`bind` are left as TODOs — jails can't
+  know your columns — so the test ships `@Disabled`. If the `<Name>` type
+  doesn't exist yet, a minimal record is laid down alongside.
 - `jails generate|g sealed <Name> <Variant...>` — a sealed interface with a
   `permits` clause and one record per variant, plus a test whose `switch` has
   no `default`, so adding a variant breaks the build. The closed set an enum
@@ -132,6 +138,8 @@ into one flat pile beside `App.java`:
 | `service` | `service` |
 | `controller` | `web` |
 | `command`, `cli` | `cli` |
+| `repo` (port) | `app` |
+| `repo` (adapter) | `adapters` |
 | `add csv`/`json`/`sqlite` | `adapters` |
 | `add http` | `api` |
 | `add testkit`/`fake` | `testkit` (test tree) |
