@@ -41,6 +41,8 @@ local KINDS = {
 local CAPABILITIES = { 'db', 'csv', 'sqlite', 'json', 'testkit', 'fake', 'http', 'format' }
 
 local SUBCOMMANDS = {
+  'about',
+  'info',
   'new',
   'new-cli',
   'generate',
@@ -60,6 +62,8 @@ local SUBCOMMANDS = {
 }
 
 local OPTIONS = {
+  about = { '--json' },
+  info = { '--json' },
   new = { '--deps', '--java', '--no-git', '--no-devtools' },
   ['new-cli'] = { '--release', '--no-git' },
   add = { '--name', '--dry-run', '--package' },

@@ -21,6 +21,56 @@ fn completion_prints_a_bash_completion_script() {
     assert!(script.contains("complete -F _jails"));
 }
 
+#[test]
+fn about_describes_a_synthetic_nested_maven_reactor() {
+    let root = temp_dir("about-reactor");
+    fs::write(
+        root.join("pom.xml"),
+        "<project><groupId>dev.example</groupId><artifactId>sample-parent</artifactId><properties><java.version>26</java.version></properties><dependencyManagement><dependencies><dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-dependencies</artifactId></dependency></dependencies></dependencyManagement><modules><module>sample-core</module><module>sample-web</module></modules></project>",
+    )
+    .unwrap();
+    for module in ["sample-core", "sample-web"] {
+        let module_root = root.join(module);
+        fs::create_dir_all(module_root.join("src/main/java/dev/example")).unwrap();
+        fs::write(
+            module_root.join("pom.xml"),
+            format!("<project><parent><groupId>dev.example</groupId><artifactId>sample-parent</artifactId></parent><artifactId>{module}</artifactId></project>"),
+        )
+        .unwrap();
+    }
+    fs::write(root.join("mvnw"), "#!/bin/sh\n").unwrap();
+    let cwd = root.join("sample-web/src/main/java/dev/example");
+
+    let output = jails_cmd(&cwd, None).arg("about").output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Workspace: sample-parent"));
+    assert!(stdout.contains("Module: sample-web"));
+    assert!(stdout.contains("Java: 26"));
+    assert!(stdout.contains("Framework: Spring Boot"));
+    assert!(stdout.contains("Modules (2):"));
+
+    let output = jails_cmd(&cwd, None)
+        .args(["info", "--json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json = String::from_utf8_lossy(&output.stdout);
+    assert!(json.contains("\"schema_version\": 1"));
+    assert!(json.contains("\"artifact_id\": \"sample-parent\""));
+    assert!(json.contains("\"artifact_id\": \"sample-web\""));
+    assert!(json.contains("\"java_release\": 26"));
+    assert!(json.contains("\"spring_boot\": true"));
+}
+
+#[test]
+fn about_errors_outside_a_maven_project() {
+    let root = temp_dir("about-no-project");
+    let output = jails_cmd(&root, None).arg("about").output().unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("pom.xml"));
+}
+
 /// Regression test: `kind` used to be a plain String, so `jails generate
 /// <TAB>` had nothing to offer but filenames, and the `g`/`d` aliases were
 /// declared with `alias` (hidden from clap_complete) instead of

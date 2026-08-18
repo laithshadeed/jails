@@ -15,6 +15,11 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
 
 ## Commands
 
+- `jails about [--json]` (alias: `jails info`) — describes the current Maven
+  context: the top-level reactor, active module, Java release, Spring Boot
+  presence, Maven wrapper/command, and recursively declared modules. It works
+  from any directory below a module. `--json` emits the versioned contract
+  used by editor integrations and other tools.
 - `jails new <name> [--deps web,jdbc] [--java 27] [--no-git] [--no-devtools]`
   — new Spring Boot project via start.spring.io. `git init` + `.gitignore`
   and `spring-boot-devtools` (needed for `run --watch`) are on by default.

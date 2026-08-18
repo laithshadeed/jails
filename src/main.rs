@@ -2,6 +2,7 @@ mod add;
 mod generate;
 mod new;
 mod pom;
+mod project;
 mod run;
 
 use add::Capability;
@@ -51,6 +52,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Describe the current Maven workspace and active module
+    #[command(visible_alias = "info")]
+    About {
+        /// Emit a stable machine-readable project description
+        #[arg(long)]
+        json: bool,
+    },
     /// Create a new Spring Boot project via start.spring.io
     New {
         name: String,
@@ -155,6 +163,7 @@ fn main() {
     let debug = cli.debug;
 
     let result = match cli.command {
+        Command::About { json } => project::about(json),
         Command::New {
             name,
             deps,
