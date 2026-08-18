@@ -18,13 +18,17 @@ pub fn new(name: &str, deps: &str, java: &str, git: bool, devtools: bool, debug:
     fs::create_dir_all(&tmp).map_err(|e| format!("failed to create temp dir: {e}"))?;
     let zip_path = tmp.join("starter.zip");
 
+    // Spring Initializr does not advertise the upcoming Java 27 release yet.
+    // Bootstrap with the newest version it accepts, then set the generated
+    // Maven release to the version the user actually requested.
+    let initializer_java = initializr_java(java);
     let mut curl = Command::new("curl");
     curl.args(["-sf", "https://start.spring.io/starter.zip"])
         .arg("-d")
         .arg(format!("dependencies={deps}"))
         .args(["-d", "type=maven-project"])
         .arg("-d")
-        .arg(format!("javaVersion={java}"))
+        .arg(format!("javaVersion={initializer_java}"))
         .arg("-d")
         .arg(format!("artifactId={name}"))
         .arg("-d")
@@ -56,6 +60,9 @@ pub fn new(name: &str, deps: &str, java: &str, git: bool, devtools: bool, debug:
         return Err("failed to extract starter.zip".to_string());
     }
 
+    if initializer_java != java {
+        set_java_release(Path::new(name), initializer_java, java)?;
+    }
     write_fixtures_dir(Path::new(name))?;
 
     // start.spring.io's zip already ships a .gitignore, so just init.
@@ -65,6 +72,29 @@ pub fn new(name: &str, deps: &str, java: &str, git: bool, devtools: bool, debug:
 
     println!("Created ./{name} (deps: {deps}, Java {java})");
     Ok(())
+}
+
+fn initializr_java(requested: &str) -> &str {
+    if requested.parse::<u32>().is_ok_and(|release| release > 26) {
+        "26"
+    } else {
+        requested
+    }
+}
+
+fn set_java_release(root: &Path, from: &str, to: &str) -> Result<()> {
+    let path = root.join("pom.xml");
+    let pom = fs::read_to_string(&path)
+        .map_err(|e| format!("failed to read {}: {e}", path.display()))?;
+    let old = format!("<java.version>{from}</java.version>");
+    if !pom.contains(&old) {
+        return Err(format!(
+            "could not set Java {to}: {} does not contain {old}",
+            path.display()
+        ));
+    }
+    fs::write(&path, pom.replacen(&old, &format!("<java.version>{to}</java.version>"), 1))
+        .map_err(|e| format!("failed to update {}: {e}", path.display()))
 }
 
 /// Plain Maven CLI project, written directly -- no `mvn archetype:generate`
@@ -277,6 +307,29 @@ mod tests {
     #[test]
     fn effective_deps_handles_an_empty_deps_string() {
         assert_eq!(effective_deps("", true), "devtools");
+    }
+
+    #[test]
+    fn initializr_uses_its_newest_supported_release_for_java_27() {
+        assert_eq!(initializr_java("27"), "26");
+        assert_eq!(initializr_java("26"), "26");
+        assert_eq!(initializr_java("21"), "21");
+    }
+
+    #[test]
+    fn generated_spring_pom_is_retargeted_after_bootstrapping() {
+        let root = scratch("retarget-java");
+        fs::write(
+            root.join("pom.xml"),
+            "<project><properties><java.version>26</java.version></properties></project>",
+        )
+        .unwrap();
+
+        set_java_release(&root, "26", "27").unwrap();
+
+        let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+        assert!(pom.contains("<java.version>27</java.version>"));
+        assert!(!pom.contains("<java.version>26</java.version>"));
     }
 
     #[test]

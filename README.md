@@ -18,6 +18,9 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
 - `jails new <name> [--deps web,jdbc] [--java 27] [--no-git] [--no-devtools]`
   — new Spring Boot project via start.spring.io. `git init` + `.gitignore`
   and `spring-boot-devtools` (needed for `run --watch`) are on by default.
+  It creates `./<name>` and refuses to overwrite an existing directory. Java
+  defaults to 27; while Initializr only accepts an earlier bootstrap release,
+  Jails retargets the generated Maven project to the requested release.
 - `jails new-cli <name> [--release 27] [--no-git]` — new plain Maven CLI
   project (hand-written `pom.xml`, `App.java`, `AppTest.java`), no network
   required. `App.java` is a working command dispatcher, not a Hello World
