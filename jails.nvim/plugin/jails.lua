@@ -7,10 +7,10 @@ vim.g.loaded_jails = true
 vim.api.nvim_create_user_command('Jails', function(cmd_opts)
   require('jails').dispatch(cmd_opts.fargs)
 end, {
-  nargs = '+',
-  desc = 'Run a jails subcommand: :Jails {new|new-cli|generate|g|add|a|destroy|d|test|build|check|fmt|run} ...',
-  complete = function(_, line)
-    return require('jails').complete(nil, line)
+  nargs = '*',
+  desc = 'Run jails in the Maven project containing the current buffer',
+  complete = function(arg_lead, line)
+    return require('jails').complete(arg_lead, line)
   end,
 })
 
@@ -19,7 +19,10 @@ end, {
 -- wouldn't take effect until Neovim restarts.
 local plugin_root = vim.fn.fnamemodify((debug.getinfo(1, 'S').source):sub(2), ':p:h:h')
 vim.api.nvim_create_autocmd('BufWritePost', {
-  pattern = plugin_root .. '/lua/jails/*.lua',
+  pattern = {
+    plugin_root .. '/lua/jails/*.lua',
+    plugin_root .. '/plugin/jails.lua',
+  },
   callback = function()
     package.loaded.jails = nil
     vim.notify('jails.nvim: reloaded', vim.log.levels.INFO)

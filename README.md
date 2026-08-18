@@ -172,10 +172,19 @@ passes `jails check` immediately.
 
 `jails.nvim/` in this repo is a thin wrapper around the binary: add it to your
 runtimepath and use `:Jails <subcommand> ...`. It completes subcommands and
-artifact kinds, opens whatever `generate` created, confirms `destroy` in the
-editor, and streams `test`/`build`/`run` into a reused terminal panel. It
-shells out to the real `jails` on PATH and deliberately reimplements none of
-its logic.
+artifact kinds, capabilities, command options, and existing test class names.
+Commands run from the nearest `pom.xml`, so they still work when Neovim's
+global working directory is elsewhere. Generated files are added to the
+quickfix list and the first is opened; `destroy` is confirmed in the editor;
+and long-running commands share a reusable terminal panel. Configure it after
+adding the runtime path:
+
+```lua
+require('jails').setup({ terminal_height = 12 })
+```
+
+The plugin shells out to the real `jails` on PATH and deliberately
+reimplements none of its project-generation logic.
 
 ## Not yet
 

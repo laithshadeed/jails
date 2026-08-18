@@ -383,11 +383,22 @@ fn test_command_infers_unit_and_integration_test_names() {
             .unwrap()
             .success()
     );
+    assert!(
+        jails_cmd(&root, Some(&fake_dir))
+            .args(["test", "BankApplicationTests"])
+            .status()
+            .unwrap()
+            .success()
+    );
 
     let invocation = read_log(&log);
     assert!(invocation.contains("test -Dtest=MoneyTest"), "{invocation}");
     assert!(
         invocation.contains("verify -Dit.test=RewardSchemaIT"),
+        "{invocation}"
+    );
+    assert!(
+        invocation.contains("test -Dtest=BankApplicationTests"),
         "{invocation}"
     );
 }

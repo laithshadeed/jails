@@ -47,7 +47,11 @@ pub fn test(filter: Option<&str>, debug: bool) -> Result<()> {
     let root = find_project_root()?;
     let mut cmd = Command::new(maven_binary(&root));
     if let Some(f) = filter {
-        let test_name = if f.ends_with("Test") || f.ends_with("IT") || f.contains('*') {
+        let test_name = if f.ends_with("Test")
+            || f.ends_with("Tests")
+            || f.ends_with("IT")
+            || f.contains('*')
+        {
             f.to_string()
         } else {
             format!("{f}Test")
