@@ -432,9 +432,9 @@ fn standalone_generators_companion_tests_compile_and_pass() {
     assert!(status.success(), "mvn test failed for the standalone-generated companion tests");
 }
 
-/// `record` and `command` are the two plain-Java kinds, so the bar for them is
-/// a `new-cli` project -- no Spring anywhere -- that still compiles and passes
-/// the tests they generate.
+/// `record`, `command` and `class` are the plain-Java kinds, so the bar for
+/// them is a `new-cli` project -- no Spring anywhere -- that still compiles and
+/// passes the tests they generate.
 #[test]
 fn record_and_command_compile_and_pass_in_a_plain_cli_project() {
     if !real_mvn_available() {
@@ -453,13 +453,19 @@ fn record_and_command_compile_and_pass_in_a_plain_cli_project() {
     for args in [
         vec!["generate", "record", "Money", "amount:long", "currency:string", "on:date"],
         vec!["generate", "command", "Greet"],
+        vec!["generate", "class", "MoneyMoved"],
     ] {
         let status = jails_cmd_with_path(&root, &path).args(&args).status().unwrap();
         assert!(status.success(), "{args:?} failed");
     }
 
+    // `class` is the one kind that lands in the base package rather than a
+    // subpackage -- a wrong `place()` here would compile and still be wrong.
+    assert!(root.join("src/main/java/com/example/demo/MoneyMoved.java").exists());
+    assert!(root.join("src/test/java/com/example/demo/MoneyMovedTest.java").exists());
+
     let status = jails_cmd_with_path(&root, &path).arg("test").status().unwrap();
-    assert!(status.success(), "mvn test failed for a generated record + command");
+    assert!(status.success(), "mvn test failed for a generated record + command + class");
 }
 
 // ---- add ----

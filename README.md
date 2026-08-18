@@ -28,6 +28,14 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
   — a single artifact plus its companion test (only `entity` takes
   `field:type` args). `jails generate|g repository <Name>` and
   `jails generate|g test <Name>` have no companion test of their own.
+- `jails generate|g class <Name>` — a plain `public final class` and its
+  companion test, both in the **base package** rather than a
+  `domain`/`service` subpackage: "a class" says nothing about which layer owns
+  it. No Spring, no JPA, no fields — the kind to reach for when what you want
+  is ordinary Java: an algorithm, a ring buffer, a parser. The generated test
+  constructs the class, so it compiles the moment it is written and stops
+  compiling the day you add a real constructor, which is the prompt to write
+  the real assertion.
 - `jails generate|g record <Name> [field:type ...]` — the plain-Java
   counterpart to `entity`: an immutable record whose compact constructor
   rejects nulls, no Spring or JPA involved, plus a companion test. Same

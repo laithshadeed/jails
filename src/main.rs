@@ -68,7 +68,7 @@ enum Command {
         #[arg(long)]
         no_git: bool,
     },
-    /// Generate a scaffold or a single artifact (controller|service|repository|entity|test)
+    /// Generate a scaffold or a single artifact (class|controller|service|repository|entity|test)
     #[command(visible_alias = "g")]
     Generate {
         kind: ArtifactKind,

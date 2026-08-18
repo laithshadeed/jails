@@ -12,6 +12,7 @@ pub enum ArtifactKind {
     Service,
     Repository,
     Entity,
+    Class,
     Record,
     Value,
     Enum,
@@ -688,6 +689,25 @@ pub fn generate(kind: ArtifactKind, name: &str, fields: &[String], package: Opti
                 },
             ]
         }
+        // The layer-less kind: a plain class and its test, in the base package
+        // rather than a subpackage, because "a class" says nothing about which
+        // layer owns it. Everything else here is a Spring or JPA shape; this is
+        // the one for ordinary Java -- an algorithm, a ring buffer, a parser.
+        ArtifactKind::Class => {
+            let pkg = place("");
+            vec![
+                Artifact {
+                    kind: "class",
+                    path: main_dir(&root, &pkg).join(format!("{name}.java")),
+                    contents: stub_class(&pkg, &name),
+                },
+                Artifact {
+                    kind: "class test",
+                    path: test_dir(&root, &pkg).join(format!("{name}Test.java")),
+                    contents: class_test(&pkg, &name),
+                },
+            ]
+        }
         ArtifactKind::Record => {
             let parsed = parse_fields(fields)?;
             let domain = place(layout::DOMAIN);
@@ -1036,6 +1056,10 @@ pub fn destroy(kind: ArtifactKind, name: &str, force: bool, package: Option<&str
         ArtifactKind::Cases => {
             vec![test_dir(&root, &place("")).join(format!("{}.java", cases_class_name(Path::new(&raw_name))?))]
         }
+        ArtifactKind::Class => vec![
+            main_dir(&root, &place("")).join(format!("{name}.java")),
+            test_dir(&root, &place("")).join(format!("{name}Test.java")),
+        ],
         ArtifactKind::Test => vec![test_dir(&root, &place("")).join(format!("{name}Test.java"))],
     };
 
@@ -1114,6 +1138,52 @@ public interface {name}Repository extends JpaRepository<{name}, Long> {{
 }}
 "#
     )
+}
+
+fn stub_class(pkg: &str, name: &str) -> String {
+    format!(
+        r#"package {pkg};
+
+public final class {name} {{
+}}
+"#
+    )
+}
+
+/// The companion test for `generate class`. It instantiates the class rather
+/// than asserting `true`: a bare class has an implicit no-arg constructor, so
+/// this compiles the moment it is generated, and the day a real constructor
+/// arrives the test stops compiling -- which is the reminder to write the real
+/// assertion, not a failure.
+fn class_test(pkg: &str, name: &str) -> String {
+    let victim = lower_first(name);
+    format!(
+        r#"package {pkg};
+
+import org.junit.jupiter.api.Test;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+class {name}Test {{
+
+    @Test
+    void shouldDoSomething() {{
+        {name} {victim} = new {name}();
+
+        assertThat({victim}).isNotNull();
+    }}
+
+}}
+"#
+    )
+}
+
+fn lower_first(name: &str) -> String {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(first) => first.to_lowercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
 }
 
 fn stub_test(pkg: &str, name: &str) -> String {
@@ -3515,6 +3585,29 @@ mod tests {
         let src = entity_java("com.example.blog", "Post", &fields, false);
         assert!(src.contains("import java.time.LocalDateTime;"));
         assert!(src.contains("private LocalDateTime postedAt;"));
+    }
+
+    #[test]
+    fn stub_class_emits_a_plain_final_class_with_no_framework_in_it() {
+        let src = stub_class("gym", "MoneyMoved");
+
+        assert_eq!(src, "package gym;\n\npublic final class MoneyMoved {\n}\n", "{src}");
+        for forbidden in ["jakarta.persistence", "@Entity", "org.springframework", "record "] {
+            assert!(!src.contains(forbidden), "{forbidden} should not appear in a plain class");
+        }
+    }
+
+    /// The companion test has to compile against the class jails just wrote,
+    /// which means constructing it with the implicit no-arg constructor -- the
+    /// only one a bare class has.
+    #[test]
+    fn class_test_constructs_the_class_it_accompanies() {
+        let src = class_test("gym", "MoneyMoved");
+
+        assert!(src.contains("class MoneyMovedTest {"), "{src}");
+        assert!(src.contains("MoneyMoved moneyMoved = new MoneyMoved();"), "{src}");
+        assert!(src.contains("assertThat(moneyMoved).isNotNull();"), "{src}");
+        assert!(src.contains("import org.junit.jupiter.api.Test;"), "{src}");
     }
 
     #[test]
