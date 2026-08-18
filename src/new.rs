@@ -261,7 +261,7 @@ mod tests {
     #[test]
     fn effective_deps_appends_devtools_by_default() {
         assert_eq!(effective_deps("web", true), "web,devtools");
-        assert_eq!(effective_deps("web,data-jpa", true), "web,data-jpa,devtools");
+        assert_eq!(effective_deps("web,jdbc", true), "web,jdbc,devtools");
     }
 
     #[test]

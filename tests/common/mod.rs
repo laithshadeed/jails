@@ -13,7 +13,10 @@ pub fn temp_dir(label: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "jails-e2e-{label}-{}-{:?}",
         std::process::id(),
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
     ));
     fs::create_dir_all(&dir).unwrap();
     dir
@@ -40,7 +43,14 @@ pub fn write_fake_maven(dir: &Path, names: &[&str], log: &Path) {
     fs::create_dir_all(dir).unwrap();
     for name in names {
         let script = dir.join(name);
-        fs::write(&script, format!("#!/bin/sh\necho \"$0 $*\" >> \"{}\"\nexit 0\n", log.display())).unwrap();
+        fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\necho \"$0 $*\" >> \"{}\"\nexit 0\n",
+                log.display()
+            ),
+        )
+        .unwrap();
         set_executable(&script);
     }
 }
@@ -62,7 +72,8 @@ pub fn real_mvn_available() -> bool {
 }
 
 pub fn real_java_available() -> bool {
-    real_path_dirs().any(|dir| dir.join("java").is_file()) && real_path_dirs().any(|dir| dir.join("javac").is_file())
+    real_path_dirs().any(|dir| dir.join("java").is_file())
+        && real_path_dirs().any(|dir| dir.join("javac").is_file())
 }
 
 /// Whether the `javac` on PATH understands the release jails generates for
@@ -87,7 +98,9 @@ pub fn real_java_supports_target_release() -> bool {
 pub const TARGET_RELEASE: &str = "25";
 
 fn real_path_dirs() -> impl Iterator<Item = PathBuf> {
-    std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect::<Vec<_>>().into_iter()
+    std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+        .collect::<Vec<_>>()
+        .into_iter()
 }
 
 /// The real PATH, minus any directory that has an `mvnd` on it. mvnd is
@@ -98,8 +111,13 @@ fn real_path_dirs() -> impl Iterator<Item = PathBuf> {
 /// being healthy. `uname`/`dirname`/etc. that mvn's own launcher script
 /// shells out to need the rest of the real PATH to stay intact.
 pub fn real_path_without_mvnd() -> String {
-    let filtered: Vec<PathBuf> = real_path_dirs().filter(|dir| !dir.join("mvnd").is_file()).collect();
-    std::env::join_paths(filtered).unwrap().to_string_lossy().into_owned()
+    let filtered: Vec<PathBuf> = real_path_dirs()
+        .filter(|dir| !dir.join("mvnd").is_file())
+        .collect();
+    std::env::join_paths(filtered)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned()
 }
 
 pub fn jails_cmd_with_path(cwd: &Path, path: &str) -> Command {
@@ -117,7 +135,11 @@ pub fn write_spring_fixture(root: &Path) {
     let pkg_dir = root.join("src/main/java/com/example/demo");
     fs::create_dir_all(&pkg_dir).unwrap();
     fs::write(root.join("pom.xml"), SPRING_FIXTURE_POM).unwrap();
-    fs::write(pkg_dir.join("DemoApplication.java"), SPRING_FIXTURE_APPLICATION).unwrap();
+    fs::write(
+        pkg_dir.join("DemoApplication.java"),
+        SPRING_FIXTURE_APPLICATION,
+    )
+    .unwrap();
 }
 
 const SPRING_FIXTURE_POM: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -138,21 +160,7 @@ const SPRING_FIXTURE_POM: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
     <dependencies>
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-data-jpa</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-webmvc</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.h2database</groupId>
-            <artifactId>h2</artifactId>
-            <scope>runtime</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-data-jpa-test</artifactId>
-            <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>

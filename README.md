@@ -1,8 +1,8 @@
 # jails
 
-A `rails`-CLI-inspired tool for Spring Boot / plain Maven projects. Steals
-exactly one idea from Rails: `generate scaffold` produces a whole working,
-tested vertical slice in one command.
+A small, opinionated scaffolding tool for Spring Boot and plain Maven
+projects. Jails favors immutable Java types, explicit ports, visible SQL, and
+short commands. It does not generate or depend on an ORM.
 
 ## Build
 
@@ -15,31 +15,37 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
 
 ## Commands
 
-- `jails new <name> [--deps web,data-jpa] [--java 27] [--no-git] [--no-devtools]`
+- `jails new <name> [--deps web,jdbc] [--java 27] [--no-git] [--no-devtools]`
   — new Spring Boot project via start.spring.io. `git init` + `.gitignore`
   and `spring-boot-devtools` (needed for `run --watch`) are on by default.
 - `jails new-cli <name> [--release 27] [--no-git]` — new plain Maven CLI
   project (hand-written `pom.xml`, `App.java`, `AppTest.java`), no network
   required. `App.java` is a working command dispatcher, not a Hello World
   stub, so `generate command` has something to register into from the start.
-- `jails generate|g scaffold <Name> [field:type ...]` — entity + repository
-  + service + controller + controller test, in one shot.
-- `jails generate|g <controller|service|entity> <Name> [field:type ...]`
-  — a single artifact plus its companion test (only `entity` takes
-  `field:type` args). `jails generate|g repository <Name>` and
-  `jails generate|g test <Name>` have no companion test of their own.
+- `jails generate|g scaffold <Name> [field:type ...]` — immutable record,
+  repository port, raw-JDBC adapter, service/controller stubs, and tests.
+- `jails generate|g record <Name> [field:type ...]` — immutable data carrier
+  with compact-constructor validation and a companion test. No persistence
+  annotations are emitted.
+- `jails generate|g repo <Name>` — repository port, `Jdbc<Name>Repository`
+  adapter, and a disabled real-database `IT`. SQL is emitted as editable text
+  blocks and `map`/`bind` remain explicit TODOs. `repository` is an alias.
+- `jails generate|g migration <description>` (short: `g mig`) — creates the
+  next `VNNN__description.sql` under `db/migration`. Migrations are
+  forward-only and cannot be destroyed.
+- `jails generate|g interface <Name>` — a plain Java interface.
+- `jails generate|g integration-test <Name>` (short: `g it`) — a disabled
+  `<Name>IT` skeleton for a real boundary test.
+- `jails generate|g <controller|service|class|value|enum|sealed|test> ...`
+  — the remaining small Java artifacts and their useful companion tests.
 - `jails generate|g class <Name>` — a plain `public final class` and its
   companion test, both in the **base package** rather than a
   `domain`/`service` subpackage: "a class" says nothing about which layer owns
-  it. No Spring, no JPA, no fields — the kind to reach for when what you want
+  it. No Spring and no fields — the kind to reach for when what you want
   is ordinary Java: an algorithm, a ring buffer, a parser. The generated test
   constructs the class, so it compiles the moment it is written and stops
   compiling the day you add a real constructor, which is the prompt to write
   the real assertion.
-- `jails generate|g record <Name> [field:type ...]` — the plain-Java
-  counterpart to `entity`: an immutable record whose compact constructor
-  rejects nulls, no Spring or JPA involved, plus a companion test. Same
-  `field:type` table as `entity`.
 - `jails generate|g command <Name>` — a CLI subcommand for `new-cli`
   projects, registered in the project's dispatcher automatically: `run(PrintStream, PrintStream, String...)` returning an exit
   code, with a `NAME` constant to dispatch on. Output streams are arguments
@@ -49,7 +55,10 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
   so and leaves the Javadoc's instructions as the fallback.
 - `jails generate|g cli <Name>` — a second dispatcher, for projects that
   want one separate from `App.java`. `new-cli` already gives you one.
-- `jails add|a <csv|sqlite|json> [--name <Base>] [--dry-run]` — grows an
+- `jails add|a db` — PostgreSQL JDBC, Flyway, PostgreSQL Testcontainers, and
+  the migration directory. Spring projects also receive the JDBC starter.
+  This capability is raw SQL only: no persistence framework or generated schema.
+- `jails add|a <csv|sqlite|json|testkit|fake|http|format> [--name <Base>] [--dry-run]` — grows an
   existing project by a whole capability: the dependency (spliced into
   `pom.xml`, comments and formatting preserved), the code that uses it, and
   a passing test. Idempotent, so re-running reports what is already there.
@@ -59,9 +68,11 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
   wired in and a tree API for input whose shape you can't trust.
 - `jails destroy|d <type> <Name> [--force]` — deletes exactly what the
   matching `generate` call would have created.
-- `jails test [filter]` — `mvn test` (or `mvnd` if present), `filter` maps
-  to `-Dtest=filter`.
+- `jails test [name]` — uses `./mvnw` when present. A bare `Money` becomes
+  `MoneyTest`; a name ending in `IT` runs through Failsafe and `verify`.
 - `jails build` — `mvn package`.
+- `jails mvn -- <args...>` — escape hatch for Maven options Jails should not
+  duplicate; it still prefers the project wrapper.
 - `jails run [--no-build] [--watch] [-- <args>...]` — finds the file with
   `static void main` under `src/main/java` (or uses `spring-boot:run` for
   Spring projects), compiles and runs it. Everything after `--` is forwarded
@@ -78,7 +89,7 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
 `generate`, `destroy` and `add` all take `--package <sub>` to override where
 the code lands; `--package ''` writes straight into the base package.
 
-Every command takes `--debug`, which prints the `mvn`/`mvnd`/`java`/`git`/`curl`
+Every command takes `--debug`, which prints the `mvnw`/`mvn`/`mvnd`/`java`/`git`/`curl`
 command lines jails shells out to instead of running them silently.
 
 - `jails generate|g handler <Name>` — an `HttpHandler` in `api/` for one
@@ -87,12 +98,6 @@ command lines jails shells out to instead of running them silently.
   outcomes to 400 / 404 / 422 through a shared `ApiError` envelope (generated
   if absent). The companion test drives it over a real loopback socket on an
   ephemeral port.
-- `jails generate|g repo <Name>` — a port interface in `app/` (no JDBC types,
-  `Optional`/empty-list returns), a plain-JDBC SQLite adapter in `adapters/`
-  (`PreparedStatement`, try-with-resources, no ORM), and a round-trip test
-  against an in-memory database. `map`/`bind` are left as TODOs — jails can't
-  know your columns — so the test ships `@Disabled`. If the `<Name>` type
-  doesn't exist yet, a minimal record is laid down alongside.
 - `jails generate|g sealed <Name> <Variant...>` — a sealed interface with a
   `permits` clause and one record per variant, plus a test whose `switch` has
   no `default`, so adding a variant breaks the build. The closed set an enum
@@ -106,9 +111,9 @@ command lines jails shells out to instead of running them silently.
 `name:type`, with two modifiers:
 
 **Case picks the table.** A lowercase type is one of jails' own — `string`,
-`text` (`@Lob` on an entity, a plain `String` elsewhere), `int`/`integer`,
-`long`, `boolean`, `date`, `datetime`, `instant`, `double`, plus `list<T>` and
-`map<K,V>` whose elements resolve the same way (`list<Match>`,
+`text`, `int`/`integer`, `long`, `boolean`, `date`, `datetime`, `instant`,
+`uuid`, `currency`, `decimal`, `bytes`, `duration`, `zone-id`, `uri`, `path`,
+`double`, plus `list<T>` and `map<K,V>` whose elements resolve the same way (`list<Match>`,
 `map<string,double>`). A collection component is defensively copied and
 defaults to empty rather than null, so no consumer has to guard a bucket. A **capitalised** one is a
 type this project owns and is used verbatim, so the generators compose:
@@ -147,19 +152,19 @@ into one flat pile beside `App.java`:
 
 | Kind | Package |
 | --- | --- |
-| `entity`, `record`, `value` | `domain` |
-| `repository` | `repository` |
+| `record`, `value` | `domain` |
 | `service` | `service` |
 | `controller` | `web` |
 | `command`, `cli` | `cli` |
 | `repo` (port) | `app` |
 | `repo` (adapter) | `adapters` |
+| `migration` | `src/main/resources/db/migration` |
 | `add csv`/`json`/`sqlite` | `adapters` |
 | `add http`, `handler` | `api` |
 | `add testkit`/`fake` | `testkit` (test tree) |
 
-`scaffold` spans four of them in one command and adds the imports that
-crossing those boundaries costs. Everything jails writes is emitted in the
+`scaffold` spans these packages without introducing persistence annotations.
+Everything jails writes is emitted in the
 import order palantir-java-format wants, so `add format` leaves a project that
 passes `jails check` immediately.
 

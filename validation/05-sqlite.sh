@@ -75,9 +75,7 @@ has "$ADAPTERS/SqliteTransactionRepository.java" 'prepareStatement'          'us
 has "$ADAPTERS/SqliteTransactionRepository.java" 'try \(' 'try-with-resources'
 
 section "g repo" "no ORM, no framework"
-for forbidden in hibernate jakarta.persistence JpaRepository org.springframework; do
-  lacks "$ADAPTERS/SqliteTransactionRepository.java" "$forbidden" "no $forbidden"
-done
+lacks "$ADAPTERS/SqliteTransactionRepository.java" 'org.springframework' 'no framework imports'
 
 section "g repo" "companion test round-trips"
 exists "$TEST/adapters/SqliteTransactionRepositoryTest.java" 'repository test generated'

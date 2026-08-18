@@ -1,5 +1,5 @@
-use crate::generate::find_project_root;
 use crate::Result;
+use crate::generate::find_project_root;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -15,13 +15,17 @@ fn find_on_path_list(bin: &str, dirs: impl Iterator<Item = PathBuf>) -> bool {
     dirs.into_iter().any(|dir| dir.join(bin).is_file())
 }
 
-/// Prefer mvnd when it's on PATH (matches the dotfiles' mvnd wrapper),
-/// falling back to plain mvn.
-fn maven_binary() -> &'static str {
+/// Prefer the project's wrapper so its Maven version is reproducible. A
+/// project without one keeps the fast mvnd/system-Maven fallback.
+fn maven_binary(root: &Path) -> PathBuf {
+    let wrapper = root.join(if cfg!(windows) { "mvnw.cmd" } else { "mvnw" });
+    if wrapper.is_file() {
+        return wrapper;
+    }
     if find_on_path("mvnd") {
-        "mvnd"
+        PathBuf::from("mvnd")
     } else {
-        "mvn"
+        PathBuf::from("mvn")
     }
 }
 
@@ -30,7 +34,9 @@ fn run_inherited(mut cmd: Command, debug: bool) -> Result<()> {
         crate::debug_cmd(&cmd);
     }
     let program = cmd.get_program().to_string_lossy().to_string();
-    let status = cmd.status().map_err(|e| format!("failed to run {program}: {e}"))?;
+    let status = cmd
+        .status()
+        .map_err(|e| format!("failed to run {program}: {e}"))?;
     if !status.success() {
         return Err(format!("{program} exited with {status}"));
     }
@@ -39,17 +45,28 @@ fn run_inherited(mut cmd: Command, debug: bool) -> Result<()> {
 
 pub fn test(filter: Option<&str>, debug: bool) -> Result<()> {
     let root = find_project_root()?;
-    let mut cmd = Command::new(maven_binary());
-    cmd.arg("test").current_dir(&root);
+    let mut cmd = Command::new(maven_binary(&root));
     if let Some(f) = filter {
-        cmd.arg(format!("-Dtest={f}"));
+        let test_name = if f.ends_with("Test") || f.ends_with("IT") || f.contains('*') {
+            f.to_string()
+        } else {
+            format!("{f}Test")
+        };
+        if test_name.ends_with("IT") {
+            cmd.arg("verify").arg(format!("-Dit.test={test_name}"));
+        } else {
+            cmd.arg("test").arg(format!("-Dtest={test_name}"));
+        }
+    } else {
+        cmd.arg("test");
     }
+    cmd.current_dir(&root);
     run_inherited(cmd, debug)
 }
 
 pub fn build(debug: bool) -> Result<()> {
     let root = find_project_root()?;
-    let mut cmd = Command::new(maven_binary());
+    let mut cmd = Command::new(maven_binary(&root));
     cmd.arg("package").current_dir(&root);
     run_inherited(cmd, debug)
 }
@@ -60,7 +77,7 @@ pub fn build(debug: bool) -> Result<()> {
 pub fn fmt(debug: bool) -> Result<()> {
     let root = find_project_root()?;
     require_spotless(&root)?;
-    let mut cmd = Command::new(maven_binary());
+    let mut cmd = Command::new(maven_binary(&root));
     cmd.args(["spotless:apply"]).current_dir(&root);
     run_inherited(cmd, debug)
 }
@@ -73,7 +90,7 @@ pub fn fmt(debug: bool) -> Result<()> {
 /// Best-effort: a project without Maven on PATH is not a reason to fail the
 /// capability, it just means the first `jails fmt` has work to do.
 pub fn fmt_quietly(root: &std::path::Path) -> bool {
-    Command::new(maven_binary())
+    Command::new(maven_binary(root))
         .args(["-q", "spotless:apply"])
         .current_dir(root)
         .status()
@@ -85,13 +102,23 @@ pub fn fmt_quietly(root: &std::path::Path) -> bool {
 /// rather than `test` because that is the phase `add format` binds to.
 pub fn check(debug: bool) -> Result<()> {
     let root = find_project_root()?;
-    let mut cmd = Command::new(maven_binary());
+    let mut cmd = Command::new(maven_binary(&root));
     cmd.arg("verify").current_dir(&root);
     run_inherited(cmd, debug)
 }
 
+/// Escape hatch for Maven features jails should not duplicate. Arguments are
+/// forwarded exactly; the project wrapper is still preferred.
+pub fn mvn(args: &[String], debug: bool) -> Result<()> {
+    let root = find_project_root()?;
+    let mut cmd = Command::new(maven_binary(&root));
+    cmd.args(args).current_dir(&root);
+    run_inherited(cmd, debug)
+}
+
 fn require_spotless(root: &std::path::Path) -> Result<()> {
-    let pom = fs::read_to_string(root.join("pom.xml")).map_err(|e| format!("failed to read pom.xml: {e}"))?;
+    let pom = fs::read_to_string(root.join("pom.xml"))
+        .map_err(|e| format!("failed to read pom.xml: {e}"))?;
     if pom.contains("spotless-maven-plugin") {
         return Ok(());
     }
@@ -106,7 +133,8 @@ fn require_spotless(root: &std::path::Path) -> Result<()> {
 /// that's checked upfront.
 pub fn watch(debug: bool) -> Result<()> {
     let root = find_project_root()?;
-    let pom = fs::read_to_string(root.join("pom.xml")).map_err(|e| format!("failed to read pom.xml: {e}"))?;
+    let pom = fs::read_to_string(root.join("pom.xml"))
+        .map_err(|e| format!("failed to read pom.xml: {e}"))?;
     if !pom.contains("org.springframework.boot") {
         return Err("--watch only supports Spring Boot projects".to_string());
     }
@@ -116,16 +144,21 @@ pub fn watch(debug: bool) -> Result<()> {
         );
     }
 
-    let mut run_cmd = Command::new(maven_binary());
+    let mut run_cmd = Command::new(maven_binary(&root));
     run_cmd.arg("spring-boot:run").current_dir(&root);
     if debug {
         crate::debug_cmd(&run_cmd);
     }
-    let mut child = run_cmd.spawn().map_err(|e| format!("failed to start spring-boot:run: {e}"))?;
+    let mut child = run_cmd
+        .spawn()
+        .map_err(|e| format!("failed to start spring-boot:run: {e}"))?;
 
     let src_root = root.join("src/main/java");
     let mut last_change = latest_mtime(&src_root);
-    println!("jails: watching {} for changes (Ctrl-C to stop)", src_root.display());
+    println!(
+        "jails: watching {} for changes (Ctrl-C to stop)",
+        src_root.display()
+    );
 
     loop {
         std::thread::sleep(std::time::Duration::from_millis(750));
@@ -142,13 +175,15 @@ pub fn watch(debug: bool) -> Result<()> {
         if change > last_change {
             last_change = change;
             println!("jails: change detected, recompiling...");
-            let mut compile = Command::new(maven_binary());
+            let mut compile = Command::new(maven_binary(&root));
             compile.arg("compile").current_dir(&root);
             if debug {
                 crate::debug_cmd(&compile);
             }
             match compile.status() {
-                Ok(s) if s.success() => println!("jails: recompiled -- devtools should restart shortly"),
+                Ok(s) if s.success() => {
+                    println!("jails: recompiled -- devtools should restart shortly")
+                }
                 Ok(s) => eprintln!("jails: recompile failed ({s})"),
                 Err(e) => eprintln!("jails: failed to run compile: {e}"),
             }
@@ -184,7 +219,8 @@ fn latest_mtime(dir: &Path) -> std::time::SystemTime {
 /// the edit loop drops out to raw `mvn` the moment the program takes input.
 pub fn run(no_build: bool, args: &[String], debug: bool) -> Result<()> {
     let root = find_project_root()?;
-    let pom = fs::read_to_string(root.join("pom.xml")).map_err(|e| format!("failed to read pom.xml: {e}"))?;
+    let pom = fs::read_to_string(root.join("pom.xml"))
+        .map_err(|e| format!("failed to read pom.xml: {e}"))?;
 
     if pom.contains("org.springframework.boot") {
         if no_build {
@@ -193,7 +229,7 @@ pub fn run(no_build: bool, args: &[String], debug: bool) -> Result<()> {
             run.args(["-jar"]).arg(&jar).args(args).current_dir(&root);
             return run_inherited(run, debug);
         }
-        let mut cmd = Command::new(maven_binary());
+        let mut cmd = Command::new(maven_binary(&root));
         cmd.arg("spring-boot:run").current_dir(&root);
         // spring-boot:run forks a JVM, so argv cannot simply be appended: the
         // plugin takes them as one space-joined property instead.
@@ -204,18 +240,31 @@ pub fn run(no_build: bool, args: &[String], debug: bool) -> Result<()> {
     }
 
     let (pkg, class_name) = find_main_class(&root)?;
-    let fqcn = if pkg.is_empty() { class_name } else { format!("{pkg}.{class_name}") };
+    let fqcn = if pkg.is_empty() {
+        class_name
+    } else {
+        format!("{pkg}.{class_name}")
+    };
 
     if !no_build {
-        let mut compile = Command::new(maven_binary());
+        let mut compile = Command::new(maven_binary(&root));
         compile.arg("compile").current_dir(&root);
         run_inherited(compile, debug)?;
-    } else if !root.join("target/classes").join(fqcn.replace('.', "/")).with_extension("class").is_file() {
-        return Err(format!("target/classes has no compiled {fqcn} -- run `jails build` or `jails run` (without --no-build) first"));
+    } else if !root
+        .join("target/classes")
+        .join(fqcn.replace('.', "/"))
+        .with_extension("class")
+        .is_file()
+    {
+        return Err(format!(
+            "target/classes has no compiled {fqcn} -- run `jails build` or `jails run` (without --no-build) first"
+        ));
     }
 
     let mut run = Command::new("java");
-    run.args(["-cp", "target/classes", &fqcn]).args(args).current_dir(&root);
+    run.args(["-cp", "target/classes", &fqcn])
+        .args(args)
+        .current_dir(&root);
     run_inherited(run, debug)
 }
 
@@ -225,13 +274,17 @@ pub fn run(no_build: bool, args: &[String], debug: bool) -> Result<()> {
 fn find_built_jar(root: &Path) -> Result<PathBuf> {
     let target = root.join("target");
     let entries = fs::read_dir(&target).map_err(|_| {
-        "no target/ directory -- run `jails build` or `jails run` (without --no-build) first".to_string()
+        "no target/ directory -- run `jails build` or `jails run` (without --no-build) first"
+            .to_string()
     })?;
     entries
         .flatten()
         .map(|e| e.path())
         .find(|p| p.extension().is_some_and(|ext| ext == "jar"))
-        .ok_or_else(|| "no jar under target/ -- run `jails build` or `jails run` (without --no-build) first".to_string())
+        .ok_or_else(|| {
+            "no jar under target/ -- run `jails build` or `jails run` (without --no-build) first"
+                .to_string()
+        })
 }
 
 /// Find the file with `static void main` under src/main/java and return
@@ -240,7 +293,8 @@ fn find_main_class(root: &Path) -> Result<(String, String)> {
     let src_root = root.join("src/main/java");
     let file = search_main_file(&src_root)
         .ok_or_else(|| "no file with `static void main` found under src/main/java".to_string())?;
-    let contents = fs::read_to_string(&file).map_err(|e| format!("failed to read {}: {e}", file.display()))?;
+    let contents =
+        fs::read_to_string(&file).map_err(|e| format!("failed to read {}: {e}", file.display()))?;
     let pkg = contents
         .lines()
         .map(str::trim)
@@ -315,7 +369,10 @@ mod tests {
         let dir = std::env::temp_dir().join(format!(
             "jails-run-test-{label}-{}-{:?}",
             std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         fs::create_dir_all(&dir).unwrap();
         dir
@@ -339,7 +396,10 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(20));
         fs::write(root.join("notes.txt"), "changed too").unwrap();
         let after_txt_touch = latest_mtime(&root);
-        assert_eq!(after_txt_touch, after_touch, "non-.java changes shouldn't move the watermark");
+        assert_eq!(
+            after_txt_touch, after_touch,
+            "non-.java changes shouldn't move the watermark"
+        );
     }
 
     #[test]
@@ -348,7 +408,10 @@ mod tests {
         fs::write(dir.join("mvnd"), "").unwrap();
         let other = scratch("find-on-path-other");
 
-        assert!(find_on_path_list("mvnd", [other.clone(), dir.clone()].into_iter()));
+        assert!(find_on_path_list(
+            "mvnd",
+            [other.clone(), dir.clone()].into_iter()
+        ));
         assert!(!find_on_path_list("mvn", [other, dir].into_iter()));
     }
 
@@ -373,7 +436,11 @@ mod tests {
         let root = scratch("no-main-class");
         let src = root.join("src/main/java/com/example/app");
         fs::create_dir_all(&src).unwrap();
-        fs::write(src.join("Helper.java"), "package com.example.app;\n\nclass Helper {}\n").unwrap();
+        fs::write(
+            src.join("Helper.java"),
+            "package com.example.app;\n\nclass Helper {}\n",
+        )
+        .unwrap();
 
         assert!(find_main_class(&root).is_err());
     }
@@ -383,7 +450,11 @@ mod tests {
         let root = scratch("default-package");
         let src = root.join("src/main/java");
         fs::create_dir_all(&src).unwrap();
-        fs::write(src.join("Cli.java"), "public class Cli {\n    public static void main(String[] args) {}\n}\n").unwrap();
+        fs::write(
+            src.join("Cli.java"),
+            "public class Cli {\n    public static void main(String[] args) {}\n}\n",
+        )
+        .unwrap();
 
         let (pkg, class_name) = find_main_class(&root).unwrap();
         assert_eq!(pkg, "");

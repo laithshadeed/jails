@@ -10,25 +10,28 @@ pub enum ArtifactKind {
     Scaffold,
     Controller,
     Service,
-    Repository,
-    Entity,
     Class,
+    Interface,
     Record,
     Value,
     Enum,
     Sealed,
+    #[value(alias = "repository")]
     Repo,
+    #[value(alias = "mig")]
+    Migration,
     Handler,
     Command,
     Cli,
     Cases,
     Test,
+    #[value(name = "integration-test", alias = "it")]
+    IntegrationTest,
 }
 
 pub struct Field {
     pub name: String,
     pub java_type: String,
-    pub needs_lob: bool,
     pub imports: Vec<&'static str>,
     pub optionality: Optionality,
     /// True when the type came from the project rather than the built-in
@@ -58,7 +61,6 @@ pub enum Optionality {
 /// One resolved type: how to spell it in Java, and what it needs imported.
 struct Resolved {
     java_type: String,
-    needs_lob: bool,
     imports: Vec<&'static str>,
     owned: bool,
     collection: bool,
@@ -78,7 +80,6 @@ fn resolve_type(token: &str) -> Result<Resolved> {
         imports.push("java.util.List");
         return Ok(Resolved {
             java_type: format!("List<{}>", boxed(&element.java_type)),
-            needs_lob: false,
             imports,
             owned: false,
             collection: true,
@@ -86,17 +87,20 @@ fn resolve_type(token: &str) -> Result<Resolved> {
     }
 
     if let Some(inner) = generic_argument(token, "map") {
-        let (key, value) = inner
-            .split_once(',')
-            .ok_or_else(|| format!("'{token}' needs a key and a value type, e.g. map<string,double>"))?;
+        let (key, value) = inner.split_once(',').ok_or_else(|| {
+            format!("'{token}' needs a key and a value type, e.g. map<string,double>")
+        })?;
         let key = resolve_element(key, token)?;
         let value = resolve_element(value, token)?;
         let mut imports = key.imports;
         imports.extend(value.imports);
         imports.push("java.util.Map");
         return Ok(Resolved {
-            java_type: format!("Map<{}, {}>", boxed(&key.java_type), boxed(&value.java_type)),
-            needs_lob: false,
+            java_type: format!(
+                "Map<{}, {}>",
+                boxed(&key.java_type),
+                boxed(&value.java_type)
+            ),
             imports,
             owned: false,
             collection: true,
@@ -108,7 +112,6 @@ fn resolve_type(token: &str) -> Result<Resolved> {
     if let Some((java_type, import)) = builtin_by_java_name(token) {
         return Ok(Resolved {
             java_type: java_type.to_string(),
-            needs_lob: false,
             imports: import.into_iter().collect(),
             owned: false,
             collection: false,
@@ -119,7 +122,6 @@ fn resolve_type(token: &str) -> Result<Resolved> {
     if token.starts_with(|c: char| c.is_uppercase()) {
         return Ok(Resolved {
             java_type: token.to_string(),
-            needs_lob: false,
             imports: Vec::new(),
             owned: true,
             collection: false,
@@ -133,10 +135,9 @@ fn resolve_type(token: &str) -> Result<Resolved> {
         ));
     }
 
-    let (java_type, needs_lob, import) = field_type(&lower)?;
+    let (java_type, import) = field_type(&lower)?;
     Ok(Resolved {
         java_type: java_type.to_string(),
-        needs_lob,
         imports: import.into_iter().collect(),
         owned: false,
         collection: false,
@@ -153,7 +154,9 @@ fn resolve_element(token: &str, outer: &str) -> Result<Resolved> {
     }
     let resolved = resolve_type(token).map_err(|e| format!("in '{outer}': {e}"))?;
     if resolved.collection {
-        return Err(format!("'{outer}': nested collections are not supported -- introduce a type for the inner one"));
+        return Err(format!(
+            "'{outer}': nested collections are not supported -- introduce a type for the inner one"
+        ));
     }
     Ok(resolved)
 }
@@ -162,24 +165,35 @@ fn resolve_element(token: &str, outer: &str) -> Result<Resolved> {
 /// no element type and is meaningless, so it is not matched here and falls
 /// through to the unknown-type error.
 fn generic_argument<'a>(token: &'a str, name: &str) -> Option<&'a str> {
-    token.strip_prefix(name)?.strip_prefix('<')?.strip_suffix('>')
+    token
+        .strip_prefix(name)?
+        .strip_prefix('<')?
+        .strip_suffix('>')
 }
 
-fn field_type(token: &str) -> Result<(&'static str, bool, Option<&'static str>)> {
+fn field_type(token: &str) -> Result<(&'static str, Option<&'static str>)> {
     match token {
-        "string" => Ok(("String", false, None)),
-        "text" => Ok(("String", true, None)),
-        "int" | "integer" => Ok(("Integer", false, None)),
-        "long" => Ok(("Long", false, None)),
-        "boolean" => Ok(("Boolean", false, None)),
-        "date" => Ok(("LocalDate", false, Some("java.time.LocalDate"))),
-        "datetime" => Ok(("LocalDateTime", false, Some("java.time.LocalDateTime"))),
-        "instant" => Ok(("Instant", false, Some("java.time.Instant"))),
-        "double" => Ok(("Double", false, None)),
+        "string" | "text" => Ok(("String", None)),
+        "int" | "integer" => Ok(("Integer", None)),
+        "long" => Ok(("Long", None)),
+        "boolean" => Ok(("Boolean", None)),
+        "date" => Ok(("LocalDate", Some("java.time.LocalDate"))),
+        "datetime" => Ok(("LocalDateTime", Some("java.time.LocalDateTime"))),
+        "instant" => Ok(("Instant", Some("java.time.Instant"))),
+        "uuid" => Ok(("UUID", Some("java.util.UUID"))),
+        "currency" => Ok(("Currency", Some("java.util.Currency"))),
+        "bigdecimal" | "decimal" => Ok(("BigDecimal", Some("java.math.BigDecimal"))),
+        "bytes" => Ok(("byte[]", None)),
+        "duration" => Ok(("Duration", Some("java.time.Duration"))),
+        "zone-id" | "zoneid" => Ok(("ZoneId", Some("java.time.ZoneId"))),
+        "uri" => Ok(("URI", Some("java.net.URI"))),
+        "path" => Ok(("Path", Some("java.nio.file.Path"))),
+        "double" => Ok(("Double", None)),
         other => Err(format!(
-            "unknown field type '{other}' (known: string, text, int/integer, long, boolean, date, datetime, instant, double, list<T>, map<K,V>).\n       \
+            "unknown field type '{other}' (known: string, text, int/integer, long, boolean, date, datetime, instant, uuid, currency, decimal, bytes, duration, zone-id, uri, path, double, list<T>, map<K,V>).\n       \
              Capitalise it -- {}:{} -- to mean a type this project owns.",
-            other, capitalize(other)
+            other,
+            capitalize(other)
         )),
     }
 }
@@ -195,6 +209,13 @@ fn builtin_by_java_name(ty: &str) -> Option<(&'static str, Option<&'static str>)
         "Double" | "double" => Some(("Double", None)),
         "LocalDate" => Some(("LocalDate", Some("java.time.LocalDate"))),
         "LocalDateTime" => Some(("LocalDateTime", Some("java.time.LocalDateTime"))),
+        "Instant" => Some(("Instant", Some("java.time.Instant"))),
+        "UUID" => Some(("UUID", Some("java.util.UUID"))),
+        "BigDecimal" => Some(("BigDecimal", Some("java.math.BigDecimal"))),
+        "Duration" => Some(("Duration", Some("java.time.Duration"))),
+        "ZoneId" => Some(("ZoneId", Some("java.time.ZoneId"))),
+        "URI" => Some(("URI", Some("java.net.URI"))),
+        "Path" => Some(("Path", Some("java.nio.file.Path"))),
         _ => None,
     }
 }
@@ -235,7 +256,6 @@ fn parse_fields(args: &[String]) -> Result<Vec<Field>> {
             Ok(Field {
                 name: name.trim().to_string(),
                 java_type: resolved.java_type,
-                needs_lob: resolved.needs_lob,
                 imports: resolved.imports,
                 optionality,
                 owned: resolved.owned,
@@ -253,11 +273,8 @@ fn capitalize(s: &str) -> String {
     }
 }
 
-/// The field table maps `long` to `Long` because a JPA entity has to be able
-/// to represent a null column. A `record` or a `value` has no such excuse:
-/// boxed components are nullable by construction, which is exactly what the
-/// compact constructor then has to spend a `requireNonNull` undoing. Primitives
-/// make the invalid state unrepresentable instead -- and cost no allocation.
+/// Parse through boxed names so collection elements work, then use primitives
+/// for required record/value components where null is not a meaningful state.
 fn unboxed(java_type: &str) -> &str {
     match java_type {
         "Integer" => "int",
@@ -291,9 +308,20 @@ fn collection_defaults(fields: &[Field]) -> String {
         .iter()
         .filter(|f| f.collection)
         .map(|f| {
-            let empty = if f.java_type.starts_with("Map") { "Map.of()" } else { "List.of()" };
-            let copy = if f.java_type.starts_with("Map") { "Map.copyOf" } else { "List.copyOf" };
-            format!("        {0} = {0} == null ? {empty} : {copy}({0});\n", f.name)
+            let empty = if f.java_type.starts_with("Map") {
+                "Map.of()"
+            } else {
+                "List.of()"
+            };
+            let copy = if f.java_type.starts_with("Map") {
+                "Map.copyOf"
+            } else {
+                "List.copyOf"
+            };
+            format!(
+                "        {0} = {0} == null ? {empty} : {copy}({0});\n",
+                f.name
+            )
         })
         .collect()
 }
@@ -336,12 +364,19 @@ fn optional_defaults(fields: &[Field]) -> String {
     fields
         .iter()
         .filter(|f| f.optionality == Optionality::Nullable)
-        .map(|f| format!("        {0} = Objects.requireNonNullElse({0}, Optional.empty());\n", f.name))
+        .map(|f| {
+            format!(
+                "        {0} = Objects.requireNonNullElse({0}, Optional.empty());\n",
+                f.name
+            )
+        })
         .collect()
 }
 
 fn has_optional(fields: &[Field]) -> bool {
-    fields.iter().any(|f| f.optionality == Optionality::Nullable)
+    fields
+        .iter()
+        .any(|f| f.optionality == Optionality::Nullable)
 }
 
 /// Only `!` asks for the blank check, and only text can be blank.
@@ -384,8 +419,11 @@ pub(crate) fn base_package(root: &Path) -> Result<String> {
     // source root rather than failing on plain Maven projects.
     let entry = find_application_file(&src_root)
         .or_else(|| shallowest_java_file(&src_root))
-        .ok_or_else(|| "could not find a .java file under src/main/java to infer the base package".to_string())?;
-    let contents = fs::read_to_string(&entry).map_err(|e| format!("failed to read {}: {e}", entry.display()))?;
+        .ok_or_else(|| {
+            "could not find a .java file under src/main/java to infer the base package".to_string()
+        })?;
+    let contents = fs::read_to_string(&entry)
+        .map_err(|e| format!("failed to read {}: {e}", entry.display()))?;
     for line in contents.lines() {
         let line = line.trim();
         if let Some(rest) = line.strip_prefix("package ") {
@@ -394,7 +432,10 @@ pub(crate) fn base_package(root: &Path) -> Result<String> {
             }
         }
     }
-    Err(format!("no package declaration found in {}", entry.display()))
+    Err(format!(
+        "no package declaration found in {}",
+        entry.display()
+    ))
 }
 
 fn find_application_file(dir: &Path) -> Option<PathBuf> {
@@ -438,18 +479,13 @@ fn shallowest_java_file(dir: &Path) -> Option<PathBuf> {
     best.map(|(_, path)| path)
 }
 
-fn has_lombok(root: &Path) -> bool {
-    fs::read_to_string(root.join("pom.xml"))
-        .map(|s| s.contains("lombok"))
-        .unwrap_or(false)
-}
-
 /// Spring Boot 4 moved `@AutoConfigureMockMvc` from
 /// `org.springframework.boot.test.autoconfigure.web.servlet` to
 /// `org.springframework.boot.webmvc.test.autoconfigure` with no back-compat
 /// shim, so the scaffolded controller test needs to import the right one.
 fn mockmvc_autoconfigure_import(root: &Path) -> &'static str {
-    const LEGACY: &str = "org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc";
+    const LEGACY: &str =
+        "org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc";
     const CURRENT: &str = "org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc";
 
     let pom = match fs::read_to_string(root.join("pom.xml")) {
@@ -466,7 +502,10 @@ fn mockmvc_autoconfigure_import(root: &Path) -> &'static str {
     let Some(vend) = after[vstart..].find("</version>") else {
         return LEGACY;
     };
-    let major: Option<u32> = after[vstart..vstart + vend].split('.').next().and_then(|s| s.parse().ok());
+    let major: Option<u32> = after[vstart..vstart + vend]
+        .split('.')
+        .next()
+        .and_then(|s| s.parse().ok());
     if major.is_some_and(|m| m >= 4) {
         CURRENT
     } else {
@@ -487,7 +526,6 @@ fn mockmvc_autoconfigure_import(root: &Path) -> &'static str {
 /// to want the ceremony.
 pub(crate) mod layout {
     pub const DOMAIN: &str = "domain";
-    pub const REPOSITORY: &str = "repository";
     /// Ports -- the interfaces the application depends on, kept free of the
     /// technology that implements them.
     pub const APP: &str = "app";
@@ -532,7 +570,8 @@ pub(crate) fn write_new_file(path: &Path, contents: &str) -> Result<()> {
         return Err(format!("{} already exists", path.display()));
     }
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
     }
     let contents = if path.extension().is_some_and(|e| e == "java") {
         normalize_imports(contents)
@@ -554,7 +593,10 @@ pub(crate) fn write_new_file(path: &Path, contents: &str) -> Result<()> {
 pub(crate) fn normalize_imports(source: &str) -> String {
     let lines: Vec<&str> = source.lines().collect();
 
-    let Some(package_at) = lines.iter().position(|l| l.trim_start().starts_with("package ")) else {
+    let Some(package_at) = lines
+        .iter()
+        .position(|l| l.trim_start().starts_with("package "))
+    else {
         return source.to_string();
     };
 
@@ -615,15 +657,26 @@ pub(crate) fn normalize_imports(source: &str) -> String {
     out
 }
 
-pub fn generate(kind: ArtifactKind, name: &str, fields: &[String], package: Option<&str>) -> Result<()> {
+pub fn generate(
+    kind: ArtifactKind,
+    name: &str,
+    fields: &[String],
+    package: Option<&str>,
+) -> Result<()> {
     let root = find_project_root()?;
     let base = base_package(&root)?;
 
-    // `cases` is the one kind whose <NAME> is a path, not a class name: the
-    // class is derived from the file it reads. Handle it before the shared
-    // capitalize, which would mangle a path.
+    // These kinds use NAME as a path/description rather than a Java class
+    // name. Handle them before the shared capitalisation below.
     if matches!(kind, ArtifactKind::Cases) {
-        return generate_cases(&root, &subpackage(&base, package.unwrap_or("")), Path::new(name));
+        return generate_cases(
+            &root,
+            &subpackage(&base, package.unwrap_or("")),
+            Path::new(name),
+        );
+    }
+    if matches!(kind, ArtifactKind::Migration) {
+        return generate_migration(&root, name);
     }
 
     let name = capitalize(name);
@@ -644,7 +697,11 @@ pub fn generate(kind: ArtifactKind, name: &str, fields: &[String], package: Opti
                 Artifact {
                     kind: "controller test",
                     path: test_dir(&root, &web).join(format!("{name}ControllerTest.java")),
-                    contents: controller_stub_test(&web, &name, mockmvc_autoconfigure_import(&root)),
+                    contents: controller_stub_test(
+                        &web,
+                        &name,
+                        mockmvc_autoconfigure_import(&root),
+                    ),
                 },
             ]
         }
@@ -663,35 +720,9 @@ pub fn generate(kind: ArtifactKind, name: &str, fields: &[String], package: Opti
                 },
             ]
         }
-        ArtifactKind::Repository => {
-            let repository = place(layout::REPOSITORY);
-            // The entity it is a repository *of* now lives one package over.
-            let domain = place(layout::DOMAIN);
-            vec![Artifact {
-                kind: "repository",
-                path: main_dir(&root, &repository).join(format!("{name}Repository.java")),
-                contents: stub_repository(&repository, &name, &import_of(&repository, &domain, &name)),
-            }]
-        }
-        ArtifactKind::Entity => {
-            let parsed = parse_fields(fields)?;
-            let domain = place(layout::DOMAIN);
-            vec![
-                Artifact {
-                    kind: "entity",
-                    path: main_dir(&root, &domain).join(format!("{name}.java")),
-                    contents: entity_java(&domain, &name, &parsed, has_lombok(&root)),
-                },
-                Artifact {
-                    kind: "entity test",
-                    path: test_dir(&root, &domain).join(format!("{name}Test.java")),
-                    contents: entity_test(&domain, &name, &parsed),
-                },
-            ]
-        }
         // The layer-less kind: a plain class and its test, in the base package
         // rather than a subpackage, because "a class" says nothing about which
-        // layer owns it. Everything else here is a Spring or JPA shape; this is
+        // layer owns it. Everything else here has a conventional home; this is
         // the one for ordinary Java -- an algorithm, a ring buffer, a parser.
         ArtifactKind::Class => {
             let pkg = place("");
@@ -707,6 +738,14 @@ pub fn generate(kind: ArtifactKind, name: &str, fields: &[String], package: Opti
                     contents: class_test(&pkg, &name),
                 },
             ]
+        }
+        ArtifactKind::Interface => {
+            let pkg = place("");
+            vec![Artifact {
+                kind: "interface",
+                path: main_dir(&root, &pkg).join(format!("{name}.java")),
+                contents: interface_java(&pkg, &name),
+            }]
         }
         ArtifactKind::Record => {
             let parsed = parse_fields(fields)?;
@@ -769,7 +808,10 @@ pub fn generate(kind: ArtifactKind, name: &str, fields: &[String], package: Opti
             // the port would not compile. Rather than fail, lay down the
             // smallest record that could be one -- it is a starting point the
             // reader will obviously edit, the same way `scaffold` works.
-            if !main_dir(&root, &domain).join(format!("{name}.java")).exists() {
+            if !main_dir(&root, &domain)
+                .join(format!("{name}.java"))
+                .exists()
+            {
                 let id = parse_fields(&["id:string!".to_string()])?;
                 artifacts.push(Artifact {
                     kind: "record (placeholder for the repository)",
@@ -789,9 +831,9 @@ pub fn generate(kind: ArtifactKind, name: &str, fields: &[String], package: Opti
                 contents: repository_port(&app, &name, &import_of(&app, &domain, &name)),
             });
             artifacts.push(Artifact {
-                kind: "sqlite adapter",
-                path: main_dir(&root, &adapters).join(format!("Sqlite{name}Repository.java")),
-                contents: sqlite_repository(
+                kind: "JDBC adapter",
+                path: main_dir(&root, &adapters).join(format!("Jdbc{name}Repository.java")),
+                contents: jdbc_repository(
                     &adapters,
                     &name,
                     &format!(
@@ -802,9 +844,9 @@ pub fn generate(kind: ArtifactKind, name: &str, fields: &[String], package: Opti
                 ),
             });
             artifacts.push(Artifact {
-                kind: "sqlite adapter test",
-                path: test_dir(&root, &adapters).join(format!("Sqlite{name}RepositoryTest.java")),
-                contents: sqlite_repository_test(&adapters, &name, &import_of(&adapters, &domain, &name)),
+                kind: "JDBC adapter integration test",
+                path: test_dir(&root, &adapters).join(format!("Jdbc{name}RepositoryIT.java")),
+                contents: jdbc_repository_test(&adapters, &name),
             });
             artifacts
         }
@@ -892,12 +934,21 @@ pub fn generate(kind: ArtifactKind, name: &str, fields: &[String], package: Opti
             ]
         }
         ArtifactKind::Cases => unreachable!("handled above -- its NAME is a path, not a class"),
+        ArtifactKind::Migration => unreachable!("handled above -- its NAME is a SQL description"),
         ArtifactKind::Test => {
             let pkg = place("");
             vec![Artifact {
                 kind: "test",
                 path: test_dir(&root, &pkg).join(format!("{name}Test.java")),
                 contents: stub_test(&pkg, &name),
+            }]
+        }
+        ArtifactKind::IntegrationTest => {
+            let pkg = place("");
+            vec![Artifact {
+                kind: "integration test",
+                path: test_dir(&root, &pkg).join(format!("{name}IT.java")),
+                contents: integration_test_java(&pkg, &name),
             }]
         }
     };
@@ -939,58 +990,69 @@ fn scaffold_artifacts(
     package: Option<&str>,
 ) -> Result<Vec<Artifact>> {
     let parsed = parse_fields(fields)?;
-    let lombok = has_lombok(root);
-    let route = name.to_lowercase() + "s";
 
     let place = |default: &str| subpackage(base, package.unwrap_or(default));
     let domain = place(layout::DOMAIN);
-    let repository = place(layout::REPOSITORY);
+    let repository = place(layout::APP);
+    let adapters = place(layout::ADAPTERS);
     let service = place(layout::SERVICE);
     let web = place(layout::WEB);
 
-    let entity_in = |user: &str| import_of(user, &domain, name);
-    let repository_in = |user: &str| import_of(user, &repository, &format!("{name}Repository"));
-    let service_in = |user: &str| import_of(user, &service, &format!("{name}Service"));
+    let domain_in = |user: &str| import_of(user, &domain, name);
 
     Ok(vec![
         Artifact {
-            kind: "entity",
+            kind: "record",
             path: main_dir(root, &domain).join(format!("{name}.java")),
-            contents: entity_java(&domain, name, &parsed, lombok),
+            contents: record_java(&domain, name, &parsed),
         },
         Artifact {
-            kind: "entity test",
+            kind: "record test",
             path: test_dir(root, &domain).join(format!("{name}Test.java")),
-            contents: entity_test(&domain, name, &parsed),
+            contents: record_test(root, &domain, name, &parsed),
         },
         Artifact {
-            kind: "repository",
+            kind: "repository port",
             path: main_dir(root, &repository).join(format!("{name}Repository.java")),
-            contents: stub_repository(&repository, name, &entity_in(&repository)),
+            contents: repository_port(&repository, name, &domain_in(&repository)),
+        },
+        Artifact {
+            kind: "JDBC adapter",
+            path: main_dir(root, &adapters).join(format!("Jdbc{name}Repository.java")),
+            contents: jdbc_repository(
+                &adapters,
+                name,
+                &format!(
+                    "{}{}",
+                    domain_in(&adapters),
+                    import_of(&adapters, &repository, &format!("{name}Repository"))
+                ),
+            ),
+        },
+        Artifact {
+            kind: "JDBC adapter integration test",
+            path: test_dir(root, &adapters).join(format!("Jdbc{name}RepositoryIT.java")),
+            contents: jdbc_repository_test(&adapters, name),
         },
         Artifact {
             kind: "service",
             path: main_dir(root, &service).join(format!("{name}Service.java")),
-            contents: service_full(
-                &service,
-                name,
-                &format!("{}{}", entity_in(&service), repository_in(&service)),
-            ),
+            contents: stub_service(&service, name),
+        },
+        Artifact {
+            kind: "service test",
+            path: test_dir(root, &service).join(format!("{name}ServiceTest.java")),
+            contents: service_stub_test(&service, name),
         },
         Artifact {
             kind: "controller",
             path: main_dir(root, &web).join(format!("{name}Controller.java")),
-            contents: controller_full(
-                &web,
-                name,
-                &route,
-                &format!("{}{}", entity_in(&web), service_in(&web)),
-            ),
+            contents: stub_controller(&web, name),
         },
         Artifact {
             kind: "controller test",
             path: test_dir(root, &web).join(format!("{name}ControllerTest.java")),
-            contents: controller_test(&web, name, &route, mockmvc_autoconfigure_import(root), &entity_in(&web)),
+            contents: controller_stub_test(&web, name, mockmvc_autoconfigure_import(root)),
         },
     ])
 }
@@ -1008,8 +1070,11 @@ pub fn destroy(kind: ArtifactKind, name: &str, force: bool, package: Option<&str
         ArtifactKind::Scaffold => vec![
             main_dir(&root, &place(layout::DOMAIN)).join(format!("{name}.java")),
             test_dir(&root, &place(layout::DOMAIN)).join(format!("{name}Test.java")),
-            main_dir(&root, &place(layout::REPOSITORY)).join(format!("{name}Repository.java")),
+            main_dir(&root, &place(layout::APP)).join(format!("{name}Repository.java")),
+            main_dir(&root, &place(layout::ADAPTERS)).join(format!("Jdbc{name}Repository.java")),
+            test_dir(&root, &place(layout::ADAPTERS)).join(format!("Jdbc{name}RepositoryIT.java")),
             main_dir(&root, &place(layout::SERVICE)).join(format!("{name}Service.java")),
+            test_dir(&root, &place(layout::SERVICE)).join(format!("{name}ServiceTest.java")),
             main_dir(&root, &place(layout::WEB)).join(format!("{name}Controller.java")),
             test_dir(&root, &place(layout::WEB)).join(format!("{name}ControllerTest.java")),
         ],
@@ -1021,19 +1086,12 @@ pub fn destroy(kind: ArtifactKind, name: &str, force: bool, package: Option<&str
             main_dir(&root, &place(layout::SERVICE)).join(format!("{name}Service.java")),
             test_dir(&root, &place(layout::SERVICE)).join(format!("{name}ServiceTest.java")),
         ],
-        ArtifactKind::Repository => {
-            vec![main_dir(&root, &place(layout::REPOSITORY)).join(format!("{name}Repository.java"))]
+        ArtifactKind::Record | ArtifactKind::Value | ArtifactKind::Enum | ArtifactKind::Sealed => {
+            vec![
+                main_dir(&root, &place(layout::DOMAIN)).join(format!("{name}.java")),
+                test_dir(&root, &place(layout::DOMAIN)).join(format!("{name}Test.java")),
+            ]
         }
-        // An entity, a record and a value are three shapes of the same named
-        // type, so they occupy -- and free -- exactly the same two paths.
-        ArtifactKind::Entity
-        | ArtifactKind::Record
-        | ArtifactKind::Value
-        | ArtifactKind::Enum
-        | ArtifactKind::Sealed => vec![
-            main_dir(&root, &place(layout::DOMAIN)).join(format!("{name}.java")),
-            test_dir(&root, &place(layout::DOMAIN)).join(format!("{name}Test.java")),
-        ],
         ArtifactKind::Command => vec![
             main_dir(&root, &place(layout::CLI)).join(format!("{name}Command.java")),
             test_dir(&root, &place(layout::CLI)).join(format!("{name}CommandTest.java")),
@@ -1044,8 +1102,8 @@ pub fn destroy(kind: ArtifactKind, name: &str, force: bool, package: Option<&str
         ],
         ArtifactKind::Repo => vec![
             main_dir(&root, &place(layout::APP)).join(format!("{name}Repository.java")),
-            main_dir(&root, &place(layout::ADAPTERS)).join(format!("Sqlite{name}Repository.java")),
-            test_dir(&root, &place(layout::ADAPTERS)).join(format!("Sqlite{name}RepositoryTest.java")),
+            main_dir(&root, &place(layout::ADAPTERS)).join(format!("Jdbc{name}Repository.java")),
+            test_dir(&root, &place(layout::ADAPTERS)).join(format!("Jdbc{name}RepositoryIT.java")),
         ],
         ArtifactKind::Cli => vec![
             main_dir(&root, &place(layout::CLI)).join(format!("{name}Cli.java")),
@@ -1054,13 +1112,26 @@ pub fn destroy(kind: ArtifactKind, name: &str, force: bool, package: Option<&str
         // `cases` derives its class from a markdown file's name, so destroy
         // takes that same path and resolves it the same way generate did.
         ArtifactKind::Cases => {
-            vec![test_dir(&root, &place("")).join(format!("{}.java", cases_class_name(Path::new(&raw_name))?))]
+            vec![
+                test_dir(&root, &place(""))
+                    .join(format!("{}.java", cases_class_name(Path::new(&raw_name))?)),
+            ]
+        }
+        ArtifactKind::Migration => {
+            return Err(
+                "migrations are forward-only; create a new migration instead of destroying one"
+                    .to_string(),
+            );
         }
         ArtifactKind::Class => vec![
             main_dir(&root, &place("")).join(format!("{name}.java")),
             test_dir(&root, &place("")).join(format!("{name}Test.java")),
         ],
+        ArtifactKind::Interface => vec![main_dir(&root, &place("")).join(format!("{name}.java"))],
         ArtifactKind::Test => vec![test_dir(&root, &place("")).join(format!("{name}Test.java"))],
+        ArtifactKind::IntegrationTest => {
+            vec![test_dir(&root, &place("")).join(format!("{name}IT.java"))]
+        }
     };
 
     let existing: Vec<&PathBuf> = paths.iter().filter(|p| p.exists()).collect();
@@ -1095,6 +1166,29 @@ pub fn destroy(kind: ArtifactKind, name: &str, force: bool, package: Option<&str
 
 // ---- standalone stub templates (ported from springgen.nvim) ----
 
+fn interface_java(pkg: &str, name: &str) -> String {
+    format!("package {pkg};\n\npublic interface {name} {{\n}}\n")
+}
+
+fn integration_test_java(pkg: &str, name: &str) -> String {
+    format!(
+        r#"package {pkg};
+
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
+
+@Disabled("todo: wire the real integration boundary")
+class {name}IT {{
+
+    @Test
+    void worksEndToEnd() {{
+        throw new UnsupportedOperationException("todo");
+    }}
+}}
+"#
+    )
+}
+
 fn stub_controller(pkg: &str, name: &str) -> String {
     format!(
         r#"package {pkg};
@@ -1123,18 +1217,6 @@ import org.springframework.stereotype.Service;
 
 @Service
 public class {name}Service {{
-}}
-"#
-    )
-}
-
-fn stub_repository(pkg: &str, name: &str, extra: &str) -> String {
-    format!(
-        r#"package {pkg};
-{extra}
-import org.springframework.data.jpa.repository.JpaRepository;
-
-public interface {name}Repository extends JpaRepository<{name}, Long> {{
 }}
 "#
     )
@@ -1206,10 +1288,7 @@ class {name}Test {{
     )
 }
 
-// ---- companion tests for the bare `generate controller`/`service` stubs
-// (Rails generates a test alongside controller/model generators; we do the
-// same -- repository is a plain JpaRepository delegate with nothing of its
-// own to assert, so it gets no companion test) ----
+// ---- companion tests for the bare `generate controller`/`service` stubs. ----
 
 fn controller_stub_test(pkg: &str, name: &str, mockmvc_import: &str) -> String {
     format!(
@@ -1263,105 +1342,8 @@ class {name}ServiceTest {{
     )
 }
 
-// ---- entity (shared by standalone `generate entity` and `generate scaffold`) ----
-
-fn entity_java(pkg: &str, name: &str, fields: &[Field], lombok: bool) -> String {
-    let mut imports = vec!["jakarta.persistence.Entity", "jakarta.persistence.GeneratedValue", "jakarta.persistence.Id"];
-    if fields.iter().any(|f| f.needs_lob) {
-        imports.push("jakarta.persistence.Lob");
-    }
-    imports.sort();
-
-    let mut out = format!("package {pkg};\n\n");
-    for imp in &imports {
-        out += &format!("import {imp};\n");
-    }
-    if lombok {
-        out += "import lombok.Data;\n";
-    }
-    let mut time_imports: Vec<&str> = fields.iter().flat_map(|f| f.imports.clone()).collect();
-    time_imports.sort();
-    time_imports.dedup();
-    if !time_imports.is_empty() {
-        out += "\n";
-        for imp in &time_imports {
-            out += &format!("import {imp};\n");
-        }
-    }
-
-    out += "\n";
-    if lombok {
-        out += "@Data\n";
-    }
-    out += "@Entity\n";
-    out += &format!("public class {name} {{\n\n");
-    out += "    @Id\n    @GeneratedValue\n    private Long id;\n";
-    for field in fields {
-        out += "\n";
-        if field.needs_lob {
-            out += "    @Lob\n";
-        }
-        out += &format!("    private {} {};\n", field.java_type, field.name);
-    }
-
-    if !lombok {
-        out += "\n";
-        out += &getter_setter("Long", "id");
-        for field in fields {
-            out += "\n";
-            out += &getter_setter(&field.java_type, &field.name);
-        }
-    }
-
-    out += "}\n";
-    out
-}
-
-fn getter_setter(java_type: &str, name: &str) -> String {
-    let cap = capitalize(name);
-    format!(
-        "    public {java_type} get{cap}() {{\n        return {name};\n    }}\n\n    public void set{cap}({java_type} {name}) {{\n        this.{name} = {name};\n    }}\n"
-    )
-}
-
-/// A companion test round-tripping every getter/setter (including
-/// Lombok's @Data-generated ones, which compile the same as hand-written).
-fn entity_test(pkg: &str, name: &str, fields: &[Field]) -> String {
-    let mut imports: Vec<&str> = fields.iter().flat_map(|f| f.imports.clone()).collect();
-    imports.sort();
-    imports.dedup();
-
-    let mut out = format!("package {pkg};\n\n");
-    out += "import org.junit.jupiter.api.Test;\n";
-    if !imports.is_empty() {
-        out += "\n";
-        for imp in &imports {
-            out += &format!("import {imp};\n");
-        }
-    }
-    out += "\nimport static org.assertj.core.api.Assertions.assertThat;\n\n";
-    out += &format!("class {name}Test {{\n\n");
-    out += "    @Test\n    void gettersAndSettersRoundTrip() {\n";
-    out += &format!("        {name} entity = new {name}();\n");
-    out += "        entity.setId(1L);\n";
-    for field in fields {
-        out += &format!("        entity.set{}({});\n", capitalize(&field.name), sample_literal(&field.java_type));
-    }
-    out += "\n        assertThat(entity.getId()).isEqualTo(1L);\n";
-    for field in fields {
-        out += &format!(
-            "        assertThat(entity.get{}()).isEqualTo({});\n",
-            capitalize(&field.name),
-            sample_literal(&field.java_type)
-        );
-    }
-    out += "    }\n}\n";
-    out
-}
-
-// ---- record: the plain-Java counterpart to `entity`, for projects with no
-// Spring or JPA in sight (`new-cli` ones, mostly). Same field:type parsing,
-// no annotations, and a compact constructor so an invalid value cannot be
+// ---- record: an immutable plain-Java data carrier. Same field:type parsing,
+// no framework annotations, and a compact constructor so an invalid value cannot be
 // constructed in the first place. ----
 
 fn record_java(pkg: &str, name: &str, fields: &[Field]) -> String {
@@ -1391,8 +1373,11 @@ fn record_java(pkg: &str, name: &str, fields: &[Field]) -> String {
         out += "\n";
     }
 
-    let components =
-        fields.iter().map(|f| format!("{} {}", declared_type(f), f.name)).collect::<Vec<_>>().join(", ");
+    let components = fields
+        .iter()
+        .map(|f| format!("{} {}", declared_type(f), f.name))
+        .collect::<Vec<_>>()
+        .join(", ");
 
     out += "/**\n";
     out += &format!(" * An immutable {name} value.\n");
@@ -1441,12 +1426,20 @@ fn record_test(root: &Path, pkg: &str, name: &str, fields: &[Field]) -> String {
     // Rather than invent a constructor call that will not compile, the test is
     // generated in full and disabled, naming exactly what it needs.
     let samples: Vec<Option<String>> = fields.iter().map(|f| sample_value(f, root, pkg)).collect();
-    let unfabricable: Vec<&str> =
-        fields.iter().zip(&samples).filter(|(_, s)| s.is_none()).map(|(f, _)| f.name.as_str()).collect();
+    let unfabricable: Vec<&str> = fields
+        .iter()
+        .zip(&samples)
+        .filter(|(_, s)| s.is_none())
+        .map(|(f, _)| f.name.as_str())
+        .collect();
     let args = samples
         .iter()
         .zip(fields)
-        .map(|(sample, field)| sample.clone().unwrap_or_else(|| format!("/* TODO: a {} */ null", field.java_type)))
+        .map(|(sample, field)| {
+            sample
+                .clone()
+                .unwrap_or_else(|| format!("/* TODO: a {} */ null", field.java_type))
+        })
         .collect::<Vec<_>>()
         .join(", ");
     let var = name.to_lowercase();
@@ -1492,7 +1485,10 @@ fn record_test(root: &Path, pkg: &str, name: &str, fields: &[Field]) -> String {
         for (field, sample) in fields.iter().zip(&samples) {
             match sample {
                 Some(value) => {
-                    out += &format!("        assertThat({var}.{}()).isEqualTo({value});\n", field.name)
+                    out += &format!(
+                        "        assertThat({var}.{}()).isEqualTo({value});\n",
+                        field.name
+                    )
                 }
                 None => out += &format!("        // TODO: assert on {}\n", field.name),
             }
@@ -1518,7 +1514,10 @@ fn record_test(root: &Path, pkg: &str, name: &str, fields: &[Field]) -> String {
         out += "\n    @Test\n    void rejectsANullComponent() {\n";
         out += &format!("        assertThatNullPointerException()\n");
         out += &format!("                .isThrownBy(() -> new {name}({nulled}))\n");
-        out += &format!("                .withMessageContaining(\"{}\");\n", first.name);
+        out += &format!(
+            "                .withMessageContaining(\"{}\");\n",
+            first.name
+        );
         out += "    }\n";
     }
 
@@ -1637,7 +1636,11 @@ fn sample_value(field: &Field, root: &Path, pkg: &str) -> Option<String> {
     }
     // An empty collection is a sample of any element type, known or not.
     if field.collection {
-        return Some(if field.java_type.starts_with("Map") { "Map.of()".to_string() } else { "List.of()".to_string() });
+        return Some(if field.java_type.starts_with("Map") {
+            "Map.of()".to_string()
+        } else {
+            "List.of()".to_string()
+        });
     }
     if !field.owned {
         return Some(sample_literal(&field.java_type).to_string());
@@ -1664,167 +1667,16 @@ fn sample_literal(java_type: &str) -> &'static str {
         "LocalDate" => "LocalDate.of(2024, 1, 1)",
         "LocalDateTime" => "LocalDateTime.of(2024, 1, 1, 12, 0)",
         "Instant" => "Instant.parse(\"2024-01-01T00:00:00Z\")",
+        "UUID" => "UUID.fromString(\"00000000-0000-0000-0000-000000000001\")",
+        "Currency" => "Currency.getInstance(\"GBP\")",
+        "BigDecimal" => "new BigDecimal(\"1.00\")",
+        "byte[]" => "new byte[] {1}",
+        "Duration" => "Duration.ofSeconds(1)",
+        "ZoneId" => "ZoneId.of(\"UTC\")",
+        "URI" => "URI.create(\"https://example.com\")",
+        "Path" => "Path.of(\"sample\")",
         _ => "null",
     }
-}
-
-// ---- scaffold's fuller service/controller/test (beyond the bare stubs) ----
-
-fn service_full(pkg: &str, name: &str, extra: &str) -> String {
-    let var = name.to_lowercase();
-    format!(
-        r#"package {pkg};
-{extra}
-import org.springframework.http.HttpStatus;
-import org.springframework.stereotype.Service;
-import org.springframework.web.server.ResponseStatusException;
-
-import java.util.List;
-
-@Service
-public class {name}Service {{
-
-    private final {name}Repository repository;
-
-    public {name}Service({name}Repository repository) {{
-        this.repository = repository;
-    }}
-
-    public List<{name}> findAll() {{
-        return repository.findAll();
-    }}
-
-    public {name} findById(Long id) {{
-        return repository.findById(id)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
-    }}
-
-    public {name} save({name} {var}) {{
-        return repository.save({var});
-    }}
-
-    public void deleteById(Long id) {{
-        if (repository.existsById(id)) {{
-            repository.deleteById(id);
-        }}
-    }}
-}}
-"#
-    )
-}
-
-fn controller_full(pkg: &str, name: &str, route: &str, extra: &str) -> String {
-    let var = name.to_lowercase();
-    format!(
-        r#"package {pkg};
-{extra}
-import org.springframework.web.bind.annotation.DeleteMapping;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.PutMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
-
-import java.util.List;
-
-@RestController
-@RequestMapping("/{route}")
-public class {name}Controller {{
-
-    private final {name}Service service;
-
-    public {name}Controller({name}Service service) {{
-        this.service = service;
-    }}
-
-    @GetMapping
-    public List<{name}> index() {{
-        return service.findAll();
-    }}
-
-    @GetMapping("/{{id}}")
-    public {name} show(@PathVariable Long id) {{
-        return service.findById(id);
-    }}
-
-    @PostMapping
-    public {name} create(@RequestBody {name} {var}) {{
-        return service.save({var});
-    }}
-
-    @PutMapping("/{{id}}")
-    public {name} update(@PathVariable Long id, @RequestBody {name} {var}) {{
-        {var}.setId(id);
-        return service.save({var});
-    }}
-
-    @DeleteMapping("/{{id}}")
-    public void destroy(@PathVariable Long id) {{
-        service.deleteById(id);
-    }}
-}}
-"#
-    )
-}
-
-fn controller_test(pkg: &str, name: &str, route: &str, mockmvc_import: &str, extra: &str) -> String {
-    format!(
-        r#"package {pkg};
-{extra}
-import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import {mockmvc_import};
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.web.servlet.MockMvc;
-
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-
-@SpringBootTest
-@AutoConfigureMockMvc
-class {name}ControllerTest {{
-
-    @Autowired
-    private MockMvc mockMvc;
-
-    @Test
-    void index() throws Exception {{
-        mockMvc.perform(get("/{route}")).andExpect(status().isOk());
-    }}
-
-    @Test
-    void create() throws Exception {{
-        mockMvc.perform(post("/{route}")
-                        .contentType("application/json")
-                        .content("{{}}"))
-                .andExpect(status().is2xxSuccessful());
-    }}
-
-    @Test
-    void show() throws Exception {{
-        mockMvc.perform(get("/{route}/999999")).andExpect(status().isNotFound());
-    }}
-
-    @Test
-    void update() throws Exception {{
-        mockMvc.perform(put("/{route}/1")
-                        .contentType("application/json")
-                        .content("{{}}"))
-                .andExpect(status().is2xxSuccessful());
-    }}
-
-    @Test
-    void destroy() throws Exception {{
-        mockMvc.perform(delete("/{route}/1")).andExpect(status().isOk());
-    }}
-}}
-"#
-    )
 }
 
 // ---- value: a record that not only rejects nulls (which `record` already
@@ -1853,9 +1705,16 @@ fn value_java(pkg: &str, name: &str, fields: &[Field]) -> String {
     }
     out += "\n";
 
-    let components =
-        fields.iter().map(|f| format!("{} {}", declared_type(f), f.name)).collect::<Vec<_>>().join(", ");
-    let names = fields.iter().map(|f| f.name.clone()).collect::<Vec<_>>().join(", ");
+    let components = fields
+        .iter()
+        .map(|f| format!("{} {}", declared_type(f), f.name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let names = fields
+        .iter()
+        .map(|f| f.name.clone())
+        .collect::<Vec<_>>()
+        .join(", ");
 
     out += "/**\n";
     out += &format!(" * A validated {name} value.\n");
@@ -1881,7 +1740,10 @@ fn value_java(pkg: &str, name: &str, fields: &[Field]) -> String {
     // produced, so " " fails the blank check rather than sneaking past it.
     out += &format!("    public {name} {{\n");
     for field in &checked {
-        out += &format!("        Objects.requireNonNull({0}, \"{0} is required\");\n", field.name);
+        out += &format!(
+            "        Objects.requireNonNull({0}, \"{0} is required\");\n",
+            field.name
+        );
     }
     out += &optional_defaults(fields);
     out += &collection_defaults(fields);
@@ -1889,7 +1751,8 @@ fn value_java(pkg: &str, name: &str, fields: &[Field]) -> String {
     out += "    }\n\n";
 
     out += "    /**\n";
-    out += &format!("     * Builds a {name}. Identical to the constructor today; it exists so that\n");
+    out +=
+        &format!("     * Builds a {name}. Identical to the constructor today; it exists so that\n");
     out += "     * parsing, defaulting or a cache can be added later without changing a\n";
     out += "     * single call site.\n";
     out += "     */\n";
@@ -1910,8 +1773,12 @@ fn value_test(root: &Path, pkg: &str, name: &str, fields: &[Field]) -> String {
     imports.dedup();
 
     let samples: Vec<Option<String>> = fields.iter().map(|f| sample_value(f, root, pkg)).collect();
-    let unfabricable: Vec<&str> =
-        fields.iter().zip(&samples).filter(|(_, s)| s.is_none()).map(|(f, _)| f.name.as_str()).collect();
+    let unfabricable: Vec<&str> = fields
+        .iter()
+        .zip(&samples)
+        .filter(|(_, s)| s.is_none())
+        .map(|(f, _)| f.name.as_str())
+        .collect();
     if has_optional(fields) {
         imports.push("java.util.Optional");
         imports.sort();
@@ -1966,7 +1833,12 @@ fn value_test(root: &Path, pkg: &str, name: &str, fields: &[Field]) -> String {
     out += &format!("        var value = {name}.of({args});\n\n");
     for (field, sample) in fields.iter().zip(&samples) {
         match sample {
-            Some(value) => out += &format!("        assertThat(value.{}()).isEqualTo({value});\n", field.name),
+            Some(value) => {
+                out += &format!(
+                    "        assertThat(value.{}()).isEqualTo({value});\n",
+                    field.name
+                )
+            }
             None => out += &format!("        // TODO: assert on {}\n", field.name),
         }
     }
@@ -2014,14 +1886,23 @@ fn value_test(root: &Path, pkg: &str, name: &str, fields: &[Field]) -> String {
 /// file that ignores the convention is one the reader has to think about.
 fn parse_constants(args: &[String]) -> Result<Vec<String>> {
     if args.is_empty() {
-        return Err("an enum needs at least one constant, e.g. `generate enum Currency GBP EUR`".to_string());
+        return Err(
+            "an enum needs at least one constant, e.g. `generate enum Currency GBP EUR`"
+                .to_string(),
+        );
     }
     let mut constants = Vec::new();
     for arg in args {
         let constant: String = arg
             .trim()
             .chars()
-            .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_uppercase() } else { '_' })
+            .map(|c| {
+                if c.is_ascii_alphanumeric() {
+                    c.to_ascii_uppercase()
+                } else {
+                    '_'
+                }
+            })
             .collect();
         if constant.is_empty() || constant.starts_with(|c: char| c.is_ascii_digit()) {
             return Err(format!("'{arg}' is not a usable enum constant"));
@@ -2404,7 +2285,7 @@ public interface {name}Repository {{
 
     List<{name}> findAll();
 
-    /** Inserts, or replaces the row with the same id. */
+    /** Inserts a row. Define conflict behavior explicitly in the SQL adapter. */
     void save({name} {var});
 
     /** @return true when a row was actually removed. */
@@ -2414,7 +2295,7 @@ public interface {name}Repository {{
     )
 }
 
-fn sqlite_repository(pkg: &str, name: &str, extra: &str) -> String {
+fn jdbc_repository(pkg: &str, name: &str, extra: &str) -> String {
     let var = name.to_lowercase();
     let table = format!("{}s", name.to_lowercase());
     format!(
@@ -2438,36 +2319,54 @@ import java.util.Optional;
  * <p>{{@link #map}} and {{@link #bind}} are yours to finish: jails knows the
  * columns of exactly nothing. Until then the companion test is disabled.
  */
-public final class Sqlite{name}Repository implements {name}Repository {{
+public final class Jdbc{name}Repository implements {name}Repository {{
 
-    private static final String TABLE = "{table}";
+    private static final String FIND_BY_ID =
+            """
+            select *
+            from {table}
+            where id = ?
+            """;
+    private static final String FIND_ALL =
+            """
+            select *
+            from {table}
+            order by id
+            """;
+    private static final String INSERT =
+            """
+            insert into {table} (id)
+            values (?)
+            """;
+    private static final String DELETE_BY_ID =
+            """
+            delete from {table}
+            where id = ?
+            """;
 
     private final Connection connection;
 
-    public Sqlite{name}Repository(Connection connection) {{
+    public Jdbc{name}Repository(Connection connection) {{
         this.connection = Objects.requireNonNull(connection, "connection is required");
     }}
 
     @Override
     public Optional<{name}> findById(String id) {{
         Objects.requireNonNull(id, "id is required");
-        var sql = "select * from " + TABLE + " where id = ?";
-        try (var query = connection.prepareStatement(sql)) {{
+        try (var query = connection.prepareStatement(FIND_BY_ID)) {{
             query.setString(1, id);
             try (var rows = query.executeQuery()) {{
                 return rows.next() ? Optional.of(map(rows)) : Optional.empty();
             }}
         }} catch (SQLException error) {{
-            throw new IllegalStateException("could not read " + TABLE + " " + id, error);
+            throw new IllegalStateException("could not read {table} " + id, error);
         }}
     }}
 
     @Override
     public List<{name}> findAll() {{
-        // Ordered explicitly: without it the row order is whatever SQLite
-        // feels like, and a test that asserts on a list would flake.
-        var sql = "select * from " + TABLE + " order by id";
-        try (var query = connection.prepareStatement(sql);
+        // Ordered explicitly: SQL does not otherwise promise row order.
+        try (var query = connection.prepareStatement(FIND_ALL);
                 var rows = query.executeQuery()) {{
             var all = new ArrayList<{name}>();
             while (rows.next()) {{
@@ -2475,38 +2374,35 @@ public final class Sqlite{name}Repository implements {name}Repository {{
             }}
             return List.copyOf(all);
         }} catch (SQLException error) {{
-            throw new IllegalStateException("could not read " + TABLE, error);
+            throw new IllegalStateException("could not read {table}", error);
         }}
     }}
 
     @Override
     public void save({name} {var}) {{
         Objects.requireNonNull({var}, "{var} is required");
-        // `insert or replace` makes save idempotent, which is what a caller
-        // replaying an event stream needs.
-        var sql = "insert or replace into " + TABLE + " (id) values (?)";
-        try (var insert = connection.prepareStatement(sql)) {{
+        try (var insert = connection.prepareStatement(INSERT)) {{
             bind(insert, {var});
             insert.executeUpdate();
         }} catch (SQLException error) {{
-            throw new IllegalStateException("could not save to " + TABLE, error);
+            throw new IllegalStateException("could not save to {table}", error);
         }}
     }}
 
     @Override
     public boolean deleteById(String id) {{
         Objects.requireNonNull(id, "id is required");
-        try (var delete = connection.prepareStatement("delete from " + TABLE + " where id = ?")) {{
+        try (var delete = connection.prepareStatement(DELETE_BY_ID)) {{
             delete.setString(1, id);
             return delete.executeUpdate() > 0;
         }} catch (SQLException error) {{
-            throw new IllegalStateException("could not delete from " + TABLE + " " + id, error);
+            throw new IllegalStateException("could not delete from {table} " + id, error);
         }}
     }}
 
     /** TODO: build a {name} from the current row. */
     private {name} map(ResultSet rows) throws SQLException {{
-        throw new UnsupportedOperationException("TODO: map a " + TABLE + " row to {name}");
+        throw new UnsupportedOperationException("TODO: map a {table} row to {name}");
     }}
 
     /** TODO: set every column the insert above declares. */
@@ -2518,89 +2414,27 @@ public final class Sqlite{name}Repository implements {name}Repository {{
     )
 }
 
-fn sqlite_repository_test(pkg: &str, name: &str, extra: &str) -> String {
-    let var = name.to_lowercase();
+fn jdbc_repository_test(pkg: &str, name: &str) -> String {
     format!(
         r#"package {pkg};
 
-{extra}import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
-import java.sql.Connection;
-import java.sql.DriverManager;
-
-import static org.assertj.core.api.Assertions.assertThat;
-
 /**
- * Round-trips against a real SQLite database held in memory: fast enough for
- * a unit test, and still the actual driver rather than a fake.
- *
- * <p>Disabled until {{@code map}} and {{@code bind}} are written -- jails cannot
- * know the columns, and a test asserting on a TODO would only ever be noise.
+ * Configure a real test database, apply the migrations, and exercise the SQL
+ * in {{@link Jdbc{name}Repository}}. Keep this as an integration test: mocks
+ * cannot prove SQL, constraints, transactions, or row mappings work.
  */
-@Disabled("todo: finish map/bind in Sqlite{name}Repository, then delete this")
-class Sqlite{name}RepositoryTest {{
-
-    private Connection connection;
-    private Sqlite{name}Repository repository;
-
-    @BeforeEach
-    void openInMemoryDatabase() throws Exception {{
-        // A fresh, empty database per test -- it exists only as long as the
-        // connection does.
-        connection = DriverManager.getConnection("jdbc:sqlite::memory:");
-        try (var schema = connection.createStatement()) {{
-            schema.execute("create table {table} (id text primary key)");
-        }}
-        repository = new Sqlite{name}Repository(connection);
-    }}
-
-    @AfterEach
-    void close() throws Exception {{
-        connection.close();
-    }}
+@Disabled("todo: configure the test database and finish the repository SQL mapping")
+class Jdbc{name}RepositoryIT {{
 
     @Test
-    void savesAndReadsBack() {{
-        var {var} = sample();
-
-        repository.save({var});
-
-        assertThat(repository.findById({var}.id())).contains({var});
-        assertThat(repository.findAll()).containsExactly({var});
-    }}
-
-    @Test
-    void findByIdIsEmptyForAnUnknownId() {{
-        assertThat(repository.findById("nope")).isEmpty();
-    }}
-
-    @Test
-    void saveReplacesARowWithTheSameId() {{
-        repository.save(sample());
-        repository.save(sample());
-
-        assertThat(repository.findAll()).hasSize(1);
-    }}
-
-    @Test
-    void deleteReportsWhetherARowWentAway() {{
-        var {var} = sample();
-        repository.save({var});
-
-        assertThat(repository.deleteById({var}.id())).isTrue();
-        assertThat(repository.deleteById({var}.id())).isFalse();
-    }}
-
-    /** TODO: build a {name} to round-trip. */
-    private {name} sample() {{
-        throw new UnsupportedOperationException("TODO: build a sample {name}");
+    void roundTripsThroughTheRealDatabase() {{
+        throw new UnsupportedOperationException("todo");
     }}
 }}
-"#,
-        table = format!("{}s", name.to_lowercase())
+"#
     )
 }
 
@@ -2610,7 +2444,8 @@ class Sqlite{name}RepositoryTest {{
 fn parse_variants(args: &[String]) -> Result<Vec<String>> {
     if args.is_empty() {
         return Err(
-            "a sealed type needs at least one variant, e.g. `generate sealed Result Ok Failed`".to_string()
+            "a sealed type needs at least one variant, e.g. `generate sealed Result Ok Failed`"
+                .to_string(),
         );
     }
     let mut variants: Vec<String> = Vec::new();
@@ -2631,7 +2466,11 @@ fn sealed_java(pkg: &str, name: &str, variants: &[String]) -> String {
     // The variants are nested, so the permits clause has to name them
     // qualified. (It could be omitted entirely for same-file subtypes, but
     // spelling it out is what makes the closed set obvious to a reader.)
-    let permits = variants.iter().map(|v| format!("{name}.{v}")).collect::<Vec<_>>().join(", ");
+    let permits = variants
+        .iter()
+        .map(|v| format!("{name}.{v}"))
+        .collect::<Vec<_>>()
+        .join(", ");
     let mut out = format!("package {pkg};\n\n");
     out += "/**\n";
     out += &format!(" * The outcomes a {name} can have.\n");
@@ -2647,7 +2486,10 @@ fn sealed_java(pkg: &str, name: &str, variants: &[String]) -> String {
     out += " * {@snippet :\n";
     out += &format!(" * var summary = switch (result) {{\n");
     for variant in variants {
-        out += &format!(" *     case {variant} v -> \"{}\";\n", variant.to_lowercase());
+        out += &format!(
+            " *     case {variant} v -> \"{}\";\n",
+            variant.to_lowercase()
+        );
     }
     out += " * };\n";
     out += " * }\n";
@@ -2674,7 +2516,10 @@ fn sealed_test(pkg: &str, name: &str, variants: &[String]) -> String {
     out += &format!("    private String describe({name} result) {{\n");
     out += "        return switch (result) {\n";
     for variant in variants {
-        out += &format!("            case {name}.{variant} v -> \"{}\";\n", variant.to_lowercase());
+        out += &format!(
+            "            case {name}.{variant} v -> \"{}\";\n",
+            variant.to_lowercase()
+        );
     }
     out += "        };\n";
     out += "    }\n";
@@ -2902,14 +2747,18 @@ fn register_command(root: &Path, base: &str, name: &str) -> Result<()> {
         }
     };
 
-    let source = fs::read_to_string(dispatcher).map_err(|e| format!("failed to read {}: {e}", dispatcher.display()))?;
+    let source = fs::read_to_string(dispatcher)
+        .map_err(|e| format!("failed to read {}: {e}", dispatcher.display()))?;
     let command_class = format!("{name}Command");
     // Scoped to the registry body, not the whole file: the dispatcher's own
     // Javadoc shows an example `commands.put(...)` line, and a whole-file
     // `contains` matched *that* -- so generating a command with the same name
     // as the example silently skipped registration.
     if registry_body(&source).is_some_and(|body| body.contains(&format!("{command_class}::run"))) {
-        println!("  exists  {command_class} is already registered in {}", dispatcher.display());
+        println!(
+            "  exists  {command_class} is already registered in {}",
+            dispatcher.display()
+        );
         return Ok(());
     }
 
@@ -2918,7 +2767,11 @@ fn register_command(root: &Path, base: &str, name: &str) -> Result<()> {
     let dispatcher_pkg = package_of(&source).unwrap_or_else(|| base.to_string());
     let command_pkg = subpackage(base, layout::CLI);
 
-    let Some(spliced) = splice_registration(&source, &command_class, &import_of(&dispatcher_pkg, &command_pkg, &command_class)) else {
+    let Some(spliced) = splice_registration(
+        &source,
+        &command_class,
+        &import_of(&dispatcher_pkg, &command_pkg, &command_class),
+    ) else {
         println!(
             "note: could not find the `return commands;` line in {} -- add {command_class} by hand",
             dispatcher.display()
@@ -2926,7 +2779,8 @@ fn register_command(root: &Path, base: &str, name: &str) -> Result<()> {
         return Ok(());
     };
 
-    fs::write(dispatcher, spliced).map_err(|e| format!("failed to write {}: {e}", dispatcher.display()))?;
+    fs::write(dispatcher, spliced)
+        .map_err(|e| format!("failed to write {}: {e}", dispatcher.display()))?;
     println!("registered {command_class} in {}", dispatcher.display());
     Ok(())
 }
@@ -2940,13 +2794,18 @@ fn find_dispatchers(dir: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     let mut stack = vec![dir.to_path_buf()];
     while let Some(current) = stack.pop() {
-        let Ok(entries) = fs::read_dir(&current) else { continue };
+        let Ok(entries) = fs::read_dir(&current) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
                 stack.push(path);
             } else if path.extension().is_some_and(|e| e == "java") {
-                if fs::read_to_string(&path).map(|s| is_dispatcher(&s)).unwrap_or(false) {
+                if fs::read_to_string(&path)
+                    .map(|s| is_dispatcher(&s))
+                    .unwrap_or(false)
+                {
                     found.push(path);
                 }
             }
@@ -2972,9 +2831,13 @@ pub(crate) fn is_dispatcher(source: &str) -> bool {
 }
 
 fn package_of(source: &str) -> Option<String> {
-    source
-        .lines()
-        .find_map(|line| line.trim().strip_prefix("package ")?.trim().strip_suffix(';').map(|s| s.trim().to_string()))
+    source.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("package ")?
+            .trim()
+            .strip_suffix(';')
+            .map(|s| s.trim().to_string())
+    })
 }
 
 /// Insert the registration immediately above `return commands;`, matching that
@@ -2988,7 +2851,9 @@ fn splice_registration(source: &str, command_class: &str, import: &str) -> Optio
 
     let mut out = String::with_capacity(source.len() + import.len() + 96);
     out.push_str(&source[..line_start]);
-    out.push_str(&format!("{indent}commands.put({command_class}.NAME, {command_class}::run);\n"));
+    out.push_str(&format!(
+        "{indent}commands.put({command_class}.NAME, {command_class}::run);\n"
+    ));
     out.push_str(&source[line_start..]);
 
     if import.is_empty() {
@@ -3005,12 +2870,80 @@ fn splice_registration(source: &str, command_class: &str, import: &str) -> Optio
     Some(normalize_imports(&with_import))
 }
 
+// ---- migration: the next forward-only SQL file. ----
+
+fn generate_migration(root: &Path, description: &str) -> Result<()> {
+    let description = sql_name(description)?;
+    let dir = root.join("src/main/resources/db/migration");
+    let version = next_migration_version(&dir)?;
+    let path = dir.join(format!("V{version:03}__{description}.sql"));
+    write_new_file(
+        &path,
+        "-- Forward-only migration. Write explicit SQL below.\n",
+    )?;
+    println!("created migration {}", path.display());
+    Ok(())
+}
+
+fn next_migration_version(dir: &Path) -> Result<u32> {
+    if !dir.exists() {
+        return Ok(1);
+    }
+    let entries =
+        fs::read_dir(dir).map_err(|e| format!("failed to read {}: {e}", dir.display()))?;
+    let mut highest = 0;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let digits = name
+            .strip_prefix('V')
+            .and_then(|rest| rest.split_once("__").map(|(version, _)| version))
+            .or_else(|| name.split_once('_').map(|(version, _)| version));
+        if let Some(version) = digits.and_then(|value| value.parse::<u32>().ok()) {
+            highest = highest.max(version);
+        }
+    }
+    highest
+        .checked_add(1)
+        .ok_or_else(|| "migration version overflow".to_string())
+}
+
+fn sql_name(value: &str) -> Result<String> {
+    let mut out = String::new();
+    let mut previous_was_lower_or_digit = false;
+    for ch in value.trim().chars() {
+        if ch.is_ascii_alphanumeric() {
+            if ch.is_ascii_uppercase() && previous_was_lower_or_digit && !out.ends_with('_') {
+                out.push('_');
+            }
+            out.push(ch.to_ascii_lowercase());
+            previous_was_lower_or_digit = ch.is_ascii_lowercase() || ch.is_ascii_digit();
+        } else if matches!(ch, '-' | '_' | ' ') {
+            if !out.is_empty() && !out.ends_with('_') {
+                out.push('_');
+            }
+            previous_was_lower_or_digit = false;
+        } else {
+            return Err(format!("'{value}' is not a usable SQL migration name"));
+        }
+    }
+    while out.ends_with('_') {
+        out.pop();
+    }
+    if out.is_empty() {
+        Err("a migration needs a description, e.g. `jails g migration create_rewards`".to_string())
+    } else {
+        Ok(out)
+    }
+}
+
 // ---- cases: a markdown checklist in, a pending JUnit class out. ----
 
 /// Turn a brief's checklist into a `@Disabled` test class -- the todo list you
 /// delete one `@Disabled` at a time.
 fn generate_cases(root: &Path, pkg: &str, brief: &Path) -> Result<()> {
-    let text = fs::read_to_string(brief).map_err(|e| format!("failed to read {}: {e}", brief.display()))?;
+    let text = fs::read_to_string(brief)
+        .map_err(|e| format!("failed to read {}: {e}", brief.display()))?;
     let cases = parse_cases(&text);
     if cases.is_empty() {
         return Err(format!(
@@ -3025,7 +2958,12 @@ fn generate_cases(root: &Path, pkg: &str, brief: &Path) -> Result<()> {
         return Err(format!("{} already exists", path.display()));
     }
     write_new_file(&path, &cases_java(pkg, &class, brief, &cases))?;
-    println!("created cases {} ({} case{})", path.display(), cases.len(), if cases.len() == 1 { "" } else { "s" });
+    println!(
+        "created cases {} ({} case{})",
+        path.display(),
+        cases.len(),
+        if cases.len() == 1 { "" } else { "s" }
+    );
     Ok(())
 }
 
@@ -3063,7 +3001,13 @@ fn parse_cases(markdown: &str) -> Vec<String> {
 /// The body under the first heading that looks like a list of expectations,
 /// up to the next heading of the same or a higher level.
 fn cases_section(markdown: &str) -> Option<String> {
-    const MARKERS: [&str; 5] = ["acceptance", "criteria", "cases", "checklist", "requirements"];
+    const MARKERS: [&str; 5] = [
+        "acceptance",
+        "criteria",
+        "cases",
+        "checklist",
+        "requirements",
+    ];
 
     let mut lines = markdown.lines().enumerate();
     let (start, level) = loop {
@@ -3099,11 +3043,17 @@ fn list_item(line: &str) -> Option<&str> {
         .or_else(|| line.strip_prefix("+ "))
         .or_else(|| {
             let digits: String = line.chars().take_while(|c| c.is_ascii_digit()).collect();
-            (!digits.is_empty()).then(|| line[digits.len()..].strip_prefix(". ")).flatten()
+            (!digits.is_empty())
+                .then(|| line[digits.len()..].strip_prefix(". "))
+                .flatten()
         })?;
     let rest = rest.trim();
     // `- [ ]` / `- [x]` checkboxes: the box is not part of the case.
-    let rest = rest.strip_prefix("[ ]").or_else(|| rest.strip_prefix("[x]")).or_else(|| rest.strip_prefix("[X]")).unwrap_or(rest);
+    let rest = rest
+        .strip_prefix("[ ]")
+        .or_else(|| rest.strip_prefix("[x]"))
+        .or_else(|| rest.strip_prefix("[X]"))
+        .unwrap_or(rest);
     Some(rest.trim())
 }
 
@@ -3139,10 +3089,12 @@ fn clean_markdown(text: &str) -> String {
 /// separators), with a leading `Case` when it starts with a digit, since a Java
 /// identifier cannot.
 fn cases_class_name(brief: &Path) -> Result<String> {
-    let stem = brief
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .ok_or_else(|| format!("{} has no file name to derive a class from", brief.display()))?;
+    let stem = brief.file_stem().and_then(|s| s.to_str()).ok_or_else(|| {
+        format!(
+            "{} has no file name to derive a class from",
+            brief.display()
+        )
+    })?;
 
     let mut class = String::new();
     let mut capitalize_next = true;
@@ -3159,7 +3111,10 @@ fn cases_class_name(brief: &Path) -> Result<String> {
         }
     }
     if class.is_empty() {
-        return Err(format!("cannot derive a class name from {}", brief.display()));
+        return Err(format!(
+            "cannot derive a class name from {}",
+            brief.display()
+        ));
     }
     if class.starts_with(|c: char| c.is_ascii_digit()) {
         class.insert_str(0, "Case");
@@ -3209,7 +3164,10 @@ fn cases_java(pkg: &str, class: &str, brief: &Path, cases: &[String]) -> String 
     out += " * than passing vacuously, and the class-level @Disabled keeps the suite green\n";
     out += " * meanwhile. Delete one @Disabled, make that case pass, move to the next.\n";
     out += " */\n";
-    out += &format!("@DisplayName(\"{}\")\n", clean_markdown(&brief.file_stem().unwrap_or_default().to_string_lossy()));
+    out += &format!(
+        "@DisplayName(\"{}\")\n",
+        clean_markdown(&brief.file_stem().unwrap_or_default().to_string_lossy())
+    );
     out += "@Disabled(\"todo: implement these cases\")\n";
     out += &format!("class {class} {{\n");
 
@@ -3246,7 +3204,10 @@ mod tests {
         let dir = std::env::temp_dir().join(format!(
             "jails-generate-test-{label}-{}-{:?}",
             std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         fs::create_dir_all(&dir).unwrap();
         dir
@@ -3262,22 +3223,33 @@ mod tests {
     #[test]
     fn field_type_maps_known_tokens() {
         assert_eq!(field_type("string").unwrap().0, "String");
-        assert_eq!(field_type("text").unwrap(), ("String", true, None));
+        assert_eq!(field_type("text").unwrap(), ("String", None));
         assert_eq!(field_type("int").unwrap().0, "Integer");
         assert_eq!(field_type("integer").unwrap().0, "Integer");
         assert_eq!(field_type("long").unwrap().0, "Long");
         assert_eq!(field_type("boolean").unwrap().0, "Boolean");
         assert_eq!(field_type("double").unwrap().0, "Double");
-        assert_eq!(field_type("date").unwrap(), ("LocalDate", false, Some("java.time.LocalDate")));
+        assert_eq!(
+            field_type("uuid").unwrap(),
+            ("UUID", Some("java.util.UUID"))
+        );
+        assert_eq!(
+            field_type("currency").unwrap(),
+            ("Currency", Some("java.util.Currency"))
+        );
+        assert_eq!(
+            field_type("date").unwrap(),
+            ("LocalDate", Some("java.time.LocalDate"))
+        );
         assert_eq!(
             field_type("datetime").unwrap(),
-            ("LocalDateTime", false, Some("java.time.LocalDateTime"))
+            ("LocalDateTime", Some("java.time.LocalDateTime"))
         );
     }
 
     #[test]
     fn field_type_rejects_unknown_tokens() {
-        assert!(field_type("uuid").is_err());
+        assert!(field_type("nope").is_err());
     }
 
     #[test]
@@ -3285,12 +3257,14 @@ mod tests {
         let fields = parse_fields(&["title:string".to_string(), "body:Text".to_string()]).unwrap();
         assert_eq!(fields[0].name, "title");
         assert_eq!(fields[0].java_type, "String");
-        assert!(!fields[0].needs_lob);
         // Capitalised means "a type this project owns", so `Text` is no longer
         // the built-in -- that is the whole point of the rule.
         assert_eq!(fields[1].java_type, "Text");
         assert!(fields[1].owned);
-        assert!(parse_fields(&["body:text".to_string()]).unwrap()[0].needs_lob);
+        assert_eq!(
+            parse_fields(&["body:text".to_string()]).unwrap()[0].java_type,
+            "String"
+        );
     }
 
     /// The Java spellings of the built-in types stay built-in: `id:String`
@@ -3318,10 +3292,19 @@ mod tests {
 
         assert!(src.contains("implements HttpHandler"), "{src}");
         assert!(src.contains(r#"PATH = "/work-items""#), "{src}");
-        assert!(src.contains("private final Service service"), "the service is a dependency: {src}");
+        assert!(
+            src.contains("private final Service service"),
+            "the service is a dependency: {src}"
+        );
         assert!(src.contains("error(404"), "{src}");
-        assert!(src.contains("error(422"), "well-formed but rejected is not a 400: {src}");
-        assert!(src.contains("ApiError"), "failures share one envelope: {src}");
+        assert!(
+            src.contains("error(422"),
+            "well-formed but rejected is not a 400: {src}"
+        );
+        assert!(
+            src.contains("ApiError"),
+            "failures share one envelope: {src}"
+        );
         assert!(!src.contains("java.sql"), "no storage in a handler: {src}");
     }
 
@@ -3330,7 +3313,10 @@ mod tests {
         let test = handler_test("com.example.demo.api", "WorkItem");
 
         assert!(test.contains("java.net.http.HttpClient"), "{test}");
-        assert!(test.contains("new InetSocketAddress(0)"), "an ephemeral port: {test}");
+        assert!(
+            test.contains("new InetSocketAddress(0)"),
+            "an ephemeral port: {test}"
+        );
         assert!(test.contains("isEqualTo(422)"), "{test}");
     }
 
@@ -3339,23 +3325,40 @@ mod tests {
     /// reader grepping for java.sql should find only the adapter.
     #[test]
     fn repository_port_is_free_of_jdbc() {
-        let src = repository_port("com.example.demo.app", "Transaction", "import com.example.demo.domain.Transaction;\n");
+        let src = repository_port(
+            "com.example.demo.app",
+            "Transaction",
+            "import com.example.demo.domain.Transaction;\n",
+        );
 
-        assert!(src.contains("public interface TransactionRepository"), "{src}");
-        assert!(src.contains("Optional<Transaction> findById(String id)"), "{src}");
+        assert!(
+            src.contains("public interface TransactionRepository"),
+            "{src}"
+        );
+        assert!(
+            src.contains("Optional<Transaction> findById(String id)"),
+            "{src}"
+        );
         assert!(src.contains("List<Transaction> findAll()"), "{src}");
         assert!(!src.contains("java.sql"), "not even in a comment: {src}");
     }
 
     #[test]
-    fn sqlite_adapter_uses_plain_jdbc_and_no_orm() {
-        let src = sqlite_repository("com.example.demo.adapters", "Transaction", "");
+    fn jdbc_adapter_uses_plain_jdbc_and_no_orm() {
+        let src = jdbc_repository("com.example.demo.adapters", "Transaction", "");
 
         assert!(src.contains("implements TransactionRepository"), "{src}");
         assert!(src.contains("connection.prepareStatement"), "{src}");
         assert!(src.contains("try (var query"), "try-with-resources: {src}");
-        assert!(src.contains("order by id"), "unordered findAll would flake a test: {src}");
-        for forbidden in ["hibernate", "jakarta.persistence", "JpaRepository", "org.springframework"] {
+        assert!(
+            src.contains("order by id"),
+            "unordered findAll would flake a test: {src}"
+        );
+        assert!(
+            src.contains("\"\"\""),
+            "SQL should be visible in text blocks: {src}"
+        );
+        for forbidden in ["org.springframework"] {
             assert!(!src.contains(forbidden), "{forbidden} should not appear");
         }
     }
@@ -3363,12 +3366,12 @@ mod tests {
     /// jails cannot know the columns, so map/bind are TODOs -- and a test that
     /// asserts on a TODO is noise until they are written.
     #[test]
-    fn sqlite_adapter_test_is_disabled_until_the_mapping_is_written() {
-        let test = sqlite_repository_test("com.example.demo.adapters", "Transaction", "");
+    fn jdbc_adapter_test_is_disabled_until_the_mapping_is_written() {
+        let test = jdbc_repository_test("com.example.demo.adapters", "Transaction");
 
         assert!(test.contains("@Disabled"), "{test}");
-        assert!(test.contains("jdbc:sqlite::memory:"), "{test}");
-        assert!(test.contains("savesAndReadsBack"), "{test}");
+        assert!(test.contains("class JdbcTransactionRepositoryIT"), "{test}");
+        assert!(test.contains("roundTripsThroughTheRealDatabase"), "{test}");
     }
 
     #[test]
@@ -3377,9 +3380,18 @@ mod tests {
         let src = sealed_java("com.example.demo", "VerificationResult", &variants);
 
         // Nested variants have to be named qualified in the permits clause.
-        assert!(src.contains("permits VerificationResult.Verified, VerificationResult.Timeout"), "{src}");
-        assert!(src.contains("record Verified() implements VerificationResult"), "{src}");
-        assert!(src.contains("record Timeout() implements VerificationResult"), "{src}");
+        assert!(
+            src.contains("permits VerificationResult.Verified, VerificationResult.Timeout"),
+            "{src}"
+        );
+        assert!(
+            src.contains("record Verified() implements VerificationResult"),
+            "{src}"
+        );
+        assert!(
+            src.contains("record Timeout() implements VerificationResult"),
+            "{src}"
+        );
     }
 
     /// The companion test switches without a `default`, so adding a variant
@@ -3391,13 +3403,19 @@ mod tests {
 
         assert!(test.contains("switch (result)"), "{test}");
         assert!(test.contains("case Result.Ok v ->"), "{test}");
-        assert!(!test.contains("default ->"), "an exhaustive switch must not have a default: {test}");
+        assert!(
+            !test.contains("default ->"),
+            "an exhaustive switch must not have a default: {test}"
+        );
     }
 
     #[test]
     fn parse_variants_rejects_unusable_names() {
         assert!(parse_variants(&[]).is_err());
-        assert!(parse_variants(&["ok".to_string(), "Ok".to_string()]).is_err(), "duplicate after capitalising");
+        assert!(
+            parse_variants(&["ok".to_string(), "Ok".to_string()]).is_err(),
+            "duplicate after capitalising"
+        );
         assert!(parse_variants(&["not a name".to_string()]).is_err());
     }
 
@@ -3437,13 +3455,26 @@ mod tests {
     /// bucket).
     #[test]
     fn collection_components_are_copied_and_default_to_empty() {
-        let fields = parse_fields(&["matched:list<Match>".to_string(), "rates:map<string,double>".to_string()]).unwrap();
+        let fields = parse_fields(&[
+            "matched:list<Match>".to_string(),
+            "rates:map<string,double>".to_string(),
+        ])
+        .unwrap();
         let src = value_java("com.example.demo", "Result", &fields);
 
         assert!(src.contains("List<Match> matched"), "{src}");
-        assert!(src.contains("matched = matched == null ? List.of() : List.copyOf(matched);"), "{src}");
-        assert!(src.contains("rates = rates == null ? Map.of() : Map.copyOf(rates);"), "{src}");
-        assert!(!src.contains("requireNonNull(matched"), "a collection is defaulted, not rejected: {src}");
+        assert!(
+            src.contains("matched = matched == null ? List.of() : List.copyOf(matched);"),
+            "{src}"
+        );
+        assert!(
+            src.contains("rates = rates == null ? Map.of() : Map.copyOf(rates);"),
+            "{src}"
+        );
+        assert!(
+            !src.contains("requireNonNull(matched"),
+            "a collection is defaulted, not rejected: {src}"
+        );
     }
 
     #[test]
@@ -3506,17 +3537,6 @@ mod tests {
     }
 
     #[test]
-    fn has_lombok_checks_pom_for_the_dependency() {
-        let root = scratch("lombok");
-        fs::write(root.join("pom.xml"), "<project><artifactId>lombok</artifactId></project>").unwrap();
-        assert!(has_lombok(&root));
-
-        let root2 = scratch("no-lombok");
-        fs::write(root2.join("pom.xml"), "<project></project>").unwrap();
-        assert!(!has_lombok(&root2));
-    }
-
-    #[test]
     fn mockmvc_import_picks_legacy_package_for_boot_3() {
         let root = scratch("boot3");
         fs::write(
@@ -3554,46 +3574,18 @@ mod tests {
     }
 
     #[test]
-    fn entity_java_without_lombok_includes_plain_getters_and_setters() {
-        let fields = parse_fields(&["title:string".to_string(), "body:text".to_string()]).unwrap();
-        let src = entity_java("com.example.blog", "Post", &fields, false);
-
-        assert!(src.contains("public class Post {"));
-        assert!(src.contains("@Id"));
-        assert!(src.contains("@GeneratedValue"));
-        assert!(src.contains("private String title;"));
-        assert!(src.contains("@Lob"));
-        assert!(src.contains("private String body;"));
-        assert!(src.contains("public String getTitle()"));
-        assert!(src.contains("public void setTitle(String title)"));
-        assert!(!src.contains("@Data"));
-    }
-
-    #[test]
-    fn entity_java_with_lombok_uses_data_and_skips_getters() {
-        let fields = parse_fields(&["title:string".to_string()]).unwrap();
-        let src = entity_java("com.example.blog", "Post", &fields, true);
-
-        assert!(src.contains("import lombok.Data;"));
-        assert!(src.contains("@Data"));
-        assert!(!src.contains("getTitle"));
-    }
-
-    #[test]
-    fn entity_java_imports_time_types_for_date_fields() {
-        let fields = parse_fields(&["postedAt:datetime".to_string()]).unwrap();
-        let src = entity_java("com.example.blog", "Post", &fields, false);
-        assert!(src.contains("import java.time.LocalDateTime;"));
-        assert!(src.contains("private LocalDateTime postedAt;"));
-    }
-
-    #[test]
     fn stub_class_emits_a_plain_final_class_with_no_framework_in_it() {
         let src = stub_class("gym", "MoneyMoved");
 
-        assert_eq!(src, "package gym;\n\npublic final class MoneyMoved {\n}\n", "{src}");
-        for forbidden in ["jakarta.persistence", "@Entity", "org.springframework", "record "] {
-            assert!(!src.contains(forbidden), "{forbidden} should not appear in a plain class");
+        assert_eq!(
+            src, "package gym;\n\npublic final class MoneyMoved {\n}\n",
+            "{src}"
+        );
+        for forbidden in ["@", "org.springframework", "record "] {
+            assert!(
+                !src.contains(forbidden),
+                "{forbidden} should not appear in a plain class"
+            );
         }
     }
 
@@ -3605,25 +3597,41 @@ mod tests {
         let src = class_test("gym", "MoneyMoved");
 
         assert!(src.contains("class MoneyMovedTest {"), "{src}");
-        assert!(src.contains("MoneyMoved moneyMoved = new MoneyMoved();"), "{src}");
+        assert!(
+            src.contains("MoneyMoved moneyMoved = new MoneyMoved();"),
+            "{src}"
+        );
         assert!(src.contains("assertThat(moneyMoved).isNotNull();"), "{src}");
         assert!(src.contains("import org.junit.jupiter.api.Test;"), "{src}");
     }
 
     #[test]
     fn record_java_emits_a_record_with_a_null_rejecting_compact_constructor() {
-        let fields = parse_fields(&["amount:long".to_string(), "currency:string".to_string()]).unwrap();
+        let fields =
+            parse_fields(&["amount:long".to_string(), "currency:string".to_string()]).unwrap();
         let src = record_java("com.example.demo", "Money", &fields);
 
-        // Primitive components, not the boxed types the entity table uses: a
+        // Primitive components make null impossible for numeric/boolean values: a
         // `long` cannot be null, so it needs neither the box nor the check.
-        assert!(src.contains("public record Money(long amount, String currency) {"), "{src}");
-        assert!(src.contains("public Money {"), "expected a compact constructor");
-        assert!(!src.contains("requireNonNull(amount"), "a primitive cannot be null");
+        assert!(
+            src.contains("public record Money(long amount, String currency) {"),
+            "{src}"
+        );
+        assert!(
+            src.contains("public Money {"),
+            "expected a compact constructor"
+        );
+        assert!(
+            !src.contains("requireNonNull(amount"),
+            "a primitive cannot be null"
+        );
         assert!(src.contains(r#"Objects.requireNonNull(currency, "currency");"#));
-        // The plain-Java counterpart to `entity`: no Spring, no JPA.
-        for forbidden in ["jakarta.persistence", "@Entity", "@Id", "org.springframework"] {
-            assert!(!src.contains(forbidden), "{forbidden} should not appear in a plain record");
+        // Plain Java: no framework persistence annotations.
+        for forbidden in ["@", "org.springframework"] {
+            assert!(
+                !src.contains(forbidden),
+                "{forbidden} should not appear in a plain record"
+            );
         }
     }
 
@@ -3634,8 +3642,14 @@ mod tests {
         let fields = parse_fields(&["amount:long".to_string(), "count:int".to_string()]).unwrap();
         let src = record_java("com.example.demo", "Tally", &fields);
 
-        assert!(src.contains("public record Tally(long amount, int count) {"), "{src}");
-        assert!(!src.contains("public Tally {"), "nothing to validate: {src}");
+        assert!(
+            src.contains("public record Tally(long amount, int count) {"),
+            "{src}"
+        );
+        assert!(
+            !src.contains("public Tally {"),
+            "nothing to validate: {src}"
+        );
         assert!(!src.contains("import java.util.Objects;"));
     }
 
@@ -3663,8 +3677,14 @@ mod tests {
 
     #[test]
     fn record_test_covers_the_accessors_and_the_null_rejection() {
-        let fields = parse_fields(&["amount:long".to_string(), "currency:string".to_string()]).unwrap();
-        let test = record_test(Path::new("/nonexistent"), "com.example.demo", "Money", &fields);
+        let fields =
+            parse_fields(&["amount:long".to_string(), "currency:string".to_string()]).unwrap();
+        let test = record_test(
+            Path::new("/nonexistent"),
+            "com.example.demo",
+            "Money",
+            &fields,
+        );
 
         assert!(test.contains("class MoneyTest"));
         assert!(test.contains("new Money(1L, \"sample\")"));
@@ -3682,7 +3702,9 @@ mod tests {
         let test = record_test(Path::new("/nonexistent"), "com.example.demo", "Marker", &[]);
 
         assert!(!test.contains("assertThatNullPointerException"));
-        assert!(!test.contains("import static org.assertj.core.api.Assertions.assertThatNullPointerException;"));
+        assert!(!test.contains(
+            "import static org.assertj.core.api.Assertions.assertThatNullPointerException;"
+        ));
         assert!(test.contains("new Marker()"));
     }
 
@@ -3692,7 +3714,9 @@ mod tests {
 
         assert!(src.contains("public final class GreetCommand"));
         assert!(src.contains(r#"public static final String NAME = "greet";"#));
-        assert!(src.contains("public static int run(PrintStream out, PrintStream err, String... args)"));
+        assert!(
+            src.contains("public static int run(PrintStream out, PrintStream err, String... args)")
+        );
         // A CLI command has no business depending on Spring.
         assert!(!src.contains("org.springframework"));
 
@@ -3701,8 +3725,14 @@ mod tests {
         // Only the class body is checked -- the Javadoc deliberately shows a
         // `main` that does call System.exit, since that is where it belongs.
         let body = &src[src.find("public final class").unwrap()..];
-        assert!(!body.contains("System.exit"), "run() must not exit the process");
-        assert!(!body.contains("System.out"), "output should go to the injected stream");
+        assert!(
+            !body.contains("System.exit"),
+            "run() must not exit the process"
+        );
+        assert!(
+            !body.contains("System.out"),
+            "output should go to the injected stream"
+        );
     }
 
     #[test]
@@ -3711,36 +3741,22 @@ mod tests {
 
         assert!(test.contains("class GreetCommandTest"));
         assert!(test.contains("ByteArrayOutputStream"));
-        assert!(test.contains("GreetCommand.run(new PrintStream(out), new PrintStream(err), args)"));
+        assert!(
+            test.contains("GreetCommand.run(new PrintStream(out), new PrintStream(err), args)")
+        );
         assert!(test.contains("GreetCommand.USAGE_ERROR"));
     }
 
     #[test]
     fn stub_templates_use_the_package_and_class_name() {
-        assert!(stub_controller("com.example.blog", "Post").contains("public class PostController"));
+        assert!(
+            stub_controller("com.example.blog", "Post").contains("public class PostController")
+        );
         assert!(stub_service("com.example.blog", "Post").contains("public class PostService"));
-        assert!(stub_repository("com.example.blog", "Post", "").contains("extends JpaRepository<Post, Long>"));
+        assert!(
+            interface_java("com.example.blog", "PostStore").contains("public interface PostStore")
+        );
         assert!(stub_test("com.example.blog", "Post").contains("class PostTest"));
-    }
-
-    #[test]
-    fn service_full_wraps_repository_crud() {
-        let src = service_full("com.example.blog", "Post", "");
-        assert!(src.contains("findAll()"));
-        assert!(src.contains("findById(Long id)"));
-        assert!(src.contains("save(Post post)"));
-        assert!(src.contains("deleteById(Long id)"));
-        assert!(src.contains("existsById(id)"));
-    }
-
-    #[test]
-    fn controller_full_exposes_full_crud_routes() {
-        let src = controller_full("com.example.blog", "Post", "posts", "");
-        assert!(src.contains(r#"@RequestMapping("/posts")"#));
-        assert!(src.contains("@GetMapping"));
-        assert!(src.contains("@PostMapping"));
-        assert!(src.contains("@PutMapping(\"/{id}\")"));
-        assert!(src.contains("@DeleteMapping(\"/{id}\")"));
     }
 
     #[test]
@@ -3758,21 +3774,61 @@ mod tests {
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        let result = generate(ArtifactKind::Scaffold, "post", &["title:string".to_string()], None);
+        let result = generate(
+            ArtifactKind::Scaffold,
+            "post",
+            &["title:string".to_string()],
+            None,
+        );
         std::env::set_current_dir(original_cwd).unwrap();
         result.unwrap();
 
-        assert!(root.join("src/main/java/com/example/blog/domain/Post.java").is_file());
-        assert!(root.join("src/test/java/com/example/blog/domain/PostTest.java").is_file());
-        assert!(root.join("src/main/java/com/example/blog/repository/PostRepository.java").is_file());
-        assert!(root.join("src/main/java/com/example/blog/service/PostService.java").is_file());
-        assert!(root.join("src/main/java/com/example/blog/web/PostController.java").is_file());
-        assert!(root.join("src/test/java/com/example/blog/web/PostControllerTest.java").is_file());
+        assert!(
+            root.join("src/main/java/com/example/blog/domain/Post.java")
+                .is_file()
+        );
+        assert!(
+            root.join("src/test/java/com/example/blog/domain/PostTest.java")
+                .is_file()
+        );
+        assert!(
+            root.join("src/main/java/com/example/blog/app/PostRepository.java")
+                .is_file()
+        );
+        assert!(
+            root.join("src/main/java/com/example/blog/adapters/JdbcPostRepository.java")
+                .is_file()
+        );
+        assert!(
+            root.join("src/test/java/com/example/blog/adapters/JdbcPostRepositoryIT.java")
+                .is_file()
+        );
+        assert!(
+            root.join("src/main/java/com/example/blog/service/PostService.java")
+                .is_file()
+        );
+        assert!(
+            root.join("src/main/java/com/example/blog/web/PostController.java")
+                .is_file()
+        );
+        assert!(
+            root.join("src/test/java/com/example/blog/web/PostControllerTest.java")
+                .is_file()
+        );
 
-        // Crossing a package boundary costs an import; the scaffold has to pay it.
-        let service = fs::read_to_string(root.join("src/main/java/com/example/blog/service/PostService.java")).unwrap();
-        assert!(service.contains("import com.example.blog.domain.Post;"), "{service}");
-        assert!(service.contains("import com.example.blog.repository.PostRepository;"), "{service}");
+        let adapter = fs::read_to_string(
+            root.join("src/main/java/com/example/blog/adapters/JdbcPostRepository.java"),
+        )
+        .unwrap();
+        assert!(
+            adapter.contains("import com.example.blog.domain.Post;"),
+            "{adapter}"
+        );
+        assert!(
+            adapter.contains("import com.example.blog.app.PostRepository;"),
+            "{adapter}"
+        );
+        assert!(!adapter.contains("org.springframework"), "{adapter}");
     }
 
     /// Regression test: standalone `generate controller` used to write only
@@ -3797,10 +3853,17 @@ mod tests {
         std::env::set_current_dir(original_cwd).unwrap();
         result.unwrap();
 
-        assert!(root.join("src/main/java/com/example/blog/web/HealthController.java").is_file());
+        assert!(
+            root.join("src/main/java/com/example/blog/web/HealthController.java")
+                .is_file()
+        );
         let test_file = root.join("src/test/java/com/example/blog/web/HealthControllerTest.java");
         assert!(test_file.is_file(), "expected {}", test_file.display());
-        assert!(fs::read_to_string(test_file).unwrap().contains("class HealthControllerTest"));
+        assert!(
+            fs::read_to_string(test_file)
+                .unwrap()
+                .contains("class HealthControllerTest")
+        );
     }
 
     #[test]
@@ -3822,8 +3885,14 @@ mod tests {
         std::env::set_current_dir(original_cwd).unwrap();
         result.unwrap();
 
-        assert!(root.join("src/main/java/com/example/blog/service/BillingService.java").is_file());
-        assert!(root.join("src/test/java/com/example/blog/service/BillingServiceTest.java").is_file());
+        assert!(
+            root.join("src/main/java/com/example/blog/service/BillingService.java")
+                .is_file()
+        );
+        assert!(
+            root.join("src/test/java/com/example/blog/service/BillingServiceTest.java")
+                .is_file()
+        );
     }
 
     #[test]
@@ -3841,12 +3910,22 @@ mod tests {
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        let result = generate(ArtifactKind::Repository, "widget", &[], None);
+        let result = generate(ArtifactKind::Repo, "widget", &[], None);
         std::env::set_current_dir(original_cwd).unwrap();
         result.unwrap();
 
-        assert!(root.join("src/main/java/com/example/blog/repository/WidgetRepository.java").is_file());
-        assert!(!root.join("src/test/java/com/example/blog/repository/WidgetRepositoryTest.java").exists());
+        assert!(
+            root.join("src/main/java/com/example/blog/app/WidgetRepository.java")
+                .is_file()
+        );
+        assert!(
+            root.join("src/main/java/com/example/blog/adapters/JdbcWidgetRepository.java")
+                .is_file()
+        );
+        assert!(
+            root.join("src/test/java/com/example/blog/adapters/JdbcWidgetRepositoryIT.java")
+                .is_file()
+        );
     }
 
     /// `record` and `command` target plain Maven projects, whose entry point
@@ -3859,20 +3938,41 @@ mod tests {
         let src = root.join("src/main/java/com/example/demo");
         fs::create_dir_all(&src).unwrap();
         fs::write(root.join("pom.xml"), "<project></project>").unwrap();
-        fs::write(src.join("App.java"), "package com.example.demo;\n\npublic class App {}\n").unwrap();
+        fs::write(
+            src.join("App.java"),
+            "package com.example.demo;\n\npublic class App {}\n",
+        )
+        .unwrap();
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        let record = generate(ArtifactKind::Record, "money", &["amount:long".to_string()], None);
+        let record = generate(
+            ArtifactKind::Record,
+            "money",
+            &["amount:long".to_string()],
+            None,
+        );
         let command = generate(ArtifactKind::Command, "greet", &[], None);
         std::env::set_current_dir(original_cwd).unwrap();
         record.unwrap();
         command.unwrap();
 
-        assert!(root.join("src/main/java/com/example/demo/domain/Money.java").is_file());
-        assert!(root.join("src/test/java/com/example/demo/domain/MoneyTest.java").is_file());
-        assert!(root.join("src/main/java/com/example/demo/cli/GreetCommand.java").is_file());
-        assert!(root.join("src/test/java/com/example/demo/cli/GreetCommandTest.java").is_file());
+        assert!(
+            root.join("src/main/java/com/example/demo/domain/Money.java")
+                .is_file()
+        );
+        assert!(
+            root.join("src/test/java/com/example/demo/domain/MoneyTest.java")
+                .is_file()
+        );
+        assert!(
+            root.join("src/main/java/com/example/demo/cli/GreetCommand.java")
+                .is_file()
+        );
+        assert!(
+            root.join("src/test/java/com/example/demo/cli/GreetCommandTest.java")
+                .is_file()
+        );
     }
 
     #[test]
@@ -3882,7 +3982,11 @@ mod tests {
         let src = root.join("src/main/java/com/example/demo");
         fs::create_dir_all(&src).unwrap();
         fs::write(root.join("pom.xml"), "<project></project>").unwrap();
-        fs::write(src.join("App.java"), "package com.example.demo;\n\npublic class App {}\n").unwrap();
+        fs::write(
+            src.join("App.java"),
+            "package com.example.demo;\n\npublic class App {}\n",
+        )
+        .unwrap();
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
@@ -3892,33 +3996,56 @@ mod tests {
 
         result.unwrap();
         assert!(!src.join("GreetCommand.java").exists());
-        assert!(!root.join("src/test/java/com/example/demo/GreetCommandTest.java").exists());
+        assert!(
+            !root
+                .join("src/test/java/com/example/demo/GreetCommandTest.java")
+                .exists()
+        );
         assert!(src.join("App.java").is_file());
     }
 
-    /// A record and an entity are the same named type in two shapes, so
-    /// generating one and destroying "the other" clears the same two paths --
-    /// and `generate` still refuses to write over either.
     #[test]
-    fn record_and_entity_occupy_the_same_paths() {
+    fn duplicate_record_refuses_to_overwrite_the_first() {
         let _guard = CWD_LOCK.lock().unwrap();
-        let root = scratch("record-entity-paths");
+        let root = scratch("duplicate-record-paths");
         let src = root.join("src/main/java/com/example/demo");
         fs::create_dir_all(&src).unwrap();
         fs::write(root.join("pom.xml"), "<project></project>").unwrap();
-        fs::write(src.join("App.java"), "package com.example.demo;\n\npublic class App {}\n").unwrap();
+        fs::write(
+            src.join("App.java"),
+            "package com.example.demo;\n\npublic class App {}\n",
+        )
+        .unwrap();
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        generate(ArtifactKind::Record, "tag", &["name:string".to_string()], None).unwrap();
-        let clash = generate(ArtifactKind::Entity, "tag", &["name:string".to_string()], None);
+        generate(
+            ArtifactKind::Record,
+            "tag",
+            &["name:string".to_string()],
+            None,
+        )
+        .unwrap();
+        let clash = generate(
+            ArtifactKind::Record,
+            "tag",
+            &["name:string".to_string()],
+            None,
+        );
         let result = destroy(ArtifactKind::Record, "tag", true, None);
         std::env::set_current_dir(original_cwd).unwrap();
 
-        assert!(clash.is_err(), "generate must not overwrite the record with an entity");
+        assert!(
+            clash.is_err(),
+            "generate must not overwrite an existing record"
+        );
         result.unwrap();
         assert!(!src.join("Tag.java").exists());
-        assert!(!root.join("src/test/java/com/example/demo/TagTest.java").exists());
+        assert!(
+            !root
+                .join("src/test/java/com/example/demo/TagTest.java")
+                .exists()
+        );
     }
 
     #[test]
@@ -3943,7 +4070,10 @@ mod tests {
         std::env::set_current_dir(original_cwd).unwrap();
 
         assert!(result.is_err());
-        assert_eq!(fs::read_to_string(web.join("CommentController.java")).unwrap(), "// already here");
+        assert_eq!(
+            fs::read_to_string(web.join("CommentController.java")).unwrap(),
+            "// already here"
+        );
     }
 
     #[test]
@@ -3961,13 +4091,23 @@ mod tests {
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        generate(ArtifactKind::Entity, "tag", &["name:string".to_string()], None).unwrap();
-        let result = destroy(ArtifactKind::Entity, "tag", true, None);
+        generate(
+            ArtifactKind::Record,
+            "tag",
+            &["name:string".to_string()],
+            None,
+        )
+        .unwrap();
+        let result = destroy(ArtifactKind::Record, "tag", true, None);
         std::env::set_current_dir(original_cwd).unwrap();
 
         result.unwrap();
         assert!(!src.join("Tag.java").is_file());
-        assert!(!root.join("src/test/java/com/example/blog/TagTest.java").exists());
+        assert!(
+            !root
+                .join("src/test/java/com/example/blog/TagTest.java")
+                .exists()
+        );
         assert!(src.join("BlogApplication.java").is_file());
     }
 }

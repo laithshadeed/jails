@@ -131,11 +131,10 @@ jails knows nothing about.
   pulls it in transitively, so this only ever bit the plain-Maven flavor.
   Keep both artifacts pinned to the same `JACKSON_VERSION`; mixing versions
   across them is a documented `NoSuchMethodError`.
-- **`record`/`command` are the plain-Java kinds.** Every other `ArtifactKind`
-  emits Spring or JPA, which is useless in a `new-cli` project. `record` and
-  `entity` deliberately occupy the same two paths (`<Name>.java` +
-  `<Name>Test.java`) — same named type, two shapes — so `destroy` treats them
-  identically and `generate` refuses to write one over the other.
+- **`record`/`command` are the plain-Java kinds.** They work in `new-cli`
+  projects without framework dependencies. A record occupies two paths
+  (`<Name>.java` + `<Name>Test.java`), and `generate` refuses to overwrite
+  either one.
   `command` **does** now register itself in the project's dispatcher, which
   `new-cli` provides as `App.java` (a Hello World stub would leave
   `generate command` -- the obvious next step -- with nothing to wire into).

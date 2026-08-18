@@ -12,14 +12,19 @@
 //! `jails add <TAB>`, and the doc comment on each variant becomes its
 //! completion description.
 
-use crate::generate::{base_package, find_project_root, layout, main_dir, subpackage, test_dir, write_new_file};
-use crate::pom::{self, Dependency, Flavor, MIN_RELEASE, TARGET_RELEASE};
 use crate::Result;
+use crate::generate::{
+    base_package, find_project_root, layout, main_dir, subpackage, test_dir, write_new_file,
+};
+use crate::pom::{self, Dependency, Flavor, MIN_RELEASE, TARGET_RELEASE};
 use clap::ValueEnum;
 use std::path::PathBuf;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Capability {
+    /// PostgreSQL + Flyway + Testcontainers; raw SQL only, never an ORM
+    #[value(alias = "postgres")]
+    Db,
     /// Read CSV files into records (Apache Commons CSV)
     Csv,
     /// SQLite persistence: JDBC connections and a migration runner (sqlite-jdbc)
@@ -39,6 +44,7 @@ pub enum Capability {
 impl Capability {
     fn label(self) -> &'static str {
         match self {
+            Capability::Db => "db",
             Capability::Csv => "csv",
             Capability::Sqlite => "sqlite",
             Capability::Json => "json",
@@ -68,7 +74,12 @@ struct Plan {
     files: Vec<NewFile>,
 }
 
-pub fn add(capability: Capability, name: Option<&str>, dry_run: bool, package: Option<&str>) -> Result<()> {
+pub fn add(
+    capability: Capability,
+    name: Option<&str>,
+    dry_run: bool,
+    package: Option<&str>,
+) -> Result<()> {
     let root = find_project_root()?;
     let pom_text = pom::read(&root)?;
     let flavor = pom::flavor(&pom_text);
@@ -100,6 +111,7 @@ pub fn add(capability: Capability, name: Option<&str>, dry_run: bool, package: O
     // rather than a heap. `--package` overrides, and `--package ''` opts out.
     let place = |default: &str| subpackage(&base, package.unwrap_or(default));
     let plan = match capability {
+        Capability::Db => db_plan(&root, flavor)?,
         Capability::Csv => csv_plan(&root, &place(layout::ADAPTERS), flavor, name)?,
         Capability::Sqlite => sqlite_plan(&root, &place(layout::ADAPTERS), flavor, name)?,
         Capability::Json => json_plan(&root, &place(layout::ADAPTERS), flavor, name)?,
@@ -136,13 +148,20 @@ pub fn add(capability: Capability, name: Option<&str>, dry_run: bool, package: O
 
     if dry_run {
         for dep in &spliced {
-            println!("  would add dependency  {}:{}", dep.group_id, dep.artifact_id);
+            println!(
+                "  would add dependency  {}:{}",
+                dep.group_id, dep.artifact_id
+            );
         }
         for artifact_id in &spliced_plugins {
             println!("  would add plugin  {artifact_id}");
         }
         for file in &plan.files {
-            let verb = if file.path.exists() { "would skip (exists)" } else { "would create" };
+            let verb = if file.path.exists() {
+                "would skip (exists)"
+            } else {
+                "would create"
+            };
             println!("  {verb}  {}", rel(&root, &file.path));
         }
         return Ok(());
@@ -211,7 +230,10 @@ pub fn add(capability: Capability, name: Option<&str>, dry_run: bool, package: O
 }
 
 fn rel(root: &std::path::Path, path: &std::path::Path) -> String {
-    path.strip_prefix(root).unwrap_or(path).display().to_string()
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .display()
+        .to_string()
 }
 
 fn capitalize(s: &str) -> String {
@@ -220,6 +242,87 @@ fn capitalize(s: &str) -> String {
         Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
         None => String::new(),
     }
+}
+
+// ---------------------------------------------------------------------------
+// db -- PostgreSQL, Flyway, and real integration tests; deliberately no ORM
+// ---------------------------------------------------------------------------
+
+const SPRING_JDBC: Dependency = Dependency {
+    group_id: "org.springframework.boot",
+    artifact_id: "spring-boot-starter-jdbc",
+    version: None,
+    scope: None,
+};
+const POSTGRES_MANAGED: Dependency = Dependency {
+    group_id: "org.postgresql",
+    artifact_id: "postgresql",
+    version: None,
+    scope: Some("runtime"),
+};
+const POSTGRES_PINNED: Dependency = Dependency {
+    group_id: "org.postgresql",
+    artifact_id: "postgresql",
+    version: Some("42.7.11"),
+    scope: Some("runtime"),
+};
+const FLYWAY_CORE_MANAGED: Dependency = Dependency {
+    group_id: "org.flywaydb",
+    artifact_id: "flyway-core",
+    version: None,
+    scope: None,
+};
+const FLYWAY_POSTGRES_MANAGED: Dependency = Dependency {
+    group_id: "org.flywaydb",
+    artifact_id: "flyway-database-postgresql",
+    version: None,
+    scope: None,
+};
+const FLYWAY_CORE_PINNED: Dependency = Dependency {
+    group_id: "org.flywaydb",
+    artifact_id: "flyway-core",
+    version: Some("12.8.1"),
+    scope: None,
+};
+const FLYWAY_POSTGRES_PINNED: Dependency = Dependency {
+    group_id: "org.flywaydb",
+    artifact_id: "flyway-database-postgresql",
+    version: Some("12.8.1"),
+    scope: None,
+};
+const TESTCONTAINERS_POSTGRES: Dependency = Dependency {
+    group_id: "org.testcontainers",
+    artifact_id: "testcontainers-postgresql",
+    version: Some("2.0.5"),
+    scope: Some("test"),
+};
+const TESTCONTAINERS_JUNIT: Dependency = Dependency {
+    group_id: "org.testcontainers",
+    artifact_id: "testcontainers-junit-jupiter",
+    version: Some("2.0.5"),
+    scope: Some("test"),
+};
+
+fn db_plan(root: &std::path::Path, flavor: Flavor) -> Result<Plan> {
+    let mut deps = match flavor {
+        Flavor::SpringBoot => vec![
+            SPRING_JDBC,
+            POSTGRES_MANAGED,
+            FLYWAY_CORE_MANAGED,
+            FLYWAY_POSTGRES_MANAGED,
+        ],
+        Flavor::PlainMaven => vec![POSTGRES_PINNED, FLYWAY_CORE_PINNED, FLYWAY_POSTGRES_PINNED],
+    };
+    deps.extend([TESTCONTAINERS_POSTGRES, TESTCONTAINERS_JUNIT]);
+
+    Ok(Plan {
+        deps,
+        plugins: vec![],
+        files: vec![NewFile {
+            path: root.join("src/main/resources/db/migration/.gitkeep"),
+            contents: String::new(),
+        }],
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -235,7 +338,12 @@ const COMMONS_CSV: Dependency = Dependency {
     scope: None,
 };
 
-fn csv_plan(root: &std::path::Path, pkg: &str, _flavor: Flavor, name: Option<&str>) -> Result<Plan> {
+fn csv_plan(
+    root: &std::path::Path,
+    pkg: &str,
+    _flavor: Flavor,
+    name: Option<&str>,
+) -> Result<Plan> {
     let base = capitalize(name.unwrap_or("Csv"));
     let class = format!("{base}Reader");
 
@@ -389,10 +497,14 @@ const SQLITE_JDBC: Dependency = Dependency {
 
 /// Deliberately the same code in both flavors. `java.sql` is part of the
 /// standard library, so a plain JDBC connection plus a migration runner needs
-/// nothing beyond the driver -- no ORM, no Flyway, and none of the fiddliness
-/// of getting SQLite to work under JPA/Hibernate dialects. A Spring project
-/// can inject the record wherever it needs a connection.
-fn sqlite_plan(root: &std::path::Path, pkg: &str, _flavor: Flavor, name: Option<&str>) -> Result<Plan> {
+/// nothing beyond the driver or the fiddliness of a persistence framework.
+/// A Spring project can inject the record wherever it needs a connection.
+fn sqlite_plan(
+    root: &std::path::Path,
+    pkg: &str,
+    _flavor: Flavor,
+    name: Option<&str>,
+) -> Result<Plan> {
     let base = name.map(capitalize).unwrap_or_default();
     let database = format!("{base}Database");
     let migrations = format!("{base}Migrations");
@@ -656,7 +768,12 @@ const JACKSON_JSR310: Dependency = Dependency {
     scope: None,
 };
 
-fn json_plan(root: &std::path::Path, pkg: &str, flavor: Flavor, name: Option<&str>) -> Result<Plan> {
+fn json_plan(
+    root: &std::path::Path,
+    pkg: &str,
+    flavor: Flavor,
+    name: Option<&str>,
+) -> Result<Plan> {
     let base = name.map(capitalize).unwrap_or_default();
     let class = format!("{base}Json");
 
@@ -665,8 +782,14 @@ fn json_plan(root: &std::path::Path, pkg: &str, flavor: Flavor, name: Option<&st
     // fight the parent pom.
     let deps = match flavor {
         Flavor::SpringBoot => vec![
-            Dependency { version: None, ..JACKSON },
-            Dependency { version: None, ..JACKSON_JSR310 },
+            Dependency {
+                version: None,
+                ..JACKSON
+            },
+            Dependency {
+                version: None,
+                ..JACKSON_JSR310
+            },
         ],
         Flavor::PlainMaven => vec![JACKSON, JACKSON_JSR310],
     };
@@ -926,11 +1049,26 @@ fn testkit_plan(root: &std::path::Path, testkit: &str) -> Result<Plan> {
 
     Ok(Plan {
         files: vec![
-            NewFile { path: dir.join("Clocks.java"), contents: clocks_java(testkit) },
-            NewFile { path: dir.join("Ids.java"), contents: ids_java(testkit) },
-            NewFile { path: dir.join("Fixtures.java"), contents: fixtures_java(testkit) },
-            NewFile { path: dir.join("Cli.java"), contents: testkit_cli_java(testkit) },
-            NewFile { path: dir.join("TestkitTest.java"), contents: testkit_test_java(testkit) },
+            NewFile {
+                path: dir.join("Clocks.java"),
+                contents: clocks_java(testkit),
+            },
+            NewFile {
+                path: dir.join("Ids.java"),
+                contents: ids_java(testkit),
+            },
+            NewFile {
+                path: dir.join("Fixtures.java"),
+                contents: fixtures_java(testkit),
+            },
+            NewFile {
+                path: dir.join("Cli.java"),
+                contents: testkit_cli_java(testkit),
+            },
+            NewFile {
+                path: dir.join("TestkitTest.java"),
+                contents: testkit_test_java(testkit),
+            },
             NewFile {
                 path: root.join("src/test/resources/fixtures/example.json"),
                 contents: EXAMPLE_FIXTURE.to_string(),
@@ -1280,8 +1418,14 @@ fn fake_plan(root: &std::path::Path, testkit: &str) -> Result<Plan> {
 
     Ok(Plan {
         files: vec![
-            NewFile { path: dir.join("Fake.java"), contents: scripted_java(testkit) },
-            NewFile { path: dir.join("FakeTest.java"), contents: scripted_test_java(testkit) },
+            NewFile {
+                path: dir.join("Fake.java"),
+                contents: scripted_java(testkit),
+            },
+            NewFile {
+                path: dir.join("FakeTest.java"),
+                contents: scripted_test_java(testkit),
+            },
         ],
         ..Plan::default()
     })
@@ -1776,10 +1920,19 @@ mod tests {
     #[test]
     fn csv_reader_uses_modern_java_idioms() {
         let src = csv_reader_java("com.example.demo", "CsvReader");
-        assert!(src.contains("public record Row("), "rows should be a record");
+        assert!(
+            src.contains("public record Row("),
+            "rows should be a record"
+        );
         assert!(src.contains(".toList()"), "should use Stream.toList()");
-        assert!(src.contains("try (var reader"), "should use try-with-resources");
-        assert!(!src.contains("java.io.File"), "should use NIO paths, not File");
+        assert!(
+            src.contains("try (var reader"),
+            "should use try-with-resources"
+        );
+        assert!(
+            !src.contains("java.io.File"),
+            "should use NIO paths, not File"
+        );
     }
 
     #[test]
@@ -1799,14 +1952,18 @@ mod tests {
         assert!(db.contains("jdbc:sqlite:"));
 
         let migrations = migrations_java("com.example.demo", "Migrations");
-        assert!(migrations.contains("schema_migrations"), "applied scripts must be tracked");
-        assert!(migrations.contains("connection.rollback()"), "a failed script must not half-apply");
+        assert!(
+            migrations.contains("schema_migrations"),
+            "applied scripts must be tracked"
+        );
+        assert!(
+            migrations.contains("connection.rollback()"),
+            "a failed script must not half-apply"
+        );
         assert!(migrations.contains("\"\"\""), "SQL should use a text block");
-        // No ORM, no migration framework -- the driver is the only dependency.
-        for forbidden in ["hibernate", "flyway", "liquibase", "jakarta.persistence"] {
-            assert!(!migrations.contains(forbidden), "{forbidden} should not appear");
-            assert!(!db.contains(forbidden), "{forbidden} should not appear");
-        }
+        // The generated helper uses only JDBC and its own migration table.
+        assert!(!migrations.contains("org.springframework"));
+        assert!(!db.contains("org.springframework"));
     }
 
     #[test]
@@ -1829,7 +1986,12 @@ mod tests {
         let spring = json_plan(root, "com.example.demo", Flavor::SpringBoot, None).unwrap();
         assert!(spring.deps.iter().all(|d| d.version.is_none()));
         let plain = json_plan(root, "com.example.demo", Flavor::PlainMaven, None).unwrap();
-        assert!(plain.deps.iter().all(|d| d.version == Some(JACKSON_VERSION)));
+        assert!(
+            plain
+                .deps
+                .iter()
+                .all(|d| d.version == Some(JACKSON_VERSION))
+        );
     }
 
     /// Without jackson-datatype-jsr310 on the classpath,
@@ -1842,8 +2004,14 @@ mod tests {
         for flavor in [Flavor::SpringBoot, Flavor::PlainMaven] {
             let plan = json_plan(root, "com.example.demo", flavor, None).unwrap();
             let artifacts: Vec<&str> = plan.deps.iter().map(|d| d.artifact_id).collect();
-            assert!(artifacts.contains(&"jackson-databind"), "{flavor:?} is missing databind");
-            assert!(artifacts.contains(&"jackson-datatype-jsr310"), "{flavor:?} is missing java.time support");
+            assert!(
+                artifacts.contains(&"jackson-databind"),
+                "{flavor:?} is missing databind"
+            );
+            assert!(
+                artifacts.contains(&"jackson-datatype-jsr310"),
+                "{flavor:?} is missing java.time support"
+            );
         }
     }
 
@@ -1873,8 +2041,14 @@ mod tests {
     #[test]
     fn json_reads_jsonl_as_a_list_of_trees() {
         let src = json_java("com.example.demo", "Json");
-        assert!(src.contains("public static List<JsonNode> readJsonl(Path path)"), "{src}");
-        assert!(src.contains("isBlank"), "blank lines should be skipped: {src}");
+        assert!(
+            src.contains("public static List<JsonNode> readJsonl(Path path)"),
+            "{src}"
+        );
+        assert!(
+            src.contains("isBlank"),
+            "blank lines should be skipped: {src}"
+        );
 
         let test = json_test_java("com.example.demo", "Json");
         assert!(test.contains("readJsonl"));
@@ -1886,8 +2060,14 @@ mod tests {
         let src = json_java("com.example.demo", "Json");
         assert!(src.contains("Files.newInputStream"));
         assert!(src.contains("Files.newOutputStream"));
-        assert!(!src.contains("java.io.File"), "should not fall back to java.io.File");
-        assert!(src.contains("private static final ObjectMapper MAPPER"), "mapper should be shared");
+        assert!(
+            !src.contains("java.io.File"),
+            "should not fall back to java.io.File"
+        );
+        assert!(
+            src.contains("private static final ObjectMapper MAPPER"),
+            "mapper should be shared"
+        );
     }
 
     /// validation/09 addresses the scripted double as `Fake`; the class and

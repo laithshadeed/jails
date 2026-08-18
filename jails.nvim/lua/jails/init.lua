@@ -7,7 +7,7 @@ local M = {}
 
 --- Streaming subcommands get a live terminal instead of buffered output --
 --- mvn/mvnd output is verbose and users may want to watch it or Ctrl-C it.
-local STREAMING = { test = true, build = true, run = true, check = true, fmt = true }
+local STREAMING = { test = true, build = true, run = true, check = true, fmt = true, mvn = true }
 
 local function jails_bin()
   if vim.fn.executable('jails') == 0 then
@@ -91,7 +91,7 @@ end
 --- Entry point for :Jails <fargs...>.
 function M.dispatch(fargs)
   if #fargs == 0 then
-    vim.notify('jails.nvim: usage :Jails <new|new-cli|generate|g|add|a|destroy|d|test|build|check|fmt|run> ...', vim.log.levels.ERROR)
+    vim.notify('jails.nvim: usage :Jails <new|new-cli|g|add|destroy|test|check|fmt|run|mvn> ...', vim.log.levels.ERROR)
     return
   end
   local sub = fargs[1]
@@ -114,8 +114,8 @@ end
 -- has to be added here too, or it silently won't complete. (`jails completion
 -- bash` derives its list from clap and cannot drift; this one can.)
 local KINDS =
-  { 'scaffold', 'controller', 'service', 'repository', 'entity', 'class', 'record', 'value', 'enum', 'sealed', 'repo', 'handler', 'command', 'cli', 'cases', 'test' }
-local CAPABILITIES = { 'csv', 'sqlite', 'json', 'testkit', 'fake', 'http', 'format' }
+  { 'scaffold', 'controller', 'service', 'class', 'interface', 'record', 'value', 'enum', 'sealed', 'repo', 'migration', 'handler', 'command', 'cli', 'cases', 'test', 'integration-test' }
+local CAPABILITIES = { 'db', 'csv', 'sqlite', 'json', 'testkit', 'fake', 'http', 'format' }
 local SUBCOMMANDS = {
   'new',
   'new-cli',
@@ -129,6 +129,7 @@ local SUBCOMMANDS = {
   'build',
   'fmt',
   'check',
+  'mvn',
   'run',
   'completion',
 }

@@ -1,7 +1,7 @@
 mod add;
 mod generate;
-mod pom;
 mod new;
+mod pom;
 mod run;
 
 use add::Capability;
@@ -16,7 +16,10 @@ pub type Result<T> = std::result::Result<T, String>;
 /// run.rs/new.rs.
 pub(crate) fn debug_cmd(cmd: &std::process::Command) {
     let program = cmd.get_program().to_string_lossy();
-    let args: Vec<String> = cmd.get_args().map(|a| a.to_string_lossy().to_string()).collect();
+    let args: Vec<String> = cmd
+        .get_args()
+        .map(|a| a.to_string_lossy().to_string())
+        .collect();
     let dir = cmd
         .get_current_dir()
         .map(|d| format!("  (in {})", d.display()))
@@ -32,12 +35,16 @@ pub(crate) fn debug_cmd(cmd: &std::process::Command) {
 pub(crate) static CWD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[derive(Parser)]
-#[command(name = "jails", version, about = "A rails-CLI-inspired tool for Spring Boot / plain Maven projects")]
+#[command(
+    name = "jails",
+    version,
+    about = "A rails-CLI-inspired tool for Spring Boot / plain Maven projects"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
 
-    /// Print the mvn/mvnd/java/git/curl commands jails executes
+    /// Print the mvnw/mvnd/mvn/java/git/curl commands jails executes
     #[arg(long, global = true)]
     debug: bool,
 }
@@ -68,7 +75,7 @@ enum Command {
         #[arg(long)]
         no_git: bool,
     },
-    /// Generate a scaffold or a single artifact (class|controller|service|repository|entity|test)
+    /// Generate a scaffold or one small Java/SQL artifact
     #[command(visible_alias = "g")]
     Generate {
         kind: ArtifactKind,
@@ -109,7 +116,7 @@ enum Command {
         #[arg(long)]
         package: Option<String>,
     },
-    /// Run the test suite (mvn/mvnd test)
+    /// Run tests; bare names become *Test and *IT names use Failsafe
     Test { filter: Option<String> },
     /// Build the project (mvn package)
     Build,
@@ -117,6 +124,11 @@ enum Command {
     Fmt,
     /// Format check + compile + tests (mvn verify)
     Check,
+    /// Pass uncommon arguments through to the project's Maven wrapper
+    Mvn {
+        #[arg(last = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Find, compile and run the project's main class
     Run {
         /// Skip compiling/building -- run whatever's already in target/
@@ -143,18 +155,46 @@ fn main() {
     let debug = cli.debug;
 
     let result = match cli.command {
-        Command::New { name, deps, java, no_git, no_devtools } => {
-            new::new(&name, &deps, &java, !no_git, !no_devtools, debug)
-        }
-        Command::NewCli { name, release, no_git } => new::new_cli(&name, &release, !no_git, debug),
-        Command::Generate { kind, name, fields, package } => generate::generate(kind, &name, &fields, package.as_deref()),
-        Command::Add { capability, name, dry_run, package } => add::add(capability, name.as_deref(), dry_run, package.as_deref()),
-        Command::Destroy { kind, name, force, package } => generate::destroy(kind, &name, force, package.as_deref()),
+        Command::New {
+            name,
+            deps,
+            java,
+            no_git,
+            no_devtools,
+        } => new::new(&name, &deps, &java, !no_git, !no_devtools, debug),
+        Command::NewCli {
+            name,
+            release,
+            no_git,
+        } => new::new_cli(&name, &release, !no_git, debug),
+        Command::Generate {
+            kind,
+            name,
+            fields,
+            package,
+        } => generate::generate(kind, &name, &fields, package.as_deref()),
+        Command::Add {
+            capability,
+            name,
+            dry_run,
+            package,
+        } => add::add(capability, name.as_deref(), dry_run, package.as_deref()),
+        Command::Destroy {
+            kind,
+            name,
+            force,
+            package,
+        } => generate::destroy(kind, &name, force, package.as_deref()),
         Command::Test { filter } => run::test(filter.as_deref(), debug),
         Command::Build => run::build(debug),
         Command::Fmt => run::fmt(debug),
         Command::Check => run::check(debug),
-        Command::Run { no_build, watch, args } => {
+        Command::Mvn { args } => run::mvn(&args, debug),
+        Command::Run {
+            no_build,
+            watch,
+            args,
+        } => {
             if watch {
                 run::watch(debug)
             } else {
