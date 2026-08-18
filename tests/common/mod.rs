@@ -95,7 +95,7 @@ pub fn real_java_supports_target_release() -> bool {
 /// `target_release_matches_the_binary` in tests/cli.rs -- the integration
 /// tests compile against the binary, not the library, so the constant cannot
 /// simply be imported.
-pub const TARGET_RELEASE: &str = "25";
+pub const TARGET_RELEASE: &str = "27";
 
 fn real_path_dirs() -> impl Iterator<Item = PathBuf> {
     std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())

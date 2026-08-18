@@ -28,7 +28,7 @@ use std::path::Path;
 ///
 /// Nothing in the generated code needs 27 -- see `MIN_RELEASE`. Pass
 /// `--release 27` when you want it.
-pub const TARGET_RELEASE: &str = "25";
+pub const TARGET_RELEASE: &str = "27";
 
 /// The oldest release the *generated* Java actually needs. Everything jails
 /// emits -- records, sealed interfaces, text blocks, pattern-matching switch,
