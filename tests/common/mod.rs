@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 pub fn bin() -> &'static str {
     env!("CARGO_BIN_EXE_jails")
@@ -91,6 +91,18 @@ pub fn real_java_supports_target_release() -> bool {
         .unwrap_or(false)
 }
 
+/// Testcontainers (and the real `add db` Spring contextLoads check) need a
+/// running daemon, not just a binary on PATH.
+pub fn real_docker_available() -> bool {
+    Command::new("docker")
+        .args(["info"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 /// Kept in step with `pom::TARGET_RELEASE` by
 /// `target_release_matches_the_binary` in tests/cli.rs -- the integration
 /// tests compile against the binary, not the library, so the constant cannot
@@ -138,6 +150,13 @@ pub fn write_spring_fixture(root: &Path) {
     fs::write(
         pkg_dir.join("DemoApplication.java"),
         SPRING_FIXTURE_APPLICATION,
+    )
+    .unwrap();
+    let test_dir = root.join("src/test/java/com/example/demo");
+    fs::create_dir_all(&test_dir).unwrap();
+    fs::write(
+        test_dir.join("DemoApplicationTests.java"),
+        SPRING_FIXTURE_TESTS,
     )
     .unwrap();
 }
@@ -189,5 +208,18 @@ public class DemoApplication {
     public static void main(String[] args) {
         SpringApplication.run(DemoApplication.class, args);
     }
+}
+"#;
+
+const SPRING_FIXTURE_TESTS: &str = r#"package com.example.demo;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.context.SpringBootTest;
+
+@SpringBootTest
+class DemoApplicationTests {
+
+    @Test
+    void contextLoads() {}
 }
 "#;

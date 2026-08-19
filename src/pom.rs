@@ -57,6 +57,8 @@ pub struct Dependency {
     pub artifact_id: &'static str,
     pub version: Option<&'static str>,
     pub scope: Option<&'static str>,
+    /// Development-only modules such as `spring-boot-docker-compose`.
+    pub optional: bool,
 }
 
 pub fn read(root: &Path) -> Result<String> {
@@ -258,6 +260,9 @@ fn render_dependency(dep: &Dependency, indent: &str) -> String {
     if let Some(s) = dep.scope {
         out.push_str(&format!("{indent}    <scope>{s}</scope>\n"));
     }
+    if dep.optional {
+        out.push_str(&format!("{indent}    <optional>true</optional>\n"));
+    }
     out.push_str(&format!("{indent}</dependency>\n"));
     out
 }
@@ -318,6 +323,133 @@ pub fn add_dependency(pom: &str, dep: &Dependency) -> Result<Option<String>> {
 fn last_child_indent(pom: &str, close: usize) -> Option<String> {
     let at = pom[..close].rfind("<dependency>")?;
     line_indent(pom, at).map(|s| s.to_string())
+}
+
+/// Remove a project-level `<dependency>` matching `group_id`/`artifact_id`.
+/// Returns `Ok(None)` when it is not declared -- `remove` is idempotent the
+/// same way `add` is. Skips `<dependencyManagement>` so a BOM entry is never
+/// mistaken for the real declaration.
+pub fn remove_dependency(pom: &str, group_id: &str, artifact_id: &str) -> Result<Option<String>> {
+    let Some((start, end)) = project_child_span(
+        pom,
+        "dependency",
+        &["project", "dependencies"],
+        group_id,
+        artifact_id,
+    ) else {
+        return Ok(None);
+    };
+    Ok(Some(cut(pom, start, end)))
+}
+
+/// Remove a `project/build/plugins` `<plugin>` whose artifactId matches.
+pub fn remove_plugin(pom: &str, artifact_id: &str) -> Result<Option<String>> {
+    let Some((start, end)) = plugin_span(pom, artifact_id) else {
+        return Ok(None);
+    };
+    Ok(Some(cut(pom, start, end)))
+}
+
+fn cut(xml: &str, start: usize, end: usize) -> String {
+    let mut out = String::with_capacity(xml.len() - (end - start));
+    out.push_str(&xml[..start]);
+    out.push_str(&xml[end..]);
+    out
+}
+
+fn span_including_line(xml: &str, start: usize, end: usize) -> (usize, usize) {
+    let line_start = xml[..start].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let start = if xml[line_start..start]
+        .chars()
+        .all(|c| c == ' ' || c == '\t')
+    {
+        line_start
+    } else {
+        start
+    };
+    let end = if xml[end..].starts_with('\n') {
+        end + 1
+    } else if xml[end..].starts_with("\r\n") {
+        end + 2
+    } else {
+        end
+    };
+    (start, end)
+}
+
+/// Byte span of a project-level `<dependency>` whose groupId and artifactId
+/// match. `parent_path` is the element stack that must surround the opening
+/// tag (`["project", "dependencies"]`).
+fn project_child_span(
+    xml: &str,
+    element: &str,
+    parent_path: &[&str],
+    group_id: &str,
+    artifact_id: &str,
+) -> Option<(usize, usize)> {
+    let tags = scan_tags(xml);
+    let mut stack: Vec<&str> = Vec::new();
+    let mut open_at: Option<usize> = None;
+    let group = format!("<groupId>{group_id}</groupId>");
+    let artifact = format!("<artifactId>{artifact_id}</artifactId>");
+
+    for tag in &tags {
+        if tag.closing {
+            if tag.name == element
+                && let Some(start) = open_at
+            {
+                let close_end = tag.start + format!("</{element}>").len();
+                let block = &xml[start..close_end.min(xml.len())];
+                if block.contains(&group) && block.contains(&artifact) {
+                    return Some(span_including_line(xml, start, close_end));
+                }
+                open_at = None;
+            }
+            stack.pop();
+            continue;
+        }
+        if tag.self_closing {
+            continue;
+        }
+        if tag.name == element && stack.as_slice() == parent_path {
+            open_at = Some(tag.start);
+        }
+        stack.push(&tag.name);
+    }
+    None
+}
+
+fn plugin_span(xml: &str, artifact_id: &str) -> Option<(usize, usize)> {
+    let tags = scan_tags(xml);
+    let mut stack: Vec<&str> = Vec::new();
+    let mut open_at: Option<usize> = None;
+    let artifact = format!("<artifactId>{artifact_id}</artifactId>");
+    let parent: &[&str] = &["project", "build", "plugins"];
+
+    for tag in &tags {
+        if tag.closing {
+            if tag.name == "plugin"
+                && let Some(start) = open_at
+            {
+                let close_end = tag.start + "</plugin>".len();
+                let block = &xml[start..close_end.min(xml.len())];
+                if block.contains(&artifact) {
+                    return Some(span_including_line(xml, start, close_end));
+                }
+                open_at = None;
+            }
+            stack.pop();
+            continue;
+        }
+        if tag.self_closing {
+            continue;
+        }
+        if tag.name == "plugin" && stack.as_slice() == parent {
+            open_at = Some(tag.start);
+        }
+        stack.push(&tag.name);
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -479,6 +611,7 @@ mod tests {
         artifact_id: "commons-csv",
         version: Some("1.12.0"),
         scope: None,
+        optional: false,
     };
 
     #[test]
@@ -609,9 +742,11 @@ mod tests {
         let once = add_plugin(pom, "spotless-maven-plugin", SPOTLESS)
             .unwrap()
             .unwrap();
-        assert!(add_plugin(&once, "spotless-maven-plugin", SPOTLESS)
-            .unwrap()
-            .is_none());
+        assert!(
+            add_plugin(&once, "spotless-maven-plugin", SPOTLESS)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -664,5 +799,84 @@ mod tests {
             out.contains("<artifactId>real</artifactId>"),
             "existing plugins survive"
         );
+    }
+
+    #[test]
+    fn add_dependency_renders_optional() {
+        let optional = Dependency {
+            optional: true,
+            ..CSV
+        };
+        let out = add_dependency(PLAIN_POM, &optional).unwrap().unwrap();
+        assert!(out.contains("<artifactId>commons-csv</artifactId>"));
+        assert!(out.contains("<optional>true</optional>"));
+    }
+
+    #[test]
+    fn remove_dependency_is_the_inverse_of_add() {
+        let added = add_dependency(PLAIN_POM, &CSV).unwrap().unwrap();
+        let removed = remove_dependency(&added, CSV.group_id, CSV.artifact_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(removed, PLAIN_POM);
+    }
+
+    #[test]
+    fn remove_dependency_is_idempotent() {
+        assert!(
+            remove_dependency(PLAIN_POM, CSV.group_id, CSV.artifact_id)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn remove_dependency_skips_the_dependency_management_block() {
+        let pom = r#"<project>
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.apache.commons</groupId>
+                <artifactId>commons-csv</artifactId>
+                <version>1.0</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+    <dependencies>
+        <dependency>
+            <groupId>com.example</groupId>
+            <artifactId>real</artifactId>
+        </dependency>
+    </dependencies>
+</project>
+"#;
+        assert!(
+            remove_dependency(pom, "org.apache.commons", "commons-csv")
+                .unwrap()
+                .is_none()
+        );
+        assert!(pom.contains("commons-csv"));
+    }
+
+    #[test]
+    fn remove_plugin_is_the_inverse_of_add() {
+        let pom = "<project>\n    <build>\n        <plugins>\n            <plugin>\n                <artifactId>real</artifactId>\n            </plugin>\n        </plugins>\n    </build>\n</project>\n";
+        let added = add_plugin(pom, "spotless-maven-plugin", SPOTLESS)
+            .unwrap()
+            .unwrap();
+        let removed = remove_plugin(&added, "spotless-maven-plugin")
+            .unwrap()
+            .unwrap();
+        assert_eq!(removed, pom);
+    }
+
+    #[test]
+    fn remove_plugin_leaves_sibling_plugins() {
+        let pom = "<project>\n    <build>\n        <plugins>\n            <plugin>\n                <artifactId>real</artifactId>\n            </plugin>\n            <plugin>\n                <artifactId>spotless-maven-plugin</artifactId>\n            </plugin>\n        </plugins>\n    </build>\n</project>\n";
+        let out = remove_plugin(pom, "spotless-maven-plugin")
+            .unwrap()
+            .unwrap();
+        assert!(out.contains("<artifactId>real</artifactId>"));
+        assert!(!out.contains("spotless-maven-plugin"));
     }
 }

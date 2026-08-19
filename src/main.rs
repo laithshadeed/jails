@@ -1,4 +1,5 @@
 mod add;
+mod compose;
 mod generate;
 mod new;
 mod pom;
@@ -8,6 +9,7 @@ mod run;
 use add::Capability;
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
+use compose::Runtime;
 use generate::ArtifactKind;
 
 pub type Result<T> = std::result::Result<T, String>;
@@ -106,11 +108,43 @@ enum Command {
         /// Print what would change without touching the project
         #[arg(long)]
         dry_run: bool,
+        /// Write compose.yaml but do not run `docker compose up`
+        #[arg(long)]
+        no_start: bool,
         /// Subpackage to place the generated code in, relative to the base
         /// package -- overrides the conventional one for the kind. Pass an
         /// empty string to write straight into the base package.
         #[arg(long)]
         package: Option<String>,
+    },
+    /// Remove what a matching add call would have created
+    #[command(visible_alias = "rm")]
+    Remove {
+        #[arg(required = true, num_args = 1..)]
+        capabilities: Vec<Capability>,
+        /// Base name for the generated class (default: the capability's own)
+        #[arg(long)]
+        name: Option<String>,
+        /// Print what would change without touching the project
+        #[arg(long)]
+        dry_run: bool,
+        /// Skip the confirmation prompt
+        #[arg(long)]
+        force: bool,
+        /// Subpackage the generated code was placed in, relative to the base
+        /// package -- must match the `--package` passed to `add`.
+        #[arg(long)]
+        package: Option<String>,
+    },
+    /// Start compose services (`docker compose up -d`). No args starts all.
+    Start {
+        #[arg(num_args = 0..)]
+        services: Vec<Runtime>,
+    },
+    /// Stop compose services. No args stops all.
+    Stop {
+        #[arg(num_args = 0..)]
+        services: Vec<Runtime>,
     },
     /// Delete the file(s) a matching generate call would have created
     #[command(visible_alias = "d")]
@@ -187,9 +221,33 @@ fn main() {
             capabilities,
             name,
             dry_run,
+            no_start,
             package,
         } => capabilities.into_iter().try_for_each(|capability| {
-            add::add(capability, name.as_deref(), dry_run, package.as_deref())
+            add::add(
+                capability,
+                name.as_deref(),
+                dry_run,
+                package.as_deref(),
+                debug,
+                no_start,
+            )
+        }),
+        Command::Remove {
+            capabilities,
+            name,
+            dry_run,
+            force,
+            package,
+        } => capabilities.into_iter().try_for_each(|capability| {
+            add::remove(
+                capability,
+                name.as_deref(),
+                dry_run,
+                force,
+                package.as_deref(),
+                debug,
+            )
         }),
         Command::Destroy {
             kind,
@@ -197,6 +255,8 @@ fn main() {
             force,
             package,
         } => generate::destroy(kind, &name, force, package.as_deref()),
+        Command::Start { services } => compose::start(&services, debug),
+        Command::Stop { services } => compose::stop_cmd(&services, debug),
         Command::Test { filter } => run::test(filter.as_deref(), debug),
         Command::Build => run::build(debug),
         Command::Fmt => run::fmt(debug),

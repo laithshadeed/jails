@@ -1,11 +1,15 @@
 //! `jails add <capability>...` -- grow an existing project with one or more
-//! capabilities at a time.
+//! capabilities at a time. `jails remove` is the inverse: it unsplices the
+//! same dependencies, deletes the same files, and takes compose services back
+//! out of `compose.yaml`.
 //!
 //! Where `generate` emits a *class*, `add` emits a *slice*: the dependency,
 //! the code that uses it, and a test that proves the wiring compiles and
-//! runs. Every capability is idempotent (re-running reports what is already
-//! there) and takes no required arguments -- the library, the version, the
-//! package and the class names all have opinionated defaults.
+//! runs. Compose-backed capabilities (`db`, `kafka`) also splice a service
+//! into `compose.yaml` and start it; `jails run` starts whatever is left in
+//! the file. Every capability is idempotent (re-running reports what is
+//! already there) and takes no required arguments -- the library, the
+//! version, the package and the class names all have opinionated defaults.
 //!
 //! `Capability` is a `clap::ValueEnum` rather than a `String` on purpose:
 //! that is the only way `clap_complete` can emit a static completion list for
@@ -13,18 +17,24 @@
 //! completion description.
 
 use crate::Result;
+use crate::compose::{self, Service as ComposeService};
 use crate::generate::{
-    base_package, find_project_root, layout, main_dir, subpackage, test_dir, write_new_file,
+    base_package, find_project_root, import_of, layout, main_dir, normalize_imports, package_of,
+    subpackage, test_dir, write_new_file,
 };
 use crate::pom::{self, Dependency, Flavor, MIN_RELEASE, TARGET_RELEASE};
 use clap::ValueEnum;
-use std::path::PathBuf;
+use std::fs;
+use std::io::Write as _;
+use std::path::{Path, PathBuf};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Capability {
-    /// PostgreSQL + Flyway + Testcontainers; raw SQL only, never an ORM
+    /// PostgreSQL + Flyway + Testcontainers + a compose service; raw SQL only, never an ORM
     #[value(alias = "postgres")]
     Db,
+    /// Apache Kafka client + a compose broker (KRaft, no ZooKeeper)
+    Kafka,
     /// Read CSV files into records (Apache Commons CSV)
     Csv,
     /// SQLite persistence: JDBC connections and a migration runner (sqlite-jdbc)
@@ -45,6 +55,7 @@ impl Capability {
     fn label(self) -> &'static str {
         match self {
             Capability::Db => "db",
+            Capability::Kafka => "kafka",
             Capability::Csv => "csv",
             Capability::Sqlite => "sqlite",
             Capability::Json => "json",
@@ -72,57 +83,42 @@ struct Plan {
     /// capability renders the XML and pom.rs only places it.
     plugins: Vec<(&'static str, String)>,
     files: Vec<NewFile>,
+    compose: Vec<ComposeService>,
+    /// Spring `add db` only: `@Import` this test configuration into the
+    /// project's `*ApplicationTests` so `@SpringBootTest` gets a DataSource.
+    /// Docker Compose is skipped in tests by default, and without this the
+    /// stock `contextLoads` test fails with "Failed to determine a suitable
+    /// driver class".
+    spring_test_import: Option<SpringTestImport>,
 }
+
+struct SpringTestImport {
+    pkg: String,
+    class: &'static str,
+}
+
+const SPRING_DOCKER_COMPOSE: Dependency = Dependency {
+    group_id: "org.springframework.boot",
+    artifact_id: "spring-boot-docker-compose",
+    version: None,
+    scope: None,
+    optional: true,
+};
 
 pub fn add(
     capability: Capability,
     name: Option<&str>,
     dry_run: bool,
     package: Option<&str>,
+    debug: bool,
+    no_start: bool,
 ) -> Result<()> {
     let root = find_project_root()?;
     let pom_text = pom::read(&root)?;
     let flavor = pom::flavor(&pom_text);
+    require_java_release(&pom_text)?;
+    let plan = build_plan(capability, &root, flavor, name, package)?;
 
-    // Emitting records and pattern-matching switches into a project pinned at
-    // an older release produces code that cannot compile, so fail with
-    // something actionable instead. The bar is what the generated code needs
-    // (MIN_RELEASE), not what jails happens to default new projects to.
-    match pom::release_level(&pom_text) {
-        Some(level) if level < MIN_RELEASE => {
-            return Err(format!(
-                "this project targets Java {level}, but jails generates Java {MIN_RELEASE}+ code.\n       \
-                 Raise <maven.compiler.release> (or <java.version>) to at least {MIN_RELEASE} in pom.xml and try again."
-            ));
-        }
-        None => {
-            return Err(format!(
-                "pom.xml does not set a Java release level, and jails generates Java {MIN_RELEASE}+ code.\n       \
-                 Add <maven.compiler.release>{TARGET_RELEASE}</maven.compiler.release> to <properties> and try again."
-            ));
-        }
-        Some(_) => {}
-    }
-
-    let base = base_package(&root)?;
-    // Capabilities land in the package their layer conventionally owns --
-    // adapters for the file/database readers, api for the HTTP server -- so a
-    // project that has grown a few of them still reads as a laid-out project
-    // rather than a heap. `--package` overrides, and `--package ''` opts out.
-    let place = |default: &str| subpackage(&base, package.unwrap_or(default));
-    let plan = match capability {
-        Capability::Db => db_plan(&root, flavor)?,
-        Capability::Csv => csv_plan(&root, &place(layout::ADAPTERS), flavor, name)?,
-        Capability::Sqlite => sqlite_plan(&root, &place(layout::ADAPTERS), flavor, name)?,
-        Capability::Json => json_plan(&root, &place(layout::ADAPTERS), flavor, name)?,
-        Capability::Testkit => testkit_plan(&root, &place(layout::TESTKIT))?,
-        Capability::Fake => fake_plan(&root, &place(layout::TESTKIT))?,
-        Capability::Http => http_plan(&root, &place(layout::API), name)?,
-        Capability::Format => format_plan()?,
-    };
-
-    // Work out the pom edit up front, so a dry run can say whether the
-    // dependency would be added or is already there.
     let mut updated_pom = pom_text.clone();
     let mut spliced: Vec<&Dependency> = Vec::new();
     for dep in &plan.deps {
@@ -146,11 +142,46 @@ pub fn add(
         }
     }
 
+    let mut compose_text = compose::read(&root)?;
+    let mut compose_added: Vec<&ComposeService> = Vec::new();
+    for svc in &plan.compose {
+        match compose::add_service(&compose_text, svc) {
+            Some(next) => {
+                compose_text = next;
+                compose_added.push(svc);
+            }
+            None => println!("  exists  compose service {}", svc.name),
+        }
+    }
+
+    let mut docker_compose_dep = false;
+    if flavor == Flavor::SpringBoot
+        && !plan.compose.is_empty()
+        && compose::has_services(&compose_text)
+    {
+        match pom::add_dependency(&updated_pom, &SPRING_DOCKER_COMPOSE)? {
+            Some(next) => {
+                updated_pom = next;
+                docker_compose_dep = true;
+            }
+            None => println!(
+                "  exists  {}:{}",
+                SPRING_DOCKER_COMPOSE.group_id, SPRING_DOCKER_COMPOSE.artifact_id
+            ),
+        }
+    }
+
     if dry_run {
         for dep in &spliced {
             println!(
                 "  would add dependency  {}:{}",
                 dep.group_id, dep.artifact_id
+            );
+        }
+        if docker_compose_dep {
+            println!(
+                "  would add dependency  {}:{} (optional)",
+                SPRING_DOCKER_COMPOSE.group_id, SPRING_DOCKER_COMPOSE.artifact_id
             );
         }
         for artifact_id in &spliced_plugins {
@@ -164,14 +195,27 @@ pub fn add(
             };
             println!("  {verb}  {}", rel(&root, &file.path));
         }
+        for svc in &compose_added {
+            println!("  would add compose service  {}", svc.name);
+        }
+        if let Some(cfg) = &plan.spring_test_import {
+            wire_application_tests(&root, cfg, true)?;
+        }
         return Ok(());
     }
 
-    if !spliced.is_empty() || !spliced_plugins.is_empty() {
+    let pom_changed = !spliced.is_empty() || !spliced_plugins.is_empty() || docker_compose_dep;
+    if pom_changed {
         std::fs::write(root.join("pom.xml"), &updated_pom)
             .map_err(|e| format!("failed to write pom.xml: {e}"))?;
         for dep in &spliced {
             println!("     dep  {}:{}", dep.group_id, dep.artifact_id);
+        }
+        if docker_compose_dep {
+            println!(
+                "     dep  {}:{} (optional)",
+                SPRING_DOCKER_COMPOSE.group_id, SPRING_DOCKER_COMPOSE.artifact_id
+            );
         }
         for artifact_id in &spliced_plugins {
             println!("  plugin  {artifact_id}");
@@ -189,7 +233,20 @@ pub fn add(
         created += 1;
     }
 
-    if created == 0 && spliced.is_empty() && spliced_plugins.is_empty() {
+    if !compose_added.is_empty() {
+        compose::write(&root, &compose_text)?;
+        println!("  compose {}", rel(&root, &compose::path(&root)));
+        for svc in &compose_added {
+            println!("  service {}", svc.name);
+        }
+    }
+
+    let mut tests_wired = false;
+    if let Some(cfg) = &plan.spring_test_import {
+        tests_wired = wire_application_tests(&root, cfg, false)?;
+    }
+
+    if created == 0 && !pom_changed && compose_added.is_empty() && !tests_wired {
         println!("{} is already set up -- nothing to do", capability.label());
         return Ok(());
     }
@@ -218,6 +275,24 @@ pub fn add(
         }
     }
 
+    if !compose_added.is_empty() && !no_start {
+        let names: Vec<&str> = compose_added.iter().map(|s| s.name).collect();
+        if compose::up(&root, &names, debug) {
+            println!("  start   {}", names.join(", "));
+        } else {
+            println!(
+                "  note    start with `{}`",
+                compose::missing_docker_hint(&names)
+            );
+        }
+    } else if !compose_added.is_empty() {
+        let names: Vec<&str> = compose_added.iter().map(|s| s.name).collect();
+        println!(
+            "  note    start with `{}`",
+            compose::missing_docker_hint(&names)
+        );
+    }
+
     println!(
         "added {} ({})",
         capability.label(),
@@ -229,7 +304,245 @@ pub fn add(
     Ok(())
 }
 
-fn rel(root: &std::path::Path, path: &std::path::Path) -> String {
+/// Inverse of [`add`]: unsplice the same pom entries, delete the same files,
+/// take compose services out, and stop their containers.
+pub fn remove(
+    capability: Capability,
+    name: Option<&str>,
+    dry_run: bool,
+    force: bool,
+    package: Option<&str>,
+    debug: bool,
+) -> Result<()> {
+    let root = find_project_root()?;
+    let pom_text = pom::read(&root)?;
+    let flavor = pom::flavor(&pom_text);
+    let plan = build_plan(capability, &root, flavor, name, package)?;
+
+    let mut updated_pom = pom_text.clone();
+    let mut removed_deps: Vec<&Dependency> = Vec::new();
+    for dep in &plan.deps {
+        match pom::remove_dependency(&updated_pom, dep.group_id, dep.artifact_id)? {
+            Some(next) => {
+                updated_pom = next;
+                removed_deps.push(dep);
+            }
+            None => {}
+        }
+    }
+
+    let mut removed_plugins: Vec<&str> = Vec::new();
+    for (artifact_id, _) in &plan.plugins {
+        match pom::remove_plugin(&updated_pom, artifact_id)? {
+            Some(next) => {
+                updated_pom = next;
+                removed_plugins.push(artifact_id);
+            }
+            None => {}
+        }
+    }
+
+    let existing_files: Vec<&PathBuf> = plan
+        .files
+        .iter()
+        .map(|f| &f.path)
+        .filter(|p| p.exists())
+        .collect();
+
+    let mut compose_text = compose::read(&root)?;
+    let mut compose_removed: Vec<&ComposeService> = Vec::new();
+    for svc in &plan.compose {
+        match compose::remove_service(&compose_text, svc) {
+            Some(next) => {
+                compose_text = next;
+                compose_removed.push(svc);
+            }
+            None => {}
+        }
+    }
+
+    let mut docker_compose_dep = false;
+    if flavor == Flavor::SpringBoot && !compose::has_services(&compose_text) {
+        match pom::remove_dependency(
+            &updated_pom,
+            SPRING_DOCKER_COMPOSE.group_id,
+            SPRING_DOCKER_COMPOSE.artifact_id,
+        )? {
+            Some(next) => {
+                updated_pom = next;
+                docker_compose_dep = true;
+            }
+            None => {}
+        }
+    }
+
+    let pom_changed = !removed_deps.is_empty() || !removed_plugins.is_empty() || docker_compose_dep;
+    let tests_to_unwire: Vec<PathBuf> = plan
+        .spring_test_import
+        .as_ref()
+        .map(|cfg| {
+            find_application_tests(&root.join("src/test/java"))
+                .into_iter()
+                .filter(|p| {
+                    fs::read_to_string(p).is_ok_and(|s| s.contains(&import_annotation(cfg.class)))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if !pom_changed
+        && existing_files.is_empty()
+        && compose_removed.is_empty()
+        && tests_to_unwire.is_empty()
+    {
+        println!("{} is not set up -- nothing to do", capability.label());
+        return Ok(());
+    }
+
+    if dry_run {
+        for dep in &removed_deps {
+            println!(
+                "  would remove dependency  {}:{}",
+                dep.group_id, dep.artifact_id
+            );
+        }
+        if docker_compose_dep {
+            println!(
+                "  would remove dependency  {}:{}",
+                SPRING_DOCKER_COMPOSE.group_id, SPRING_DOCKER_COMPOSE.artifact_id
+            );
+        }
+        for artifact_id in &removed_plugins {
+            println!("  would remove plugin  {artifact_id}");
+        }
+        for path in &existing_files {
+            println!("  would delete  {}", rel(&root, path));
+        }
+        for svc in &compose_removed {
+            println!("  would remove compose service  {}", svc.name);
+        }
+        for path in &tests_to_unwire {
+            println!("  would unsplice @Import from {}", rel(&root, path));
+        }
+        return Ok(());
+    }
+
+    if !force {
+        println!("about to remove {}:", capability.label());
+        for dep in &removed_deps {
+            println!("  dep {}:{}", dep.group_id, dep.artifact_id);
+        }
+        if docker_compose_dep {
+            println!(
+                "  dep {}:{}",
+                SPRING_DOCKER_COMPOSE.group_id, SPRING_DOCKER_COMPOSE.artifact_id
+            );
+        }
+        for artifact_id in &removed_plugins {
+            println!("  plugin {artifact_id}");
+        }
+        for path in &existing_files {
+            println!("  {}", rel(&root, path));
+        }
+        for svc in &compose_removed {
+            println!("  compose {}", svc.name);
+        }
+        for path in &tests_to_unwire {
+            println!("  import in {}", rel(&root, path));
+        }
+        print!("proceed? [y/N] ");
+        std::io::stdout().flush().ok();
+        let mut answer = String::new();
+        std::io::stdin()
+            .read_line(&mut answer)
+            .map_err(|e| format!("failed to read confirmation: {e}"))?;
+        if !answer.trim().eq_ignore_ascii_case("y") {
+            println!("aborted");
+            return Ok(());
+        }
+    }
+
+    if pom_changed {
+        std::fs::write(root.join("pom.xml"), &updated_pom)
+            .map_err(|e| format!("failed to write pom.xml: {e}"))?;
+        for dep in &removed_deps {
+            println!("  remove  {}:{}", dep.group_id, dep.artifact_id);
+        }
+        if docker_compose_dep {
+            println!(
+                "  remove  {}:{}",
+                SPRING_DOCKER_COMPOSE.group_id, SPRING_DOCKER_COMPOSE.artifact_id
+            );
+        }
+        for artifact_id in &removed_plugins {
+            println!("  remove  plugin {artifact_id}");
+        }
+    }
+
+    for path in existing_files {
+        std::fs::remove_file(path)
+            .map_err(|e| format!("failed to remove {}: {e}", path.display()))?;
+        println!("  delete  {}", rel(&root, path));
+    }
+
+    if !compose_removed.is_empty() {
+        let names: Vec<&str> = compose_removed.iter().map(|s| s.name).collect();
+        compose::stop(&root, &names, debug);
+        compose::write(&root, &compose_text)?;
+        if compose_text.is_empty() {
+            println!("  delete  {}", rel(&root, &compose::path(&root)));
+        } else {
+            println!("  compose {}", rel(&root, &compose::path(&root)));
+        }
+        for svc in &compose_removed {
+            println!("  stop    {}", svc.name);
+        }
+    }
+
+    if let Some(cfg) = &plan.spring_test_import {
+        unwire_application_tests(&root, cfg)?;
+    }
+
+    println!("removed {}", capability.label());
+    Ok(())
+}
+
+fn require_java_release(pom_text: &str) -> Result<()> {
+    match pom::release_level(pom_text) {
+        Some(level) if level < MIN_RELEASE => Err(format!(
+            "this project targets Java {level}, but jails generates Java {MIN_RELEASE}+ code.\n       \
+             Raise <maven.compiler.release> (or <java.version>) to at least {MIN_RELEASE} in pom.xml and try again."
+        )),
+        None => Err(format!(
+            "pom.xml does not set a Java release level, and jails generates Java {MIN_RELEASE}+ code.\n       \
+             Add <maven.compiler.release>{TARGET_RELEASE}</maven.compiler.release> to <properties> and try again."
+        )),
+        Some(_) => Ok(()),
+    }
+}
+
+fn build_plan(
+    capability: Capability,
+    root: &Path,
+    flavor: Flavor,
+    name: Option<&str>,
+    package: Option<&str>,
+) -> Result<Plan> {
+    let base = base_package(root)?;
+    let place = |default: &str| subpackage(&base, package.unwrap_or(default));
+    match capability {
+        Capability::Db => db_plan(root, flavor, &place("")),
+        Capability::Kafka => kafka_plan(flavor),
+        Capability::Csv => csv_plan(root, &place(layout::ADAPTERS), flavor, name),
+        Capability::Sqlite => sqlite_plan(root, &place(layout::ADAPTERS), flavor, name),
+        Capability::Json => json_plan(root, &place(layout::ADAPTERS), flavor, name),
+        Capability::Testkit => testkit_plan(root, &place(layout::TESTKIT)),
+        Capability::Fake => fake_plan(root, &place(layout::TESTKIT)),
+        Capability::Http => http_plan(root, &place(layout::API), name),
+        Capability::Format => format_plan(),
+    }
+}
+
+fn rel(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
         .unwrap_or(path)
         .display()
@@ -253,75 +566,335 @@ const SPRING_JDBC: Dependency = Dependency {
     artifact_id: "spring-boot-starter-jdbc",
     version: None,
     scope: None,
+    optional: false,
 };
 const POSTGRES_MANAGED: Dependency = Dependency {
     group_id: "org.postgresql",
     artifact_id: "postgresql",
     version: None,
     scope: Some("runtime"),
+    optional: false,
 };
 const POSTGRES_PINNED: Dependency = Dependency {
     group_id: "org.postgresql",
     artifact_id: "postgresql",
     version: Some("42.7.11"),
     scope: Some("runtime"),
+    optional: false,
 };
 const FLYWAY_CORE_MANAGED: Dependency = Dependency {
     group_id: "org.flywaydb",
     artifact_id: "flyway-core",
     version: None,
     scope: None,
+    optional: false,
 };
 const FLYWAY_POSTGRES_MANAGED: Dependency = Dependency {
     group_id: "org.flywaydb",
     artifact_id: "flyway-database-postgresql",
     version: None,
     scope: None,
+    optional: false,
 };
 const FLYWAY_CORE_PINNED: Dependency = Dependency {
     group_id: "org.flywaydb",
     artifact_id: "flyway-core",
     version: Some("12.8.1"),
     scope: None,
+    optional: false,
 };
 const FLYWAY_POSTGRES_PINNED: Dependency = Dependency {
     group_id: "org.flywaydb",
     artifact_id: "flyway-database-postgresql",
     version: Some("12.8.1"),
     scope: None,
+    optional: false,
 };
 const TESTCONTAINERS_POSTGRES: Dependency = Dependency {
     group_id: "org.testcontainers",
     artifact_id: "testcontainers-postgresql",
     version: Some("2.0.5"),
     scope: Some("test"),
+    optional: false,
 };
 const TESTCONTAINERS_JUNIT: Dependency = Dependency {
     group_id: "org.testcontainers",
     artifact_id: "testcontainers-junit-jupiter",
     version: Some("2.0.5"),
     scope: Some("test"),
+    optional: false,
+};
+const SPRING_TESTCONTAINERS: Dependency = Dependency {
+    group_id: "org.springframework.boot",
+    artifact_id: "spring-boot-testcontainers",
+    version: None,
+    scope: Some("test"),
+    optional: false,
 };
 
-fn db_plan(root: &std::path::Path, flavor: Flavor) -> Result<Plan> {
+const POSTGRES_IMAGE: &str = "postgres:17-alpine";
+const POSTGRES_CONTAINER_CONFIG: &str = "PostgresContainerConfig";
+
+fn db_plan(root: &std::path::Path, flavor: Flavor, pkg: &str) -> Result<Plan> {
     let mut deps = match flavor {
         Flavor::SpringBoot => vec![
             SPRING_JDBC,
             POSTGRES_MANAGED,
             FLYWAY_CORE_MANAGED,
             FLYWAY_POSTGRES_MANAGED,
+            SPRING_TESTCONTAINERS,
         ],
         Flavor::PlainMaven => vec![POSTGRES_PINNED, FLYWAY_CORE_PINNED, FLYWAY_POSTGRES_PINNED],
     };
     deps.extend([TESTCONTAINERS_POSTGRES, TESTCONTAINERS_JUNIT]);
 
+    let mut files = vec![NewFile {
+        path: root.join("src/main/resources/db/migration/.gitkeep"),
+        contents: String::new(),
+    }];
+    let spring_test_import = if flavor == Flavor::SpringBoot {
+        files.push(NewFile {
+            path: test_dir(root, pkg).join(format!("{POSTGRES_CONTAINER_CONFIG}.java")),
+            contents: postgres_container_config_java(pkg),
+        });
+        Some(SpringTestImport {
+            pkg: pkg.to_string(),
+            class: POSTGRES_CONTAINER_CONFIG,
+        })
+    } else {
+        None
+    };
+
     Ok(Plan {
         deps,
-        plugins: vec![],
-        files: vec![NewFile {
-            path: root.join("src/main/resources/db/migration/.gitkeep"),
-            contents: String::new(),
+        files,
+        compose: vec![compose::POSTGRES],
+        spring_test_import,
+        ..Plan::default()
+    })
+}
+
+fn postgres_container_config_java(pkg: &str) -> String {
+    format!(
+        r#"package {pkg};
+
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.context.annotation.Bean;
+import org.testcontainers.postgresql.PostgreSQLContainer;
+
+@TestConfiguration(proxyBeanMethods = false)
+public class {POSTGRES_CONTAINER_CONFIG} {{
+
+    @Bean
+    @ServiceConnection
+    PostgreSQLContainer postgres() {{
+        return new PostgreSQLContainer("{POSTGRES_IMAGE}");
+    }}
+}}
+"#
+    )
+}
+
+fn import_annotation(class: &str) -> String {
+    format!("@Import({class}.class)")
+}
+
+/// Wire `{class}` into the unique `*ApplicationTests` via `@Import`.
+///
+/// Returns whether the file was (or, in dry-run, would be) changed.
+fn wire_application_tests(root: &Path, cfg: &SpringTestImport, dry_run: bool) -> Result<bool> {
+    let path = match unique_application_tests(root) {
+        Ok(Some(path)) => path,
+        Ok(None) => {
+            println!(
+                "note: no *ApplicationTests.java -- @SpringBootTest will fail to load a DataSource\n      \
+                 until you @Import({}.class)",
+                cfg.class
+            );
+            return Ok(false);
+        }
+        Err(n) => {
+            println!(
+                "note: {n} *ApplicationTests.java files found, so {} was not imported automatically -- add @Import({}.class) to the one you meant",
+                cfg.class, cfg.class
+            );
+            return Ok(false);
+        }
+    };
+
+    let source =
+        fs::read_to_string(&path).map_err(|e| format!("failed to read {}: {e}", path.display()))?;
+    if source.contains(&import_annotation(&cfg.class)) {
+        println!(
+            "  exists  {} is already imported in {}",
+            cfg.class,
+            rel(root, &path)
+        );
+        return Ok(false);
+    }
+
+    let tests_pkg = package_of(&source).unwrap_or_else(|| cfg.pkg.clone());
+    let extra = import_of(&tests_pkg, &cfg.pkg, cfg.class);
+    let Some(spliced) = splice_spring_boot_test_import(&source, cfg.class, &extra) else {
+        println!(
+            "note: could not find @SpringBootTest in {} -- add @Import({}.class) by hand",
+            rel(root, &path),
+            cfg.class
+        );
+        return Ok(false);
+    };
+
+    if dry_run {
+        println!("  would import  {} into {}", cfg.class, rel(root, &path));
+        return Ok(true);
+    }
+
+    fs::write(&path, spliced).map_err(|e| format!("failed to write {}: {e}", path.display()))?;
+    println!("  import  {} -> {}", cfg.class, rel(root, &path));
+    Ok(true)
+}
+
+fn unwire_application_tests(root: &Path, cfg: &SpringTestImport) -> Result<()> {
+    for path in find_application_tests(&root.join("src/test/java")) {
+        let Ok(source) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let tests_pkg = package_of(&source).unwrap_or_else(|| cfg.pkg.clone());
+        let extra = import_of(&tests_pkg, &cfg.pkg, cfg.class);
+        let Some(next) = unsplice_spring_boot_test_import(&source, cfg.class, &extra) else {
+            continue;
+        };
+        fs::write(&path, next).map_err(|e| format!("failed to write {}: {e}", path.display()))?;
+        println!("  unsplice  {} from {}", cfg.class, rel(root, &path));
+    }
+    Ok(())
+}
+
+/// `Ok(Some)` when there is exactly one, `Ok(None)` when there are none,
+/// `Err(n)` when there are several -- same shape as the command dispatcher.
+fn unique_application_tests(root: &Path) -> std::result::Result<Option<PathBuf>, usize> {
+    let found = find_application_tests(&root.join("src/test/java"));
+    match found.len() {
+        0 => Ok(None),
+        1 => Ok(Some(found.into_iter().next().unwrap())),
+        n => Err(n),
+    }
+}
+
+fn find_application_tests(dir: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&current) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+                n.ends_with("ApplicationTests.java") || n.ends_with("ApplicationTest.java")
+            }) {
+                found.push(path);
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+/// Insert `@Import(Class.class)` immediately above `@SpringBootTest` and add
+/// the annotation import (plus `extra` when the config lives in another
+/// package). `None` when the anchor is missing.
+fn splice_spring_boot_test_import(source: &str, class: &str, extra: &str) -> Option<String> {
+    let annotation = import_annotation(class);
+    let anchor = source.find("@SpringBootTest")?;
+    let line_start = source[..anchor].rfind('\n').map(|i| i + 1).unwrap_or(0);
+
+    let mut out = String::with_capacity(source.len() + annotation.len() + extra.len() + 64);
+    out.push_str(&source[..line_start]);
+    out.push_str(&annotation);
+    out.push('\n');
+    out.push_str(&source[line_start..]);
+
+    let mut imports = String::new();
+    if !out.contains("org.springframework.context.annotation.Import") {
+        imports.push_str("import org.springframework.context.annotation.Import;\n");
+    }
+    imports.push_str(extra);
+    if !imports.is_empty() {
+        let package_end = out.find(";\n").map(|i| i + 2)?;
+        let mut with_import = String::with_capacity(out.len() + imports.len());
+        with_import.push_str(&out[..package_end]);
+        with_import.push('\n');
+        with_import.push_str(&imports);
+        with_import.push_str(&out[package_end..]);
+        out = with_import;
+    }
+    Some(normalize_imports(&out))
+}
+
+fn unsplice_spring_boot_test_import(source: &str, class: &str, extra: &str) -> Option<String> {
+    let annotation = import_annotation(class);
+    if !source.contains(&annotation) {
+        return None;
+    }
+    let extra = extra.trim();
+    // Drop the Import import only when this was the last @Import in the file.
+    let dropping_import_stmt = source.matches("@Import").count() <= 1;
+    let lines: Vec<&str> = source
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim();
+            if trimmed == annotation {
+                return false;
+            }
+            if !extra.is_empty() && trimmed == extra {
+                return false;
+            }
+            if dropping_import_stmt
+                && trimmed == "import org.springframework.context.annotation.Import;"
+            {
+                return false;
+            }
+            true
+        })
+        .collect();
+    let mut out = lines.join("\n");
+    if source.ends_with('\n') {
+        out.push('\n');
+    }
+    Some(normalize_imports(&out))
+}
+
+// ---------------------------------------------------------------------------
+// kafka
+// ---------------------------------------------------------------------------
+
+const SPRING_KAFKA: Dependency = Dependency {
+    group_id: "org.springframework.boot",
+    artifact_id: "spring-boot-starter-kafka",
+    version: None,
+    scope: None,
+    optional: false,
+};
+const KAFKA_CLIENTS: Dependency = Dependency {
+    group_id: "org.apache.kafka",
+    artifact_id: "kafka-clients",
+    version: Some("4.1.0"),
+    scope: None,
+    optional: false,
+};
+
+fn kafka_plan(flavor: Flavor) -> Result<Plan> {
+    Ok(Plan {
+        deps: vec![match flavor {
+            Flavor::SpringBoot => SPRING_KAFKA,
+            Flavor::PlainMaven => KAFKA_CLIENTS,
         }],
+        compose: vec![compose::KAFKA],
+        ..Plan::default()
     })
 }
 
@@ -336,6 +909,7 @@ const COMMONS_CSV: Dependency = Dependency {
     artifact_id: "commons-csv",
     version: Some("1.14.1"),
     scope: None,
+    optional: false,
 };
 
 fn csv_plan(
@@ -351,7 +925,6 @@ fn csv_plan(
         // Spring Boot's dependency management does not cover commons-csv, so
         // the version is pinned in both flavors.
         deps: vec![COMMONS_CSV],
-        plugins: vec![],
         files: vec![
             NewFile {
                 path: main_dir(root, pkg).join(format!("{class}.java")),
@@ -362,6 +935,7 @@ fn csv_plan(
                 contents: csv_reader_test_java(pkg, &class),
             },
         ],
+        ..Plan::default()
     })
 }
 
@@ -493,6 +1067,7 @@ const SQLITE_JDBC: Dependency = Dependency {
     artifact_id: "sqlite-jdbc",
     version: Some("3.49.1.0"),
     scope: None,
+    optional: false,
 };
 
 /// Deliberately the same code in both flavors. `java.sql` is part of the
@@ -511,7 +1086,6 @@ fn sqlite_plan(
 
     Ok(Plan {
         deps: vec![SQLITE_JDBC],
-        plugins: vec![],
         files: vec![
             NewFile {
                 path: main_dir(root, pkg).join(format!("{database}.java")),
@@ -530,6 +1104,7 @@ fn sqlite_plan(
                 contents: database_test_java(pkg, &database, &migrations),
             },
         ],
+        ..Plan::default()
     })
 }
 
@@ -753,6 +1328,7 @@ const JACKSON: Dependency = Dependency {
     artifact_id: "jackson-databind",
     version: Some(JACKSON_VERSION),
     scope: None,
+    optional: false,
 };
 
 /// `findAndRegisterModules()` only finds modules that are actually on the
@@ -766,6 +1342,7 @@ const JACKSON_JSR310: Dependency = Dependency {
     artifact_id: "jackson-datatype-jsr310",
     version: Some(JACKSON_VERSION),
     scope: None,
+    optional: false,
 };
 
 fn json_plan(
@@ -796,7 +1373,6 @@ fn json_plan(
 
     Ok(Plan {
         deps,
-        plugins: vec![],
         files: vec![
             NewFile {
                 path: main_dir(root, pkg).join(format!("{class}.java")),
@@ -807,6 +1383,7 @@ fn json_plan(
                 contents: json_test_java(pkg, &class),
             },
         ],
+        ..Plan::default()
     })
 }
 
@@ -2085,8 +2662,123 @@ mod tests {
 
     #[test]
     fn capitalize_uppercases_the_first_letter_only() {
-        assert_eq!(capitalize("csv"), "Csv");
-        assert_eq!(capitalize("transaction"), "Transaction");
-        assert_eq!(capitalize(""), "");
+        assert_eq!("Csv", capitalize("csv"));
+        assert_eq!("Transaction", capitalize("transaction"));
+        assert_eq!("", capitalize(""));
+    }
+
+    #[test]
+    fn db_plan_ships_compose_postgres_and_never_an_orm() {
+        let root = std::path::Path::new("/tmp/does-not-matter");
+        let plan = db_plan(root, Flavor::PlainMaven, "com.example.demo").unwrap();
+        assert_eq!(plan.compose, vec![compose::POSTGRES]);
+        let artifacts: Vec<&str> = plan.deps.iter().map(|d| d.artifact_id).collect();
+        assert!(artifacts.contains(&"postgresql"));
+        assert!(artifacts.contains(&"flyway-core"));
+        assert!(artifacts.contains(&"testcontainers-postgresql"));
+        assert!(
+            !artifacts
+                .iter()
+                .any(|a| a.contains("hibernate") || a.contains("jpa"))
+        );
+        assert!(
+            !plan
+                .deps
+                .iter()
+                .any(|d| d.artifact_id == "spring-boot-docker-compose"),
+            "the docker-compose module is added at apply time, and only for Spring"
+        );
+        assert!(plan.spring_test_import.is_none());
+        assert!(
+            !plan
+                .files
+                .iter()
+                .any(|f| f.path.ends_with("PostgresContainerConfig.java"))
+        );
+    }
+
+    #[test]
+    fn db_plan_on_spring_wires_a_testcontainers_service_connection() {
+        let root = std::path::Path::new("/tmp/does-not-matter");
+        let plan = db_plan(root, Flavor::SpringBoot, "com.example.demo").unwrap();
+        let artifacts: Vec<&str> = plan.deps.iter().map(|d| d.artifact_id).collect();
+        assert!(artifacts.contains(&"spring-boot-starter-jdbc"));
+        assert!(artifacts.contains(&"spring-boot-testcontainers"));
+        assert!(
+            plan.deps
+                .iter()
+                .any(|d| d.artifact_id == "spring-boot-testcontainers" && d.scope == Some("test"))
+        );
+        assert!(plan.files.iter().any(|f| {
+            f.path
+                .ends_with("src/test/java/com/example/demo/PostgresContainerConfig.java")
+        }));
+        let src = postgres_container_config_java("com.example.demo");
+        assert!(src.contains("@ServiceConnection"));
+        assert!(src.contains("org.testcontainers.postgresql.PostgreSQLContainer"));
+        assert!(
+            src.contains(POSTGRES_IMAGE),
+            "container image must match compose: {src}"
+        );
+        assert!(
+            compose::POSTGRES.body.contains(POSTGRES_IMAGE),
+            "compose postgres image drifted from POSTGRES_IMAGE"
+        );
+        assert!(!src.contains("GenericContainer"));
+        let cfg = plan.spring_test_import.unwrap();
+        assert_eq!(cfg.pkg, "com.example.demo");
+        assert_eq!(cfg.class, "PostgresContainerConfig");
+    }
+
+    #[test]
+    fn splice_import_lands_above_spring_boot_test_and_is_idempotent_to_unsplice() {
+        let source = r#"package com.example.demo;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.context.SpringBootTest;
+
+@SpringBootTest
+class DemoApplicationTests {
+
+    @Test
+    void contextLoads() {}
+}
+"#;
+        let spliced =
+            splice_spring_boot_test_import(source, "PostgresContainerConfig", "").unwrap();
+        assert!(spliced.contains("@Import(PostgresContainerConfig.class)"));
+        assert!(spliced.contains("import org.springframework.context.annotation.Import;"));
+        let import_at = spliced
+            .find("@Import(PostgresContainerConfig.class)")
+            .unwrap();
+        let boot_at = spliced.find("@SpringBootTest").unwrap();
+        assert!(import_at < boot_at, "{spliced}");
+
+        let restored =
+            unsplice_spring_boot_test_import(&spliced, "PostgresContainerConfig", "").unwrap();
+        assert!(!restored.contains("PostgresContainerConfig"));
+        assert!(!restored.contains("org.springframework.context.annotation.Import"));
+        assert!(restored.contains("@SpringBootTest"));
+
+        let extra = "import com.example.demo.testkit.PostgresContainerConfig;\n";
+        let other_pkg =
+            splice_spring_boot_test_import(source, "PostgresContainerConfig", extra).unwrap();
+        assert!(other_pkg.contains("import com.example.demo.testkit.PostgresContainerConfig;"));
+        let round_trip =
+            unsplice_spring_boot_test_import(&other_pkg, "PostgresContainerConfig", extra).unwrap();
+        assert!(!round_trip.contains("testkit.PostgresContainerConfig"));
+    }
+
+    #[test]
+    fn kafka_plan_is_a_client_plus_a_compose_broker() {
+        let spring = kafka_plan(Flavor::SpringBoot).unwrap();
+        assert_eq!(spring.deps[0].artifact_id, "spring-boot-starter-kafka");
+        assert!(spring.deps[0].version.is_none());
+        assert_eq!(spring.compose, vec![compose::KAFKA]);
+
+        let plain = kafka_plan(Flavor::PlainMaven).unwrap();
+        assert_eq!(plain.deps[0].artifact_id, "kafka-clients");
+        assert_eq!(plain.deps[0].version, Some("4.1.0"));
+        assert_eq!(plain.compose, vec![compose::KAFKA]);
     }
 }

@@ -16,6 +16,8 @@ local STREAMING = {
   check = true,
   fmt = true,
   mvn = true,
+  start = true,
+  stop = true,
 }
 
 local KINDS = {
@@ -38,7 +40,8 @@ local KINDS = {
   'integration-test',
 }
 
-local CAPABILITIES = { 'db', 'csv', 'sqlite', 'json', 'testkit', 'fake', 'http', 'format' }
+local CAPABILITIES = { 'db', 'kafka', 'csv', 'sqlite', 'json', 'testkit', 'fake', 'http', 'format' }
+local RUNTIMES = { 'db', 'kafka' }
 
 local SUBCOMMANDS = {
   'about',
@@ -49,6 +52,8 @@ local SUBCOMMANDS = {
   'g',
   'add',
   'a',
+  'remove',
+  'rm',
   'destroy',
   'd',
   'test',
@@ -57,6 +62,8 @@ local SUBCOMMANDS = {
   'check',
   'mvn',
   'run',
+  'start',
+  'stop',
   'completion',
   'help',
 }
@@ -66,8 +73,10 @@ local OPTIONS = {
   info = { '--json' },
   new = { '--deps', '--java', '--no-git', '--no-devtools' },
   ['new-cli'] = { '--release', '--no-git' },
-  add = { '--name', '--dry-run', '--package' },
-  a = { '--name', '--dry-run', '--package' },
+  add = { '--name', '--dry-run', '--no-start', '--package' },
+  a = { '--name', '--dry-run', '--no-start', '--package' },
+  remove = { '--name', '--dry-run', '--force', '--package' },
+  rm = { '--name', '--dry-run', '--force', '--package' },
   destroy = { '--force', '--package' },
   d = { '--force', '--package' },
   generate = { '--package' },
@@ -244,6 +253,21 @@ function M.destroy(args)
   M.run(command)
 end
 
+function M.remove(args)
+  if #args < 1 then
+    vim.notify('jails.nvim: usage :Jails remove <capability>...', vim.log.levels.ERROR)
+    return
+  end
+
+  local choice = vim.fn.confirm(('remove %s?'):format(table.concat(args, ' ')), '&Yes\n&No', 2)
+  if choice ~= 1 then return end
+
+  local command = { 'remove' }
+  vim.list_extend(command, args)
+  if not vim.tbl_contains(command, '--force') then table.insert(command, '--force') end
+  M.run(command)
+end
+
 function M.dispatch(fargs)
   if #fargs == 0 then
     vim.notify(
@@ -256,6 +280,8 @@ function M.dispatch(fargs)
   local sub = fargs[1]
   if sub == 'destroy' or sub == 'd' then
     M.destroy(vim.list_slice(fargs, 2))
+  elseif sub == 'remove' or sub == 'rm' then
+    M.remove(vim.list_slice(fargs, 2))
   elseif STREAMING[sub] then
     M.run_terminal(fargs)
   else
@@ -305,8 +331,11 @@ function M.complete(arg_lead, cmd_line)
     if sub == 'generate' or sub == 'g' or sub == 'destroy' or sub == 'd' then
       return matching(KINDS, arg_lead)
     end
-    if sub == 'add' or sub == 'a' then
+    if sub == 'add' or sub == 'a' or sub == 'remove' or sub == 'rm' then
       return matching(CAPABILITIES, arg_lead)
+    end
+    if sub == 'start' or sub == 'stop' then
+      return matching(RUNTIMES, arg_lead)
     end
     if sub == 'test' then return matching(test_names(), arg_lead) end
   end

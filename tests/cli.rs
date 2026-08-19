@@ -527,6 +527,145 @@ fn run_command_uses_spring_boot_run_for_spring_projects() {
 }
 
 #[test]
+fn run_starts_compose_services_when_compose_yaml_exists() {
+    let root = temp_dir("mock-run-compose");
+    let pkg_dir = root.join("src/main/java/com/example/demo");
+    fs::create_dir_all(&pkg_dir).unwrap();
+    fs::write(
+        root.join("pom.xml"),
+        "<project>org.springframework.boot</project>",
+    )
+    .unwrap();
+    fs::write(
+        root.join("compose.yaml"),
+        "services:\n  postgres:\n    image: postgres:17-alpine\n",
+    )
+    .unwrap();
+    let fake_dir = temp_dir("mock-run-compose-bin");
+    let log = fake_dir.join("log.txt");
+    write_fake_maven(&fake_dir, &["docker", "mvn"], &log);
+
+    let status = jails_cmd(&root, Some(&fake_dir))
+        .arg("run")
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let invocation = read_log(&log);
+    assert!(
+        invocation.contains("compose up -d"),
+        "expected docker compose up before spring-boot:run: {invocation}"
+    );
+    assert!(invocation.contains("spring-boot:run"));
+}
+
+#[test]
+fn start_and_stop_drive_docker_compose() {
+    let root = temp_dir("mock-start-stop");
+    write_project_skeleton(&root);
+    fs::write(
+        root.join("compose.yaml"),
+        "services:\n  postgres:\n    image: postgres:17-alpine\n  kafka:\n    image: apache/kafka:4.1.0\n",
+    )
+    .unwrap();
+    let fake_dir = temp_dir("mock-start-stop-bin");
+    let log = fake_dir.join("log.txt");
+    write_fake_maven(&fake_dir, &["docker"], &log);
+
+    assert!(
+        jails_cmd(&root, Some(&fake_dir))
+            .args(["start", "db"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        jails_cmd(&root, Some(&fake_dir))
+            .args(["stop", "kafka"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        jails_cmd(&root, Some(&fake_dir))
+            .arg("start")
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        jails_cmd(&root, Some(&fake_dir))
+            .arg("stop")
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let invocation = read_log(&log);
+    let lines: Vec<&str> = invocation.lines().collect();
+    assert!(
+        lines.iter().any(|l| l.ends_with("compose up -d postgres")),
+        "start db: {invocation}"
+    );
+    assert!(
+        lines.iter().any(|l| l.ends_with("compose stop kafka")),
+        "stop kafka: {invocation}"
+    );
+    assert!(
+        lines.iter().any(|l| l.ends_with("compose up -d")),
+        "bare start should be `up -d` with no service filter: {invocation}"
+    );
+    assert!(
+        lines.iter().any(|l| l.ends_with("compose stop")),
+        "bare stop should be `stop` with no service filter: {invocation}"
+    );
+}
+
+#[test]
+fn start_errors_when_there_is_no_compose_file() {
+    let root = temp_dir("start-no-compose");
+    write_project_skeleton(&root);
+    let fake_dir = temp_dir("start-no-compose-bin");
+    let log = fake_dir.join("log.txt");
+    write_fake_maven(&fake_dir, &["docker"], &log);
+
+    let output = jails_cmd(&root, Some(&fake_dir))
+        .arg("start")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("compose.yaml"), "{stderr}");
+    assert!(read_log(&log).is_empty(), "docker must not be invoked");
+}
+
+#[test]
+fn add_db_no_start_skips_docker_compose_up() {
+    let root = temp_dir("add-db-no-start");
+    write_plain_fixture(&root);
+    let fake = temp_dir("add-db-no-start-bin");
+    let log = fake.join("log.txt");
+    write_fake_maven(&fake, &["docker"], &log);
+
+    let output = jails_cmd(&root, Some(&fake))
+        .args(["add", "db", "--no-start"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(root.join("compose.yaml").is_file());
+    assert!(
+        read_log(&log).is_empty(),
+        "docker must not be invoked with --no-start: {}",
+        read_log(&log)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("jails start"), "{stdout}");
+}
+
+#[test]
 fn run_command_compiles_before_attempting_a_plain_main_class() {
     let root = temp_dir("mock-run-plain");
     let pkg_dir = root.join("src/main/java/com/example/demo");
@@ -859,12 +998,28 @@ fn completion_script_lists_add_and_its_capabilities() {
         script.contains("add"),
         "completion script never mentions `add`"
     );
-    for capability in ["db", "csv", "sqlite", "json"] {
+    for capability in ["db", "kafka", "csv", "sqlite", "json"] {
         assert!(
             script.contains(capability),
             "completion script never mentions the {capability} capability"
         );
     }
+    assert!(
+        script.contains("remove"),
+        "completion script never mentions `remove`"
+    );
+    assert!(
+        script.contains("jails,rm)"),
+        "expected the `rm` alias to transition completion state: {script}"
+    );
+    assert!(
+        script.contains("start"),
+        "completion script never mentions `start`"
+    );
+    assert!(
+        script.contains("stop"),
+        "completion script never mentions `stop`"
+    );
 }
 
 #[test]
@@ -1110,8 +1265,14 @@ fn add_sqlite_writes_a_first_migration_and_both_classes() {
 fn add_db_installs_postgres_flyway_and_testcontainers_without_an_orm() {
     let root = temp_dir("add-db-files");
     write_plain_fixture(&root);
+    let fake = temp_dir("add-db-bin");
+    let log = fake.join("log.txt");
+    write_fake_maven(&fake, &["docker"], &log);
 
-    let output = jails_cmd(&root, None).args(["add", "db"]).output().unwrap();
+    let output = jails_cmd(&root, Some(&fake))
+        .args(["add", "db"])
+        .output()
+        .unwrap();
     assert!(
         output.status.success(),
         "{}",
@@ -1129,8 +1290,227 @@ fn add_db_installs_postgres_flyway_and_testcontainers_without_an_orm() {
         assert!(pom.contains(artifact), "missing {artifact}: {pom}");
     }
     assert!(
+        !pom.contains("hibernate") && !pom.contains("jpa"),
+        "db must not pull in an ORM: {pom}"
+    );
+    assert!(
         root.join("src/main/resources/db/migration/.gitkeep")
             .is_file()
+    );
+    let compose = fs::read_to_string(root.join("compose.yaml")).unwrap();
+    assert!(compose.contains("postgres:17-alpine"), "{compose}");
+    assert!(compose.contains("# jails:db"), "{compose}");
+    let invocation = read_log(&log);
+    assert!(
+        invocation.contains("compose up -d postgres"),
+        "expected docker compose up: {invocation}"
+    );
+}
+
+#[test]
+fn add_db_on_spring_wires_docker_compose_support() {
+    let root = temp_dir("add-db-spring");
+    write_spring_fixture(&root);
+    let fake = temp_dir("add-db-spring-bin");
+    let log = fake.join("log.txt");
+    write_fake_maven(&fake, &["docker"], &log);
+
+    assert!(
+        jails_cmd(&root, Some(&fake))
+            .args(["add", "db"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(pom.contains("spring-boot-starter-jdbc"));
+    assert!(pom.contains("spring-boot-docker-compose"));
+    assert!(pom.contains("spring-boot-testcontainers"));
+    assert!(pom.contains("<optional>true</optional>"));
+    let config = root.join("src/test/java/com/example/demo/PostgresContainerConfig.java");
+    assert!(config.is_file(), "missing {}", config.display());
+    let tests =
+        fs::read_to_string(root.join("src/test/java/com/example/demo/DemoApplicationTests.java"))
+            .unwrap();
+    assert!(
+        tests.contains("@Import(PostgresContainerConfig.class)"),
+        "{tests}"
+    );
+
+    assert!(
+        jails_cmd(&root, Some(&fake))
+            .args(["remove", "db", "--force"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let tests =
+        fs::read_to_string(root.join("src/test/java/com/example/demo/DemoApplicationTests.java"))
+            .unwrap();
+    assert!(
+        !tests.contains("PostgresContainerConfig"),
+        "remove db must unsplice ApplicationTests: {tests}"
+    );
+    assert!(!config.is_file());
+}
+
+/// The failure `jails check` actually hits after `add db` on a Spring project:
+/// stock `*ApplicationTests.contextLoads` cannot pick a driver because Docker
+/// Compose is skipped in tests. Testcontainers `@ServiceConnection` is what
+/// makes that test (and therefore `mvn verify`) green.
+#[test]
+fn add_db_on_spring_makes_context_loads_pass() {
+    if !real_mvn_available() {
+        eprintln!("skipping: mvn not found on PATH");
+        return;
+    }
+    if !real_java_supports_target_release() {
+        eprintln!("skipping: javac on PATH does not support --release {TARGET_RELEASE}");
+        return;
+    }
+    if !real_docker_available() {
+        eprintln!("skipping: docker daemon not available");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let root = temp_dir("real-add-db-spring");
+    write_spring_fixture(&root);
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    let pom = pom.replace(
+        "<java.version>26</java.version>",
+        &format!("<java.version>{TARGET_RELEASE}</java.version>"),
+    );
+    fs::write(root.join("pom.xml"), pom).unwrap();
+
+    let status = jails_cmd_with_path(&root, &path)
+        .args(["add", "db", "--no-start"])
+        .status()
+        .unwrap();
+    assert!(status.success(), "add db failed");
+
+    let status = jails_cmd_with_path(&root, &path)
+        .arg("test")
+        .status()
+        .unwrap();
+    assert!(
+        status.success(),
+        "mvn test failed after `jails add db` on a Spring project (contextLoads needs Testcontainers)"
+    );
+}
+
+#[test]
+fn add_kafka_stacks_onto_db_compose_and_remove_undoes_one_side() {
+    let root = temp_dir("add-kafka-stack");
+    write_plain_fixture(&root);
+    let fake = temp_dir("add-kafka-bin");
+    let log = fake.join("log.txt");
+    write_fake_maven(&fake, &["docker"], &log);
+
+    assert!(
+        jails_cmd(&root, Some(&fake))
+            .args(["add", "db", "kafka"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let compose = fs::read_to_string(root.join("compose.yaml")).unwrap();
+    assert!(compose.contains("  postgres:"));
+    assert!(compose.contains("  kafka:"));
+    assert!(compose.contains("apache/kafka:4.1.0"));
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(pom.contains("kafka-clients"));
+    assert!(pom.contains("postgresql"));
+
+    assert!(
+        jails_cmd(&root, Some(&fake))
+            .args(["remove", "db", "--force"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let compose = fs::read_to_string(root.join("compose.yaml")).unwrap();
+    assert!(!compose.contains("postgres:"), "{compose}");
+    assert!(compose.contains("  kafka:"), "{compose}");
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(
+        !pom.contains("<artifactId>postgresql</artifactId>"),
+        "{pom}"
+    );
+    assert!(pom.contains("kafka-clients"));
+    assert!(root.join("compose.yaml").is_file());
+
+    assert!(
+        jails_cmd(&root, Some(&fake))
+            .args(["remove", "kafka", "--force"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(!root.join("compose.yaml").exists());
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(!pom.contains("kafka-clients"));
+}
+
+#[test]
+fn remove_is_the_inverse_of_add_csv() {
+    let root = temp_dir("remove-csv");
+    write_plain_fixture(&root);
+    assert!(
+        jails_cmd(&root, None)
+            .args(["add", "csv"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let reader = root.join("src/main/java/com/example/demo/adapters/CsvReader.java");
+    assert!(reader.is_file());
+
+    let output = jails_cmd(&root, None)
+        .args(["remove", "csv", "--force"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!reader.exists());
+    assert!(
+        !root
+            .join("src/test/java/com/example/demo/adapters/CsvReaderTest.java")
+            .exists()
+    );
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(!pom.contains("commons-csv"), "{pom}");
+}
+
+#[test]
+fn remove_without_force_prompts_and_aborts_on_no() {
+    let root = temp_dir("remove-prompt");
+    write_plain_fixture(&root);
+    assert!(
+        jails_cmd(&root, None)
+            .args(["add", "csv"])
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let mut child = jails_cmd(&root, None)
+        .args(["remove", "csv"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(b"n\n").unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("aborted"), "{stdout}");
+    assert!(
+        root.join("src/main/java/com/example/demo/adapters/CsvReader.java")
+            .is_file(),
+        "aborted remove must leave the files"
     );
 }
 
@@ -1171,8 +1551,11 @@ fn capabilities_stack_without_clobbering_each_other() {
 fn add_accepts_multiple_capabilities_in_one_invocation() {
     let root = temp_dir("add-multiple");
     write_plain_fixture(&root);
+    let fake = temp_dir("add-multiple-bin");
+    let log = fake.join("log.txt");
+    write_fake_maven(&fake, &["docker"], &log);
 
-    let output = jails_cmd(&root, None)
+    let output = jails_cmd(&root, Some(&fake))
         .args(["add", "db", "json", "testkit"])
         .output()
         .unwrap();

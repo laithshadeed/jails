@@ -1,5 +1,6 @@
-use crate::generate::find_project_root;
 use crate::Result;
+use crate::compose;
+use crate::generate::find_project_root;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -137,6 +138,7 @@ fn require_spotless(root: &std::path::Path) -> Result<()> {
 /// that's checked upfront.
 pub fn watch(debug: bool) -> Result<()> {
     let root = find_project_root()?;
+    compose::up(&root, &[], debug);
     let pom = fs::read_to_string(root.join("pom.xml"))
         .map_err(|e| format!("failed to read pom.xml: {e}"))?;
     if !pom.contains("org.springframework.boot") {
@@ -223,6 +225,7 @@ fn latest_mtime(dir: &Path) -> std::time::SystemTime {
 /// the edit loop drops out to raw `mvn` the moment the program takes input.
 pub fn run(no_build: bool, args: &[String], debug: bool) -> Result<()> {
     let root = find_project_root()?;
+    compose::up(&root, &[], debug);
     let pom = fs::read_to_string(root.join("pom.xml"))
         .map_err(|e| format!("failed to read pom.xml: {e}"))?;
 

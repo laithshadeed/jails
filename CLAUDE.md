@@ -19,20 +19,25 @@ command that isn't already there.
 - `src/generate.rs` — all Java templates (`format!`, no template engine) +
   `generate`/`destroy`. `ArtifactKind` is a `clap::ValueEnum` — keep it that
   way, see gotcha below.
-- `src/add.rs` — `add <capability>` (csv/sqlite/json): grows an existing
-  project by a whole slice (dependency + code + test). `Capability` is a `clap::ValueEnum` for
-  the same completion reason as `ArtifactKind`.
-- `src/pom.rs` — the only code that *edits* a file the user owns. Flavor
-  and release-level detection, plus a comment-preserving dependency splice.
-  `TARGET_RELEASE` lives here.
-- `src/run.rs` — `test`/`build`/`run`, shells to `mvn`/`mvnd`.
+- `src/add.rs` — `add`/`remove <capability>` (csv/sqlite/json/db/kafka/…):
+  grows or shrinks an existing project by a whole slice (dependency + code +
+  test, and for `db`/`kafka` a compose service). `Capability` is a
+  `clap::ValueEnum` for the same completion reason as `ArtifactKind`.
+- `src/pom.rs` — flavor and release-level detection, plus a comment-preserving
+  dependency/plugin splice and unsplice. `TARGET_RELEASE` lives here.
+- `src/compose.rs` — the other user-owned file jails edits: `compose.yaml`.
+  Marked service blocks so `add db` and `add kafka` stack, and `remove` can
+  take one service out without touching the other. Also `start`/`stop`
+  (`docker compose up/stop`) and the auto-start `run` shells out to.
+- `src/run.rs` — `test`/`build`/`run`, shells to `mvn`/`mvnd`. `run`/`watch`
+  start compose services first when `compose.yaml` is present.
 - `tests/common/mod.rs` + `tests/cli.rs` — integration tests against the
   real compiled binary (`CARGO_BIN_EXE_jails`).
 - `jails.nvim/` — tracked in this repo, but Lua, not Rust: a thin `:Jails`
   wrapper that shells out to the binary on PATH. It keeps its own hand-
   maintained `SUBCOMMANDS`/`KINDS` lists for `:Jails` completion, so a new
   subcommand or artifact kind has to be added there too or it silently
-  won't complete (`add`/`a` is missing from that list today).
+  won't complete.
 
 Untracked siblings in this directory are **not** part of the project:
 `rails/` and `start.spring.io/` are gitignored reference checkouts (separate
@@ -131,6 +136,13 @@ jails knows nothing about.
   pulls it in transitively, so this only ever bit the plain-Maven flavor.
   Keep both artifacts pinned to the same `JACKSON_VERSION`; mixing versions
   across them is a documented `NoSuchMethodError`.
+- **`add db` on Spring must wire Testcontainers into `*ApplicationTests`.**
+  Docker Compose is skipped in tests (`spring.docker.compose.skip.in-tests=true`
+  by default), so JDBC auto-config has no URL and fails with "Failed to
+  determine a suitable driver class". `PostgresContainerConfig` + `@Import` is
+  the Initializr pattern. Do not "fix" this by setting `skip.in-tests=false`
+  (that would share the compose database with tests) or by writing a
+  `src/test/resources/application.properties` that shadows the main one.
 - **`record`/`command` are the plain-Java kinds.** They work in `new-cli`
   projects without framework dependencies. A record occupies two paths
   (`<Name>.java` + `<Name>Test.java`), and `generate` refuses to overwrite

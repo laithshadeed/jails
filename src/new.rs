@@ -367,8 +367,10 @@ mod tests {
             crate::pom::TARGET_RELEASE
         )));
         // The release is whatever the caller asked for, not a baked-in constant.
-        assert!(pom_xml("demo", "com.example.demo", "21")
-            .contains("<maven.compiler.release>21</maven.compiler.release>"));
+        assert!(
+            pom_xml("demo", "com.example.demo", "21")
+                .contains("<maven.compiler.release>21</maven.compiler.release>")
+        );
         assert!(pom.contains("<mainClass>com.example.demo.App</mainClass>"));
         assert!(pom.contains("<artifactId>demo</artifactId>"));
     }

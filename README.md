@@ -63,9 +63,20 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
   so and leaves the Javadoc's instructions as the fallback.
 - `jails generate|g cli <Name>` — a second dispatcher, for projects that
   want one separate from `App.java`. `new-cli` already gives you one.
-- `jails add|a db` — PostgreSQL JDBC, Flyway, PostgreSQL Testcontainers, and
-  the migration directory. Spring projects also receive the JDBC starter.
-  This capability is raw SQL only: no persistence framework or generated schema.
+- `jails add|a db` — PostgreSQL JDBC, Flyway, PostgreSQL Testcontainers, a
+  `compose.yaml` service, and the migration directory. Spring projects also
+  receive the JDBC starter, `spring-boot-docker-compose` so the database
+  starts with the app, and a `@ServiceConnection` Testcontainers config
+  `@Import`ed into `*ApplicationTests` so `contextLoads` (and `jails check`)
+  still pass — Docker Compose is skipped in tests, and without a DataSource
+  Spring cannot pick a driver. `jails add` starts postgres immediately when Docker is
+  on PATH (`--no-start` skips that). `jails start` / `jails stop` start and
+  stop the compose services on their own; `jails run` starts whatever is in
+  `compose.yaml` either way. This
+  capability is raw SQL only: no persistence framework or generated schema.
+- `jails add|a kafka` — a Kafka client (`spring-boot-starter-kafka` or
+  `kafka-clients`) and a KRaft broker in `compose.yaml`. Stacks with `add db`
+  in one file; `remove kafka` takes only the broker back out.
 - `jails add|a <csv|sqlite|json|testkit|fake|http|format> [--name <Base>] [--dry-run]` — grows an
   existing project by a whole capability: the dependency (spliced into
   `pom.xml`, comments and formatting preserved), the code that uses it, and
@@ -74,6 +85,13 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
   `Database` record plus a migration runner over plain JDBC (no ORM); `json`
   gives a shared Jackson `ObjectMapper` wrapper, with `java.time` support
   wired in and a tree API for input whose shape you can't trust.
+- `jails remove|rm <capability>... [--force]` — the inverse of `add`: unsplices
+  the same dependencies, deletes the same files, removes compose services, and
+  stops their containers. Confirms unless `--force`.
+- `jails start [db|kafka]...` — `docker compose up -d` for the named services,
+  or everything in `compose.yaml` when invoked with no arguments.
+- `jails stop [db|kafka]...` — stop those containers (`db` is the postgres
+  service). Does not delete `compose.yaml`.
 - `jails destroy|d <type> <Name> [--force]` — deletes exactly what the
   matching `generate` call would have created.
 - `jails test [name]` — uses `./mvnw` when present. A bare `Money` becomes
@@ -94,7 +112,7 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
   compile + tests (`mvn verify`). Both need `jails add format`.
 - `jails completion <bash|zsh|fish|elvish|powershell>` — shell completion.
 
-`generate`, `destroy` and `add` all take `--package <sub>` to override where
+`generate`, `destroy`, `add` and `remove` all take `--package <sub>` to override where
 the code lands; `--package ''` writes straight into the base package.
 
 Every command takes `--debug`, which prints the `mvnw`/`mvn`/`mvnd`/`java`/`git`/`curl`
@@ -168,6 +186,7 @@ into one flat pile beside `App.java`:
 | `repo` (adapter) | `adapters` |
 | `migration` | `src/main/resources/db/migration` |
 | `add csv`/`json`/`sqlite` | `adapters` |
+| `add db` / `add kafka` | `compose.yaml` (and `src/main/resources/db/migration` for `db`; Spring `add db` also writes `PostgresContainerConfig` next to `*ApplicationTests`) |
 | `add http`, `handler` | `api` |
 | `add testkit`/`fake` | `testkit` (test tree) |
 

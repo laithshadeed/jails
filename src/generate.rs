@@ -971,7 +971,7 @@ pub fn generate(
 
 /// An `import` line for `{from}.{class}`, or nothing at all when the two
 /// packages are the same -- importing a sibling is a compile error.
-fn import_of(user: &str, owner: &str, class: &str) -> String {
+pub(crate) fn import_of(user: &str, owner: &str, class: &str) -> String {
     if user == owner {
         String::new()
     } else {
@@ -1112,8 +1112,10 @@ pub fn destroy(kind: ArtifactKind, name: &str, force: bool, package: Option<&str
         // `cases` derives its class from a markdown file's name, so destroy
         // takes that same path and resolves it the same way generate did.
         ArtifactKind::Cases => {
-            vec![test_dir(&root, &place(""))
-                .join(format!("{}.java", cases_class_name(Path::new(&raw_name))?))]
+            vec![
+                test_dir(&root, &place(""))
+                    .join(format!("{}.java", cases_class_name(Path::new(&raw_name))?)),
+            ]
         }
         ArtifactKind::Migration => {
             return Err(
@@ -2828,7 +2830,7 @@ pub(crate) fn is_dispatcher(source: &str) -> bool {
     source.contains("SequencedMap<String, Command>") && source.contains("return commands;")
 }
 
-fn package_of(source: &str) -> Option<String> {
+pub(crate) fn package_of(source: &str) -> Option<String> {
     source.lines().find_map(|line| {
         line.trim()
             .strip_prefix("package ")?
@@ -3739,13 +3741,17 @@ mod tests {
 
         assert!(test.contains("class GreetCommandTest"));
         assert!(test.contains("ByteArrayOutputStream"));
-        assert!(test.contains("GreetCommand.run(new PrintStream(out), new PrintStream(err), args)"));
+        assert!(
+            test.contains("GreetCommand.run(new PrintStream(out), new PrintStream(err), args)")
+        );
         assert!(test.contains("GreetCommand.USAGE_ERROR"));
     }
 
     #[test]
     fn stub_templates_use_the_package_and_class_name() {
-        assert!(stub_controller("com.example.blog", "Post").contains("public class PostController"));
+        assert!(
+            stub_controller("com.example.blog", "Post").contains("public class PostController")
+        );
         assert!(stub_service("com.example.blog", "Post").contains("public class PostService"));
         assert!(
             interface_java("com.example.blog", "PostStore").contains("public interface PostStore")
@@ -3777,30 +3783,38 @@ mod tests {
         std::env::set_current_dir(original_cwd).unwrap();
         result.unwrap();
 
-        assert!(root
-            .join("src/main/java/com/example/blog/domain/Post.java")
-            .is_file());
-        assert!(root
-            .join("src/test/java/com/example/blog/domain/PostTest.java")
-            .is_file());
-        assert!(root
-            .join("src/main/java/com/example/blog/app/PostRepository.java")
-            .is_file());
-        assert!(root
-            .join("src/main/java/com/example/blog/adapters/JdbcPostRepository.java")
-            .is_file());
-        assert!(root
-            .join("src/test/java/com/example/blog/adapters/JdbcPostRepositoryIT.java")
-            .is_file());
-        assert!(root
-            .join("src/main/java/com/example/blog/service/PostService.java")
-            .is_file());
-        assert!(root
-            .join("src/main/java/com/example/blog/web/PostController.java")
-            .is_file());
-        assert!(root
-            .join("src/test/java/com/example/blog/web/PostControllerTest.java")
-            .is_file());
+        assert!(
+            root.join("src/main/java/com/example/blog/domain/Post.java")
+                .is_file()
+        );
+        assert!(
+            root.join("src/test/java/com/example/blog/domain/PostTest.java")
+                .is_file()
+        );
+        assert!(
+            root.join("src/main/java/com/example/blog/app/PostRepository.java")
+                .is_file()
+        );
+        assert!(
+            root.join("src/main/java/com/example/blog/adapters/JdbcPostRepository.java")
+                .is_file()
+        );
+        assert!(
+            root.join("src/test/java/com/example/blog/adapters/JdbcPostRepositoryIT.java")
+                .is_file()
+        );
+        assert!(
+            root.join("src/main/java/com/example/blog/service/PostService.java")
+                .is_file()
+        );
+        assert!(
+            root.join("src/main/java/com/example/blog/web/PostController.java")
+                .is_file()
+        );
+        assert!(
+            root.join("src/test/java/com/example/blog/web/PostControllerTest.java")
+                .is_file()
+        );
 
         let adapter = fs::read_to_string(
             root.join("src/main/java/com/example/blog/adapters/JdbcPostRepository.java"),
@@ -3839,14 +3853,17 @@ mod tests {
         std::env::set_current_dir(original_cwd).unwrap();
         result.unwrap();
 
-        assert!(root
-            .join("src/main/java/com/example/blog/web/HealthController.java")
-            .is_file());
+        assert!(
+            root.join("src/main/java/com/example/blog/web/HealthController.java")
+                .is_file()
+        );
         let test_file = root.join("src/test/java/com/example/blog/web/HealthControllerTest.java");
         assert!(test_file.is_file(), "expected {}", test_file.display());
-        assert!(fs::read_to_string(test_file)
-            .unwrap()
-            .contains("class HealthControllerTest"));
+        assert!(
+            fs::read_to_string(test_file)
+                .unwrap()
+                .contains("class HealthControllerTest")
+        );
     }
 
     #[test]
@@ -3868,12 +3885,14 @@ mod tests {
         std::env::set_current_dir(original_cwd).unwrap();
         result.unwrap();
 
-        assert!(root
-            .join("src/main/java/com/example/blog/service/BillingService.java")
-            .is_file());
-        assert!(root
-            .join("src/test/java/com/example/blog/service/BillingServiceTest.java")
-            .is_file());
+        assert!(
+            root.join("src/main/java/com/example/blog/service/BillingService.java")
+                .is_file()
+        );
+        assert!(
+            root.join("src/test/java/com/example/blog/service/BillingServiceTest.java")
+                .is_file()
+        );
     }
 
     #[test]
@@ -3895,15 +3914,18 @@ mod tests {
         std::env::set_current_dir(original_cwd).unwrap();
         result.unwrap();
 
-        assert!(root
-            .join("src/main/java/com/example/blog/app/WidgetRepository.java")
-            .is_file());
-        assert!(root
-            .join("src/main/java/com/example/blog/adapters/JdbcWidgetRepository.java")
-            .is_file());
-        assert!(root
-            .join("src/test/java/com/example/blog/adapters/JdbcWidgetRepositoryIT.java")
-            .is_file());
+        assert!(
+            root.join("src/main/java/com/example/blog/app/WidgetRepository.java")
+                .is_file()
+        );
+        assert!(
+            root.join("src/main/java/com/example/blog/adapters/JdbcWidgetRepository.java")
+                .is_file()
+        );
+        assert!(
+            root.join("src/test/java/com/example/blog/adapters/JdbcWidgetRepositoryIT.java")
+                .is_file()
+        );
     }
 
     /// `record` and `command` target plain Maven projects, whose entry point
@@ -3935,18 +3957,22 @@ mod tests {
         record.unwrap();
         command.unwrap();
 
-        assert!(root
-            .join("src/main/java/com/example/demo/domain/Money.java")
-            .is_file());
-        assert!(root
-            .join("src/test/java/com/example/demo/domain/MoneyTest.java")
-            .is_file());
-        assert!(root
-            .join("src/main/java/com/example/demo/cli/GreetCommand.java")
-            .is_file());
-        assert!(root
-            .join("src/test/java/com/example/demo/cli/GreetCommandTest.java")
-            .is_file());
+        assert!(
+            root.join("src/main/java/com/example/demo/domain/Money.java")
+                .is_file()
+        );
+        assert!(
+            root.join("src/test/java/com/example/demo/domain/MoneyTest.java")
+                .is_file()
+        );
+        assert!(
+            root.join("src/main/java/com/example/demo/cli/GreetCommand.java")
+                .is_file()
+        );
+        assert!(
+            root.join("src/test/java/com/example/demo/cli/GreetCommandTest.java")
+                .is_file()
+        );
     }
 
     #[test]
@@ -3970,9 +3996,11 @@ mod tests {
 
         result.unwrap();
         assert!(!src.join("GreetCommand.java").exists());
-        assert!(!root
-            .join("src/test/java/com/example/demo/GreetCommandTest.java")
-            .exists());
+        assert!(
+            !root
+                .join("src/test/java/com/example/demo/GreetCommandTest.java")
+                .exists()
+        );
         assert!(src.join("App.java").is_file());
     }
 
@@ -4013,9 +4041,11 @@ mod tests {
         );
         result.unwrap();
         assert!(!src.join("Tag.java").exists());
-        assert!(!root
-            .join("src/test/java/com/example/demo/TagTest.java")
-            .exists());
+        assert!(
+            !root
+                .join("src/test/java/com/example/demo/TagTest.java")
+                .exists()
+        );
     }
 
     #[test]
@@ -4073,9 +4103,11 @@ mod tests {
 
         result.unwrap();
         assert!(!src.join("Tag.java").is_file());
-        assert!(!root
-            .join("src/test/java/com/example/blog/TagTest.java")
-            .exists());
+        assert!(
+            !root
+                .join("src/test/java/com/example/blog/TagTest.java")
+                .exists()
+        );
         assert!(src.join("BlogApplication.java").is_file());
     }
 }
