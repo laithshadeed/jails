@@ -95,10 +95,11 @@ enum Command {
         #[arg(long)]
         package: Option<String>,
     },
-    /// Add a capability to an existing project: dependency, code and a test
+    /// Add one or more capabilities to an existing project: dependencies, code and tests
     #[command(visible_alias = "a")]
     Add {
-        capability: Capability,
+        #[arg(required = true, num_args = 1..)]
+        capabilities: Vec<Capability>,
         /// Base name for the generated class (default: the capability's own)
         #[arg(long)]
         name: Option<String>,
@@ -183,11 +184,13 @@ fn main() {
             package,
         } => generate::generate(kind, &name, &fields, package.as_deref()),
         Command::Add {
-            capability,
+            capabilities,
             name,
             dry_run,
             package,
-        } => add::add(capability, name.as_deref(), dry_run, package.as_deref()),
+        } => capabilities.into_iter().try_for_each(|capability| {
+            add::add(capability, name.as_deref(), dry_run, package.as_deref())
+        }),
         Command::Destroy {
             kind,
             name,

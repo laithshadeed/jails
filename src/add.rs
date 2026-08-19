@@ -1,5 +1,5 @@
-//! `jails add <capability>` -- grow an existing project one capability at a
-//! time.
+//! `jails add <capability>...` -- grow an existing project with one or more
+//! capabilities at a time.
 //!
 //! Where `generate` emits a *class*, `add` emits a *slice*: the dependency,
 //! the code that uses it, and a test that proves the wiring compiles and

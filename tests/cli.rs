@@ -1167,6 +1167,36 @@ fn capabilities_stack_without_clobbering_each_other() {
     assert!(pkg.join("adapters/Json.java").is_file());
 }
 
+#[test]
+fn add_accepts_multiple_capabilities_in_one_invocation() {
+    let root = temp_dir("add-multiple");
+    write_plain_fixture(&root);
+
+    let output = jails_cmd(&root, None)
+        .args(["add", "db", "json", "testkit"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    for artifact in ["postgresql", "jackson-databind"] {
+        let declaration = format!("<artifactId>{artifact}</artifactId>");
+        assert_eq!(
+            1,
+            pom.matches(&declaration).count(),
+            "missing {artifact}: {pom}"
+        );
+    }
+    let main = root.join("src/main/java/com/example/demo");
+    assert!(main.join("adapters/Json.java").is_file());
+    let test = root.join("src/test/java/com/example/demo");
+    assert!(test.join("testkit/Clocks.java").is_file());
+}
+
 /// The real bar for the whole `add` surface: every capability, stacked into
 /// one project, compiles and passes its generated tests.
 #[test]
