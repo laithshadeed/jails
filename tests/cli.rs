@@ -1514,8 +1514,8 @@ fn add_db_on_spring_wires_docker_compose_support() {
     assert!(pom.contains("spring-boot-starter-jdbc"));
     assert!(pom.contains("spring-boot-docker-compose"));
     assert!(
-        !pom.contains("spring-boot-testcontainers"),
-        "initializer talks to Testcontainers directly: {pom}"
+        pom.contains("spring-boot-testcontainers"),
+        "@ServiceConnection and the container-bean lifecycle live there: {pom}"
     );
     assert!(pom.contains("<optional>true</optional>"));
     let config = root.join("src/test/java/com/example/demo/PostgresContainerConfig.java");
@@ -1663,8 +1663,11 @@ class ExtraSliceTest {
         root.join("src/test/java/com/example/demo/PostgresContainerConfig.java"),
     )
     .unwrap();
+    // The legacy @Import-per-test shape is rewritten to the current one:
+    // a container bean with @ServiceConnection, registered for every test by
+    // an initializer so no test class needs the @Import back.
     assert!(config.contains("ApplicationContextInitializer"), "{config}");
-    assert!(!config.contains("@ServiceConnection"), "{config}");
+    assert!(config.contains("@ServiceConnection"), "{config}");
     let tests =
         fs::read_to_string(root.join("src/test/java/com/example/demo/DemoApplicationTests.java"))
             .unwrap();

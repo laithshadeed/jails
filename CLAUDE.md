@@ -180,6 +180,32 @@ jails knows nothing about.
 - **`jails check` is `mvn clean verify`.** Incremental `verify` leaves deleted
   tests in `target/`, and Surefire still runs the leftover `.class`. Don't
   "optimize" it back to bare verify.
+- **`add db`'s test wiring is a container *bean* registered globally.** Two
+  requirements pull in opposite directions and both have to be met. Boot's
+  own docs want the container declared as a `@Bean` with
+  `@ServiceConnection` (not a `@Testcontainers`/`@Container` static field:
+  Spring caches the context past the container's JUnit-managed lifetime, and
+  later tests then fail against a stopped container). But the documented way
+  to use that `@TestConfiguration` is `@Import` on each test class, which is
+  wrong here — JDBC auto-config demands a DataSource for *every*
+  `@SpringBootTest` once the starter is present, including tests that never
+  query. So `PostgresContainerConfig` is both: an `ApplicationContextInitializer`
+  listed in test `META-INF/spring.factories`, whose only job is to register a
+  nested `@TestConfiguration` holding the `@ServiceConnection` bean.
+  `ServiceConnectionAutoConfiguration` finds it by type
+  (`getBeanNamesForType(Container.class)`), so a programmatically registered
+  bean definition is fine. Nothing calls `start()` —
+  `spring-boot-testcontainers` registers
+  `TestcontainersLifecycleApplicationContextInitializer` from its own
+  `spring.factories`. That module is therefore a required dependency.
+  `should_replace_postgres_test_config` checks for **both** markers, because
+  each earlier generation had exactly one of them.
+- **`add db` writes `spring.datasource.*` for the application itself**, read
+  back out of `compose.yaml` rather than assumed. Spring's docker-compose
+  module supplies these where it works and its connection details take
+  precedence, so the properties are redundant there and load-bearing
+  everywhere else — without them the app dies at startup on any machine
+  whose compose provider Spring cannot drive.
 - **`add db` on Spring registers a test-classpath ApplicationContextInitializer.**
   Docker Compose is skipped in tests (`spring.docker.compose.skip.in-tests=true`
   by default), so JDBC auto-config has no URL and fails with "Failed to

@@ -80,10 +80,16 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
 - `jails add|a db` — PostgreSQL JDBC, Flyway, PostgreSQL Testcontainers, a
   `compose.yaml` service, and the migration directory. Spring projects also
   receive the JDBC starter, `spring-boot-docker-compose` so the database
-  starts with the app, and a Testcontainers `ApplicationContextInitializer`
-  registered from `src/test/resources/META-INF/spring.factories` so every
-  `@SpringBootTest` gets a DataSource — Docker Compose is skipped in tests,
-  and without a DataSource Spring cannot pick a driver. JDBC would also
+  starts with the app, `spring.datasource.*` properties read out of
+  `compose.yaml` so the application can reach the database on any machine,
+  and a `PostgresContainerConfig` for tests. That last one declares the
+  container as a `@Bean` with `@ServiceConnection` — Spring Boot's current
+  idiom, and the one its own docs prefer over `@Testcontainers`/`@Container`
+  static fields, because Spring caches a context past the container's
+  JUnit-managed lifetime. It registers itself from
+  `src/test/resources/META-INF/spring.factories`, so every `@SpringBootTest`
+  gets a DataSource without an `@Import` on the test class — Docker Compose
+  is skipped in tests, and without a DataSource Spring cannot pick a driver. JDBC would also
   CGLIB-proxy every `@Repository`, which breaks `final` classes, so `add db`
   sets `spring.persistence.exceptiontranslation.enabled=false` (this
   capability is raw SQL, not JPA). `jails add` starts postgres immediately when Docker is

@@ -709,6 +709,11 @@ fn db_plan(root: &std::path::Path, flavor: Flavor, pkg: &str) -> Result<Plan> {
         Flavor::PlainMaven => vec![POSTGRES_PINNED, FLYWAY_CORE_PINNED, FLYWAY_POSTGRES_PINNED],
     };
     deps.extend([TESTCONTAINERS_POSTGRES, TESTCONTAINERS_JUNIT]);
+    if flavor == Flavor::SpringBoot {
+        // `@ServiceConnection` and the lifecycle initializer that starts a
+        // container declared as a bean both live in this module.
+        deps.push(SPRING_TESTCONTAINERS);
+    }
 
     let mut files = vec![NewFile {
         path: root.join("src/main/resources/db/migration/.gitkeep"),
@@ -736,49 +741,101 @@ fn db_plan(root: &std::path::Path, flavor: Flavor, pkg: &str) -> Result<Plan> {
     })
 }
 
+/// The test-side database wiring.
+///
+/// Two pieces in one file, because they answer two different questions.
+///
+/// `Containers` is the modern Spring Boot idiom: a container declared as a
+/// `@Bean` and annotated `@ServiceConnection`, which is how connection
+/// details reach auto-configuration. Boot's own reference docs recommend
+/// this over `@Testcontainers`/`@Container` static fields, because Spring
+/// caches an application context beyond the container's JUnit-managed
+/// lifetime and later tests then fail against a stopped container. Nothing
+/// here calls `start()`: `spring-boot-testcontainers` registers
+/// `TestcontainersLifecycleApplicationContextInitializer` from its own
+/// `spring.factories`, so a container that is a bean is started and stopped
+/// with the context.
+///
+/// The outer class exists only to register the inner one for *every* test.
+/// The documented way to use a `@TestConfiguration` is `@Import` on each
+/// test class, and that is the right default in a project that has some
+/// tests needing a database and some not. It is the wrong default here:
+/// once `spring-boot-starter-jdbc` is on the classpath, JDBC auto-config
+/// demands a DataSource for every `@SpringBootTest`, so a test that never
+/// touches the database still fails with "Failed to determine a suitable
+/// driver class". Registering the configuration from a test-classpath
+/// `ApplicationContextInitializer` makes that a non-problem without an
+/// annotation on every test class. `ServiceConnectionAutoConfiguration`
+/// finds the container by type (`getBeanNamesForType(Container.class)`), so
+/// it does not care that the bean definition was registered programmatically.
 fn postgres_container_config_java(pkg: &str) -> String {
     format!(
         r#"package {pkg};
 
-import java.util.HashMap;
-import java.util.Map;
+import org.springframework.beans.factory.support.BeanDefinitionRegistry;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.ApplicationContextInitializer;
 import org.springframework.context.ConfigurableApplicationContext;
-import org.springframework.core.env.MapPropertySource;
+import org.springframework.context.annotation.AnnotatedBeanDefinitionReader;
+import org.springframework.context.annotation.Bean;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 /**
- * Starts one PostgreSQL Testcontainers instance for the test JVM and publishes
- * JDBC properties before the context refreshes. Registered from
- * {{@code META-INF/spring.factories}} on the test classpath so every
- * {{@code @SpringBootTest}} sees a DataSource without an {{@code @Import}} on
- * the test class -- Docker Compose is skipped in tests.
+ * Gives every {{@code @SpringBootTest}} a real PostgreSQL to talk to.
+ *
+ * <p>Registered from {{@code META-INF/spring.factories}} on the test
+ * classpath, so no test class needs an {{@code @Import}}. That matters
+ * because JDBC auto-configuration requires a DataSource for every context
+ * once the starter is present -- even a test that never queries anything.
+ *
+ * <p>Docker Compose is skipped during tests by default, which is why the
+ * container is here rather than left to {{@code compose.yaml}}.
  */
 public class {POSTGRES_CONTAINER_CONFIG} implements ApplicationContextInitializer<ConfigurableApplicationContext> {{
 
-    private static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("{POSTGRES_IMAGE}");
-
     @Override
     public void initialize(ConfigurableApplicationContext context) {{
-        POSTGRES.start();
-        Map<String, Object> properties = new HashMap<>();
-        properties.put("spring.datasource.url", POSTGRES.getJdbcUrl());
-        properties.put("spring.datasource.username", POSTGRES.getUsername());
-        properties.put("spring.datasource.password", POSTGRES.getPassword());
-        properties.put("spring.datasource.driver-class-name", POSTGRES.getDriverClassName());
-        context.getEnvironment()
-                .getPropertySources()
-                .addFirst(new MapPropertySource("jails-postgres", properties));
+        if (context instanceof BeanDefinitionRegistry registry) {{
+            new AnnotatedBeanDefinitionReader(registry).register(Containers.class);
+        }}
+    }}
+
+    /**
+     * The container itself. {{@code @ServiceConnection}} publishes its JDBC
+     * url, username and password to auto-configuration -- connection details
+     * take precedence over {{@code spring.datasource.*}} properties, so the
+     * application's own settings do not have to be overridden for tests.
+     */
+    @TestConfiguration(proxyBeanMethods = false)
+    public static class Containers {{
+
+        @Bean
+        @ServiceConnection
+        PostgreSQLContainer postgresContainer() {{
+            return new PostgreSQLContainer("{POSTGRES_IMAGE}");
+        }}
     }}
 }}
 "#
     )
 }
 
+/// Whether an existing `PostgresContainerConfig.java` predates the current
+/// shape and should be rewritten.
+///
+/// Two earlier generations exist and each has exactly one of the two things
+/// the current one needs: the original `@TestConfiguration` had
+/// `@ServiceConnection` but required an `@Import` on every test class, and
+/// the initializer that replaced it applied globally but injected
+/// `spring.datasource.*` properties by hand. So the test is for *both*
+/// markers -- checking either one alone leaves one generation unmigrated.
 fn should_replace_postgres_test_config(path: &Path) -> bool {
     path.file_name()
         .is_some_and(|n| n == "PostgresContainerConfig.java")
-        && fs::read_to_string(path).is_ok_and(|s| !s.contains("ApplicationContextInitializer"))
+        && fs::read_to_string(path).is_ok_and(|s| {
+            !(s.contains("ServiceConnection") && s.contains("ApplicationContextInitializer"))
+        })
 }
 
 fn spring_factories_path(root: &Path) -> PathBuf {
@@ -796,8 +853,34 @@ fn application_properties_path(root: &Path) -> PathBuf {
 const EXCEPTION_TRANSLATION_PROPERTY: &str =
     "spring.persistence.exceptiontranslation.enabled=false";
 
-fn application_properties_block() -> String {
-    format!("# jails:db\n{EXCEPTION_TRANSLATION_PROPERTY}\n# /jails:db\n")
+/// The application's own datasource, pointing at the compose service `add
+/// db` just wrote.
+///
+/// Spring Boot can discover this itself through `spring-boot-docker-compose`,
+/// and where that works these properties are simply overridden by it --
+/// connection details take precedence over properties. Writing them anyway
+/// buys two things. The application starts on a machine whose compose
+/// provider Spring cannot drive (`spring-boot-docker-compose` shells out
+/// with Docker Compose v2 syntax that podman-compose rejects, and the app
+/// dies during startup). And the connection is visible in the project rather
+/// than materialising from a module, which is the same reason this
+/// capability emits SQL you can read instead of an ORM.
+fn application_properties_block(connect: &compose::PostgresConnect) -> String {
+    let compose::PostgresConnect {
+        host,
+        port,
+        user,
+        password,
+        database,
+    } = connect;
+    format!(
+        "# jails:db\n\
+         {EXCEPTION_TRANSLATION_PROPERTY}\n\
+         spring.datasource.url=jdbc:postgresql://{host}:{port}/{database}\n\
+         spring.datasource.username={user}\n\
+         spring.datasource.password={password}\n\
+         # /jails:db\n"
+    )
 }
 
 fn install_db_properties(root: &Path, dry_run: bool) -> Result<bool> {
@@ -811,13 +894,21 @@ fn install_db_properties(root: &Path, dry_run: bool) -> Result<bool> {
         println!("  exists  {}", rel(root, &path));
         return Ok(false);
     }
+    // Read back from compose.yaml rather than assuming the defaults: `add
+    // db` writes that file, but a project may have edited the port or the
+    // credentials since, and a datasource pointing at the wrong one is worse
+    // than none.
+    let connect = compose::read(root)
+        .ok()
+        .and_then(|yaml| compose::postgres_connect(&yaml))
+        .unwrap_or_else(compose::PostgresConnect::defaults);
     let next = if existing.trim().is_empty() {
-        application_properties_block()
+        application_properties_block(&connect)
     } else {
         format!(
             "{}\n{}",
             existing.trim_end(),
-            application_properties_block()
+            application_properties_block(&connect)
         )
     };
     if dry_run {
@@ -2932,18 +3023,27 @@ mod tests {
         let artifacts: Vec<&str> = plan.deps.iter().map(|d| d.artifact_id).collect();
         assert!(artifacts.contains(&"spring-boot-starter-jdbc"));
         assert!(
-            !artifacts.contains(&"spring-boot-testcontainers"),
-            "ServiceConnection is gone; the initializer talks to Testcontainers directly"
+            artifacts.contains(&"spring-boot-testcontainers"),
+            "@ServiceConnection and the container-bean lifecycle live in that module"
         );
         assert!(plan.files.iter().any(|f| {
             f.path
                 .ends_with("src/test/java/com/example/demo/PostgresContainerConfig.java")
         }));
         let src = postgres_container_config_java("com.example.demo");
+        // Registered globally, so no test class needs an @Import: JDBC
+        // auto-config demands a DataSource for every @SpringBootTest once
+        // the starter is present, including tests that never query.
         assert!(src.contains("ApplicationContextInitializer"));
-        assert!(src.contains("MapPropertySource"));
-        assert!(!src.contains("@ServiceConnection"));
-        assert!(!src.contains("@TestConfiguration"));
+        assert!(src.contains("AnnotatedBeanDefinitionReader"));
+        // ...but the container itself is a bean with @ServiceConnection,
+        // which is how connection details reach auto-configuration.
+        assert!(src.contains("@ServiceConnection"));
+        assert!(src.contains("@TestConfiguration"));
+        // Nothing starts the container by hand -- the lifecycle initializer
+        // in spring-boot-testcontainers does that for a container bean.
+        assert!(!src.contains(".start()"), "{src}");
+        assert!(!src.contains("MapPropertySource"), "{src}");
         assert!(src.contains("org.testcontainers.postgresql.PostgreSQLContainer"));
         assert!(
             src.contains(POSTGRES_IMAGE),
@@ -2982,7 +3082,7 @@ mod tests {
 
     #[test]
     fn application_properties_block_disables_exception_translation() {
-        let block = application_properties_block();
+        let block = application_properties_block(&compose::PostgresConnect::defaults());
         assert!(block.contains(EXCEPTION_TRANSLATION_PROPERTY));
         let gone = remove_jails_db_block(&block, EXCEPTION_TRANSLATION_PROPERTY).unwrap();
         assert!(gone.trim().is_empty());
@@ -2991,6 +3091,37 @@ mod tests {
         let next = remove_jails_db_block(&existing, EXCEPTION_TRANSLATION_PROPERTY).unwrap();
         assert!(next.contains("spring.application.name=demo"));
         assert!(!next.contains("exceptiontranslation"));
+    }
+
+    #[test]
+    fn application_properties_carry_the_compose_datasource() {
+        // The app needs its own connection: Spring's docker-compose module
+        // supplies one where it works, but it cannot drive every provider,
+        // and a dead datasource kills startup before any code runs.
+        let block = application_properties_block(&compose::PostgresConnect::defaults());
+        assert!(
+            block.contains("spring.datasource.url=jdbc:postgresql://localhost:5432/app"),
+            "{block}"
+        );
+        assert!(block.contains("spring.datasource.username=app"), "{block}");
+        assert!(block.contains("spring.datasource.password=app"), "{block}");
+    }
+
+    #[test]
+    fn the_datasource_follows_an_edited_compose_file() {
+        let connect = compose::PostgresConnect {
+            host: "localhost".into(),
+            port: 5544,
+            user: "rewards".into(),
+            password: "secret".into(),
+            database: "rewards".into(),
+        };
+        let block = application_properties_block(&connect);
+        assert!(
+            block.contains("spring.datasource.url=jdbc:postgresql://localhost:5544/rewards"),
+            "{block}"
+        );
+        assert!(block.contains("spring.datasource.username=rewards"), "{block}");
     }
 
     #[test]
