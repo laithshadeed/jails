@@ -223,6 +223,10 @@ pub(crate) struct Bean {
     pub needs: Vec<String>,
     /// Interfaces and superclasses it can be injected as.
     pub provides: Vec<String>,
+    /// Carries `@Primary`, which is how a project with two candidates for
+    /// one injection point tells Spring which to prefer. Without tracking
+    /// it, jails would report a resolved ambiguity as broken.
+    pub primary: bool,
 }
 
 /// The annotations that make a type a bean. `@Configuration` is included
@@ -364,12 +368,28 @@ pub(crate) fn collect_beans(root: &Path) -> (Vec<Bean>, BTreeSet<String>) {
 /// two candidates for one injection point.
 pub(crate) fn providers(beans: &[Bean]) -> BTreeMap<String, Vec<String>> {
     let mut index: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut primary: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for bean in beans {
         for provided in std::iter::once(&bean.type_name).chain(bean.provides.iter()) {
             let candidates = index.entry(provided.clone()).or_default();
             if !candidates.contains(&bean.type_name) {
                 candidates.push(bean.type_name.clone());
             }
+            if bean.primary {
+                primary
+                    .entry(provided.clone())
+                    .or_default()
+                    .push(bean.type_name.clone());
+            }
+        }
+    }
+    // Exactly one @Primary among several candidates is not an ambiguity --
+    // it is the answer, and reporting it as broken would train the reader to
+    // ignore the check. Two @Primary beans for one type is still ambiguous,
+    // so only a single winner collapses the list.
+    for (provided, winners) in primary {
+        if winners.len() == 1 {
+            index.insert(provided, winners);
         }
     }
     index
@@ -396,6 +416,7 @@ fn file_beans(source: &str, label: &str) -> Vec<Bean> {
                 .map(|p| p.type_name.clone())
                 .collect(),
             provides: info.supertypes.clone(),
+            primary: annotations.iter().any(|a| a.name == "Primary"),
         });
     }
 
@@ -419,6 +440,9 @@ fn file_beans(source: &str, label: &str) -> Vec<Bean> {
             source: format!("{label} ({}#{name})", info.name),
             needs: Vec::new(),
             provides: Vec::new(),
+            primary: matches!(&annotation.target, Target::Method { name: m, .. }
+                if annotations.iter().any(|a| a.name == "Primary"
+                    && matches!(&a.target, Target::Method { name: other, .. } if other == m))),
         });
     }
     found
