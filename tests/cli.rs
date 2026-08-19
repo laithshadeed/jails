@@ -3,6 +3,7 @@ mod common;
 use common::*;
 use std::fs;
 use std::io::Write as _;
+use std::path::Path;
 use std::process::Stdio;
 
 // ---- offline, filesystem-only: exercise the real binary against real
@@ -484,7 +485,7 @@ fn project_maven_wrapper_wins_over_path_maven() {
             .unwrap()
             .success()
     );
-    assert!(read_log(&wrapper_log).contains("verify"));
+    assert!(read_log(&wrapper_log).contains("clean verify"));
     assert!(!path_log.exists() || read_log(&path_log).is_empty());
 }
 
@@ -502,6 +503,47 @@ fn build_command_invokes_mvn_package() {
         .unwrap();
     assert!(status.success());
     assert!(read_log(&log).contains("package"));
+}
+
+#[test]
+fn clean_command_invokes_mvn_clean() {
+    let root = temp_dir("mock-wipe-target");
+    write_project_skeleton(&root);
+    let fake_dir = temp_dir("mock-wipe-target-bin");
+    let log = fake_dir.join("log.txt");
+    write_fake_maven(&fake_dir, &["mvn"], &log);
+
+    let status = jails_cmd(&root, Some(&fake_dir))
+        .arg("clean")
+        .status()
+        .unwrap();
+    assert!(status.success());
+    assert!(read_log(&log).contains("clean"));
+    assert!(
+        !read_log(&log).contains("verify"),
+        "clean is only clean, not clean verify: {}",
+        read_log(&log)
+    );
+}
+
+#[test]
+fn check_command_invokes_mvn_clean_verify() {
+    let root = temp_dir("mock-check");
+    write_project_skeleton(&root);
+    let fake_dir = temp_dir("mock-check-bin");
+    let log = fake_dir.join("log.txt");
+    write_fake_maven(&fake_dir, &["mvn"], &log);
+
+    let status = jails_cmd(&root, Some(&fake_dir))
+        .arg("check")
+        .status()
+        .unwrap();
+    assert!(status.success());
+    assert!(
+        read_log(&log).contains("clean verify"),
+        "check must wipe target so deleted tests cannot linger: {}",
+        read_log(&log)
+    );
 }
 
 #[test]
@@ -636,6 +678,152 @@ fn start_errors_when_there_is_no_compose_file() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("compose.yaml"), "{stderr}");
     assert!(read_log(&log).is_empty(), "docker must not be invoked");
+}
+
+#[test]
+fn db_opens_psql_against_compose_postgres() {
+    let root = temp_dir("db-psql");
+    write_plain_fixture(&root);
+    let fake = temp_dir("db-psql-bin");
+    let log = fake.join("log.txt");
+    write_fake_maven(&fake, &["docker", "psql"], &log);
+    fs::write(
+        fake.join("psql"),
+        format!(
+            "#!/bin/sh\necho \"PGPASSWORD=$PGPASSWORD $*\" >> \"{}\"\nexit 0\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+
+    assert!(
+        jails_cmd(&root, Some(&fake))
+            .args(["add", "db", "--no-start"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    fs::write(&log, "").unwrap();
+
+    assert!(
+        jails_cmd(&root, Some(&fake))
+            .arg("db")
+            .status()
+            .unwrap()
+            .success()
+    );
+    let invocation = read_log(&log);
+    assert!(
+        invocation.contains("compose up -d postgres"),
+        "db should start postgres first: {invocation}"
+    );
+    assert!(
+        invocation.contains("PGPASSWORD=app -h localhost -p 5432 -U app -d app"),
+        "{invocation}"
+    );
+
+    fs::write(&log, "").unwrap();
+    assert!(
+        jails_cmd(&root, Some(&fake))
+            .args(["db", "--no-start"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let invocation = read_log(&log);
+    assert!(
+        !invocation.contains("compose up"),
+        "--no-start must not bring compose up: {invocation}"
+    );
+    assert!(
+        invocation.contains("-h localhost -p 5432 -U app -d app"),
+        "{invocation}"
+    );
+}
+
+#[test]
+fn db_without_postgres_explains_add_db() {
+    let root = temp_dir("db-missing");
+    write_plain_fixture(&root);
+    let fake = temp_dir("db-missing-bin");
+    let log = fake.join("log.txt");
+    write_fake_maven(&fake, &["psql"], &log);
+    let output = jails_cmd(&root, Some(&fake)).arg("db").output().unwrap();
+    assert!(!output.status.success());
+    let err = String::from_utf8_lossy(&output.stderr);
+    assert!(err.contains("add db"), "{err}");
+}
+
+#[test]
+fn db_with_a_file_uses_sqlite3() {
+    let root = temp_dir("db-sqlite");
+    write_plain_fixture(&root);
+    fs::write(root.join("app.db"), "").unwrap();
+    let fake = temp_dir("db-sqlite-bin");
+    let log = fake.join("log.txt");
+    write_fake_maven(&fake, &["sqlite3"], &log);
+    assert!(
+        jails_cmd(&root, Some(&fake))
+            .args(["db", "app.db"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let invocation = read_log(&log);
+    assert!(
+        invocation.contains("sqlite3") && invocation.contains("app.db"),
+        "{invocation}"
+    );
+}
+
+#[test]
+fn console_launches_jshell_with_the_project_classpath() {
+    let root = temp_dir("console-jshell");
+    write_plain_fixture(&root);
+    let fake = temp_dir("console-jshell-bin");
+    let log = fake.join("log.txt");
+    write_fake_maven(&fake, &["mvn", "jshell"], &log);
+    assert!(
+        jails_cmd(&root, Some(&fake))
+            .args(["console", "--no-build"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let invocation = read_log(&log);
+    assert!(
+        invocation.contains("dependency:build-classpath"),
+        "{invocation}"
+    );
+    assert!(
+        invocation.contains("jshell") && invocation.contains("--class-path"),
+        "{invocation}"
+    );
+    assert!(
+        !invocation.contains(" compile") && !invocation.contains("/mvn compile"),
+        "--no-build should skip compile: {invocation}"
+    );
+}
+
+#[test]
+fn completion_script_lists_db_and_console_and_their_aliases() {
+    let workdir = temp_dir("completion-db-console");
+    let output = jails_cmd(&workdir, None)
+        .args(["completion", "bash"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let script = String::from_utf8_lossy(&output.stdout);
+    assert!(script.contains("dbconsole"), "{script}");
+    assert!(script.contains("console"), "missing console");
+    assert!(
+        script.contains("jails,c)") || script.contains("jails,c,"),
+        "visible alias `c` should complete"
+    );
+    assert!(
+        script.contains("jails,dbconsole)") || script.contains("jails,dbconsole,"),
+        "visible alias `dbconsole` should complete"
+    );
 }
 
 #[test]
@@ -1325,17 +1513,45 @@ fn add_db_on_spring_wires_docker_compose_support() {
     let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
     assert!(pom.contains("spring-boot-starter-jdbc"));
     assert!(pom.contains("spring-boot-docker-compose"));
-    assert!(pom.contains("spring-boot-testcontainers"));
+    assert!(
+        !pom.contains("spring-boot-testcontainers"),
+        "initializer talks to Testcontainers directly: {pom}"
+    );
     assert!(pom.contains("<optional>true</optional>"));
     let config = root.join("src/test/java/com/example/demo/PostgresContainerConfig.java");
     assert!(config.is_file(), "missing {}", config.display());
+    let config_src = fs::read_to_string(&config).unwrap();
+    assert!(
+        config_src.contains("ApplicationContextInitializer"),
+        "{config_src}"
+    );
+    let factories =
+        fs::read_to_string(root.join("src/test/resources/META-INF/spring.factories")).unwrap();
+    assert!(
+        factories.contains("com.example.demo.PostgresContainerConfig"),
+        "{factories}"
+    );
     let tests =
         fs::read_to_string(root.join("src/test/java/com/example/demo/DemoApplicationTests.java"))
             .unwrap();
     assert!(
-        tests.contains("@Import(PostgresContainerConfig.class)"),
-        "{tests}"
+        !tests.contains("PostgresContainerConfig"),
+        "tests stay untouched; the initializer is registered globally: {tests}"
     );
+    let properties =
+        fs::read_to_string(root.join("src/main/resources/application.properties")).unwrap();
+    assert!(
+        properties.contains("spring.persistence.exceptiontranslation.enabled=false"),
+        "{properties}"
+    );
+
+    let stale_class =
+        root.join("target/test-classes/com/example/demo/PostgresContainerConfig.class");
+    fs::create_dir_all(stale_class.parent().unwrap()).unwrap();
+    fs::write(&stale_class, []).unwrap();
+    let stale_factories = root.join("target/test-classes/META-INF/spring.factories");
+    fs::create_dir_all(stale_factories.parent().unwrap()).unwrap();
+    fs::write(&stale_factories, "leftover\n").unwrap();
 
     assert!(
         jails_cmd(&root, Some(&fake))
@@ -1347,17 +1563,124 @@ fn add_db_on_spring_wires_docker_compose_support() {
     let tests =
         fs::read_to_string(root.join("src/test/java/com/example/demo/DemoApplicationTests.java"))
             .unwrap();
-    assert!(
-        !tests.contains("PostgresContainerConfig"),
-        "remove db must unsplice ApplicationTests: {tests}"
-    );
+    assert!(!tests.contains("PostgresContainerConfig"), "{tests}");
     assert!(!config.is_file());
+    assert!(
+        !root
+            .join("src/test/resources/META-INF/spring.factories")
+            .is_file()
+    );
+    assert!(
+        !root
+            .join("src/main/resources/application.properties")
+            .is_file(),
+        "fixture had no properties file; remove should delete the one add created"
+    );
+    assert!(
+        !stale_class.is_file(),
+        "remove db must drop the compiled initializer or incremental tests keep loading it"
+    );
+    assert!(!stale_factories.is_file());
+}
+
+/// Re-running `add db` on a project that still has the old `@ServiceConnection`
+/// + `@Import` wiring must replace the config, register spring.factories, and
+/// take the import back out of existing tests.
+#[test]
+fn add_db_on_spring_migrates_legacy_service_connection() {
+    let root = temp_dir("add-db-spring-migrate");
+    write_spring_fixture(&root);
+    let fake = temp_dir("add-db-spring-migrate-bin");
+    let log = fake.join("log.txt");
+    write_fake_maven(&fake, &["docker"], &log);
+
+    fs::write(
+        root.join("src/test/java/com/example/demo/PostgresContainerConfig.java"),
+        r#"package com.example.demo;
+
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.context.annotation.Bean;
+import org.testcontainers.postgresql.PostgreSQLContainer;
+
+@TestConfiguration(proxyBeanMethods = false)
+public class PostgresContainerConfig {
+
+    @Bean
+    @ServiceConnection
+    PostgreSQLContainer postgres() {
+        return new PostgreSQLContainer("postgres:17-alpine");
+    }
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/test/java/com/example/demo/DemoApplicationTests.java"),
+        r#"package com.example.demo;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
+
+@Import(PostgresContainerConfig.class)
+@SpringBootTest
+class DemoApplicationTests {
+
+    @Test
+    void contextLoads() {}
+}
+"#,
+    )
+    .unwrap();
+    let api = root.join("src/test/java/com/example/demo/api");
+    fs::create_dir_all(&api).unwrap();
+    fs::write(
+        api.join("ExtraSliceTest.java"),
+        r#"package com.example.demo.api;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.context.SpringBootTest;
+
+@SpringBootTest
+class ExtraSliceTest {
+
+    @Test
+    void contextLoads() {}
+}
+"#,
+    )
+    .unwrap();
+
+    assert!(
+        jails_cmd(&root, Some(&fake))
+            .args(["add", "db"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let config = fs::read_to_string(
+        root.join("src/test/java/com/example/demo/PostgresContainerConfig.java"),
+    )
+    .unwrap();
+    assert!(config.contains("ApplicationContextInitializer"), "{config}");
+    assert!(!config.contains("@ServiceConnection"), "{config}");
+    let tests =
+        fs::read_to_string(root.join("src/test/java/com/example/demo/DemoApplicationTests.java"))
+            .unwrap();
+    assert!(!tests.contains("@Import"), "{tests}");
+    let factories =
+        fs::read_to_string(root.join("src/test/resources/META-INF/spring.factories")).unwrap();
+    assert!(
+        factories.contains("com.example.demo.PostgresContainerConfig"),
+        "{factories}"
+    );
 }
 
 /// The failure `jails check` actually hits after `add db` on a Spring project:
-/// stock `*ApplicationTests.contextLoads` cannot pick a driver because Docker
-/// Compose is skipped in tests. Testcontainers `@ServiceConnection` is what
-/// makes that test (and therefore `mvn verify`) green.
+/// Docker Compose is skipped in tests, so JDBC auto-config has no URL. A
+/// test-classpath ApplicationContextInitializer is what makes every
+/// `@SpringBootTest` (and therefore `mvn verify`) green.
 #[test]
 fn add_db_on_spring_makes_context_loads_pass() {
     if !real_mvn_available() {
@@ -1382,11 +1705,44 @@ fn add_db_on_spring_makes_context_loads_pass() {
     );
     fs::write(root.join("pom.xml"), pom).unwrap();
 
+    // The failure `add db` actually hits in a real app: JDBC auto-config
+    // CGLIB-proxies every `@Repository`, and jails-style classes are `final`.
+    fs::write(
+        root.join("src/main/java/com/example/demo/InMemoryThingRepository.java"),
+        r#"package com.example.demo;
+
+import org.springframework.stereotype.Repository;
+
+@Repository
+public final class InMemoryThingRepository {}
+"#,
+    )
+    .unwrap();
+
     let status = jails_cmd_with_path(&root, &path)
         .args(["add", "db", "--no-start"])
         .status()
         .unwrap();
     assert!(status.success(), "add db failed");
+
+    let api = root.join("src/test/java/com/example/demo/api");
+    fs::create_dir_all(&api).unwrap();
+    fs::write(
+        api.join("ExtraSliceTest.java"),
+        r#"package com.example.demo.api;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.context.SpringBootTest;
+
+@SpringBootTest
+class ExtraSliceTest {
+
+    @Test
+    void contextLoads() {}
+}
+"#,
+    )
+    .unwrap();
 
     let status = jails_cmd_with_path(&root, &path)
         .arg("test")
@@ -1394,7 +1750,7 @@ fn add_db_on_spring_makes_context_loads_pass() {
         .unwrap();
     assert!(
         status.success(),
-        "mvn test failed after `jails add db` on a Spring project (contextLoads needs Testcontainers)"
+        "mvn test failed after `jails add db` on a Spring project (every @SpringBootTest needs the initializer)"
     );
 }
 
@@ -1959,5 +2315,275 @@ fn add_json_on_a_spring_project_defers_to_the_parents_version_and_compiles() {
     assert!(
         status.success(),
         "mvn test failed after `jails add json` on a Spring project"
+    );
+}
+
+// ---- observation and refactoring commands (doctor / routes / beans /
+// rename / why). All offline: they read source and configuration, never
+// Maven. ----
+
+/// A minimal Spring-shaped project: an application class, a controller, a
+/// service, and a repository interface with an implementation. Enough for
+/// `routes`, `beans` and `rename` to have something real to say.
+fn write_inspectable_project(root: &Path) {
+    fs::write(
+        root.join("pom.xml"),
+        "<project><parent><groupId>org.springframework.boot</groupId>\
+         <artifactId>spring-boot-starter-parent</artifactId></parent>\
+         <artifactId>shop</artifactId>\
+         <properties><maven.compiler.release>27</maven.compiler.release></properties></project>",
+    )
+    .unwrap();
+    let main = root.join("src/main/java/dev/example/shop");
+    fs::create_dir_all(main.join("api")).unwrap();
+    fs::create_dir_all(main.join("domain")).unwrap();
+    fs::write(
+        main.join("ShopApplication.java"),
+        "package dev.example.shop;\npublic class ShopApplication {}\n",
+    )
+    .unwrap();
+    fs::write(
+        main.join("api/OrderController.java"),
+        "package dev.example.shop.api;\n\
+         @RestController\n\
+         @RequestMapping(\"/orders\")\n\
+         public final class OrderController {\n\
+         \x20   public OrderController(OrderService service) {}\n\
+         \x20   @GetMapping(\"/{id}\")\n\
+         \x20   public Order byId(String id) { return null; }\n\
+         \x20   @PostMapping\n\
+         \x20   public Order create(Order order) { return null; }\n\
+         }\n",
+    )
+    .unwrap();
+    fs::write(
+        main.join("domain/Order.java"),
+        "package dev.example.shop.domain;\npublic record Order(String id) {}\n",
+    )
+    .unwrap();
+    fs::write(
+        main.join("domain/OrderService.java"),
+        "package dev.example.shop.domain;\n\
+         @Service\n\
+         public final class OrderService {\n\
+         \x20   public OrderService(Order seed) {}\n\
+         }\n",
+    )
+    .unwrap();
+}
+
+#[test]
+fn routes_lists_mappings_with_the_type_level_prefix_applied() {
+    let root = temp_dir("routes");
+    write_inspectable_project(&root);
+
+    let output = jails_cmd(&root, None).arg("routes").output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("/orders/{id}"), "{stdout}");
+    assert!(stdout.contains("OrderController#byId"), "{stdout}");
+    assert!(stdout.contains("POST"), "{stdout}");
+    assert!(stdout.contains("2 route(s)"), "{stdout}");
+}
+
+#[test]
+fn routes_json_is_machine_readable() {
+    let root = temp_dir("routes-json");
+    write_inspectable_project(&root);
+
+    let output = jails_cmd(&root, None)
+        .args(["routes", "--json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.starts_with(r#"{"version":1,"routes":["#), "{stdout}");
+    assert!(stdout.contains(r#""verb":"GET""#), "{stdout}");
+}
+
+#[test]
+fn beans_reports_a_dependency_no_bean_supplies() {
+    let root = temp_dir("beans");
+    write_inspectable_project(&root);
+
+    let output = jails_cmd(&root, None).arg("beans").output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("@RestController"), "{stdout}");
+    assert!(stdout.contains("OrderService"), "{stdout}");
+    // Order is a project type with no stereotype, so OrderService's
+    // dependency on it cannot be satisfied -- exactly the static half of
+    // "required a bean of type ... that could not be found".
+    assert!(stdout.contains("NO BEAN"), "{stdout}");
+}
+
+#[test]
+fn beans_filters_on_a_pattern() {
+    let root = temp_dir("beans-filter");
+    write_inspectable_project(&root);
+
+    let output = jails_cmd(&root, None)
+        .args(["beans", "controller"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("OrderController"), "{stdout}");
+    assert!(!stdout.contains("@Service"), "{stdout}");
+}
+
+#[test]
+fn doctor_reports_a_jdk_older_than_the_target_release() {
+    let root = temp_dir("doctor-jdk");
+    write_inspectable_project(&root);
+
+    let output = jails_cmd(&root, None).arg("doctor").output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // The project targets release 27 and declares no compose services, so
+    // the report must at least name the project and reach a verdict.
+    assert!(stdout.contains("project"), "{stdout}");
+    assert!(stdout.contains("checks"), "{stdout}");
+    // Every failing line has to carry a fix; a diagnosis without an action
+    // has only moved the work.
+    for line in stdout.lines().filter(|l| l.starts_with("FAIL")) {
+        let title = line.split_whitespace().nth(1).unwrap_or_default();
+        assert!(
+            stdout.contains("fix:"),
+            "FAIL line for {title} carries no fix: {stdout}"
+        );
+    }
+}
+
+#[test]
+fn doctor_exits_non_zero_when_a_check_fails() {
+    let root = temp_dir("doctor-exit");
+    // No pom.xml at all below this directory is not the case under test --
+    // an empty project *with* a pom is: it has no src/main/java.
+    fs::write(root.join("pom.xml"), "<project><artifactId>x</artifactId></project>").unwrap();
+
+    let output = jails_cmd(&root, None).arg("doctor").output().unwrap();
+    assert!(!output.status.success(), "doctor should fail on a broken project");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("FAIL"), "{stdout}");
+    // The report is the message; a redundant `jails: ` line under it is not.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("jails: "), "{stderr}");
+}
+
+#[test]
+fn why_explains_a_missing_bean_read_from_stdin() {
+    let root = temp_dir("why-bean");
+    write_inspectable_project(&root);
+
+    let mut child = jails_cmd(&root, None)
+        .arg("why")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(
+            b"Parameter 0 of constructor in dev.example.shop.api.OrderController required a bean \
+              of type 'dev.example.shop.domain.OrderRepository' that could not be found.",
+        )
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("OrderRepository"), "{stdout}");
+    assert!(stdout.contains("jails beans"), "{stdout}");
+}
+
+#[test]
+fn why_reads_a_log_file_and_says_so_when_it_does_not_recognise_one() {
+    let root = temp_dir("why-file");
+    write_inspectable_project(&root);
+    let log = root.join("failure.log");
+    fs::write(&log, "something entirely novel went wrong").unwrap();
+
+    let output = jails_cmd(&root, None)
+        .arg("why")
+        .arg(&log)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("does not recognise"), "{stdout}");
+    assert!(stdout.contains("jails doctor"), "{stdout}");
+}
+
+#[test]
+fn rename_moves_the_type_its_companion_and_every_reference() {
+    let root = temp_dir("rename");
+    write_inspectable_project(&root);
+    let tests = root.join("src/test/java/dev/example/shop/domain");
+    fs::create_dir_all(&tests).unwrap();
+    fs::write(
+        tests.join("OrderTest.java"),
+        "package dev.example.shop.domain;\n\
+         class OrderTest {\n\
+         \x20   void works() { var o = new Order(\"Order lookup failed\"); }\n\
+         }\n",
+    )
+    .unwrap();
+
+    let output = jails_cmd(&root, None)
+        .args(["rename", "Order", "Purchase", "--force"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{:?}", output);
+
+    let domain = root.join("src/main/java/dev/example/shop/domain");
+    assert!(domain.join("Purchase.java").is_file());
+    assert!(!domain.join("Order.java").exists());
+    assert!(tests.join("PurchaseTest.java").is_file());
+    assert!(!tests.join("OrderTest.java").exists());
+
+    // A reference in another file follows...
+    let service = fs::read_to_string(domain.join("OrderService.java")).unwrap();
+    assert!(service.contains("Purchase seed"), "{service}");
+    // ...but a type that merely starts with the same letters does not.
+    assert!(domain.join("OrderService.java").is_file());
+    // ...and neither does a string literal.
+    let renamed_test = fs::read_to_string(tests.join("PurchaseTest.java")).unwrap();
+    assert!(renamed_test.contains("new Purchase("), "{renamed_test}");
+    assert!(
+        renamed_test.contains("\"Order lookup failed\""),
+        "{renamed_test}"
+    );
+}
+
+#[test]
+fn rename_refuses_a_package_qualified_name() {
+    let root = temp_dir("rename-qualified");
+    write_inspectable_project(&root);
+
+    let output = jails_cmd(&root, None)
+        .args(["rename", "dev.example.shop.domain.Order", "Purchase", "--force"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("simple name"), "{stderr}");
+}
+
+#[test]
+fn rename_dry_run_writes_nothing() {
+    let root = temp_dir("rename-dry");
+    write_inspectable_project(&root);
+
+    let output = jails_cmd(&root, None)
+        .args(["rename", "Order", "Purchase", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("nothing was written"), "{stdout}");
+    assert!(
+        root.join("src/main/java/dev/example/shop/domain/Order.java")
+            .is_file()
     );
 }

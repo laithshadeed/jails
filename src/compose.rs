@@ -509,6 +509,77 @@ pub fn write(root: &Path, text: &str) -> Result<()> {
     std::fs::write(&path, text).map_err(|e| format!("failed to write {}: {e}", path.display()))
 }
 
+/// Connection parameters for the compose postgres that `jails add db` wrote.
+/// `None` when the file has no postgres service.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PostgresConnect {
+    pub host: String,
+    pub port: u16,
+    pub user: String,
+    pub password: String,
+    pub database: String,
+}
+
+impl PostgresConnect {
+    pub fn defaults() -> Self {
+        Self {
+            host: "localhost".into(),
+            port: 5432,
+            user: "app".into(),
+            password: "app".into(),
+            database: "app".into(),
+        }
+    }
+}
+
+pub fn postgres_connect(text: &str) -> Option<PostgresConnect> {
+    if !has_postgres_service(text) {
+        return None;
+    }
+    let mut c = PostgresConnect::defaults();
+    for line in text.lines() {
+        let t = line.trim();
+        if let Some(v) = yaml_scalar(t, "POSTGRES_DB:") {
+            c.database = v;
+        } else if let Some(v) = yaml_scalar(t, "POSTGRES_USER:") {
+            c.user = v;
+        } else if let Some(v) = yaml_scalar(t, "POSTGRES_PASSWORD:") {
+            c.password = v;
+        } else if let Some(port) = host_port_for_container(t, 5432) {
+            c.port = port;
+        }
+    }
+    Some(c)
+}
+
+fn has_postgres_service(text: &str) -> bool {
+    text.contains("# jails:db")
+        || text.lines().any(|l| {
+            let t = l.trim_end();
+            t == "  postgres:" || t.starts_with("  postgres:")
+        })
+}
+
+fn yaml_scalar(trimmed: &str, key: &str) -> Option<String> {
+    let rest = trimmed.strip_prefix(key)?.trim();
+    if rest.is_empty() {
+        return None;
+    }
+    Some(rest.trim_matches(|c| c == '"' || c == '\'').to_string())
+}
+
+/// Host port from a compose mapping like `- "5432:5432"` or `- "15432:5432"`.
+fn host_port_for_container(trimmed: &str, container_port: u16) -> Option<u16> {
+    let rest = trimmed.strip_prefix('-')?.trim();
+    let rest = rest.trim_matches(|c| c == '"' || c == '\'');
+    let (host, container) = rest.split_once(':')?;
+    let container = container.split('/').next()?;
+    if container.parse::<u16>().ok()? != container_port {
+        return None;
+    }
+    host.parse().ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -581,6 +652,20 @@ mod tests {
         assert!(out.contains("# keep me"));
         assert!(out.contains("  redis:"));
         assert!(out.contains("  postgres:"));
+    }
+
+    #[test]
+    fn postgres_connect_reads_the_jails_db_block() {
+        let yaml = add_service("", &POSTGRES).unwrap();
+        assert_eq!(postgres_connect(&yaml), Some(PostgresConnect::defaults()));
+        let kafka_only = add_service("", &KAFKA).unwrap();
+        assert!(postgres_connect(&kafka_only).is_none());
+        assert!(postgres_connect("").is_none());
+
+        let remapped = yaml.replace("\"5432:5432\"", "\"15432:5432\"");
+        let c = postgres_connect(&remapped).unwrap();
+        assert_eq!(c.port, 15432);
+        assert_eq!(c.user, "app");
     }
 
     #[test]

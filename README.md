@@ -66,10 +66,13 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
 - `jails add|a db` — PostgreSQL JDBC, Flyway, PostgreSQL Testcontainers, a
   `compose.yaml` service, and the migration directory. Spring projects also
   receive the JDBC starter, `spring-boot-docker-compose` so the database
-  starts with the app, and a `@ServiceConnection` Testcontainers config
-  `@Import`ed into `*ApplicationTests` so `contextLoads` (and `jails check`)
-  still pass — Docker Compose is skipped in tests, and without a DataSource
-  Spring cannot pick a driver. `jails add` starts postgres immediately when Docker is
+  starts with the app, and a Testcontainers `ApplicationContextInitializer`
+  registered from `src/test/resources/META-INF/spring.factories` so every
+  `@SpringBootTest` gets a DataSource — Docker Compose is skipped in tests,
+  and without a DataSource Spring cannot pick a driver. JDBC would also
+  CGLIB-proxy every `@Repository`, which breaks `final` classes, so `add db`
+  sets `spring.persistence.exceptiontranslation.enabled=false` (this
+  capability is raw SQL, not JPA). `jails add` starts postgres immediately when Docker is
   on PATH (`--no-start` skips that). `jails start` / `jails stop` start and
   stop the compose services on their own; `jails run` starts whatever is in
   `compose.yaml` either way. This
@@ -92,11 +95,55 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
   or everything in `compose.yaml` when invoked with no arguments.
 - `jails stop [db|kafka]...` — stop those containers (`db` is the postgres
   service). Does not delete `compose.yaml`.
+- `jails doctor` — everything that has to be true before the app starts,
+  checked in one pass: the JDK on PATH against the release `pom.xml` targets,
+  Maven, Docker (via `docker info`, which also works when `docker` is podman's
+  CLI shim), each compose service, a real TCP connection to postgres, Flyway
+  migrations, the test-classpath Testcontainers initializer `add db` installs,
+  `DOCKER_HOST` for Testcontainers, both Jackson artifacts, the HTTP port, and
+  every constructor dependency that no bean supplies. Reads only — it never
+  starts, stops or writes anything, so it is safe mid-debug. Each failing line
+  carries the command that fixes it, and a failure exits non-zero so
+  `jails doctor && jails run` works.
+- `jails why [log]` — translate a failure into what it actually means. Reads a
+  log file, or stdin (`jails test 2>&1 | jails why`), or with neither it starts
+  the app and reads what it prints. Every rule was written against a failure
+  that really happened: "Could not find a valid Docker environment" (Testcontainers
+  does not read podman's socket), "Failed to determine a suitable driver class",
+  "required a bean of type", port clashes, Flyway checksum mismatches, JDK/release
+  mismatches, `NoSuchMethodError` version skew. An unrecognised failure is
+  reported as unrecognised rather than guessed at.
+- `jails routes [--json]` — every HTTP route the source declares: Spring's
+  `@GetMapping`/`@PostMapping`/… with the type-level `@RequestMapping` prefix
+  applied, plus `generate handler`'s `HttpHandler` types and their `PATH`
+  constant. Read from source, so it answers on a project that does not start.
+- `jails beans [pattern] [--json]` — every `@Component`/`@Service`/`@Repository`/
+  `@Controller`/`@Configuration` and every `@Bean` method, with each
+  constructor dependency marked resolvable or not. A dependency naming a type
+  this project declares but never registers is the static half of "required a
+  bean of type … that could not be found", caught before the context starts.
+- `jails rename <Old> <New> [--dry-run] [--force]` — rename a type, its
+  `Test`/`Tests`/`IT` companions, and every reference. Textual, and honest
+  about it: it matches whole identifiers only (`Reward` never matches inside
+  `RewardHistory`) and leaves string literals alone, reporting how many
+  mentions it skipped. Neovim's `grn` (jdt.ls) is scope-aware and better where
+  it works — this is for when the language server is not attached or the
+  project does not currently compile.
+- `jails db|dbconsole [file] [--no-start] [-- <args>...]` — `rails dbconsole`:
+  `psql` against the compose postgres that `add db` started (credentials from
+  `compose.yaml`). Starts postgres first unless `--no-start`. Pass a SQLite
+  file to open it with `sqlite3` instead. Extra args after `--` go to the
+  client: `jails db -- -c 'select 1'`.
+- `jails console|c [--no-build] [-- <args>...]` — `jshell` with the project's
+  compiled classes and Maven runtime classpath. This is not a Spring-booted
+  REPL (Java has no `rails console`); it is a JDK shell that can see your
+  types. `--no-build` skips `mvn compile`.
 - `jails destroy|d <type> <Name> [--force]` — deletes exactly what the
   matching `generate` call would have created.
 - `jails test [name]` — uses `./mvnw` when present. A bare `Money` becomes
   `MoneyTest`; a name ending in `IT` runs through Failsafe and `verify`.
 - `jails build` — `mvn package`.
+- `jails clean` — `mvn clean`. Wipes `target/` so leftover classes from deleted sources cannot linger; `jails check` does this automatically.
 - `jails mvn -- <args...>` — escape hatch for Maven options Jails should not
   duplicate; it still prefers the project wrapper.
 - `jails run [--no-build] [--watch] [-- <args>...]` — finds the file with
@@ -109,7 +156,9 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
   only) recompiles on every source change and lets devtools restart the
   already-running app — no manual restarts.
 - `jails fmt` — reformat in place (Spotless); `jails check` — format check +
-  compile + tests (`mvn verify`). Both need `jails add format`.
+  compile + tests (`mvn clean verify`). Both need `jails add format`. The
+  `clean` is load-bearing: Maven's incremental compile leaves deleted tests
+  in `target/`, and Surefire will still run them.
 - `jails completion <bash|zsh|fish|elvish|powershell>` — shell completion.
 
 `generate`, `destroy`, `add` and `remove` all take `--package <sub>` to override where
@@ -186,7 +235,7 @@ into one flat pile beside `App.java`:
 | `repo` (adapter) | `adapters` |
 | `migration` | `src/main/resources/db/migration` |
 | `add csv`/`json`/`sqlite` | `adapters` |
-| `add db` / `add kafka` | `compose.yaml` (and `src/main/resources/db/migration` for `db`; Spring `add db` also writes `PostgresContainerConfig` next to `*ApplicationTests`) |
+| `add db` / `add kafka` | `compose.yaml` (and `src/main/resources/db/migration` for `db`; Spring `add db` also writes `PostgresContainerConfig` and test-classpath `META-INF/spring.factories`) |
 | `add http`, `handler` | `api` |
 | `add testkit`/`fake` | `testkit` (test tree) |
 
@@ -217,7 +266,8 @@ reimplements none of its project-generation logic.
 
 Deferred out of v1 on purpose — this is meant to stay a small tool:
 
-- `jails console` — no clean Java equivalent to an app-booted REPL.
-- `jails routes` — needs real annotation scanning, v2 once v1 is proven.
 - Gradle support — Maven only for now.
+- A runtime bean/route view (booting the context and asking Spring itself).
+  `routes` and `beans` read source instead, which is instant and works on a
+  project that does not start — at the cost of anything decided at runtime.
 - Any kind of plugin system.

@@ -1,16 +1,23 @@
 mod add;
 mod compose;
+mod console;
+mod doctor;
 mod generate;
+mod inspect;
+mod java;
 mod new;
 mod pom;
+mod rename;
 mod project;
 mod run;
+mod why;
 
 use add::Capability;
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
 use compose::Runtime;
 use generate::ArtifactKind;
+use std::path::PathBuf;
 
 pub type Result<T> = std::result::Result<T, String>;
 
@@ -146,6 +153,63 @@ enum Command {
         #[arg(num_args = 0..)]
         services: Vec<Runtime>,
     },
+    /// Check everything that has to be true before the app can start
+    Doctor,
+    /// Explain a failure: pass a log file, pipe one in, or run it bare to start the app
+    Why {
+        /// A file holding the failure output. Omit to read stdin, or to
+        /// start the app and read what it prints.
+        log: Option<PathBuf>,
+    },
+    /// List the HTTP routes this project's source declares
+    Routes {
+        /// Emit machine-readable output for editor integrations
+        #[arg(long)]
+        json: bool,
+    },
+    /// List the Spring beans this project's source registers, and what they inject
+    Beans {
+        /// Only show beans whose type or stereotype contains this text
+        pattern: Option<String>,
+        /// Emit machine-readable output for editor integrations
+        #[arg(long)]
+        json: bool,
+    },
+    /// Open a database client (`psql` against compose postgres, or sqlite3)
+    #[command(visible_alias = "dbconsole")]
+    Db {
+        /// A SQLite file; omit this to use the compose postgres from `add db`
+        file: Option<PathBuf>,
+        /// Do not `docker compose up` postgres first
+        #[arg(long)]
+        no_start: bool,
+        /// Extra arguments forwarded to psql/sqlite3
+        #[arg(last = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// jshell with the project's classpath (not a Spring-booted REPL)
+    #[command(visible_alias = "c")]
+    Console {
+        /// Skip `mvn compile` -- use whatever is already in target/
+        #[arg(long)]
+        no_build: bool,
+        /// Extra arguments forwarded to jshell
+        #[arg(last = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Rename a type and every reference to it (files, companions, call sites)
+    Rename {
+        /// The type's current simple name
+        old: String,
+        /// The name to give it
+        new: String,
+        /// Print the plan without touching anything
+        #[arg(long)]
+        dry_run: bool,
+        /// Skip the confirmation prompt
+        #[arg(long)]
+        force: bool,
+    },
     /// Delete the file(s) a matching generate call would have created
     #[command(visible_alias = "d")]
     Destroy {
@@ -163,9 +227,11 @@ enum Command {
     Test { filter: Option<String> },
     /// Build the project (mvn package)
     Build,
+    /// Delete Maven's `target/` directory (`mvn clean`)
+    Clean,
     /// Reformat every source file in place (needs `jails add format`)
     Fmt,
-    /// Format check + compile + tests (mvn verify)
+    /// Format check + compile + tests (`mvn clean verify`)
     Check,
     /// Pass uncommon arguments through to the project's Maven wrapper
     Mvn {
@@ -249,6 +315,12 @@ fn main() {
                 debug,
             )
         }),
+        Command::Rename {
+            old,
+            new,
+            dry_run,
+            force,
+        } => rename::rename(&old, &new, dry_run, force),
         Command::Destroy {
             kind,
             name,
@@ -257,8 +329,19 @@ fn main() {
         } => generate::destroy(kind, &name, force, package.as_deref()),
         Command::Start { services } => compose::start(&services, debug),
         Command::Stop { services } => compose::stop_cmd(&services, debug),
+        Command::Doctor => doctor::doctor(),
+        Command::Why { log } => why::why(log.as_deref(), debug),
+        Command::Routes { json } => inspect::routes(json),
+        Command::Beans { pattern, json } => inspect::beans(pattern.as_deref(), json),
+        Command::Db {
+            file,
+            no_start,
+            args,
+        } => console::db(file.as_deref(), no_start, &args, debug),
+        Command::Console { no_build, args } => console::console(no_build, &args, debug),
         Command::Test { filter } => run::test(filter.as_deref(), debug),
         Command::Build => run::build(debug),
+        Command::Clean => run::clean(debug),
         Command::Fmt => run::fmt(debug),
         Command::Check => run::check(debug),
         Command::Mvn { args } => run::mvn(&args, debug),
@@ -280,7 +363,13 @@ fn main() {
     };
 
     if let Err(err) = result {
-        eprintln!("jails: {err}");
+        // An empty message means the command has already printed everything
+        // the user needs (`doctor` prints a report and then fails only to
+        // set the exit code); printing a bare `jails: ` under it would be
+        // noise.
+        if !err.is_empty() {
+            eprintln!("jails: {err}");
+        }
         std::process::exit(1);
     }
 }

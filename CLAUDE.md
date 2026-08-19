@@ -6,9 +6,9 @@ deliberately deferred) — treat it as the spec, and update it in the same
 change as the code. The original `prompt.md` spec was deleted once the
 commands it described all shipped; don't go looking for it.
 
-The scope bar: this is a deliberately small v1. No `console`, no `routes`, no
-Gradle, no plugin system. Check `README.md`'s "Not yet" before adding a
-command that isn't already there.
+The scope bar: this is a deliberately small v1. No `routes`, no Gradle, no
+plugin system. Check `README.md`'s "Not yet" before adding a command that
+isn't already there.
 
 ## Layout
 
@@ -29,15 +29,45 @@ command that isn't already there.
   Marked service blocks so `add db` and `add kafka` stack, and `remove` can
   take one service out without touching the other. Also `start`/`stop`
   (`docker compose up/stop`) and the auto-start `run` shells out to.
-- `src/run.rs` — `test`/`build`/`run`, shells to `mvn`/`mvnd`. `run`/`watch`
+- `src/run.rs` — `test`/`build`/`clean`/`run`, shells to `mvn`/`mvnd`. `run`/`watch`
   start compose services first when `compose.yaml` is present.
+- `src/console.rs` — `db`/`dbconsole` (`psql` or `sqlite3`) and `console`/`c`
+  (`jshell` + Maven classpath). Interactive; inherit stdio.
+- `src/java.rs` — a deliberately small Java reader shared by `inspect`,
+  `doctor` and `rename`: annotations and what they are attached to, a type's
+  supertypes, a constructor's parameters. **Not a parser, and must not grow
+  into one.** Its one trick is `blanked()`, which replaces comments and
+  literals with spaces *of the same length*, so a scan cannot be fooled by
+  `// @Service` while byte offsets still index the original source — which
+  is why `annotations()` slices names and args out of `source`, not out of
+  the blanked copy.
+- `src/inspect.rs` — `routes` and `beans`. Reads source, never a running
+  context: instant, and works on a project that does not start (the case
+  that matters). The cost is anything decided at runtime, which the output
+  states rather than hiding.
+- `src/doctor.rs` — `doctor`. Read-only by contract: it must never start,
+  stop or write anything, so it stays safe to run mid-debug. Every `FAIL`
+  carries a `fix:` line (an integration test asserts this), and a failure
+  exits non-zero via an *empty* `Err` so `main` prints no redundant
+  `jails: ` line.
+- `src/why.rs` — `why`. A table of (signature, explanation, fix) rules
+  matched against a log. Rules sharing a `group` describe one failure
+  through different messages and only the most specific is reported. Add
+  rules only from failures that actually happened; a guessed cause costs
+  more than no cause.
+- `src/rename.rs` — `rename`. Textual by design (see its module docs for
+  when to prefer jdt.ls `grn`): whole identifiers only, string literals left
+  alone and the skipped count reported.
 - `tests/common/mod.rs` + `tests/cli.rs` — integration tests against the
   real compiled binary (`CARGO_BIN_EXE_jails`).
 - `jails.nvim/` — tracked in this repo, but Lua, not Rust: a thin `:Jails`
   wrapper that shells out to the binary on PATH. It keeps its own hand-
-  maintained `SUBCOMMANDS`/`KINDS` lists for `:Jails` completion, so a new
-  subcommand or artifact kind has to be added there too or it silently
-  won't complete.
+  maintained `SUBCOMMANDS`/`KINDS`/`CAPABILITIES`/`OPTIONS` lists for
+  `:Jails` completion, so a new subcommand, artifact kind, capability or
+  flag has to be added there too or it silently won't complete. The
+  `<leader>J...` keymaps that drive it live in a *third* repo
+  (`~/code/my-dotfiles/home/.config/nvim/init.lua`), which this project's
+  git history does not track.
 
 Untracked siblings in this directory are **not** part of the project:
 `rails/` and `start.spring.io/` are gitignored reference checkouts (separate
@@ -136,13 +166,23 @@ jails knows nothing about.
   pulls it in transitively, so this only ever bit the plain-Maven flavor.
   Keep both artifacts pinned to the same `JACKSON_VERSION`; mixing versions
   across them is a documented `NoSuchMethodError`.
-- **`add db` on Spring must wire Testcontainers into `*ApplicationTests`.**
+- **`jails check` is `mvn clean verify`.** Incremental `verify` leaves deleted
+  tests in `target/`, and Surefire still runs the leftover `.class`. Don't
+  "optimize" it back to bare verify.
+- **`add db` on Spring registers a test-classpath ApplicationContextInitializer.**
   Docker Compose is skipped in tests (`spring.docker.compose.skip.in-tests=true`
   by default), so JDBC auto-config has no URL and fails with "Failed to
-  determine a suitable driver class". `PostgresContainerConfig` + `@Import` is
-  the Initializr pattern. Do not "fix" this by setting `skip.in-tests=false`
-  (that would share the compose database with tests) or by writing a
-  `src/test/resources/application.properties` that shadows the main one.
+  determine a suitable driver class". `PostgresContainerConfig` implements
+  `ApplicationContextInitializer` and is listed in test-only
+  `META-INF/spring.factories`, so every `@SpringBootTest` sees a DataSource
+  without an `@Import` on the test class. JDBC auto-config also registers
+  persistence-exception translation, which CGLIB-proxies every `@Repository`
+  and fails on `final` classes; `add db` disables it with
+  `spring.persistence.exceptiontranslation.enabled=false` in main
+  `application.properties` (raw SQL, no ORM). Do not "fix" this by setting
+  `skip.in-tests=false` (that would share the compose database with tests)
+  or by writing a `src/test/resources/application.properties` that shadows
+  the main one.
 - **`record`/`command` are the plain-Java kinds.** They work in `new-cli`
   projects without framework dependencies. A record occupies two paths
   (`<Name>.java` + `<Name>Test.java`), and `generate` refuses to overwrite
@@ -167,7 +207,23 @@ jails knows nothing about.
   27 — anything preview needs `--enable-preview` wired into both compile
   and surefire and breaks on the next JDK. String templates (`STR."..."`)
   were withdrawn and do not exist at all.
-
+- **`docker` here is podman's CLI shim.** `docker info --format
+  '{{.ServerVersion}}'` exits 125 against podman's differently-shaped info
+  report, and `podman-compose` rejects `compose ps --services --status`.
+  `doctor` therefore probes with bare `docker info` and `docker ps --format
+  '{{.Names}}'`, which behave identically on both engines. Don't "improve"
+  either back to the Docker-specific spelling.
+- **Testcontainers and the `docker` CLI look at different sockets.** The
+  shim talks to podman's rootless socket; Testcontainers reads `DOCKER_HOST`
+  or `/var/run/docker.sock` and finds neither, so `jails start` succeeding
+  proves nothing about whether `@SpringBootTest` can start a container —
+  it fails with "Could not find a valid Docker environment" (47 occurrences
+  of the sibling DataSource failure and 8 of this one across one day of
+  real sessions). `doctor` checks it; `why` explains it.
+- **Testcontainers 2.0 renamed every module** (`postgresql` ->
+  `testcontainers-postgresql`). `doctor` matches on the `org.testcontainers`
+  groupId alone for that reason — a check that silently stops applying after
+  a dependency bump is worse than no check.
 - **clap `alias` vs `visible_alias`**: hidden `alias` is invisible to
   `clap_complete`'s bash generator — `jails g <TAB>` fell back to top-level
   subcommand names instead of `generate`'s completions. Always use

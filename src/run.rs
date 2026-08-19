@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn find_on_path(bin: &str) -> bool {
+pub(crate) fn find_on_path(bin: &str) -> bool {
     let Some(paths) = std::env::var_os("PATH") else {
         return false;
     };
@@ -18,7 +18,7 @@ fn find_on_path_list(bin: &str, dirs: impl Iterator<Item = PathBuf>) -> bool {
 
 /// Prefer the project's wrapper so its Maven version is reproducible. A
 /// project without one keeps the fast mvnd/system-Maven fallback.
-fn maven_binary(root: &Path) -> PathBuf {
+pub(crate) fn maven_binary(root: &Path) -> PathBuf {
     let wrapper = root.join(if cfg!(windows) { "mvnw.cmd" } else { "mvnw" });
     if wrapper.is_file() {
         return wrapper;
@@ -30,7 +30,7 @@ fn maven_binary(root: &Path) -> PathBuf {
     }
 }
 
-fn run_inherited(mut cmd: Command, debug: bool) -> Result<()> {
+pub(crate) fn run_inherited(mut cmd: Command, debug: bool) -> Result<()> {
     if debug {
         crate::debug_cmd(&cmd);
     }
@@ -76,6 +76,13 @@ pub fn build(debug: bool) -> Result<()> {
     run_inherited(cmd, debug)
 }
 
+pub fn clean(debug: bool) -> Result<()> {
+    let root = find_project_root()?;
+    let mut cmd = Command::new(maven_binary(&root));
+    cmd.arg("clean").current_dir(&root);
+    run_inherited(cmd, debug)
+}
+
 /// Reformat in place. Spotless is a plugin, not a dependency, so an
 /// unconfigured project fails with a Maven stack trace about an unknown
 /// prefix -- checking first turns that into one actionable line.
@@ -105,10 +112,13 @@ pub fn fmt_quietly(root: &std::path::Path) -> bool {
 
 /// Everything the build has to say: format check, compile, tests. `verify`
 /// rather than `test` because that is the phase `add format` binds to.
+/// `clean` first: Maven's incremental compile does not delete stale `.class`
+/// files, so a removed test (or a renamed record) would still run from
+/// `target/` and fail the check for a file that is no longer in the tree.
 pub fn check(debug: bool) -> Result<()> {
     let root = find_project_root()?;
     let mut cmd = Command::new(maven_binary(&root));
-    cmd.arg("verify").current_dir(&root);
+    cmd.args(["clean", "verify"]).current_dir(&root);
     run_inherited(cmd, debug)
 }
 

@@ -10,14 +10,28 @@ local config = {
 }
 
 local STREAMING = {
+  -- `why` with no argument starts the application and reads its output, so
+  -- it needs the terminal like `run` does. `doctor`/`routes`/`beans` print a
+  -- report and exit, and `rename` prompts for confirmation -- all three want
+  -- the terminal too, so the whole observation set streams.
+  doctor = true,
+  why = true,
+  routes = true,
+  beans = true,
+  rename = true,
   test = true,
   build = true,
+  clean = true,
   run = true,
   check = true,
   fmt = true,
   mvn = true,
   start = true,
   stop = true,
+  db = true,
+  dbconsole = true,
+  console = true,
+  c = true,
 }
 
 local KINDS = {
@@ -46,6 +60,11 @@ local RUNTIMES = { 'db', 'kafka' }
 local SUBCOMMANDS = {
   'about',
   'info',
+  'doctor',
+  'why',
+  'routes',
+  'beans',
+  'rename',
   'new',
   'new-cli',
   'generate',
@@ -58,12 +77,17 @@ local SUBCOMMANDS = {
   'd',
   'test',
   'build',
+  'clean',
   'fmt',
   'check',
   'mvn',
   'run',
   'start',
   'stop',
+  'db',
+  'dbconsole',
+  'console',
+  'c',
   'completion',
   'help',
 }
@@ -82,6 +106,13 @@ local OPTIONS = {
   generate = { '--package' },
   g = { '--package' },
   run = { '--no-build', '--watch', '--' },
+  console = { '--no-build', '--' },
+  c = { '--no-build', '--' },
+  db = { '--no-start', '--' },
+  dbconsole = { '--no-start', '--' },
+  routes = { '--json' },
+  beans = { '--json' },
+  rename = { '--dry-run', '--force' },
 }
 
 function M.setup(opts)
@@ -318,6 +349,32 @@ local function test_names()
   return names
 end
 
+--- Every type the project declares, by filename. `jails rename` takes a
+--- simple type name and refuses a package-qualified one, so a filename stem
+--- is exactly the right shape -- and typing the old name from memory is the
+--- step most likely to be got wrong.
+local function type_names()
+  local root = M.project_root()
+  local names = {}
+  local seen = {}
+  for _, sub in ipairs({ 'src/main/java', 'src/test/java' }) do
+    local dir = vim.fs.joinpath(root, sub)
+    if vim.fn.isdirectory(dir) == 1 then
+      for _, path in ipairs(vim.fs.find(function(name)
+        return name:match('%.java$')
+      end, { path = dir, type = 'file', limit = 1000 })) do
+        local name = vim.fn.fnamemodify(path, ':t:r')
+        if not seen[name] then
+          seen[name] = true
+          table.insert(names, name)
+        end
+      end
+    end
+  end
+  table.sort(names)
+  return names
+end
+
 --- Complete subcommands, generator kinds, capabilities, options and test names.
 function M.complete(arg_lead, cmd_line)
   local words = vim.split(cmd_line, '%s+', { trimempty = true })
@@ -338,6 +395,9 @@ function M.complete(arg_lead, cmd_line)
       return matching(RUNTIMES, arg_lead)
     end
     if sub == 'test' then return matching(test_names(), arg_lead) end
+    -- Only the first argument: the second is the *new* name, which by
+    -- definition does not exist yet and must not be completed from what does.
+    if sub == 'rename' then return matching(type_names(), arg_lead) end
   end
 
   return matching(OPTIONS[sub] or {}, arg_lead)

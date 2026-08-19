@@ -84,17 +84,21 @@ struct Plan {
     plugins: Vec<(&'static str, String)>,
     files: Vec<NewFile>,
     compose: Vec<ComposeService>,
-    /// Spring `add db` only: `@Import` this test configuration into the
-    /// project's `*ApplicationTests` so `@SpringBootTest` gets a DataSource.
-    /// Docker Compose is skipped in tests by default, and without this the
-    /// stock `contextLoads` test fails with "Failed to determine a suitable
-    /// driver class".
+    /// Spring `add db` only: a test-classpath ApplicationContextInitializer
+    /// so every `@SpringBootTest` gets a DataSource without editing those
+    /// files. Docker Compose is skipped in tests by default.
     spring_test_import: Option<SpringTestImport>,
 }
 
 struct SpringTestImport {
     pkg: String,
     class: &'static str,
+}
+
+impl SpringTestImport {
+    fn fqcn(&self) -> String {
+        format!("{}.{}", self.pkg, self.class)
+    }
 }
 
 const SPRING_DOCKER_COMPOSE: Dependency = Dependency {
@@ -199,7 +203,8 @@ pub fn add(
             println!("  would add compose service  {}", svc.name);
         }
         if let Some(cfg) = &plan.spring_test_import {
-            wire_application_tests(&root, cfg, true)?;
+            install_db_properties(&root, true)?;
+            install_postgres_test_initializer(&root, cfg, true)?;
         }
         return Ok(());
     }
@@ -225,7 +230,19 @@ pub fn add(
     let mut created = 0;
     for file in &plan.files {
         if file.path.exists() {
-            println!("  exists  {}", rel(&root, &file.path));
+            if should_replace_postgres_test_config(&file.path) {
+                let contents = if file.path.extension().is_some_and(|e| e == "java") {
+                    normalize_imports(&file.contents)
+                } else {
+                    file.contents.clone()
+                };
+                fs::write(&file.path, &contents)
+                    .map_err(|e| format!("failed to write {}: {e}", file.path.display()))?;
+                println!("  update  {}", rel(&root, &file.path));
+                created += 1;
+            } else {
+                println!("  exists  {}", rel(&root, &file.path));
+            }
             continue;
         }
         write_new_file(&file.path, &file.contents)?;
@@ -243,7 +260,9 @@ pub fn add(
 
     let mut tests_wired = false;
     if let Some(cfg) = &plan.spring_test_import {
-        tests_wired = wire_application_tests(&root, cfg, false)?;
+        tests_wired = install_db_properties(&root, false)?;
+        tests_wired |= install_postgres_test_initializer(&root, cfg, false)?;
+        tests_wired |= strip_legacy_postgres_imports(&root, cfg)?;
     }
 
     if created == 0 && !pom_changed && compose_added.is_empty() && !tests_wired {
@@ -375,13 +394,32 @@ pub fn remove(
             None => {}
         }
     }
+    if flavor == Flavor::SpringBoot && plan.spring_test_import.is_some() {
+        match pom::remove_dependency(
+            &updated_pom,
+            SPRING_TESTCONTAINERS.group_id,
+            SPRING_TESTCONTAINERS.artifact_id,
+        )? {
+            Some(next) => {
+                updated_pom = next;
+                removed_deps.push(&SPRING_TESTCONTAINERS);
+            }
+            None => {}
+        }
+    }
 
     let pom_changed = !removed_deps.is_empty() || !removed_plugins.is_empty() || docker_compose_dep;
+    let factories_present = plan.spring_test_import.as_ref().is_some_and(|cfg| {
+        fs::read_to_string(spring_factories_path(&root)).is_ok_and(|s| s.contains(&cfg.fqcn()))
+    });
+    let properties_present = plan.spring_test_import.is_some()
+        && fs::read_to_string(application_properties_path(&root))
+            .is_ok_and(|s| s.contains(EXCEPTION_TRANSLATION_PROPERTY));
     let tests_to_unwire: Vec<PathBuf> = plan
         .spring_test_import
         .as_ref()
         .map(|cfg| {
-            find_application_tests(&root.join("src/test/java"))
+            find_spring_boot_tests(&root.join("src/test/java"))
                 .into_iter()
                 .filter(|p| {
                     fs::read_to_string(p).is_ok_and(|s| s.contains(&import_annotation(cfg.class)))
@@ -393,6 +431,8 @@ pub fn remove(
         && existing_files.is_empty()
         && compose_removed.is_empty()
         && tests_to_unwire.is_empty()
+        && !factories_present
+        && !properties_present
     {
         println!("{} is not set up -- nothing to do", capability.label());
         return Ok(());
@@ -423,6 +463,18 @@ pub fn remove(
         for path in &tests_to_unwire {
             println!("  would unsplice @Import from {}", rel(&root, path));
         }
+        if factories_present {
+            println!(
+                "  would unsplice {}",
+                rel(&root, &spring_factories_path(&root))
+            );
+        }
+        if properties_present {
+            println!(
+                "  would unsplice {}",
+                rel(&root, &application_properties_path(&root))
+            );
+        }
         return Ok(());
     }
 
@@ -448,6 +500,12 @@ pub fn remove(
         }
         for path in &tests_to_unwire {
             println!("  import in {}", rel(&root, path));
+        }
+        if factories_present {
+            println!("  {}", rel(&root, &spring_factories_path(&root)));
+        }
+        if properties_present {
+            println!("  {}", rel(&root, &application_properties_path(&root)));
         }
         print!("proceed? [y/N] ");
         std::io::stdout().flush().ok();
@@ -482,6 +540,7 @@ pub fn remove(
         std::fs::remove_file(path)
             .map_err(|e| format!("failed to remove {}: {e}", path.display()))?;
         println!("  delete  {}", rel(&root, path));
+        delete_maven_output(&root, path);
     }
 
     if !compose_removed.is_empty() {
@@ -499,7 +558,11 @@ pub fn remove(
     }
 
     if let Some(cfg) = &plan.spring_test_import {
-        unwire_application_tests(&root, cfg)?;
+        uninstall_postgres_test_initializer(&root, cfg)?;
+        delete_maven_output(&root, &spring_factories_path(&root));
+        uninstall_db_properties(&root)?;
+        delete_maven_output(&root, &application_properties_path(&root));
+        let _ = strip_legacy_postgres_imports(&root, cfg)?;
     }
 
     println!("removed {}", capability.label());
@@ -642,7 +705,6 @@ fn db_plan(root: &std::path::Path, flavor: Flavor, pkg: &str) -> Result<Plan> {
             POSTGRES_MANAGED,
             FLYWAY_CORE_MANAGED,
             FLYWAY_POSTGRES_MANAGED,
-            SPRING_TESTCONTAINERS,
         ],
         Flavor::PlainMaven => vec![POSTGRES_PINNED, FLYWAY_CORE_PINNED, FLYWAY_POSTGRES_PINNED],
     };
@@ -678,88 +740,257 @@ fn postgres_container_config_java(pkg: &str) -> String {
     format!(
         r#"package {pkg};
 
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
-import org.springframework.context.annotation.Bean;
+import java.util.HashMap;
+import java.util.Map;
+import org.springframework.context.ApplicationContextInitializer;
+import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
-@TestConfiguration(proxyBeanMethods = false)
-public class {POSTGRES_CONTAINER_CONFIG} {{
+/**
+ * Starts one PostgreSQL Testcontainers instance for the test JVM and publishes
+ * JDBC properties before the context refreshes. Registered from
+ * {{@code META-INF/spring.factories}} on the test classpath so every
+ * {{@code @SpringBootTest}} sees a DataSource without an {{@code @Import}} on
+ * the test class -- Docker Compose is skipped in tests.
+ */
+public class {POSTGRES_CONTAINER_CONFIG} implements ApplicationContextInitializer<ConfigurableApplicationContext> {{
 
-    @Bean
-    @ServiceConnection
-    PostgreSQLContainer postgres() {{
-        return new PostgreSQLContainer("{POSTGRES_IMAGE}");
+    private static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("{POSTGRES_IMAGE}");
+
+    @Override
+    public void initialize(ConfigurableApplicationContext context) {{
+        POSTGRES.start();
+        Map<String, Object> properties = new HashMap<>();
+        properties.put("spring.datasource.url", POSTGRES.getJdbcUrl());
+        properties.put("spring.datasource.username", POSTGRES.getUsername());
+        properties.put("spring.datasource.password", POSTGRES.getPassword());
+        properties.put("spring.datasource.driver-class-name", POSTGRES.getDriverClassName());
+        context.getEnvironment()
+                .getPropertySources()
+                .addFirst(new MapPropertySource("jails-postgres", properties));
     }}
 }}
 "#
     )
 }
 
-fn import_annotation(class: &str) -> String {
-    format!("@Import({class}.class)")
+fn should_replace_postgres_test_config(path: &Path) -> bool {
+    path.file_name()
+        .is_some_and(|n| n == "PostgresContainerConfig.java")
+        && fs::read_to_string(path).is_ok_and(|s| !s.contains("ApplicationContextInitializer"))
 }
 
-/// Wire `{class}` into the unique `*ApplicationTests` via `@Import`.
-///
-/// Returns whether the file was (or, in dry-run, would be) changed.
-fn wire_application_tests(root: &Path, cfg: &SpringTestImport, dry_run: bool) -> Result<bool> {
-    let path = match unique_application_tests(root) {
-        Ok(Some(path)) => path,
-        Ok(None) => {
-            println!(
-                "note: no *ApplicationTests.java -- @SpringBootTest will fail to load a DataSource\n      \
-                 until you @Import({}.class)",
-                cfg.class
-            );
-            return Ok(false);
-        }
-        Err(n) => {
-            println!(
-                "note: {n} *ApplicationTests.java files found, so {} was not imported automatically -- add @Import({}.class) to the one you meant",
-                cfg.class, cfg.class
-            );
-            return Ok(false);
-        }
-    };
+fn spring_factories_path(root: &Path) -> PathBuf {
+    root.join("src/test/resources/META-INF/spring.factories")
+}
 
-    let source =
-        fs::read_to_string(&path).map_err(|e| format!("failed to read {}: {e}", path.display()))?;
-    if source.contains(&import_annotation(&cfg.class)) {
+fn application_properties_path(root: &Path) -> PathBuf {
+    root.join("src/main/resources/application.properties")
+}
+
+/// JDBC auto-config registers a CGLIB proxy around every `@Repository`.
+/// jails (and the code it generates) uses `final` classes, so that proxy
+/// cannot be created. Exception translation is a JPA concern anyway -- this
+/// capability is raw SQL.
+const EXCEPTION_TRANSLATION_PROPERTY: &str =
+    "spring.persistence.exceptiontranslation.enabled=false";
+
+fn application_properties_block() -> String {
+    format!("# jails:db\n{EXCEPTION_TRANSLATION_PROPERTY}\n# /jails:db\n")
+}
+
+fn install_db_properties(root: &Path, dry_run: bool) -> Result<bool> {
+    let path = application_properties_path(root);
+    let existing = if path.exists() {
+        fs::read_to_string(&path).map_err(|e| format!("failed to read {}: {e}", path.display()))?
+    } else {
+        String::new()
+    };
+    if existing.contains(EXCEPTION_TRANSLATION_PROPERTY) {
+        println!("  exists  {}", rel(root, &path));
+        return Ok(false);
+    }
+    let next = if existing.trim().is_empty() {
+        application_properties_block()
+    } else {
+        format!(
+            "{}\n{}",
+            existing.trim_end(),
+            application_properties_block()
+        )
+    };
+    if dry_run {
         println!(
-            "  exists  {} is already imported in {}",
-            cfg.class,
+            "  would set  {EXCEPTION_TRANSLATION_PROPERTY} in {}",
             rel(root, &path)
         );
-        return Ok(false);
-    }
-
-    let tests_pkg = package_of(&source).unwrap_or_else(|| cfg.pkg.clone());
-    let extra = import_of(&tests_pkg, &cfg.pkg, cfg.class);
-    let Some(spliced) = splice_spring_boot_test_import(&source, cfg.class, &extra) else {
-        println!(
-            "note: could not find @SpringBootTest in {} -- add @Import({}.class) by hand",
-            rel(root, &path),
-            cfg.class
-        );
-        return Ok(false);
-    };
-
-    if dry_run {
-        println!("  would import  {} into {}", cfg.class, rel(root, &path));
         return Ok(true);
     }
-
-    fs::write(&path, spliced).map_err(|e| format!("failed to write {}: {e}", path.display()))?;
-    println!("  import  {} -> {}", cfg.class, rel(root, &path));
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
+    }
+    fs::write(&path, next).map_err(|e| format!("failed to write {}: {e}", path.display()))?;
+    println!("  properties  {}", rel(root, &path));
     Ok(true)
 }
 
-fn unwire_application_tests(root: &Path, cfg: &SpringTestImport) -> Result<()> {
-    for path in find_application_tests(&root.join("src/test/java")) {
+fn uninstall_db_properties(root: &Path) -> Result<()> {
+    let path = application_properties_path(root);
+    if !path.exists() {
+        return Ok(());
+    }
+    let existing =
+        fs::read_to_string(&path).map_err(|e| format!("failed to read {}: {e}", path.display()))?;
+    let Some(next) = remove_jails_db_block(&existing, EXCEPTION_TRANSLATION_PROPERTY) else {
+        return Ok(());
+    };
+    if next.trim().is_empty() {
+        fs::remove_file(&path).map_err(|e| format!("failed to remove {}: {e}", path.display()))?;
+        println!("  delete  {}", rel(root, &path));
+    } else {
+        fs::write(&path, next).map_err(|e| format!("failed to write {}: {e}", path.display()))?;
+        println!("  unsplice  {}", rel(root, &path));
+    }
+    Ok(())
+}
+
+/// Drop the matching class/resource under `target/` so incremental
+/// `mvn test` (what `jails test` runs) does not keep using a deleted file.
+fn delete_maven_output(root: &Path, src: &Path) {
+    let Some(out) = maven_output_for(root, src) else {
+        return;
+    };
+    if out.exists() {
+        let _ = fs::remove_file(&out);
+    }
+}
+
+fn maven_output_for(root: &Path, src: &Path) -> Option<PathBuf> {
+    let rel = src.strip_prefix(root).ok()?;
+    let mut parts = rel.iter();
+    if parts.next()?.to_str()? != "src" {
+        return None;
+    }
+    let scope = parts.next()?.to_str()?;
+    let kind = parts.next()?.to_str()?;
+    let rest: PathBuf = parts.collect();
+    let target_root = match (scope, kind) {
+        ("main", "java") | ("main", "resources") => root.join("target/classes"),
+        ("test", "java") | ("test", "resources") => root.join("target/test-classes"),
+        _ => return None,
+    };
+    let mut out = target_root.join(rest);
+    if out.extension().is_some_and(|e| e == "java") {
+        out.set_extension("class");
+    }
+    Some(out)
+}
+
+const SPRING_FACTORIES_KEY: &str = "org.springframework.context.ApplicationContextInitializer";
+
+fn spring_factories_block(fqcn: &str) -> String {
+    format!("# jails:db\n{SPRING_FACTORIES_KEY}={fqcn}\n# /jails:db\n")
+}
+
+/// Register the initializer on the test classpath. Returns whether the
+/// factories file was created or changed.
+fn install_postgres_test_initializer(
+    root: &Path,
+    cfg: &SpringTestImport,
+    dry_run: bool,
+) -> Result<bool> {
+    let path = spring_factories_path(root);
+    let existing = if path.exists() {
+        fs::read_to_string(&path).map_err(|e| format!("failed to read {}: {e}", path.display()))?
+    } else {
+        String::new()
+    };
+    let fqcn = cfg.fqcn();
+    if existing.contains(&fqcn) {
+        println!("  exists  {}", rel(root, &path));
+        return Ok(false);
+    }
+    let next = if existing.trim().is_empty() {
+        spring_factories_block(&fqcn)
+    } else {
+        format!("{}\n{}", existing.trim_end(), spring_factories_block(&fqcn))
+    };
+    if dry_run {
+        println!("  would register  {fqcn} in {}", rel(root, &path));
+        return Ok(true);
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
+    }
+    fs::write(&path, next).map_err(|e| format!("failed to write {}: {e}", path.display()))?;
+    println!("  register  {fqcn} -> {}", rel(root, &path));
+    Ok(true)
+}
+
+fn uninstall_postgres_test_initializer(root: &Path, cfg: &SpringTestImport) -> Result<()> {
+    let path = spring_factories_path(root);
+    if !path.exists() {
+        return Ok(());
+    }
+    let existing =
+        fs::read_to_string(&path).map_err(|e| format!("failed to read {}: {e}", path.display()))?;
+    let fqcn = cfg.fqcn();
+    let Some(next) = remove_jails_db_block(&existing, &fqcn) else {
+        return Ok(());
+    };
+    if next.trim().is_empty() {
+        fs::remove_file(&path).map_err(|e| format!("failed to remove {}: {e}", path.display()))?;
+        println!("  delete  {}", rel(root, &path));
+    } else {
+        fs::write(&path, next).map_err(|e| format!("failed to write {}: {e}", path.display()))?;
+        println!("  unsplice  {}", rel(root, &path));
+    }
+    Ok(())
+}
+
+fn remove_jails_db_block(source: &str, fqcn: &str) -> Option<String> {
+    if !source.contains(fqcn) && !source.contains("# jails:db") {
+        return None;
+    }
+    let mut out = String::new();
+    let mut skipping = false;
+    let mut changed = false;
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed == "# jails:db" {
+            skipping = true;
+            changed = true;
+            continue;
+        }
+        if skipping {
+            if trimmed == "# /jails:db" {
+                skipping = false;
+            }
+            continue;
+        }
+        if trimmed.contains(fqcn) {
+            changed = true;
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    changed.then_some(out)
+}
+
+/// Drop `@Import(PostgresContainerConfig)` left by earlier jails versions.
+fn strip_legacy_postgres_imports(root: &Path, cfg: &SpringTestImport) -> Result<bool> {
+    let mut changed = false;
+    for path in find_spring_boot_tests(&root.join("src/test/java")) {
         let Ok(source) = fs::read_to_string(&path) else {
             continue;
         };
+        if !source.contains(&import_annotation(cfg.class)) {
+            continue;
+        }
         let tests_pkg = package_of(&source).unwrap_or_else(|| cfg.pkg.clone());
         let extra = import_of(&tests_pkg, &cfg.pkg, cfg.class);
         let Some(next) = unsplice_spring_boot_test_import(&source, cfg.class, &extra) else {
@@ -767,22 +998,16 @@ fn unwire_application_tests(root: &Path, cfg: &SpringTestImport) -> Result<()> {
         };
         fs::write(&path, next).map_err(|e| format!("failed to write {}: {e}", path.display()))?;
         println!("  unsplice  {} from {}", cfg.class, rel(root, &path));
+        changed = true;
     }
-    Ok(())
+    Ok(changed)
 }
 
-/// `Ok(Some)` when there is exactly one, `Ok(None)` when there are none,
-/// `Err(n)` when there are several -- same shape as the command dispatcher.
-fn unique_application_tests(root: &Path) -> std::result::Result<Option<PathBuf>, usize> {
-    let found = find_application_tests(&root.join("src/test/java"));
-    match found.len() {
-        0 => Ok(None),
-        1 => Ok(Some(found.into_iter().next().unwrap())),
-        n => Err(n),
-    }
+fn import_annotation(class: &str) -> String {
+    format!("@Import({class}.class)")
 }
 
-fn find_application_tests(dir: &Path) -> Vec<PathBuf> {
+fn find_spring_boot_tests(dir: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     let mut stack = vec![dir.to_path_buf()];
     while let Some(current) = stack.pop() {
@@ -793,9 +1018,9 @@ fn find_application_tests(dir: &Path) -> Vec<PathBuf> {
             let path = entry.path();
             if path.is_dir() {
                 stack.push(path);
-            } else if path.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
-                n.ends_with("ApplicationTests.java") || n.ends_with("ApplicationTest.java")
-            }) {
+            } else if path.extension().is_some_and(|e| e == "java")
+                && fs::read_to_string(&path).is_ok_and(|s| s.contains("@SpringBootTest"))
+            {
                 found.push(path);
             }
         }
@@ -806,7 +1031,10 @@ fn find_application_tests(dir: &Path) -> Vec<PathBuf> {
 
 /// Insert `@Import(Class.class)` immediately above `@SpringBootTest` and add
 /// the annotation import (plus `extra` when the config lives in another
-/// package). `None` when the anchor is missing.
+/// package). `None` when the anchor is missing. Production only unsplices
+/// leftover imports from earlier jails versions; this helper exists so the
+/// unit test can prove the round-trip.
+#[cfg(test)]
 fn splice_spring_boot_test_import(source: &str, class: &str, extra: &str) -> Option<String> {
     let annotation = import_annotation(class);
     let anchor = source.find("@SpringBootTest")?;
@@ -2698,23 +2926,24 @@ mod tests {
     }
 
     #[test]
-    fn db_plan_on_spring_wires_a_testcontainers_service_connection() {
+    fn db_plan_on_spring_registers_a_test_classpath_initializer() {
         let root = std::path::Path::new("/tmp/does-not-matter");
         let plan = db_plan(root, Flavor::SpringBoot, "com.example.demo").unwrap();
         let artifacts: Vec<&str> = plan.deps.iter().map(|d| d.artifact_id).collect();
         assert!(artifacts.contains(&"spring-boot-starter-jdbc"));
-        assert!(artifacts.contains(&"spring-boot-testcontainers"));
         assert!(
-            plan.deps
-                .iter()
-                .any(|d| d.artifact_id == "spring-boot-testcontainers" && d.scope == Some("test"))
+            !artifacts.contains(&"spring-boot-testcontainers"),
+            "ServiceConnection is gone; the initializer talks to Testcontainers directly"
         );
         assert!(plan.files.iter().any(|f| {
             f.path
                 .ends_with("src/test/java/com/example/demo/PostgresContainerConfig.java")
         }));
         let src = postgres_container_config_java("com.example.demo");
-        assert!(src.contains("@ServiceConnection"));
+        assert!(src.contains("ApplicationContextInitializer"));
+        assert!(src.contains("MapPropertySource"));
+        assert!(!src.contains("@ServiceConnection"));
+        assert!(!src.contains("@TestConfiguration"));
         assert!(src.contains("org.testcontainers.postgresql.PostgreSQLContainer"));
         assert!(
             src.contains(POSTGRES_IMAGE),
@@ -2728,6 +2957,66 @@ mod tests {
         let cfg = plan.spring_test_import.unwrap();
         assert_eq!(cfg.pkg, "com.example.demo");
         assert_eq!(cfg.class, "PostgresContainerConfig");
+        assert_eq!(cfg.fqcn(), "com.example.demo.PostgresContainerConfig");
+    }
+
+    #[test]
+    fn spring_factories_block_is_idempotent_to_remove() {
+        let fqcn = "com.example.demo.PostgresContainerConfig";
+        let block = spring_factories_block(fqcn);
+        assert!(block.contains("# jails:db"));
+        assert!(block.contains(SPRING_FACTORIES_KEY));
+        assert!(block.contains(fqcn));
+
+        let gone = remove_jails_db_block(&block, fqcn).unwrap();
+        assert!(gone.trim().is_empty());
+
+        let other =
+            format!("org.springframework.context.ApplicationListener=com.example.Other\n{block}");
+        let next = remove_jails_db_block(&other, fqcn).unwrap();
+        assert!(next.contains("com.example.Other"));
+        assert!(!next.contains(fqcn));
+        assert!(!next.contains("# jails:db"));
+        assert!(remove_jails_db_block("unrelated\n", fqcn).is_none());
+    }
+
+    #[test]
+    fn application_properties_block_disables_exception_translation() {
+        let block = application_properties_block();
+        assert!(block.contains(EXCEPTION_TRANSLATION_PROPERTY));
+        let gone = remove_jails_db_block(&block, EXCEPTION_TRANSLATION_PROPERTY).unwrap();
+        assert!(gone.trim().is_empty());
+
+        let existing = format!("spring.application.name=demo\n{block}");
+        let next = remove_jails_db_block(&existing, EXCEPTION_TRANSLATION_PROPERTY).unwrap();
+        assert!(next.contains("spring.application.name=demo"));
+        assert!(!next.contains("exceptiontranslation"));
+    }
+
+    #[test]
+    fn maven_output_maps_java_and_resources_into_target() {
+        let root = std::path::Path::new("/tmp/demo");
+        assert_eq!(
+            maven_output_for(
+                root,
+                &root.join("src/test/java/com/example/demo/PostgresContainerConfig.java")
+            ),
+            Some(root.join("target/test-classes/com/example/demo/PostgresContainerConfig.class"))
+        );
+        assert_eq!(
+            maven_output_for(
+                root,
+                &root.join("src/test/resources/META-INF/spring.factories")
+            ),
+            Some(root.join("target/test-classes/META-INF/spring.factories"))
+        );
+        assert_eq!(
+            maven_output_for(
+                root,
+                &root.join("src/main/resources/application.properties")
+            ),
+            Some(root.join("target/classes/application.properties"))
+        );
     }
 
     #[test]
