@@ -3,8 +3,8 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::Result;
 use crate::pom;
+use crate::Result;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MavenModule {

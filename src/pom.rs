@@ -76,7 +76,11 @@ pub fn flavor(pom: &str) -> Flavor {
 /// usual spellings it uses. `None` when the pom says nothing (Maven then
 /// defaults to something ancient, so callers should treat that as "too old").
 pub fn release_level(pom: &str) -> Option<u32> {
-    for tag in ["maven.compiler.release", "java.version", "maven.compiler.source"] {
+    for tag in [
+        "maven.compiler.release",
+        "java.version",
+        "maven.compiler.source",
+    ] {
         if let Some(value) = element_text(pom, tag) {
             // `java.version` is sometimes written `1.8`; take the last segment
             // so both `1.8` and `27` land on a sane number.
@@ -125,7 +129,10 @@ pub fn has_dependency(pom: &str, group_id: &str, artifact_id: &str) -> bool {
         let at = from + rel;
         if !inside_comment(pom, at) {
             let block_start = pom[..at].rfind("<dependency>").unwrap_or(0);
-            let block_end = pom[at..].find("</dependency>").map(|i| at + i).unwrap_or(pom.len());
+            let block_end = pom[at..]
+                .find("</dependency>")
+                .map(|i| at + i)
+                .unwrap_or(pom.len());
             if pom[block_start..block_end].contains(&group) {
                 return true;
             }
@@ -179,7 +186,12 @@ fn scan_tags(xml: &str) -> Vec<Tag> {
             .take_while(|c| !c.is_whitespace() && *c != '/')
             .collect();
         if !name.is_empty() {
-            tags.push(Tag { name, start: i, closing, self_closing });
+            tags.push(Tag {
+                name,
+                start: i,
+                closing,
+                self_closing,
+            });
         }
         i += gt + 1;
     }
@@ -207,7 +219,10 @@ fn project_dependencies_close(xml: &str) -> Option<usize> {
         if tag.self_closing {
             continue;
         }
-        if tag.name == "dependencies" && stack.as_slice() == ["project"] && depth_of_target.is_none() {
+        if tag.name == "dependencies"
+            && stack.as_slice() == ["project"]
+            && depth_of_target.is_none()
+        {
             depth_of_target = Some(stack.len() + 1);
         }
         stack.push(&tag.name);
@@ -220,14 +235,23 @@ fn project_dependencies_close(xml: &str) -> Option<usize> {
 fn line_indent(xml: &str, offset: usize) -> Option<&str> {
     let line_start = xml[..offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
     let prefix = &xml[line_start..offset];
-    prefix.chars().all(|c| c == ' ' || c == '\t').then_some(prefix)
+    prefix
+        .chars()
+        .all(|c| c == ' ' || c == '\t')
+        .then_some(prefix)
 }
 
 fn render_dependency(dep: &Dependency, indent: &str) -> String {
     let mut out = String::new();
     out.push_str(&format!("{indent}<dependency>\n"));
-    out.push_str(&format!("{indent}    <groupId>{}</groupId>\n", dep.group_id));
-    out.push_str(&format!("{indent}    <artifactId>{}</artifactId>\n", dep.artifact_id));
+    out.push_str(&format!(
+        "{indent}    <groupId>{}</groupId>\n",
+        dep.group_id
+    ));
+    out.push_str(&format!(
+        "{indent}    <artifactId>{}</artifactId>\n",
+        dep.artifact_id
+    ));
     if let Some(v) = dep.version {
         out.push_str(&format!("{indent}    <version>{v}</version>\n"));
     }
@@ -322,7 +346,10 @@ fn build_plugins_close(xml: &str) -> Option<usize> {
         if tag.self_closing {
             continue;
         }
-        if tag.name == "plugins" && stack.as_slice() == ["project", "build"] && depth_of_target.is_none() {
+        if tag.name == "plugins"
+            && stack.as_slice() == ["project", "build"]
+            && depth_of_target.is_none()
+        {
             depth_of_target = Some(stack.len() + 1);
         }
         stack.push(&tag.name);
@@ -464,14 +491,27 @@ mod tests {
     fn release_level_reads_all_three_spellings() {
         assert_eq!(release_level(SPRING_POM), Some(27));
         assert_eq!(release_level(PLAIN_POM), Some(27));
-        assert_eq!(release_level("<project><properties><java.version>1.8</java.version></properties></project>"), Some(8));
+        assert_eq!(
+            release_level(
+                "<project><properties><java.version>1.8</java.version></properties></project>"
+            ),
+            Some(8)
+        );
         assert_eq!(release_level("<project/>"), None);
     }
 
     #[test]
     fn has_dependency_matches_group_and_artifact_together() {
-        assert!(has_dependency(PLAIN_POM, "org.junit.jupiter", "junit-jupiter"));
-        assert!(!has_dependency(PLAIN_POM, "org.apache.commons", "commons-csv"));
+        assert!(has_dependency(
+            PLAIN_POM,
+            "org.junit.jupiter",
+            "junit-jupiter"
+        ));
+        assert!(!has_dependency(
+            PLAIN_POM,
+            "org.apache.commons",
+            "commons-csv"
+        ));
         // Same artifactId, different group -- must not count as present.
         assert!(!has_dependency(PLAIN_POM, "com.example", "junit-jupiter"));
     }
@@ -484,7 +524,9 @@ mod tests {
 
     #[test]
     fn add_dependency_is_idempotent() {
-        let once = add_dependency(PLAIN_POM, &CSV).unwrap().expect("first add splices");
+        let once = add_dependency(PLAIN_POM, &CSV)
+            .unwrap()
+            .expect("first add splices");
         assert!(add_dependency(&once, &CSV).unwrap().is_none());
     }
 
@@ -527,7 +569,10 @@ mod tests {
         let out = add_dependency(pom, &CSV).unwrap().unwrap();
         let managed_end = out.find("</dependencyManagement>").unwrap();
         let spliced = out.find("commons-csv").unwrap();
-        assert!(spliced > managed_end, "dependency landed inside dependencyManagement");
+        assert!(
+            spliced > managed_end,
+            "dependency landed inside dependencyManagement"
+        );
     }
 
     #[test]
@@ -541,7 +586,10 @@ mod tests {
 
     #[test]
     fn add_dependency_omits_version_when_managed_by_a_parent() {
-        let managed = Dependency { version: None, ..CSV };
+        let managed = Dependency {
+            version: None,
+            ..CSV
+        };
         let out = add_dependency(SPRING_POM, &managed).unwrap().unwrap();
         assert!(out.contains("<artifactId>commons-csv</artifactId>"));
         assert!(!out.contains("<version>1.12.0</version>"));
@@ -552,19 +600,26 @@ mod tests {
         assert!(add_dependency("nonsense", &CSV).is_err());
     }
 
-    const SPOTLESS: &str = "<plugin>\n    <artifactId>spotless-maven-plugin</artifactId>\n</plugin>";
+    const SPOTLESS: &str =
+        "<plugin>\n    <artifactId>spotless-maven-plugin</artifactId>\n</plugin>";
 
     #[test]
     fn add_plugin_is_idempotent() {
         let pom = "<project>\n    <build>\n        <plugins>\n        </plugins>\n    </build>\n</project>\n";
-        let once = add_plugin(pom, "spotless-maven-plugin", SPOTLESS).unwrap().unwrap();
-        assert!(add_plugin(&once, "spotless-maven-plugin", SPOTLESS).unwrap().is_none());
+        let once = add_plugin(pom, "spotless-maven-plugin", SPOTLESS)
+            .unwrap()
+            .unwrap();
+        assert!(add_plugin(&once, "spotless-maven-plugin", SPOTLESS)
+            .unwrap()
+            .is_none());
     }
 
     #[test]
     fn add_plugin_creates_the_build_nest_when_absent() {
         let pom = "<project>\n    <artifactId>demo</artifactId>\n</project>\n";
-        let out = add_plugin(pom, "spotless-maven-plugin", SPOTLESS).unwrap().unwrap();
+        let out = add_plugin(pom, "spotless-maven-plugin", SPOTLESS)
+            .unwrap()
+            .unwrap();
         assert!(out.contains("    <build>\n        <plugins>\n"));
         assert!(out.contains("spotless-maven-plugin"));
         assert!(out.contains("        </plugins>\n    </build>\n</project>"));
@@ -591,7 +646,9 @@ mod tests {
     </build>
 </project>
 "#;
-        let out = add_plugin(pom, "spotless-maven-plugin", SPOTLESS).unwrap().unwrap();
+        let out = add_plugin(pom, "spotless-maven-plugin", SPOTLESS)
+            .unwrap()
+            .unwrap();
         let managed_end = out.find("</pluginManagement>").unwrap();
         assert!(out.find("spotless-maven-plugin").unwrap() > managed_end);
     }
@@ -599,8 +656,13 @@ mod tests {
     #[test]
     fn add_plugin_matches_sibling_indentation() {
         let pom = "<project>\n    <build>\n        <plugins>\n            <plugin>\n                <artifactId>real</artifactId>\n            </plugin>\n        </plugins>\n    </build>\n</project>\n";
-        let out = add_plugin(pom, "spotless-maven-plugin", SPOTLESS).unwrap().unwrap();
+        let out = add_plugin(pom, "spotless-maven-plugin", SPOTLESS)
+            .unwrap()
+            .unwrap();
         assert!(out.contains("            <plugin>\n                <artifactId>spotless-maven-plugin</artifactId>\n            </plugin>\n"));
-        assert!(out.contains("<artifactId>real</artifactId>"), "existing plugins survive");
+        assert!(
+            out.contains("<artifactId>real</artifactId>"),
+            "existing plugins survive"
+        );
     }
 }

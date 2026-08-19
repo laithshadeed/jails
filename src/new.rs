@@ -6,7 +6,14 @@ use std::process::Command;
 /// Port of the `spring-init` bash function: wraps start.spring.io's
 /// starter.zip API. baseDir wraps the archive in a `$name/` folder
 /// server-side, so extracting to "." lands the project at `./$name`.
-pub fn new(name: &str, deps: &str, java: &str, git: bool, devtools: bool, debug: bool) -> Result<()> {
+pub fn new(
+    name: &str,
+    deps: &str,
+    java: &str,
+    git: bool,
+    devtools: bool,
+    debug: bool,
+) -> Result<()> {
     if Path::new(name).exists() {
         return Err(format!("{name} already exists"));
     }
@@ -40,7 +47,9 @@ pub fn new(name: &str, deps: &str, java: &str, git: bool, devtools: bool, debug:
     if debug {
         crate::debug_cmd(&curl);
     }
-    let status = curl.status().map_err(|e| format!("failed to run curl: {e}"))?;
+    let status = curl
+        .status()
+        .map_err(|e| format!("failed to run curl: {e}"))?;
 
     if !status.success() {
         let _ = fs::remove_dir_all(&tmp);
@@ -52,7 +61,9 @@ pub fn new(name: &str, deps: &str, java: &str, git: bool, devtools: bool, debug:
     if debug {
         crate::debug_cmd(&unzip);
     }
-    let status = unzip.status().map_err(|e| format!("failed to run unzip: {e}"))?;
+    let status = unzip
+        .status()
+        .map_err(|e| format!("failed to run unzip: {e}"))?;
 
     let _ = fs::remove_dir_all(&tmp);
 
@@ -84,8 +95,8 @@ fn initializr_java(requested: &str) -> &str {
 
 fn set_java_release(root: &Path, from: &str, to: &str) -> Result<()> {
     let path = root.join("pom.xml");
-    let pom = fs::read_to_string(&path)
-        .map_err(|e| format!("failed to read {}: {e}", path.display()))?;
+    let pom =
+        fs::read_to_string(&path).map_err(|e| format!("failed to read {}: {e}", path.display()))?;
     let old = format!("<java.version>{from}</java.version>");
     if !pom.contains(&old) {
         return Err(format!(
@@ -93,8 +104,11 @@ fn set_java_release(root: &Path, from: &str, to: &str) -> Result<()> {
             path.display()
         ));
     }
-    fs::write(&path, pom.replacen(&old, &format!("<java.version>{to}</java.version>"), 1))
-        .map_err(|e| format!("failed to update {}: {e}", path.display()))
+    fs::write(
+        &path,
+        pom.replacen(&old, &format!("<java.version>{to}</java.version>"), 1),
+    )
+    .map_err(|e| format!("failed to update {}: {e}", path.display()))
 }
 
 /// Plain Maven CLI project, written directly -- no `mvn archetype:generate`
@@ -121,14 +135,12 @@ pub fn new_cli(name: &str, java: &str, git: bool, debug: bool) -> Result<()> {
 
     let package = sanitize_package(name);
 
-    let src_dir = root
-        .join("src/main/java")
-        .join(package.replace('.', "/"));
-    let test_dir = root
-        .join("src/test/java")
-        .join(package.replace('.', "/"));
-    fs::create_dir_all(&src_dir).map_err(|e| format!("failed to create {}: {e}", src_dir.display()))?;
-    fs::create_dir_all(&test_dir).map_err(|e| format!("failed to create {}: {e}", test_dir.display()))?;
+    let src_dir = root.join("src/main/java").join(package.replace('.', "/"));
+    let test_dir = root.join("src/test/java").join(package.replace('.', "/"));
+    fs::create_dir_all(&src_dir)
+        .map_err(|e| format!("failed to create {}: {e}", src_dir.display()))?;
+    fs::create_dir_all(&test_dir)
+        .map_err(|e| format!("failed to create {}: {e}", test_dir.display()))?;
 
     fs::write(root.join("pom.xml"), pom_xml(name, &package, java))
         .map_err(|e| format!("failed to write pom.xml: {e}"))?;
@@ -141,13 +153,20 @@ pub fn new_cli(name: &str, java: &str, git: bool, debug: bool) -> Result<()> {
     // makes `jails generate command` -- the obvious next step -- report that
     // it has nothing to register into, and leaves you with two `main`s the
     // moment you fix that by hand.
-    crate::generate::write_new_file(&src_dir.join("App.java"), &crate::generate::cli_java(&package, "App", name))?;
-    crate::generate::write_new_file(&test_dir.join("AppTest.java"), &crate::generate::cli_test(&package, "App"))?;
+    crate::generate::write_new_file(
+        &src_dir.join("App.java"),
+        &crate::generate::cli_java(&package, "App", name),
+    )?;
+    crate::generate::write_new_file(
+        &test_dir.join("AppTest.java"),
+        &crate::generate::cli_test(&package, "App"),
+    )?;
 
     write_fixtures_dir(root)?;
 
     if git {
-        fs::write(root.join(".gitignore"), GITIGNORE).map_err(|e| format!("failed to write .gitignore: {e}"))?;
+        fs::write(root.join(".gitignore"), GITIGNORE)
+            .map_err(|e| format!("failed to write .gitignore: {e}"))?;
         git_init(root, debug);
     }
 
@@ -166,7 +185,7 @@ fn write_fixtures_dir(root: &Path) -> Result<()> {
     Ok(())
 }
 
-const GITIGNORE: &str ="target/\n*.class\n.idea/\n*.iml\n.DS_Store\n";
+const GITIGNORE: &str = "target/\n*.class\n.idea/\n*.iml\n.DS_Store\n";
 
 /// Best-effort: a missing/broken git shouldn't fail project creation, just
 /// skip repo setup with a warning.
@@ -271,7 +290,6 @@ fn pom_xml(artifact: &str, package: &str, java: &str) -> String {
     )
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -282,7 +300,10 @@ mod tests {
         let dir = std::env::temp_dir().join(format!(
             "jails-new-test-{label}-{}-{:?}",
             std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         fs::create_dir_all(&dir).unwrap();
         dir
@@ -346,7 +367,8 @@ mod tests {
             crate::pom::TARGET_RELEASE
         )));
         // The release is whatever the caller asked for, not a baked-in constant.
-        assert!(pom_xml("demo", "com.example.demo", "21").contains("<maven.compiler.release>21</maven.compiler.release>"));
+        assert!(pom_xml("demo", "com.example.demo", "21")
+            .contains("<maven.compiler.release>21</maven.compiler.release>"));
         assert!(pom.contains("<mainClass>com.example.demo.App</mainClass>"));
         assert!(pom.contains("<artifactId>demo</artifactId>"));
     }
@@ -367,8 +389,14 @@ mod tests {
         assert!(src.contains("package com.example.demo;"));
         assert!(src.contains("public static void main(String[] args)"));
         assert!(src.contains("public final class App"), "{src}");
-        assert!(src.contains("usage: demo <command> [args]"), "the program name should be the project's");
-        assert!(crate::generate::is_dispatcher(&src), "generate command must be able to find this");
+        assert!(
+            src.contains("usage: demo <command> [args]"),
+            "the program name should be the project's"
+        );
+        assert!(
+            crate::generate::is_dispatcher(&src),
+            "generate command must be able to find this"
+        );
     }
 
     #[test]
@@ -397,7 +425,10 @@ mod tests {
         assert!(test.is_file(), "expected {}", test.display());
         let fixtures = root.join("src/test/resources/fixtures");
         assert!(fixtures.is_dir(), "expected {}", fixtures.display());
-        assert!(fixtures.join(".gitkeep").is_file(), "fixtures dir needs a .gitkeep to survive a clone");
+        assert!(
+            fixtures.join(".gitkeep").is_file(),
+            "fixtures dir needs a .gitkeep to survive a clone"
+        );
     }
 
     #[test]
