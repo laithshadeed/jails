@@ -58,6 +58,15 @@ struct Cli {
     /// Print the mvnw/mvnd/mvn/java/git/curl commands jails executes
     #[arg(long, global = true)]
     debug: bool,
+
+    /// Run, but write nothing -- print what would change and stop.
+    ///
+    /// Global on purpose: Rails puts `--pretend` on every generator rather
+    /// than on the few that seemed risky, and the value is that you never
+    /// have to remember which commands support it. `add`, `remove` and
+    /// `rename` also accept `--dry-run`, which means the same thing.
+    #[arg(long, short = 'p', global = true)]
+    pretend: bool,
 }
 
 #[derive(Subcommand)]
@@ -263,6 +272,7 @@ enum Command {
 fn main() {
     let cli = Cli::parse();
     let debug = cli.debug;
+    let pretend = cli.pretend;
 
     let result = match cli.command {
         Command::About { json } => project::about(json),
@@ -283,7 +293,7 @@ fn main() {
             name,
             fields,
             package,
-        } => generate::generate(kind, &name, &fields, package.as_deref()),
+        } => generate::generate(kind, &name, &fields, package.as_deref(), pretend),
         Command::Add {
             capabilities,
             name,
@@ -294,7 +304,7 @@ fn main() {
             add::add(
                 capability,
                 name.as_deref(),
-                dry_run,
+                dry_run || pretend,
                 package.as_deref(),
                 debug,
                 no_start,
@@ -310,7 +320,7 @@ fn main() {
             add::remove(
                 capability,
                 name.as_deref(),
-                dry_run,
+                dry_run || pretend,
                 force,
                 package.as_deref(),
                 debug,
@@ -321,13 +331,13 @@ fn main() {
             new,
             dry_run,
             force,
-        } => rename::rename(&old, &new, dry_run, force),
+        } => rename::rename(&old, &new, dry_run || pretend, force),
         Command::Destroy {
             kind,
             name,
             force,
             package,
-        } => generate::destroy(kind, &name, force, package.as_deref()),
+        } => generate::destroy(kind, &name, force, package.as_deref(), pretend),
         Command::Start { services } => compose::start(&services, debug),
         Command::Stop { services } => compose::stop_cmd(&services, debug),
         Command::Doctor => doctor::doctor(),

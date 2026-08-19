@@ -35,7 +35,11 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
   When the project has a `db/migration` directory (i.e. `jails add db` has
   run), it also writes the `create table` for the same field spec — the DDL,
   the insert and the row mapper all come from one column list, which is what
-  keeps them from drifting.
+  keeps them from drifting. When `src/test/resources/fixtures` exists (every
+  `new`/`new-cli` project seeds it), it writes a two-row fixture keyed by the
+  same column names, which `add testkit`'s `Fixtures` loader reads. Two rows,
+  not one: a single row cannot catch an ordering bug or a `findAll` that
+  returns only the first result.
 - `jails generate|g record <Name> [field:type ...]` — immutable data carrier
   with compact-constructor validation and a companion test. No persistence
   annotations are emitted.
@@ -176,6 +180,12 @@ the code lands; `--package ''` writes straight into the base package.
 
 Every command takes `--debug`, which prints the `mvnw`/`mvn`/`mvnd`/`java`/`git`/`curl`
 command lines jails shells out to instead of running them silently.
+
+Every command that writes also takes `--pretend` (`-p`): it runs every check
+and prints what would change, then stops without touching the project. Global
+on purpose — Rails puts it on every generator rather than on the few that
+looked risky, and the value is never having to remember which commands
+support it. `add`, `remove` and `rename` spell the same thing `--dry-run`.
 
 - `jails generate|g handler <Name>` — an `HttpHandler` in `api/` for one
   resource: derives its path (`WorkItem` → `/work-items`), takes its service as

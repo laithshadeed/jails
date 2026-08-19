@@ -302,6 +302,29 @@ jails knows nothing about.
   bash)`. That's a separate repo — changes there aren't tracked by this
   project's git history.
 
+## Generated code tracks Spring Boot 4 / Framework 7, verified against source
+
+The upstream checkouts under `deps/` (see `deps/deps.tsv`) are the reference,
+not memory. Three things confirmed there and relied on by the templates:
+
+- **`@MockBean`/`@SpyBean` no longer exist** in Boot 4 — there is no
+  `MockBean.java` in the tree at all. The replacement is `@MockitoBean` /
+  `@MockitoSpyBean` from
+  `org.springframework.test.context.bean.override.mockito` (it lives in
+  spring-framework's `spring-test`, not in Boot). jails never generated
+  `@MockBean`, so nothing broke; don't introduce it.
+- **`MockMvcTester`** (`org.springframework.test.web.servlet.assertj`) is the
+  current MockMvc entry point, and `@AutoConfigureMockMvc` contributes one
+  whenever AssertJ is on the classpath. `controller_stub_test` generates
+  against it: one fluent chain rather than two families of static imports,
+  and no `throws Exception` on the test method.
+- **Testcontainers containers should be Spring beans**, not
+  `@Testcontainers`/`@Container` static fields — Boot's own reference docs
+  warn that Spring caches the context beyond the container's JUnit-managed
+  lifetime, so later tests fail on a stopped container. `@ServiceConnection`
+  (`org.springframework.boot.testcontainers.service.connection`) is how the
+  connection details reach auto-configuration.
+
 ## Testing philosophy
 
 Three tiers, don't blur them:

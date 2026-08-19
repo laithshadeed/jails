@@ -2715,3 +2715,131 @@ fn a_project_without_a_migration_directory_gets_no_migration() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(!stdout.contains("created migration"), "{stdout}");
 }
+
+#[test]
+fn pretend_writes_nothing_but_still_reports_the_whole_plan() {
+    let root = temp_dir("pretend");
+    write_spring_fixture(&root);
+
+    let output = jails_cmd(&root, None)
+        .args(["generate", "scaffold", "Payout", "id:uuid", "--pretend"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("would create"), "{stdout}");
+    assert!(stdout.contains("nothing was written"), "{stdout}");
+    assert!(!stdout.contains("\ncreated "), "{stdout}");
+    assert!(
+        !root
+            .join("src/main/java/com/example/demo/domain/Payout.java")
+            .exists()
+    );
+}
+
+#[test]
+fn pretend_is_global_and_reaches_destroy_too() {
+    let root = temp_dir("pretend-destroy");
+    write_spring_fixture(&root);
+    let created = jails_cmd(&root, None)
+        .args(["generate", "record", "Payout", "id:uuid"])
+        .output()
+        .unwrap();
+    assert!(created.status.success());
+    let file = root.join("src/main/java/com/example/demo/domain/Payout.java");
+    assert!(file.is_file());
+
+    let output = jails_cmd(&root, None)
+        .args(["destroy", "record", "Payout", "--pretend"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("would remove"), "{stdout}");
+    // --pretend must not stop to ask for confirmation: nothing is at risk.
+    assert!(!stdout.contains("proceed?"), "{stdout}");
+    assert!(file.is_file(), "--pretend deleted a file");
+}
+
+#[test]
+fn a_scaffold_writes_a_two_row_fixture_keyed_by_column_name() {
+    let root = temp_dir("scaffold-fixture");
+    write_spring_fixture(&root);
+    // `new`/`new-cli` seed this directory; `add testkit` writes the loader
+    // that reads it.
+    fs::create_dir_all(root.join("src/test/resources/fixtures")).unwrap();
+
+    let status = jails_cmd(&root, None)
+        .args(["generate", "enum", "Currency", "GBP", "USD"])
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    let output = jails_cmd(&root, None)
+        .args([
+            "generate",
+            "scaffold",
+            "Payout",
+            "paidAt:instant",
+            "currency:Currency",
+            "note:string?",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let fixture =
+        fs::read_to_string(root.join("src/test/resources/fixtures/payouts.json")).unwrap();
+    // Column names, not component names -- the fixture describes what the
+    // database holds, next to a JDBC adapter that reads those same columns.
+    assert!(fixture.contains("\"paid_at\""), "{fixture}");
+    assert!(!fixture.contains("paidAt"), "{fixture}");
+    // A real constant read off the generated enum, not a guess.
+    assert!(fixture.contains("\"currency\": \"GBP\""), "{fixture}");
+    // Two rows, and the nullable one is absent in the second.
+    assert!(fixture.contains("\"note\": \"sample-1\""), "{fixture}");
+    assert!(fixture.contains("\"note\": null"), "{fixture}");
+}
+
+#[test]
+fn a_project_without_a_fixtures_directory_gets_no_fixture() {
+    let root = temp_dir("scaffold-no-fixture");
+    write_spring_fixture(&root);
+
+    let output = jails_cmd(&root, None)
+        .args(["generate", "scaffold", "Payout", "id:uuid"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains("created fixture"), "{stdout}");
+}
+
+#[test]
+fn the_generated_controller_test_uses_the_assertj_mockmvc_entry_point() {
+    // Spring Framework 7 / Boot 4 favour MockMvcTester over plain MockMvc:
+    // one fluent chain instead of two families of static imports, and no
+    // `throws Exception` on the test method.
+    let root = temp_dir("controller-test-style");
+    write_spring_fixture(&root);
+
+    let status = jails_cmd(&root, None)
+        .args(["generate", "controller", "Payout"])
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    let test = fs::read_to_string(
+        root.join("src/test/java/com/example/demo/web/PayoutControllerTest.java"),
+    )
+    .unwrap();
+    assert!(
+        test.contains("org.springframework.test.web.servlet.assertj.MockMvcTester"),
+        "{test}"
+    );
+    assert!(test.contains("assertThat(mvc.get().uri("), "{test}");
+    assert!(test.contains("hasStatusOk()"), "{test}");
+    // The old style would need these; the new one does not.
+    assert!(!test.contains("MockMvcResultMatchers"), "{test}");
+    assert!(!test.contains("throws Exception"), "{test}");
+}

@@ -355,6 +355,67 @@ pub(crate) fn create_table(type_name: &str, columns: &[Column]) -> String {
     )
 }
 
+/// Two rows of sample data for `src/test/resources/fixtures`, keyed by the
+/// same column names as the table and the adapter.
+///
+/// Rails writes a fixture file for every model it generates, and the reason
+/// it earns its place is that the alternative is a test that builds its own
+/// sample inline -- which every test then does slightly differently. Two
+/// rows rather than one: a single row cannot catch an ordering bug or a
+/// `findAll` that returns only the first result.
+///
+/// The keys are the *column* names, not the component names, so the fixture
+/// lines up with what the database actually holds -- which is the point of
+/// having it next to a JDBC adapter rather than a Java builder.
+pub(crate) fn fixture_json(columns: &[Column], enum_constant: &dyn Fn(&str) -> Option<String>) -> String {
+    let rows: Vec<String> = (1..=2)
+        .map(|row| {
+            let fields: Vec<String> = columns
+                .iter()
+                .map(|column| {
+                    format!(
+                        "    \"{}\": {}",
+                        column.name,
+                        sample_value(column, row, enum_constant)
+                    )
+                })
+                .collect();
+            format!("  {{\n{}\n  }}", fields.join(",\n"))
+        })
+        .collect();
+    format!("[\n{}\n]\n", rows.join(",\n"))
+}
+
+/// A JSON sample for one column. `row` is 1 or 2, so the two rows differ --
+/// two identical rows would let a `findAll` that returns one of them pass.
+fn sample_value(column: &Column, row: u8, enum_constant: &dyn Fn(&str) -> Option<String>) -> String {
+    // A nullable column is null in the second row: the shape most likely to
+    // break a mapper is the absent one, so the fixture should contain it.
+    if !column.not_null && row == 2 {
+        return "null".to_string();
+    }
+    match column.java_type.as_str() {
+        "String" => format!("\"sample-{row}\""),
+        "Integer" | "int" | "Long" | "long" => row.to_string(),
+        "Double" | "double" => format!("{row}.5"),
+        // A number, not a string: this is what a JSON body would carry, and
+        // rounding it through a float is the bug BigDecimal exists to avoid.
+        "BigDecimal" => format!("{row}.00"),
+        "Boolean" | "boolean" => (row == 1).to_string(),
+        "UUID" => format!("\"00000000-0000-0000-0000-00000000000{row}\""),
+        "Instant" => format!("\"2024-01-0{row}T00:00:00Z\""),
+        "LocalDate" => format!("\"2024-01-0{row}\""),
+        "LocalDateTime" => format!("\"2024-01-0{row}T12:00:00\""),
+        "URI" => format!("\"https://example.test/{row}\""),
+        other => match enum_constant(other) {
+            Some(constant) => format!("\"{constant}\""),
+            // A type jails cannot sample: null is honest, and the reader
+            // sees immediately which field needs a real value.
+            None => "null".to_string(),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -440,6 +501,35 @@ mod tests {
             Some("Timestamp.from(value.createdAt())")
         );
         assert_eq!(columns[1].write.as_deref(), Some("value.name()"));
+    }
+
+    #[test]
+    fn a_fixture_has_two_rows_keyed_by_column_name() {
+        let json = fixture_json(&cols(&["transactionId:uuid", "amount:long"]), &|_| None);
+        assert!(json.contains("\"transaction_id\""), "{json}");
+        assert!(!json.contains("transactionId"), "camelCase leaked: {json}");
+        // Two rows, and they differ -- one row cannot catch an ordering bug.
+        assert_eq!(json.matches("transaction_id").count(), 2, "{json}");
+        assert!(json.contains("...1\"") || json.contains("00000001"), "{json}");
+        assert!(json.contains("00000002"), "{json}");
+    }
+
+    #[test]
+    fn a_nullable_column_is_null_in_the_second_row() {
+        let json = fixture_json(&cols(&["id:string!", "note:string?"]), &|_| None);
+        assert!(json.contains("\"note\": \"sample-1\""), "{json}");
+        assert!(json.contains("\"note\": null"), "{json}");
+    }
+
+    #[test]
+    fn an_enum_column_uses_a_real_constant_when_one_can_be_read() {
+        let json = fixture_json(&cols(&["currency:Currency"]), &|t| {
+            (t == "Currency").then(|| "GBP".to_string())
+        });
+        assert!(json.contains("\"currency\": \"GBP\""), "{json}");
+        // And null when the constant cannot be read, rather than a guess.
+        let unknown = fixture_json(&cols(&["ref:SourceRef"]), &|_| None);
+        assert!(unknown.contains("\"ref\": null"), "{unknown}");
     }
 
     #[test]

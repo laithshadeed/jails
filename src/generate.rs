@@ -671,6 +671,7 @@ pub fn generate(
     name: &str,
     fields: &[String],
     package: Option<&str>,
+    pretend: bool,
 ) -> Result<()> {
     let root = find_project_root()?;
     let base = base_package(&root)?;
@@ -982,6 +983,19 @@ pub fn generate(
             return Err(format!("{} already exists", artifact.path.display()));
         }
     }
+    // `--pretend` still runs every check above, so a run that would have
+    // collided reports the collision rather than a clean-looking plan.
+    if pretend {
+        for artifact in &artifacts {
+            println!("would create {} {}", artifact.kind, artifact.path.display());
+        }
+        if matches!(kind, ArtifactKind::Command) {
+            println!("would register {name} in the project's command dispatcher");
+        }
+        println!();
+        println!("--pretend: nothing was written.");
+        return Ok(());
+    }
     for artifact in &artifacts {
         write_new_file(&artifact.path, &artifact.contents)?;
         println!("created {} {}", artifact.kind, artifact.path.display());
@@ -1033,6 +1047,21 @@ fn scaffold_artifacts(
     // `amount_minor` select), and one list cannot disagree with itself.
     let migration_dir = root.join("src/main/resources/db/migration");
     let mut artifacts = Vec::new();
+
+    // A fixture file, on the same rule as the migration: only when the
+    // project already has somewhere to put one. `new`/`new-cli` seed
+    // src/test/resources/fixtures, and `add testkit` generates the
+    // `Fixtures` loader that reads it -- so the file is live, not decoration.
+    let fixtures_dir = root.join("src/test/resources/fixtures");
+    if fixtures_dir.is_dir() && !columns.is_empty() {
+        let table = crate::sql::table_name(name);
+        let constant = |type_name: &str| first_enum_constant(root, &domain, type_name);
+        artifacts.push(Artifact {
+            kind: "fixture",
+            path: fixtures_dir.join(format!("{table}.json")),
+            contents: crate::sql::fixture_json(&columns, &constant),
+        });
+    }
     if migration_dir.is_dir() && !columns.is_empty() {
         let version = next_migration_version(&migration_dir)?;
         let table = crate::sql::table_name(name);
@@ -1106,7 +1135,13 @@ fn scaffold_artifacts(
     Ok(artifacts)
 }
 
-pub fn destroy(kind: ArtifactKind, name: &str, force: bool, package: Option<&str>) -> Result<()> {
+pub fn destroy(
+    kind: ArtifactKind,
+    name: &str,
+    force: bool,
+    package: Option<&str>,
+    pretend: bool,
+) -> Result<()> {
     let root = find_project_root()?;
     let base = base_package(&root)?;
     let place = |default: &str| subpackage(&base, package.unwrap_or(default));
@@ -1189,7 +1224,7 @@ pub fn destroy(kind: ArtifactKind, name: &str, force: bool, package: Option<&str
         return Ok(());
     }
 
-    if !force {
+    if !force && !pretend {
         println!("about to delete:");
         for p in &existing {
             println!("  {}", p.display());
@@ -1204,6 +1239,15 @@ pub fn destroy(kind: ArtifactKind, name: &str, force: bool, package: Option<&str
             println!("aborted");
             return Ok(());
         }
+    }
+
+    if pretend {
+        for p in existing {
+            println!("would remove {}", p.display());
+        }
+        println!();
+        println!("--pretend: nothing was deleted.");
+        return Ok(());
     }
 
     for p in existing {
@@ -1339,6 +1383,18 @@ class {name}Test {{
 
 // ---- companion tests for the bare `generate controller`/`service` stubs. ----
 
+/// The controller's companion test, written against `MockMvcTester` rather
+/// than plain `MockMvc`.
+///
+/// `MockMvcTester` is Spring's AssertJ entry point (`@AutoConfigureMockMvc`
+/// contributes one whenever AssertJ is on the classpath, which
+/// `spring-boot-starter-test` guarantees). Three things it buys over
+/// `mockMvc.perform(get(...)).andExpect(status().isOk())`: the request and
+/// the assertions are one fluent chain instead of two families of static
+/// imports, an unresolved exception is reported as a failed assertion
+/// instead of being thrown, and the test method needs no `throws Exception`
+/// -- which is what makes the generated body a thing you extend rather than
+/// a thing you first have to reshape.
 fn controller_stub_test(pkg: &str, name: &str, mockmvc_import: &str) -> String {
     format!(
         r#"package {pkg};
@@ -1347,24 +1403,23 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import {mockmvc_import};
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.assertj.MockMvcTester;
 
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest
 @AutoConfigureMockMvc
 class {name}ControllerTest {{
 
     @Autowired
-    private MockMvc mockMvc;
+    private MockMvcTester mvc;
 
     @Test
-    void getReturnsOk() throws Exception {{
-        mockMvc.perform(get("/{route}"))
-                .andExpect(status().isOk())
-                .andExpect(content().string("{name}"));
+    void getReturnsOk() {{
+        assertThat(mvc.get().uri("/{route}"))
+                .hasStatusOk()
+                .bodyText()
+                .isEqualTo("{name}");
     }}
 }}
 "#,
@@ -1745,6 +1800,41 @@ pub(crate) fn fields_from_record(root: &Path, pkg: &str, name: &str) -> Option<V
         })
         .collect();
     Some(fields)
+}
+
+/// The first constant of a project enum, for a fixture sample. Reads the
+/// file rather than guessing: a made-up constant produces a fixture that
+/// looks right and fails on the first `valueOf`.
+pub(crate) fn first_enum_constant(root: &Path, pkg: &str, type_name: &str) -> Option<String> {
+    let source = fs::read_to_string(main_dir(root, pkg).join(format!("{type_name}.java"))).ok()?;
+    let text = crate::java::blanked(&source);
+    let body = text.find(&format!("enum {type_name}"))?;
+    let open = text[body..].find('{')? + body + 1;
+    // Constants come first in an enum body and end at the first `;` or `}`.
+    let end = text[open..]
+        .find([';', '}'])
+        .map(|o| open + o)
+        .unwrap_or(text.len());
+    source
+        .get(open..end)?
+        .split(',')
+        .map(str::trim)
+        .find(|token| {
+            !token.is_empty()
+                && token
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_uppercase() || c == '_')
+        })
+        .map(|token| {
+            // `GBP("British Pound")` -- the constant is the name, not the
+            // whole declaration.
+            token
+                .split(['(', ' ', '{'])
+                .next()
+                .unwrap_or(token)
+                .to_string()
+        })
 }
 
 pub(crate) fn is_enum_type(root: &Path, pkg: &str, type_name: &str) -> bool {
@@ -4010,6 +4100,7 @@ mod tests {
             "post",
             &["title:string".to_string()],
             None,
+         false,
         );
         std::env::set_current_dir(original_cwd).unwrap();
         result.unwrap();
@@ -4080,7 +4171,7 @@ mod tests {
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        let result = generate(ArtifactKind::Controller, "health", &[], None);
+        let result = generate(ArtifactKind::Controller, "health", &[], None, false);
         std::env::set_current_dir(original_cwd).unwrap();
         result.unwrap();
 
@@ -4112,7 +4203,7 @@ mod tests {
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        let result = generate(ArtifactKind::Service, "billing", &[], None);
+        let result = generate(ArtifactKind::Service, "billing", &[], None, false);
         std::env::set_current_dir(original_cwd).unwrap();
         result.unwrap();
 
@@ -4141,7 +4232,7 @@ mod tests {
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        let result = generate(ArtifactKind::Repo, "widget", &[], None);
+        let result = generate(ArtifactKind::Repo, "widget", &[], None, false);
         std::env::set_current_dir(original_cwd).unwrap();
         result.unwrap();
 
@@ -4182,8 +4273,9 @@ mod tests {
             "money",
             &["amount:long".to_string()],
             None,
+         false,
         );
-        let command = generate(ArtifactKind::Command, "greet", &[], None);
+        let command = generate(ArtifactKind::Command, "greet", &[], None, false);
         std::env::set_current_dir(original_cwd).unwrap();
         record.unwrap();
         command.unwrap();
@@ -4221,8 +4313,8 @@ mod tests {
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        generate(ArtifactKind::Command, "greet", &[], None).unwrap();
-        let result = destroy(ArtifactKind::Command, "greet", true, None);
+        generate(ArtifactKind::Command, "greet", &[], None, false).unwrap();
+        let result = destroy(ArtifactKind::Command, "greet", true, None, false);
         std::env::set_current_dir(original_cwd).unwrap();
 
         result.unwrap();
@@ -4255,6 +4347,7 @@ mod tests {
             "tag",
             &["name:string".to_string()],
             None,
+         false,
         )
         .unwrap();
         let clash = generate(
@@ -4262,8 +4355,9 @@ mod tests {
             "tag",
             &["name:string".to_string()],
             None,
+         false,
         );
-        let result = destroy(ArtifactKind::Record, "tag", true, None);
+        let result = destroy(ArtifactKind::Record, "tag", true, None, false);
         std::env::set_current_dir(original_cwd).unwrap();
 
         assert!(
@@ -4297,7 +4391,7 @@ mod tests {
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        let result = generate(ArtifactKind::Controller, "comment", &[], None);
+        let result = generate(ArtifactKind::Controller, "comment", &[], None, false);
         std::env::set_current_dir(original_cwd).unwrap();
 
         assert!(result.is_err());
@@ -4327,9 +4421,10 @@ mod tests {
             "tag",
             &["name:string".to_string()],
             None,
+         false,
         )
         .unwrap();
-        let result = destroy(ArtifactKind::Record, "tag", true, None);
+        let result = destroy(ArtifactKind::Record, "tag", true, None, false);
         std::env::set_current_dir(original_cwd).unwrap();
 
         result.unwrap();
