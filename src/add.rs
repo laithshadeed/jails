@@ -853,6 +853,18 @@ fn application_properties_path(root: &Path) -> PathBuf {
 const EXCEPTION_TRANSLATION_PROPERTY: &str =
     "spring.persistence.exceptiontranslation.enabled=false";
 
+/// jails already owns the compose lifecycle -- `jails run` and `jails start`
+/// bring the services up, and `jails stop` takes them down -- so Spring's own
+/// docker-compose module has no job left to do in a jails project. Leaving it
+/// on is not merely redundant: it shells out to the compose provider with
+/// Docker Compose v2 syntax (`--ansi never`, `config --format=json`) that
+/// podman-compose rejects, and the application then dies during startup
+/// before any of its own code runs. Flip this to `true` to hand compose back
+/// to Spring.
+const COMPOSE_DISABLED_PROPERTY: &str = "spring.docker.compose.enabled=false";
+const COMPOSE_LIFECYCLE_COMMENT: &str =
+    "# jails starts compose itself (jails run / jails start).";
+
 /// The application's own datasource, pointing at the compose service `add
 /// db` just wrote.
 ///
@@ -879,6 +891,8 @@ fn application_properties_block(connect: &compose::PostgresConnect) -> String {
          spring.datasource.url=jdbc:postgresql://{host}:{port}/{database}\n\
          spring.datasource.username={user}\n\
          spring.datasource.password={password}\n\
+         {COMPOSE_LIFECYCLE_COMMENT}\n\
+         {COMPOSE_DISABLED_PROPERTY}\n\
          # /jails:db\n"
     )
 }
@@ -890,10 +904,22 @@ fn install_db_properties(root: &Path, dry_run: bool) -> Result<bool> {
     } else {
         String::new()
     };
-    if existing.contains(EXCEPTION_TRANSLATION_PROPERTY) {
+    // An older jails wrote a block with only the exception-translation
+    // property in it. `add` promises to write whatever is missing, so an
+    // out-of-date block is replaced rather than reported as already present
+    // -- otherwise a project generated last week silently never gains the
+    // datasource it now needs.
+    let has_block = existing.contains(EXCEPTION_TRANSLATION_PROPERTY);
+    let current = existing.contains("spring.datasource.url=");
+    if has_block && current {
         println!("  exists  {}", rel(root, &path));
         return Ok(false);
     }
+    let existing = if has_block {
+        remove_jails_db_block(&existing, EXCEPTION_TRANSLATION_PROPERTY).unwrap_or(existing)
+    } else {
+        existing
+    };
     // Read back from compose.yaml rather than assuming the defaults: `add
     // db` writes that file, but a project may have edited the port or the
     // credentials since, and a datasource pointing at the wrong one is worse
@@ -3105,6 +3131,9 @@ mod tests {
         );
         assert!(block.contains("spring.datasource.username=app"), "{block}");
         assert!(block.contains("spring.datasource.password=app"), "{block}");
+        // Spring's compose module duplicates what `jails run`/`jails start`
+        // already do, and cannot drive every compose provider.
+        assert!(block.contains(COMPOSE_DISABLED_PROPERTY), "{block}");
     }
 
     #[test]
