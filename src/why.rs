@@ -70,6 +70,30 @@ const RULES: &[Rule] = &[
         },
     },
     Rule {
+        // Two signatures, so this outranks any generic startup failure it
+        // cascades into. It fires before the datasource rule on purpose:
+        // when compose never starts, "no suitable driver class" is the
+        // symptom and this is the cause.
+        signatures: &["podman-compose", "spring-boot-docker-compose"],
+        group: "compose-provider",
+        explain: |_| Diagnosis {
+            headline: "Spring Boot's Docker Compose module cannot drive podman-compose".into(),
+            because: "`spring-boot-docker-compose` shells out to the compose provider with \
+                      Docker Compose v2 syntax -- `--ansi never` and `config --format=json`. \
+                      podman-compose accepts neither (it spells the first `--no-ansi` and has no \
+                      `--format` at all), so the call exits 2 and the application dies during \
+                      startup, before any of your code runs. Nothing is wrong with the compose \
+                      file or the containers. jails already starts compose services itself in \
+                      `jails run` and `jails start`, so Spring's own integration is redundant \
+                      here -- turning it off loses nothing."
+                .into(),
+            fixes: vec![
+                "echo 'spring.docker.compose.enabled=false' >> src/main/resources/application.properties".into(),
+                "jails start db   # jails starts the services instead, which it already did".into(),
+            ],
+        },
+    },
+    Rule {
         signatures: &["Failed to determine a suitable driver class"],
         group: "datasource",
         explain: |_| Diagnosis {
@@ -109,6 +133,45 @@ const RULES: &[Rule] = &[
                     "jails beans      # lists every registered bean and flags unresolvable dependencies".into(),
                     format!("Annotate the implementation of {short} with @Service/@Repository/@Component"),
                     "Check the implementation lives under the application class's package".into(),
+                ],
+            }
+        },
+    },
+    Rule {
+        // The other half of the injection failure. The zero case and the
+        // many case read almost identically in a stack trace and have
+        // opposite fixes, so they are separate rules -- and this one has to
+        // outrank the zero-case rule, whose message it partly shares.
+        signatures: &["required a single bean", "were found"],
+        group: "ambiguous-bean",
+        explain: |log| {
+            let candidates: Vec<String> = log
+                .lines()
+                .filter_map(|line| {
+                    let line = line.trim();
+                    let name = line.strip_prefix("- ")?.split(':').next()?;
+                    (!name.is_empty() && name.len() < 80).then(|| name.to_string())
+                })
+                .collect();
+            let named = if candidates.is_empty() {
+                String::new()
+            } else {
+                format!(" The candidates are: {}.", candidates.join(", "))
+            };
+            Diagnosis {
+                headline: "Two or more beans qualify for one injection point".into(),
+                because: format!(
+                    "Spring found several candidates and will not choose for you.{named} This is \
+                     the usual shape of \"I added a real adapter and kept the in-memory one\": \
+                     both carry a stereotype annotation, both implement the same port, and \
+                     nothing says which one the application should use."
+                ),
+                fixes: vec![
+                    "jails beans     # shows every candidate and what each one provides".into(),
+                    "Mark the one you want with @Primary".into(),
+                    "Or drop the stereotype from the other -- an in-memory fake usually wants to \
+                     be constructed by tests, not registered in the application context"
+                        .into(),
                 ],
             }
         },
@@ -335,6 +398,11 @@ pub fn why(input: Option<&Path>, debug: bool) -> Result<()> {
         return Ok(());
     }
 
+    print_report(&found);
+    Ok(())
+}
+
+fn print_report(found: &[Diagnosis]) {
     for (index, diagnosis) in found.iter().enumerate() {
         if index > 0 {
             println!();
@@ -360,7 +428,35 @@ pub fn why(input: Option<&Path>, debug: bool) -> Result<()> {
             found.len()
         );
     }
-    Ok(())
+}
+
+/// Output that means the application is dead, whatever the exit code says.
+///
+/// This exists because `mvn spring-boot:run` exits 0 on a failed startup:
+/// spring-boot-devtools runs `main` on its own `restartedMain` thread, the
+/// startup exception is caught there, and Maven -- which only ever saw the
+/// plugin return normally -- prints BUILD SUCCESS over the top of a stack
+/// trace. Without this, `jails run` reports success for an app that never
+/// came up.
+const FATAL_MARKERS: [&str; 4] = [
+    // Spring's own log line when the context fails to refresh.
+    "Application run failed",
+    // The failure-analyzer banner, for the failures it has a report for.
+    "APPLICATION FAILED TO START",
+    "Exception in thread \"main\"",
+    "Exception in thread \"restartedMain\"",
+];
+
+pub(crate) fn looks_fatal(log: &str) -> bool {
+    FATAL_MARKERS.iter().any(|marker| log.contains(marker))
+}
+
+/// Explain a captured run that failed. Returns how many failures were
+/// recognised, so the caller can say something useful about zero.
+pub(crate) fn report(log: &str) -> usize {
+    let found = explain(log);
+    print_report(&found);
+    found.len()
 }
 
 /// Rules whose every signature appears in the log, most specific first --
@@ -468,7 +564,9 @@ fn run_and_capture(debug: bool) -> Result<String> {
 /// Whether a fix line is literally runnable. The set is closed on purpose:
 /// anything not recognised is prose and is marked as prose.
 fn is_command(fix: &str) -> bool {
-    const RUNNABLE: [&str; 8] = ["jails ", "export ", "lsof ", "kill ", "systemctl ", "mise ", "mvn ", "docker "];
+    const RUNNABLE: [&str; 9] = [
+        "jails ", "export ", "lsof ", "kill ", "systemctl ", "mise ", "mvn ", "docker ", "echo ",
+    ];
     RUNNABLE.iter().any(|prefix| fix.starts_with(prefix))
 }
 
@@ -562,8 +660,45 @@ mod tests {
     }
 
     #[test]
+    fn a_devtools_startup_failure_is_fatal_despite_a_zero_exit() {
+        // The exact shape `mvn spring-boot:run` exits 0 on.
+        let log = "ERROR 288515 --- [rewards] [  restartedMain] o.s.boot.SpringApplication \
+                   : Application run failed\n[INFO] BUILD SUCCESS";
+        assert!(looks_fatal(log));
+        assert!(!looks_fatal("[INFO] BUILD SUCCESS\nStarted RewardsApplication in 1.2 seconds"));
+    }
+
+    #[test]
     fn an_unrecognised_failure_matches_nothing() {
         assert!(explain("something entirely novel went wrong").is_empty());
+    }
+
+    #[test]
+    fn the_podman_compose_provider_failure_is_recognised() {
+        let log = "Error: executing /usr/bin/podman-compose --file compose.yaml --ansi never \
+                   config --format=json: exit status 2\n\
+                   at org.springframework.boot.docker.compose.core.ProcessRunner.run \
+                   ~[spring-boot-docker-compose-4.1.0.jar:4.1.0]";
+        let found = explain(log);
+        assert_eq!(found.len(), 1, "{}", found.len());
+        assert!(found[0].headline.contains("podman-compose"), "{}", found[0].headline);
+        assert!(
+            found[0].fixes.iter().any(|f| f.contains("spring.docker.compose.enabled=false")),
+            "{:?}",
+            found[0].fixes
+        );
+    }
+
+    #[test]
+    fn an_ambiguous_injection_point_is_told_apart_from_a_missing_one() {
+        let log = "Parameter 0 of constructor in RewardHistoryService required a single bean, \
+                   but 2 were found:\n\t- inMemoryRewardRepository: defined in file [x]\n\
+                   \t- jdbcRewardRepository: defined in file [y]";
+        let found = explain(log);
+        assert_eq!(found.len(), 1, "{}", found.len());
+        assert!(found[0].headline.contains("Two or more"), "{}", found[0].headline);
+        assert!(found[0].because.contains("inMemoryRewardRepository"), "{}", found[0].because);
+        assert!(found[0].fixes.iter().any(|f| f.contains("@Primary")));
     }
 
     #[test]

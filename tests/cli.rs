@@ -2587,3 +2587,131 @@ fn rename_dry_run_writes_nothing() {
             .is_file()
     );
 }
+
+#[test]
+fn a_scaffold_with_database_types_compiles_including_its_derived_jdbc_adapter() {
+    // The tier that answers the question the tool exists for. A unit test on
+    // the SQL mapping cannot catch a generated expression that is merely
+    // *nearly* right: `Timestamp.from(x.createdAt())` has the receiver in
+    // the middle, so gluing the receiver on the front yields
+    // `x.Timestamp.from(createdAt())` -- which reads fine and does not
+    // compile. Only javac finds that.
+    if !real_mvn_available() {
+        eprintln!("skipping: mvn not found on PATH");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let root = temp_dir("real-scaffold-jdbc");
+    write_spring_fixture(&root);
+
+    // The enum has to exist before the record names it, or the mapping falls
+    // back to "unmappable" and the interesting branch never runs.
+    let status = jails_cmd_with_path(&root, &path)
+        .args(["generate", "enum", "Currency", "GBP", "USD"])
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    let status = jails_cmd_with_path(&root, &path)
+        .args([
+            "generate",
+            "scaffold",
+            "Payout",
+            "id:uuid",
+            "amount:bigdecimal",
+            "currency:Currency",
+            "paidAt:instant",
+            "note:string?",
+        ])
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    let adapter = fs::read_to_string(
+        root.join("src/main/java/com/example/demo/adapters/JdbcPayoutRepository.java"),
+    )
+    .unwrap();
+    // Derived, not left as a TODO.
+    assert!(!adapter.contains("UnsupportedOperationException"), "{adapter}");
+    assert!(adapter.contains("Timestamp.from(payout.paidAt())"), "{adapter}");
+    assert!(adapter.contains("Currency.valueOf(rows.getString(\"currency\"))"), "{adapter}");
+    // An Optional component is unwrapped on the way out and rebuilt on the way in.
+    assert!(adapter.contains("Optional.ofNullable(rows.getString(\"note\"))"), "{adapter}");
+    assert!(adapter.contains("payout.note().orElse(null)"), "{adapter}");
+    // The column list is shared by the select and the insert, so they agree.
+    assert!(adapter.contains("insert into payouts (id, amount, currency, paid_at, note)"), "{adapter}");
+
+    let status = jails_cmd_with_path(&root, &path)
+        .arg("test")
+        .status()
+        .unwrap();
+    assert!(
+        status.success(),
+        "mvn test failed for a scaffold whose JDBC adapter jails derived"
+    );
+}
+
+#[test]
+fn a_scaffold_emits_a_migration_whose_columns_match_the_adapter() {
+    let root = temp_dir("scaffold-migration");
+    write_spring_fixture(&root);
+    // `add db` is what creates this directory; jails emits a migration only
+    // when the project has somewhere to put one.
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+
+    let output = jails_cmd(&root, None)
+        .args([
+            "generate",
+            "scaffold",
+            "Payout",
+            "id:uuid",
+            "amount:bigdecimal",
+            "paidAt:instant",
+            "note:string?",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let migration = fs::read_to_string(
+        root.join("src/main/resources/db/migration/V001__create_payouts.sql"),
+    )
+    .unwrap();
+    assert!(migration.contains("create table payouts ("), "{migration}");
+    assert!(migration.contains("uuid") && migration.contains("numeric"), "{migration}");
+    // An Instant needs a zone-aware column or it comes back reinterpreted.
+    assert!(migration.contains("timestamptz not null"), "{migration}");
+    // The nullable component is the only one without `not null`.
+    assert!(migration.contains("text,"), "{migration}");
+    assert_eq!(
+        migration.matches("not null").count(),
+        3,
+        "only the nullable component may lack `not null`: {migration}"
+    );
+    assert!(migration.contains("primary key (id)"), "{migration}");
+
+    // The same column names the adapter selects and inserts.
+    let adapter = fs::read_to_string(
+        root.join("src/main/java/com/example/demo/adapters/JdbcPayoutRepository.java"),
+    )
+    .unwrap();
+    for column in ["id", "amount", "paid_at", "note"] {
+        assert!(migration.contains(column), "migration missing {column}");
+        assert!(adapter.contains(column), "adapter missing {column}");
+    }
+}
+
+#[test]
+fn a_project_without_a_migration_directory_gets_no_migration() {
+    let root = temp_dir("scaffold-no-migration");
+    write_spring_fixture(&root);
+
+    let output = jails_cmd(&root, None)
+        .args(["generate", "scaffold", "Payout", "id:uuid"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(!root.join("src/main/resources/db/migration").exists());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains("created migration"), "{stdout}");
+}

@@ -29,6 +29,7 @@ pub enum ArtifactKind {
     IntegrationTest,
 }
 
+#[derive(Clone)]
 pub struct Field {
     pub name: String,
     pub java_type: String,
@@ -218,6 +219,14 @@ fn builtin_by_java_name(ty: &str) -> Option<(&'static str, Option<&'static str>)
         "Path" => Some(("Path", Some("java.nio.file.Path"))),
         _ => None,
     }
+}
+
+/// `parse_fields` for tests in sibling modules -- `sql.rs` needs real
+/// `Field`s to derive columns from, and duplicating the parser in a test
+/// fixture would let the two drift.
+#[cfg(test)]
+pub(crate) fn parse_fields_for_test(args: &[String]) -> Result<Vec<Field>> {
+    parse_fields(args)
 }
 
 fn parse_fields(args: &[String]) -> Result<Vec<Field>> {
@@ -803,6 +812,15 @@ pub fn generate(
             let adapters = place(layout::ADAPTERS);
             let domain = place(layout::DOMAIN);
             let mut artifacts = Vec::new();
+            // Three sources for the columns, in order of how much they know:
+            // the field spec on this command line, the record already on
+            // disk, or nothing (which yields the TODO-shaped adapter).
+            let spec = parse_fields(fields)?;
+            let record_fields = if spec.is_empty() {
+                fields_from_record(&root, &domain, &name).unwrap_or_default()
+            } else {
+                spec
+            };
 
             // A repository of a type that does not exist is meaningless, and
             // the port would not compile. Rather than fail, lay down the
@@ -812,7 +830,11 @@ pub fn generate(
                 .join(format!("{name}.java"))
                 .exists()
             {
-                let id = parse_fields(&["id:string!".to_string()])?;
+                let id = if record_fields.is_empty() {
+                    parse_fields(&["id:string!".to_string()])?
+                } else {
+                    record_fields.clone()
+                };
                 artifacts.push(Artifact {
                     kind: "record (placeholder for the repository)",
                     path: main_dir(&root, &domain).join(format!("{name}.java")),
@@ -841,6 +863,8 @@ pub fn generate(
                         import_of(&adapters, &domain, &name),
                         import_of(&adapters, &app, &format!("{name}Repository"))
                     ),
+                    &crate::sql::columns(&record_fields, &root, &domain, &name.to_lowercase()),
+                    &domain,
                 ),
             });
             artifacts.push(Artifact {
@@ -999,8 +1023,27 @@ fn scaffold_artifacts(
     let web = place(layout::WEB);
 
     let domain_in = |user: &str| import_of(user, &domain, name);
+    let columns = crate::sql::columns(&parsed, root, &domain, &name.to_lowercase());
 
-    Ok(vec![
+    // The migration is emitted only when the project has somewhere to put
+    // one -- `jails add db` creates db/migration, and a .sql file in a
+    // project with no Flyway is dead weight nobody asked for. When it is
+    // emitted it comes from the same column list as the adapter, which is
+    // the point: a hand-written pair drifts (an `amount` column against an
+    // `amount_minor` select), and one list cannot disagree with itself.
+    let migration_dir = root.join("src/main/resources/db/migration");
+    let mut artifacts = Vec::new();
+    if migration_dir.is_dir() && !columns.is_empty() {
+        let version = next_migration_version(&migration_dir)?;
+        let table = crate::sql::table_name(name);
+        artifacts.push(Artifact {
+            kind: "migration",
+            path: migration_dir.join(format!("V{version:03}__create_{table}.sql")),
+            contents: crate::sql::create_table(name, &columns),
+        });
+    }
+
+    artifacts.extend(vec![
         Artifact {
             kind: "record",
             path: main_dir(root, &domain).join(format!("{name}.java")),
@@ -1027,6 +1070,10 @@ fn scaffold_artifacts(
                     domain_in(&adapters),
                     import_of(&adapters, &repository, &format!("{name}Repository"))
                 ),
+                // The record was just written from these same fields, so the
+                // adapter and the type it maps cannot disagree.
+                &crate::sql::columns(&parsed, root, &domain, &name.to_lowercase()),
+                &domain,
             ),
         },
         Artifact {
@@ -1054,7 +1101,9 @@ fn scaffold_artifacts(
             path: test_dir(root, &web).join(format!("{name}ControllerTest.java")),
             contents: controller_stub_test(&web, name, mockmvc_autoconfigure_import(root)),
         },
-    ])
+    ]);
+
+    Ok(artifacts)
 }
 
 pub fn destroy(kind: ArtifactKind, name: &str, force: bool, package: Option<&str>) -> Result<()> {
@@ -1645,13 +1694,60 @@ fn sample_value(field: &Field, root: &Path, pkg: &str) -> Option<String> {
     if !field.owned {
         return Some(sample_literal(&field.java_type).to_string());
     }
-    is_enum(root, pkg, &field.java_type).then(|| format!("{}.values()[0]", field.java_type))
+    is_enum_type(root, pkg, &field.java_type).then(|| format!("{}.values()[0]", field.java_type))
 }
 
 /// Whether `<Type>.java` in this package declares an enum. Reading the file is
 /// the only honest way to know: jails has no type model, and guessing from the
 /// name would be worse than admitting ignorance.
-fn is_enum(root: &Path, pkg: &str, type_name: &str) -> bool {
+/// The components of a record that already exists on disk, as `Field`s.
+///
+/// This is what makes `jails g repo Reward` useful on a type you wrote
+/// yourself: the record already states every component and its type, so the
+/// adapter can be derived from it instead of being handed back as a pile of
+/// TODOs. Returns `None` when there is no such file, or when it declares no
+/// components -- both mean jails has nothing to derive from and should say
+/// so rather than invent columns.
+pub(crate) fn fields_from_record(root: &Path, pkg: &str, name: &str) -> Option<Vec<Field>> {
+    let path = main_dir(root, pkg).join(format!("{name}.java"));
+    let source = fs::read_to_string(path).ok()?;
+    let info = crate::java::type_info(&source)?;
+    if info.constructor_params.is_empty() {
+        return None;
+    }
+    let fields: Vec<Field> = info
+        .constructor_params
+        .iter()
+        .map(|param| {
+            // An `Optional<T>` component is jails' `?` optionality; the rest
+            // of the type resolves through the same table `parse_fields` uses,
+            // so a hand-written record and a generated one map identically.
+            let (java_type, optionality) = match param
+                .type_name
+                .strip_prefix("Optional<")
+                .and_then(|rest| rest.strip_suffix('>'))
+            {
+                Some(inner) => (inner.to_string(), Optionality::Nullable),
+                None => (param.type_name.clone(), Optionality::Required),
+            };
+            let builtin = builtin_by_java_name(&java_type);
+            Field {
+                name: param.name.clone(),
+                java_type: match &optionality {
+                    Optionality::Nullable => format!("Optional<{java_type}>"),
+                    _ => java_type.clone(),
+                },
+                imports: builtin.and_then(|(_, import)| import).into_iter().collect(),
+                optionality,
+                owned: builtin.is_none(),
+                collection: java_type.starts_with("List") || java_type.starts_with("Map"),
+            }
+        })
+        .collect();
+    Some(fields)
+}
+
+pub(crate) fn is_enum_type(root: &Path, pkg: &str, type_name: &str) -> bool {
     fs::read_to_string(main_dir(root, pkg).join(format!("{type_name}.java")))
         .map(|src| src.contains(&format!("enum {type_name}")))
         .unwrap_or(false)
@@ -2295,13 +2391,148 @@ public interface {name}Repository {{
     )
 }
 
-fn jdbc_repository(pkg: &str, name: &str, extra: &str) -> String {
+/// The JDBC adapter. When the caller knows the record's components (every
+/// path except a bare `generate repo` on a type jails has never seen), the
+/// SQL, the bind and the row mapper are all derived from them and there is
+/// nothing left to fill in. `columns` empty falls back to the old shape --
+/// `select *`, and a `map`/`bind` pair that throws -- because inventing
+/// columns for a type whose fields are unknown would be worse than saying so.
+fn jdbc_repository(
+    pkg: &str,
+    name: &str,
+    extra: &str,
+    columns: &[crate::sql::Column],
+    // Where the record's own types live, so a project enum the mapper calls
+    // `valueOf` on can be imported. Without this the adapter compiles only
+    // when it happens to sit in the same package as the enum.
+    owner: &str,
+) -> String {
     let var = name.to_lowercase();
-    let table = format!("{}s", name.to_lowercase());
+    let table = crate::sql::table_name(name);
+    let mapped: Vec<&crate::sql::Column> = columns.iter().filter(|c| c.mapped()).collect();
+    let derived = !mapped.is_empty();
+
+    // Every SQL fragment below is built from the same column list, which is
+    // the whole point: a hand-written adapter drifts (an `amount` in the
+    // insert against an `amount_minor` in the select compiles and fails at
+    // runtime), and one list cannot disagree with itself.
+    let select_list = if derived {
+        mapped
+            .iter()
+            .map(|c| format!("                {},", c.name))
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim_end_matches(',')
+            .to_string()
+    } else {
+        "                *".to_string()
+    };
+    // The key `findById`/`deleteById` look up by. An `id` column when there
+    // is one; otherwise the first component, because a record whose
+    // components are its own natural key (the common shape for the value
+    // types jails generates) has no surrogate. The Javadoc says which was
+    // chosen whenever it was not the obvious one.
+    let key = mapped.iter().find(|c| c.name == "id").or(mapped.first());
+    let id_column = key.map(|c| c.name.clone()).unwrap_or_else(|| "id".to_string());
+    // The port takes a String id, so a non-text key column needs the cast
+    // spelled out -- Postgres will not compare a uuid column to a text
+    // parameter on its own.
+    let key_placeholder = match key {
+        Some(column) if column.sql_type != "text" => {
+            format!("cast(? as {})", column.sql_type)
+        }
+        _ => "?".to_string(),
+    };
+    let key_note = match key {
+        Some(column) if column.name != "id" => format!(
+            " * <p>There is no {{@code id}} component, so lookups are keyed on\n              * {{@code {}}} -- change {{@code FIND_BY_ID}} and {{@code DELETE_BY_ID}} if the\n              * real key is a different or a composite one.\n",
+            column.name
+        ),
+        _ => String::new(),
+    };
+    let insert_columns = if derived {
+        mapped
+            .iter()
+            .map(|c| c.name.clone())
+            .collect::<Vec<_>>()
+            .join(", ")
+    } else {
+        "id".to_string()
+    };
+    let placeholders = if derived {
+        vec!["?"; mapped.len()].join(", ")
+    } else {
+        "?".to_string()
+    };
+    let mut sql_imports = crate::sql::imports(columns)
+        .into_iter()
+        .map(|i| format!("import {i};\n"))
+        .collect::<String>();
+    // A mapped column whose type is not in jails' table is a project enum
+    // (nothing else maps), and the mapper names it directly.
+    for column in &mapped {
+        if builtin_by_java_name(&column.java_type).is_none() {
+            sql_imports.push_str(&import_of(pkg, owner, &column.java_type));
+        }
+    }
+
+    let map_body = if derived {
+        let args = mapped
+            .iter()
+            .map(|c| format!("                {}", c.read.as_deref().unwrap_or("null")))
+            .collect::<Vec<_>>()
+            .join(",\n");
+        format!("        return new {name}(\n{args});")
+    } else {
+        format!("        throw new UnsupportedOperationException(\"TODO: map a {table} row to {name}\");")
+    };
+    let bind_body = if derived {
+        mapped
+            .iter()
+            .enumerate()
+            .map(|(index, c)| {
+                format!(
+                    "        insert.setObject({}, {});",
+                    index + 1,
+                    c.write.as_deref().unwrap_or("null")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        format!("        throw new UnsupportedOperationException(\"TODO: bind {name} to the insert\");")
+    };
+
+    // Anything jails could not map is named rather than quietly dropped --
+    // the adapter still compiles, but it does not pretend to persist a
+    // column it has no mapping for.
+    let unmapped: Vec<&str> = columns
+        .iter()
+        .filter(|c| !c.mapped())
+        .map(|c| c.name.as_str())
+        .collect();
+    let doc_note = if !derived {
+        format!(
+            " * <p>{{@link #map}} and {{@link #bind}} are yours to finish: this adapter was \n\
+             * generated without a field spec, so jails knows the columns of exactly nothing.\n"
+        )
+    } else if unmapped.is_empty() {
+        " * <p>The SQL, the bind and the row mapper are all derived from the same field
+ * spec, so they cannot disagree about a column name or a type.
+".to_string()
+    } else {
+        format!(
+            " * <p>The SQL, the bind and the row mapper are derived from the field spec.\n\
+             * Not persisted, because jails has no mapping for the type: {}.\n\
+             * Add those columns by hand, or model them as their own table.\n",
+            unmapped.join(", ")
+        )
+    };
+
     format!(
         r#"package {pkg};
 
-{extra}import java.sql.Connection;
+{extra}{sql_imports}import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -2316,32 +2547,32 @@ import java.util.Optional;
  * <p>The caller owns the {{@link Connection}} -- this class neither opens nor
  * closes it, so one transaction can span several repositories.
  *
- * <p>{{@link #map}} and {{@link #bind}} are yours to finish: jails knows the
- * columns of exactly nothing. Until then the companion test is disabled.
- */
+{doc_note}{key_note} */
 public final class Jdbc{name}Repository implements {name}Repository {{
 
     private static final String FIND_BY_ID =
             """
-            select *
+            select
+{select_list}
             from {table}
-            where id = ?
+            where {id_column} = {key_placeholder}
             """;
     private static final String FIND_ALL =
             """
-            select *
+            select
+{select_list}
             from {table}
-            order by id
+            order by {id_column}
             """;
     private static final String INSERT =
             """
-            insert into {table} (id)
-            values (?)
+            insert into {table} ({insert_columns})
+            values ({placeholders})
             """;
     private static final String DELETE_BY_ID =
             """
             delete from {table}
-            where id = ?
+            where {id_column} = {key_placeholder}
             """;
 
     private final Connection connection;
@@ -2400,14 +2631,14 @@ public final class Jdbc{name}Repository implements {name}Repository {{
         }}
     }}
 
-    /** TODO: build a {name} from the current row. */
+    /** Builds a {name} from the current row. */
     private {name} map(ResultSet rows) throws SQLException {{
-        throw new UnsupportedOperationException("TODO: map a {table} row to {name}");
+{map_body}
     }}
 
-    /** TODO: set every column the insert above declares. */
+    /** Sets every column the insert above declares, in that order. */
     private void bind(java.sql.PreparedStatement insert, {name} {var}) throws SQLException {{
-        throw new UnsupportedOperationException("TODO: bind {name} to the insert");
+{bind_body}
     }}
 }}
 "#
@@ -3345,7 +3576,7 @@ mod tests {
 
     #[test]
     fn jdbc_adapter_uses_plain_jdbc_and_no_orm() {
-        let src = jdbc_repository("com.example.demo.adapters", "Transaction", "");
+        let src = jdbc_repository("com.example.demo.adapters", "Transaction", "", &[], "com.example.demo.domain");
 
         assert!(src.contains("implements TransactionRepository"), "{src}");
         assert!(src.contains("connection.prepareStatement"), "{src}");

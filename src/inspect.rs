@@ -14,7 +14,7 @@
 //! a path built by concatenation, a bean registered by a conditional
 //! auto-configuration. The output says which kind of answer it is giving.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use crate::Result;
@@ -268,11 +268,7 @@ pub fn beans(pattern: Option<&str>, json: bool) -> Result<()> {
     // Which project types can satisfy an injection point: a bean's own name
     // plus every interface it declares. `RewardRepository` is not itself a
     // bean, but `InMemoryRewardRepository implements RewardRepository` is.
-    let mut supplied: BTreeSet<&str> = BTreeSet::new();
-    for bean in &found {
-        supplied.insert(bean.type_name.as_str());
-        supplied.extend(bean.provides.iter().map(String::as_str));
-    }
+    let supplied = providers(&found);
 
     let stereotype_width = filtered
         .iter()
@@ -281,6 +277,7 @@ pub fn beans(pattern: Option<&str>, json: bool) -> Result<()> {
         .unwrap_or(0);
     let type_width = filtered.iter().map(|b| b.type_name.len()).max().unwrap_or(0);
     let mut unsatisfied = 0usize;
+    let mut ambiguous = 0usize;
     for bean in &filtered {
         // `src/main/java/` prefixes every one of these and tells the reader
         // nothing; the package below it is the part that locates the bean.
@@ -294,13 +291,25 @@ pub fn beans(pattern: Option<&str>, json: bool) -> Result<()> {
             bean.type_name,
         );
         for need in &bean.needs {
-            let note = if supplied.contains(need.as_str()) {
-                "ok".to_string()
-            } else if project_types.contains(need.as_str()) {
-                unsatisfied += 1;
-                "NO BEAN -- this project declares the type but registers no bean for it".to_string()
-            } else {
-                "external -- the framework or a library is expected to supply it".to_string()
+            let candidates = supplied.get(need.as_str()).map(Vec::as_slice).unwrap_or(&[]);
+            let note = match candidates.len() {
+                1 => "ok".to_string(),
+                // Spring refuses to choose between candidates, so two is as
+                // broken as zero -- and it fails at startup with a different
+                // message and the opposite fix.
+                n if n > 1 => {
+                    ambiguous += 1;
+                    format!(
+                        "AMBIGUOUS -- {n} beans qualify ({}); mark one @Primary",
+                        candidates.join(", ")
+                    )
+                }
+                _ if project_types.contains(need.as_str()) => {
+                    unsatisfied += 1;
+                    "NO BEAN -- this project declares the type but registers no bean for it"
+                        .to_string()
+                }
+                _ => "external -- the framework or a library is expected to supply it".to_string(),
             };
             println!("{:stereotype_width$}    needs {need}  ({note})", "");
         }
@@ -314,6 +323,14 @@ pub fn beans(pattern: Option<&str>, json: bool) -> Result<()> {
              registers -- the usual cause of \"required a bean of type ... that could not be\n\
              found\" at startup. Annotate the implementation (@Service/@Repository/@Component)\n\
              or add an @Bean method for it."
+        );
+    }
+    if ambiguous > 0 {
+        println!(
+            "{ambiguous} dependency/dependencies have more than one candidate -- \"required a\n\
+             single bean, but N were found\" at startup. Mark the one the application should use\n\
+             @Primary, or drop the stereotype from the other (an in-memory fake usually wants to\n\
+             be constructed by tests, not registered in the context)."
         );
     }
     Ok(())
@@ -338,6 +355,24 @@ pub(crate) fn collect_beans(root: &Path) -> (Vec<Bean>, BTreeSet<String>) {
     }
     beans.sort_by(|a, b| a.type_name.cmp(&b.type_name));
     (beans, project_types)
+}
+
+/// Which beans can satisfy each injectable type: a bean supplies its own
+/// type and every interface it declares. `RewardRepository` is not itself a
+/// bean, but `InMemoryRewardRepository implements RewardRepository` is -- and
+/// so is `JdbcRewardRepository`, which is exactly how a project ends up with
+/// two candidates for one injection point.
+pub(crate) fn providers(beans: &[Bean]) -> BTreeMap<String, Vec<String>> {
+    let mut index: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for bean in beans {
+        for provided in std::iter::once(&bean.type_name).chain(bean.provides.iter()) {
+            let candidates = index.entry(provided.clone()).or_default();
+            if !candidates.contains(&bean.type_name) {
+                candidates.push(bean.type_name.clone());
+            }
+        }
+    }
+    index
 }
 
 fn file_beans(source: &str, label: &str) -> Vec<Bean> {

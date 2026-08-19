@@ -10,6 +10,7 @@ mod pom;
 mod rename;
 mod project;
 mod run;
+mod sql;
 mod why;
 
 use add::Capability;

@@ -508,20 +508,28 @@ fn beans_check(root: &Path) -> Check {
     if beans.is_empty() {
         return Check::new(Status::Skip, "beans", "no Spring stereotypes in src/main/java");
     }
-    let mut supplied: Vec<&str> = Vec::new();
-    for bean in &beans {
-        supplied.push(&bean.type_name);
-        supplied.extend(bean.provides.iter().map(String::as_str));
-    }
+    let supplied = inspect::providers(&beans);
     let mut missing = Vec::new();
+    let mut ambiguous = Vec::new();
     for bean in &beans {
         for need in &bean.needs {
-            if !supplied.contains(&need.as_str()) && project_types.contains(need.as_str()) {
-                missing.push(format!("{} needs {need}", bean.type_name));
+            match supplied.get(need.as_str()).map(Vec::len).unwrap_or(0) {
+                1 => {}
+                // Spring will not choose between candidates, so two is as
+                // broken as zero -- and it is the failure a project hits the
+                // day it keeps an in-memory fake alongside a real adapter.
+                n if n > 1 => ambiguous.push(format!(
+                    "{need} has {n} candidates ({})",
+                    supplied[need.as_str()].join(", ")
+                )),
+                _ if project_types.contains(need.as_str()) => {
+                    missing.push(format!("{} needs {need}", bean.type_name))
+                }
+                _ => {}
             }
         }
     }
-    if missing.is_empty() {
+    if missing.is_empty() && ambiguous.is_empty() {
         return Check::new(
             Status::Ok,
             "beans",
@@ -529,9 +537,21 @@ fn beans_check(root: &Path) -> Check {
         );
     }
     let mut detail = String::new();
-    let _ = write!(detail, "unresolvable: {}", missing.join("; "));
-    Check::new(Status::Fail, "beans", detail)
-        .fix("annotate the implementation (@Service/@Repository/@Component) or add an @Bean method")
+    if !missing.is_empty() {
+        let _ = write!(detail, "unresolvable: {}", missing.join("; "));
+    }
+    if !ambiguous.is_empty() {
+        if !detail.is_empty() {
+            detail.push_str("; ");
+        }
+        ambiguous.dedup();
+        let _ = write!(detail, "ambiguous: {}", ambiguous.join("; "));
+    }
+    Check::new(Status::Fail, "beans", detail).fix(if missing.is_empty() {
+        "mark one candidate @Primary, or drop the stereotype from the fake"
+    } else {
+        "annotate the implementation (@Service/@Repository/@Component) or add an @Bean method"
+    })
 }
 
 /// `jails start` takes the capability name (`db`), not the compose service

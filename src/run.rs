@@ -44,6 +44,99 @@ pub(crate) fn run_inherited(mut cmd: Command, debug: bool) -> Result<()> {
     Ok(())
 }
 
+/// Run a command, echoing its output live while keeping a copy, and treat
+/// a *successful* exit with fatal output in it as a failure.
+///
+/// `run_inherited` cannot do this: it hands the child our stdio and never
+/// sees a byte. That is fine for `build` and `test`, where Maven's exit code
+/// is the truth. It is not fine for `run`: spring-boot-devtools runs `main`
+/// on its own thread, catches the startup exception there, and lets Maven
+/// print BUILD SUCCESS over a dead application -- so `jails run` reported
+/// success for an app that never came up.
+///
+/// Piping costs the child its terminal, and a program that cannot see a
+/// terminal turns colour off, so the caller passes `color_args` to force it
+/// back on. Only stdout and stderr are piped; stdin stays inherited, so an
+/// interactive program still reads the keyboard.
+fn run_watched(mut cmd: Command, debug: bool) -> Result<()> {
+    use std::io::Read as _;
+
+    cmd.stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    if debug {
+        crate::debug_cmd(&cmd);
+    }
+    let program = cmd.get_program().to_string_lossy().to_string();
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("failed to run {program}: {e}"))?;
+
+    // stderr on its own thread: reading the two pipes in sequence would
+    // deadlock the moment the child filled the one we are not reading.
+    let stderr = child.stderr.take();
+    let collector = std::thread::spawn(move || {
+        let mut captured = String::new();
+        if let Some(mut stderr) = stderr {
+            let mut chunk = [0u8; 4096];
+            while let Ok(n) = stderr.read(&mut chunk) {
+                if n == 0 {
+                    break;
+                }
+                let text = String::from_utf8_lossy(&chunk[..n]);
+                eprint!("{text}");
+                captured.push_str(&text);
+            }
+        }
+        captured
+    });
+
+    let mut log = String::new();
+    if let Some(mut stdout) = child.stdout.take() {
+        let mut chunk = [0u8; 4096];
+        while let Ok(n) = stdout.read(&mut chunk) {
+            if n == 0 {
+                break;
+            }
+            let text = String::from_utf8_lossy(&chunk[..n]);
+            print!("{text}");
+            std::io::Write::flush(&mut std::io::stdout()).ok();
+            log.push_str(&text);
+        }
+    }
+    let status = child
+        .wait()
+        .map_err(|e| format!("failed to wait for {program}: {e}"))?;
+    if let Ok(errors) = collector.join() {
+        log.push_str(&errors);
+    }
+
+    if !status.success() {
+        return Err(format!("{program} exited with {status}"));
+    }
+    if !crate::why::looks_fatal(&log) {
+        return Ok(());
+    }
+
+    println!();
+    println!("jails: the application failed to start, even though {program} reported success.");
+    println!("(spring-boot-devtools runs main on its own thread and swallows the exception.)");
+    println!();
+    if crate::why::report(&log) == 0 {
+        println!("jails does not recognise this failure. `jails doctor` checks everything that");
+        println!("has to be true before the app can start.");
+    }
+    // The report above is the message; main.rs prints nothing for an empty
+    // error and just sets the exit code.
+    Err(String::new())
+}
+
+/// Force colour back on for a piped child. Maven and Spring Boot both turn
+/// it off when stdout is not a terminal, and `run_watched` always pipes.
+fn forced_color(cmd: &mut Command) {
+    cmd.arg("-Dstyle.color=always")
+        .arg("-Dspring-boot.run.jvmArguments=-Dspring.output.ansi.enabled=always");
+}
+
 pub fn test(filter: Option<&str>, debug: bool) -> Result<()> {
     let root = find_project_root()?;
     let mut cmd = Command::new(maven_binary(&root));
@@ -253,7 +346,8 @@ pub fn run(no_build: bool, args: &[String], debug: bool) -> Result<()> {
         if !args.is_empty() {
             cmd.arg(format!("-Dspring-boot.run.arguments={}", args.join(" ")));
         }
-        return run_inherited(cmd, debug);
+        forced_color(&mut cmd);
+        return run_watched(cmd, debug);
     }
 
     let (pkg, class_name) = find_main_class(&root)?;

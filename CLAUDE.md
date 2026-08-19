@@ -55,6 +55,17 @@ isn't already there.
   through different messages and only the most specific is reported. Add
   rules only from failures that actually happened; a guessed cause costs
   more than no cause.
+- `src/sql.rs` — the field spec -> SQL mapping: column name, Postgres type,
+  and the two JDBC expressions. One column list feeds the DDL, the select,
+  the insert, the bind and the row mapper, which is the whole point — a
+  hand-written pair drifts (`amount` in the insert against `amount_minor` in
+  the select compiles and fails at runtime). **The write expression bakes in
+  the receiver** rather than letting callers prefix it: `Timestamp.from(x.at())`
+  puts the receiver in the middle, and gluing it on the front yields
+  `x.Timestamp.from(at())`, which reads fine and does not compile. Only the
+  real-toolchain tier catches that, which is why
+  `a_scaffold_with_database_types_compiles_including_its_derived_jdbc_adapter`
+  exists.
 - `src/rename.rs` — `rename`. Textual by design (see its module docs for
   when to prefer jdt.ls `grn`): whole identifiers only, string literals left
   alone and the skipped count reported.
@@ -207,6 +218,21 @@ jails knows nothing about.
   27 — anything preview needs `--enable-preview` wired into both compile
   and surefire and breaks on the next JDK. String templates (`STR."..."`)
   were withdrawn and do not exist at all.
+- **`mvn spring-boot:run` exits 0 on a failed startup.** spring-boot-devtools
+  runs `main` on its own `restartedMain` thread and catches the exception
+  there, so Maven prints BUILD SUCCESS over a dead application — `jails run`
+  reported success for an app that never came up. `run::run_watched` pipes
+  the output, scans it for `why::FATAL_MARKERS`, and explains the failure
+  inline. Piping costs the child its terminal, so the Spring path also passes
+  `-Dstyle.color=always` and `spring.output.ansi.enabled=always`; drop those
+  and `jails run` goes monochrome.
+- **`spring-boot-docker-compose` cannot drive podman-compose.** It shells out
+  with Docker Compose v2 syntax (`--ansi never`, `config --format=json`);
+  podman-compose spells the first `--no-ansi` and has no `--format` at all,
+  so it exits 2 and the app dies during startup. `jails add db` adds that
+  dependency on Spring, so on this machine every such project needs
+  `spring.docker.compose.enabled=false` — jails already starts the services
+  itself in `run`/`start`, so nothing is lost. `why` has the rule.
 - **`docker` here is podman's CLI shim.** `docker info --format
   '{{.ServerVersion}}'` exits 125 against podman's differently-shaped info
   report, and `podman-compose` rejects `compose ps --services --status`.

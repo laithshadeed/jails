@@ -32,12 +32,22 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
   stub, so `generate command` has something to register into from the start.
 - `jails generate|g scaffold <Name> [field:type ...]` — immutable record,
   repository port, raw-JDBC adapter, service/controller stubs, and tests.
+  When the project has a `db/migration` directory (i.e. `jails add db` has
+  run), it also writes the `create table` for the same field spec — the DDL,
+  the insert and the row mapper all come from one column list, which is what
+  keeps them from drifting.
 - `jails generate|g record <Name> [field:type ...]` — immutable data carrier
   with compact-constructor validation and a companion test. No persistence
   annotations are emitted.
-- `jails generate|g repo <Name>` — repository port, `Jdbc<Name>Repository`
-  adapter, and a disabled real-database `IT`. SQL is emitted as editable text
-  blocks and `map`/`bind` remain explicit TODOs. `repository` is an alias.
+- `jails generate|g repo <Name> [field:type ...]` — repository port,
+  `Jdbc<Name>Repository` adapter, and a disabled real-database `IT`.
+  `repository` is an alias. **The adapter is derived, not stubbed**: given a
+  field spec — or, with none, the record already on disk — jails writes the
+  select list, the insert, the bind and the row mapper from one column list,
+  so they cannot disagree about a name or a type. Types it cannot map (a
+  project class that is not an enum, a collection) are named in the class
+  Javadoc rather than guessed at, and a type it knows nothing about at all
+  still falls back to the old `map`/`bind` TODOs.
 - `jails generate|g migration <description>` (short: `g mig`) — creates the
   next `VNNN__description.sql` under `db/migration`. Migrations are
   forward-only and cannot be destroyed.
