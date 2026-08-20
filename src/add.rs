@@ -323,7 +323,7 @@ pub fn add(
             }
             continue;
         }
-        write_new_file(&file.path, &file.contents)?;
+        write_new_file(&root, &file.path, &file.contents)?;
         println!("  create  {}", rel(&root, &file.path));
         created += 1;
     }

@@ -850,7 +850,17 @@ struct Artifact {
     contents: String,
 }
 
-pub(crate) fn write_new_file(path: &Path, contents: &str) -> Result<()> {
+/// Write a file jails is creating, into a project whose root the caller
+/// names.
+///
+/// `root` is a parameter rather than something this rediscovers, because it
+/// cannot be rediscovered correctly: the side effect below needs the project
+/// being *written to*, and process CWD is not it. `new-cli` writes into a
+/// directory that does not contain the CWD, so the lookup either found the
+/// surrounding project (wrong pom, wrong package) or found nothing -- which
+/// is why a `new-cli` project's own base package never got the
+/// `package-info.java` every other package gets.
+pub(crate) fn write_new_file(root: &Path, path: &Path, contents: &str) -> Result<()> {
     if path.exists() {
         return Err(format!("{} already exists", path.display()));
     }
@@ -859,7 +869,7 @@ pub(crate) fn write_new_file(path: &Path, contents: &str) -> Result<()> {
             .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
     }
     let contents = if path.extension().is_some_and(|e| e == "java") {
-        ensure_package_info(path)?;
+        ensure_package_info(root, path)?;
         normalize_imports(contents)
     } else {
         contents.to_string()
@@ -888,7 +898,7 @@ pub(crate) fn write_new_file(path: &Path, contents: &str) -> Result<()> {
 /// `org.jspecify:jspecify` dependency would not compile with the annotation,
 /// so nothing is written unless the annotation is actually available. That is
 /// checked by the caller chain rather than here; see `jspecify_available`.
-fn ensure_package_info(class_path: &Path) -> Result<()> {
+fn ensure_package_info(root: &Path, class_path: &Path) -> Result<()> {
     let Some(dir) = class_path.parent() else {
         return Ok(());
     };
@@ -899,13 +909,10 @@ fn ensure_package_info(class_path: &Path) -> Result<()> {
     if info.exists() {
         return Ok(());
     }
-    let Ok(root) = find_project_root() else {
-        return Ok(());
-    };
-    if !jspecify_available(&root) {
+    if !jspecify_available(root) {
         return Ok(());
     }
-    let Some(pkg) = package_of_dir(&root, dir) else {
+    let Some(pkg) = package_of_dir(root, dir) else {
         return Ok(());
     };
     fs::write(&info, package_info_java(&pkg))
@@ -1553,7 +1560,7 @@ pub fn generate(
         return Ok(());
     }
     for artifact in &artifacts {
-        write_new_file(&artifact.path, &artifact.contents)?;
+        write_new_file(&root, &artifact.path, &artifact.contents)?;
         println!("created {} {}", artifact.kind, artifact.path.display());
     }
 
@@ -4560,6 +4567,7 @@ fn generate_migration(root: &Path, description: &str, pretend: bool) -> Result<(
         return Ok(());
     }
     write_new_file(
+        root,
         &path,
         "-- Forward-only migration. Write explicit SQL below.\n",
     )?;
@@ -4650,7 +4658,7 @@ fn generate_cases(root: &Path, pkg: &str, brief: &Path, pretend: bool) -> Result
         println!("--pretend: nothing was written.");
         return Ok(());
     }
-    write_new_file(&path, &cases_java(pkg, &class, brief, &cases))?;
+    write_new_file(root, &path, &cases_java(pkg, &class, brief, &cases))?;
     println!(
         "created cases {} ({} case{})",
         path.display(),

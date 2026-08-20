@@ -66,7 +66,7 @@ recorded it as done. What was decided:
 | Generate/destroy not inverses | `unsplice_registration` undoes command registration; the round-trip test asserts the dispatcher is byte-identical. `destroy strategy` derives implementations from disk rather than a second path list. |
 | `Migrate { check }` ignored | `--check=false` is now an error naming the only mode, rather than a flag that reads as a toggle and is not one. |
 | Toolchain policy contradicts itself | `TARGET_RELEASE` is 27; its doc had argued for 25 above it. The doc now states the decision, names the three files that must agree, and records the cost — which turned out to be the row below. |
-| A requested write can hide more writes | `package-info.java` was written as a side effect of writing a class, so `--pretend` named two files and the run wrote three. It is planned as an artifact now, so preview and apply consume one list. The `new_cli` half of this row is not yet done: `write_new_file` still discovers the project from process CWD, which Phase 1 addresses. |
+| A requested write can hide more writes | Both halves done. `package-info.java` was written as a side effect of writing a class, so `--pretend` named two files and the run wrote three; it is planned as an artifact now, so preview and apply consume one list. And `write_new_file` takes an explicit root instead of discovering one from process CWD — which was a live bug, not only an architectural smell: a `new-cli` project's own base package never got a `package-info.java`, because the lookup found the *surrounding* project or none at all. |
 
 Also found while fixing the above, and worth recording beside them: 11 of 104
 integration tests were reporting green without running, because the acceptance
@@ -86,13 +86,37 @@ Two further items that needed no ADR have also landed:
   scratch-resource cleanup the later phases depend on. `migrate` already
   creates a scratch database it owns.
 
-The larger phases (`ChangeSet`, `CommandSpec`, `lib.rs`, the typed field
-model) remain untouched and design-only. They are blocked on the ADRs at the
-end of this document, not on effort -- in particular whether `.jails/state.toml`
-is acceptable as committed project metadata, which decides what evidence
-authorises a destructive remove. The interim answer shipped instead is that
-`remove` re-renders and names any generated file that no longer matches, so it
-cannot delete hand-finished work silently.
+**The ADRs are decided** (2026-08-20), so nothing below is blocked on them:
+
+1. **Java target: 27**, recorded on `TARGET_RELEASE` with the three files that
+   must agree and the cost of a pre-GA release spelled out.
+2. **MSRV: current stable.** jails is installed from source by its author; an
+   MSRV lane would gate work nothing consumes.
+3. **`.jails/state.toml`: no.** Committed *intent* is worth having and now
+   exists (`[project] capabilities`); committed *provenance* is not. A digest
+   manifest conflicts on every generate, goes stale on any legitimate edit,
+   and adds a second source of truth that can disagree with disk. The
+   alternative this document names for a "no" is what shipped: `remove`
+   re-renders and names any generated file that no longer matches, so it
+   cannot delete hand-finished work silently.
+4. **`--pretend`: global, or refused in as many words.** Done.
+5. **Windows: supported best-effort**, which the `cfg!(windows)` branches
+   already implied. It immediately paid: `run.rs` and `project.rs` disagreed
+   about whether mvnd is `mvnd` or `mvnd.cmd`, so `about` named a command
+   `test` would not run.
+6. **The library façade is an internal testing surface**, kept minimal.
+
+Phase 1 has begun where it was load-bearing rather than as a sweep: the file
+writer no longer rediscovers the project. The remaining `find_project_root()`
+callers are command entry points, which is where this document says discovery
+belongs; what mattered was that a *writer* had one.
+
+The larger phases (the `ChangeSet` rollback journal and `Move`, `CommandSpec`,
+`lib.rs`, the typed field model) remain design-only. Their user-visible
+guarantees have been retrofitted onto the existing shape instead -- one plan,
+previewed and preflighted before any write, no hidden writes, no partial
+apply on a validation failure -- which is where the value of that IR actually
+lands.
 
 | Behavior | Current evidence | Required contract |
 |---|---|---|

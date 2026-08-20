@@ -306,11 +306,17 @@ pub fn new_cli(name: &str, java: &str, git: bool, debug: bool, pretend: bool) ->
     // makes `jails generate command` -- the obvious next step -- report that
     // it has nothing to register into, and leaves you with two `main`s the
     // moment you fix that by hand.
+    // `root` is the project being created, not the process CWD. Passing it
+    // is what gives a new-cli project's own base package the null-marked
+    // `package-info.java` every other package gets -- the lookup this
+    // replaced either found the surrounding project or found nothing.
     crate::generate::write_new_file(
+        root,
         &src_dir.join("App.java"),
         &crate::generate::cli_java(&package, "App", name),
     )?;
     crate::generate::write_new_file(
+        root,
         &test_dir.join("AppTest.java"),
         &crate::generate::cli_test(&package, "App"),
     )?;

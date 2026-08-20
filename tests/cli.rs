@@ -4050,3 +4050,66 @@ fn planned_package_infos_are_one_per_package() {
         "{shown}"
     );
 }
+
+/// A file writer must not rediscover the project. `write_new_file` used to
+/// find it from process CWD, which is not the project being written to when
+/// `new-cli` creates a directory the CWD is not inside.
+///
+/// The visible cost: a `new-cli` project's own base package never got the
+/// null-marked `package-info.java` every other package gets. Run from
+/// nowhere, the lookup found no project and skipped; run from inside another
+/// Maven project, it read *that* project's pom and package. The audit's
+/// "every package jails writes a class into gets one" was simply not true for
+/// `App.java`.
+#[test]
+fn new_cli_gives_its_own_base_package_a_package_info() {
+    let workdir = temp_dir("new-cli-base-pkginfo");
+    fs::create_dir_all(&workdir).unwrap();
+    jails_cmd(&workdir, None)
+        .args(["new-cli", "demo"])
+        .status()
+        .unwrap();
+
+    let info = workdir.join("demo/src/main/java/com/example/demo/package-info.java");
+    assert!(
+        info.is_file(),
+        "the project's own base package did not get a package-info"
+    );
+    assert!(fs::read_to_string(&info).unwrap().contains("@NullMarked"));
+}
+
+/// The same, from inside another Maven project: the root that matters is the
+/// one being written to, so the package-info must describe the *new*
+/// project's package rather than the surrounding one's.
+#[test]
+fn new_cli_inside_another_project_uses_the_new_projects_root() {
+    let outer = temp_dir("new-cli-nested-root");
+    fs::create_dir_all(outer.join("src/main/java/com/outer")).unwrap();
+    fs::write(
+        outer.join("pom.xml"),
+        "<project><properties>\
+         <maven.compiler.release>27</maven.compiler.release>\
+         </properties><dependencies></dependencies></project>",
+    )
+    .unwrap();
+    fs::write(
+        outer.join("src/main/java/com/outer/Outer.java"),
+        "package com.outer;\nclass Outer {}\n",
+    )
+    .unwrap();
+
+    jails_cmd(&outer, None)
+        .args(["new-cli", "demo"])
+        .status()
+        .unwrap();
+
+    let info = outer.join("demo/src/main/java/com/example/demo/package-info.java");
+    assert!(info.is_file(), "no package-info in the nested new project");
+    let text = fs::read_to_string(&info).unwrap();
+    assert!(
+        text.contains("package com.example.demo;"),
+        "the package-info names the surrounding project's package:\n{text}"
+    );
+    // And the outer project is left alone.
+    assert!(!outer.join("src/main/java/com/outer/package-info.java").exists());
+}
