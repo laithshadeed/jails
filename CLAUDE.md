@@ -36,10 +36,19 @@ isn't already there.
   extractor cut them mid-identifier. Do it by hand, a few at a time, or not
   at all — `scratch()` is already hoisted to module level so a submodule
   test mod can use it.
-- `src/add.rs` — `add`/`remove <capability>` (csv/sqlite/json/db/kafka/…):
+- `src/add.rs` — `add`/`remove`/`sync`/`preflight`: the orchestration that
   grows or shrinks an existing project by a whole slice (dependency + code +
   test, and for `db`/`kafka` a compose service). `Capability` is a
-  `clap::ValueEnum` for the same completion reason as `ArtifactKind`.
+  `clap::ValueEnum` for the same completion reason as `ArtifactKind`. The
+  per-capability plans live beside it:
+  - `add/database.rs` — `db` and `sqlite`.
+  - `add/messaging.rs` — `kafka`.
+  - `add/data.rs` — `csv` and `json`.
+  - `add/testing.rs` — `testkit`, `fake`, `toxiproxy`.
+  - `add/tooling.rs` — `http` and `format`.
+
+  The Spring-only capabilities stay in `src/spring.rs`, which is a different
+  cut: they share one precondition (`require_spring`), not one subject.
 - `templates/**.java` + `src/template.rs` — the Java bodies, as Java files.
   A template used to be a Rust `format!` string, which meant **every brace
   doubled** (`class {name}Controller {{`, and `{{@code public}}` in Javadoc)
