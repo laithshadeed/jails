@@ -3241,8 +3241,11 @@ fn add_kafka_and_generate_event_compile_against_real_spring() {
     assert!(properties.contains("auto-offset-reset=earliest"), "{properties}");
     assert!(properties.contains("JacksonJsonDeserializer"), "{properties}");
     assert!(!properties.contains("serializer.JsonDeserializer"), "{properties}");
+    // Both the base package and a wildcard under it: the match is neither a
+    // prefix nor recursive, so `com.example.demo` alone rejects the payload
+    // `g event` writes into `com.example.demo.messaging`.
     assert!(
-        properties.contains("trusted.packages=com.example.demo"),
+        properties.contains("trusted.packages=com.example.demo,com.example.demo.*"),
         "{properties}"
     );
     // The consumer group is the artifactId, not the checkout directory: a

@@ -3468,7 +3468,7 @@ class DemoApplicationTests {
             spring
                 .properties
                 .iter()
-                .any(|p| p.ends_with("trusted.packages=com.example.demo")),
+                .any(|p| p.ends_with("trusted.packages=com.example.demo,com.example.demo.*")),
             "{:?}",
             spring.properties
         );

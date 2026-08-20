@@ -1300,7 +1300,16 @@ pub(crate) fn kafka_properties(base: &str, group: &str) -> Vec<String> {
         "spring.kafka.consumer.auto-offset-reset=earliest".to_string(),
         "spring.kafka.producer.value-serializer=org.springframework.kafka.support.serializer.JacksonJsonSerializer".to_string(),
         "spring.kafka.consumer.value-deserializer=org.springframework.kafka.support.serializer.JacksonJsonDeserializer".to_string(),
-        format!("spring.kafka.consumer.properties.spring.json.trusted.packages={base}"),
+        // Both the base package *and* a wildcard for everything under it.
+        // The check is `PatternMatchUtils.simpleMatch` against the class's
+        // package name, so it is neither a prefix match nor recursive:
+        // `com.example.app` alone rejects `com.example.app.messaging` --
+        // where `jails g event` puts the payload -- and the failure surfaces
+        // as a SerializationException reading "is not in the trusted
+        // packages", which sounds like a security setting rather than a
+        // missing dot-star. The wildcard alone would not match the base
+        // package itself, hence both.
+        format!("spring.kafka.consumer.properties.spring.json.trusted.packages={base},{base}.*"),
     ]
 }
 
@@ -1386,7 +1395,8 @@ public class {name}Publisher {{
     private final String topic;
 
     public {name}Publisher(
-            KafkaTemplate<String, {name}Event> kafka, @Value("${{topics.{topic}:{topic}}}") String topic) {{
+            KafkaTemplate<String, {name}Event> kafka,
+            @Value("${{topics.{topic}:{topic}}}") String topic) {{
         this.kafka = kafka;
         this.topic = topic;
     }}
@@ -1528,8 +1538,7 @@ class {name}MessagingIT {{
         @Bean
         @ServiceConnection
         KafkaContainer kafka() {{
-            return new KafkaContainer("apache/kafka:4.1.0")
-                    .withStartupTimeout(Duration.ofMinutes(2));
+            return new KafkaContainer("apache/kafka:4.1.0").withStartupTimeout(Duration.ofMinutes(2));
         }}
 
         @Bean
