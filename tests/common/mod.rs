@@ -67,6 +67,27 @@ pub fn read_log(log: &Path) -> String {
     fs::read_to_string(log).unwrap_or_default()
 }
 
+/// Set `JAILS_REQUIRE_TOOLCHAIN=1` to turn every "skipping: ..." into a
+/// failure.
+///
+/// The real-toolchain tests self-skip when Maven, a new enough JDK or Docker
+/// is missing, which is right on a laptop and wrong in CI: the suite reports
+/// green while the one tier that answers "does this produce a project that
+/// compiles?" has not run, and nothing in the output says so. On this machine
+/// that is the normal state, because `TARGET_RELEASE` is a release whose JDK
+/// is not GA yet.
+///
+/// So the default stays permissive and CI opts in. A run with this set either
+/// exercises the tier or fails naming what was missing -- it never passes
+/// quietly.
+#[track_caller]
+pub fn skip(reason: &str) {
+    if std::env::var_os("JAILS_REQUIRE_TOOLCHAIN").is_some_and(|v| v != "0") {
+        panic!("JAILS_REQUIRE_TOOLCHAIN is set, but this test cannot run: {reason}");
+    }
+    eprintln!("skipping: {reason}");
+}
+
 pub fn real_mvn_available() -> bool {
     real_path_dirs().any(|dir| dir.join("mvn").is_file())
 }

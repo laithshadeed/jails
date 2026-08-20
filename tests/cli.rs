@@ -949,7 +949,7 @@ fn run_no_build_errors_clearly_when_target_is_missing() {
 #[test]
 fn run_no_build_runs_already_compiled_plain_classes_without_mvn() {
     if !real_java_available() {
-        eprintln!("skipping: java/javac not found on PATH");
+        skip(&format!("java/javac not found on PATH"));
         return;
     }
     let root = temp_dir("no-build-plain-real");
@@ -1009,11 +1009,11 @@ fn run_no_build_runs_already_compiled_plain_classes_without_mvn() {
 #[test]
 fn new_cli_project_passes_real_mvn_test() {
     if !real_mvn_available() {
-        eprintln!("skipping: mvn not found on PATH");
+        skip(&format!("mvn not found on PATH"));
         return;
     }
     if !real_java_supports_target_release() {
-        eprintln!("skipping: javac on PATH does not support --release {TARGET_RELEASE}");
+        skip(&format!("javac on PATH does not support --release {TARGET_RELEASE}"));
         return;
     }
     let path = real_path_without_mvnd();
@@ -1037,7 +1037,7 @@ fn new_cli_project_passes_real_mvn_test() {
 #[test]
 fn generate_scaffold_produces_a_project_that_compiles_and_passes_tests() {
     if !real_mvn_available() {
-        eprintln!("skipping: mvn not found on PATH");
+        skip(&format!("mvn not found on PATH"));
         return;
     }
     let path = real_path_without_mvnd();
@@ -1073,7 +1073,7 @@ fn generate_scaffold_produces_a_project_that_compiles_and_passes_tests() {
 #[test]
 fn standalone_generators_companion_tests_compile_and_pass() {
     if !real_mvn_available() {
-        eprintln!("skipping: mvn not found on PATH");
+        skip(&format!("mvn not found on PATH"));
         return;
     }
     let path = real_path_without_mvnd();
@@ -1114,11 +1114,11 @@ fn standalone_generators_companion_tests_compile_and_pass() {
 #[test]
 fn record_and_command_compile_and_pass_in_a_plain_cli_project() {
     if !real_mvn_available() {
-        eprintln!("skipping: mvn not found on PATH");
+        skip(&format!("mvn not found on PATH"));
         return;
     }
     if !real_java_supports_target_release() {
-        eprintln!("skipping: javac on PATH does not support --release {TARGET_RELEASE}");
+        skip(&format!("javac on PATH does not support --release {TARGET_RELEASE}"));
         return;
     }
     let path = real_path_without_mvnd();
@@ -1382,11 +1382,11 @@ fn add_name_override_renames_the_generated_class() {
 #[test]
 fn add_csv_produces_a_project_that_compiles_and_passes_tests() {
     if !real_mvn_available() {
-        eprintln!("skipping: mvn not found on PATH");
+        skip(&format!("mvn not found on PATH"));
         return;
     }
     if !real_java_supports_target_release() {
-        eprintln!("skipping: javac on PATH does not support --release {TARGET_RELEASE}");
+        skip(&format!("javac on PATH does not support --release {TARGET_RELEASE}"));
         return;
     }
     let path = real_path_without_mvnd();
@@ -1720,15 +1720,15 @@ class ExtraSliceTest {
 #[test]
 fn add_db_on_spring_makes_context_loads_pass() {
     if !real_mvn_available() {
-        eprintln!("skipping: mvn not found on PATH");
+        skip(&format!("mvn not found on PATH"));
         return;
     }
     if !real_java_supports_target_release() {
-        eprintln!("skipping: javac on PATH does not support --release {TARGET_RELEASE}");
+        skip(&format!("javac on PATH does not support --release {TARGET_RELEASE}"));
         return;
     }
     if !real_docker_available() {
-        eprintln!("skipping: docker daemon not available");
+        skip(&format!("docker daemon not available"));
         return;
     }
     let path = real_path_without_mvnd();
@@ -1977,11 +1977,11 @@ fn add_accepts_multiple_capabilities_in_one_invocation() {
 #[test]
 fn every_capability_together_produces_a_project_that_compiles_and_passes_tests() {
     if !real_mvn_available() {
-        eprintln!("skipping: mvn not found on PATH");
+        skip(&format!("mvn not found on PATH"));
         return;
     }
     if !real_java_supports_target_release() {
-        eprintln!("skipping: javac on PATH does not support --release {TARGET_RELEASE}");
+        skip(&format!("javac on PATH does not support --release {TARGET_RELEASE}"));
         return;
     }
     let path = real_path_without_mvnd();
@@ -2018,11 +2018,11 @@ fn every_capability_together_produces_a_project_that_compiles_and_passes_tests()
 #[test]
 fn every_generator_and_capability_together_compiles_and_passes_tests() {
     if !real_mvn_available() {
-        eprintln!("skipping: mvn not found on PATH");
+        skip(&format!("mvn not found on PATH"));
         return;
     }
     if !real_java_supports_target_release() {
-        eprintln!("skipping: javac on PATH does not support --release {TARGET_RELEASE}");
+        skip(&format!("javac on PATH does not support --release {TARGET_RELEASE}"));
         return;
     }
     let path = real_path_without_mvnd();
@@ -2090,11 +2090,11 @@ fn every_generator_and_capability_together_compiles_and_passes_tests() {
 #[test]
 fn generators_compose_through_user_owned_field_types() {
     if !real_mvn_available() {
-        eprintln!("skipping: mvn not found on PATH");
+        skip(&format!("mvn not found on PATH"));
         return;
     }
     if !real_java_supports_target_release() {
-        eprintln!("skipping: javac on PATH does not support --release {TARGET_RELEASE}");
+        skip(&format!("javac on PATH does not support --release {TARGET_RELEASE}"));
         return;
     }
     let path = real_path_without_mvnd();
@@ -2197,11 +2197,11 @@ fn generators_compose_through_user_owned_field_types() {
 #[test]
 fn a_generated_command_is_reachable_by_name_through_jails_run() {
     if !real_mvn_available() {
-        eprintln!("skipping: mvn not found on PATH");
+        skip(&format!("mvn not found on PATH"));
         return;
     }
     if !real_java_supports_target_release() {
-        eprintln!("skipping: javac on PATH does not support --release {TARGET_RELEASE}");
+        skip(&format!("javac on PATH does not support --release {TARGET_RELEASE}"));
         return;
     }
     let path = real_path_without_mvnd();
@@ -2253,11 +2253,11 @@ fn a_generated_command_is_reachable_by_name_through_jails_run() {
 #[test]
 fn a_freshly_generated_project_passes_check_with_no_manual_formatting() {
     if !real_mvn_available() {
-        eprintln!("skipping: mvn not found on PATH");
+        skip(&format!("mvn not found on PATH"));
         return;
     }
     if !real_java_supports_target_release() {
-        eprintln!("skipping: javac on PATH does not support --release {TARGET_RELEASE}");
+        skip(&format!("javac on PATH does not support --release {TARGET_RELEASE}"));
         return;
     }
     let path = real_path_without_mvnd();
@@ -2313,11 +2313,11 @@ fn a_freshly_generated_project_passes_check_with_no_manual_formatting() {
 #[test]
 fn add_json_on_a_spring_project_defers_to_the_parents_version_and_compiles() {
     if !real_mvn_available() {
-        eprintln!("skipping: mvn not found on PATH");
+        skip(&format!("mvn not found on PATH"));
         return;
     }
     if !real_java_supports_target_release() {
-        eprintln!("skipping: javac on PATH does not support --release {TARGET_RELEASE}");
+        skip(&format!("javac on PATH does not support --release {TARGET_RELEASE}"));
         return;
     }
     let path = real_path_without_mvnd();
@@ -2633,7 +2633,7 @@ fn a_scaffold_with_database_types_compiles_including_its_derived_jdbc_adapter() 
     // `x.Timestamp.from(createdAt())` -- which reads fine and does not
     // compile. Only javac finds that.
     if !real_mvn_available() {
-        eprintln!("skipping: mvn not found on PATH");
+        skip(&format!("mvn not found on PATH"));
         return;
     }
     let path = real_path_without_mvnd();
@@ -2939,7 +2939,7 @@ fn add_db_upgrades_an_out_of_date_properties_block() {
 #[test]
 fn add_api_generates_problem_detail_handling_that_compiles_and_passes() {
     if !real_mvn_available() {
-        eprintln!("skipping: mvn not found on PATH");
+        skip(&format!("mvn not found on PATH"));
         return;
     }
     let path = real_path_without_mvnd();
@@ -2975,7 +2975,7 @@ fn add_api_generates_problem_detail_handling_that_compiles_and_passes() {
 #[test]
 fn add_cache_switches_caching_on_and_proves_it() {
     if !real_mvn_available() {
-        eprintln!("skipping: mvn not found on PATH");
+        skip(&format!("mvn not found on PATH"));
         return;
     }
     let path = real_path_without_mvnd();
@@ -3006,7 +3006,7 @@ fn add_cache_switches_caching_on_and_proves_it() {
 #[test]
 fn add_actuator_exposes_health_and_nothing_dangerous() {
     if !real_mvn_available() {
-        eprintln!("skipping: mvn not found on PATH");
+        skip(&format!("mvn not found on PATH"));
         return;
     }
     let path = real_path_without_mvnd();
@@ -3037,7 +3037,7 @@ fn add_actuator_exposes_health_and_nothing_dangerous() {
 #[test]
 fn add_observability_serves_a_prometheus_scrape() {
     if !real_mvn_available() {
-        eprintln!("skipping: mvn not found on PATH");
+        skip(&format!("mvn not found on PATH"));
         return;
     }
     let path = real_path_without_mvnd();
@@ -3167,7 +3167,7 @@ fn generate_dto_client_and_job_compile_and_pass_against_real_spring() {
     // the template text proves nothing worth knowing. javac and the real
     // context are the check.
     if !real_mvn_available() {
-        eprintln!("skipping: mvn not found on PATH");
+        skip(&format!("mvn not found on PATH"));
         return;
     }
     let path = real_path_without_mvnd();
@@ -3320,7 +3320,7 @@ fn add_kafka_and_generate_event_compile_against_real_spring() {
     // Kafka API -- including the Jackson-prefixed serializers, since the
     // older pair is deprecated for removal.
     if !real_mvn_available() {
-        eprintln!("skipping: mvn not found on PATH");
+        skip(&format!("mvn not found on PATH"));
         return;
     }
     let path = real_path_without_mvnd();
@@ -3391,7 +3391,7 @@ fn add_kafka_and_generate_event_compile_against_real_spring() {
 #[test]
 fn add_security_writes_an_explicit_chain_that_denies_by_default() {
     if !real_mvn_available() {
-        eprintln!("skipping: mvn not found on PATH");
+        skip(&format!("mvn not found on PATH"));
         return;
     }
     let path = real_path_without_mvnd();
@@ -3433,7 +3433,7 @@ fn add_security_writes_an_explicit_chain_that_denies_by_default() {
 #[test]
 fn add_redis_wires_a_ttl_enforcing_store_and_a_compose_service() {
     if !real_mvn_available() {
-        eprintln!("skipping: mvn not found on PATH");
+        skip(&format!("mvn not found on PATH"));
         return;
     }
     let path = real_path_without_mvnd();
@@ -3623,11 +3623,11 @@ fn add_preflight_holds_when_the_refused_capability_is_named_first() {
 #[test]
 fn generate_strategy_produces_a_project_that_compiles_and_passes_tests() {
     if !real_mvn_available() {
-        eprintln!("skipping: mvn not found on PATH");
+        skip(&format!("mvn not found on PATH"));
         return;
     }
     if !real_java_supports_target_release() {
-        eprintln!("skipping: javac on PATH does not support --release {TARGET_RELEASE}");
+        skip(&format!("javac on PATH does not support --release {TARGET_RELEASE}"));
         return;
     }
     let path = real_path_without_mvnd();

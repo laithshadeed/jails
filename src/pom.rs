@@ -18,16 +18,26 @@ use std::path::Path;
 /// `new-cli`'s `--release` default, `new`'s `--java` default, and the tier-3
 /// test gate.
 ///
-/// **25, the current LTS -- not the newest JDK.** A scaffolding tool's default
-/// has to run on the toolchain people actually have. Defaulting to 27 broke in
-/// two directions at once: it is not GA until 2026-09-15, and pinning
-/// `release` above the JDK that runs the *forked* surefire JVM (or an mvnd
-/// daemon started under an older JDK) fails at class-load time with an error
-/// that says nothing about the release level. 25 also gets three years of
-/// updates where 27 gets six months.
+/// **This is the one place the target is decided.** Three other files
+/// describe the same toolchain and have to agree with it: `mise.toml` (which
+/// JDK this machine installs), `new::initializr_java` (the newest release
+/// start.spring.io will accept, currently 26 -- projects are bootstrapped
+/// there and then set to this), and `tests/common/mod.rs`'s `TARGET_RELEASE`
+/// (the integration tests compile against the binary, not the library, so the
+/// constant cannot be imported; `target_release_matches_the_binary` pins them
+/// together).
 ///
-/// Nothing in the generated code needs 27 -- see `MIN_RELEASE`. Pass
-/// `--release 27` when you want it.
+/// 27 is deliberate and is not free. It is not GA until 2026-09-15, so on a
+/// machine whose `javac` is older, **every real-toolchain test self-skips** --
+/// the suite still reports green while the one tier that answers "does this
+/// produce a project that compiles?" has not run. `mise.toml` provides a JDK
+/// that satisfies it; if you change this constant, change that pin with it.
+///
+/// This doc used to argue for 25 while the constant said 27, which is how a
+/// reader ends up trusting the wrong half. The floor for *generated code* is
+/// a separate question and a lower number -- see `MIN_RELEASE`, which is what
+/// `add` checks, so a project pinned below this default is still one jails
+/// can grow.
 pub const TARGET_RELEASE: &str = "27";
 
 /// The oldest release the *generated* Java actually needs. Everything jails

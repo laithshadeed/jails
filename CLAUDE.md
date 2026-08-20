@@ -559,3 +559,19 @@ Three tiers, don't blur them:
    the question the whole tool exists for — "does it produce a project that
    actually compiles and passes tests?" Don't let tier 2 masquerade as
    tier 3.
+
+**A skipped tier-3 test is reported as passing, and on this machine most of
+them skip.** `TARGET_RELEASE` is 27, whose JDK is not GA, so `javac` on a
+bare PATH rejects it — measured: **11 of the 104 integration tests do
+nothing** and the suite still says green. Every skip therefore goes through
+`common::skip()`, and `JAILS_REQUIRE_TOOLCHAIN=1 cargo test` turns each one
+into a failure naming what was missing. Use it before believing a green run
+covered the generated-code path:
+
+```
+JAILS_REQUIRE_TOOLCHAIN=1 JAVA_HOME=~/.local/share/jdk/jdk-27 cargo test
+```
+
+Note `real_path_without_mvnd()` rebuilds PATH for the real-mvn tests, so
+which JDK Maven actually uses is decided by `JAVA_HOME`, not by the `javac`
+the gate probed — the two can disagree, and the gate is the optimistic one.
