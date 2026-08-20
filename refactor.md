@@ -66,8 +66,26 @@ separate from any mechanical move, as this document asks. What was decided:
 | Toolchain policy contradicts itself | `TARGET_RELEASE` is 27; its doc had argued for 25 above it. The doc now states the decision, names the three files that must agree, and records the cost — which turned out to be the row below. |
 | (found while fixing the above) | 11 of 104 integration tests were reporting green without running, because the acceptance tier self-skips on a pre-GA JDK. `JAILS_REQUIRE_TOOLCHAIN=1` makes each a failure naming what was missing. |
 
-The remaining phases below (`ChangeSet`, `CommandSpec`, `lib.rs`, the typed
-field model) are untouched and still design-only.
+Two further items that needed no ADR have also landed:
+
+- **§6, the duplicated layer list.** This document predicted the drift and it
+  had already happened: `stats` reported against jails' default package names,
+  so a project renaming a layer in `jails.toml` had those files counted as
+  "Other", and `cli`/`messaging` were never counted at all. `config` now owns
+  the list, its headings and the project's renames; the validation list is
+  derived from the same constant.
+- **§5, `main` returning `ExitCode`.** `process::exit` skipped destructors on
+  the current stack, which works against exactly the staged-file and
+  scratch-resource cleanup the later phases depend on. `migrate` already
+  creates a scratch database it owns.
+
+The larger phases (`ChangeSet`, `CommandSpec`, `lib.rs`, the typed field
+model) remain untouched and design-only. They are blocked on the ADRs at the
+end of this document, not on effort -- in particular whether `.jails/state.toml`
+is acceptable as committed project metadata, which decides what evidence
+authorises a destructive remove. The interim answer shipped instead is that
+`remove` re-renders and names any generated file that no longer matches, so it
+cannot delete hand-finished work silently.
 
 | Behavior | Current evidence | Required contract |
 |---|---|---|

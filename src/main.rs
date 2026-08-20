@@ -382,7 +382,14 @@ enum Command {
     Completion { shell: Shell },
 }
 
-fn main() {
+/// Returns [`ExitCode`] rather than calling [`std::process::exit`].
+///
+/// `process::exit` terminates without unwinding, so destructors on the
+/// current stack never run. jails holds real resources while a command is in
+/// flight -- `migrate` creates a scratch database it is responsible for
+/// dropping -- and anything staging a file beside its destination would be in
+/// the same position. Returning lets the stack unwind normally first.
+fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
     let debug = cli.debug;
     let pretend = cli.pretend;
@@ -524,6 +531,7 @@ fn main() {
         if !err.is_empty() {
             eprintln!("jails: {err}");
         }
-        std::process::exit(1);
+        return std::process::ExitCode::FAILURE;
     }
+    std::process::ExitCode::SUCCESS
 }

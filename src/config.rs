@@ -54,19 +54,37 @@ pub(crate) const FILE: &str = "jails.toml";
 /// Kept as a list rather than derived from the `layout` module so that adding
 /// a constant there without deciding whether it is configurable is a
 /// compile-time-visible omission rather than a silent one.
-const LAYERS: &[&str] = &[
-    layout::DOMAIN,
-    layout::APP,
-    layout::SERVICE,
-    layout::WEB,
-    layout::CLI,
-    layout::ADAPTERS,
-    layout::API,
-    layout::TESTKIT,
-    layout::CLIENTS,
-    layout::JOBS,
-    layout::MESSAGING,
+/// Every layer, in the order a reader wants them -- domain first, adapters
+/// last -- with the heading `stats` prints for it.
+///
+/// **One list, not two.** `inspect.rs` used to keep its own copy of this and
+/// its own labels, which meant `jails stats` reported against jails' default
+/// package names: a project with `adapters = "persistence"` had its adapters
+/// counted as "Other", and the two layers this list has that the copy did not
+/// (`cli`, `messaging`) were never counted at all. A second list of the same
+/// thing is how that happens, so the validation list below is derived from
+/// this one rather than written out again.
+pub(crate) const LAYERS_IN_ORDER: &[(&str, &str)] = &[
+    (layout::DOMAIN, "Domain"),
+    (layout::APP, "Ports"),
+    (layout::SERVICE, "Services"),
+    (layout::WEB, "Web"),
+    (layout::API, "API"),
+    (layout::MESSAGING, "Messaging"),
+    (layout::CLI, "CLI"),
+    (layout::CLIENTS, "Clients"),
+    (layout::JOBS, "Jobs"),
+    (layout::ADAPTERS, "Adapters"),
+    (layout::TESTKIT, "Testkit"),
 ];
+
+fn is_layer(key: &str) -> bool {
+    LAYERS_IN_ORDER.iter().any(|(name, _)| *name == key)
+}
+
+fn layer_names() -> Vec<&'static str> {
+    LAYERS_IN_ORDER.iter().map(|(name, _)| *name).collect()
+}
 
 /// The table naming the capabilities the project is meant to have.
 const PROJECT_TABLE: &str = "project";
@@ -110,6 +128,19 @@ impl Config {
             .get(default)
             .map(String::as_str)
             .unwrap_or(default)
+    }
+
+    /// Every layer as `(package, heading)`, in display order, with this
+    /// project's renames already applied.
+    ///
+    /// The one place anything reporting *per layer* should get its list, so a
+    /// renamed layer is renamed there too rather than falling into a
+    /// catch-all bucket.
+    pub(crate) fn layers(&self) -> Vec<(String, &'static str)> {
+        LAYERS_IN_ORDER
+            .iter()
+            .map(|(name, label)| (self.layer(name).to_string(), *label))
+            .collect()
     }
 
     /// The capabilities this project declares, in file order.
@@ -177,10 +208,10 @@ impl Config {
             let value = unquote(value.trim())
                 .ok_or_else(|| format!("line {lineno}: `{key}` must be a double-quoted string"))?;
 
-            if !LAYERS.contains(&key) {
+            if !is_layer(key) {
                 return Err(format!(
                     "line {lineno}: unknown layer `{key}`. Known layers: {}",
-                    LAYERS.join(", ")
+                    layer_names().join(", ")
                 ));
             }
             if !is_package_path(value) {

@@ -3927,3 +3927,22 @@ fn dry_run_remove_names_edited_files() {
     assert!(shown.contains("changed since jails wrote"), "{shown}");
     assert!(generated.is_file(), "--dry-run deleted the file");
 }
+
+/// `stats` used to keep its own layer list, so it reported against jails'
+/// *default* package names: a project that renamed a layer in `jails.toml`
+/// had those files counted as "Other". The layout has one owner now.
+#[test]
+fn stats_counts_a_renamed_layer_under_its_configured_name() {
+    let root = temp_dir("stats-renamed-layer");
+    write_plain_fixture(&root);
+    fs::write(root.join("jails.toml"), "[layout]\nadapters = \"persistence\"\n").unwrap();
+    jails_cmd(&root, None).args(["add", "csv"]).status().unwrap();
+
+    let output = jails_cmd(&root, None).args(["stats"]).output().unwrap();
+    assert!(output.status.success());
+    let shown = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        shown.contains("Adapters"),
+        "the renamed layer was not recognised:\n{shown}"
+    );
+}

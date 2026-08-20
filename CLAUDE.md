@@ -23,6 +23,17 @@ isn't already there.
   grows or shrinks an existing project by a whole slice (dependency + code +
   test, and for `db`/`kafka` a compose service). `Capability` is a
   `clap::ValueEnum` for the same completion reason as `ArtifactKind`.
+- **The layer list has one owner: `config::LAYERS_IN_ORDER`.** It carries each
+  layer's package name *and* the heading `stats` prints, and the validation
+  list is derived from it rather than written out again. `inspect.rs` used to
+  keep its own copy, which is exactly the drift refactor.md §6 predicts: it
+  reported against jails' *default* package names, so a project with
+  `adapters = "persistence"` had its adapters counted as "Other", and `cli`
+  and `messaging` -- missing from the copy -- were never counted at all.
+  Anything reporting per layer must go through `Config::layers()`, which
+  applies the project's renames. Layer matching is on whole path segments in
+  sequence, so `webshop` is not the `web` layer and a nested
+  `adapters = "infra.jdbc"` still matches.
 - **`jails.toml` is a manifest, and its truth is maintained by `add`, not by
   the user.** `[project] capabilities` is what `jails sync` applies. `add`
   records every capability it applies — *including* on the "already set up"

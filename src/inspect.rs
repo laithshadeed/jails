@@ -639,24 +639,20 @@ struct LayerStats {
     code: usize,
 }
 
-/// The subpackages jails' own layout assigns, plus a catch-all. Reported in
-/// dependency order -- domain first, adapters last -- so the shape of the
-/// application reads down the page.
-const LAYERS: [(&str, &str); 8] = [
-    ("domain", "Domain"),
-    ("app", "Ports"),
-    ("service", "Services"),
-    ("web", "Web"),
-    ("api", "API"),
-    ("clients", "Clients"),
-    ("jobs", "Jobs"),
-    ("adapters", "Adapters"),
-];
+// The layer list and its headings live in `config`, which is also what
+// applies a project's renames. This module used to keep its own copy, so
+// `stats` reported against jails' *default* package names: a project with
+// `adapters = "persistence"` had its adapters counted as "Other", and `cli`
+// and `messaging` were never counted at all because the copy was missing
+// them. One list, read through the project's config.
 
 pub fn stats() -> Result<()> {
     let root = find_project_root()?;
-    let main = collect_stats(&root.join("src/main/java"));
-    let test = collect_stats(&root.join("src/test/java"));
+    // Through the project's own config, so a renamed layer is counted under
+    // the name the project actually uses.
+    let layers = crate::config::Config::load(&root)?.layers();
+    let main = collect_stats(&root.join("src/main/java"), &layers);
+    let test = collect_stats(&root.join("src/test/java"), &layers);
 
     let rows: Vec<&LayerStats> = main.iter().filter(|r| r.files > 0).collect();
     if rows.is_empty() {
@@ -699,8 +695,8 @@ pub fn stats() -> Result<()> {
     Ok(())
 }
 
-fn collect_stats(src: &Path) -> Vec<LayerStats> {
-    let mut rows: Vec<LayerStats> = LAYERS
+fn collect_stats(src: &Path, layers: &[(String, &'static str)]) -> Vec<LayerStats> {
+    let mut rows: Vec<LayerStats> = layers
         .iter()
         .map(|(_, label)| LayerStats {
             label,
@@ -720,7 +716,7 @@ fn collect_stats(src: &Path) -> Vec<LayerStats> {
         let Ok(source) = std::fs::read_to_string(&path) else {
             continue;
         };
-        let row = layer_index(&path);
+        let row = layer_index(&path, layers);
         let lines = source.lines().count();
         // "Code" excludes blanks and comment lines. Javadoc is most of a
         // jails-generated file, and counting it would make every layer look
@@ -743,17 +739,33 @@ fn collect_stats(src: &Path) -> Vec<LayerStats> {
 }
 
 /// Which row a file belongs to: the first layer subpackage its path contains,
-/// or the catch-all. Matched on a path *segment* so `com/example/webshop`
+/// or the catch-all. Matched on whole path *segments* so `com/example/webshop`
 /// does not read as the `web` layer.
-fn layer_index(path: &Path) -> usize {
+///
+/// A configured layer may be a nested package (`adapters = "infra.jdbc"`), so
+/// the match is on the segments in sequence rather than on one name.
+fn layer_index(path: &Path, layers: &[(String, &'static str)]) -> usize {
     let segments: Vec<String> = path
         .components()
         .map(|c| c.as_os_str().to_string_lossy().into_owned())
         .collect();
-    LAYERS
+    layers
         .iter()
-        .position(|(package, _)| segments.iter().any(|s| s == package))
-        .unwrap_or(LAYERS.len())
+        .position(|(package, _)| contains_package(&segments, package))
+        .unwrap_or(layers.len())
+}
+
+/// Whether `package` ("adapters", or "infra.jdbc") appears as consecutive
+/// segments of the path. An empty package is the base package, which every
+/// file is under -- it would swallow the whole tree, so it never matches.
+fn contains_package(segments: &[String], package: &str) -> bool {
+    let wanted: Vec<&str> = package.split('.').filter(|p| !p.is_empty()).collect();
+    if wanted.is_empty() {
+        return false;
+    }
+    segments
+        .windows(wanted.len())
+        .any(|window| window.iter().zip(&wanted).all(|(seg, want)| seg == want))
 }
 
 /// A `TODO`/`FIXME`-style marker and where it is.
@@ -834,4 +846,67 @@ fn file_notes(source: &str, label: &str, only: Option<&str>) -> Vec<Note> {
         }
     }
     found
+}
+
+#[cfg(test)]
+mod layer_tests {
+    use super::*;
+
+    fn segs(path: &str) -> Vec<String> {
+        path.split('/').map(str::to_string).collect()
+    }
+
+    /// Matched on whole segments, or `com/example/webshop` reads as the `web`
+    /// layer and a project gets a Web row it never asked for.
+    #[test]
+    fn a_layer_matches_a_whole_segment_not_a_prefix() {
+        assert!(contains_package(&segs("com/example/web/Foo.java"), "web"));
+        assert!(!contains_package(&segs("com/example/webshop/Foo.java"), "web"));
+    }
+
+    /// `jails.toml` allows a nested package, so the match has to span
+    /// segments in sequence rather than compare one name.
+    #[test]
+    fn a_nested_layer_matches_its_segments_in_sequence() {
+        let path = segs("com/example/demo/infra/jdbc/CsvReader.java");
+        assert!(contains_package(&path, "infra.jdbc"));
+        // Not the same thing as either half on its own appearing somewhere.
+        assert!(!contains_package(&segs("com/example/jdbc/infra/X.java"), "infra.jdbc"));
+    }
+
+    /// An empty layer value means the base package, which every file is
+    /// under. Matching it would put the whole tree in one row.
+    #[test]
+    fn the_base_package_is_not_a_layer_that_swallows_everything() {
+        assert!(!contains_package(&segs("com/example/demo/App.java"), ""));
+    }
+
+    /// The bug this fix exists for: `stats` kept its own layer list, so a
+    /// project that renamed a layer in `jails.toml` had those files counted
+    /// as "Other".
+    #[test]
+    fn a_renamed_layer_is_counted_under_its_configured_name() {
+        let layers = vec![
+            ("domain".to_string(), "Domain"),
+            ("persistence".to_string(), "Adapters"),
+        ];
+        let adapters = Path::new("src/main/java/com/example/demo/persistence/CsvReader.java");
+        assert_eq!(layer_index(adapters, &layers), 1);
+
+        // And a file in no layer still falls to the catch-all.
+        let loose = Path::new("src/main/java/com/example/demo/App.java");
+        assert_eq!(layer_index(loose, &layers), layers.len());
+    }
+
+    /// Two layers the old copy of the list did not have at all, so their
+    /// files were never counted anywhere but "Other".
+    #[test]
+    fn cli_and_messaging_are_layers_stats_knows_about() {
+        let labels: Vec<&str> = crate::config::LAYERS_IN_ORDER
+            .iter()
+            .map(|(name, _)| *name)
+            .collect();
+        assert!(labels.contains(&"cli"), "{labels:?}");
+        assert!(labels.contains(&"messaging"), "{labels:?}");
+    }
 }
