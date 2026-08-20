@@ -111,6 +111,7 @@ local SUBCOMMANDS = {
   'db',
   'dbconsole',
   'kafka',
+  'migrate',
   'console',
   'c',
   'completion',
@@ -135,11 +136,12 @@ local OPTIONS = {
   -- this completer does not model; `--no-start` is the only flag on the
   -- parent.
   kafka = { '--no-start' },
+  migrate = { '--no-start' },
   routes = { '--json' },
   -- `--pretend` is global (every writing command takes it); it is listed
   -- here on the ones where previewing is most often wanted.
-  generate = { '--package', '--pretend' },
-  g = { '--package', '--pretend' },
+  generate = { '--package', '--pretend', '--index' },
+  g = { '--package', '--pretend', '--index' },
   destroy = { '--force', '--package', '--pretend' },
   d = { '--force', '--package', '--pretend' },
   notes = {},

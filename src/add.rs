@@ -3024,28 +3024,40 @@ class FaultsTest {{
         }}
     }}
 
+    /**
+     * Answers every connection with {{@link #HELLO}}, one virtual thread per
+     * connection.
+     *
+     * <p>Per connection, not one loop: a blackholed connection is held open by
+     * the proxy long after its client has gone, and a single-threaded upstream
+     * stuck on that one never accepts the next -- so the test after the fault
+     * measures this server rather than the proxy.
+     */
     private static void greetInBackground(ServerSocket upstream) {{
         Thread.ofVirtual().start(() -> {{
             while (!upstream.isClosed()) {{
-                try (var accepted = upstream.accept()) {{
-                    accepted.getOutputStream().write(HELLO);
-                    accepted.getOutputStream().flush();
-                    // Wait for the client to hang up before closing. Closing on
-                    // top of a just-written byte can reset the connection and
-                    // take the greeting with it, which reads exactly like a
-                    // fault the test did not inject.
-                    accepted.getInputStream().read();
-                }} catch (IOException perConnection) {{
-                    // A client that hung up mid-greeting is what several of
-                    // these toxics look like from here. Keep serving, or the
-                    // upstream dies with the first fault and every later
-                    // assertion measures this thread instead of the proxy.
-                    if (upstream.isClosed()) {{
-                        return;
-                    }}
+                try {{
+                    var accepted = upstream.accept();
+                    Thread.ofVirtual().start(() -> greet(accepted));
+                }} catch (IOException stopping) {{
+                    return;
                 }}
             }}
         }});
+    }}
+
+    private static void greet(Socket accepted) {{
+        try (accepted) {{
+            accepted.getOutputStream().write(HELLO);
+            accepted.getOutputStream().flush();
+            // Wait for the client to hang up before closing. Closing on top of
+            // a just-written byte can reset the connection and take the
+            // greeting with it, which reads exactly like a fault the test did
+            // not inject.
+            accepted.getInputStream().read();
+        }} catch (IOException hungUp) {{
+            // The client left. Nothing to say about it.
+        }}
     }}
 
     /**
