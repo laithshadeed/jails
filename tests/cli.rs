@@ -3852,3 +3852,78 @@ fn sync_refuses_a_manifest_naming_a_capability_that_does_not_exist() {
     assert!(stderr.contains("unknown capability `postgress`"), "{stderr}");
     assert!(stderr.contains("db"), "should list the real ones: {stderr}");
 }
+
+/// "It exists" is not ownership. `remove` deletes every generated file the
+/// plan names, and a `CsvReader` someone spent an afternoon on looks exactly
+/// like the stub jails wrote. A real project was found with ~20 hand-written
+/// properties inside jails' own markers; a hand-finished generated class is
+/// the same discovery waiting to happen and costs more.
+///
+/// jails does not refuse -- `remove` is the documented inverse of `add`, and
+/// refusing would make it unusable on the projects that got the most out of
+/// it. It must not delete them *silently*, which is the line
+/// `unowned_properties` already draws for properties.
+#[test]
+fn remove_names_generated_files_that_were_edited_before_deleting_them() {
+    let root = temp_dir("remove-edited-files");
+    write_plain_fixture(&root);
+    jails_cmd(&root, None).args(["add", "csv"]).status().unwrap();
+
+    let generated = root.join("src/main/java/com/example/demo/adapters/CsvReader.java");
+    let mut edited = fs::read_to_string(&generated).unwrap();
+    edited.push_str("\n// an afternoon of work\n");
+    fs::write(&generated, edited).unwrap();
+
+    // --force is the silent path: it skips the confirmation prompt entirely.
+    let output = jails_cmd(&root, None)
+        .args(["remove", "csv", "--force"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let shown = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        shown.contains("changed since jails wrote"),
+        "an edited generated file was deleted with no mention of it:\n{shown}"
+    );
+    assert!(shown.contains("CsvReader.java"), "{shown}");
+}
+
+/// The counterpart, and the one that keeps the warning worth reading: a
+/// project whose generated files are untouched gets no noise.
+#[test]
+fn remove_says_nothing_about_files_that_were_not_edited() {
+    let root = temp_dir("remove-unedited-files");
+    write_plain_fixture(&root);
+    jails_cmd(&root, None).args(["add", "csv"]).status().unwrap();
+
+    let output = jails_cmd(&root, None)
+        .args(["remove", "csv", "--force"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let shown = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !shown.contains("changed since jails wrote"),
+        "warned about a file nobody touched:\n{shown}"
+    );
+}
+
+/// `--dry-run` is where you look before deciding, so it has to say so too.
+#[test]
+fn dry_run_remove_names_edited_files() {
+    let root = temp_dir("remove-edited-dry-run");
+    write_plain_fixture(&root);
+    jails_cmd(&root, None).args(["add", "csv"]).status().unwrap();
+
+    let generated = root.join("src/main/java/com/example/demo/adapters/CsvReader.java");
+    fs::write(&generated, "package com.example.demo.adapters;\nclass CsvReader {}\n").unwrap();
+
+    let output = jails_cmd(&root, None)
+        .args(["remove", "csv", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let shown = String::from_utf8_lossy(&output.stdout);
+    assert!(shown.contains("changed since jails wrote"), "{shown}");
+    assert!(generated.is_file(), "--dry-run deleted the file");
+}

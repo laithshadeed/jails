@@ -145,6 +145,14 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
   Jackson 3) put two Jackson majors on one classpath, which does not conflict,
   does not warn, and leaves half the code on a mapper nobody configured.
   `jails doctor` reports that case.
+`remove` names every generated file that has changed since jails wrote it,
+before deleting it — at the confirmation prompt, in `--dry-run`, and under
+`--force`, which is the path that would otherwise be silent. "It exists" is
+not ownership: a `CsvReader` you spent an afternoon on looks exactly like the
+stub jails generated. It does not refuse — `remove` is the documented inverse
+of `add` — but it will not delete your work without saying so, the same line
+it already draws for hand-written properties inside a jails-owned block.
+
 - `jails remove|rm <capability>... [--force]` — the inverse of `add`: unsplices
   the same dependencies, deletes the same files, removes compose services, and
   stops their containers. Confirms unless `--force`.
