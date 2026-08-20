@@ -51,6 +51,24 @@ The refactor is not a rewrite. These are useful foundations:
 
 These should receive focused regression tests and intentional decisions before a broad refactor. They are not merely style issues.
 
+**Status: all seven are fixed** (2026-08-20), each verified against the source
+first rather than taken from this table on trust, and each with a regression
+test that fails if it comes back. They landed as one reviewable commit
+separate from any mechanical move, as this document asks. What was decided:
+
+| Row | Resolution |
+|---|---|
+| `--debug` skipped execution | Debug prints and then runs, everywhere. `migrate::psql` and the Kafka stdin path no longer return early. |
+| `--pretend` not global in effect | `generate cases`/`migration` and `new-cli` preview for real; `new` **refuses** it, because its project is whatever start.spring.io returns and a preview that downloads the zip is not a preview. Refused, never ignored. |
+| Multi-capability partial success | `add::preflight` plans every requested capability before any is applied. Not a transaction, and does not claim to be — it removes the failure jails can see coming. |
+| Generate/destroy not inverses | `unsplice_registration` undoes command registration; the round-trip test asserts the dispatcher is byte-identical. `destroy strategy` derives implementations from disk rather than a second path list. |
+| `Migrate { check }` ignored | `--check=false` is now an error naming the only mode, rather than a flag that reads as a toggle and is not one. |
+| Toolchain policy contradicts itself | `TARGET_RELEASE` is 27; its doc had argued for 25 above it. The doc now states the decision, names the three files that must agree, and records the cost — which turned out to be the row below. |
+| (found while fixing the above) | 11 of 104 integration tests were reporting green without running, because the acceptance tier self-skips on a pre-GA JDK. `JAILS_REQUIRE_TOOLCHAIN=1` makes each a failure naming what was missing. |
+
+The remaining phases below (`ChangeSet`, `CommandSpec`, `lib.rs`, the typed
+field model) are untouched and still design-only.
+
 | Behavior | Current evidence | Required contract |
 |---|---|---|
 | `--debug` sometimes becomes “do not execute” | `run::run_inherited` prints and executes (`src/run.rs:33-45`), but piped `psql` and Kafka stdin paths print and return success (`src/migrate.rs:181-184`, `src/kafka.rs:233-239`). `jails --debug migrate --check` can therefore claim migrations applied without running the SQL. | Debug affects observability only. Preview affects execution. They must be orthogonal. |
