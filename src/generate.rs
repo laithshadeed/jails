@@ -584,6 +584,33 @@ pub(crate) mod layout {
     pub const MESSAGING: &str = "messaging";
 }
 
+/// Ensure Failsafe is configured, whenever jails writes an `*IT`.
+///
+/// Called from the write path rather than from each kind's arm, so a new
+/// generator that emits an integration test cannot forget it. Without this
+/// the generated `*IT` never executes and `mvn verify` still reports
+/// success -- a test that silently does not run is worse than no test.
+fn ensure_failsafe(root: &Path, artifacts: &[Artifact]) -> Result<()> {
+    let writes_an_it = artifacts.iter().any(|a| {
+        a.path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.ends_with("IT.java"))
+    });
+    if !writes_an_it {
+        return Ok(());
+    }
+    let pom = crate::pom::read(root)?;
+    if let Some(updated) =
+        crate::pom::add_plugin(&pom, crate::spring::FAILSAFE_ARTIFACT, crate::spring::FAILSAFE_PLUGIN)?
+    {
+        fs::write(root.join("pom.xml"), updated)
+            .map_err(|e| format!("failed to write pom.xml: {e}"))?;
+        println!("  plugin {}", crate::spring::FAILSAFE_ARTIFACT);
+    }
+    Ok(())
+}
+
 /// Splice a dependency into pom.xml unless it is already there.
 ///
 /// Comment-preserving, like every other pom edit jails makes: the file
@@ -1144,6 +1171,7 @@ pub fn generate(
     // did not write, which is exactly the plumbing this tool exists to
     // remove. Splicing is idempotent -- pom.rs reports when it is already
     // there and changes nothing.
+    ensure_failsafe(&root, &artifacts)?;
     match kind {
         ArtifactKind::Dto | ArtifactKind::Scaffold => {
             ensure_dependency(&root, &crate::spring::VALIDATION_STARTER)?

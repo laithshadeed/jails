@@ -3326,3 +3326,93 @@ fn add_security_writes_an_explicit_chain_that_denies_by_default() {
         .unwrap();
     assert!(status.success(), "mvn test failed after `jails add security`");
 }
+
+#[test]
+fn add_redis_wires_a_ttl_enforcing_store_and_a_compose_service() {
+    if !real_mvn_available() {
+        eprintln!("skipping: mvn not found on PATH");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let root = temp_dir("real-add-redis");
+    write_spring_fixture(&root);
+    let fake = root.join("fake-bin");
+    write_fake_maven(&fake, &["docker"], &root.join("docker.log"));
+
+    assert!(
+        jails_cmd(&root, Some(&fake))
+            .args(["add", "redis"])
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let compose = fs::read_to_string(root.join("compose.yaml")).unwrap();
+    assert!(compose.contains("redis:7-alpine"), "{compose}");
+    // A cache with a volume hides the one bug caches reliably have: code
+    // that only works because something was already cached.
+    assert!(!compose.contains("redis-data"), "{compose}");
+
+    let store =
+        fs::read_to_string(root.join("src/main/java/com/example/demo/adapters/KeyValueStore.java"))
+            .unwrap();
+    // Every write carries a lifetime. `set(k, v)` with no expiry stores a key
+    // forever, which is a memory leak that survives restarts.
+    assert!(store.contains("set(key, value, ttl)"), "{store}");
+    assert!(!store.contains("set(key, value)"), "{store}");
+
+    // The IT compiles here; it is run by `verify`, not `test`, because it
+    // starts a container.
+    let status = jails_cmd_with_path(&root, &path)
+        .arg("test")
+        .status()
+        .unwrap();
+    assert!(status.success(), "mvn test failed after `jails add redis`");
+}
+
+#[test]
+fn generating_an_integration_test_also_configures_something_to_run_it() {
+    // Surefire runs `*Test`; `*IT` belongs to Failsafe, and Failsafe is not
+    // part of the Spring Boot parent's default build. Without this, every
+    // generated IT is dead code and `mvn verify` still reports success --
+    // a test that silently does not run is worse than no test, because the
+    // green build claims it passed.
+    let root = temp_dir("failsafe");
+    write_spring_fixture(&root);
+    assert!(
+        !fs::read_to_string(root.join("pom.xml"))
+            .unwrap()
+            .contains("failsafe")
+    );
+
+    assert!(
+        jails_cmd(&root, None)
+            .args(["generate", "integration-test", "Payment"])
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(pom.contains("maven-failsafe-plugin"), "{pom}");
+    // Both goals: `integration-test` runs them, `verify` is what makes a
+    // failure fail the build. Binding only the first ignores the result.
+    assert!(pom.contains("<goal>integration-test</goal>"), "{pom}");
+    assert!(pom.contains("<goal>verify</goal>"), "{pom}");
+    // No version: the Spring Boot parent manages it, and pinning one here
+    // would drift from the platform.
+    let plugin_block = &pom[pom.find("maven-failsafe-plugin").unwrap()..];
+    let block_end = plugin_block.find("</plugin>").unwrap();
+    assert!(!plugin_block[..block_end].contains("<version>"), "{pom}");
+
+    // Idempotent: a second IT must not splice a second plugin block.
+    assert!(
+        jails_cmd(&root, None)
+            .args(["generate", "integration-test", "Refund"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert_eq!(pom.matches("maven-failsafe-plugin").count(), 1, "{pom}");
+}

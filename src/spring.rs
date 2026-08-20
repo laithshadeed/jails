@@ -2088,3 +2088,214 @@ public class InMemory{name}Repository implements {name}Repository {{
 "#
     )
 }
+
+/// The Failsafe plugin, without which every generated `*IT` is dead code.
+///
+/// Surefire runs `*Test`; `*IT` belongs to Failsafe, and Failsafe is *not*
+/// part of the Spring Boot parent's default build. So a project that has
+/// never added it runs `mvn verify` to completion, reports success, and
+/// executes none of the integration tests -- which is worse than not having
+/// them, because the green build says they passed.
+///
+/// `integration-test` and `verify` are both bound: the first runs the tests,
+/// the second is what makes a failure fail the build. Binding only the first
+/// runs them and ignores the result.
+pub(crate) const FAILSAFE_ARTIFACT: &str = "maven-failsafe-plugin";
+
+pub(crate) const FAILSAFE_PLUGIN: &str = r#"<plugin>
+    <groupId>org.apache.maven.plugins</groupId>
+    <artifactId>maven-failsafe-plugin</artifactId>
+    <executions>
+        <execution>
+            <goals>
+                <!-- `verify` as well as `integration-test`: without it the
+                     tests run and their failures are ignored. -->
+                <goal>integration-test</goal>
+                <goal>verify</goal>
+            </goals>
+        </execution>
+    </executions>
+</plugin>"#;
+
+// ---------------------------------------------------------------------------
+// `add redis` -- a key/value store with a compose service and a real test.
+// ---------------------------------------------------------------------------
+
+pub(crate) const REDIS_STARTER: Dependency = Dependency {
+    group_id: "org.springframework.boot",
+    artifact_id: "spring-boot-starter-data-redis",
+    version: None,
+    scope: None,
+    optional: false,
+};
+
+/// Testcontainers' generic container, which is what Boot's Redis
+/// `@ServiceConnection` factory matches on: it accepts any
+/// `GenericContainer` whose image is one of the Redis images, rather than a
+/// dedicated Redis container type.
+pub(crate) const TESTCONTAINERS_CORE: Dependency = Dependency {
+    group_id: "org.testcontainers",
+    artifact_id: "testcontainers",
+    version: Some("2.0.5"),
+    scope: Some("test"),
+    optional: false,
+};
+
+pub(crate) const REDIS_IMAGE: &str = "redis:7-alpine";
+
+pub(crate) fn redis_slice(root: &Path, pkg: &str) -> SpringSlice {
+    let main = crate::generate::main_dir(root, pkg);
+    let test = crate::generate::test_dir(root, pkg);
+    SpringSlice {
+        deps: vec![REDIS_STARTER, TESTCONTAINERS_CORE, SPRING_TESTCONTAINERS],
+        files: vec![
+            (main.join("KeyValueStore.java"), key_value_store_java(pkg)),
+            (test.join("KeyValueStoreIT.java"), key_value_store_it_java(pkg)),
+        ],
+        properties: vec![
+            "spring.data.redis.host=localhost".to_string(),
+            "spring.data.redis.port=6379".to_string(),
+            // A key/value store is a cache, not a database, and a cache
+            // without expiry is a memory leak that survives restarts. This is
+            // the default the wrapper applies when no TTL is given.
+            "app.redis.default-ttl=PT10M".to_string(),
+        ],
+    }
+}
+
+fn key_value_store_java(pkg: &str) -> String {
+    format!(
+        r#"package {pkg};
+
+import java.time.Duration;
+import java.util.Objects;
+import java.util.Optional;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.stereotype.Component;
+
+/**
+ * The application's view of Redis: get, put with a lifetime, and remove.
+ *
+ * <p>A named wrapper rather than {{@link StringRedisTemplate}} injected
+ * everywhere. Two reasons, and the second is the real one:
+ *
+ * <ul>
+ *   <li>Callers depend on three methods instead of Redis's whole surface,
+ *       so the store can be replaced with an in-memory one in a test.
+ *   <li>**Every write gets a TTL.** {{@code opsForValue().set(k, v)}} with no
+ *       expiry stores a key forever, and a cache that never evicts is a
+ *       memory leak that survives restarts and is discovered in production.
+ *       Making the lifetime a required argument -- with a configured default
+ *       -- means forgetting it is not possible.
+ * </ul>
+ *
+ * <p>{{@link StringRedisTemplate}} rather than a serializing template: the
+ * values are strings, so what is in Redis is readable with {{@code redis-cli}}
+ * rather than being a Java serialization blob nothing else can inspect.
+ */
+@Component
+public class KeyValueStore {{
+
+    private final StringRedisTemplate redis;
+    private final Duration defaultTtl;
+
+    public KeyValueStore(StringRedisTemplate redis, @Value("${{app.redis.default-ttl:PT10M}}") Duration defaultTtl) {{
+        this.redis = Objects.requireNonNull(redis, "redis is required");
+        this.defaultTtl = Objects.requireNonNull(defaultTtl, "defaultTtl is required");
+    }}
+
+    /** @return the value, or empty when the key is absent or has expired. */
+    public Optional<String> get(String key) {{
+        return Optional.ofNullable(redis.opsForValue().get(key));
+    }}
+
+    /** Stores with the configured default lifetime. */
+    public void put(String key, String value) {{
+        put(key, value, defaultTtl);
+    }}
+
+    public void put(String key, String value, Duration ttl) {{
+        redis.opsForValue().set(key, value, ttl);
+    }}
+
+    /** @return true when a key was actually removed. */
+    public boolean remove(String key) {{
+        return Boolean.TRUE.equals(redis.delete(key));
+    }}
+}}
+"#
+    )
+}
+
+fn key_value_store_it_java(pkg: &str) -> String {
+    format!(
+        r#"package {pkg};
+
+import java.time.Duration;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.testcontainers.containers.GenericContainer;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * Against a real Redis, because the behaviour worth testing is Redis's.
+ *
+ * <p>An {{@code IT}}: Failsafe runs it in {{@code verify}}, not on every
+ * {{@code jails test}}, since starting a container costs seconds.
+ *
+ * <p>{{@code @ServiceConnection(name = "redis")}} names the connection-details
+ * factory explicitly rather than leaving Boot to infer it from the image.
+ * Inference works only for image names it recognises, so a private mirror --
+ * or, as here, a tag it does not expect -- fails at runtime with
+ * {{@code No ConnectionDetails found for source}}, which reads like a missing
+ * dependency rather than a naming problem. The explicit name is documented
+ * and cannot drift.
+ */
+@SpringBootTest
+@Import(KeyValueStoreIT.Containers.class)
+class KeyValueStoreIT {{
+
+    @Autowired
+    private KeyValueStore store;
+
+    @Test
+    void aValueSurvivesARoundTrip() {{
+        store.put("probe", "value");
+
+        assertThat(store.get("probe")).contains("value");
+    }}
+
+    @Test
+    void anAbsentKeyIsEmptyRatherThanNull() {{
+        assertThat(store.get("never-written")).isEmpty();
+    }}
+
+    @Test
+    void removeReportsWhetherAnythingWasThere() {{
+        store.put("doomed", "value", Duration.ofMinutes(1));
+
+        assertThat(store.remove("doomed")).isTrue();
+        assertThat(store.remove("doomed")).isFalse();
+        assertThat(store.get("doomed")).isEmpty();
+    }}
+
+    @TestConfiguration(proxyBeanMethods = false)
+    static class Containers {{
+
+        @Bean
+        @ServiceConnection(name = "redis")
+        GenericContainer<?> redis() {{
+            return new GenericContainer<>("{REDIS_IMAGE}").withExposedPorts(6379);
+        }}
+    }}
+}}
+"#
+    )
+}

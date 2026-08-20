@@ -393,6 +393,17 @@ by accident:
   uncompilable code for a record read off disk. Two representations of one
   thing is how that happens.
 
+## Anything that writes an `*IT` must also configure Failsafe
+
+Surefire runs `*Test`; `*IT` is Failsafe's, and Failsafe is **not** in the
+Spring Boot parent's default build. jails generated integration tests for
+months that never ran once — `mvn verify` completed, reported success, and
+executed none of them, which is worse than having no test because the green
+build claims it passed. `generate::ensure_failsafe` is called from the write
+path (not per-kind) so a new generator cannot forget, and `add.rs` does the
+same for capability plans. Both goals are bound: `integration-test` runs
+them, `verify` is what makes a failure fail the build.
+
 ## A generator that emits code must supply the dependency it needs
 
 `g dto` splices `spring-boot-starter-validation`; `g client` splices

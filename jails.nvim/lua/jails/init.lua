@@ -74,8 +74,9 @@ local CAPABILITIES = {
   'actuator',
   'cache',
   'security',
+  'redis',
 }
-local RUNTIMES = { 'db', 'kafka' }
+local RUNTIMES = { 'db', 'kafka', 'redis' }
 
 local SUBCOMMANDS = {
   'about',

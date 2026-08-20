@@ -28,6 +28,8 @@ pub enum Runtime {
     Db,
     /// Apache Kafka (the `add kafka` compose service)
     Kafka,
+    /// Redis (the `add redis` compose service)
+    Redis,
 }
 
 impl Runtime {
@@ -35,6 +37,7 @@ impl Runtime {
         match self {
             Runtime::Db => "postgres",
             Runtime::Kafka => "kafka",
+            Runtime::Redis => "redis",
         }
     }
 }
@@ -69,6 +72,24 @@ pub const POSTGRES: Service = Service {
       - postgres-data:/var/lib/postgresql/data
 "#,
     volume: Some("postgres-data"),
+};
+
+pub const REDIS: Service = Service {
+    name: "redis",
+    marker: "redis",
+    // No volume: this is a cache. Persisting it across `jails stop`/`start`
+    // would hide the one bug a cache reliably has -- code that only works
+    // because something was already cached.
+    body: r#"    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+"#,
+    volume: None,
 };
 
 pub const KAFKA: Service = Service {

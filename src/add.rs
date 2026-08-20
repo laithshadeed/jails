@@ -58,6 +58,9 @@ pub enum Capability {
     Cache,
     /// An explicit Spring Security filter chain, shaped for an API
     Security,
+    /// Redis: a TTL-enforcing key/value wrapper, a compose service, and a
+    /// real-container integration test
+    Redis,
 }
 
 impl Capability {
@@ -76,6 +79,7 @@ impl Capability {
             Capability::Actuator => "actuator",
             Capability::Cache => "cache",
             Capability::Security => "security",
+            Capability::Redis => "redis",
         }
     }
 }
@@ -283,6 +287,26 @@ pub fn add(
     }
     tests_wired |=
         install_capability_properties(&root, capability.label(), &plan.properties, false)?;
+
+    // Same rule as the generators: a capability that writes an `*IT` has to
+    // make sure something runs it. Failsafe is not in the Spring Boot
+    // parent's default build, so without this `mvn verify` completes,
+    // reports success, and executes none of them.
+    if plan
+        .files
+        .iter()
+        .any(|f| f.path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.ends_with("IT.java")))
+        && let Some(next) = pom::add_plugin(
+            &updated_pom,
+            crate::spring::FAILSAFE_ARTIFACT,
+            crate::spring::FAILSAFE_PLUGIN,
+        )?
+    {
+        std::fs::write(root.join("pom.xml"), &next)
+            .map_err(|e| format!("failed to write pom.xml: {e}"))?;
+        println!("  plugin  {}", crate::spring::FAILSAFE_ARTIFACT);
+        tests_wired = true;
+    }
 
     if created == 0 && !pom_changed && compose_added.is_empty() && !tests_wired {
         println!("{} is already set up -- nothing to do", capability.label());
@@ -645,6 +669,15 @@ fn build_plan(
             flavor,
             "security",
         ),
+        Capability::Redis => spring_slice_plan(
+            crate::spring::redis_slice(root, &place(layout::ADAPTERS)),
+            flavor,
+            "redis",
+        )
+        .map(|plan| Plan {
+            compose: vec![compose::REDIS],
+            ..plan
+        }),
     }
 }
 

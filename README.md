@@ -155,6 +155,14 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
 - `jails generate|g job <Name>` — a `@Scheduled` component whose interval is a
   property, not a constant, and which catches its own failures: an exception
   escaping a scheduled method cancels every future run, silently.
+- `jails add|a redis` — a `KeyValueStore` wrapper, a compose service, and an
+  `IT` against a real container. Every write takes a lifetime:
+  `opsForValue().set(k, v)` with no expiry stores a key forever, so the TTL is
+  a required argument with a configured default rather than something you can
+  forget. `@ServiceConnection(name = "redis")` names the factory explicitly —
+  leaving Boot to infer it from the image fails at runtime with `No
+  ConnectionDetails found for source`, which reads like a missing dependency
+  rather than a naming problem.
 - `jails add|a security` — an explicit `SecurityFilterChain` instead of the
   default one. Adding the starter alone secures every endpoint and prints a
   generated password at startup, which is safe and opaque — and the usual
@@ -227,6 +235,9 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
   matching `generate` call would have created.
 - `jails test [name]` — uses `./mvnw` when present. A bare `Money` becomes
   `MoneyTest`; a name ending in `IT` runs through Failsafe and `verify`.
+  Any command that writes an `*IT` also splices the Failsafe plugin, because
+  it is *not* part of the Spring Boot parent's default build — without it
+  `mvn verify` completes, reports success, and runs none of them.
 - `jails build` — `mvn package`.
 - `jails clean` — `mvn clean`. Wipes `target/` so leftover classes from deleted sources cannot linger; `jails check` does this automatically.
 - `jails mvn -- <args...>` — escape hatch for Maven options Jails should not
