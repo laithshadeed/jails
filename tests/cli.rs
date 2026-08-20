@@ -3946,3 +3946,107 @@ fn stats_counts_a_renamed_layer_under_its_configured_name() {
         "the renamed layer was not recognised:\n{shown}"
     );
 }
+
+/// `--pretend` has to name every write. `package-info.java` was created as a
+/// side effect of writing a class, so the preview listed two files and the
+/// real run wrote three -- on the one command whose entire job is to tell you
+/// what is about to happen.
+///
+/// The fix is that the preview and the apply consume the same list, rather
+/// than the preview learning to predict a side effect: a second piece of code
+/// guessing what the first will do is the drift this costs everywhere else.
+#[test]
+fn pretend_names_the_package_info_it_will_write() {
+    let root = temp_dir("pkginfo-preview");
+    write_plain_fixture(&root);
+    // package-info is conditional on the annotation resolving.
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap().replace(
+        "</dependencies>",
+        "<dependency><groupId>org.jspecify</groupId>\
+         <artifactId>jspecify</artifactId><version>1.0.0</version></dependency>\
+         </dependencies>",
+    );
+    fs::write(root.join("pom.xml"), pom).unwrap();
+
+    let preview = jails_cmd(&root, None)
+        .args(["g", "record", "Note", "title:string", "--pretend"])
+        .output()
+        .unwrap();
+    assert!(preview.status.success());
+    let shown = String::from_utf8_lossy(&preview.stdout);
+    assert!(
+        shown.contains("package-info"),
+        "the preview hid a file the real run writes:\n{shown}"
+    );
+
+    let real = jails_cmd(&root, None)
+        .args(["g", "record", "Note", "title:string"])
+        .output()
+        .unwrap();
+    assert!(real.status.success());
+    let done = String::from_utf8_lossy(&real.stdout);
+
+    // The preview and the run must name the same set of files.
+    let files = |text: &str| -> Vec<String> {
+        text.lines()
+            .filter_map(|l| l.rsplit_once(' ').map(|(_, p)| p.to_string()))
+            .filter(|p| p.ends_with(".java"))
+            .collect()
+    };
+    assert_eq!(
+        files(&shown),
+        files(&done),
+        "preview and apply disagreed about what would be written"
+    );
+    assert!(
+        root.join("src/main/java/com/example/demo/domain/package-info.java")
+            .is_file()
+    );
+}
+
+/// One per package, not one per class -- `scaffold` puts several classes in
+/// the same package -- and never in the test tree, where a nullness contract
+/// buys nothing.
+#[test]
+fn planned_package_infos_are_one_per_package() {
+    let root = temp_dir("pkginfo-dedup");
+    write_plain_fixture(&root);
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap().replace(
+        "</dependencies>",
+        "<dependency><groupId>org.jspecify</groupId>\
+         <artifactId>jspecify</artifactId><version>1.0.0</version></dependency>\
+         </dependencies>",
+    );
+    fs::write(root.join("pom.xml"), pom).unwrap();
+
+    let preview = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Task", "title:string", "--pretend"])
+        .output()
+        .unwrap();
+    assert!(preview.status.success());
+    let shown = String::from_utf8_lossy(&preview.stdout);
+
+    let infos: Vec<&str> = shown
+        .lines()
+        .filter(|l| l.contains("package-info"))
+        .collect();
+    assert!(
+        infos.len() > 1,
+        "scaffold should span several packages:\n{shown}"
+    );
+
+    // No package planned twice, however many classes land in it.
+    let mut seen = std::collections::HashSet::new();
+    for line in &infos {
+        assert!(
+            seen.insert(*line),
+            "the same package-info was planned twice:\n{shown}"
+        );
+    }
+
+    // Never in the test tree.
+    assert!(
+        !infos.iter().any(|l| l.contains("src/test/java")),
+        "{shown}"
+    );
+}

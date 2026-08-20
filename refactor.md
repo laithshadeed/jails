@@ -53,8 +53,10 @@ These should receive focused regression tests and intentional decisions before a
 
 **Status: all seven are fixed** (2026-08-20), each verified against the source
 first rather than taken from this table on trust, and each with a regression
-test that fails if it comes back. They landed as one reviewable commit
-separate from any mechanical move, as this document asks. What was decided:
+test that fails if it comes back. The first six landed as one reviewable
+commit separate from any mechanical move, as this document asks; the hidden-
+writes row was fixed later, after an earlier revision of this table wrongly
+recorded it as done. What was decided:
 
 | Row | Resolution |
 |---|---|
@@ -64,7 +66,12 @@ separate from any mechanical move, as this document asks. What was decided:
 | Generate/destroy not inverses | `unsplice_registration` undoes command registration; the round-trip test asserts the dispatcher is byte-identical. `destroy strategy` derives implementations from disk rather than a second path list. |
 | `Migrate { check }` ignored | `--check=false` is now an error naming the only mode, rather than a flag that reads as a toggle and is not one. |
 | Toolchain policy contradicts itself | `TARGET_RELEASE` is 27; its doc had argued for 25 above it. The doc now states the decision, names the three files that must agree, and records the cost — which turned out to be the row below. |
-| (found while fixing the above) | 11 of 104 integration tests were reporting green without running, because the acceptance tier self-skips on a pre-GA JDK. `JAILS_REQUIRE_TOOLCHAIN=1` makes each a failure naming what was missing. |
+| A requested write can hide more writes | `package-info.java` was written as a side effect of writing a class, so `--pretend` named two files and the run wrote three. It is planned as an artifact now, so preview and apply consume one list. The `new_cli` half of this row is not yet done: `write_new_file` still discovers the project from process CWD, which Phase 1 addresses. |
+
+Also found while fixing the above, and worth recording beside them: 11 of 104
+integration tests were reporting green without running, because the acceptance
+tier self-skips on a pre-GA JDK. `JAILS_REQUIRE_TOOLCHAIN=1` makes each a
+failure naming what was missing.
 
 Two further items that needed no ADR have also landed:
 

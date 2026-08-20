@@ -908,7 +908,13 @@ fn ensure_package_info(class_path: &Path) -> Result<()> {
     let Some(pkg) = package_of_dir(&root, dir) else {
         return Ok(());
     };
-    let contents = format!(
+    fs::write(&info, package_info_java(&pkg))
+        .map_err(|e| format!("failed to write {}: {e}", info.display()))?;
+    Ok(())
+}
+
+fn package_info_java(pkg: &str) -> String {
+    format!(
         r#"/**
  * Every reference type in this package is non-null unless it is explicitly
  * annotated {{@code @Nullable}}.
@@ -922,9 +928,55 @@ package {pkg};
 
 import org.jspecify.annotations.NullMarked;
 "#
-    );
-    fs::write(&info, contents).map_err(|e| format!("failed to write {}: {e}", info.display()))?;
-    Ok(())
+    )
+}
+
+/// The `package-info.java` files this artifact list would cause to be
+/// written, as artifacts in their own right.
+///
+/// `write_new_file` creates these as a side effect of writing a class, which
+/// made them **invisible**: `--pretend` listed two files and `generate` then
+/// wrote three. A preview that does not name every write is not a preview,
+/// and it is the one command whose entire job is to tell you what will
+/// happen.
+///
+/// Planning them here rather than teaching the preview to predict the side
+/// effect is the point -- a second piece of code guessing what the first will
+/// do is exactly the drift this costs elsewhere. They are prepended to the
+/// plan so each lands before the class that needed it, at which point
+/// `ensure_package_info` finds the file present and does nothing.
+fn planned_package_infos(root: &Path, artifacts: &[Artifact]) -> Vec<Artifact> {
+    if !jspecify_available(root) {
+        return Vec::new();
+    }
+    let mut planned = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for artifact in artifacts {
+        if !artifact.path.extension().is_some_and(|e| e == "java") {
+            continue;
+        }
+        let Some(dir) = artifact.path.parent() else {
+            continue;
+        };
+        // Main sources only: a nullness contract on tests buys nothing and
+        // would put one of these in every test package.
+        if !dir.to_string_lossy().contains("src/main/java") {
+            continue;
+        }
+        let info = dir.join("package-info.java");
+        if info.exists() || !seen.insert(info.clone()) {
+            continue;
+        }
+        let Some(pkg) = package_of_dir(root, dir) else {
+            continue;
+        };
+        planned.push(Artifact {
+            kind: "package-info",
+            path: info,
+            contents: package_info_java(&pkg),
+        });
+    }
+    planned
 }
 
 /// Whether `org.jspecify:jspecify` is a declared dependency.
@@ -1459,6 +1511,17 @@ pub fn generate(
             }]
         }
     };
+
+    // Every write this command performs, in one list, before any of it is
+    // previewed or applied. `package-info.java` used to be created as a side
+    // effect of writing a class, so `--pretend` named two files and the real
+    // run wrote three.
+    let mut artifacts = artifacts;
+    let mut planned = planned_package_infos(&root, &artifacts);
+    if !planned.is_empty() {
+        planned.append(&mut artifacts);
+        artifacts = planned;
+    }
 
     for artifact in &artifacts {
         if artifact.path.exists() {
