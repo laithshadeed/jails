@@ -66,6 +66,13 @@ isn't already there.
   real-toolchain tier catches that, which is why
   `a_scaffold_with_database_types_compiles_including_its_derived_jdbc_adapter`
   exists.
+- `src/spring.rs` — the Spring-only capabilities (`api`, `actuator`, `cache`)
+  and generator kinds (`client`, `job`, `dto`). Kept apart from `add.rs`
+  because they share one precondition — a Spring Boot parent, checked once in
+  `require_spring` — and because `add.rs` was already the biggest file here.
+  **Every template was written against `deps/`, not from memory.** The
+  generated code targets APIs that moved recently, and the failure mode is
+  silent: it compiles against the version you had.
 - `src/rename.rs` — `rename`. Textual by design (see its module docs for
   when to prefer jdt.ls `grn`): whole identifiers only, string literals left
   alone and the skipped count reported.
@@ -330,8 +337,24 @@ jails knows nothing about.
 
 ## Generated code tracks Spring Boot 4 / Framework 7, verified against source
 
-The upstream checkouts under `deps/` (see `deps/deps.tsv`) are the reference,
-not memory. Three things confirmed there and relied on by the templates:
+The upstream checkouts under `deps/` are the reference, not memory.
+`deps/deps.tsv` is the manifest (dir -> `owner/repo`) and `deps/update.sh`
+clones what's missing and fast-forwards the rest — both tracked here, while
+`/deps/*/` is gitignored because each checkout is its own upstream repo. The
+manifest covers every third-party library the payments-gateway-service poms
+pull in, not just the ones jails' own templates target, so "check the source"
+is answerable for the whole stack. New clones are blobless
+(`--filter=blob:none`) since the 13 original full clones already cost 6.3 GB.
+
+One gotcha the script now carries a comment about: **bash declares every name
+in a `local` statement before running any of its assignments**, so
+`local dir=$1 repo=$2 url="...${repo}..."` expands `$repo` as the blanked
+local, not as `$2`. That built `github-personal:.git` and GitHub answered
+`remote error: is not a valid repository name` for every repo at once — which
+reads exactly like an account-wide ssh rate limit, and is not one. The `url=`
+assignment has to be its own statement.
+
+Three things confirmed in those checkouts and relied on by the templates:
 
 - **`@MockBean`/`@SpyBean` no longer exist** in Boot 4 — there is no
   `MockBean.java` in the tree at all. The replacement is `@MockitoBean` /
@@ -350,6 +373,21 @@ not memory. Three things confirmed there and relied on by the templates:
   lifetime, so later tests fail on a stopped container. `@ServiceConnection`
   (`org.springframework.boot.testcontainers.service.connection`) is how the
   connection details reach auto-configuration.
+
+## A generator that emits code must supply the dependency it needs
+
+`g dto` splices `spring-boot-starter-validation`; `g client` splices
+`spring-boot-starter-restclient`. Handing the reader a compile error for a
+line they did not write is exactly the plumbing this tool exists to remove.
+`pom::add_dependency` is idempotent, so `ensure_dependency` is safe to call
+on every run.
+
+The restclient one is the non-obvious case and cost real time to find:
+`@ImportHttpServices` builds the client proxies without it (that part is
+Framework, not Boot), so the project compiles and starts — and the first call
+fails with `URI with undefined scheme`, a message that says nothing about a
+missing module. `spring-boot-starter-webmvc` does not bring it in; serving
+HTTP and calling it are separate concerns.
 
 ## Testing philosophy
 

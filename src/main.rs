@@ -10,6 +10,7 @@ mod pom;
 mod rename;
 mod project;
 mod run;
+mod spring;
 mod sql;
 mod why;
 
@@ -170,6 +171,13 @@ enum Command {
         /// A file holding the failure output. Omit to read stdin, or to
         /// start the app and read what it prints.
         log: Option<PathBuf>,
+    },
+    /// Count files and lines per layer, and the test-to-code ratio
+    Stats,
+    /// List TODO/FIXME/HACK/XXX comments across the project
+    Notes {
+        /// Only this tag (e.g. `jails notes fixme`)
+        tag: Option<String>,
     },
     /// List the HTTP routes this project's source declares
     Routes {
@@ -342,6 +350,8 @@ fn main() {
         Command::Stop { services } => compose::stop_cmd(&services, debug),
         Command::Doctor => doctor::doctor(),
         Command::Why { log } => why::why(log.as_deref(), debug),
+        Command::Stats => inspect::stats(),
+        Command::Notes { tag } => inspect::notes(tag.as_deref()),
         Command::Routes { json } => inspect::routes(json),
         Command::Beans { pattern, json } => inspect::beans(pattern.as_deref(), json),
         Command::Db {

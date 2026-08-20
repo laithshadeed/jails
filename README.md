@@ -115,6 +115,44 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
   or everything in `compose.yaml` when invoked with no arguments.
 - `jails stop [db|kafka]...` — stop those containers (`db` is the postgres
   service). Does not delete `compose.yaml`.
+- `jails add|a api` — the error-handling slice every Spring service writes by
+  hand: a `@RestControllerAdvice` extending Spring's own
+  `ResponseEntityExceptionHandler`, so framework exceptions keep their
+  statuses, plus a sealed `ApiException` (`NotFound`/`Conflict`/`Rejected`)
+  the advice switches over with no `default` branch — adding a variant stops
+  the build until its status is decided. Responses are RFC 9457
+  `application/problem+json`, and bean-validation failures report each bad
+  field in a `fields` extension member instead of a bare 400. Adds
+  `spring-boot-starter-validation`.
+- `jails add|a actuator` — health, info and metrics, exposed by name rather
+  than with `*` (which publishes heap dumps and the resolved environment). The
+  generated test pins both halves: health is up, `env` and `heapdump` are not.
+- `jails add|a cache` — `@EnableCaching` plus Caffeine and a **bounded** spec.
+  The test counts invocations, because a cache that is silently off looks
+  exactly like a cache that is on.
+- `jails generate|g dto <Name>` — `<Name>Request` and `<Name>Response` records
+  for a domain type, with the mapping both ways and a round-trip test. Reads
+  the record already on disk when no field spec is given. Constraints come
+  from the field spec (`@NotNull`, `@NotBlank`; never on a primitive, which
+  cannot be null), and an `Optional<T>` component becomes a plain nullable
+  field on the wire. Splices `spring-boot-starter-validation` if absent.
+- `jails generate|g client <Name>` — a declarative HTTP client: an
+  `@HttpExchange` interface, an `@ImportHttpServices` registration, and a test
+  that drives it against a real socket on an ephemeral port. No base URL in
+  the code — the group's URL comes from
+  `spring.http.serviceclient.<group>.base-url`. Splices
+  `spring-boot-starter-restclient`, without which the proxies are built but no
+  base URL is ever applied (the failure reads "URI with undefined scheme" and
+  says nothing about a missing dependency).
+- `jails generate|g job <Name>` — a `@Scheduled` component whose interval is a
+  property, not a constant, and which catches its own failures: an exception
+  escaping a scheduled method cancels every future run, silently.
+- `jails stats` — files, lines and code per layer, plus the test-to-code
+  ratio. Comment lines are excluded, or generated Javadoc would triple every
+  count.
+- `jails notes [tag]` — `TODO`/`FIXME`/`HACK`/`XXX` in comments. String
+  literals are excluded, so jails' own `"TODO: map a row"` exception messages
+  do not bury the real ones.
 - `jails doctor` — everything that has to be true before the app starts,
   checked in one pass: the JDK on PATH against the release `pom.xml` targets,
   Maven, Docker (via `docker info`, which also works when `docker` is podman's

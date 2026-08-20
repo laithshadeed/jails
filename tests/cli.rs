@@ -2889,3 +2889,315 @@ fn add_db_upgrades_an_out_of_date_properties_block() {
         "{next}"
     );
 }
+
+// ---- Spring-only capabilities. The generated code targets Spring Boot 4 /
+// Framework 7 APIs, so the only honest check is a real compile. ----
+
+#[test]
+fn add_api_generates_problem_detail_handling_that_compiles_and_passes() {
+    if !real_mvn_available() {
+        eprintln!("skipping: mvn not found on PATH");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let root = temp_dir("real-add-api");
+    write_spring_fixture(&root);
+
+    let status = jails_cmd_with_path(&root, &path)
+        .args(["add", "api"])
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    let handler = fs::read_to_string(
+        root.join("src/main/java/com/example/demo/api/ApiExceptionHandler.java"),
+    )
+    .unwrap();
+    // Spring's own base class, so framework exceptions keep their statuses.
+    assert!(handler.contains("extends ResponseEntityExceptionHandler"), "{handler}");
+    // RFC 9457, not a hand-rolled error envelope.
+    assert!(handler.contains("ProblemDetail.forStatusAndDetail"), "{handler}");
+    // Field errors ride in an extension member rather than a bespoke shape.
+    assert!(handler.contains("problem.setProperty(\"fields\""), "{handler}");
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(pom.contains("spring-boot-starter-validation"), "{pom}");
+
+    let status = jails_cmd_with_path(&root, &path)
+        .arg("test")
+        .status()
+        .unwrap();
+    assert!(status.success(), "mvn test failed after `jails add api`");
+}
+
+#[test]
+fn add_cache_switches_caching_on_and_proves_it() {
+    if !real_mvn_available() {
+        eprintln!("skipping: mvn not found on PATH");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let root = temp_dir("real-add-cache");
+    write_spring_fixture(&root);
+
+    assert!(
+        jails_cmd_with_path(&root, &path)
+            .args(["add", "cache"])
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let properties =
+        fs::read_to_string(root.join("src/main/resources/application.properties")).unwrap();
+    // A cache with no bound is a memory leak with a friendly name.
+    assert!(properties.contains("maximumSize="), "{properties}");
+    assert!(properties.contains("# jails:cache"), "{properties}");
+
+    let status = jails_cmd_with_path(&root, &path)
+        .arg("test")
+        .status()
+        .unwrap();
+    assert!(status.success(), "mvn test failed after `jails add cache`");
+}
+
+#[test]
+fn add_actuator_exposes_health_and_nothing_dangerous() {
+    if !real_mvn_available() {
+        eprintln!("skipping: mvn not found on PATH");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let root = temp_dir("real-add-actuator");
+    write_spring_fixture(&root);
+
+    assert!(
+        jails_cmd_with_path(&root, &path)
+            .args(["add", "actuator"])
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let properties =
+        fs::read_to_string(root.join("src/main/resources/application.properties")).unwrap();
+    assert!(properties.contains("management.endpoints.web.exposure.include=health,info,metrics"));
+    // `*` publishes heapdump and the resolved environment; never generate it.
+    assert!(!properties.contains("include=*"), "{properties}");
+
+    let status = jails_cmd_with_path(&root, &path)
+        .arg("test")
+        .status()
+        .unwrap();
+    assert!(status.success(), "mvn test failed after `jails add actuator`");
+}
+
+#[test]
+fn a_spring_capability_is_refused_in_a_plain_maven_project() {
+    let root = temp_dir("api-plain-maven");
+    fs::write(
+        root.join("pom.xml"),
+        "<project><artifactId>x</artifactId>\
+         <properties><maven.compiler.release>27</maven.compiler.release></properties></project>",
+    )
+    .unwrap();
+    fs::create_dir_all(root.join("src/main/java/com/example/demo")).unwrap();
+    fs::write(
+        root.join("src/main/java/com/example/demo/App.java"),
+        "package com.example.demo;\npublic class App {}\n",
+    )
+    .unwrap();
+
+    let output = jails_cmd(&root, None).args(["add", "api"]).output().unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Spring Boot capability"), "{stderr}");
+    assert!(stderr.contains("jails add http"), "{stderr}");
+}
+
+#[test]
+fn capability_property_blocks_do_not_clobber_each_other() {
+    let root = temp_dir("property-blocks");
+    write_spring_fixture(&root);
+    let fake = root.join("fake-bin");
+    write_fake_maven(&fake, &["mvn", "mvnd", "docker"], &root.join("mvn.log"));
+
+    for capability in ["cache", "actuator"] {
+        assert!(
+            jails_cmd(&root, Some(&fake))
+                .args(["add", capability])
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+    let properties =
+        fs::read_to_string(root.join("src/main/resources/application.properties")).unwrap();
+    assert!(properties.contains("# jails:cache"), "{properties}");
+    assert!(properties.contains("# jails:actuator"), "{properties}");
+
+    // Removing one leaves the other exactly as it was.
+    assert!(
+        jails_cmd(&root, Some(&fake))
+            .args(["remove", "cache", "--force"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let after = fs::read_to_string(root.join("src/main/resources/application.properties")).unwrap();
+    assert!(!after.contains("# jails:cache"), "{after}");
+    assert!(!after.contains("spring.cache.type"), "{after}");
+    assert!(after.contains("# jails:actuator"), "{after}");
+    assert!(after.contains("management.endpoints.web.exposure.include"), "{after}");
+}
+
+#[test]
+fn generate_dto_client_and_job_compile_and_pass_against_real_spring() {
+    // These target Spring Boot 4 / Framework 7 APIs that moved recently
+    // (@ImportHttpServices, ProblemDetail, MockMvcTester), so a unit test on
+    // the template text proves nothing worth knowing. javac and the real
+    // context are the check.
+    if !real_mvn_available() {
+        eprintln!("skipping: mvn not found on PATH");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let root = temp_dir("real-spring-generators");
+    write_spring_fixture(&root);
+
+    // A domain record for the DTO to describe.
+    assert!(
+        jails_cmd_with_path(&root, &path)
+            .args([
+                "generate", "record", "Payout", "id:uuid", "amount:long", "note:string?"
+            ])
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    for args in [
+        vec!["generate", "dto", "Payout"],
+        vec!["generate", "client", "Billing"],
+        vec!["generate", "job", "Sweep"],
+    ] {
+        assert!(
+            jails_cmd_with_path(&root, &path)
+                .args(&args)
+                .status()
+                .unwrap()
+                .success(),
+            "{args:?} failed"
+        );
+    }
+
+    let request =
+        fs::read_to_string(root.join("src/main/java/com/example/demo/web/PayoutRequest.java"))
+            .unwrap();
+    // Constraints come from the field spec, so a bad request is rejected at
+    // the edge rather than deep in the domain.
+    assert!(request.contains("@NotNull UUID id"), "{request}");
+    // An Optional domain component is a plain nullable field on the wire, and
+    // carries no constraint -- `?` said it was optional.
+    assert!(request.contains("String note"), "{request}");
+    assert!(!request.contains("@NotNull String note"), "{request}");
+    assert!(request.contains("Optional.ofNullable(note)"), "{request}");
+
+    let client =
+        fs::read_to_string(root.join("src/main/java/com/example/demo/clients/BillingClient.java"))
+            .unwrap();
+    assert!(client.contains("@GetExchange"), "{client}");
+    // No base URL in the annotation: it belongs to the group's configuration.
+    assert!(!client.contains("@HttpExchange(url"), "{client}");
+    let config = fs::read_to_string(
+        root.join("src/main/java/com/example/demo/clients/HttpClientsConfig.java"),
+    )
+    .unwrap();
+    assert!(config.contains("@ImportHttpServices(group = \"billing\""), "{config}");
+
+    let job = fs::read_to_string(root.join("src/main/java/com/example/demo/jobs/SweepJob.java"))
+        .unwrap();
+    // fixedDelay, not fixedRate: a slow run must not queue another on top.
+    assert!(job.contains("fixedDelayString"), "{job}");
+    // An exception escaping a @Scheduled method cancels every future run.
+    assert!(job.contains("catch (RuntimeException"), "{job}");
+
+    let status = jails_cmd_with_path(&root, &path)
+        .arg("test")
+        .status()
+        .unwrap();
+    assert!(
+        status.success(),
+        "mvn test failed for generated dto/client/job"
+    );
+}
+
+#[test]
+fn notes_reads_comments_and_ignores_string_literals() {
+    let root = temp_dir("notes");
+    write_spring_fixture(&root);
+    let pkg = root.join("src/main/java/com/example/demo");
+    fs::write(
+        pkg.join("Probe.java"),
+        "package com.example.demo;\n\
+         // TODO wire the real thing\n\
+         public class Probe {\n\
+         \x20   /* FIXME: broken */\n\
+         \x20   String message = \"TODO: this one is data, not work\";\n\
+         \x20   String sql = \"\"\"\n\
+         \x20       select 1 -- TODO not a note either\n\
+         \x20       \"\"\";\n\
+         }\n",
+    )
+    .unwrap();
+
+    let output = jails_cmd(&root, None).arg("notes").output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("wire the real thing"), "{stdout}");
+    assert!(stdout.contains("FIXME"), "{stdout}");
+    // The discrimination that makes this worth running: a tag inside a
+    // literal is data. jails' own generated adapters put "TODO: map a row"
+    // in an exception message, and reporting those would bury the real ones.
+    assert!(!stdout.contains("data, not work"), "{stdout}");
+    assert!(!stdout.contains("not a note either"), "{stdout}");
+    assert!(stdout.contains("2 note(s)"), "{stdout}");
+}
+
+#[test]
+fn notes_can_be_filtered_to_one_tag() {
+    let root = temp_dir("notes-filter");
+    write_spring_fixture(&root);
+    fs::write(
+        root.join("src/main/java/com/example/demo/Probe.java"),
+        "package com.example.demo;\n// TODO one\n// FIXME two\npublic class Probe {}\n",
+    )
+    .unwrap();
+
+    let output = jails_cmd(&root, None)
+        .args(["notes", "fixme"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("FIXME"), "{stdout}");
+    assert!(!stdout.contains("TODO"), "{stdout}");
+}
+
+#[test]
+fn stats_counts_code_per_layer_and_the_test_ratio() {
+    let root = temp_dir("stats");
+    write_spring_fixture(&root);
+    assert!(
+        jails_cmd(&root, None)
+            .args(["generate", "record", "Payout", "id:uuid"])
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let output = jails_cmd(&root, None).arg("stats").output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Domain"), "{stdout}");
+    assert!(stdout.contains("Test code to application code"), "{stdout}");
+}

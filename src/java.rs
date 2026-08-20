@@ -95,6 +95,69 @@ pub(crate) fn blanked(source: &str) -> String {
     })
 }
 
+/// The source with string and character literals blanked, but comments left
+/// intact.
+///
+/// The mirror image of [`blanked`], and the two exist for opposite reasons.
+/// A scan for annotations must ignore comments; a scan for `TODO` markers
+/// must read only comments, and must still not be fooled by the word
+/// appearing inside a string literal. Length is preserved either way, so line
+/// and byte offsets still index the original.
+pub(crate) fn without_literals(source: &str) -> String {
+    let bytes = source.as_bytes();
+    let mut out: Vec<u8> = bytes.to_vec();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            // Skip over comments untouched -- a quote inside one does not
+            // open a literal.
+            b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'/' => {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'*' => {
+                i += 2;
+                while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(bytes.len());
+            }
+            b'"' if bytes[i..].starts_with(br#"""""#) => {
+                let start = i;
+                i += 3;
+                while i + 2 < bytes.len() && !bytes[i..].starts_with(br#"""""#) {
+                    i += 1;
+                }
+                i = (i + 3).min(bytes.len());
+                blank_range(&mut out, start, i);
+            }
+            quote @ (b'"' | b'\'') => {
+                let start = i;
+                i += 1;
+                while i < bytes.len() && bytes[i] != quote {
+                    i += if bytes[i] == b'\\' { 2 } else { 1 };
+                }
+                i = (i + 1).min(bytes.len());
+                blank_range(&mut out, start, i);
+            }
+            _ => i += 1,
+        }
+    }
+    String::from_utf8(out).unwrap_or_else(|_| source.to_string())
+}
+
+/// Blank a byte range to spaces, leaving newlines so line numbers survive a
+/// multi-line text block.
+fn blank_range(out: &mut [u8], start: usize, end: usize) {
+    let end = end.min(out.len());
+    for byte in &mut out[start..end] {
+        if *byte != b'\n' {
+            *byte = b' ';
+        }
+    }
+}
+
 /// One annotation and the declaration it sits on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Annotated {
@@ -272,7 +335,14 @@ pub(crate) struct TypeInfo {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Param {
+    /// The type with generics and package qualifiers stripped -- what bean
+    /// wiring compares against.
     pub type_name: String,
+    /// The type as written, generics intact. `beans` wants `List`; anything
+    /// reconstructing the component's real type wants `List<Reward>`, and an
+    /// `Optional<String>` flattened to `Optional` loses the only part that
+    /// says what is inside it.
+    pub raw_type: String,
     pub name: String,
 }
 
@@ -429,6 +499,14 @@ fn push_param(out: &mut Vec<Param>, text: &str) {
     let raw_type = cleaned[..cleaned.len() - 1].join(" ");
     out.push(Param {
         type_name: simple_name(raw_type.trim()),
+        // Package qualifier dropped, generics kept: `java.util.List<Reward>`
+        // becomes `List<Reward>`.
+        raw_type: raw_type
+            .trim()
+            .rsplit('.')
+            .next()
+            .unwrap_or(raw_type.trim())
+            .to_string(),
         name,
     });
 }
@@ -555,6 +633,17 @@ mod tests {
     }
 
     #[test]
+    fn without_literals_keeps_comments_and_drops_strings() {
+        let src = "class A { // TODO fix\n  String s = \"TODO not really\";\n}";
+        let out = without_literals(src);
+        assert_eq!(out.len(), src.len(), "offsets must stay valid");
+        assert!(out.contains("// TODO fix"), "{out}");
+        assert!(!out.contains("not really"), "{out}");
+        // Line count preserved, so a note's line number is the real one.
+        assert_eq!(out.lines().count(), src.lines().count());
+    }
+
+    #[test]
     fn annotations_attach_to_types_and_methods() {
         let src = r#"
 package com.example;
@@ -598,6 +687,17 @@ public final class InMemoryRewardRepository implements RewardRepository {
                 .collect::<Vec<_>>(),
             vec!["Clock", "JdbcTemplate"]
         );
+    }
+
+    #[test]
+    fn a_generic_component_keeps_its_argument_in_the_raw_type() {
+        // `Optional` without its argument says nothing about what is inside,
+        // and that is exactly what a DTO has to reconstruct.
+        let src = "package p;\npublic record Reward(Optional<String> note, List<Money> lines) {}";
+        let info = type_info(src).unwrap();
+        assert_eq!(info.constructor_params[0].type_name, "Optional");
+        assert_eq!(info.constructor_params[0].raw_type, "Optional<String>");
+        assert_eq!(info.constructor_params[1].raw_type, "List<Money>");
     }
 
     #[test]

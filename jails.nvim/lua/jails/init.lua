@@ -18,6 +18,8 @@ local STREAMING = {
   why = true,
   routes = true,
   beans = true,
+  stats = true,
+  notes = true,
   rename = true,
   test = true,
   build = true,
@@ -50,11 +52,27 @@ local KINDS = {
   'command',
   'cli',
   'cases',
+  'client',
+  'job',
+  'dto',
   'test',
   'integration-test',
 }
 
-local CAPABILITIES = { 'db', 'kafka', 'csv', 'sqlite', 'json', 'testkit', 'fake', 'http', 'format' }
+local CAPABILITIES = {
+  'db',
+  'kafka',
+  'csv',
+  'sqlite',
+  'json',
+  'testkit',
+  'fake',
+  'http',
+  'format',
+  'api',
+  'actuator',
+  'cache',
+}
 local RUNTIMES = { 'db', 'kafka' }
 
 local SUBCOMMANDS = {
@@ -65,6 +83,8 @@ local SUBCOMMANDS = {
   'routes',
   'beans',
   'rename',
+  'stats',
+  'notes',
   'new',
   'new-cli',
   'generate',
@@ -101,16 +121,19 @@ local OPTIONS = {
   a = { '--name', '--dry-run', '--no-start', '--package' },
   remove = { '--name', '--dry-run', '--force', '--package' },
   rm = { '--name', '--dry-run', '--force', '--package' },
-  destroy = { '--force', '--package' },
-  d = { '--force', '--package' },
-  generate = { '--package' },
-  g = { '--package' },
   run = { '--no-build', '--watch', '--' },
   console = { '--no-build', '--' },
   c = { '--no-build', '--' },
   db = { '--no-start', '--' },
   dbconsole = { '--no-start', '--' },
   routes = { '--json' },
+  -- `--pretend` is global (every writing command takes it); it is listed
+  -- here on the ones where previewing is most often wanted.
+  generate = { '--package', '--pretend' },
+  g = { '--package', '--pretend' },
+  destroy = { '--force', '--package', '--pretend' },
+  d = { '--force', '--package', '--pretend' },
+  notes = {},
   beans = { '--json' },
   rename = { '--dry-run', '--force' },
 }

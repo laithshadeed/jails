@@ -49,6 +49,13 @@ pub enum Capability {
     Http,
     /// Automatic formatting on `mvn verify` (Spotless + palantir-java-format)
     Format,
+    /// RFC 9457 problem responses and bean validation, handled in one place
+    #[value(alias = "errors")]
+    Api,
+    /// Actuator health, info and metrics, exposed narrowly rather than with `*`
+    Actuator,
+    /// Caching that is switched on, bounded, and proven by a test
+    Cache,
 }
 
 impl Capability {
@@ -63,6 +70,9 @@ impl Capability {
             Capability::Fake => "fake",
             Capability::Http => "http",
             Capability::Format => "format",
+            Capability::Api => "api",
+            Capability::Actuator => "actuator",
+            Capability::Cache => "cache",
         }
     }
 }
@@ -84,6 +94,9 @@ struct Plan {
     plugins: Vec<(&'static str, String)>,
     files: Vec<NewFile>,
     compose: Vec<ComposeService>,
+    /// `application.properties` lines this capability owns, spliced into a
+    /// `# jails:<label>` block so `remove` can take exactly them back out.
+    properties: Vec<String>,
     /// Spring `add db` only: a test-classpath ApplicationContextInitializer
     /// so every `@SpringBootTest` gets a DataSource without editing those
     /// files. Docker Compose is skipped in tests by default.
@@ -206,6 +219,7 @@ pub fn add(
             install_db_properties(&root, true)?;
             install_postgres_test_initializer(&root, cfg, true)?;
         }
+        install_capability_properties(&root, capability.label(), &plan.properties, true)?;
         return Ok(());
     }
 
@@ -264,6 +278,8 @@ pub fn add(
         tests_wired |= install_postgres_test_initializer(&root, cfg, false)?;
         tests_wired |= strip_legacy_postgres_imports(&root, cfg)?;
     }
+    tests_wired |=
+        install_capability_properties(&root, capability.label(), &plan.properties, false)?;
 
     if created == 0 && !pom_changed && compose_added.is_empty() && !tests_wired {
         println!("{} is already set up -- nothing to do", capability.label());
@@ -564,6 +580,10 @@ pub fn remove(
         delete_maven_output(&root, &application_properties_path(&root));
         let _ = strip_legacy_postgres_imports(&root, cfg)?;
     }
+    if !plan.properties.is_empty() {
+        remove_capability_properties(&root, capability.label())?;
+        delete_maven_output(&root, &application_properties_path(&root));
+    }
 
     println!("removed {}", capability.label());
     Ok(())
@@ -602,7 +622,42 @@ fn build_plan(
         Capability::Fake => fake_plan(root, &place(layout::TESTKIT)),
         Capability::Http => http_plan(root, &place(layout::API), name),
         Capability::Format => format_plan(),
+        Capability::Api => spring_slice_plan(
+            crate::spring::api_slice(root, &place(layout::API)),
+            flavor,
+            "api",
+        ),
+        Capability::Actuator => spring_slice_plan(
+            crate::spring::actuator_slice(root, &place("")),
+            flavor,
+            "actuator",
+        ),
+        Capability::Cache => spring_slice_plan(
+            crate::spring::cache_slice(root, &place("")),
+            flavor,
+            "cache",
+        ),
     }
+}
+
+/// Adapt a Spring-only slice to the shape `add` already executes. The Spring
+/// check lives here rather than in each slice so there is one message for it.
+fn spring_slice_plan(
+    slice: crate::spring::SpringSlice,
+    flavor: Flavor,
+    capability: &str,
+) -> Result<Plan> {
+    crate::spring::require_spring(flavor, capability)?;
+    Ok(Plan {
+        deps: slice.deps,
+        files: slice
+            .files
+            .into_iter()
+            .map(|(path, contents)| NewFile { path, contents })
+            .collect(),
+        properties: slice.properties,
+        ..Plan::default()
+    })
 }
 
 fn rel(root: &Path, path: &Path) -> String {
@@ -895,6 +950,94 @@ fn application_properties_block(connect: &compose::PostgresConnect) -> String {
          {COMPOSE_DISABLED_PROPERTY}\n\
          # /jails:db\n"
     )
+}
+
+/// Splice a capability's own `application.properties` lines into a marked
+/// block. Generic in the label so every capability owns exactly its own
+/// lines and `remove` can take them back without touching a neighbour's --
+/// the same rule `compose.yaml` already follows for services.
+fn install_capability_properties(
+    root: &Path,
+    label: &str,
+    lines: &[String],
+    dry_run: bool,
+) -> Result<bool> {
+    if lines.is_empty() {
+        return Ok(false);
+    }
+    let path = application_properties_path(root);
+    let existing = if path.exists() {
+        fs::read_to_string(&path).map_err(|e| format!("failed to read {}: {e}", path.display()))?
+    } else {
+        String::new()
+    };
+    let marker = format!("# jails:{label}");
+    if existing.contains(&marker) {
+        println!("  exists  {}", rel(root, &path));
+        return Ok(false);
+    }
+    let block = format!("{marker}\n{}\n# /jails:{label}\n", lines.join("\n"));
+    let next = if existing.trim().is_empty() {
+        block
+    } else {
+        format!("{}\n{block}", existing.trim_end())
+    };
+    if dry_run {
+        for line in lines {
+            println!("  would set  {line} in {}", rel(root, &path));
+        }
+        return Ok(true);
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
+    }
+    fs::write(&path, next).map_err(|e| format!("failed to write {}: {e}", path.display()))?;
+    for line in lines {
+        println!("  set     {line}");
+    }
+    Ok(true)
+}
+
+/// Remove one capability's marked property block, leaving every other line
+/// -- including another capability's block -- exactly as it was.
+fn remove_capability_properties(root: &Path, label: &str) -> Result<()> {
+    let path = application_properties_path(root);
+    let Ok(existing) = fs::read_to_string(&path) else {
+        return Ok(());
+    };
+    let open = format!("# jails:{label}");
+    let close = format!("# /jails:{label}");
+    if !existing.contains(&open) {
+        return Ok(());
+    }
+    let mut out = String::new();
+    let mut skipping = false;
+    for line in existing.lines() {
+        let trimmed = line.trim();
+        if trimmed == open {
+            skipping = true;
+            continue;
+        }
+        if skipping {
+            if trimmed == close {
+                skipping = false;
+            }
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    if out.trim().is_empty() {
+        // The file existed only for this block; leaving an empty file behind
+        // is litter.
+        let _ = fs::remove_file(&path);
+        println!("  removed {}", rel(root, &path));
+        return Ok(());
+    }
+    fs::write(&path, out).map_err(|e| format!("failed to write {}: {e}", path.display()))?;
+    println!("  updated {}", rel(root, &path));
+    Ok(())
 }
 
 fn install_db_properties(root: &Path, dry_run: bool) -> Result<bool> {

@@ -24,6 +24,14 @@ pub enum ArtifactKind {
     Command,
     Cli,
     Cases,
+    /// A declarative HTTP client: an `@HttpExchange` interface, its group
+    /// registration, and a test against a real socket
+    Client,
+    /// Scheduled work: a `@Scheduled` component that cannot cancel its own
+    /// schedule by throwing
+    Job,
+    /// Request/response records for a domain type, with the mapping
+    Dto,
     Test,
     #[value(name = "integration-test", alias = "it")]
     IntegrationTest,
@@ -544,6 +552,37 @@ pub(crate) mod layout {
     pub const ADAPTERS: &str = "adapters";
     pub const API: &str = "api";
     pub const TESTKIT: &str = "testkit";
+    /// Outbound HTTP: interfaces this application calls, kept apart from
+    /// `api` (what it serves) so the direction of a dependency is visible
+    /// from the package name alone.
+    pub const CLIENTS: &str = "clients";
+    /// Scheduled work.
+    pub const JOBS: &str = "jobs";
+}
+
+/// Splice a dependency into pom.xml unless it is already there.
+///
+/// Comment-preserving, like every other pom edit jails makes: the file
+/// belongs to the reader, and a generator that reformats it has taken more
+/// than it was asked for.
+fn ensure_dependency(root: &Path, dep: &crate::pom::Dependency) -> Result<()> {
+    let pom = crate::pom::read(root)?;
+    match crate::pom::add_dependency(&pom, dep)? {
+        Some(updated) => {
+            fs::write(root.join("pom.xml"), updated)
+                .map_err(|e| format!("failed to write pom.xml: {e}"))?;
+            println!("     dep {}:{}", dep.group_id, dep.artifact_id);
+            Ok(())
+        }
+        None => Ok(()),
+    }
+}
+
+/// Spring-only generator kinds refuse politely rather than writing code that
+/// cannot compile.
+fn require_spring_project(root: &Path, kind: &str) -> Result<()> {
+    let pom = crate::pom::read(root)?;
+    crate::spring::require_spring(crate::pom::flavor(&pom), kind)
 }
 
 /// `com.example.demo` + `domain` -> `com.example.demo.domain`. An empty
@@ -756,6 +795,55 @@ pub fn generate(
                 path: main_dir(&root, &pkg).join(format!("{name}.java")),
                 contents: interface_java(&pkg, &name),
             }]
+        }
+        // Spring-only kinds. The templates live in spring.rs, next to the
+        // capabilities that share their Spring Boot 4 assumptions.
+        ArtifactKind::Client => {
+            require_spring_project(&root, "client")?;
+            let pkg = place(layout::CLIENTS);
+            crate::spring::client_files(&root, &pkg, &name)
+                .into_iter()
+                .map(|(path, contents, kind)| Artifact {
+                    kind,
+                    path,
+                    contents,
+                })
+                .collect()
+        }
+        ArtifactKind::Job => {
+            require_spring_project(&root, "job")?;
+            let pkg = place(layout::JOBS);
+            crate::spring::job_files(&root, &pkg, &name)
+                .into_iter()
+                .map(|(path, contents, kind)| Artifact {
+                    kind,
+                    path,
+                    contents,
+                })
+                .collect()
+        }
+        ArtifactKind::Dto => {
+            let domain = place(layout::DOMAIN);
+            let web = place(layout::WEB);
+            let parsed = parse_fields(fields)?;
+            let components = if parsed.is_empty() {
+                fields_from_record(&root, &domain, &name).ok_or_else(|| {
+                    format!(
+                        "no {name} record found under {domain}, and no field spec was given.\n       \
+                         Either `jails g record {name} <field:type ...>` first, or pass the fields here."
+                    )
+                })?
+            } else {
+                parsed
+            };
+            crate::spring::dto_files(&root, &web, &domain, &name, &components)
+                .into_iter()
+                .map(|(path, contents, kind)| Artifact {
+                    kind,
+                    path,
+                    contents,
+                })
+                .collect()
         }
         ArtifactKind::Record => {
             let parsed = parse_fields(fields)?;
@@ -992,6 +1080,16 @@ pub fn generate(
         if matches!(kind, ArtifactKind::Command) {
             println!("would register {name} in the project's command dispatcher");
         }
+        if let Some(dep) = match kind {
+            ArtifactKind::Dto => Some(&crate::spring::VALIDATION_STARTER),
+            ArtifactKind::Client => Some(&crate::spring::RESTCLIENT_STARTER),
+            _ => None,
+        } {
+            println!(
+                "would ensure dependency {}:{}",
+                dep.group_id, dep.artifact_id
+            );
+        }
         println!();
         println!("--pretend: nothing was written.");
         return Ok(());
@@ -1003,6 +1101,16 @@ pub fn generate(
 
     if matches!(kind, ArtifactKind::Command) {
         register_command(&root, &base, &name)?;
+    }
+    // A generator that emits code needing a dependency has to supply it.
+    // The alternative is handing the reader a compile error for a line they
+    // did not write, which is exactly the plumbing this tool exists to
+    // remove. Splicing is idempotent -- pom.rs reports when it is already
+    // there and changes nothing.
+    match kind {
+        ArtifactKind::Dto => ensure_dependency(&root, &crate::spring::VALIDATION_STARTER)?,
+        ArtifactKind::Client => ensure_dependency(&root, &crate::spring::RESTCLIENT_STARTER)?,
+        _ => {}
     }
     Ok(())
 }
@@ -1213,6 +1321,31 @@ pub fn destroy(
         ],
         ArtifactKind::Interface => vec![main_dir(&root, &place("")).join(format!("{name}.java"))],
         ArtifactKind::Test => vec![test_dir(&root, &place("")).join(format!("{name}Test.java"))],
+        // The shared registration files (HttpClientsConfig, SchedulingConfig)
+        // are deliberately not listed: a second client or job still needs
+        // them, and deleting one would strand the other.
+        ArtifactKind::Client => {
+            let pkg = place(layout::CLIENTS);
+            vec![
+                main_dir(&root, &pkg).join(format!("{name}Client.java")),
+                test_dir(&root, &pkg).join(format!("{name}ClientTest.java")),
+            ]
+        }
+        ArtifactKind::Job => {
+            let pkg = place(layout::JOBS);
+            vec![
+                main_dir(&root, &pkg).join(format!("{name}Job.java")),
+                test_dir(&root, &pkg).join(format!("{name}JobTest.java")),
+            ]
+        }
+        ArtifactKind::Dto => {
+            let web = place(layout::WEB);
+            vec![
+                main_dir(&root, &web).join(format!("{name}Request.java")),
+                main_dir(&root, &web).join(format!("{name}Response.java")),
+                test_dir(&root, &web).join(format!("{name}DtoTest.java")),
+            ]
+        }
         ArtifactKind::IntegrationTest => {
             vec![test_dir(&root, &place("")).join(format!("{name}IT.java"))]
         }
@@ -1732,7 +1865,7 @@ class {name}CommandTest {{
 /// have any constructor at all, and guessing produces a test that does not
 /// compile. The one case it *can* solve is an enum -- hence `generate enum`
 /// pulling its weight twice.
-fn sample_value(field: &Field, root: &Path, pkg: &str) -> Option<String> {
+pub(crate) fn sample_value(field: &Field, root: &Path, pkg: &str) -> Option<String> {
     // An absent Optional is a sample of anything, so `?` rescues even a type
     // jails knows nothing about.
     if field.optionality == Optionality::Nullable {
@@ -1778,12 +1911,12 @@ pub(crate) fn fields_from_record(root: &Path, pkg: &str, name: &str) -> Option<V
             // of the type resolves through the same table `parse_fields` uses,
             // so a hand-written record and a generated one map identically.
             let (java_type, optionality) = match param
-                .type_name
+                .raw_type
                 .strip_prefix("Optional<")
                 .and_then(|rest| rest.strip_suffix('>'))
             {
                 Some(inner) => (inner.to_string(), Optionality::Nullable),
-                None => (param.type_name.clone(), Optionality::Required),
+                None => (param.raw_type.clone(), Optionality::Required),
             };
             let builtin = builtin_by_java_name(&java_type);
             Field {

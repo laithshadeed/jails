@@ -594,3 +594,213 @@ public final class InMemoryRewardRepository implements RewardRepository {
         assert_eq!(found[0].provides, vec!["RewardRepository"]);
     }
 }
+
+// ---------------------------------------------------------------------------
+// `jails stats` and `jails notes` -- Rails' two oldest reading commands.
+// ---------------------------------------------------------------------------
+
+/// One row of the statistics table.
+struct LayerStats {
+    label: &'static str,
+    files: usize,
+    lines: usize,
+    /// Lines that are neither blank nor a comment.
+    code: usize,
+}
+
+/// The subpackages jails' own layout assigns, plus a catch-all. Reported in
+/// dependency order -- domain first, adapters last -- so the shape of the
+/// application reads down the page.
+const LAYERS: [(&str, &str); 8] = [
+    ("domain", "Domain"),
+    ("app", "Ports"),
+    ("service", "Services"),
+    ("web", "Web"),
+    ("api", "API"),
+    ("clients", "Clients"),
+    ("jobs", "Jobs"),
+    ("adapters", "Adapters"),
+];
+
+pub fn stats() -> Result<()> {
+    let root = find_project_root()?;
+    let main = collect_stats(&root.join("src/main/java"));
+    let test = collect_stats(&root.join("src/test/java"));
+
+    let rows: Vec<&LayerStats> = main.iter().filter(|r| r.files > 0).collect();
+    if rows.is_empty() {
+        println!("No Java sources under src/main/java.");
+        return Ok(());
+    }
+
+    let width = rows.iter().map(|r| r.label.len()).max().unwrap_or(0).max(5);
+    println!("{:width$}  {:>6}  {:>7}  {:>7}", "Layer", "files", "lines", "code");
+    println!("{}", "-".repeat(width + 26));
+    for row in &rows {
+        println!(
+            "{:width$}  {:>6}  {:>7}  {:>7}",
+            row.label, row.files, row.lines, row.code
+        );
+    }
+
+    let code: usize = main.iter().map(|r| r.code).sum();
+    let test_code: usize = test.iter().map(|r| r.code).sum();
+    let files: usize = main.iter().map(|r| r.files).sum();
+    let test_files: usize = test.iter().map(|r| r.files).sum();
+    println!("{}", "-".repeat(width + 26));
+    println!(
+        "{:width$}  {:>6}  {:>7}  {:>7}",
+        "Main", files, "", code
+    );
+    println!(
+        "{:width$}  {:>6}  {:>7}  {:>7}",
+        "Test", test_files, "", test_code
+    );
+    println!();
+    // The ratio, not a verdict on it. What counts as healthy depends on what
+    // the code does, and a tool asserting a target would only be ignored.
+    if code > 0 {
+        println!(
+            "Test code to application code: {:.2}",
+            test_code as f64 / code as f64
+        );
+    }
+    Ok(())
+}
+
+fn collect_stats(src: &Path) -> Vec<LayerStats> {
+    let mut rows: Vec<LayerStats> = LAYERS
+        .iter()
+        .map(|(_, label)| LayerStats {
+            label,
+            files: 0,
+            lines: 0,
+            code: 0,
+        })
+        .collect();
+    rows.push(LayerStats {
+        label: "Other",
+        files: 0,
+        lines: 0,
+        code: 0,
+    });
+
+    for path in java::source_files(src) {
+        let Ok(source) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let row = layer_index(&path);
+        let lines = source.lines().count();
+        // "Code" excludes blanks and comment lines. Javadoc is most of a
+        // jails-generated file, and counting it would make every layer look
+        // three times its size.
+        let code = source
+            .lines()
+            .map(str::trim)
+            .filter(|line| {
+                !line.is_empty()
+                    && !line.starts_with("//")
+                    && !line.starts_with("/*")
+                    && !line.starts_with('*')
+            })
+            .count();
+        rows[row].files += 1;
+        rows[row].lines += lines;
+        rows[row].code += code;
+    }
+    rows
+}
+
+/// Which row a file belongs to: the first layer subpackage its path contains,
+/// or the catch-all. Matched on a path *segment* so `com/example/webshop`
+/// does not read as the `web` layer.
+fn layer_index(path: &Path) -> usize {
+    let segments: Vec<String> = path
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    LAYERS
+        .iter()
+        .position(|(package, _)| segments.iter().any(|s| s == package))
+        .unwrap_or(LAYERS.len())
+}
+
+/// A `TODO`/`FIXME`-style marker and where it is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Note {
+    pub tag: String,
+    pub file: String,
+    pub line: usize,
+    pub text: String,
+}
+
+/// The tags worth surfacing. Deliberately short: a list long enough to catch
+/// everything catches nothing, because the output stops being read.
+const NOTE_TAGS: [&str; 4] = ["TODO", "FIXME", "HACK", "XXX"];
+
+pub fn notes(tag: Option<&str>) -> Result<()> {
+    let root = find_project_root()?;
+    let found = collect_notes(&root, tag);
+    if found.is_empty() {
+        match tag {
+            Some(tag) => println!("No {tag} notes."),
+            None => println!("No {} notes.", NOTE_TAGS.join("/")),
+        }
+        return Ok(());
+    }
+    let width = found.iter().map(|n| n.tag.len()).max().unwrap_or(0);
+    for note in &found {
+        println!("{:width$}  {}:{}", note.tag, note.file, note.line);
+        println!("{:width$}    {}", "", note.text);
+    }
+    println!();
+    println!("{} note(s).", found.len());
+    Ok(())
+}
+
+pub(crate) fn collect_notes(root: &Path, only: Option<&str>) -> Vec<Note> {
+    let mut found = Vec::new();
+    for dir in ["src/main/java", "src/test/java"] {
+        for path in java::source_files(&root.join(dir)) {
+            let Ok(source) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let label = relative(root, &path);
+            found.extend(file_notes(&source, &label, only));
+        }
+    }
+    found
+}
+
+fn file_notes(source: &str, label: &str, only: Option<&str>) -> Vec<Note> {
+    // Scanned against the blanked copy so a tag inside a string literal --
+    // `"TODO"` in a message, or a SQL text block -- is not reported as work
+    // to do. Offsets are shared, so the text still comes from the original.
+    // Literals blanked, comments kept: a note lives in a comment, and the
+    // word appearing inside a string ("TODO" in a message, or in a SQL text
+    // block) is not work anyone signed up for.
+    let scanned = java::without_literals(source);
+    let mut found = Vec::new();
+    for (index, (line, raw)) in scanned.lines().zip(source.lines()).enumerate() {
+        for tag in NOTE_TAGS {
+            if only.is_some_and(|wanted| !wanted.eq_ignore_ascii_case(tag)) {
+                continue;
+            }
+            // Only in a comment: `TODO` inside an identifier is not a note.
+            let Some(at) = line.find(tag) else {
+                continue;
+            };
+            if !line[..at].contains("//") && !line[..at].contains('*') {
+                continue;
+            }
+            found.push(Note {
+                tag: tag.to_string(),
+                file: label.to_string(),
+                line: index + 1,
+                text: raw[at..].trim().to_string(),
+            });
+            break;
+        }
+    }
+    found
+}
