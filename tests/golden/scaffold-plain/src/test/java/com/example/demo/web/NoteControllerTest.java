@@ -1,0 +1,47 @@
+package com.example.demo.web;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.BDDMockito.given;
+
+import com.example.demo.service.NoteService;
+import java.util.List;
+import java.util.Optional;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.servlet.assertj.MockMvcTester;
+
+@WebMvcTest(NoteController.class)
+class NoteControllerTest {
+
+    @Autowired
+    private MockMvcTester mvc;
+
+    @MockitoBean
+    private NoteService service;
+
+    @Test
+    void anEmptyCollectionIsAnEmptyArray() {
+        given(service.findAll()).willReturn(List.of());
+
+        assertThat(mvc.get().uri(NoteController.PATH))
+                .hasStatusOk()
+                .bodyJson()
+                .isEqualTo("[]");
+    }
+
+    @Test
+    void aMissingItemIs404() {
+        given(service.findById("nope")).willReturn(Optional.empty());
+
+        assertThat(mvc.get().uri(NoteController.PATH + "/nope")).hasStatus(404);
+    }
+
+    @Test
+    void aDeleteThatRemovedNothingIs404() {
+        given(service.deleteById("nope")).willReturn(false);
+
+        assertThat(mvc.delete().uri(NoteController.PATH + "/nope")).hasStatus(404);
+    }
+}

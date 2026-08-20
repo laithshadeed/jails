@@ -244,3 +244,24 @@ class DemoApplicationTests {
     void contextLoads() {}
 }
 "#;
+
+/// A minimal plain-Maven project: a pom with a release level and JUnit, and
+/// one class so `base_package` can find the tree. Shared with the golden
+/// target, which needs the same starting point every time or the snapshots
+/// are not comparable.
+pub fn write_plain_fixture(root: &Path) {
+    let pkg_dir = root.join("src/main/java/com/example/demo");
+    std::fs::create_dir_all(&pkg_dir).unwrap();
+    std::fs::write(
+        root.join("pom.xml"),
+        format!(
+            "<project>\n    <groupId>com.example</groupId>\n    <artifactId>demo</artifactId>\n    <properties>\n        <maven.compiler.release>{TARGET_RELEASE}</maven.compiler.release>\n    </properties>\n    <dependencies>\n        <dependency>\n            <groupId>org.junit.jupiter</groupId>\n            <artifactId>junit-jupiter</artifactId>\n            <version>5.11.4</version>\n            <scope>test</scope>\n        </dependency>\n    </dependencies>\n</project>\n"
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        pkg_dir.join("DemoApplication.java"),
+        "package com.example.demo;\n\npublic class DemoApplication {}\n",
+    )
+    .unwrap();
+}

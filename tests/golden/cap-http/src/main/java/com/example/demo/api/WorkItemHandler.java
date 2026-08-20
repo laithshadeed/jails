@@ -1,0 +1,149 @@
+package com.example.demo.api;
+
+import com.example.demo.domain.ApiError;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+
+/**
+ * HTTP for the {@code /work-items} resource.
+ *
+ * <p>Thin by construction: this class binds, routes, and maps outcomes to
+ * status codes. It holds no rules of its own, so the same {@link Service} can
+ * be driven from the CLI without any of this.
+ *
+ * <p>{@link Service} deals in JSON strings because a scaffold cannot know
+ * your types. Narrowing it to real ones is the first thing worth doing here.
+ *
+ * <p>Status codes are the contract:
+ * <ul>
+ *   <li>400 -- the body is not JSON, or a query parameter is not a number
+ *   <li>404 -- no such resource
+ *   <li>422 -- well-formed, but the domain rejected it
+ * </ul>
+ */
+public final class WorkItemHandler implements HttpHandler {
+
+    /** The path this handler is registered under. */
+    public static final String PATH = "/work-items";
+
+    /** What this handler needs from the application behind it. */
+    public interface Service {
+
+        /** @return a JSON array of items, never null. */
+        String list(int offset, int limit);
+
+        /** @return the item as JSON, or empty when there is no such id. */
+        Optional<String> find(String id);
+
+        /**
+         * @param body the raw request body
+         * @return the created item as JSON
+         * @throws IllegalArgumentException when the domain rejects it -- becomes a 422
+         */
+        String create(String body);
+    }
+
+    private final Service service;
+
+    public WorkItemHandler(Service service) {
+        this.service = Objects.requireNonNull(service, "service is required");
+    }
+
+    @Override
+    public void handle(HttpExchange exchange) throws IOException {
+        try (exchange) {
+            var path = exchange.getRequestURI().getPath();
+            var id = idFrom(path);
+
+            var response =
+                    switch (exchange.getRequestMethod()) {
+                        case "GET" -> id.isEmpty() ? list(exchange) : find(id);
+                        case "POST" -> create(body(exchange));
+                        default -> error(405, "method_not_allowed", "use GET or POST");
+                    };
+
+            send(exchange, response);
+        }
+    }
+
+    /** The trailing path segment, or empty for a request against the collection. */
+    private String idFrom(String path) {
+        var rest = path.length() > PATH.length() ? path.substring(PATH.length()) : "";
+        return rest.startsWith("/") ? rest.substring(1) : rest;
+    }
+
+    private Response list(HttpExchange exchange) {
+        var query = query(exchange);
+        try {
+            var offset = Integer.parseInt(query.getOrDefault("offset", "0"));
+            var limit = Integer.parseInt(query.getOrDefault("limit", "50"));
+            return new Response(200, service.list(offset, limit));
+        } catch (NumberFormatException malformed) {
+            return error(400, "bad_request", "offset and limit must be whole numbers");
+        }
+    }
+
+    private Response find(String id) {
+        return service.find(id)
+                .map(json -> new Response(200, json))
+                .orElseGet(() -> error(404, "not_found", "no /work-items with id " + id));
+    }
+
+    private Response create(String body) {
+        if (body.isBlank() || !body.stripLeading().startsWith("{")) {
+            return error(400, "bad_request", "expected a JSON object");
+        }
+        try {
+            return new Response(201, service.create(body));
+        } catch (IllegalArgumentException rejected) {
+            // Well-formed but wrong: the client sent something the domain will
+            // not accept, which is 422 rather than 400.
+            return error(422, "unprocessable", rejected.getMessage());
+        }
+    }
+
+    /** An {@link ApiError} rendered as the response body. */
+    private Response error(int status, String code, String message) {
+        var envelope = new ApiError(code, message == null ? code : message, Map.of());
+        return new Response(
+                status,
+                "{\"code\":\"" + envelope.code() + "\",\"message\":\"" + envelope.message() + "\"}");
+    }
+
+    private record Response(int status, String body) {}
+
+    private static String body(HttpExchange exchange) throws IOException {
+        try (var in = exchange.getRequestBody()) {
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        }
+    }
+
+    private static Map<String, String> query(HttpExchange exchange) {
+        var raw = exchange.getRequestURI().getQuery();
+        if (raw == null || raw.isBlank()) {
+            return Map.of();
+        }
+        var parsed = new java.util.LinkedHashMap<String, String>();
+        for (var pair : raw.split("&")) {
+            var split = pair.split("=", 2);
+            if (split.length == 2) {
+                parsed.put(split[0], split[1]);
+            }
+        }
+        return Map.copyOf(parsed);
+    }
+
+    private static void send(HttpExchange exchange, Response response) throws IOException {
+        var bytes = response.body().getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().set("Content-Type", "application/json");
+        exchange.sendResponseHeaders(response.status(), bytes.length);
+        try (var out = exchange.getResponseBody()) {
+            out.write(bytes);
+        }
+    }
+}
