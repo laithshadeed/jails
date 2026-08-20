@@ -357,32 +357,69 @@ class ApiExceptionHandlerTest {{
 // `add actuator` -- health, metrics and info, without inventing endpoints.
 // ---------------------------------------------------------------------------
 
+/// The actuator exposure list, unioned with whatever is already set.
+///
+/// Two capabilities own this one key -- `actuator` and `observability` -- and
+/// each installs its properties as its own marked block. Properties are
+/// last-wins, so whichever was added second would otherwise silently narrow
+/// the other: `add observability` then `add actuator` leaves `prometheus`
+/// unexposed and the scrape returns 404 with nothing in the logs to say why.
+/// Reading the current value and unioning makes the order stop mattering.
+fn exposure_include(root: &Path, wanted: &[&str]) -> String {
+    let mut names: Vec<String> = Vec::new();
+    let path = root.join("src/main/resources/application.properties");
+    if let Ok(existing) = std::fs::read_to_string(&path) {
+        for line in existing.lines() {
+            let line = line.trim();
+            if let Some(value) = line.strip_prefix("management.endpoints.web.exposure.include=") {
+                for name in value.split(',') {
+                    let name = name.trim();
+                    // `*` is a wildcard, not a name: keep it and stop, rather
+                    // than expanding a user's deliberate choice into a list.
+                    if !name.is_empty() && !names.iter().any(|n| n == name) {
+                        names.push(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+    for name in wanted {
+        if !names.iter().any(|n| n == name) {
+            names.push((*name).to_string());
+        }
+    }
+    format!(
+        "management.endpoints.web.exposure.include={}",
+        names.join(",")
+    )
+}
+
 pub(crate) fn actuator_slice(root: &Path, pkg: &str) -> SpringSlice {
     let test = crate::generate::test_dir(root, pkg);
     SpringSlice {
         deps: vec![ACTUATOR_STARTER],
         files: vec![(
             test.join("ActuatorEndpointsTest.java"),
-            actuator_test_java(pkg),
+            actuator_test_java(pkg, crate::generate::mockmvc_autoconfigure_import(root)),
         )],
         // Exposed deliberately and narrowly. The default over HTTP is health
         // alone; `*` is the shape that leaks heap dumps and environment
         // variables to anything that can reach the port.
         properties: vec![
-            "management.endpoints.web.exposure.include=health,info,metrics".to_string(),
+            exposure_include(root, &["health", "info", "metrics"]),
             "management.endpoint.health.show-details=when-authorized".to_string(),
         ],
     }
 }
 
-fn actuator_test_java(pkg: &str) -> String {
+fn actuator_test_java(pkg: &str, mockmvc_import: &str) -> String {
     format!(
         r#"package {pkg};
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import {mockmvc_import};
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -2320,6 +2357,332 @@ class KeyValueStoreIT {{
         GenericContainer<?> redis() {{
             return new GenericContainer<>("{REDIS_IMAGE}").withExposedPorts(6379);
         }}
+    }}
+}}
+"#
+    )
+}
+
+// ---------------------------------------------------------------------------
+// `add observability` -- metrics that are attributable and scrapeable.
+// ---------------------------------------------------------------------------
+
+/// Version managed by the Spring Boot parent, which imports the Micrometer
+/// BOM (verified in spring-boot-dependencies, not assumed).
+pub(crate) const PROMETHEUS_REGISTRY: Dependency = Dependency {
+    group_id: "io.micrometer",
+    artifact_id: "micrometer-registry-prometheus",
+    version: None,
+    scope: None,
+    optional: false,
+};
+
+/// Metrics, exposed for scraping and tagged so they can be told apart.
+///
+/// The boilerplate this removes is not the dependency -- it is the two
+/// conventions people rediscover per project. Metrics with no common tag are
+/// unattributable the moment a second service reports to the same Prometheus,
+/// and a counter created inline per call site gets a slightly different name
+/// each time (`orders.created`, `order_created`, `ordersCreated`) until the
+/// dashboards stop agreeing.
+pub(crate) fn observability_slice(root: &Path, pkg: &str) -> SpringSlice {
+    let main = crate::generate::main_dir(root, pkg);
+    let test = crate::generate::test_dir(root, pkg);
+    SpringSlice {
+        deps: vec![ACTUATOR_STARTER, PROMETHEUS_REGISTRY],
+        files: vec![
+            (
+                main.join("MetricsConfig.java"),
+                metrics_config_java(pkg, meter_registry_customizer_import(root)),
+            ),
+            (main.join("AppMetrics.java"), app_metrics_java(pkg)),
+            (test.join("AppMetricsTest.java"), app_metrics_test_java(pkg)),
+            (
+                test.join("PrometheusScrapeTest.java"),
+                prometheus_scrape_test_java(pkg, crate::generate::mockmvc_autoconfigure_import(root)),
+            ),
+        ],
+        properties: vec![
+            // `prometheus` in addition to the actuator defaults. Still named
+            // individually rather than `*`, which would publish heapdump and
+            // the resolved environment.
+            exposure_include(root, &["health", "info", "metrics", "prometheus"]),
+        ],
+    }
+}
+
+fn app_metrics_java(pkg: &str) -> String {
+    format!(
+        r#"package {pkg};
+
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+import java.util.Objects;
+import java.util.function.Supplier;
+import org.springframework.stereotype.Component;
+
+/**
+ * The application's metrics, named in one place.
+ *
+ * <p>Not a wrapper for its own sake. A {{@link MeterRegistry}} injected
+ * directly into every class means the name of a metric is a string literal at
+ * each call site, and those drift -- {{@code orders.created}} in one place,
+ * {{@code order_created}} in another -- until a dashboard silently stops
+ * matching. Declaring each meter once, here, makes the name a compile-time
+ * reference.
+ *
+ * <p>Meters are created eagerly in the constructor rather than per call.
+ * {{@code Counter.builder(...).register(...)}} is idempotent but not free,
+ * and a counter registered on first use does not appear in a scrape until
+ * something has happened -- so a dashboard shows a gap rather than a zero,
+ * which reads as "broken" instead of "quiet".
+ */
+@Component
+public class AppMetrics {{
+
+    private final Counter requestsHandled;
+    private final Timer workDuration;
+
+    public AppMetrics(MeterRegistry registry) {{
+        Objects.requireNonNull(registry, "registry is required");
+        // Dot-separated names: Micrometer translates them to each backend's
+        // convention (Prometheus wants underscores) and doing that by hand
+        // ties the code to one backend.
+        this.requestsHandled = Counter.builder("app.requests.handled")
+                .description("requests this application finished handling")
+                .register(registry);
+        this.workDuration = Timer.builder("app.work.duration")
+                .description("how long the unit of work took")
+                .register(registry);
+    }}
+
+    public void requestHandled() {{
+        requestsHandled.increment();
+    }}
+
+    /** Times {{@code work}} and returns its result. */
+    public <T> T timed(Supplier<T> work) {{
+        return workDuration.record(work);
+    }}
+}}
+"#
+    )
+}
+
+fn app_metrics_test_java(pkg: &str) -> String {
+    format!(
+        r#"package {pkg};
+
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.junit.jupiter.api.Test;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * A {{@link SimpleMeterRegistry}} rather than a Spring context: the thing
+ * being tested is that the meters exist under the names other systems will
+ * query, and that needs no application.
+ *
+ * <p>Worth pinning because a renamed metric breaks a dashboard silently --
+ * nothing fails, the graph just goes flat.
+ */
+class AppMetricsTest {{
+
+    private final SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    private final AppMetrics metrics = new AppMetrics(registry);
+
+    @Test
+    void theCounterIsRegisteredBeforeAnythingIncrementsIt() {{
+        // Registered eagerly, so a scrape taken before the first request
+        // reports zero rather than nothing at all.
+        assertThat(registry.find("app.requests.handled").counter()).isNotNull();
+        assertThat(registry.find("app.requests.handled").counter().count()).isZero();
+
+        metrics.requestHandled();
+
+        assertThat(registry.find("app.requests.handled").counter().count()).isEqualTo(1.0);
+    }}
+
+    @Test
+    void theTimerRecordsAndReturnsTheResult() {{
+        String result = metrics.timed(() -> "done");
+
+        assertThat(result).isEqualTo("done");
+        assertThat(registry.find("app.work.duration").timer().count()).isEqualTo(1L);
+    }}
+}}
+"#
+    )
+}
+
+#[cfg(test)]
+mod observability_tests {
+    use super::*;
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "jails-observability-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn fixture(tag: &str, properties: &str) -> std::path::PathBuf {
+        let dir = scratch(tag);
+        let resources = dir.join("src/main/resources");
+        std::fs::create_dir_all(&resources).unwrap();
+        std::fs::write(resources.join("application.properties"), properties).unwrap();
+        dir
+    }
+
+    #[test]
+    fn the_exposure_list_unions_rather_than_replaces() {
+        let dir = fixture(
+            "union",
+            "management.endpoints.web.exposure.include=health,info,metrics\n",
+        );
+        assert_eq!(
+            exposure_include(&dir, &["health", "info", "metrics", "prometheus"]),
+            "management.endpoints.web.exposure.include=health,info,metrics,prometheus"
+        );
+    }
+
+    #[test]
+    fn a_narrower_capability_does_not_drop_what_a_wider_one_exposed() {
+        // `add observability` then `add actuator`: actuator's own list is a
+        // subset, and appending it verbatim would win and hide the scrape.
+        let dir = fixture(
+            "narrower",
+            "management.endpoints.web.exposure.include=health,info,metrics,prometheus\n",
+        );
+        assert!(exposure_include(&dir, &["health", "info", "metrics"]).ends_with("prometheus"));
+    }
+
+    #[test]
+    fn a_hand_widened_list_is_preserved_not_rewritten() {
+        let dir = fixture(
+            "hand-widened",
+            "management.endpoints.web.exposure.include=health,loggers\n",
+        );
+        let line = exposure_include(&dir, &["health", "info", "metrics"]);
+        assert!(line.contains("loggers"), "{line}");
+    }
+
+    #[test]
+    fn no_properties_file_yields_just_the_wanted_names() {
+        let dir = scratch("absent");
+        assert_eq!(
+            exposure_include(&dir, &["health", "prometheus"]),
+            "management.endpoints.web.exposure.include=health,prometheus"
+        );
+    }
+}
+
+fn prometheus_scrape_test_java(pkg: &str, mockmvc_import: &str) -> String {
+    format!(
+        r#"package {pkg};
+
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import {mockmvc_import};
+import org.springframework.test.web.servlet.assertj.MockMvcTester;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * Proves the scrape endpoint actually serves, which the unit tests cannot.
+ *
+ * <p>Three separate things have to line up before Prometheus can read this
+ * application -- the registry on the classpath, the endpoint in the exposure
+ * list, and the meters registered -- and every one of them fails silently.
+ * A missing registry is not an error, it is an endpoint that 404s; a narrowed
+ * exposure list is not an error either. The symptom in all cases is a
+ * dashboard that stays empty, noticed days later.
+ */
+@SpringBootTest
+@AutoConfigureMockMvc
+class PrometheusScrapeTest {{
+
+    @Autowired
+    private MockMvcTester mvc;
+
+    @Test
+    void theScrapeEndpointServesThisApplicationsMeters() {{
+        assertThat(mvc.get().uri("/actuator/prometheus"))
+                .hasStatusOk()
+                .bodyText()
+                // Micrometer renames dots to underscores for Prometheus, so
+                // asserting the exported spelling also pins that translation.
+                .contains("app_requests_handled")
+                // And that the common tag reached a meter registered directly
+                // on the registry -- the case a properties-only approach
+                // misses, since `management.observations.key-values` tags
+                // observations and a plain Counter is not one.
+                .contains("application=");
+    }}
+
+    @Test
+    void theDangerousEndpointsStayUnexposed() {{
+        // 4xx rather than 404: `jails add security` turns these into 401s.
+        assertThat(mvc.get().uri("/actuator/env")).hasStatus4xxClientError();
+        assertThat(mvc.get().uri("/actuator/heapdump")).hasStatus4xxClientError();
+    }}
+}}
+"#
+    )
+}
+
+/// Boot 4 moved `MeterRegistryCustomizer` out of `actuate.autoconfigure`, with
+/// no shim -- the same class of break as `@AutoConfigureMockMvc`.
+fn meter_registry_customizer_import(root: &Path) -> &'static str {
+    const LEGACY: &str =
+        "org.springframework.boot.actuate.autoconfigure.metrics.MeterRegistryCustomizer";
+    const CURRENT: &str =
+        "org.springframework.boot.micrometer.metrics.autoconfigure.MeterRegistryCustomizer";
+    if crate::generate::spring_boot_major(root) >= 4 {
+        CURRENT
+    } else {
+        LEGACY
+    }
+}
+
+fn metrics_config_java(pkg: &str, customizer_import: &str) -> String {
+    format!(
+        r#"package {pkg};
+
+import io.micrometer.core.instrument.MeterRegistry;
+import {customizer_import};
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+/**
+ * Tags every meter with the application it came from.
+ *
+ * <p>Without this, two services reporting to the same Prometheus publish the
+ * same series names and their values are summed together -- graphs that are
+ * quietly wrong rather than visibly missing, which is the worse failure.
+ *
+ * <p>A customizer rather than a property: {{@code management.observations.
+ * key-values.*}} tags observations, and a {{@link io.micrometer.core.instrument
+ * .Counter}} registered straight on the registry is not an observation, so
+ * half the meters would go untagged. {{@code config().commonTags(...)}} covers
+ * both, and Spring Boot guarantees customizers run before any meter is
+ * registered.
+ */
+@Configuration(proxyBeanMethods = false)
+class MetricsConfig {{
+
+    @Bean
+    MeterRegistryCustomizer<MeterRegistry> commonTags(@Value("${{spring.application.name:unnamed}}") String application) {{
+        return registry -> registry.config().commonTags("application", application);
     }}
 }}
 "#

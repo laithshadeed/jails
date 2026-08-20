@@ -75,6 +75,7 @@ local CAPABILITIES = {
   'cache',
   'security',
   'redis',
+  'observability',
 }
 local RUNTIMES = { 'db', 'kafka', 'redis' }
 

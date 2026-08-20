@@ -3002,6 +3002,73 @@ fn add_actuator_exposes_health_and_nothing_dangerous() {
 }
 
 #[test]
+fn add_observability_serves_a_prometheus_scrape() {
+    if !real_mvn_available() {
+        eprintln!("skipping: mvn not found on PATH");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let root = temp_dir("real-add-observability");
+    write_spring_fixture(&root);
+
+    assert!(
+        jails_cmd_with_path(&root, &path)
+            .args(["add", "observability"])
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let properties =
+        fs::read_to_string(root.join("src/main/resources/application.properties")).unwrap();
+    assert!(properties.contains("exposure.include=health,info,metrics,prometheus"));
+    assert!(!properties.contains("include=*"), "{properties}");
+
+    let status = jails_cmd_with_path(&root, &path)
+        .arg("test")
+        .status()
+        .unwrap();
+    assert!(
+        status.success(),
+        "mvn test failed after `jails add observability`"
+    );
+    // The generated PrometheusScrapeTest is what proves the endpoint serves;
+    // a green run with that class never loaded would prove nothing.
+    let surefire = fs::read_dir(root.join("target/surefire-reports"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .any(|e| e.file_name().to_string_lossy().contains("PrometheusScrapeTest"));
+    assert!(surefire, "PrometheusScrapeTest did not run");
+}
+
+#[test]
+fn adding_actuator_after_observability_keeps_prometheus_exposed() {
+    let root = temp_dir("observability-then-actuator");
+    write_spring_fixture(&root);
+
+    for capability in ["observability", "actuator"] {
+        assert!(
+            jails_cmd(&root, None)
+                .args(["add", capability])
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+
+    // Properties are last-wins and `actuator` was added second, so without the
+    // union its narrower list would silently un-expose the scrape endpoint.
+    let properties =
+        fs::read_to_string(root.join("src/main/resources/application.properties")).unwrap();
+    for line in properties
+        .lines()
+        .filter(|l| l.starts_with("management.endpoints.web.exposure.include="))
+    {
+        assert!(line.contains("prometheus"), "{properties}");
+    }
+}
+
+#[test]
 fn a_spring_capability_is_refused_in_a_plain_maven_project() {
     let root = temp_dir("api-plain-maven");
     fs::write(

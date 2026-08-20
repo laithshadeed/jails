@@ -74,8 +74,9 @@ isn't already there.
   real-toolchain tier catches that, which is why
   `a_scaffold_with_database_types_compiles_including_its_derived_jdbc_adapter`
   exists.
-- `src/spring.rs` — the Spring-only capabilities (`api`, `actuator`, `cache`)
-  and generator kinds (`client`, `job`, `dto`). Kept apart from `add.rs`
+- `src/spring.rs` — the Spring-only capabilities (`api`, `actuator`, `cache`,
+  `security`, `redis`, `observability`) and generator kinds (`client`, `job`,
+  `dto`, `event`). Kept apart from `add.rs`
   because they share one precondition — a Spring Boot parent, checked once in
   `require_spring` — and because `add.rs` was already the biggest file here.
   **Every template was written against `deps/`, not from memory.** The
@@ -291,6 +292,21 @@ jails knows nothing about.
   `testcontainers-postgresql`). `doctor` matches on the `org.testcontainers`
   groupId alone for that reason — a check that silently stops applying after
   a dependency bump is worse than no check.
+- **Two capabilities own `management.endpoints.web.exposure.include`.**
+  `actuator` and `observability` each install their properties as their own
+  marked block, and `.properties` is last-wins — so `add observability` then
+  `add actuator` would leave `prometheus` unexposed and the scrape 404ing with
+  nothing in the logs. `spring::exposure_include` reads the current value and
+  unions, which makes the order stop mattering. A new capability touching that
+  key must go through it too.
+- **A property cannot tag meters registered directly on the registry.**
+  `management.metrics.tags.*` was removed in Boot 3, and its replacement
+  `management.observations.key-values.*` tags *observations* — a plain
+  `Counter` is not one, so half the meters go untagged and nothing complains.
+  `add observability` generates a `MeterRegistryCustomizer` calling
+  `config().commonTags(...)`, which covers both. Boot 4 also moved that
+  interface out of `actuate.autoconfigure` with no shim, so the import is
+  version-sniffed like `@AutoConfigureMockMvc` is.
 - **clap `alias` vs `visible_alias`**: hidden `alias` is invisible to
   `clap_complete`'s bash generator — `jails g <TAB>` fell back to top-level
   subcommand names instead of `generate`'s completions. Always use

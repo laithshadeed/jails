@@ -163,6 +163,20 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
   leaving Boot to infer it from the image fails at runtime with `No
   ConnectionDetails found for source`, which reads like a missing dependency
   rather than a naming problem.
+- `jails add|a observability` (alias `metrics`) — a Prometheus scrape endpoint,
+  plus the two conventions every project rediscovers. Meter names are declared
+  once in `AppMetrics` rather than as a string literal per call site, because
+  those drift (`orders.created`, `order_created`) until a dashboard quietly
+  stops matching; and a generated `MeterRegistryCustomizer` tags every meter
+  with the application name, because two services reporting to one Prometheus
+  otherwise publish the same series and their values are summed — graphs that
+  are wrong rather than missing. A property cannot do that job:
+  `management.observations.key-values.*` tags observations, and a `Counter`
+  registered straight on the registry is not one. The exposure list is unioned
+  with whatever is already set, so `add actuator` and `add observability` in
+  either order both leave `prometheus` exposed. The generated test scrapes the
+  live endpoint rather than the registry, since a missing registry is not an
+  error — it is a 404 nobody notices for days.
 - `jails add|a security` — an explicit `SecurityFilterChain` instead of the
   default one. Adding the starter alone secures every endpoint and prints a
   generated password at startup, which is safe and opaque — and the usual

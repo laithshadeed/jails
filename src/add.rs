@@ -61,6 +61,10 @@ pub enum Capability {
     /// Redis: a TTL-enforcing key/value wrapper, a compose service, and a
     /// real-container integration test
     Redis,
+    /// Metrics: a Prometheus scrape endpoint, application-tagged meters, and
+    /// meter names declared once rather than per call site
+    #[value(alias = "metrics")]
+    Observability,
 }
 
 impl Capability {
@@ -80,6 +84,7 @@ impl Capability {
             Capability::Cache => "cache",
             Capability::Security => "security",
             Capability::Redis => "redis",
+            Capability::Observability => "observability",
         }
     }
 }
@@ -668,6 +673,11 @@ fn build_plan(
             crate::spring::security_slice(root, &place("")),
             flavor,
             "security",
+        ),
+        Capability::Observability => spring_slice_plan(
+            crate::spring::observability_slice(root, &place("")),
+            flavor,
+            "observability",
         ),
         Capability::Redis => spring_slice_plan(
             crate::spring::redis_slice(root, &place(layout::ADAPTERS)),

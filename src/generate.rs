@@ -539,7 +539,7 @@ fn webmvc_test_import(root: &Path) -> &'static str {
 /// cannot be read -- the conservative choice, since the pre-4 package names
 /// still exist as deprecated aliases in some builds while the 4 ones simply
 /// do not exist before 4.
-fn spring_boot_major(root: &Path) -> u32 {
+pub(crate) fn spring_boot_major(root: &Path) -> u32 {
     let Ok(pom) = fs::read_to_string(root.join("pom.xml")) else {
         return 3;
     };
@@ -560,7 +560,7 @@ fn spring_boot_major(root: &Path) -> u32 {
         .unwrap_or(3)
 }
 
-fn mockmvc_autoconfigure_import(root: &Path) -> &'static str {
+pub(crate) fn mockmvc_autoconfigure_import(root: &Path) -> &'static str {
     const LEGACY: &str =
         "org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc";
     const CURRENT: &str = "org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc";
