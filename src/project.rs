@@ -256,22 +256,17 @@ fn roots_to_workspace<'a>(module_root: &'a Path, workspace_root: &'a Path) -> Ve
         .collect()
 }
 
+/// What `about` reports is what `run`/`test` will actually execute, because
+/// it is the same function. These were two copies that had already drifted:
+/// this one probed for `mvnd.cmd` on Windows and `run.rs` probed for a bare
+/// `mvnd`, so the reported command and the run command disagreed there.
 fn maven_command(workspace_root: &Path) -> PathBuf {
-    let wrapper = workspace_root.join(if cfg!(windows) { "mvnw.cmd" } else { "mvnw" });
-    if wrapper.is_file() {
-        return wrapper;
-    }
-    if command_on_path(if cfg!(windows) { "mvnd.cmd" } else { "mvnd" }) {
-        PathBuf::from("mvnd")
-    } else {
-        PathBuf::from("mvn")
-    }
+    crate::run::maven_binary(workspace_root)
 }
 
-fn command_on_path(command: &str) -> bool {
-    env::var_os("PATH")
-        .map(|path| env::split_paths(&path).any(|dir| dir.join(command).is_file()))
-        .unwrap_or(false)
+#[cfg(test)]
+pub(crate) fn maven_command_for_tests(workspace_root: &Path) -> PathBuf {
+    maven_command(workspace_root)
 }
 
 fn without_comments(xml: &str) -> String {

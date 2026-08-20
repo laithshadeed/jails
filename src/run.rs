@@ -16,15 +16,32 @@ fn find_on_path_list(bin: &str, dirs: impl Iterator<Item = PathBuf>) -> bool {
     dirs.into_iter().any(|dir| dir.join(bin).is_file())
 }
 
+/// The name mvnd is installed under. On Windows it ships as `mvnd.cmd`, so
+/// probing for a bare `mvnd` there finds nothing and silently falls back to
+/// `mvn`.
+///
+/// This is the whole reason there is one resolver: `project.rs` had its own
+/// copy that got this right while this one got it wrong, so on Windows
+/// `jails about` reported a Maven command that `jails test` would not have
+/// used -- and this path would then have tried to execute a name that is not
+/// on disk.
+fn mvnd_binary() -> &'static str {
+    if cfg!(windows) { "mvnd.cmd" } else { "mvnd" }
+}
+
 /// Prefer the project's wrapper so its Maven version is reproducible. A
 /// project without one keeps the fast mvnd/system-Maven fallback.
+///
+/// The one place this is decided. `project.rs` reports it, `run.rs` executes
+/// it, and the two disagreeing is how you get a tool that describes a build
+/// it does not run.
 pub(crate) fn maven_binary(root: &Path) -> PathBuf {
     let wrapper = root.join(if cfg!(windows) { "mvnw.cmd" } else { "mvnw" });
     if wrapper.is_file() {
         return wrapper;
     }
-    if find_on_path("mvnd") {
-        PathBuf::from("mvnd")
+    if find_on_path(mvnd_binary()) {
+        PathBuf::from(mvnd_binary())
     } else {
         PathBuf::from("mvn")
     }
@@ -570,5 +587,55 @@ mod tests {
         let (pkg, class_name) = find_main_class(&root).unwrap();
         assert_eq!(pkg, "");
         assert_eq!(class_name, "Cli");
+    }
+}
+
+#[cfg(test)]
+mod maven_resolution_tests {
+    use super::*;
+
+    /// mvnd ships as `mvnd.cmd` on Windows. `run.rs` probed for a bare
+    /// `mvnd` while `project.rs` probed for `mvnd.cmd`, so on Windows the
+    /// command `jails about` reported was not the one `jails test` would run
+    /// -- and this side would have tried to execute a name not on disk.
+    #[test]
+    fn the_mvnd_binary_carries_its_platform_extension() {
+        if cfg!(windows) {
+            assert_eq!(mvnd_binary(), "mvnd.cmd");
+        } else {
+            assert_eq!(mvnd_binary(), "mvnd");
+        }
+    }
+
+    /// The wrapper wins over anything on PATH, so a project's pinned Maven
+    /// version is what runs.
+    #[test]
+    fn the_project_wrapper_is_preferred_over_path() {
+        let dir = std::env::temp_dir().join(format!(
+            "jails-maven-binary-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // No wrapper: falls back to something on PATH, never to a wrapper path.
+        assert!(!maven_binary(&dir).starts_with(&dir));
+
+        let wrapper = dir.join(if cfg!(windows) { "mvnw.cmd" } else { "mvnw" });
+        std::fs::write(&wrapper, "#!/bin/sh\n").unwrap();
+        assert_eq!(maven_binary(&dir), wrapper);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// `about` must report the command that will actually be executed.
+    #[test]
+    fn about_and_run_resolve_the_same_maven() {
+        let root = std::env::temp_dir();
+        assert_eq!(
+            crate::project::maven_command_for_tests(&root),
+            maven_binary(&root)
+        );
     }
 }
