@@ -26,6 +26,10 @@ pub enum ArtifactKind {
     Enum,
     /// A sealed interface with one record per variant; adding one breaks the build
     Sealed,
+    /// An open set: one port interface and a bean per implementation, which
+    /// Spring collects into a `List<Port>`. The counterpart to `sealed`.
+    #[value(alias = "rule")]
+    Strategy,
     /// Repository port, a derived JDBC adapter, and a real-database IT
     #[value(alias = "repository")]
     Repo,
@@ -1028,6 +1032,8 @@ pub fn generate(
     fields: &[String],
     package: Option<&str>,
     indexes: &[String],
+    strategy_on: Option<&str>,
+    strategy_yields: Option<&str>,
     pretend: bool,
 ) -> Result<()> {
     let root = find_project_root()?;
@@ -1350,6 +1356,59 @@ pub fn generate(
                     contents: sealed_test(&domain, &name, &variants),
                 },
             ]
+        }
+        ArtifactKind::Strategy => {
+            let variants = parse_variants(fields)?;
+            let domain = place(layout::DOMAIN);
+            let on = strategy_on.ok_or_else(|| {
+                format!(
+                    "`generate strategy` needs the type the strategy examines, e.g. \
+                     `jails g strategy {name} Coffee Large --on Transaction --yields Reward`.\n\n\
+                     Without it jails would have to invent the one method every \
+                     implementation overrides, and every implementation would then have \
+                     to be rewritten."
+                )
+            })?;
+            let spring = matches!(
+                crate::pom::read(&root).map(|p| crate::pom::flavor(&p)),
+                Ok(crate::pom::Flavor::SpringBoot)
+            );
+            // The generated signature names types jails did not write. If one
+            // is not in the project yet, say so here rather than letting the
+            // next `mvn` be what tells you -- a compile error for a line you
+            // did not write is the plumbing this tool exists to remove.
+            for missing in missing_types(&root, [Some(on), strategy_yields]) {
+                println!(
+                    "note: {missing} is not in this project yet -- \
+                     `jails g record {missing} <field:type ...>` writes one"
+                );
+            }
+            let mut artifacts = vec![Artifact {
+                kind: "strategy",
+                path: main_dir(&root, &domain).join(format!("{name}.java")),
+                contents: strategy_interface_java(&domain, &name, &variants, on, strategy_yields),
+            }];
+            for variant in &variants {
+                let class = strategy_class(variant, &name);
+                artifacts.push(Artifact {
+                    kind: "strategy implementation",
+                    path: main_dir(&root, &domain).join(format!("{class}.java")),
+                    contents: strategy_impl_java(
+                        &domain,
+                        &name,
+                        &class,
+                        on,
+                        strategy_yields,
+                        spring,
+                    ),
+                });
+                artifacts.push(Artifact {
+                    kind: "strategy implementation test",
+                    path: test_dir(&root, &domain).join(format!("{class}Test.java")),
+                    contents: strategy_impl_test(&domain, &name, &class, on, strategy_yields),
+                });
+            }
+            artifacts
         }
         ArtifactKind::Command => {
             let cli = place(layout::CLI);
@@ -1689,6 +1748,30 @@ pub fn destroy(
                 main_dir(&root, &place(layout::DOMAIN)).join(format!("{name}.java")),
                 test_dir(&root, &place(layout::DOMAIN)).join(format!("{name}Test.java")),
             ]
+        }
+        // The implementations are read back off disk rather than rebuilt from
+        // a variant list destroy is not given. That also makes it a real
+        // inverse of what is *there*: an implementation added by hand after
+        // the generate call is still one of this strategy's classes, and
+        // leaving it behind implementing a deleted interface would stop the
+        // project compiling.
+        ArtifactKind::Strategy => {
+            let domain = place(layout::DOMAIN);
+            let mut paths = vec![main_dir(&root, &domain).join(format!("{name}.java"))];
+            for path in crate::java::source_files(&main_dir(&root, &domain)) {
+                let Ok(source) = fs::read_to_string(&path) else {
+                    continue;
+                };
+                let Some(info) = crate::java::type_info(&source) else {
+                    continue;
+                };
+                if info.name == name || !info.supertypes.iter().any(|s| s == &name) {
+                    continue;
+                }
+                paths.push(path);
+                paths.push(test_dir(&root, &domain).join(format!("{}Test.java", info.name)));
+            }
+            paths
         }
         ArtifactKind::Command => vec![
             main_dir(&root, &place(layout::CLI)).join(format!("{name}Command.java")),
@@ -3773,6 +3856,242 @@ fn sealed_test(pkg: &str, name: &str, variants: &[String]) -> String {
     out
 }
 
+// ---- strategy: the open set, and the counterpart to `sealed`. ----
+//
+// `sealed` is a closed set the compiler checks: add a variant and every switch
+// stops compiling. `strategy` is the open one -- a port interface, a bean per
+// implementation, and Spring collecting them into a `List<Port>` that the
+// caller iterates without knowing what is in it.
+//
+// It earns a generator because the pattern is entirely boilerplate and its
+// failure is silent. The interface, the implementations, the annotation on
+// each and the `List<Port>` constructor parameter are four things that have to
+// agree, and when one implementation is missing its annotation nothing fails:
+// the list is simply shorter, the rule never fires, and the first person to
+// notice asks why that case is not being rewarded. `~/code/bank/rewards`
+// hand-wrote exactly this shape.
+
+/// A type jails knows the Java spelling of, so it is never "missing".
+fn is_builtin_java_type(ty: &str) -> bool {
+    builtin_by_java_name(ty).is_some()
+}
+
+/// Which of the named types the project does not declare anywhere under
+/// `src/main/java`.
+///
+/// Deliberately a whole-source-tree check by simple name rather than a
+/// package-aware resolve: the generated code and the type it names are in the
+/// same package in the common case, and a false "missing" note on a type that
+/// is really there would be worse than the compile error it replaces. Java's
+/// own built-ins are skipped for the same reason.
+fn missing_types<'a>(
+    root: &Path,
+    names: impl IntoIterator<Item = Option<&'a str>>,
+) -> Vec<String> {
+    let wanted: Vec<&str> = names
+        .into_iter()
+        .flatten()
+        .filter(|n| !is_builtin_java_type(n))
+        .collect();
+    if wanted.is_empty() {
+        return Vec::new();
+    }
+    let declared: std::collections::HashSet<String> =
+        crate::java::source_files(&root.join("src/main/java"))
+            .iter()
+            .filter_map(|p| fs::read_to_string(p).ok())
+            .filter_map(|s| crate::java::type_info(&s).map(|t| t.name))
+            .collect();
+    wanted
+        .into_iter()
+        .filter(|n| !declared.contains(*n))
+        .map(str::to_string)
+        .collect()
+}
+
+/// A variant's class name: `Coffee` + `RewardRule` -> `CoffeeRewardRule`.
+///
+/// A variant that already carries the interface's name keeps it rather than
+/// doubling it, for the same reason `strip_redundant_suffix` exists: typing
+/// the name the class will actually have is the obvious thing to do.
+fn strategy_class(variant: &str, name: &str) -> String {
+    if variant == name || variant.ends_with(name) {
+        variant.to_string()
+    } else {
+        format!("{variant}{name}")
+    }
+}
+
+/// The method every implementation overrides.
+///
+/// With `yields`, the strategy answers "what does this earn?" and returns an
+/// `Optional` -- empty is how an implementation declines, which is what lets
+/// every implementation see every input. Without it the strategy is a
+/// predicate and returns `boolean`.
+fn strategy_method(on: &str, yields: Option<&str>) -> (String, String, String) {
+    let param = lower_first(on);
+    match yields {
+        Some(out) => (
+            format!("Optional<{out}>"),
+            "apply".to_string(),
+            format!("{on} {param}"),
+        ),
+        None => ("boolean".to_string(), "matches".to_string(), format!("{on} {param}")),
+    }
+}
+
+fn strategy_interface_java(
+    pkg: &str,
+    name: &str,
+    variants: &[String],
+    on: &str,
+    yields: Option<&str>,
+) -> String {
+    let (ret, method, param) = strategy_method(on, yields);
+    let param_name = lower_first(on);
+    let mut out = format!("package {pkg};\n\n");
+    if yields.is_some() {
+        out += "import java.util.Optional;\n\n";
+    }
+    out += "/**\n";
+    out += &format!(" * One reason a {param_name} produces a result.\n");
+    out += " *\n";
+    out += &format!(
+        " * <p>An open set: every implementation is a bean, and Spring collects them\n \
+         * into a {{@code List<{name}>}}. Implementations are independent and each one\n \
+         * sees every input, so more than one may answer.\n"
+    );
+    out += " *\n";
+    out += &format!(
+        " * <p>Take the whole set as a constructor parameter rather than naming\n \
+         * implementations one by one -- that is what makes adding one a matter of\n \
+         * writing the class and nothing else:\n"
+    );
+    out += " *\n";
+    out += " * {@snippet :\n";
+    out += &format!(" * private final List<{name}> {}s;\n", lower_first(name));
+    out += &format!(
+        " * Evaluator(List<{name}> {}s) {{ this.{}s = List.copyOf({}s); }}\n",
+        lower_first(name),
+        lower_first(name),
+        lower_first(name)
+    );
+    out += " * }\n";
+    out += " *\n";
+    out += &format!(
+        " * <p>Evaluation should be pure -- no clock beyond one the implementation was\n \
+         * built with, no database, no network -- so the same {param_name} always\n \
+         * yields the same answer.\n"
+    );
+    out += " */\n";
+    out += &format!("public interface {name} {{\n\n");
+    if yields.is_some() {
+        out += &format!(
+            "    /** What this grants, or empty when the {param_name} does not qualify. */\n"
+        );
+    } else {
+        out += &format!("    /** Whether this applies to the given {param_name}. */\n");
+    }
+    out += &format!("    {ret} {method}({param});\n");
+    out += "}\n";
+    let _ = variants;
+    out
+}
+
+fn strategy_impl_java(
+    pkg: &str,
+    name: &str,
+    class: &str,
+    on: &str,
+    yields: Option<&str>,
+    spring: bool,
+) -> String {
+    let (ret, method, param) = strategy_method(on, yields);
+    let param_name = lower_first(on);
+    let mut out = format!("package {pkg};\n\n");
+    if yields.is_some() {
+        out += "import java.util.Optional;\n";
+    }
+    if spring {
+        out += "import org.springframework.stereotype.Component;\n";
+    }
+    out += "\n/**\n";
+    out += &format!(" * TODO: say what makes a {param_name} qualify under {class}.\n");
+    if spring {
+        out += " *\n";
+        out += &format!(
+            " * <p>The {{@code @Component}} is load-bearing and its absence is silent:\n \
+             * without it this class is simply not in the {{@code List<{name}>}}, so it\n \
+             * never runs and nothing reports a problem.\n"
+        );
+    }
+    out += " */\n";
+    if spring {
+        out += "@Component\n";
+    }
+    out += &format!("public final class {class} implements {name} {{\n\n");
+    out += "    @Override\n";
+    out += &format!("    public {ret} {method}({param}) {{\n");
+    match yields {
+        Some(_) => {
+            out += &format!(
+                "        // TODO: decide whether {param_name} qualifies, and what it earns.\n"
+            );
+            out += "        return Optional.empty();\n";
+        }
+        None => {
+            out += &format!("        // TODO: decide whether {param_name} qualifies.\n");
+            out += "        return false;\n";
+        }
+    }
+    out += "    }\n";
+    out += "}\n";
+    out
+}
+
+/// A `@Disabled` test naming what to prove, per the rule the audit settled:
+/// a generated test that passes over an unwritten class inflates the count and
+/// teaches the pattern, and a failing one makes a fresh project red.
+fn strategy_impl_test(pkg: &str, name: &str, class: &str, on: &str, yields: Option<&str>) -> String {
+    // A verb per mode rather than the method name with an `s` glued on:
+    // `apply` + `s` reads `applys`, and a generated test whose name is
+    // misspelled is the first thing anyone sees of the pattern.
+    let verb = if yields.is_some() { "grants" } else { "matches" };
+    let param_name = lower_first(on);
+    let mut out = format!("package {pkg};\n\n");
+    out += "import org.junit.jupiter.api.Disabled;\n";
+    out += "import org.junit.jupiter.api.Test;\n\n";
+    out += "/**\n";
+    out += &format!(
+        " * {class} is a pure function of its {param_name}, so it needs no context,\n \
+         * no container and no mocks -- construct it and call it.\n"
+    );
+    out += " */\n";
+    out += &format!("class {class}Test {{\n\n");
+    out += &format!(
+        "    @Disabled(\"write {class} first: this names what to prove, it does not prove it\")\n"
+    );
+    out += "    @Test\n";
+    out += &format!("    void {verb}WhenThe{on}Qualifies() {{\n");
+    out += &format!("        var {} = new {class}();\n", lower_first(class));
+    out += &format!(
+        "        // TODO: build a qualifying {param_name} and assert what {class} answers.\n"
+    );
+    out += "    }\n";
+    out += "\n";
+    out += &format!(
+        "    @Disabled(\"write {class} first: this names what to prove, it does not prove it\")\n"
+    );
+    out += "    @Test\n";
+    out += &format!("    void declinesWhenThe{on}DoesNot() {{\n");
+    out += &format!("        var {} = new {class}();\n", lower_first(class));
+    out += &format!("        // TODO: assert {class} declines a {param_name} it should not match.\n");
+    out += "    }\n";
+    out += &format!("}}\n");
+    let _ = name;
+    out
+}
+
 // ---- cli: the dispatcher that `generate command` leaves you to write. ----
 
 pub(crate) fn cli_java(pkg: &str, class: &str, program: &str) -> String {
@@ -4890,6 +5209,90 @@ mod tests {
         );
     }
 
+    /// Typing the name the class will actually have is the obvious thing to
+    /// do, and `g service RewardHistoryService` writing
+    /// `RewardHistoryServiceService.java` is the bug that taught jails not to
+    /// punish it. The same rule applies to a strategy's variants.
+    #[test]
+    fn a_strategy_variant_does_not_repeat_the_interface_name() {
+        assert_eq!(strategy_class("Coffee", "RewardRule"), "CoffeeRewardRule");
+        assert_eq!(
+            strategy_class("CoffeeRewardRule", "RewardRule"),
+            "CoffeeRewardRule"
+        );
+        // Never the whole name away: `g strategy Rule Rule` means a class
+        // called `Rule`, not the empty string.
+        assert_eq!(strategy_class("RewardRule", "RewardRule"), "RewardRule");
+    }
+
+    /// `--yields` is what decides the shape: with it the strategy answers
+    /// "what does this earn?" and declines with an empty `Optional`, which is
+    /// what lets every implementation see every input. Without it it is a
+    /// predicate.
+    #[test]
+    fn a_strategy_yields_an_optional_and_a_bare_one_is_a_predicate() {
+        let (ret, method, param) = strategy_method("Transaction", Some("Reward"));
+        assert_eq!(ret, "Optional<Reward>");
+        assert_eq!(method, "apply");
+        assert_eq!(param, "Transaction transaction");
+
+        let (ret, method, _) = strategy_method("Transaction", None);
+        assert_eq!(ret, "boolean");
+        assert_eq!(method, "matches");
+    }
+
+    /// The annotation is the whole reason the pattern works, and its absence
+    /// is silent: without it the class is simply not in the `List<Port>`, so
+    /// it never runs and nothing reports a problem. The generated Javadoc
+    /// says so, because that is the only place a reader will find it.
+    #[test]
+    fn a_spring_strategy_implementation_is_a_bean_and_says_why() {
+        let spring = strategy_impl_java(
+            "com.example.demo.domain",
+            "RewardRule",
+            "CoffeeRewardRule",
+            "Transaction",
+            Some("Reward"),
+            true,
+        );
+        assert!(spring.contains("@Component"), "{spring}");
+        assert!(
+            spring.contains("import org.springframework.stereotype.Component;"),
+            "{spring}"
+        );
+        assert!(spring.contains("its absence is silent"), "{spring}");
+
+        // A plain Maven project has no Spring on the classpath, so the
+        // annotation would not resolve and the import would not compile.
+        let plain = strategy_impl_java(
+            "com.example.demo.domain",
+            "RewardRule",
+            "CoffeeRewardRule",
+            "Transaction",
+            Some("Reward"),
+            false,
+        );
+        assert!(!plain.contains("@Component"), "{plain}");
+        assert!(!plain.contains("springframework"), "{plain}");
+    }
+
+    /// `apply` + `s` reads `applys`. A generated test whose name is
+    /// misspelled is the first thing anyone sees of the pattern.
+    #[test]
+    fn generated_strategy_test_names_are_english() {
+        let yielding =
+            strategy_impl_test("d", "RewardRule", "CoffeeRewardRule", "Transaction", Some("Reward"));
+        assert!(yielding.contains("void grantsWhenTheTransactionQualifies()"), "{yielding}");
+        assert!(!yielding.contains("applys"), "{yielding}");
+
+        let predicate = strategy_impl_test("d", "RewardRule", "CoffeeRewardRule", "Transaction", None);
+        assert!(predicate.contains("void matchesWhenTheTransactionQualifies()"), "{predicate}");
+
+        // @Disabled, not a passing assertion over an unwritten class: it is
+        // reported as skipped rather than counted green.
+        assert!(yielding.contains("@Disabled"), "{yielding}");
+    }
+
     #[test]
     fn parse_variants_rejects_unusable_names() {
         assert!(parse_variants(&[]).is_err());
@@ -5310,8 +5713,7 @@ mod tests {
             &["title:string".to_string()],
             None,
          &[],
-         false,
-        );
+         None, None, false,);
         std::env::set_current_dir(original_cwd).unwrap();
         result.unwrap();
 
@@ -5381,7 +5783,7 @@ mod tests {
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        let result = generate(ArtifactKind::Controller, "health", &[], None, &[], false);
+        let result = generate(ArtifactKind::Controller, "health", &[], None, &[], None, None, false);
         std::env::set_current_dir(original_cwd).unwrap();
         result.unwrap();
 
@@ -5413,7 +5815,7 @@ mod tests {
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        let result = generate(ArtifactKind::Service, "billing", &[], None, &[], false);
+        let result = generate(ArtifactKind::Service, "billing", &[], None, &[], None, None, false);
         std::env::set_current_dir(original_cwd).unwrap();
         result.unwrap();
 
@@ -5442,7 +5844,7 @@ mod tests {
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        let result = generate(ArtifactKind::Repo, "widget", &[], None, &[], false);
+        let result = generate(ArtifactKind::Repo, "widget", &[], None, &[], None, None, false);
         std::env::set_current_dir(original_cwd).unwrap();
         result.unwrap();
 
@@ -5484,9 +5886,8 @@ mod tests {
             &["amount:long".to_string()],
             None,
          &[],
-         false,
-        );
-        let command = generate(ArtifactKind::Command, "greet", &[], None, &[], false);
+         None, None, false,);
+        let command = generate(ArtifactKind::Command, "greet", &[], None, &[], None, None, false);
         std::env::set_current_dir(original_cwd).unwrap();
         record.unwrap();
         command.unwrap();
@@ -5524,7 +5925,7 @@ mod tests {
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        generate(ArtifactKind::Command, "greet", &[], None, &[], false).unwrap();
+        generate(ArtifactKind::Command, "greet", &[], None, &[], None, None, false).unwrap();
         let result = destroy(ArtifactKind::Command, "greet", true, None, false);
         std::env::set_current_dir(original_cwd).unwrap();
 
@@ -5568,7 +5969,7 @@ mod tests {
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        generate(ArtifactKind::Command, "greet", &[], None, &[], false).unwrap();
+        generate(ArtifactKind::Command, "greet", &[], None, &[], None, None, false).unwrap();
         let registered = fs::read_to_string(src.join("App.java")).unwrap();
         let result = destroy(ArtifactKind::Command, "greet", true, None, false);
         std::env::set_current_dir(original_cwd).unwrap();
@@ -5604,7 +6005,7 @@ mod tests {
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        generate(ArtifactKind::Command, "greet", &[], None, &[], false).unwrap();
+        generate(ArtifactKind::Command, "greet", &[], None, &[], None, None, false).unwrap();
         fs::remove_file(src.join("cli/GreetCommand.java")).unwrap();
         fs::remove_file(root.join("src/test/java/com/example/demo/cli/GreetCommandTest.java"))
             .unwrap();
@@ -5646,8 +6047,7 @@ mod tests {
             &["name:string".to_string()],
             None,
          &[],
-         false,
-        )
+         None, None, false,)
         .unwrap();
         let clash = generate(
             ArtifactKind::Record,
@@ -5655,8 +6055,7 @@ mod tests {
             &["name:string".to_string()],
             None,
          &[],
-         false,
-        );
+         None, None, false,);
         let result = destroy(ArtifactKind::Record, "tag", true, None, false);
         std::env::set_current_dir(original_cwd).unwrap();
 
@@ -5691,7 +6090,7 @@ mod tests {
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        let result = generate(ArtifactKind::Controller, "comment", &[], None, &[], false);
+        let result = generate(ArtifactKind::Controller, "comment", &[], None, &[], None, None, false);
         std::env::set_current_dir(original_cwd).unwrap();
 
         assert!(result.is_err());
@@ -5722,8 +6121,7 @@ mod tests {
             &["name:string".to_string()],
             None,
          &[],
-         false,
-        )
+         None, None, false,)
         .unwrap();
         let result = destroy(ArtifactKind::Record, "tag", true, None, false);
         std::env::set_current_dir(original_cwd).unwrap();

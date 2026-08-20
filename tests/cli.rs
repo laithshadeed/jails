@@ -3613,3 +3613,117 @@ fn add_preflight_holds_when_the_refused_capability_is_named_first() {
         before
     );
 }
+
+/// The tier that answers what the tool is for. A strategy's interface,
+/// implementations and tests have to agree on one method signature across
+/// five files, and a mismatch is a compile error the user did not write.
+///
+/// Both modes are covered in one project because they generate different
+/// signatures: `--yields` returns `Optional<T>`, a bare strategy `boolean`.
+#[test]
+fn generate_strategy_produces_a_project_that_compiles_and_passes_tests() {
+    if !real_mvn_available() {
+        eprintln!("skipping: mvn not found on PATH");
+        return;
+    }
+    if !real_java_supports_target_release() {
+        eprintln!("skipping: javac on PATH does not support --release {TARGET_RELEASE}");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let workdir = temp_dir("real-strategy-compiles");
+    jails_cmd_with_path(&workdir, &path)
+        .args(["new-cli", "demo"])
+        .status()
+        .unwrap();
+    let root = workdir.join("demo");
+
+    // The types the generated signature names. Without them the strategy
+    // would not compile, which is what the note at generation time says.
+    for record in ["Transaction", "Reward"] {
+        assert!(
+            jails_cmd_with_path(&root, &path)
+                .args(["g", "record", record, "id:uuid", "amount:long"])
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+
+    assert!(
+        jails_cmd_with_path(&root, &path)
+            .args([
+                "g", "strategy", "RewardRule", "Coffee", "LargeTransaction", "--on",
+                "Transaction", "--yields", "Reward",
+            ])
+            .status()
+            .unwrap()
+            .success()
+    );
+    // The predicate mode, whose method returns `boolean` rather than Optional.
+    assert!(
+        jails_cmd_with_path(&root, &path)
+            .args(["g", "strategy", "Eligibility", "Domestic", "--on", "Transaction"])
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let status = jails_cmd_with_path(&root, &path)
+        .arg("test")
+        .status()
+        .unwrap();
+    assert!(
+        status.success(),
+        "mvn test failed for a project with a generated strategy"
+    );
+}
+
+/// `destroy strategy` reads the implementations back off disk rather than
+/// rebuilding a variant list it was never given, so it takes out every class
+/// implementing the interface -- including one added by hand afterwards.
+/// Leaving that behind implementing a deleted interface stops the project
+/// compiling, which is the failure the generate/destroy inverse rule exists
+/// to prevent.
+#[test]
+fn destroy_strategy_removes_the_implementations_it_did_not_name() {
+    let root = temp_dir("destroy-strategy");
+    write_plain_fixture(&root);
+
+    assert!(
+        jails_cmd(&root, None)
+            .args(["g", "strategy", "RewardRule", "Coffee", "--on", "Transaction"])
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    // An implementation the generate call never knew about.
+    let domain = root.join("src/main/java/com/example/demo/domain");
+    fs::write(
+        domain.join("HandWrittenRewardRule.java"),
+        "package com.example.demo.domain;\n\n\
+         public final class HandWrittenRewardRule implements RewardRule {\n\
+         \x20   @Override\n\
+         \x20   public boolean matches(Transaction transaction) {\n\
+         \x20       return false;\n\
+         \x20   }\n\
+         }\n",
+    )
+    .unwrap();
+
+    assert!(
+        jails_cmd(&root, None)
+            .args(["destroy", "strategy", "RewardRule", "--force"])
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    assert!(!domain.join("RewardRule.java").exists());
+    assert!(!domain.join("CoffeeRewardRule.java").exists());
+    assert!(
+        !domain.join("HandWrittenRewardRule.java").exists(),
+        "an implementation of a deleted interface was left behind"
+    );
+}

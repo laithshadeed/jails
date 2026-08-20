@@ -372,6 +372,19 @@ jails knows nothing about.
   and the adapter would not compile. The first version of this change emitted
   `JdbcClient` for every Spring project and broke `g scaffold` on any project
   that had not run `add db`; only the real-toolchain tier caught it.
+- **`g strategy` is the open counterpart to `g sealed`, and its `destroy`
+  reads disk rather than a path list.** A strategy is a port interface plus a
+  bean per implementation, which Spring collects into a `List<Port>`. Its
+  failure mode is the quiet kind: an implementation missing `@Component` is
+  simply not in the list, so it never runs and nothing reports a problem —
+  which is why the generated Javadoc says so and why `--on`/`--yields` types
+  that are not in the project are named at generation time. `destroy strategy`
+  cannot be given the variant list (destroy takes no fields), so it finds
+  implementations by reading `java::type_info(...).supertypes` under the
+  domain package. That is deliberately *better* than a stored list: an
+  implementation added by hand after the generate call is still one of this
+  strategy's classes, and leaving it behind implementing a deleted interface
+  stops the project compiling.
 - **A name that already carries its kind's suffix must not get it twice.**
   `strip_redundant_suffix` runs in `generate` **and** `destroy` — applied to
   one and not the other, `destroy` rebuilds different paths and strands the

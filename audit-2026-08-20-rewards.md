@@ -291,6 +291,21 @@ list is covered:
   `DeadLetterPublishingRecoverer` + explicit `.DLT` destination. ✅
 - **`ErrorHandlingDeserializer`** wrapping the JSON deserializer. ✅
 - **Retryable vs fatal classification.** `addNotRetryableExceptions(...)`. ✅
+  — revised since. The first version listed `DeserializationException`,
+  `IllegalArgumentException` and `NullPointerException`. Reading
+  `ExceptionClassifier.defaultFatalExceptionsList()` shows the first was already
+  inherited (with four others), so naming it made the generated list look like
+  the whole policy. The third was an outright bug: an NPE is a defect in the
+  listener, and classifying it fatal dead-letters the offending record, commits
+  the offset, and buries the very failure that would have exposed it.
+  `add kafka` now generates a `NonRetryableException` marker and classifies on
+  that alone — the framework keeps the classifications it can infer, and the
+  domain declares the one it cannot.
+- **A dead-letter counter.** `kafka.dlt`, tagged by source topic, resolved
+  through `ObjectProvider<MeterRegistry>` so it works with
+  `jails add observability` and no-ops without it. ✅ — needs an explicit
+  `micrometer-core`, because spring-kafka's is `optionalApi` and
+  `spring-boot-kafka`'s is `optional`, and neither is inherited.
 - **`group.protocol=consumer`** (KIP-848). ✅
 - **`acks=all` / `enable.idempotence=true`** stated rather than inherited. ✅
 - **A `NewTopic` bean.** ✅ — but moved to `g event`, not `add kafka`.

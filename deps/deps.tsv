@@ -1,0 +1,109 @@
+# Upstream source checkouts used as read-only research references.
+# Format: <dir>\t<owner/repo>   (one per line, '#' comments ignored)
+# Cloned via the `github-personal:` ssh alias, matching the existing checkouts.
+
+# --- language / platform ---
+jdk	openjdk/jdk
+
+# --- spring ---
+spring-boot	spring-projects/spring-boot
+spring-framework	spring-projects/spring-framework
+spring-security	spring-projects/spring-security
+spring-kafka	spring-projects/spring-kafka
+spring-data-redis	spring-projects/spring-data-redis
+spring-modulith	spring-projects/spring-modulith
+spring-integration	spring-projects/spring-integration
+spring-cloud-commons	spring-cloud/spring-cloud-commons
+spring-cloud-circuitbreaker	spring-cloud/spring-cloud-circuitbreaker
+springdoc-openapi	springdoc/springdoc-openapi
+start.spring.io	spring-io/start.spring.io
+
+# --- datastores / messaging / infra ---
+postgres	postgres/postgres
+pgjdbc	pgjdbc/pgjdbc
+redis	redis/redis
+lettuce	redis/lettuce
+kafka	apache/kafka
+zookeeper	apache/zookeeper
+schema-registry	confluentinc/schema-registry
+avro	apache/avro
+hazelcast	hazelcast/hazelcast
+hikaricp	brettwooldridge/HikariCP
+tomcat	apache/tomcat
+netty	netty/netty
+
+# --- json / serialization ---
+jackson-core	FasterXML/jackson-core
+jackson-databind	FasterXML/jackson-databind
+jackson-annotations	FasterXML/jackson-annotations
+java-uuid-generator	cowtowncoder/java-uuid-generator
+zjsonpatch	flipkart-incubator/zjsonpatch
+snappy-java	xerial/snappy-java
+
+# --- resilience / observability / caching ---
+resilience4j	resilience4j/resilience4j
+micrometer	micrometer-metrics/micrometer
+opentelemetry-java	open-telemetry/opentelemetry-java
+opentelemetry-java-instrumentation	open-telemetry/opentelemetry-java-instrumentation
+caffeine	ben-manes/caffeine
+disruptor	LMAX-Exchange/disruptor
+HdrHistogram	HdrHistogram/HdrHistogram
+
+# --- logging ---
+slf4j	qos-ch/slf4j
+logback	qos-ch/logback
+commons-logging	apache/commons-logging
+
+# --- security / crypto ---
+bc-java	bcgit/bc-java
+aws-encryption-sdk-java	aws/aws-encryption-sdk-java
+
+# --- aws ---
+aws-sdk-java-v2	aws/aws-sdk-java-v2
+
+# --- jakarta / validation ---
+jakarta-validation	jakartaee/validation
+jakarta-annotations	jakartaee/common-annotations-api
+jakarta-activation	jakartaee/jaf-api
+jakarta-jaxb-api	jakartaee/jaxb-api
+hibernate-validator	hibernate/hibernate-validator
+
+# --- apache commons ---
+commons-lang	apache/commons-lang
+commons-codec	apache/commons-codec
+commons-collections	apache/commons-collections
+commons-compress	apache/commons-compress
+commons-math	apache/commons-math
+commons-pool	apache/commons-pool
+commons-text	apache/commons-text
+httpcomponents-client	apache/httpcomponents-client
+httpcomponents-core	apache/httpcomponents-core
+
+# --- testing ---
+junit-framework	junit-team/junit-framework
+mockito	mockito/mockito
+assertj	assertj/assertj
+hamcrest	hamcrest/JavaHamcrest
+awaitility	awaitility/awaitility
+testcontainers-java	testcontainers/testcontainers-java
+wiremock	wiremock/wiremock
+wiremock-testcontainers-java	wiremock/wiremock-testcontainers-java
+
+# --- tooling / codegen / annotations ---
+lombok	projectlombok/lombok
+jspecify	jspecify/jspecify
+error-prone	google/error-prone
+checker-framework	typetools/checker-framework
+guava	google/guava
+re2j	google/re2j
+jna	java-native-access/jna
+aspectj	eclipse-aspectj/aspectj
+swagger-core	swagger-api/swagger-core
+openapi-generator	OpenAPITools/openapi-generator
+openfeature-java-sdk	open-feature/java-sdk
+checkstyle	checkstyle/checkstyle
+jacoco	jacoco/jacoco
+dafny	dafny-lang/dafny
+
+# --- other reference ---
+rails	rails/rails

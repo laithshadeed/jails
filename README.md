@@ -386,6 +386,34 @@ support it. `add`, `remove` and `rename` spell the same thing `--dry-run`.
   `permits` clause and one record per variant, plus a test whose `switch` has
   no `default`, so adding a variant breaks the build. The closed set an enum
   can't model, because each case carries its own data.
+- `jails generate|g strategy <Name> <Variant...> --on <Type> [--yields <Type>]`
+  (alias `rule`) — the open set, and the counterpart to `sealed`: one port
+  interface, a bean per implementation, and Spring collecting them into a
+  `List<Name>` the caller iterates without knowing what is in it.
+
+  ```
+  jails g strategy RewardRule Coffee LargeTransaction --on Transaction --yields Reward
+  ```
+
+  writes `RewardRule` (`Optional<Reward> apply(Transaction)`),
+  `CoffeeRewardRule` and `LargeTransactionRewardRule` — each `@Component`, each
+  with a `@Disabled` test naming what to prove. A variant that already carries
+  the interface's name keeps it rather than doubling it. Without `--yields` the
+  strategy is a predicate returning `boolean`; with it, an implementation
+  declines by returning `Optional.empty()`, which is what lets every
+  implementation see every input.
+
+  It earns a generator because the failure is silent: the interface, the
+  implementations, the annotation on each and the `List<Name>` constructor
+  parameter are four things that have to agree, and an implementation missing
+  its `@Component` is simply not in the list — it never runs, and nothing
+  reports a problem. `--on`/`--yields` types that aren't in the project yet are
+  named at generation time rather than left for the next `mvn`.
+
+  `jails destroy strategy <Name>` reads the implementations back off disk
+  rather than rebuilding a variant list it was never given, so it also removes
+  ones added by hand — left behind implementing a deleted interface, they stop
+  the project compiling.
 - `jails generate|g enum <Name> <CONSTANT...>` — a plain enum plus its test.
   Also the one type jails can build a sample of, which is why an enum-typed
   component keeps its companion test working.

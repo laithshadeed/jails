@@ -155,6 +155,15 @@ enum Command {
         ///   --index 'customer_id, created_at desc'
         #[arg(long = "index", value_name = "COLUMNS")]
         indexes: Vec<String>,
+        /// For `strategy`: the type each implementation examines.
+        ///
+        ///   jails g strategy RewardRule Coffee Large --on Transaction --yields Reward
+        #[arg(long = "on", value_name = "TYPE")]
+        strategy_on: Option<String>,
+        /// For `strategy`: what a matching implementation produces. Omit and
+        /// the strategy is a predicate returning `boolean`.
+        #[arg(long = "yields", value_name = "TYPE")]
+        strategy_yields: Option<String>,
     },
     /// Add one or more capabilities to an existing project: dependencies, code and tests
     ///
@@ -382,7 +391,18 @@ fn main() {
             fields,
             package,
             indexes,
-        } => generate::generate(kind, &name, &fields, package.as_deref(), &indexes, pretend),
+            strategy_on,
+            strategy_yields,
+        } => generate::generate(
+            kind,
+            &name,
+            &fields,
+            package.as_deref(),
+            &indexes,
+            strategy_on.as_deref(),
+            strategy_yields.as_deref(),
+            pretend,
+        ),
         Command::Add {
             capabilities,
             name,

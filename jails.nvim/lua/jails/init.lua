@@ -46,6 +46,8 @@ local KINDS = {
   'value',
   'enum',
   'sealed',
+  'strategy',
+  'rule',
   'repo',
   'migration',
   'handler',
@@ -140,8 +142,8 @@ local OPTIONS = {
   routes = { '--json' },
   -- `--pretend` is global (every writing command takes it); it is listed
   -- here on the ones where previewing is most often wanted.
-  generate = { '--package', '--pretend', '--index' },
-  g = { '--package', '--pretend', '--index' },
+  generate = { '--package', '--pretend', '--index', '--on', '--yields' },
+  g = { '--package', '--pretend', '--index', '--on', '--yields' },
   destroy = { '--force', '--package', '--pretend' },
   d = { '--force', '--package', '--pretend' },
   notes = {},
