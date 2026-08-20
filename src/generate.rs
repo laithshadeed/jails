@@ -7,35 +7,55 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Copy, ValueEnum)]
 #[value(rename_all = "lowercase")]
 pub enum ArtifactKind {
+    /// A REST resource that runs: record, port, JDBC + in-memory adapters,
+    /// DTOs, service, controller, migration, fixture and tests
     Scaffold,
+    /// A Spring `@RestController` stub and its test
     Controller,
+    /// A `@Service` stub and its test
     Service,
+    /// A plain `final class` and its test, in the base package
     Class,
+    /// A plain Java interface
     Interface,
+    /// An immutable record with compact-constructor validation, plus a test
     Record,
+    /// A record whose fields are all validated as a value object
     Value,
+    /// An enum and its test -- the one type jails can build a sample of
     Enum,
+    /// A sealed interface with one record per variant; adding one breaks the build
     Sealed,
+    /// Repository port, a derived JDBC adapter, and a real-database IT
     #[value(alias = "repository")]
     Repo,
+    /// The next `VNNN__description.sql` under db/migration; forward-only
     #[value(alias = "mig")]
     Migration,
+    /// An `HttpHandler` on the JDK's own server -- no framework
     Handler,
+    /// A CLI subcommand, registered in the project's dispatcher
     Command,
+    /// A second CLI dispatcher, separate from App.java
     Cli,
+    /// A test class per scenario in a markdown file
     Cases,
-    /// A declarative HTTP client: an `@HttpExchange` interface, its group
-    /// registration, and a test against a real socket
+    /// A declarative HTTP client: `@HttpExchange` interface, group
+    /// registration, and a test against a real socket (Spring only)
     Client,
     /// Scheduled work: a `@Scheduled` component that cannot cancel its own
-    /// schedule by throwing
+    /// schedule by throwing (Spring only)
     Job,
-    /// Request/response records for a domain type, with the mapping
+    /// Request/response records for a domain type, with the mapping and a
+    /// round-trip test (Spring only)
     Dto,
-    /// A Kafka slice: the payload record, a publisher, a listener, and an
-    /// integration test against a real broker
+    /// A Kafka slice: payload record, publisher, listener, and an IT against
+    /// a real broker (Spring only)
     Event,
+    /// A `<Name>Test` skeleton
     Test,
+    /// A disabled `<Name>IT` skeleton for a real boundary test; also splices
+    /// the Failsafe plugin, without which no `*IT` ever runs
     #[value(name = "integration-test", alias = "it")]
     IntegrationTest,
 }

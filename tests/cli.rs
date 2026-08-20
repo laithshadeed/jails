@@ -3416,3 +3416,43 @@ fn generating_an_integration_test_also_configures_something_to_run_it() {
     let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
     assert_eq!(pom.matches("maven-failsafe-plugin").count(), 1, "{pom}");
 }
+
+#[test]
+fn generate_help_documents_the_field_syntax_at_the_point_of_typing() {
+    // The field grammar is the thing you need while typing the command, and
+    // it lived only in the README. clap reflows a doc comment into one
+    // paragraph unless told not to, which turns the table and the examples
+    // into a run-on -- so the formatting is worth asserting, not just the
+    // presence of the words.
+    let workdir = temp_dir("generate-help");
+    let output = jails_cmd(&workdir, None)
+        .args(["generate", "--help"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let help = String::from_utf8_lossy(&output.stdout);
+
+    assert!(help.contains("name:string!"), "{help}");
+    assert!(help.contains("name:string?"), "{help}");
+    assert!(help.contains("Case is the rule"), "{help}");
+    assert!(help.contains("list<string>"), "{help}");
+    // Line breaks survived: the table is indented lines, not one paragraph.
+    assert!(help.contains("\n  name:string      required"), "{help}");
+    assert!(help.contains("\n  jails g sealed Outcome"), "{help}");
+    // Every kind carries a description rather than a bare name.
+    assert!(help.contains("- scaffold:"), "{help}");
+    assert!(help.contains("- sealed:"), "{help}");
+}
+
+#[test]
+fn add_help_lists_worked_examples() {
+    let workdir = temp_dir("add-help");
+    let output = jails_cmd(&workdir, None)
+        .args(["add", "--help"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let help = String::from_utf8_lossy(&output.stdout);
+    assert!(help.contains("jails add db kafka redis"), "{help}");
+    assert!(help.contains("is the exact inverse"), "{help}");
+}

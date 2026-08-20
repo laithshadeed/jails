@@ -104,7 +104,37 @@ enum Command {
         no_git: bool,
     },
     /// Generate a scaffold or one small Java/SQL artifact
-    #[command(visible_alias = "g")]
+    ///
+    /// FIELDS are `name:type`, with an optional suffix:
+    ///
+    ///   name:string      required, must not be null
+    ///   name:string!     required and must not be blank (text only)
+    ///   name:string?     optional -- becomes an Optional<T> component
+    ///
+    /// Case is the rule. A lowercase type is one jails knows and can build a
+    /// sample of: string, int, long, double, boolean, uuid, instant, date,
+    /// datetime, bigdecimal, duration, uri, path, zoneid. A capitalised one
+    /// is a type your project owns -- passed through verbatim, no import,
+    /// same package. `id:String` still works; jails recognises the Java
+    /// spelling of its own built-ins.
+    ///
+    /// Collections are `list<string>` and `map<string,long>`.
+    ///
+    /// Examples:
+    ///   jails g scaffold Payout id:uuid amount:bigdecimal paidAt:instant
+    ///   jails g record Money amount:long currency:Currency
+    ///   jails g scaffold Note title:string! body:string?    # ! non-blank, ? optional
+    ///   jails g sealed Outcome Accepted Rejected
+    ///   jails g dto Payout                                  # reads the record on disk
+    ///   jails g mig add_payout_index
+    ///
+    /// A kind whose fields jails cannot sample still gets its test, emitted
+    /// whole and @Disabled naming the type -- a guess would not compile, and
+    /// silence would drop the coverage.
+    // verbatim_doc_comment: clap reflows a doc comment into one
+    // paragraph by default, which turns the field-syntax table and the
+    // examples into an unreadable run-on.
+    #[command(visible_alias = "g", verbatim_doc_comment)]
     Generate {
         kind: ArtifactKind,
         name: String,
@@ -116,7 +146,21 @@ enum Command {
         package: Option<String>,
     },
     /// Add one or more capabilities to an existing project: dependencies, code and tests
-    #[command(visible_alias = "a")]
+    ///
+    /// A capability is a whole slice, not a dependency line: the artifact in
+    /// pom.xml, the code that uses it, a test that proves it works, and where
+    /// relevant a compose service and the properties that make it behave.
+    /// Re-running one reports what is already there and changes nothing else.
+    ///
+    /// Examples:
+    ///   jails add db                 # postgres, Flyway, Testcontainers, compose
+    ///   jails add api                # RFC 9457 problem responses + validation
+    ///   jails add db kafka redis     # several at once
+    ///   jails add csv --name Ledger  # name the generated class
+    ///   jails add security --pretend # see the plan, write nothing
+    ///
+    /// `jails remove <capability>` is the exact inverse.
+    #[command(visible_alias = "a", verbatim_doc_comment)]
     Add {
         #[arg(required = true, num_args = 1..)]
         capabilities: Vec<Capability>,
