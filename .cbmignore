@@ -1,0 +1,4 @@
+# Vendored upstream source trees kept for research only: ~6.3 GB / 176k files
+# (jdk, postgres, hazelcast, kafka, rails, start.spring.io). Indexing these
+# blew the index worker past 25 GB RSS and OOM'd the laptop.
+target/

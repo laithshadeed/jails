@@ -1363,6 +1363,7 @@ fn publisher_java(pkg: &str, name: &str, topic: &str) -> String {
     format!(
         r#"package {pkg};
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
 
@@ -1385,8 +1386,7 @@ public class {name}Publisher {{
     private final String topic;
 
     public {name}Publisher(
-            KafkaTemplate<String, {name}Event> kafka,
-            @org.springframework.beans.factory.annotation.Value("${{topics.{topic}:{topic}}}") String topic) {{
+            KafkaTemplate<String, {name}Event> kafka, @Value("${{topics.{topic}:{topic}}}") String topic) {{
         this.kafka = kafka;
         this.topic = topic;
     }}
@@ -1463,8 +1463,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Publishes through a real broker and waits for it to come back.
  *
  * <p>An {{@code IT}}, so Failsafe runs it in {{@code verify}} rather than on
- * every {{@code jails test}}: starting a broker costs seconds, not
- * milliseconds.
+ * every {{@code jails test}}: starting a broker costs tens of seconds.
  *
  * <p>{{@code @ServiceConnection}} points the application at the container --
  * no bootstrap-servers property to override, and no chance of a test quietly
@@ -1473,17 +1472,17 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>The latch is the part worth copying. Consumption is asynchronous, so an
  * assertion made straight after publishing races the consumer and fails about
  * one run in five. Waiting on a latch with a timeout either observes the
- * message or fails with a clear timeout.
+ * message or fails saying so.
  */
 @SpringBootTest
 @Import({name}MessagingIT.Containers.class)
 class {name}MessagingIT {{
 
-    private static final CountDownLatch RECEIVED = new CountDownLatch(1);
-    private static final AtomicReference<{name}Event> LAST = new AtomicReference<>();
-
     @Autowired
     private {name}Publisher publisher;
+
+    @Autowired
+    private Probe probe;
 
     @Test
     void aPublishedEventIsConsumed() throws InterruptedException {{
@@ -1491,22 +1490,36 @@ class {name}MessagingIT {{
 
         publisher.publish(event);
 
-        assertThat(RECEIVED.await(30, TimeUnit.SECONDS))
+        assertThat(probe.received.await(30, TimeUnit.SECONDS))
                 .as("the event should have been consumed within 30s")
                 .isTrue();
-        assertThat(LAST.get().id()).isEqualTo("probe-1");
+        assertThat(probe.last.get().id()).isEqualTo("probe-1");
     }}
 
     /**
-     * A second listener on the same topic, in its own consumer group so it
-     * does not compete with the application's listener for partitions --
-     * two consumers in one group split the work and each message reaches
-     * only one of them.
+     * The probe has to be a *bean*, not a method on the test class.
+     *
+     * <p>{{@code @KafkaListener}} is registered by a bean post-processor, and
+     * a test instance is not a bean -- Spring creates it and injects into it,
+     * but never processes its annotations. A listener declared on the test
+     * class is therefore silently never subscribed, and the only symptom is a
+     * latch that times out with nothing in the log to explain it.
      */
-    @KafkaListener(topics = "${{topics.{topic}:{topic}}}", groupId = "{topic}-it-probe")
-    void record({name}Event event) {{
-        LAST.set(event);
-        RECEIVED.countDown();
+    static class Probe {{
+
+        private final CountDownLatch received = new CountDownLatch(1);
+        private final AtomicReference<{name}Event> last = new AtomicReference<>();
+
+        /**
+         * Its own consumer group, so it does not compete with the
+         * application's listener: two consumers in one group split the
+         * partitions and each message reaches only one of them.
+         */
+        @KafkaListener(topics = "${{topics.{topic}:{topic}}}", groupId = "{topic}-it-probe")
+        void on({name}Event event) {{
+            last.set(event);
+            received.countDown();
+        }}
     }}
 
     @TestConfiguration(proxyBeanMethods = false)
@@ -1518,12 +1531,16 @@ class {name}MessagingIT {{
             return new KafkaContainer("apache/kafka:4.1.0")
                     .withStartupTimeout(Duration.ofMinutes(2));
         }}
+
+        @Bean
+        Probe probe() {{
+            return new Probe();
+        }}
     }}
 }}
 "#
     )
 }
-
 // ---------------------------------------------------------------------------
 // `add security` -- an explicit filter chain, rather than the default one.
 // ---------------------------------------------------------------------------
