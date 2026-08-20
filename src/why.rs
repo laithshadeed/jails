@@ -51,6 +51,66 @@ struct Rule {
 
 const RULES: &[Rule] = &[
     Rule {
+        // Testcontainers caches a failed environment probe for the life of
+        // the JVM, so this is what every *subsequent* test in the same run
+        // reports. Observed 7 times against 4 of the original message, which
+        // means the retry text is the one more often pasted into a search.
+        signatures: &["Previous attempts to find a Docker environment failed"],
+        group: "docker-env",
+        explain: |_| Diagnosis {
+            headline: "Testcontainers gave up looking for a container engine".into(),
+            because: "This is the *second* failure, not the first: Testcontainers probes for an \
+                      engine once per JVM and caches the answer, so every test after the first \
+                      reports this instead of the real message. The original is earlier in the \
+                      log -- search up for \"Could not find a valid Docker environment\". The \
+                      cause is almost always that Testcontainers reads DOCKER_HOST or \
+                      /var/run/docker.sock and finds neither, while the `docker` CLI works fine \
+                      because it is podman's shim talking to a different socket."
+                .into(),
+            fixes: vec![
+                "export DOCKER_HOST=unix://$XDG_RUNTIME_DIR/podman/podman.sock".into(),
+                "export TESTCONTAINERS_RYUK_DISABLED=true   # rootless podman cannot run Ryuk".into(),
+                "jails doctor                                # its testcontainers check reports this".into(),
+            ],
+        },
+    },
+    Rule {
+        // `jails console` shells out to jshell, whose default execution
+        // engine forks a JVM and talks to it over a loopback socket.
+        signatures: &["FailOverExecutionControlProvider"],
+        group: "jshell",
+        explain: |_| Diagnosis {
+            headline: "jshell could not start its execution engine".into(),
+            because: "By default jshell runs your snippets in a *second* JVM and talks to it over \
+                      a loopback socket (the `jdi` execution provider). Where opening that socket \
+                      is not permitted -- a sandbox, a locked-down container, some corporate \
+                      endpoint agents -- the launch fails with this provider-chain message, which \
+                      says nothing about sockets. The `local` provider runs snippets in the same \
+                      JVM and needs no socket at all; the trade is isolation, so a snippet that \
+                      calls System.exit takes the shell with it."
+                .into(),
+            fixes: vec![
+                "jails console -- --execution local".into(),
+            ],
+        },
+    },
+    Rule {
+        signatures: &["mvnd/registry", "Read-only file system"],
+        group: "mvnd-registry",
+        explain: |_| Diagnosis {
+            headline: "The Maven daemon cannot write its registry".into(),
+            because: "mvnd keeps a registry of running daemons under ~/.m2/mvnd, and cannot start \
+                      when that path is read-only -- which is what a sandbox with a read-only home \
+                      looks like from inside. This is the daemon failing to launch, not your build \
+                      failing."
+                .into(),
+            fixes: vec![
+                "jails mvn -- <goal>   # jails prefers the project's ./mvnw, which is not mvnd".into(),
+                "rm -rf ~/.m2/mvnd/registry   # if the registry is merely stale rather than read-only".into(),
+            ],
+        },
+    },
+    Rule {
         signatures: &["Could not find a valid Docker environment"],
         group: "docker-env",
         explain: |_| Diagnosis {
@@ -174,6 +234,27 @@ const RULES: &[Rule] = &[
                         .into(),
                 ],
             }
+        },
+    },
+    Rule {
+        // The generic wrapper. Deliberately one signature, so the specific
+        // rules above (which name the type) outrank it whenever the fuller
+        // message is present -- this one is for a log where only the
+        // exception line survived.
+        signatures: &["UnsatisfiedDependencyException"],
+        group: "missing-bean",
+        explain: |_| Diagnosis {
+            headline: "A bean could not be constructed because one of its dependencies could not be"
+                .into(),
+            because: "Spring reports the outermost bean, but the cause is further down: read to the \
+                      last `Caused by:` and it will name a type. That type either has no \
+                      implementation registered, or has more than one and Spring will not choose. \
+                      Both are visible without starting the application."
+                .into(),
+            fixes: vec![
+                "jails beans     # every registered bean, and which dependencies do not resolve".into(),
+                "jails doctor    # the same check, as a pass/fail line".into(),
+            ],
         },
     },
     Rule {
@@ -666,6 +747,58 @@ mod tests {
                    : Application run failed\n[INFO] BUILD SUCCESS";
         assert!(looks_fatal(log));
         assert!(!looks_fatal("[INFO] BUILD SUCCESS\nStarted RewardsApplication in 1.2 seconds"));
+    }
+
+    /// Every distinct root cause found in a month of this machine's real
+    /// session logs, with the occurrence count that justified the rule.
+    /// Measured before writing them: 2 of 6 were recognised.
+    #[test]
+    fn every_root_cause_seen_in_real_logs_is_recognised() {
+        let observed: [(&str, &str); 6] = [
+            // 8x
+            (
+                "UnsatisfiedDependencyException",
+                "Caused by: org.springframework.beans.factory.UnsatisfiedDependencyException: \
+                 Error creating bean with name 'rewardController'",
+            ),
+            // 8x
+            (
+                "dataSource / Hikari",
+                "Caused by: org.springframework.beans.BeanInstantiationException: Failed to \
+                 instantiate [com.zaxxer.hikari.HikariDataSource]: Failed to determine a suitable \
+                 driver class",
+            ),
+            // 7x -- the cached-probe variant, more common than the original
+            (
+                "Testcontainers retry",
+                "Caused by: java.lang.IllegalStateException: Previous attempts to find a Docker \
+                 environment failed. Will not retry.",
+            ),
+            // 4x
+            (
+                "Testcontainers first failure",
+                "Caused by: java.lang.IllegalStateException: Could not find a valid Docker \
+                 environment.",
+            ),
+            // 1x
+            (
+                "mvnd registry",
+                "Caused by: java.nio.file.FileSystemException: \
+                 /home/laith/.m2/mvnd/registry/1.0.6/registry.bin: Read-only file system",
+            ),
+            // 33x -- `jails console`, whose jshell needs a loopback socket
+            (
+                "jshell execution engine",
+                "Launching JShell execution engine threw: FailOverExecutionControlProvider: \
+                 FAILED: 0:jdi:hostname(127.0.0.1)",
+            ),
+        ];
+        for (label, log) in observed {
+            assert!(
+                !explain(log).is_empty(),
+                "no rule matches a failure that really happened: {label}"
+            );
+        }
     }
 
     #[test]

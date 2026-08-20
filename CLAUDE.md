@@ -54,7 +54,15 @@ isn't already there.
   matched against a log. Rules sharing a `group` describe one failure
   through different messages and only the most specific is reported. Add
   rules only from failures that actually happened; a guessed cause costs
-  more than no cause.
+  more than no cause. The way to find them is to mine the real logs:
+  `grep -rhoa -E "Caused by: [a-zA-Z0-9_.]+(Exception|Error): .{0,80}"` over
+  `~/.codex/sessions`, deduplicated and counted. Doing that once took
+  coverage of this machine's distinct root causes from 2/6 to 6/6, and
+  `every_root_cause_seen_in_real_logs_is_recognised` pins each with the
+  count that justified it. Two of the four additions were variants of
+  failures already covered — Testcontainers caches its environment probe, so
+  the *retry* message ("Previous attempts to find a Docker environment
+  failed") appears more often than the original.
 - `src/sql.rs` — the field spec -> SQL mapping: column name, Postgres type,
   and the two JDBC expressions. One column list feeds the DDL, the select,
   the insert, the bind and the row mapper, which is the whole point — a
