@@ -138,219 +138,15 @@ pub(crate) fn api_slice(root: &Path, pkg: &str) -> SpringSlice {
 /// With `permits` spelled out, adding one breaks the build at the switch --
 /// which is where the decision about its status code belongs.
 fn api_exception_java(pkg: &str) -> String {
-    format!(
-        r#"package {pkg};
-
-/**
- * A failure this application knows how to describe to a client.
- *
- * <p>Sealed on purpose. {{@link ApiExceptionHandler}} switches over these to
- * choose a status code, and that switch has no {{@code default}} branch -- so
- * adding a variant here stops the build until someone decides what it means
- * over HTTP. An open hierarchy would instead let a new failure quietly become
- * a 500.
- *
- * <p>Abstract as well as sealed: a sealed class that can itself be
- * instantiated is one more case the switch has to cover, and javac says so.
- *
- * <p>These carry no stack trace: they describe an expected outcome (the id was
- * not there, the version had moved on), not a bug, and collecting a trace for
- * every 404 is pure cost.
- */
-public abstract sealed class ApiException extends RuntimeException {{
-
-    private ApiException(String message) {{
-        // No writable stack trace, no suppression: an expected outcome does
-        // not need the cost of a fill-in.
-        super(message, null, false, false);
-    }}
-
-    /** Nothing with that identity exists. Becomes a 404. */
-    public static final class NotFound extends ApiException {{
-        public NotFound(String message) {{
-            super(message);
-        }}
-    }}
-
-    /** The request conflicts with the current state. Becomes a 409. */
-    public static final class Conflict extends ApiException {{
-        public Conflict(String message) {{
-            super(message);
-        }}
-    }}
-
-    /**
-     * The request was well-formed but the domain rejected it. Becomes a 422 --
-     * as opposed to a 400, which means jails could not read the request at all.
-     */
-    public static final class Rejected extends ApiException {{
-        public Rejected(String message) {{
-            super(message);
-        }}
-    }}
-}}
-"#
-    )
+    crate::template::render(include_str!("../templates/spring/api_exception_java.java"), &[("pkg", pkg)])
 }
 
 fn api_exception_handler_java(pkg: &str) -> String {
-    format!(
-        r#"package {pkg};
-
-import java.util.LinkedHashMap;
-import java.util.Map;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.HttpStatusCode;
-import org.springframework.http.ProblemDetail;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.MethodArgumentNotValidException;
-import org.springframework.web.bind.annotation.ExceptionHandler;
-import org.springframework.web.bind.annotation.RestControllerAdvice;
-import org.springframework.web.context.request.WebRequest;
-import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
-
-/**
- * Turns failures into RFC 9457 problem responses, in one place.
- *
- * <p>Extends Spring's own {{@link ResponseEntityExceptionHandler}} rather than
- * starting from nothing, so every exception the framework already understands
- * -- an unreadable body, a missing parameter, an unsupported media type --
- * keeps the status code Spring chose for it. Only this application's own
- * failures need a mapping, and they are the sealed set in
- * {{@link ApiException}}.
- *
- * <p>The response body is {{@code application/problem+json}}: a media type
- * with a specification behind it, rather than a {{@code Map<String, String>}}
- * shaped differently in each controller.
- */
-@RestControllerAdvice
-public class ApiExceptionHandler extends ResponseEntityExceptionHandler {{
-
-    /**
-     * The application's own failures. The switch has no {{@code default}}:
-     * a new {{@link ApiException}} variant breaks this build until its status
-     * is decided here.
-     */
-    @ExceptionHandler(ApiException.class)
-    public ProblemDetail handleApiException(ApiException failure) {{
-        HttpStatus status =
-                switch (failure) {{
-                    case ApiException.NotFound ignored -> HttpStatus.NOT_FOUND;
-                    case ApiException.Conflict ignored -> HttpStatus.CONFLICT;
-                    case ApiException.Rejected ignored -> HttpStatus.UNPROCESSABLE_ENTITY;
-                }};
-        return ProblemDetail.forStatusAndDetail(status, failure.getMessage());
-    }}
-
-    /**
-     * Bean-validation failures on a request body or parameter.
-     *
-     * <p>Spring's default renders these as a 400 with no indication of which
-     * field was wrong, which is the single most common reason a client
-     * integration stalls. The field errors go into a {{@code fields}} extension
-     * member -- an RFC 9457 problem document is explicitly extensible, so this
-     * needs no bespoke error envelope.
-     */
-    @Override
-    protected ResponseEntity<Object> handleMethodArgumentNotValid(
-            MethodArgumentNotValidException failure,
-            HttpHeaders headers,
-            HttpStatusCode status,
-            WebRequest request) {{
-        ProblemDetail problem =
-                ProblemDetail.forStatusAndDetail(status, "the request has invalid fields");
-        // LinkedHashMap: field order follows declaration order, so the
-        // response is stable and diffable between runs.
-        Map<String, String> fields = new LinkedHashMap<>();
-        failure.getBindingResult()
-                .getFieldErrors()
-                .forEach(error -> fields.putIfAbsent(error.getField(), message(error.getDefaultMessage())));
-        problem.setProperty("fields", fields);
-        return handleExceptionInternal(failure, problem, headers, status, request);
-    }}
-
-    private static String message(String defaultMessage) {{
-        return defaultMessage == null ? "is invalid" : defaultMessage;
-    }}
-}}
-"#
-    )
+    crate::template::render(include_str!("../templates/spring/api_exception_handler_java.java"), &[("pkg", pkg)])
 }
 
 fn api_exception_handler_test_java(pkg: &str) -> String {
-    format!(
-        r#"package {pkg};
-
-import java.util.List;
-import org.junit.jupiter.api.Test;
-import org.springframework.http.HttpStatus;
-import org.springframework.test.web.servlet.assertj.MockMvcTester;
-import org.springframework.test.web.servlet.setup.StandaloneMockMvcBuilder;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RestController;
-
-import static org.assertj.core.api.Assertions.assertThat;
-
-/**
- * Drives the advice through a standalone MockMvc rather than a
- * {{@code @SpringBootTest}}: no application context, no database, no port, so
- * it runs in milliseconds and keeps failing for exactly one reason.
- *
- * <p>The controller below exists only to throw. Testing the advice against
- * the real controllers would couple this test to whatever they happen to do
- * today.
- */
-class ApiExceptionHandlerTest {{
-
-    private final MockMvcTester mvc =
-            MockMvcTester.of(
-                    List.of(new ThrowingController()),
-                    builder -> builder.setControllerAdvice(new ApiExceptionHandler()).build());
-
-    @Test
-    void aMissingThingBecomesA404Problem() {{
-        assertThat(mvc.get().uri("/boom/not-found"))
-                .hasStatus(HttpStatus.NOT_FOUND)
-                .bodyJson()
-                .extractingPath("$.detail")
-                .isEqualTo("no such thing");
-    }}
-
-    @Test
-    void aConflictBecomesA409() {{
-        assertThat(mvc.get().uri("/boom/conflict")).hasStatus(HttpStatus.CONFLICT);
-    }}
-
-    @Test
-    void aDomainRejectionBecomesA422() {{
-        // 422, not 400: the request was read successfully and the domain said
-        // no. A 400 would tell the client to fix its syntax.
-        assertThat(mvc.get().uri("/boom/rejected"))
-                .hasStatus(HttpStatus.UNPROCESSABLE_ENTITY);
-    }}
-
-    @RestController
-    static class ThrowingController {{
-
-        @GetMapping("/boom/not-found")
-        String notFound() {{
-            throw new ApiException.NotFound("no such thing");
-        }}
-
-        @GetMapping("/boom/conflict")
-        String conflict() {{
-            throw new ApiException.Conflict("already exists");
-        }}
-
-        @GetMapping("/boom/rejected")
-        String rejected() {{
-            throw new ApiException.Rejected("amount must be positive");
-        }}
-    }}
-}}
-"#
-    )
+    crate::template::render(include_str!("../templates/spring/api_exception_handler_test_java.java"), &[("pkg", pkg)])
 }
 
 // ---------------------------------------------------------------------------
@@ -413,51 +209,7 @@ pub(crate) fn actuator_slice(root: &Path, pkg: &str) -> SpringSlice {
 }
 
 fn actuator_test_java(pkg: &str, mockmvc_import: &str) -> String {
-    format!(
-        r#"package {pkg};
-
-import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import {mockmvc_import};
-import org.springframework.test.web.servlet.assertj.MockMvcTester;
-
-import static org.assertj.core.api.Assertions.assertThat;
-
-/**
- * Pins the endpoints that are exposed, both ways.
- *
- * <p>The second assertion is the one that earns its place: `management.
- * endpoints.web.exposure.include` is a list people widen to `*` under time
- * pressure, and `*` publishes heap dumps and the resolved environment --
- * credentials included -- to anything that can reach the port. A test that
- * fails when that happens is cheaper than noticing in production.
- */
-@SpringBootTest
-@AutoConfigureMockMvc
-class ActuatorEndpointsTest {{
-
-    @Autowired
-    private MockMvcTester mvc;
-
-    @Test
-    void healthIsExposed() {{
-        assertThat(mvc.get().uri("/actuator/health")).hasStatusOk();
-    }}
-
-    @Test
-    void everythingElseStaysUnexposed() {{
-        // 4xx rather than 404 specifically: an unexposed endpoint is a 404,
-        // but once `jails add security` is in the project it becomes a 401
-        // instead. Both mean "not available"; pinning 404 would make this
-        // test fail the day the application is secured, which is exactly
-        // backwards.
-        assertThat(mvc.get().uri("/actuator/env")).hasStatus4xxClientError();
-        assertThat(mvc.get().uri("/actuator/heapdump")).hasStatus4xxClientError();
-    }}
-}}
-"#
-    )
+    crate::template::render(include_str!("../templates/spring/actuator_test_java.java"), &[("pkg", pkg), ("mockmvc_import", mockmvc_import)])
 }
 
 // ---------------------------------------------------------------------------
@@ -482,104 +234,11 @@ pub(crate) fn cache_slice(root: &Path, pkg: &str) -> SpringSlice {
 }
 
 fn cache_config_java(pkg: &str) -> String {
-    format!(
-        r#"package {pkg};
-
-import org.springframework.cache.annotation.EnableCaching;
-import org.springframework.context.annotation.Configuration;
-
-/**
- * Turns on {{@code @Cacheable}} and friends.
- *
- * <p>Spring Boot auto-configures a {{@code CacheManager}} from
- * {{@code spring.cache.*}}, but caching itself stays off until something
- * enables it -- which is why a freshly added {{@code @Cacheable}} so often
- * appears to do nothing at all.
- *
- * <p>The bound in {{@code spring.cache.caffeine.spec}} is not decoration: an
- * unbounded cache is a memory leak that reports itself as a performance
- * feature.
- */
-@Configuration(proxyBeanMethods = false)
-@EnableCaching
-public class CacheConfig {{}}
-"#
-    )
+    crate::template::render(include_str!("../templates/spring/cache_config_java.java"), &[("pkg", pkg)])
 }
 
 fn cache_test_java(pkg: &str) -> String {
-    format!(
-        r#"package {pkg};
-
-import java.util.concurrent.atomic.AtomicInteger;
-import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.cache.annotation.Cacheable;
-import org.springframework.context.annotation.Bean;
-import org.springframework.stereotype.Component;
-
-import static org.assertj.core.api.Assertions.assertThat;
-
-/**
- * Proves caching is actually switched on.
- *
- * <p>Worth a test because the failure is silent: without {{@code @EnableCaching}}
- * a {{@code @Cacheable}} method simply runs every time, and nothing anywhere
- * reports a problem. Counting invocations is the only way to tell the two
- * states apart.
- */
-@SpringBootTest
-class CacheConfigTest {{
-
-    @Autowired
-    private Counter counter;
-
-    @Test
-    void aSecondCallWithTheSameArgumentDoesNotRunTheMethod() {{
-        counter.reset();
-
-        assertThat(counter.slow("a")).isEqualTo(1);
-        assertThat(counter.slow("a")).isEqualTo(1);
-        assertThat(counter.calls()).isEqualTo(1);
-
-        // A different argument is a different cache key, so the method runs.
-        assertThat(counter.slow("b")).isEqualTo(2);
-        assertThat(counter.calls()).isEqualTo(2);
-    }}
-
-    @TestConfiguration(proxyBeanMethods = false)
-    static class Config {{
-
-        @Bean
-        Counter counter() {{
-            return new Counter();
-        }}
-    }}
-
-    /** Self-proxied through Spring, so {{@code @Cacheable}} actually applies. */
-    @Component
-    static class Counter {{
-
-        private final AtomicInteger calls = new AtomicInteger();
-
-        @Cacheable("jails-cache-probe")
-        public int slow(String key) {{
-            return calls.incrementAndGet();
-        }}
-
-        int calls() {{
-            return calls.get();
-        }}
-
-        void reset() {{
-            calls.set(0);
-        }}
-    }}
-}}
-"#
-    )
+    crate::template::render(include_str!("../templates/spring/cache_test_java.java"), &[("pkg", pkg)])
 }
 
 // ---------------------------------------------------------------------------
@@ -667,27 +326,7 @@ public interface {name}Client {{
 }
 
 fn client_config_java(pkg: &str, group: &str) -> String {
-    format!(
-        r#"package {pkg};
-
-import org.springframework.context.annotation.Configuration;
-import org.springframework.web.service.registry.ImportHttpServices;
-
-/**
- * Registers this package's {{@code @HttpExchange}} interfaces as beans.
- *
- * <p>Scanned by package rather than listed by type, so a new client interface
- * dropped in here is wired up with no edit to this file.
- *
- * <p>The group name is what links the clients to their configuration:
- * {{@code spring.http.serviceclient.{group}.base-url}} sets where they point,
- * and the same prefix carries timeouts, default headers and SSL bundles.
- */
-@Configuration(proxyBeanMethods = false)
-@ImportHttpServices(group = "{group}", basePackages = "{pkg}")
-public class HttpClientsConfig {{}}
-"#
-    )
+    crate::template::render(include_str!("../templates/spring/client_config_java.java"), &[("pkg", pkg), ("group", group)])
 }
 
 fn client_test_java(pkg: &str, name: &str, group: &str) -> String {
@@ -857,65 +496,11 @@ public class {name}Job {{
 }
 
 fn scheduling_config_java(pkg: &str) -> String {
-    format!(
-        r#"package {pkg};
-
-import org.springframework.context.annotation.Configuration;
-import org.springframework.scheduling.annotation.EnableScheduling;
-
-/**
- * Turns on {{@code @Scheduled}}.
- *
- * <p>Without this, every {{@code @Scheduled}} method in the application is
- * inert and nothing says so -- the same silent-no-op failure mode as
- * {{@code @EnableCaching}}.
- */
-@Configuration(proxyBeanMethods = false)
-@EnableScheduling
-public class SchedulingConfig {{}}
-"#
-    )
+    crate::template::render(include_str!("../templates/spring/scheduling_config_java.java"), &[("pkg", pkg)])
 }
 
 fn job_test_java(pkg: &str, name: &str) -> String {
-    format!(
-        r#"package {pkg};
-
-import org.junit.jupiter.api.Test;
-
-import static org.assertj.core.api.Assertions.assertThatCode;
-
-/**
- * Calls the work directly rather than waiting for a schedule.
- *
- * <p>A test that sleeps until the scheduler fires is slow and flaky, and it
- * tests Spring's scheduler rather than this job. What is worth asserting here
- * is that {{@code run()}} does not propagate -- because an exception escaping a
- * scheduled method cancels every future run.
- */
-class {name}JobTest {{
-
-    private final {name}Job job = new {name}Job();
-
-    @Test
-    void theWorkRuns() {{
-        assertThatCode(job::work).doesNotThrowAnyException();
-    }}
-
-    @Test
-    void aFailureNeverEscapesAndCancelsTheSchedule() {{
-        {name}Job failing =
-                new {name}Job() {{
-                    @Override
-                    void work() {{
-                        throw new IllegalStateException("boom");
-                    }}
-                }};
-        assertThatCode(failing::run).doesNotThrowAnyException();
-    }}
-}}
-"#
-    )
+    crate::template::render(include_str!("../templates/spring/job_test_java.java"), &[("pkg", pkg), ("name", name)])
 }
 
 // ---------------------------------------------------------------------------
@@ -1417,93 +1002,7 @@ fn kafka_deserializer_properties() -> Vec<String> {
 /// No `NewTopic` beans here: `add kafka` does not know what this service's
 /// topics are called. `jails g event <Name>` declares them, because it does.
 fn kafka_config_java(pkg: &str) -> String {
-    format!(
-        r#"package {pkg};
-
-import io.micrometer.core.instrument.MeterRegistry;
-import org.apache.kafka.common.TopicPartition;
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.kafka.core.KafkaOperations;
-import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
-import org.springframework.kafka.listener.DefaultErrorHandler;
-import org.springframework.kafka.support.ExponentialBackOffWithMaxRetries;
-
-/**
- * What happens to a record that does not process cleanly.
- *
- * <p>Without a defined poison-message path, one bad record blocks its
- * partition forever and the only symptom is consumer lag -- there is no
- * repeated error to find, because the first one already scrolled away.
- */
-@Configuration(proxyBeanMethods = false)
-class KafkaConfig {{
-
-    /** The suffix this service's dead-letter topics use. See {{@link #errorHandler}}. */
-    static final String DEAD_LETTER_SUFFIX = ".DLT";
-
-    /**
-     * Counts records routed to a dead-letter topic, tagged by source topic.
-     *
-     * <p>A dead-letter topic nothing alerts on is silent discard with extra
-     * steps, and this is the number a depth alarm is built from.
-     *
-     * <p>Two things to know before writing that alarm. The series does not
-     * exist until the first record dead-letters, because the topic tag is only
-     * known once there is a record to tag -- so alert on presence, not on
-     * {{@code rate() == 0}}. And it counts *routing attempts*, not records
-     * durably in the topic: it increments before the publish is confirmed, so a
-     * failed publish means a redelivery and a second increment.
-     */
-    static final String DEAD_LETTER_METRIC = "kafka.dlt";
-
-    /**
-     * Retries a transient failure with exponential backoff, and sends a
-     * permanent one straight to the dead-letter topic.
-     *
-     * <p>The destination is named explicitly. {{@code
-     * DeadLetterPublishingRecoverer}}'s own default appends {{@code -dlt}} and
-     * uses the *same* partition number as the source record, so a project that
-     * declares a {{@code .DLT}} topic and ships a consumer for it gets neither:
-     * the records land on an auto-created {{@code -dlt}} topic, and the only
-     * trace is a WARN.
-     *
-     * <p>The {{@code MeterRegistry}} is optional on purpose. Spring Kafka
-     * declares Micrometer as an optional dependency, so a project that has not
-     * run {{@code jails add observability}} has the API on the classpath but no
-     * registry bean; injecting one directly would fail the context at startup.
-     * {{@code ObjectProvider}} makes the counter appear when a registry does and
-     * cost nothing when it does not.
-     */
-    @Bean
-    DefaultErrorHandler errorHandler(
-            KafkaOperations<Object, Object> template, ObjectProvider<MeterRegistry> registries) {{
-        var backOff = new ExponentialBackOffWithMaxRetries(3);
-        backOff.setInitialInterval(200);
-        backOff.setMultiplier(2.0);
-        var registry = registries.getIfAvailable();
-        var recoverer = new DeadLetterPublishingRecoverer(template, (record, exception) -> {{
-            if (registry != null) {{
-                registry.counter(DEAD_LETTER_METRIC, "topic", record.topic()).increment();
-            }}
-            return new TopicPartition(record.topic() + DEAD_LETTER_SUFFIX, -1);
-        }});
-        var handler = new DefaultErrorHandler(recoverer, backOff);
-        // Spring already classifies DeserializationException,
-        // MessageConversionException, ConversionException,
-        // MethodArgumentResolutionException and ClassCastException as fatal --
-        // see ExceptionClassifier.defaultFatalExceptionsList(). This adds the
-        // one thing the framework cannot infer: the domain's own "no retry will
-        // ever fix this". Deliberately *not* NullPointerException -- that is a
-        // bug in this service, not a bad record, and dead-lettering it commits
-        // the offset and buries it.
-        handler.addNotRetryableExceptions(NonRetryableException.class);
-        return handler;
-    }}
-}}
-"#
-    )
+    crate::template::render(include_str!("../templates/spring/kafka_config_java.java"), &[("pkg", pkg)])
 }
 
 /// The domain's own "no retry will ever fix this".
@@ -1513,46 +1012,7 @@ class KafkaConfig {{
 /// keeps its stack trace, because it wraps a real cause and that cause is what
 /// a human reads out of the dead-letter headers.
 fn non_retryable_exception_java(pkg: &str) -> String {
-    format!(
-        r#"package {pkg};
-
-/**
- * A failure that will fail identically on every redelivery.
- *
- * <p>This is the only classification the Kafka error handler cannot work out
- * for itself. Spring already knows that a record which will not deserialize is
- * unprocessable; it cannot know that a value which parsed perfectly names a
- * currency, region or status this service has no constant for. That is a
- * property of the domain, so the domain declares it -- throw this and the
- * record goes to the dead-letter topic on the first attempt instead of costing
- * the partition three retries first.
- *
- * <p>The distinction that matters is not "expected vs unexpected", it is
- * "would a retry change the outcome". A database that is briefly unavailable is
- * unexpected and worth retrying. A {{@code NullPointerException}} is a bug in
- * this service: do <em>not</em> wrap it in this, or the bug is committed past
- * and buried in the dead-letter topic along with genuinely bad records.
- *
- * <p>Keeps its stack trace, unlike an expected-outcome exception: something
- * has to be readable when the dead-lettered record is investigated.
- */
-public class NonRetryableException extends RuntimeException {{
-
-    public NonRetryableException(String message) {{
-        super(message);
-    }}
-
-    /**
-     * @param cause the failure that proves the record unprocessable -- an enum
-     *     lookup that found nothing, a value out of range. Kept, because the
-     *     dead-letter headers carry it.
-     */
-    public NonRetryableException(String message, Throwable cause) {{
-        super(message, cause);
-    }}
-}}
-"#
-    )
+    crate::template::render(include_str!("../templates/spring/non_retryable_exception_java.java"), &[("pkg", pkg)])
 }
 
 /// A test that the poison-message path is actually wired, without a broker.
@@ -1561,88 +1021,7 @@ public class NonRetryableException extends RuntimeException {{
 /// `add kafka` keeps the promise `jails add --help` makes -- a dependency,
 /// the code that uses it, *and a test that proves it works*.
 fn kafka_config_test_java(pkg: &str) -> String {
-    format!(
-        r#"package {pkg};
-
-import static org.assertj.core.api.Assertions.assertThat;
-
-import io.micrometer.core.instrument.MeterRegistry;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.kafka.core.KafkaOperations;
-import org.springframework.kafka.listener.DefaultErrorHandler;
-import org.springframework.kafka.support.serializer.DeserializationException;
-
-class KafkaConfigTest {{
-
-    /**
-     * Builds the handler the way a context with no {{@code MeterRegistry}}
-     * would -- i.e. a project that has not run {{@code jails add observability}}.
-     * If this throws, the optional-registry wiring is wrong and every such
-     * project fails at startup.
-     */
-    @SuppressWarnings("unchecked")
-    private static DefaultErrorHandler handlerWithoutRegistry() {{
-        KafkaOperations<Object, Object> template = org.mockito.Mockito.mock(KafkaOperations.class);
-        ObjectProvider<MeterRegistry> noRegistry = org.mockito.Mockito.mock(ObjectProvider.class);
-        org.mockito.Mockito.when(noRegistry.getIfAvailable()).thenReturn(null);
-        return new KafkaConfig().errorHandler(template, noRegistry);
-    }}
-
-    /**
-     * The classification, which is the part that matters.
-     *
-     * <p>{{@code removeClassification}} returns the classification it removed,
-     * which is the only public way to read one back. It mutates the handler,
-     * so this test builds its own.
-     */
-    @Test
-    void aRecordThatCanNeverSucceedIsNotRetried() {{
-        var handler = handlerWithoutRegistry();
-
-        assertThat(handler.removeClassification(NonRetryableException.class))
-                .as("the domain said this record can never be processed")
-                .isFalse();
-        // Not added by this config -- inherited from
-        // ExceptionClassifier.defaultFatalExceptionsList(). Pinned because the
-        // generated config deliberately relies on it instead of restating it.
-        assertThat(handler.removeClassification(DeserializationException.class))
-                .as("a record that cannot be parsed will not parse on retry either")
-                .isFalse();
-    }}
-
-    /**
-     * The deliberate omission, pinned so nobody "helpfully" adds it back.
-     *
-     * <p>A {{@code NullPointerException}} is a bug in this service, not a bad
-     * record. Classifying it permanent would dead-letter it and commit the
-     * offset, turning a loud repeating failure into a silent one.
-     *
-     * <p>{{@code removeClassification}} is a map removal, so {{@code null}} means
-     * "never classified either way" -- which is the assertion wanted here. It
-     * falls through to the classifier's default and is retried.
-     */
-    @Test
-    void aBugInTheListenerStaysRetryableAndStaysLoud() {{
-        assertThat(handlerWithoutRegistry().removeClassification(NullPointerException.class))
-                .as("an NPE is a defect to fix, not a record to quarantine")
-                .isNull();
-    }}
-
-    /**
-     * Pins the dead-letter destination against the recoverer's own default,
-     * which is `-dlt` and a matching partition number. A project that declares
-     * `<topic>.DLT` and consumes it would otherwise find it empty.
-     */
-    @Test
-    void deadLetterRecordsGoToTheDotDltTopic() {{
-        var record = new ConsumerRecord<>("orders", 2, 0L, "k", "v");
-        assertThat(record.topic() + KafkaConfig.DEAD_LETTER_SUFFIX).isEqualTo("orders.DLT");
-    }}
-}}
-"#
-    )
+    crate::template::render(include_str!("../templates/spring/kafka_config_test_java.java"), &[("pkg", pkg)])
 }
 
 /// The files `add kafka` writes on a Spring project.
@@ -1702,209 +1081,19 @@ pub(crate) fn event_files(
 }
 
 fn event_java(pkg: &str, name: &str) -> String {
-    format!(
-        r#"package {pkg};
-
-import java.time.Instant;
-
-/**
- * What crosses the topic.
- *
- * <p>A record of its own, not a domain type. A message is a published
- * contract that outlives the process that sent it -- consumers read messages
- * written by older versions -- so it needs to change on its own schedule.
- * Reusing the domain type couples every consumer to an internal refactor.
- *
- * <p>{{@code occurredAt}} is on the event rather than inferred from the
- * broker: the time something happened and the time it was published are
- * different facts, and only the first one survives a replay.
- */
-public record {name}Event(String id, Instant occurredAt) {{}}
-"#
-    )
+    crate::template::render(include_str!("../templates/spring/event_java.java"), &[("pkg", pkg), ("name", name)])
 }
 
 fn publisher_java(pkg: &str, name: &str, topic: &str) -> String {
-    format!(
-        r#"package {pkg};
-
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.stereotype.Component;
-
-/**
- * Publishes {{@link {name}Event}}.
- *
- * <p>The topic is a property, not a constant: the same jar has to run against
- * a local broker, a shared staging one and production, and those rarely agree
- * on names.
- *
- * <p>The key is the event id, which is what gives ordering per entity --
- * Kafka only guarantees order within a partition, and a null key round-robins
- * across all of them. Getting this wrong produces a system that works until
- * it has traffic.
- */
-@Component
-public class {name}Publisher {{
-
-    private final KafkaTemplate<String, {name}Event> kafka;
-    private final String topic;
-
-    public {name}Publisher(
-            KafkaTemplate<String, {name}Event> kafka,
-            @Value("${{topics.{topic}:{topic}}}") String topic) {{
-        this.kafka = kafka;
-        this.topic = topic;
-    }}
-
-    /** Publishes asynchronously; the send is in flight when this returns. */
-    public void publish({name}Event event) {{
-        kafka.send(topic, event.id(), event);
-    }}
-}}
-"#
-    )
+    crate::template::render(include_str!("../templates/spring/publisher_java.java"), &[("pkg", pkg), ("name", name), ("topic", topic)])
 }
 
 fn listener_java(pkg: &str, name: &str, topic: &str) -> String {
-    format!(
-        r#"package {pkg};
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.kafka.annotation.KafkaListener;
-import org.springframework.stereotype.Component;
-
-/**
- * Consumes {{@link {name}Event}}.
- *
- * <p>The listener is deliberately thin: it hands the event to the application
- * and does nothing else. Business logic inside a listener is unreachable from
- * any test that does not start a broker, and unreusable from any other entry
- * point.
- *
- * <p>Nothing here catches exceptions. That is the right default -- a thrown
- * exception means the offset is not committed, so the message is retried and
- * eventually goes to a dead-letter topic if one is configured. Swallowing it
- * would acknowledge a message that was never processed, which is data loss
- * that looks like success.
- */
-@Component
-public class {name}Listener {{
-
-    private static final Logger log = LoggerFactory.getLogger({name}Listener.class);
-
-    @KafkaListener(topics = "${{topics.{topic}:{topic}}}")
-    public void on({name}Event event) {{
-        log.info("received {{}}", event.id());
-        // TODO: hand this to the application service that owns the reaction.
-    }}
-}}
-"#
-    )
+    crate::template::render(include_str!("../templates/spring/listener_java.java"), &[("pkg", pkg), ("name", name), ("topic", topic)])
 }
 
 fn messaging_it_java(pkg: &str, name: &str, topic: &str) -> String {
-    format!(
-        r#"package {pkg};
-
-import java.time.Duration;
-import java.time.Instant;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
-import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Import;
-import org.springframework.kafka.annotation.KafkaListener;
-import org.testcontainers.kafka.KafkaContainer;
-
-import static org.assertj.core.api.Assertions.assertThat;
-
-/**
- * Publishes through a real broker and waits for it to come back.
- *
- * <p>An {{@code IT}}, so Failsafe runs it in {{@code verify}} rather than on
- * every {{@code jails test}}: starting a broker costs tens of seconds.
- *
- * <p>{{@code @ServiceConnection}} points the application at the container --
- * no bootstrap-servers property to override, and no chance of a test quietly
- * using the developer's own broker.
- *
- * <p>The latch is the part worth copying. Consumption is asynchronous, so an
- * assertion made straight after publishing races the consumer and fails about
- * one run in five. Waiting on a latch with a timeout either observes the
- * message or fails saying so.
- */
-@SpringBootTest
-@Import({name}MessagingIT.Containers.class)
-class {name}MessagingIT {{
-
-    @Autowired
-    private {name}Publisher publisher;
-
-    @Autowired
-    private Probe probe;
-
-    @Test
-    void aPublishedEventIsConsumed() throws InterruptedException {{
-        {name}Event event = new {name}Event("probe-1", Instant.parse("2024-01-01T00:00:00Z"));
-
-        publisher.publish(event);
-
-        assertThat(probe.received.await(30, TimeUnit.SECONDS))
-                .as("the event should have been consumed within 30s")
-                .isTrue();
-        assertThat(probe.last.get().id()).isEqualTo("probe-1");
-    }}
-
-    /**
-     * The probe has to be a *bean*, not a method on the test class.
-     *
-     * <p>{{@code @KafkaListener}} is registered by a bean post-processor, and
-     * a test instance is not a bean -- Spring creates it and injects into it,
-     * but never processes its annotations. A listener declared on the test
-     * class is therefore silently never subscribed, and the only symptom is a
-     * latch that times out with nothing in the log to explain it.
-     */
-    static class Probe {{
-
-        private final CountDownLatch received = new CountDownLatch(1);
-        private final AtomicReference<{name}Event> last = new AtomicReference<>();
-
-        /**
-         * Its own consumer group, so it does not compete with the
-         * application's listener: two consumers in one group split the
-         * partitions and each message reaches only one of them.
-         */
-        @KafkaListener(topics = "${{topics.{topic}:{topic}}}", groupId = "{topic}-it-probe")
-        void on({name}Event event) {{
-            last.set(event);
-            received.countDown();
-        }}
-    }}
-
-    @TestConfiguration(proxyBeanMethods = false)
-    static class Containers {{
-
-        @Bean
-        @ServiceConnection
-        KafkaContainer kafka() {{
-            return new KafkaContainer("apache/kafka:4.1.0").withStartupTimeout(Duration.ofMinutes(2));
-        }}
-
-        @Bean
-        Probe probe() {{
-            return new Probe();
-        }}
-    }}
-}}
-"#
-    )
+    crate::template::render(include_str!("../templates/spring/messaging_it_java.java"), &[("pkg", pkg), ("name", name), ("topic", topic)])
 }
 // ---------------------------------------------------------------------------
 // `add security` -- an explicit filter chain, rather than the default one.
@@ -1952,140 +1141,11 @@ pub(crate) fn security_slice(root: &Path, pkg: &str) -> SpringSlice {
 }
 
 fn security_config_java(pkg: &str) -> String {
-    format!(
-        r#"package {pkg};
-
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.security.config.Customizer;
-import org.springframework.security.config.annotation.web.builders.HttpSecurity;
-import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
-import org.springframework.security.config.http.SessionCreationPolicy;
-import org.springframework.security.web.SecurityFilterChain;
-
-/**
- * Who may reach what, spelled out.
- *
- * <p>Written rather than inherited on purpose. Spring Boot's default chain
- * secures everything and prints a generated password at startup, which is a
- * good default and an opaque one -- and the usual reaction to it is a blanket
- * {{@code permitAll()}} that nobody revisits. A chain you can read is a chain
- * you can review.
- *
- * <p>Shaped for an API rather than a browser application. The three choices
- * below go together and are only safe together:
- *
- * <ul>
- *   <li>{{@code STATELESS}} -- no session is created, so there is no session
- *       cookie.
- *   <li>CSRF disabled -- CSRF is an attack on *ambient* credentials, meaning
- *       one the browser attaches automatically, like a session cookie. With
- *       no cookie there is nothing to ride on. Re-enable it the moment this
- *       application starts issuing one: form login, {{@code rememberMe}} and
- *       session-based auth all need it.
- *   <li>HTTP Basic -- honest placeholder. Replace it with the real scheme
- *       ({{@code oauth2ResourceServer}} for JWTs) rather than building a
- *       token check by hand.
- * </ul>
- */
-@Configuration(proxyBeanMethods = false)
-public class SecurityConfig {{
-
-    @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {{
-        return http.authorizeHttpRequests(
-                        requests ->
-                                requests
-                                        // Liveness for a load balancer, which
-                                        // cannot authenticate. Only `health` --
-                                        // `env` and `heapdump` are not public.
-                                        .requestMatchers("/actuator/health/**")
-                                        .permitAll()
-                                        // Default deny: a new endpoint is
-                                        // protected until someone says
-                                        // otherwise, which is the only default
-                                        // that fails safe.
-                                        .anyRequest()
-                                        .authenticated())
-                .sessionManagement(
-                        session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                .csrf(AbstractHttpConfigurer::disable)
-                .httpBasic(Customizer.withDefaults())
-                .build();
-    }}
-}}
-"#
-    )
+    crate::template::render(include_str!("../templates/spring/security_config_java.java"), &[("pkg", pkg)])
 }
 
 fn security_test_java(pkg: &str) -> String {
-    format!(
-        r#"package {pkg};
-
-import java.nio.charset.StandardCharsets;
-import java.util.Base64;
-import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
-import org.springframework.test.web.servlet.assertj.MockMvcTester;
-
-import static org.assertj.core.api.Assertions.assertThat;
-
-/**
- * Both directions, because only one of them is usually checked.
- *
- * <p>A test that an authenticated request succeeds passes just as happily
- * against a chain with {{@code permitAll()}} on everything. The assertion that
- * an anonymous request is *rejected* is the one that notices when the rules
- * are loosened -- which is exactly the change nobody means to make
- * permanently.
- *
- * <p>The credentials are test-only properties and the request carries a real
- * {{@code Authorization}} header, rather than using
- * {{@code @WithMockUser}}. Two reasons: it exercises the actual
- * authentication filter instead of installing a {{@code SecurityContext}}
- * behind it, and {{@code @WithMockUser}} does not survive a
- * {{@code STATELESS}} chain anyway -- with no {{@code SecurityContext}}
- * repository, the context set by the test is never read back.
- */
-@SpringBootTest(
-        properties = {{
-            "spring.security.user.name=probe",
-            "spring.security.user.password=probe"
-        }})
-@AutoConfigureMockMvc
-class SecurityConfigTest {{
-
-    private static final String BASIC =
-            "Basic "
-                    + Base64.getEncoder()
-                            .encodeToString("probe:probe".getBytes(StandardCharsets.UTF_8));
-
-    @Autowired
-    private MockMvcTester mvc;
-
-    @Test
-    void healthIsReachableWithoutCredentials() {{
-        // A load balancer cannot authenticate. Needs `jails add actuator`
-        // for the endpoint to exist at all.
-        assertThat(mvc.get().uri("/actuator/health")).hasStatusOk();
-    }}
-
-    @Test
-    void anythingElseRequiresCredentials() {{
-        assertThat(mvc.get().uri("/anything")).hasStatus(401);
-    }}
-
-    @Test
-    void anAuthenticatedRequestGetsThrough() {{
-        // 404 rather than 401: the credentials were accepted and there is
-        // simply nothing mapped at that path yet.
-        assertThat(mvc.get().uri("/anything").header("Authorization", BASIC)).hasStatus(404);
-    }}
-}}
-"#
-    )
+    crate::template::render(include_str!("../templates/spring/security_test_java.java"), &[("pkg", pkg)])
 }
 
 // ---------------------------------------------------------------------------
@@ -2566,139 +1626,13 @@ pub(crate) fn redis_slice(root: &Path, pkg: &str) -> SpringSlice {
 }
 
 fn key_value_store_java(pkg: &str) -> String {
-    format!(
-        r#"package {pkg};
-
-import java.time.Duration;
-import java.util.Objects;
-import java.util.Optional;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.stereotype.Component;
-
-/**
- * The application's view of Redis: get, put with a lifetime, and remove.
- *
- * <p>A named wrapper rather than {{@link StringRedisTemplate}} injected
- * everywhere. Two reasons, and the second is the real one:
- *
- * <ul>
- *   <li>Callers depend on three methods instead of Redis's whole surface,
- *       so the store can be replaced with an in-memory one in a test.
- *   <li>**Every write gets a TTL.** {{@code opsForValue().set(k, v)}} with no
- *       expiry stores a key forever, and a cache that never evicts is a
- *       memory leak that survives restarts and is discovered in production.
- *       Making the lifetime a required argument -- with a configured default
- *       -- means forgetting it is not possible.
- * </ul>
- *
- * <p>{{@link StringRedisTemplate}} rather than a serializing template: the
- * values are strings, so what is in Redis is readable with {{@code redis-cli}}
- * rather than being a Java serialization blob nothing else can inspect.
- */
-@Component
-public class KeyValueStore {{
-
-    private final StringRedisTemplate redis;
-    private final Duration defaultTtl;
-
-    public KeyValueStore(StringRedisTemplate redis, @Value("${{app.redis.default-ttl:PT10M}}") Duration defaultTtl) {{
-        this.redis = Objects.requireNonNull(redis, "redis is required");
-        this.defaultTtl = Objects.requireNonNull(defaultTtl, "defaultTtl is required");
-    }}
-
-    /** @return the value, or empty when the key is absent or has expired. */
-    public Optional<String> get(String key) {{
-        return Optional.ofNullable(redis.opsForValue().get(key));
-    }}
-
-    /** Stores with the configured default lifetime. */
-    public void put(String key, String value) {{
-        put(key, value, defaultTtl);
-    }}
-
-    public void put(String key, String value, Duration ttl) {{
-        redis.opsForValue().set(key, value, ttl);
-    }}
-
-    /** @return true when a key was actually removed. */
-    public boolean remove(String key) {{
-        return Boolean.TRUE.equals(redis.delete(key));
-    }}
-}}
-"#
-    )
+    crate::template::render(include_str!("../templates/spring/key_value_store_java.java"), &[("pkg", pkg)])
 }
 
 fn key_value_store_it_java(pkg: &str) -> String {
-    format!(
-        r#"package {pkg};
-
-import java.time.Duration;
-import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Import;
-import org.testcontainers.containers.GenericContainer;
-
-import static org.assertj.core.api.Assertions.assertThat;
-
-/**
- * Against a real Redis, because the behaviour worth testing is Redis's.
- *
- * <p>An {{@code IT}}: Failsafe runs it in {{@code verify}}, not on every
- * {{@code jails test}}, since starting a container costs seconds.
- *
- * <p>{{@code @ServiceConnection(name = "redis")}} names the connection-details
- * factory explicitly rather than leaving Boot to infer it from the image.
- * Inference works only for image names it recognises, so a private mirror --
- * or, as here, a tag it does not expect -- fails at runtime with
- * {{@code No ConnectionDetails found for source}}, which reads like a missing
- * dependency rather than a naming problem. The explicit name is documented
- * and cannot drift.
- */
-@SpringBootTest
-@Import(KeyValueStoreIT.Containers.class)
-class KeyValueStoreIT {{
-
-    @Autowired
-    private KeyValueStore store;
-
-    @Test
-    void aValueSurvivesARoundTrip() {{
-        store.put("probe", "value");
-
-        assertThat(store.get("probe")).contains("value");
-    }}
-
-    @Test
-    void anAbsentKeyIsEmptyRatherThanNull() {{
-        assertThat(store.get("never-written")).isEmpty();
-    }}
-
-    @Test
-    void removeReportsWhetherAnythingWasThere() {{
-        store.put("doomed", "value", Duration.ofMinutes(1));
-
-        assertThat(store.remove("doomed")).isTrue();
-        assertThat(store.remove("doomed")).isFalse();
-        assertThat(store.get("doomed")).isEmpty();
-    }}
-
-    @TestConfiguration(proxyBeanMethods = false)
-    static class Containers {{
-
-        @Bean
-        @ServiceConnection(name = "redis")
-        GenericContainer<?> redis() {{
-            return new GenericContainer<>("{REDIS_IMAGE}").withExposedPorts(6379);
-        }}
-    }}
-}}
-"#
+    crate::template::render(
+        include_str!("../templates/spring/key_value_store_it_java.java"),
+        &[("pkg", pkg), ("REDIS_IMAGE", REDIS_IMAGE)],
     )
 }
 
@@ -2751,108 +1685,11 @@ pub(crate) fn observability_slice(root: &Path, pkg: &str) -> SpringSlice {
 }
 
 fn app_metrics_java(pkg: &str) -> String {
-    format!(
-        r#"package {pkg};
-
-import io.micrometer.core.instrument.Counter;
-import io.micrometer.core.instrument.MeterRegistry;
-import io.micrometer.core.instrument.Timer;
-import java.util.Objects;
-import java.util.function.Supplier;
-import org.springframework.stereotype.Component;
-
-/**
- * The application's metrics, named in one place.
- *
- * <p>Not a wrapper for its own sake. A {{@link MeterRegistry}} injected
- * directly into every class means the name of a metric is a string literal at
- * each call site, and those drift -- {{@code orders.created}} in one place,
- * {{@code order_created}} in another -- until a dashboard silently stops
- * matching. Declaring each meter once, here, makes the name a compile-time
- * reference.
- *
- * <p>Meters are created eagerly in the constructor rather than per call.
- * {{@code Counter.builder(...).register(...)}} is idempotent but not free,
- * and a counter registered on first use does not appear in a scrape until
- * something has happened -- so a dashboard shows a gap rather than a zero,
- * which reads as "broken" instead of "quiet".
- */
-@Component
-public class AppMetrics {{
-
-    private final Counter requestsHandled;
-    private final Timer workDuration;
-
-    public AppMetrics(MeterRegistry registry) {{
-        Objects.requireNonNull(registry, "registry is required");
-        // Dot-separated names: Micrometer translates them to each backend's
-        // convention (Prometheus wants underscores) and doing that by hand
-        // ties the code to one backend.
-        this.requestsHandled = Counter.builder("app.requests.handled")
-                .description("requests this application finished handling")
-                .register(registry);
-        this.workDuration = Timer.builder("app.work.duration")
-                .description("how long the unit of work took")
-                .register(registry);
-    }}
-
-    public void requestHandled() {{
-        requestsHandled.increment();
-    }}
-
-    /** Times {{@code work}} and returns its result. */
-    public <T> T timed(Supplier<T> work) {{
-        return workDuration.record(work);
-    }}
-}}
-"#
-    )
+    crate::template::render(include_str!("../templates/spring/app_metrics_java.java"), &[("pkg", pkg)])
 }
 
 fn app_metrics_test_java(pkg: &str) -> String {
-    format!(
-        r#"package {pkg};
-
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
-import org.junit.jupiter.api.Test;
-
-import static org.assertj.core.api.Assertions.assertThat;
-
-/**
- * A {{@link SimpleMeterRegistry}} rather than a Spring context: the thing
- * being tested is that the meters exist under the names other systems will
- * query, and that needs no application.
- *
- * <p>Worth pinning because a renamed metric breaks a dashboard silently --
- * nothing fails, the graph just goes flat.
- */
-class AppMetricsTest {{
-
-    private final SimpleMeterRegistry registry = new SimpleMeterRegistry();
-    private final AppMetrics metrics = new AppMetrics(registry);
-
-    @Test
-    void theCounterIsRegisteredBeforeAnythingIncrementsIt() {{
-        // Registered eagerly, so a scrape taken before the first request
-        // reports zero rather than nothing at all.
-        assertThat(registry.find("app.requests.handled").counter()).isNotNull();
-        assertThat(registry.find("app.requests.handled").counter().count()).isZero();
-
-        metrics.requestHandled();
-
-        assertThat(registry.find("app.requests.handled").counter().count()).isEqualTo(1.0);
-    }}
-
-    @Test
-    void theTimerRecordsAndReturnsTheResult() {{
-        String result = metrics.timed(() -> "done");
-
-        assertThat(result).isEqualTo("done");
-        assertThat(registry.find("app.work.duration").timer().count()).isEqualTo(1L);
-    }}
-}}
-"#
-    )
+    crate::template::render(include_str!("../templates/spring/app_metrics_test_java.java"), &[("pkg", pkg)])
 }
 
 #[cfg(test)]
@@ -2924,58 +1761,7 @@ mod observability_tests {
 }
 
 fn prometheus_scrape_test_java(pkg: &str, mockmvc_import: &str) -> String {
-    format!(
-        r#"package {pkg};
-
-import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import {mockmvc_import};
-import org.springframework.test.web.servlet.assertj.MockMvcTester;
-
-import static org.assertj.core.api.Assertions.assertThat;
-
-/**
- * Proves the scrape endpoint actually serves, which the unit tests cannot.
- *
- * <p>Three separate things have to line up before Prometheus can read this
- * application -- the registry on the classpath, the endpoint in the exposure
- * list, and the meters registered -- and every one of them fails silently.
- * A missing registry is not an error, it is an endpoint that 404s; a narrowed
- * exposure list is not an error either. The symptom in all cases is a
- * dashboard that stays empty, noticed days later.
- */
-@SpringBootTest
-@AutoConfigureMockMvc
-class PrometheusScrapeTest {{
-
-    @Autowired
-    private MockMvcTester mvc;
-
-    @Test
-    void theScrapeEndpointServesThisApplicationsMeters() {{
-        assertThat(mvc.get().uri("/actuator/prometheus"))
-                .hasStatusOk()
-                .bodyText()
-                // Micrometer renames dots to underscores for Prometheus, so
-                // asserting the exported spelling also pins that translation.
-                .contains("app_requests_handled")
-                // And that the common tag reached a meter registered directly
-                // on the registry -- the case a properties-only approach
-                // misses, since `management.observations.key-values` tags
-                // observations and a plain Counter is not one.
-                .contains("application=");
-    }}
-
-    @Test
-    void theDangerousEndpointsStayUnexposed() {{
-        // 4xx rather than 404: `jails add security` turns these into 401s.
-        assertThat(mvc.get().uri("/actuator/env")).hasStatus4xxClientError();
-        assertThat(mvc.get().uri("/actuator/heapdump")).hasStatus4xxClientError();
-    }}
-}}
-"#
-    )
+    crate::template::render(include_str!("../templates/spring/prometheus_scrape_test_java.java"), &[("pkg", pkg), ("mockmvc_import", mockmvc_import)])
 }
 
 /// Boot 4 moved `MeterRegistryCustomizer` out of `actuate.autoconfigure`, with
@@ -2993,37 +1779,5 @@ fn meter_registry_customizer_import(root: &Path) -> &'static str {
 }
 
 fn metrics_config_java(pkg: &str, customizer_import: &str) -> String {
-    format!(
-        r#"package {pkg};
-
-import io.micrometer.core.instrument.MeterRegistry;
-import {customizer_import};
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-
-/**
- * Tags every meter with the application it came from.
- *
- * <p>Without this, two services reporting to the same Prometheus publish the
- * same series names and their values are summed together -- graphs that are
- * quietly wrong rather than visibly missing, which is the worse failure.
- *
- * <p>A customizer rather than a property: {{@code management.observations.
- * key-values.*}} tags observations, and a {{@link io.micrometer.core.instrument
- * .Counter}} registered straight on the registry is not an observation, so
- * half the meters would go untagged. {{@code config().commonTags(...)}} covers
- * both, and Spring Boot guarantees customizers run before any meter is
- * registered.
- */
-@Configuration(proxyBeanMethods = false)
-class MetricsConfig {{
-
-    @Bean
-    MeterRegistryCustomizer<MeterRegistry> commonTags(@Value("${{spring.application.name:unnamed}}") String application) {{
-        return registry -> registry.config().commonTags("application", application);
-    }}
-}}
-"#
-    )
+    crate::template::render(include_str!("../templates/spring/metrics_config_java.java"), &[("pkg", pkg), ("customizer_import", customizer_import)])
 }

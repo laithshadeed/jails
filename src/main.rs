@@ -16,6 +16,7 @@ mod project;
 mod run;
 mod spring;
 mod sql;
+mod template;
 mod why;
 
 use add::Capability;

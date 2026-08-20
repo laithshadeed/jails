@@ -23,6 +23,20 @@ isn't already there.
   grows or shrinks an existing project by a whole slice (dependency + code +
   test, and for `db`/`kafka` a compose service). `Capability` is a
   `clap::ValueEnum` for the same completion reason as `ArtifactKind`.
+- `templates/**.java` + `src/template.rs` — the Java bodies, as Java files.
+  A template used to be a Rust `format!` string, which meant **every brace
+  doubled** (`class {name}Controller {{`, and `{{@code public}}` in Javadoc)
+  because `format!` owns that syntax and Java is made of braces. The
+  templates are real `.java` files now, pulled in with `include_str!` so they
+  are still compile-time constants with no runtime file access and no new
+  dependency. Placeholders are `{{name}}`, chosen by **checking**: no `{{`
+  appears anywhere in the 159 golden files, so it cannot collide, while
+  `${name}` would (spring.rs generates `@Value("${...}")`). A missing or
+  unused key is a panic, not silent text in a generated class. It is
+  substitution only — **not** a template engine: anything structural (Spring's
+  `@Component` versus its absence, a body repeated per field) stays in Rust
+  and is passed in rendered. A template under ~15 lines stays inline, since a
+  file for four lines is indirection with nothing to show for it.
 - `src/process.rs` — `CommandSpec` + one synchronous executor, and the one
   place a tool is resolved on PATH. Extracted because two copies of "which
   tool is this" had already drifted: `run.rs` vs `project.rs` on whether mvnd

@@ -1998,29 +1998,9 @@ class {name}IT {{
 }
 
 fn stub_controller(pkg: &str, name: &str) -> String {
-    format!(
-        r#"package {pkg};
-
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RestController;
-
-/**
- * Package-private, and so is every handler on it.
- *
- * <p>Spring instantiates and calls this by reflection, so {{@code public}} buys
- * it nothing -- it only widens the surface other packages can compile
- * against. A controller is an entry point, not module API.
- */
-@RestController
-class {name}Controller {{
-
-    @GetMapping("/{route}")
-    String get() {{
-        return "{name}";
-    }}
-}}
-"#,
-        route = name.to_lowercase()
+    crate::template::render(
+        include_str!("../templates/generate/stub_controller.java"),
+        &[("pkg", pkg), ("name", name), ("route", &name.to_lowercase())],
     )
 }
 
@@ -2144,34 +2124,14 @@ class {name}Test {{
 /// -- which is what makes the generated body a thing you extend rather than
 /// a thing you first have to reshape.
 fn controller_stub_test(pkg: &str, name: &str, mockmvc_import: &str) -> String {
-    format!(
-        r#"package {pkg};
-
-import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import {mockmvc_import};
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.web.servlet.assertj.MockMvcTester;
-
-import static org.assertj.core.api.Assertions.assertThat;
-
-@SpringBootTest
-@AutoConfigureMockMvc
-class {name}ControllerTest {{
-
-    @Autowired
-    private MockMvcTester mvc;
-
-    @Test
-    void getReturnsOk() {{
-        assertThat(mvc.get().uri("/{route}"))
-                .hasStatusOk()
-                .bodyText()
-                .isEqualTo("{name}");
-    }}
-}}
-"#,
-        route = name.to_lowercase()
+    crate::template::render(
+        include_str!("../templates/generate/controller_stub_test.java"),
+        &[
+            ("pkg", pkg),
+            ("name", name),
+            ("mockmvc_import", mockmvc_import),
+            ("route", &name.to_lowercase()),
+        ],
     )
 }
 
@@ -2437,46 +2397,7 @@ public final class {name}Command {{
 }
 
 fn command_test(pkg: &str, name: &str) -> String {
-    format!(
-        r#"package {pkg};
-
-import org.junit.jupiter.api.Test;
-
-import java.io.ByteArrayOutputStream;
-import java.io.PrintStream;
-
-import static org.assertj.core.api.Assertions.assertThat;
-
-class {name}CommandTest {{
-
-    private final ByteArrayOutputStream out = new ByteArrayOutputStream();
-    private final ByteArrayOutputStream err = new ByteArrayOutputStream();
-
-    private int run(String... args) {{
-        return {name}Command.run(new PrintStream(out), new PrintStream(err), args);
-    }}
-
-    @Test
-    void succeedsAndPrintsItsArgument() {{
-        assertThat(run("hello")).isZero();
-        assertThat(out.toString()).contains("hello");
-        assertThat(err.toString()).isEmpty();
-    }}
-
-    @Test
-    void reportsUsageOnStderrWhenCalledWithoutArguments() {{
-        assertThat(run()).isEqualTo({name}Command.USAGE_ERROR);
-        assertThat(err.toString()).contains({name}Command.USAGE);
-        assertThat(out.toString()).isEmpty();
-    }}
-
-    @Test
-    void rejectsTooManyArguments() {{
-        assertThat(run("one", "two")).isEqualTo({name}Command.USAGE_ERROR);
-    }}
-}}
-"#
-    )
+    crate::template::render(include_str!("../templates/generate/command_test.java"), &[("pkg", pkg), ("name", name)])
 }
 
 /// A literal a generated test can construct the component from.
@@ -3805,27 +3726,7 @@ public final class Jdbc{name}Repository implements {name}Repository {{
 }
 
 fn jdbc_repository_test(pkg: &str, name: &str) -> String {
-    format!(
-        r#"package {pkg};
-
-import org.junit.jupiter.api.Disabled;
-import org.junit.jupiter.api.Test;
-
-/**
- * Configure a real test database, apply the migrations, and exercise the SQL
- * in {{@link Jdbc{name}Repository}}. Keep this as an integration test: mocks
- * cannot prove SQL, constraints, transactions, or row mappings work.
- */
-@Disabled("todo: configure the test database and finish the repository SQL mapping")
-class Jdbc{name}RepositoryIT {{
-
-    @Test
-    void roundTripsThroughTheRealDatabase() {{
-        throw new UnsupportedOperationException("todo");
-    }}
-}}
-"#
-    )
+    crate::template::render(include_str!("../templates/generate/jdbc_repository_test.java"), &[("pkg", pkg), ("name", name)])
 }
 
 // ---- sealed: the closed set whose cases carry different data, which is the
