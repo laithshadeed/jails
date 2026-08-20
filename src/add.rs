@@ -56,6 +56,8 @@ pub enum Capability {
     Actuator,
     /// Caching that is switched on, bounded, and proven by a test
     Cache,
+    /// An explicit Spring Security filter chain, shaped for an API
+    Security,
 }
 
 impl Capability {
@@ -73,6 +75,7 @@ impl Capability {
             Capability::Api => "api",
             Capability::Actuator => "actuator",
             Capability::Cache => "cache",
+            Capability::Security => "security",
         }
     }
 }
@@ -614,7 +617,7 @@ fn build_plan(
     let place = |default: &str| subpackage(&base, package.unwrap_or(default));
     match capability {
         Capability::Db => db_plan(root, flavor, &place("")),
-        Capability::Kafka => kafka_plan(flavor),
+        Capability::Kafka => kafka_plan(root, flavor),
         Capability::Csv => csv_plan(root, &place(layout::ADAPTERS), flavor, name),
         Capability::Sqlite => sqlite_plan(root, &place(layout::ADAPTERS), flavor, name),
         Capability::Json => json_plan(root, &place(layout::ADAPTERS), flavor, name),
@@ -636,6 +639,11 @@ fn build_plan(
             crate::spring::cache_slice(root, &place("")),
             flavor,
             "cache",
+        ),
+        Capability::Security => spring_slice_plan(
+            crate::spring::security_slice(root, &place("")),
+            flavor,
+            "security",
         ),
     }
 }
@@ -1375,13 +1383,34 @@ const KAFKA_CLIENTS: Dependency = Dependency {
     optional: false,
 };
 
-fn kafka_plan(flavor: Flavor) -> Result<Plan> {
+fn kafka_plan(root: &Path, flavor: Flavor) -> Result<Plan> {
+    // Spring projects also get the properties that make publish-and-consume
+    // work at all. Without them the broker is up, the code compiles, and
+    // nothing is ever received -- see `spring::kafka_properties` for why each
+    // one is there.
+    let properties = match flavor {
+        Flavor::SpringBoot => {
+            let base = base_package(root)?;
+            // The artifactId, not the directory name: a consumer group is a
+            // shared, durable identity in the broker, and naming it after
+            // whatever the checkout happens to be called gives two clones of
+            // the same service two different groups -- so both receive every
+            // message instead of splitting the work.
+            let group = pom::read(root)
+                .ok()
+                .and_then(|pom| crate::project::artifact_id(&pom))
+                .unwrap_or_else(|| "app".to_string());
+            crate::spring::kafka_properties(&base, &group)
+        }
+        Flavor::PlainMaven => Vec::new(),
+    };
     Ok(Plan {
         deps: vec![match flavor {
             Flavor::SpringBoot => SPRING_KAFKA,
             Flavor::PlainMaven => KAFKA_CLIENTS,
         }],
         compose: vec![compose::KAFKA],
+        properties,
         ..Plan::default()
     })
 }
@@ -3363,14 +3392,61 @@ class DemoApplicationTests {
 
     #[test]
     fn kafka_plan_is_a_client_plus_a_compose_broker() {
-        let spring = kafka_plan(Flavor::SpringBoot).unwrap();
+        // The Spring path reads the base package, for the deserializer's
+        // trusted-packages list -- so it needs a project to read.
+        let root = std::env::temp_dir().join(format!(
+            "jails-kafka-plan-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let pkg = root.join("src/main/java/com/example/demo");
+        fs::create_dir_all(&pkg).unwrap();
+        fs::write(
+            pkg.join("DemoApplication.java"),
+            "package com.example.demo;\npublic class DemoApplication {}\n",
+        )
+        .unwrap();
+
+        let spring = kafka_plan(&root, Flavor::SpringBoot).unwrap();
         assert_eq!(spring.deps[0].artifact_id, "spring-boot-starter-kafka");
         assert!(spring.deps[0].version.is_none());
         assert_eq!(spring.compose, vec![compose::KAFKA]);
+        // A consumer that starts at the end of the topic sees nothing that
+        // was published before it joined -- the commonest Kafka surprise.
+        assert!(
+            spring
+                .properties
+                .iter()
+                .any(|p| p == "spring.kafka.consumer.auto-offset-reset=earliest"),
+            "{:?}",
+            spring.properties
+        );
+        // The Jackson-prefixed serializers: the older pair is deprecated for
+        // removal since Spring Kafka 4.0.
+        assert!(
+            spring.properties.iter().any(|p| p.contains("JacksonJsonSerializer")),
+            "{:?}",
+            spring.properties
+        );
+        assert!(
+            spring
+                .properties
+                .iter()
+                .any(|p| p.ends_with("trusted.packages=com.example.demo")),
+            "{:?}",
+            spring.properties
+        );
 
-        let plain = kafka_plan(Flavor::PlainMaven).unwrap();
+        let plain = kafka_plan(&root, Flavor::PlainMaven).unwrap();
         assert_eq!(plain.deps[0].artifact_id, "kafka-clients");
         assert_eq!(plain.deps[0].version, Some("4.1.0"));
         assert_eq!(plain.compose, vec![compose::KAFKA]);
+        // Plain Maven has no Spring properties file to write into.
+        assert!(plain.properties.is_empty());
+
+        let _ = fs::remove_dir_all(&root);
     }
 }

@@ -147,6 +147,25 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
 - `jails generate|g job <Name>` — a `@Scheduled` component whose interval is a
   property, not a constant, and which catches its own failures: an exception
   escaping a scheduled method cancels every future run, silently.
+- `jails add|a security` — an explicit `SecurityFilterChain` instead of the
+  default one. Adding the starter alone secures every endpoint and prints a
+  generated password at startup, which is safe and opaque — and the usual
+  reaction is a blanket `permitAll()` nobody revisits. The generated chain is
+  default-deny, permits only `/actuator/health/**`, and is stateless with CSRF
+  off (safe *only* together: CSRF protects ambient credentials, and a chain
+  that issues no session cookie has none). The test asserts both directions,
+  because a test that authenticated requests succeed passes just as happily
+  against `permitAll()` on everything.
+- `jails generate|g event <Name>` — a Kafka slice: the payload record, a
+  publisher keyed by event id (ordering is per partition; a null key
+  round-robins), a listener that deliberately does not catch (swallowing
+  commits an offset for a message never processed), and an `IT` that publishes
+  through a real broker via Testcontainers and waits on a latch. `jails add
+  kafka` on Spring now also writes the properties that make this work at all —
+  `auto-offset-reset=earliest` (a new consumer group otherwise starts at the
+  end of the topic and sees nothing published before it joined), the
+  `JacksonJson*` serializers (the older `Json*` pair is deprecated for removal
+  since Spring Kafka 4.0), and the deserializer's trusted-packages list.
 - `jails stats` — files, lines and code per layer, plus the test-to-code
   ratio. Comment lines are excluded, or generated Javadoc would triple every
   count.

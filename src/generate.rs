@@ -32,6 +32,9 @@ pub enum ArtifactKind {
     Job,
     /// Request/response records for a domain type, with the mapping
     Dto,
+    /// A Kafka slice: the payload record, a publisher, a listener, and an
+    /// integration test against a real broker
+    Event,
     Test,
     #[value(name = "integration-test", alias = "it")]
     IntegrationTest,
@@ -558,6 +561,8 @@ pub(crate) mod layout {
     pub const CLIENTS: &str = "clients";
     /// Scheduled work.
     pub const JOBS: &str = "jobs";
+    /// Events published to and consumed from a broker.
+    pub const MESSAGING: &str = "messaging";
 }
 
 /// Splice a dependency into pom.xml unless it is already there.
@@ -814,6 +819,18 @@ pub fn generate(
             require_spring_project(&root, "job")?;
             let pkg = place(layout::JOBS);
             crate::spring::job_files(&root, &pkg, &name)
+                .into_iter()
+                .map(|(path, contents, kind)| Artifact {
+                    kind,
+                    path,
+                    contents,
+                })
+                .collect()
+        }
+        ArtifactKind::Event => {
+            require_spring_project(&root, "event")?;
+            let pkg = place(layout::MESSAGING);
+            crate::spring::event_files(&root, &pkg, &name)
                 .into_iter()
                 .map(|(path, contents, kind)| Artifact {
                     kind,
@@ -1083,6 +1100,7 @@ pub fn generate(
         if let Some(dep) = match kind {
             ArtifactKind::Dto => Some(&crate::spring::VALIDATION_STARTER),
             ArtifactKind::Client => Some(&crate::spring::RESTCLIENT_STARTER),
+            ArtifactKind::Event => Some(&crate::spring::TESTCONTAINERS_KAFKA),
             _ => None,
         } {
             println!(
@@ -1110,6 +1128,10 @@ pub fn generate(
     match kind {
         ArtifactKind::Dto => ensure_dependency(&root, &crate::spring::VALIDATION_STARTER)?,
         ArtifactKind::Client => ensure_dependency(&root, &crate::spring::RESTCLIENT_STARTER)?,
+        ArtifactKind::Event => {
+            ensure_dependency(&root, &crate::spring::TESTCONTAINERS_KAFKA)?;
+            ensure_dependency(&root, &crate::spring::SPRING_TESTCONTAINERS)?;
+        }
         _ => {}
     }
     Ok(())
@@ -1336,6 +1358,15 @@ pub fn destroy(
             vec![
                 main_dir(&root, &pkg).join(format!("{name}Job.java")),
                 test_dir(&root, &pkg).join(format!("{name}JobTest.java")),
+            ]
+        }
+        ArtifactKind::Event => {
+            let pkg = place(layout::MESSAGING);
+            vec![
+                main_dir(&root, &pkg).join(format!("{name}Event.java")),
+                main_dir(&root, &pkg).join(format!("{name}Publisher.java")),
+                main_dir(&root, &pkg).join(format!("{name}Listener.java")),
+                test_dir(&root, &pkg).join(format!("{name}MessagingIT.java")),
             ]
         }
         ArtifactKind::Dto => {

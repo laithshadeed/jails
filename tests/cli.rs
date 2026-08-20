@@ -3201,3 +3201,118 @@ fn stats_counts_code_per_layer_and_the_test_ratio() {
     assert!(stdout.contains("Domain"), "{stdout}");
     assert!(stdout.contains("Test code to application code"), "{stdout}");
 }
+
+#[test]
+fn add_kafka_and_generate_event_compile_against_real_spring() {
+    // Compile-only for the messaging slice: its test is an `IT`, so Failsafe
+    // runs it in `verify` (it starts a broker, which costs seconds). What
+    // this pins is that the generated code is valid against the real Spring
+    // Kafka API -- including the Jackson-prefixed serializers, since the
+    // older pair is deprecated for removal.
+    if !real_mvn_available() {
+        eprintln!("skipping: mvn not found on PATH");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let root = temp_dir("real-kafka-slice");
+    write_spring_fixture(&root);
+    let fake = root.join("fake-bin");
+    write_fake_maven(&fake, &["docker"], &root.join("docker.log"));
+
+    assert!(
+        jails_cmd(&root, Some(&fake))
+            .args(["add", "kafka"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let properties =
+        fs::read_to_string(root.join("src/main/resources/application.properties")).unwrap();
+    assert!(properties.contains("auto-offset-reset=earliest"), "{properties}");
+    assert!(properties.contains("JacksonJsonDeserializer"), "{properties}");
+    assert!(!properties.contains("serializer.JsonDeserializer"), "{properties}");
+    assert!(
+        properties.contains("trusted.packages=com.example.demo"),
+        "{properties}"
+    );
+    // The consumer group is the artifactId, not the checkout directory: a
+    // group is a durable identity in the broker, and two clones of one
+    // service under different directory names would otherwise each receive
+    // every message instead of splitting the work.
+    assert!(
+        properties.contains("spring.kafka.consumer.group-id=demo"),
+        "{properties}"
+    );
+
+    assert!(
+        jails_cmd_with_path(&root, &path)
+            .args(["generate", "event", "PayoutSettled"])
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let listener = fs::read_to_string(
+        root.join("src/main/java/com/example/demo/messaging/PayoutSettledListener.java"),
+    )
+    .unwrap();
+    // No catch: swallowing here commits an offset for a message that was
+    // never processed, which is data loss wearing a success badge.
+    assert!(!listener.contains("catch ("), "{listener}");
+
+    let publisher = fs::read_to_string(
+        root.join("src/main/java/com/example/demo/messaging/PayoutSettledPublisher.java"),
+    )
+    .unwrap();
+    // Keyed sends: ordering is per partition, and a null key round-robins.
+    assert!(publisher.contains("kafka.send(topic, event.id(), event)"), "{publisher}");
+
+    // `test` runs Surefire only, so the IT is compiled but not executed.
+    let status = jails_cmd_with_path(&root, &path)
+        .arg("test")
+        .status()
+        .unwrap();
+    assert!(status.success(), "mvn test failed for the kafka slice");
+}
+
+#[test]
+fn add_security_writes_an_explicit_chain_that_denies_by_default() {
+    if !real_mvn_available() {
+        eprintln!("skipping: mvn not found on PATH");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let root = temp_dir("real-add-security");
+    write_spring_fixture(&root);
+
+    // Actuator first: the chain permits `/actuator/health` and the test
+    // asserts it, so the endpoint has to exist.
+    for capability in ["actuator", "security"] {
+        assert!(
+            jails_cmd_with_path(&root, &path)
+                .args(["add", capability])
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+
+    let config =
+        fs::read_to_string(root.join("src/main/java/com/example/demo/SecurityConfig.java")).unwrap();
+    // Default deny: a new endpoint is protected until someone says otherwise.
+    assert!(config.contains(".anyRequest()"), "{config}");
+    assert!(config.contains(".authenticated()"), "{config}");
+    // CSRF is only disabled alongside STATELESS -- the two are safe together
+    // and unsafe apart, so neither should appear without the other.
+    assert!(config.contains("SessionCreationPolicy.STATELESS"), "{config}");
+    assert!(config.contains("csrf(AbstractHttpConfigurer::disable)"), "{config}");
+    // Only health is public. `env` and `heapdump` must not be.
+    assert!(config.contains("/actuator/health/**"), "{config}");
+    assert!(!config.contains("/actuator/**"), "{config}");
+
+    let status = jails_cmd_with_path(&root, &path)
+        .arg("test")
+        .status()
+        .unwrap();
+    assert!(status.success(), "mvn test failed after `jails add security`");
+}

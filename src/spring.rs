@@ -410,8 +410,13 @@ class ActuatorEndpointsTest {{
 
     @Test
     void everythingElseStaysUnexposed() {{
-        assertThat(mvc.get().uri("/actuator/env")).hasStatus(404);
-        assertThat(mvc.get().uri("/actuator/heapdump")).hasStatus(404);
+        // 4xx rather than 404 specifically: an unexposed endpoint is a 404,
+        // but once `jails add security` is in the project it becomes a 401
+        // instead. Both mean "not available"; pinning 404 would make this
+        // test fail the day the application is secured, which is exactly
+        // backwards.
+        assertThat(mvc.get().uri("/actuator/env")).hasStatus4xxClientError();
+        assertThat(mvc.get().uri("/actuator/heapdump")).hasStatus4xxClientError();
     }}
 }}
 "#
@@ -1215,6 +1220,458 @@ import static org.assertj.core.api.Assertions.assertThat;
     private static {name}Request sample() {{
         return new {name}Request(
 {arguments});
+    }}
+}}
+"#
+    )
+}
+
+// ---------------------------------------------------------------------------
+// `generate event` -- a Kafka publisher, listener and payload, as one slice.
+// ---------------------------------------------------------------------------
+
+/// Boot's Testcontainers integration, needed for `@ServiceConnection`.
+pub(crate) const SPRING_TESTCONTAINERS: Dependency = Dependency {
+    group_id: "org.springframework.boot",
+    artifact_id: "spring-boot-testcontainers",
+    version: None,
+    scope: Some("test"),
+    optional: false,
+};
+
+/// Testcontainers' Kafka module. Named the 2.x way (`testcontainers-kafka`),
+/// matching the postgres module `add db` already pins.
+pub(crate) const TESTCONTAINERS_KAFKA: Dependency = Dependency {
+    group_id: "org.testcontainers",
+    artifact_id: "testcontainers-kafka",
+    version: Some("2.0.5"),
+    scope: Some("test"),
+    optional: false,
+};
+
+/// The Spring Kafka properties that make publish-and-consume actually work.
+///
+/// Every one of these is a thing people discover by losing an afternoon:
+///
+/// - `auto-offset-reset=earliest`: a consumer joining a group for the first
+///   time otherwise starts at the *end* of the topic, so anything published
+///   before it joined is invisible. This is the single most common reason a
+///   Kafka integration test hangs and then fails with nothing consumed.
+/// - `JacksonJsonSerializer`/`JacksonJsonDeserializer`: the defaults are
+///   `StringSerializer`, so a record payload arrives as its `toString()` and
+///   comes back unparseable. Note the `Jackson` prefix -- the older
+///   `JsonSerializer`/`JsonDeserializer` pair is deprecated for removal since
+///   Spring Kafka 4.0, which moved to Jackson 3.
+/// - `spring.json.trusted.packages`: the deserializer refuses to instantiate
+///   a type outside the trusted list, and reports it as a deserialization
+///   failure rather than a configuration one.
+pub(crate) fn kafka_properties(base: &str, group: &str) -> Vec<String> {
+    vec![
+        "spring.kafka.bootstrap-servers=localhost:9092".to_string(),
+        format!("spring.kafka.consumer.group-id={group}"),
+        "spring.kafka.consumer.auto-offset-reset=earliest".to_string(),
+        "spring.kafka.producer.value-serializer=org.springframework.kafka.support.serializer.JacksonJsonSerializer".to_string(),
+        "spring.kafka.consumer.value-deserializer=org.springframework.kafka.support.serializer.JacksonJsonDeserializer".to_string(),
+        format!("spring.kafka.consumer.properties.spring.json.trusted.packages={base}"),
+    ]
+}
+
+pub(crate) fn event_files(
+    root: &Path,
+    pkg: &str,
+    name: &str,
+) -> Vec<(std::path::PathBuf, String, &'static str)> {
+    let main = crate::generate::main_dir(root, pkg);
+    let test = crate::generate::test_dir(root, pkg);
+    let topic = crate::sql::snake_case(name).replace('_', "-");
+    vec![
+        (
+            main.join(format!("{name}Event.java")),
+            event_java(pkg, name),
+            "event",
+        ),
+        (
+            main.join(format!("{name}Publisher.java")),
+            publisher_java(pkg, name, &topic),
+            "publisher",
+        ),
+        (
+            main.join(format!("{name}Listener.java")),
+            listener_java(pkg, name, &topic),
+            "listener",
+        ),
+        (
+            test.join(format!("{name}MessagingIT.java")),
+            messaging_it_java(pkg, name, &topic),
+            "messaging integration test",
+        ),
+    ]
+}
+
+fn event_java(pkg: &str, name: &str) -> String {
+    format!(
+        r#"package {pkg};
+
+import java.time.Instant;
+
+/**
+ * What crosses the topic.
+ *
+ * <p>A record of its own, not a domain type. A message is a published
+ * contract that outlives the process that sent it -- consumers read messages
+ * written by older versions -- so it needs to change on its own schedule.
+ * Reusing the domain type couples every consumer to an internal refactor.
+ *
+ * <p>{{@code occurredAt}} is on the event rather than inferred from the
+ * broker: the time something happened and the time it was published are
+ * different facts, and only the first one survives a replay.
+ */
+public record {name}Event(String id, Instant occurredAt) {{}}
+"#
+    )
+}
+
+fn publisher_java(pkg: &str, name: &str, topic: &str) -> String {
+    format!(
+        r#"package {pkg};
+
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.stereotype.Component;
+
+/**
+ * Publishes {{@link {name}Event}}.
+ *
+ * <p>The topic is a property, not a constant: the same jar has to run against
+ * a local broker, a shared staging one and production, and those rarely agree
+ * on names.
+ *
+ * <p>The key is the event id, which is what gives ordering per entity --
+ * Kafka only guarantees order within a partition, and a null key round-robins
+ * across all of them. Getting this wrong produces a system that works until
+ * it has traffic.
+ */
+@Component
+public class {name}Publisher {{
+
+    private final KafkaTemplate<String, {name}Event> kafka;
+    private final String topic;
+
+    public {name}Publisher(
+            KafkaTemplate<String, {name}Event> kafka,
+            @org.springframework.beans.factory.annotation.Value("${{topics.{topic}:{topic}}}") String topic) {{
+        this.kafka = kafka;
+        this.topic = topic;
+    }}
+
+    /** Publishes asynchronously; the send is in flight when this returns. */
+    public void publish({name}Event event) {{
+        kafka.send(topic, event.id(), event);
+    }}
+}}
+"#
+    )
+}
+
+fn listener_java(pkg: &str, name: &str, topic: &str) -> String {
+    format!(
+        r#"package {pkg};
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.stereotype.Component;
+
+/**
+ * Consumes {{@link {name}Event}}.
+ *
+ * <p>The listener is deliberately thin: it hands the event to the application
+ * and does nothing else. Business logic inside a listener is unreachable from
+ * any test that does not start a broker, and unreusable from any other entry
+ * point.
+ *
+ * <p>Nothing here catches exceptions. That is the right default -- a thrown
+ * exception means the offset is not committed, so the message is retried and
+ * eventually goes to a dead-letter topic if one is configured. Swallowing it
+ * would acknowledge a message that was never processed, which is data loss
+ * that looks like success.
+ */
+@Component
+public class {name}Listener {{
+
+    private static final Logger log = LoggerFactory.getLogger({name}Listener.class);
+
+    @KafkaListener(topics = "${{topics.{topic}:{topic}}}")
+    public void on({name}Event event) {{
+        log.info("received {{}}", event.id());
+        // TODO: hand this to the application service that owns the reaction.
+    }}
+}}
+"#
+    )
+}
+
+fn messaging_it_java(pkg: &str, name: &str, topic: &str) -> String {
+    format!(
+        r#"package {pkg};
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.kafka.annotation.KafkaListener;
+import org.testcontainers.kafka.KafkaContainer;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * Publishes through a real broker and waits for it to come back.
+ *
+ * <p>An {{@code IT}}, so Failsafe runs it in {{@code verify}} rather than on
+ * every {{@code jails test}}: starting a broker costs seconds, not
+ * milliseconds.
+ *
+ * <p>{{@code @ServiceConnection}} points the application at the container --
+ * no bootstrap-servers property to override, and no chance of a test quietly
+ * using the developer's own broker.
+ *
+ * <p>The latch is the part worth copying. Consumption is asynchronous, so an
+ * assertion made straight after publishing races the consumer and fails about
+ * one run in five. Waiting on a latch with a timeout either observes the
+ * message or fails with a clear timeout.
+ */
+@SpringBootTest
+@Import({name}MessagingIT.Containers.class)
+class {name}MessagingIT {{
+
+    private static final CountDownLatch RECEIVED = new CountDownLatch(1);
+    private static final AtomicReference<{name}Event> LAST = new AtomicReference<>();
+
+    @Autowired
+    private {name}Publisher publisher;
+
+    @Test
+    void aPublishedEventIsConsumed() throws InterruptedException {{
+        {name}Event event = new {name}Event("probe-1", Instant.parse("2024-01-01T00:00:00Z"));
+
+        publisher.publish(event);
+
+        assertThat(RECEIVED.await(30, TimeUnit.SECONDS))
+                .as("the event should have been consumed within 30s")
+                .isTrue();
+        assertThat(LAST.get().id()).isEqualTo("probe-1");
+    }}
+
+    /**
+     * A second listener on the same topic, in its own consumer group so it
+     * does not compete with the application's listener for partitions --
+     * two consumers in one group split the work and each message reaches
+     * only one of them.
+     */
+    @KafkaListener(topics = "${{topics.{topic}:{topic}}}", groupId = "{topic}-it-probe")
+    void record({name}Event event) {{
+        LAST.set(event);
+        RECEIVED.countDown();
+    }}
+
+    @TestConfiguration(proxyBeanMethods = false)
+    static class Containers {{
+
+        @Bean
+        @ServiceConnection
+        KafkaContainer kafka() {{
+            return new KafkaContainer("apache/kafka:4.1.0")
+                    .withStartupTimeout(Duration.ofMinutes(2));
+        }}
+    }}
+}}
+"#
+    )
+}
+
+// ---------------------------------------------------------------------------
+// `add security` -- an explicit filter chain, rather than the default one.
+// ---------------------------------------------------------------------------
+
+pub(crate) const SECURITY_STARTER: Dependency = Dependency {
+    group_id: "org.springframework.boot",
+    artifact_id: "spring-boot-starter-security",
+    version: None,
+    scope: None,
+    optional: false,
+};
+
+pub(crate) const SECURITY_TEST: Dependency = Dependency {
+    group_id: "org.springframework.security",
+    artifact_id: "spring-security-test",
+    version: None,
+    scope: Some("test"),
+    optional: false,
+};
+
+/// The security slice.
+///
+/// Adding `spring-boot-starter-security` on its own changes the application
+/// immediately and drastically: every endpoint requires authentication, a
+/// login form appears, and a generated password is printed to the log once at
+/// startup. That is a safe default and a bewildering one -- the usual first
+/// reaction is to search for how to turn it off, which is how applications
+/// end up with `permitAll()` on everything.
+///
+/// So this writes the filter chain explicitly. An explicit chain is readable,
+/// reviewable, and testable, and the generated test asserts both directions:
+/// anonymous requests are rejected, authenticated ones are not.
+pub(crate) fn security_slice(root: &Path, pkg: &str) -> SpringSlice {
+    let main = crate::generate::main_dir(root, pkg);
+    let test = crate::generate::test_dir(root, pkg);
+    SpringSlice {
+        deps: vec![SECURITY_STARTER, SECURITY_TEST],
+        files: vec![
+            (main.join("SecurityConfig.java"), security_config_java(pkg)),
+            (test.join("SecurityConfigTest.java"), security_test_java(pkg)),
+        ],
+        properties: Vec::new(),
+    }
+}
+
+fn security_config_java(pkg: &str) -> String {
+    format!(
+        r#"package {pkg};
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.Customizer;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.web.SecurityFilterChain;
+
+/**
+ * Who may reach what, spelled out.
+ *
+ * <p>Written rather than inherited on purpose. Spring Boot's default chain
+ * secures everything and prints a generated password at startup, which is a
+ * good default and an opaque one -- and the usual reaction to it is a blanket
+ * {{@code permitAll()}} that nobody revisits. A chain you can read is a chain
+ * you can review.
+ *
+ * <p>Shaped for an API rather than a browser application. The three choices
+ * below go together and are only safe together:
+ *
+ * <ul>
+ *   <li>{{@code STATELESS}} -- no session is created, so there is no session
+ *       cookie.
+ *   <li>CSRF disabled -- CSRF is an attack on *ambient* credentials, meaning
+ *       one the browser attaches automatically, like a session cookie. With
+ *       no cookie there is nothing to ride on. Re-enable it the moment this
+ *       application starts issuing one: form login, {{@code rememberMe}} and
+ *       session-based auth all need it.
+ *   <li>HTTP Basic -- honest placeholder. Replace it with the real scheme
+ *       ({{@code oauth2ResourceServer}} for JWTs) rather than building a
+ *       token check by hand.
+ * </ul>
+ */
+@Configuration(proxyBeanMethods = false)
+public class SecurityConfig {{
+
+    @Bean
+    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {{
+        return http.authorizeHttpRequests(
+                        requests ->
+                                requests
+                                        // Liveness for a load balancer, which
+                                        // cannot authenticate. Only `health` --
+                                        // `env` and `heapdump` are not public.
+                                        .requestMatchers("/actuator/health/**")
+                                        .permitAll()
+                                        // Default deny: a new endpoint is
+                                        // protected until someone says
+                                        // otherwise, which is the only default
+                                        // that fails safe.
+                                        .anyRequest()
+                                        .authenticated())
+                .sessionManagement(
+                        session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .csrf(AbstractHttpConfigurer::disable)
+                .httpBasic(Customizer.withDefaults())
+                .build();
+    }}
+}}
+"#
+    )
+}
+
+fn security_test_java(pkg: &str) -> String {
+    format!(
+        r#"package {pkg};
+
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.test.web.servlet.assertj.MockMvcTester;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * Both directions, because only one of them is usually checked.
+ *
+ * <p>A test that an authenticated request succeeds passes just as happily
+ * against a chain with {{@code permitAll()}} on everything. The assertion that
+ * an anonymous request is *rejected* is the one that notices when the rules
+ * are loosened -- which is exactly the change nobody means to make
+ * permanently.
+ *
+ * <p>The credentials are test-only properties and the request carries a real
+ * {{@code Authorization}} header, rather than using
+ * {{@code @WithMockUser}}. Two reasons: it exercises the actual
+ * authentication filter instead of installing a {{@code SecurityContext}}
+ * behind it, and {{@code @WithMockUser}} does not survive a
+ * {{@code STATELESS}} chain anyway -- with no {{@code SecurityContext}}
+ * repository, the context set by the test is never read back.
+ */
+@SpringBootTest(
+        properties = {{
+            "spring.security.user.name=probe",
+            "spring.security.user.password=probe"
+        }})
+@AutoConfigureMockMvc
+class SecurityConfigTest {{
+
+    private static final String BASIC =
+            "Basic "
+                    + Base64.getEncoder()
+                            .encodeToString("probe:probe".getBytes(StandardCharsets.UTF_8));
+
+    @Autowired
+    private MockMvcTester mvc;
+
+    @Test
+    void healthIsReachableWithoutCredentials() {{
+        // A load balancer cannot authenticate. Needs `jails add actuator`
+        // for the endpoint to exist at all.
+        assertThat(mvc.get().uri("/actuator/health")).hasStatusOk();
+    }}
+
+    @Test
+    void anythingElseRequiresCredentials() {{
+        assertThat(mvc.get().uri("/anything")).hasStatus(401);
+    }}
+
+    @Test
+    void anAuthenticatedRequestGetsThrough() {{
+        // 404 rather than 401: the credentials were accepted and there is
+        // simply nothing mapped at that path yet.
+        assertThat(mvc.get().uri("/anything").header("Authorization", BASIC)).hasStatus(404);
     }}
 }}
 "#

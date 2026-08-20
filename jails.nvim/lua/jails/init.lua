@@ -55,6 +55,7 @@ local KINDS = {
   'client',
   'job',
   'dto',
+  'event',
   'test',
   'integration-test',
 }
@@ -72,6 +73,7 @@ local CAPABILITIES = {
   'api',
   'actuator',
   'cache',
+  'security',
 }
 local RUNTIMES = { 'db', 'kafka' }
 

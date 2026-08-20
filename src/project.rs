@@ -215,7 +215,9 @@ fn read_pom(root: &Path) -> Result<String> {
         .map_err(|e| format!("failed to read {}/pom.xml: {e}", root.display()))
 }
 
-fn artifact_id(xml: &str) -> Option<String> {
+/// The module's own artifactId, ignoring the parent's -- which is why the
+/// `<parent>` block is dropped before looking.
+pub(crate) fn artifact_id(xml: &str) -> Option<String> {
     let xml = without_comments(xml);
     let xml = without_first_block(&xml, "parent");
     element_values(&xml, "artifactId").into_iter().next()
