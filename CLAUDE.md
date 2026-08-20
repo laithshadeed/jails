@@ -23,6 +23,18 @@ isn't already there.
   grows or shrinks an existing project by a whole slice (dependency + code +
   test, and for `db`/`kafka` a compose service). `Capability` is a
   `clap::ValueEnum` for the same completion reason as `ArtifactKind`.
+- `src/process.rs` — `CommandSpec` + one synchronous executor, and the one
+  place a tool is resolved on PATH. Extracted because two copies of "which
+  tool is this" had already drifted: `run.rs` vs `project.rs` on whether mvnd
+  is `mvnd` or `mvnd.cmd`, and `compose.rs` vs `doctor.rs` on whether Docker
+  Compose is `docker compose` or the standalone `docker-compose`. **Debug
+  prints and then runs** — that property lives in the executor now rather than
+  at each site, which is where it was violated. **Secrets are never rendered**:
+  `secret_env` marks one explicitly, and `ALWAYS_SECRET` is a name-based
+  backstop, because `console.rs` sets `PGPASSWORD` on a plain `Command` that
+  reaches debug rendering through `run_inherited` — a rule every call site has
+  to remember is a rule that decays into printing a password. Arguments stay
+  `OsString` end to end so a forwarded argument containing a space survives.
 - **The layer list has one owner: `config::LAYERS_IN_ORDER`.** It carries each
   layer's package name *and* the heading `stats` prints, and the validation
   list is derived from it rather than written out again. `inspect.rs` used to

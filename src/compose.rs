@@ -478,23 +478,17 @@ fn invoke_compose(root: &Path, args: Vec<&str>, debug: bool) -> Result<()> {
     }
 }
 
+/// `docker compose` (v2, a CLI plugin) or the standalone `docker-compose`.
+///
+/// Resolved in `process`, which is also what `doctor` probes with -- the two
+/// had separate copies, and `doctor` hardcoded `docker`, so on a machine with
+/// only the standalone binary `jails start` worked while `doctor` reported
+/// Docker missing.
 fn compose_command() -> Option<Command> {
-    if find_on_path("docker") {
-        let mut cmd = Command::new("docker");
-        cmd.arg("compose");
-        return Some(cmd);
-    }
-    if find_on_path("docker-compose") {
-        return Some(Command::new("docker-compose"));
-    }
-    None
-}
-
-fn find_on_path(bin: &str) -> bool {
-    let Some(paths) = std::env::var_os("PATH") else {
-        return false;
-    };
-    std::env::split_paths(&paths).any(|dir| dir.join(bin).is_file())
+    let (program, prefix) = crate::process::compose_program()?;
+    let mut cmd = Command::new(program);
+    cmd.args(prefix);
+    Some(cmd)
 }
 
 /// Used by `add` after a failed docker start so the message stays one line.

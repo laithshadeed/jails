@@ -237,17 +237,14 @@ fn compose_provider_check(pom_text: &str) -> Option<Check> {
     ) {
         return None;
     }
-    if !run::find_on_path("docker") {
-        // The docker check above already reports this; one message is enough.
-        return None;
-    }
-    let output = std::process::Command::new("docker")
-        .args(["compose", "version"])
-        .output()
-        .ok()?;
-    Some(classify_compose_provider(&String::from_utf8_lossy(
-        &output.stdout,
-    )))
+    // Through the same resolver `compose.rs` runs with, so this reports the
+    // provider jails would actually drive. Hardcoding `docker` here meant a
+    // machine with only the standalone `docker-compose` had `jails start`
+    // working while this said Docker was missing.
+    let spec = crate::process::compose_spec(["version"])?
+        .output(crate::process::OutputMode::Capture);
+    let done = crate::process::run(&spec, crate::process::Diagnostics::Normal).ok()?;
+    Some(classify_compose_provider(&done.stdout_string()))
 }
 
 /// Read a `docker compose version` banner. Split out from the subprocess so
@@ -902,7 +899,10 @@ fn parse_java_major(text: &str) -> Option<u32> {
 /// against podman's differently-shaped info report and exits 125 -- which
 /// would report a perfectly healthy engine as dead.
 fn docker_daemon_running() -> bool {
-    Command::new("docker")
+    let Some(docker) = crate::process::docker_program() else {
+        return false;
+    };
+    Command::new(docker)
         .arg("info")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -917,7 +917,13 @@ fn docker_daemon_running() -> bool {
 /// provider behind podman's `docker` shim) does not accept `--services
 /// --status`. `docker ps --format` works identically on both.
 fn running_containers() -> Vec<String> {
-    let out = Command::new("docker")
+    let Some(docker) = crate::process::docker_program() else {
+        // Only the standalone `docker-compose` is installed, so there is no
+        // Docker CLI to ask. Reporting "nothing running" would be a guess
+        // dressed as a fact; an empty list is what callers treat as unknown.
+        return Vec::new();
+    };
+    let out = Command::new(docker)
         .args(["ps", "--format", "{{.Names}}"])
         .stderr(Stdio::null())
         .output();

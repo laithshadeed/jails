@@ -5,15 +5,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// One PATH lookup, in `process`. `run.rs`, `compose.rs` and `project.rs`
+/// each had their own copy, which is how the mvnd naming drifted between
+/// them.
 pub(crate) fn find_on_path(bin: &str) -> bool {
-    let Some(paths) = std::env::var_os("PATH") else {
-        return false;
-    };
-    find_on_path_list(bin, std::env::split_paths(&paths))
-}
-
-fn find_on_path_list(bin: &str, dirs: impl Iterator<Item = PathBuf>) -> bool {
-    dirs.into_iter().any(|dir| dir.join(bin).is_file())
+    crate::process::on_path(bin)
 }
 
 /// The name mvnd is installed under. On Windows it ships as `mvnd.cmd`, so
@@ -47,18 +43,27 @@ pub(crate) fn maven_binary(root: &Path) -> PathBuf {
     }
 }
 
-pub(crate) fn run_inherited(mut cmd: Command, debug: bool) -> Result<()> {
-    if debug {
-        crate::debug_cmd(&cmd);
+/// Run a command with our stdio, failing on a non-zero exit.
+///
+/// A thin adapter over the one executor: the callers here build a
+/// `std::process::Command` directly, and converting all of them at once would
+/// be a large diff for no behaviour change. What matters is that the printing,
+/// spawning and exit-status handling happen in one place -- the executor
+/// prints *and then runs*, which is the property that was violated where each
+/// site decided for itself.
+pub(crate) fn run_inherited(cmd: Command, debug: bool) -> Result<()> {
+    let mut spec = crate::process::CommandSpec::new(cmd.get_program())
+        .args(cmd.get_args())
+        .output(crate::process::OutputMode::Inherit);
+    if let Some(dir) = cmd.get_current_dir() {
+        spec = spec.current_dir(dir);
     }
-    let program = cmd.get_program().to_string_lossy().to_string();
-    let status = cmd
-        .status()
-        .map_err(|e| format!("failed to run {program}: {e}"))?;
-    if !status.success() {
-        return Err(format!("{program} exited with {status}"));
+    for (key, value) in cmd.get_envs() {
+        if let Some(value) = value {
+            spec = spec.env(key, value);
+        }
     }
-    Ok(())
+    crate::process::run_checked(&spec, crate::process::Diagnostics::from_flag(debug)).map(|_| ())
 }
 
 /// Run a command, echoing its output live while keeping a copy, and treat
@@ -528,19 +533,6 @@ mod tests {
             after_txt_touch, after_touch,
             "non-.java changes shouldn't move the watermark"
         );
-    }
-
-    #[test]
-    fn find_on_path_list_finds_an_executable_in_one_of_the_dirs() {
-        let dir = scratch("find-on-path");
-        fs::write(dir.join("mvnd"), "").unwrap();
-        let other = scratch("find-on-path-other");
-
-        assert!(find_on_path_list(
-            "mvnd",
-            [other.clone(), dir.clone()].into_iter()
-        ));
-        assert!(!find_on_path_list("mvn", [other, dir].into_iter()));
     }
 
     #[test]

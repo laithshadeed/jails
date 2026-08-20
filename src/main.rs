@@ -10,6 +10,7 @@ mod migrate;
 mod java;
 mod new;
 mod pom;
+mod process;
 mod rename;
 mod project;
 mod run;

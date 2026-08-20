@@ -111,8 +111,19 @@ writer no longer rediscovers the project. The remaining `find_project_root()`
 callers are command entry points, which is where this document says discovery
 belongs; what mattered was that a *writer* had one.
 
-The larger phases (the `ChangeSet` rollback journal and `Move`, `CommandSpec`,
-`lib.rs`, the typed field model) remain design-only. Their user-visible
+**Phase 2 has landed** as `src/process.rs`: `CommandSpec`, `Diagnostics`,
+`OutputMode` and one synchronous executor, with tool resolution in one place.
+It was anchored on a second instance of the drift this document predicts --
+`compose.rs` falls back to the standalone `docker-compose` while `doctor.rs`
+hardcoded `docker`, so a machine with only the standalone binary had
+`jails start` working and `doctor` reporting Docker missing. Debug rendering
+redacts secrets (and carries a name-based backstop, since `console.rs` sets
+`PGPASSWORD` on a plain `Command`), arguments stay `OsString`, and stdin,
+capture and inherit go through the same path. `run.rs`'s callers reach it via
+`run_inherited`, which is now an adapter rather than a second implementation.
+
+The remaining phases (the `ChangeSet` rollback journal and `Move`, `lib.rs`,
+the typed field model) remain design-only. Their user-visible
 guarantees have been retrofitted onto the existing shape instead -- one plan,
 previewed and preflighted before any write, no hidden writes, no partial
 apply on a validation failure -- which is where the value of that IR actually

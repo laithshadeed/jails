@@ -25,7 +25,7 @@
 //! kafka send` is what makes that setting testable in one line.
 
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 use crate::compose;
 use crate::generate::find_project_root;
@@ -237,28 +237,18 @@ fn tool(
     match stdin {
         None => run::run_inherited(cmd, debug),
         Some(input) => {
-            // Print and then run -- `--debug` never decides whether the
-            // record is actually sent. See the same note in `migrate::psql`.
-            if debug {
-                crate::debug_cmd(&cmd);
-            }
-            cmd.stdin(Stdio::piped());
-            let mut child = cmd
-                .spawn()
-                .map_err(|e| format!("failed to run docker compose exec: {e}"))?;
-            {
-                use std::io::Write;
-                let pipe = child
-                    .stdin
-                    .as_mut()
-                    .ok_or_else(|| "failed to open stdin to the producer".to_string())?;
-                pipe.write_all(input.as_bytes())
-                    .map_err(|e| format!("failed to write the record: {e}"))?;
-            }
-            let status = child
-                .wait()
-                .map_err(|e| format!("failed to wait for the producer: {e}"))?;
-            if status.success() {
+            // One executor: it prints (when asked) and then runs, delivers
+            // stdin, and closes the pipe so the producer sees EOF instead of
+            // waiting. `--debug` never decides whether the record is sent.
+            let spec = crate::process::compose_spec(["exec", "-T", SERVICE])
+                .ok_or_else(|| "docker compose is not installed".to_string())?
+                .arg(format!("{TOOLS}/{script}"))
+                .args(["--bootstrap-server", BROKER])
+                .args(args)
+                .current_dir(root)
+                .stdin(input.as_bytes().to_vec());
+            let done = crate::process::run(&spec, crate::process::Diagnostics::from_flag(debug))?;
+            if done.status.success() {
                 Ok(())
             } else {
                 Err("the producer exited non-zero".into())

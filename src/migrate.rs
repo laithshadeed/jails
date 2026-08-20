@@ -28,7 +28,6 @@
 //! batch per file, stopping at the first failure and naming the file.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use crate::compose;
 use crate::generate::find_project_root;
@@ -157,54 +156,41 @@ fn version_of(file_name: &str) -> Option<u32> {
 }
 
 fn psql(conn: &compose::PostgresConnect, database: &str, sql: &str, debug: bool) -> Result<()> {
-    let mut cmd = Command::new("psql");
-    cmd.args([
-        "-h",
-        &conn.host,
-        "-p",
-        &conn.port.to_string(),
-        "-U",
-        &conn.user,
-        "-d",
-        database,
-        // Stop at the first error and report it, rather than plodding on and
-        // reporting the twelve that follow from it.
-        "-v",
-        "ON_ERROR_STOP=1",
-        "--no-psqlrc",
-        "-q",
-        "-f",
-        "-",
-    ])
-    .env("PGPASSWORD", &conn.password);
+    use crate::process::{CommandSpec, Diagnostics, OutputMode};
 
-    // Print and then run. `--debug` is observability, never a mode that
-    // skips the work: a `--debug migrate` that returned here reported
-    // "applied cleanly" over SQL that had not been near a database.
-    if debug {
-        crate::debug_cmd(&cmd);
-    }
+    let spec = CommandSpec::new("psql")
+        .args([
+            "-h",
+            &conn.host,
+            "-p",
+            &conn.port.to_string(),
+            "-U",
+            &conn.user,
+            "-d",
+            database,
+            // Stop at the first error and report it, rather than plodding on
+            // and reporting the twelve that follow from it.
+            "-v",
+            "ON_ERROR_STOP=1",
+            "--no-psqlrc",
+            "-q",
+            "-f",
+            "-",
+        ])
+        // `secret_env`, so `--debug` prints `PGPASSWORD=<redacted>`: the
+        // reader needs to know it was set, never what it is.
+        .secret_env("PGPASSWORD", &conn.password)
+        .stdin(sql.as_bytes().to_vec())
+        .output(OutputMode::Capture);
 
-    use std::io::Write;
-    use std::process::Stdio;
-    cmd.stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = cmd.spawn().map_err(|e| format!("failed to run psql: {e}"))?;
-    child
-        .stdin
-        .as_mut()
-        .ok_or_else(|| "failed to open stdin to psql".to_string())?
-        .write_all(sql.as_bytes())
-        .map_err(|e| format!("failed to send SQL to psql: {e}"))?;
-    let output = child
-        .wait_with_output()
-        .map_err(|e| format!("failed to wait for psql: {e}"))?;
-    if output.status.success() {
+    // The executor prints and then runs. `--debug` is observability, never a
+    // mode that skips the work: a `--debug migrate` that returned early here
+    // reported "applied cleanly" over SQL that had not been near a database.
+    let done = crate::process::run(&spec, Diagnostics::from_flag(debug))?;
+    if done.status.success() {
         return Ok(());
     }
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    Err(stderr.trim().to_string())
+    Err(String::from_utf8_lossy(&done.stderr).trim().to_string())
 }
 
 fn rel(root: &Path, path: &Path) -> String {
