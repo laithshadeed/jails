@@ -1040,10 +1040,11 @@ pub fn generate(
             &root,
             &subpackage(&base, package.unwrap_or("")),
             Path::new(name),
+            pretend,
         );
     }
     if matches!(kind, ArtifactKind::Migration) {
-        return generate_migration(&root, name);
+        return generate_migration(&root, name, pretend);
     }
 
     let name = strip_redundant_suffix(kind, &capitalize(name));
@@ -1767,6 +1768,12 @@ pub fn destroy(
 
     let existing: Vec<&PathBuf> = paths.iter().filter(|p| p.exists()).collect();
     if existing.is_empty() {
+        // A command's files can already be gone while the dispatcher still
+        // calls it -- a half-finished delete by hand is exactly when the
+        // registration most needs taking out.
+        if matches!(kind, ArtifactKind::Command) && !pretend {
+            unregister_command(&root, &name)?;
+        }
         println!("nothing to destroy");
         return Ok(());
     }
@@ -1792,6 +1799,9 @@ pub fn destroy(
         for p in existing {
             println!("would remove {}", p.display());
         }
+        if matches!(kind, ArtifactKind::Command) {
+            println!("would unregister {name}Command from its dispatcher");
+        }
         println!();
         println!("--pretend: nothing was deleted.");
         return Ok(());
@@ -1800,6 +1810,11 @@ pub fn destroy(
     for p in existing {
         fs::remove_file(p).map_err(|e| format!("failed to remove {}: {e}", p.display()))?;
         println!("removed {}", p.display());
+    }
+    // After the files, not before: an unregistration that succeeded over a
+    // failed delete would leave a class nothing dispatches to.
+    if matches!(kind, ArtifactKind::Command) {
+        unregister_command(&root, &name)?;
     }
     Ok(())
 }
@@ -4092,13 +4107,76 @@ fn splice_registration(source: &str, command_class: &str, import: &str) -> Optio
     Some(normalize_imports(&with_import))
 }
 
+/// The exact inverse of `splice_registration`: take the dispatch line for
+/// `command_class` back out, and the import that only existed to serve it.
+///
+/// Returns `None` when there is no such line, so the caller can stay quiet
+/// rather than rewriting a file it did not change. Scoped to the registry
+/// body for the same reason `register_command` is -- the dispatcher's own
+/// Javadoc carries an example `commands.put(...)` line, and a whole-file
+/// match would delete the documentation instead of the registration.
+fn unsplice_registration(source: &str, command_class: &str) -> Option<String> {
+    let call = format!("commands.put({command_class}.NAME, {command_class}::run);");
+    let body = registry_body(source)?;
+    if !body.contains(&call) {
+        return None;
+    }
+
+    let import = format!(".{command_class};");
+    let kept: Vec<&str> = source
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim();
+            if trimmed == call {
+                return false;
+            }
+            !(trimmed.starts_with("import ") && trimmed.ends_with(&import))
+        })
+        .collect();
+
+    let mut out = kept.join("\n");
+    if source.ends_with('\n') {
+        out.push('\n');
+    }
+    Some(out)
+}
+
+/// Undo `register_command`, so `destroy command` is its true inverse.
+///
+/// Without this, destroying a command deleted the class and left the
+/// dispatcher calling it -- the project then stops compiling, on the one
+/// operation whose whole job is to leave no trace.
+fn unregister_command(root: &Path, name: &str) -> Result<()> {
+    let command_class = format!("{name}Command");
+    for dispatcher in find_dispatchers(&root.join("src/main/java")) {
+        let source = fs::read_to_string(&dispatcher)
+            .map_err(|e| format!("failed to read {}: {e}", dispatcher.display()))?;
+        let Some(unspliced) = unsplice_registration(&source, &command_class) else {
+            continue;
+        };
+        fs::write(&dispatcher, unspliced)
+            .map_err(|e| format!("failed to write {}: {e}", dispatcher.display()))?;
+        println!(
+            "unregistered {command_class} from {}",
+            dispatcher.display()
+        );
+    }
+    Ok(())
+}
+
 // ---- migration: the next forward-only SQL file. ----
 
-fn generate_migration(root: &Path, description: &str) -> Result<()> {
+fn generate_migration(root: &Path, description: &str, pretend: bool) -> Result<()> {
     let description = sql_name(description)?;
     let dir = root.join("src/main/resources/db/migration");
     let version = next_migration_version(&dir)?;
     let path = dir.join(format!("V{version:03}__{description}.sql"));
+    if pretend {
+        println!("would create migration {}", path.display());
+        println!();
+        println!("--pretend: nothing was written.");
+        return Ok(());
+    }
     write_new_file(
         &path,
         "-- Forward-only migration. Write explicit SQL below.\n",
@@ -4163,7 +4241,7 @@ fn sql_name(value: &str) -> Result<String> {
 
 /// Turn a brief's checklist into a `@Disabled` test class -- the todo list you
 /// delete one `@Disabled` at a time.
-fn generate_cases(root: &Path, pkg: &str, brief: &Path) -> Result<()> {
+fn generate_cases(root: &Path, pkg: &str, brief: &Path, pretend: bool) -> Result<()> {
     let text = fs::read_to_string(brief)
         .map_err(|e| format!("failed to read {}: {e}", brief.display()))?;
     let cases = parse_cases(&text);
@@ -4178,6 +4256,17 @@ fn generate_cases(root: &Path, pkg: &str, brief: &Path) -> Result<()> {
     let path = test_dir(root, pkg).join(format!("{class}.java"));
     if path.exists() {
         return Err(format!("{} already exists", path.display()));
+    }
+    if pretend {
+        println!(
+            "would create cases {} ({} case{})",
+            path.display(),
+            cases.len(),
+            if cases.len() == 1 { "" } else { "s" }
+        );
+        println!();
+        println!("--pretend: nothing was written.");
+        return Ok(());
     }
     write_new_file(&path, &cases_java(pkg, &class, brief, &cases))?;
     println!(
@@ -5447,6 +5536,93 @@ mod tests {
                 .exists()
         );
         assert!(src.join("App.java").is_file());
+    }
+
+    /// The shape `is_dispatcher` looks for, which is what `new-cli` writes.
+    fn dispatcher_java() -> &'static str {
+        "package com.example.demo;\n\
+         \n\
+         import java.util.LinkedHashMap;\n\
+         import java.util.SequencedMap;\n\
+         \n\
+         public class App {\n\
+         \x20   static SequencedMap<String, Command> commands() {\n\
+         \x20       SequencedMap<String, Command> commands = new LinkedHashMap<>();\n\
+         \x20       return commands;\n\
+         \x20   }\n\
+         }\n"
+    }
+
+    /// `generate command` then `destroy command` must leave the dispatcher
+    /// exactly as it was. Deleting the class while the dispatcher still calls
+    /// it stops the project compiling -- on the one operation whose entire
+    /// job is to leave no trace.
+    #[test]
+    fn destroy_command_unregisters_it_from_the_dispatcher() {
+        let _guard = CWD_LOCK.lock().unwrap();
+        let root = scratch("destroy-command-unregisters");
+        let src = root.join("src/main/java/com/example/demo");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(root.join("pom.xml"), "<project></project>").unwrap();
+        fs::write(src.join("App.java"), dispatcher_java()).unwrap();
+
+        let original_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&root).unwrap();
+        generate(ArtifactKind::Command, "greet", &[], None, &[], false).unwrap();
+        let registered = fs::read_to_string(src.join("App.java")).unwrap();
+        let result = destroy(ArtifactKind::Command, "greet", true, None, false);
+        std::env::set_current_dir(original_cwd).unwrap();
+        result.unwrap();
+
+        // It really was registered, or the round trip proves nothing.
+        assert!(
+            registered.contains("commands.put(GreetCommand.NAME, GreetCommand::run);"),
+            "generate did not register the command:\n{registered}"
+        );
+        let after = fs::read_to_string(src.join("App.java")).unwrap();
+        assert!(
+            !after.contains("GreetCommand"),
+            "destroy left the dispatcher calling a class it deleted:\n{after}"
+        );
+        assert_eq!(
+            after,
+            dispatcher_java(),
+            "destroy is not the inverse of generate"
+        );
+    }
+
+    /// The registration can outlive the files when someone deletes the class
+    /// by hand. That is precisely when the dangling call needs taking out.
+    #[test]
+    fn destroy_command_unregisters_even_when_the_files_are_already_gone() {
+        let _guard = CWD_LOCK.lock().unwrap();
+        let root = scratch("destroy-command-files-gone");
+        let src = root.join("src/main/java/com/example/demo");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(root.join("pom.xml"), "<project></project>").unwrap();
+        fs::write(src.join("App.java"), dispatcher_java()).unwrap();
+
+        let original_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&root).unwrap();
+        generate(ArtifactKind::Command, "greet", &[], None, &[], false).unwrap();
+        fs::remove_file(src.join("cli/GreetCommand.java")).unwrap();
+        fs::remove_file(root.join("src/test/java/com/example/demo/cli/GreetCommandTest.java"))
+            .unwrap();
+        let result = destroy(ArtifactKind::Command, "greet", true, None, false);
+        std::env::set_current_dir(original_cwd).unwrap();
+        result.unwrap();
+
+        let after = fs::read_to_string(src.join("App.java")).unwrap();
+        assert_eq!(after, dispatcher_java());
+    }
+
+    /// The dispatcher's own Javadoc carries an example `commands.put(...)`
+    /// line. Unregistering must not reach into it -- that is documentation,
+    /// not a registration.
+    #[test]
+    fn unsplice_registration_leaves_an_unregistered_command_alone() {
+        let source = dispatcher_java();
+        assert!(unsplice_registration(source, "GreetCommand").is_none());
     }
 
     #[test]

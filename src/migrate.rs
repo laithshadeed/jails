@@ -178,9 +178,11 @@ fn psql(conn: &compose::PostgresConnect, database: &str, sql: &str, debug: bool)
     ])
     .env("PGPASSWORD", &conn.password);
 
+    // Print and then run. `--debug` is observability, never a mode that
+    // skips the work: a `--debug migrate` that returned here reported
+    // "applied cleanly" over SQL that had not been near a database.
     if debug {
         crate::debug_cmd(&cmd);
-        return Ok(());
     }
 
     use std::io::Write;

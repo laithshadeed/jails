@@ -648,7 +648,6 @@ mod tests {
         assert!(!without.contains(",\n)"), "{without}");
     }
 
-    #[test]
     /// The migration `~/code/bank/rewards` had to hand-edit after generation:
     /// a composite primary key, a positivity check, and a covering index.
     /// None of it was expressible, so the generated schema was rewritten by

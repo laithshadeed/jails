@@ -149,6 +149,43 @@ const SPRING_DOCKER_COMPOSE: Dependency = Dependency {
     optional: true,
 };
 
+/// Plan every requested capability before any of them is applied.
+///
+/// `jails add db kafka` applied them in turn, so a project that cannot have
+/// the second was left with the first: `add` reported a failure over a
+/// half-changed pom, and the obvious retry then had to skip `db` by hand.
+/// Planning is pure, and it is where the refusals live (`require_spring`, a
+/// release too old, an unreadable pom), so building all the plans first
+/// turns that class of failure back into "nothing happened".
+///
+/// This is not a transaction and does not claim to be: an I/O error part-way
+/// through the apply still leaves a partial change. It removes the failure
+/// jails can actually see coming.
+pub fn preflight(
+    capabilities: &[Capability],
+    name: Option<&str>,
+    package: Option<&str>,
+) -> Result<()> {
+    if capabilities.len() < 2 {
+        return Ok(());
+    }
+    let root = find_project_root()?;
+    let pom_text = pom::read(&root)?;
+    let flavor = pom::flavor(&pom_text);
+    require_java_release(&pom_text)?;
+    for &capability in capabilities {
+        build_plan(capability, &root, flavor, name, package).map_err(|e| {
+            format!(
+                "{e}\n\nnothing was written -- `{}` was refused, so none of the {} \
+                 requested capabilities were applied.",
+                capability.label(),
+                capabilities.len()
+            )
+        })?;
+    }
+    Ok(())
+}
+
 pub fn add(
     capability: Capability,
     name: Option<&str>,

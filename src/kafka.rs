@@ -237,9 +237,10 @@ fn tool(
     match stdin {
         None => run::run_inherited(cmd, debug),
         Some(input) => {
+            // Print and then run -- `--debug` never decides whether the
+            // record is actually sent. See the same note in `migrate::psql`.
             if debug {
                 crate::debug_cmd(&cmd);
-                return Ok(());
             }
             cmd.stdin(Stdio::piped());
             let mut child = cmd

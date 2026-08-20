@@ -3559,3 +3559,57 @@ fn add_help_lists_worked_examples() {
     assert!(help.contains("jails add db kafka redis"), "{help}");
     assert!(help.contains("is the exact inverse"), "{help}");
 }
+
+/// `jails add csv security` on a plain Maven project: `security` is Spring-only
+/// and is refused. Before preflight, `csv` had already been applied by then --
+/// the command reported a failure over a pom it had just edited, and the
+/// obvious retry had to skip `csv` by hand.
+///
+/// Planning is pure and is where that refusal lives, so every requested
+/// capability is planned before any is applied.
+#[test]
+fn add_preflights_every_capability_before_applying_any_of_them() {
+    let root = temp_dir("add-preflight");
+    write_plain_fixture(&root);
+    let before = fs::read_to_string(root.join("pom.xml")).unwrap();
+
+    let output = jails_cmd(&root, None)
+        .args(["add", "csv", "security"])
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "security is Spring-only and must be refused on a plain Maven project"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("nothing was written"),
+        "the failure should say the other capabilities were not applied: {stderr}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("pom.xml")).unwrap(),
+        before,
+        "csv was applied even though the same command's `security` was refused"
+    );
+}
+
+/// The order must not matter: a refusal named last still has to stop the ones
+/// named before it, which is the case that was broken.
+#[test]
+fn add_preflight_holds_when_the_refused_capability_is_named_first() {
+    let root = temp_dir("add-preflight-order");
+    write_plain_fixture(&root);
+    let before = fs::read_to_string(root.join("pom.xml")).unwrap();
+
+    let output = jails_cmd(&root, None)
+        .args(["add", "security", "csv"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert_eq!(
+        fs::read_to_string(root.join("pom.xml")).unwrap(),
+        before
+    );
+}

@@ -254,8 +254,11 @@ enum Command {
     /// migrations writes. Doctor can say whether anything will run them;
     /// this says whether they work.
     Migrate {
-        /// Apply to a scratch database and drop it. The only mode today --
-        /// jails does not run migrations against a real database, Flyway does.
+        /// Apply to a scratch database and drop it. The only mode there is --
+        /// jails does not run migrations against a real database, Flyway
+        /// does. Accepted so the documented `jails migrate --check` keeps
+        /// working; `--check=false` is refused rather than quietly checking
+        /// anyway.
         #[arg(long, default_value_t = true)]
         check: bool,
         /// Do not `docker compose up` postgres first
@@ -367,12 +370,12 @@ fn main() {
             java,
             no_git,
             no_devtools,
-        } => new::new(&name, &deps, &java, !no_git, !no_devtools, debug),
+        } => new::new(&name, &deps, &java, !no_git, !no_devtools, debug, pretend),
         Command::NewCli {
             name,
             release,
             no_git,
-        } => new::new_cli(&name, &release, !no_git, debug),
+        } => new::new_cli(&name, &release, !no_git, debug, pretend),
         Command::Generate {
             kind,
             name,
@@ -386,15 +389,17 @@ fn main() {
             dry_run,
             no_start,
             package,
-        } => capabilities.into_iter().try_for_each(|capability| {
-            add::add(
-                capability,
-                name.as_deref(),
-                dry_run || pretend,
-                package.as_deref(),
-                debug,
-                no_start,
-            )
+        } => add::preflight(&capabilities, name.as_deref(), package.as_deref()).and_then(|()| {
+            capabilities.into_iter().try_for_each(|capability| {
+                add::add(
+                    capability,
+                    name.as_deref(),
+                    dry_run || pretend,
+                    package.as_deref(),
+                    debug,
+                    no_start,
+                )
+            })
         }),
         Command::Remove {
             capabilities,
@@ -432,7 +437,16 @@ fn main() {
         Command::Notes { tag } => inspect::notes(tag.as_deref()),
         Command::Routes { json } => inspect::routes(json),
         Command::Beans { pattern, json } => inspect::beans(pattern.as_deref(), json),
-        Command::Migrate { check: _, no_start } => migrate::check(no_start, debug),
+        Command::Migrate { check, no_start } => {
+            if !check {
+                Err("`--check` is the only mode jails has: it applies the migrations to a \
+                     scratch database and drops it. Applying them for real is Flyway's job, \
+                     which the application does at startup.\n\nfix: run `jails migrate`."
+                    .to_string())
+            } else {
+                migrate::check(no_start, debug)
+            }
+        }
         Command::Kafka { command, no_start } => kafka::kafka(command, no_start, debug),
         Command::Db {
             file,

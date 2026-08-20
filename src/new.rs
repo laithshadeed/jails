@@ -13,9 +13,25 @@ pub fn new(
     git: bool,
     devtools: bool,
     debug: bool,
+    pretend: bool,
 ) -> Result<()> {
     if Path::new(name).exists() {
         return Err(format!("{name} already exists"));
+    }
+
+    // Refused rather than ignored. The project `new` creates is whatever
+    // start.spring.io returns, so the only honest preview would be to fetch
+    // the zip -- and a `--pretend` that hits the network to tell you what it
+    // would have done is not a preview. `new-cli` writes a file set jails
+    // knows, so that one previews for real.
+    if pretend {
+        return Err(
+            "`--pretend` is not supported for `new`: the project comes from start.spring.io, \
+             so jails cannot say what is in it without downloading it.\n\n\
+             fix: run `jails new-cli --pretend` to preview a project jails writes itself, or \
+             run `jails new` and inspect the result."
+                .to_string(),
+        );
     }
 
     let deps = effective_deps(deps, devtools);
@@ -227,7 +243,7 @@ fn set_java_release(root: &Path, from: &str, to: &str) -> Result<()> {
 /// Plain Maven CLI project, written directly -- no `mvn archetype:generate`
 /// (slow, needs network, and falls into an interactive catalog picker
 /// without exact archetype coordinates).
-pub fn new_cli(name: &str, java: &str, git: bool, debug: bool) -> Result<()> {
+pub fn new_cli(name: &str, java: &str, git: bool, debug: bool, pretend: bool) -> Result<()> {
     let root = Path::new(name);
     if root.exists() {
         return Err(format!("{name} already exists"));
@@ -250,6 +266,30 @@ pub fn new_cli(name: &str, java: &str, git: bool, debug: bool) -> Result<()> {
 
     let src_dir = root.join("src/main/java").join(package.replace('.', "/"));
     let test_dir = root.join("src/test/java").join(package.replace('.', "/"));
+
+    // Every path below is written unconditionally, so the preview is the
+    // list itself rather than a second description of it that can drift.
+    if pretend {
+        let mut planned = vec![
+            root.join("pom.xml"),
+            src_dir.join("App.java"),
+            test_dir.join("AppTest.java"),
+            root.join("src/test/resources/fixtures/.gitkeep"),
+        ];
+        if git {
+            planned.push(root.join(".gitignore"));
+        }
+        for path in planned {
+            println!("would create {}", path.display());
+        }
+        if git {
+            println!("would run git init in ./{name}");
+        }
+        println!();
+        println!("--pretend: nothing was written. (package: {package}, Java {java})");
+        return Ok(());
+    }
+
     fs::create_dir_all(&src_dir)
         .map_err(|e| format!("failed to create {}: {e}", src_dir.display()))?;
     fs::create_dir_all(&test_dir)
@@ -538,7 +578,7 @@ mod tests {
         let workdir = scratch("new-cli");
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&workdir).unwrap();
-        let result = new_cli("demo-app", crate::pom::TARGET_RELEASE, false, false);
+        let result = new_cli("demo-app", crate::pom::TARGET_RELEASE, false, false, false);
         std::env::set_current_dir(&original_cwd).unwrap();
         result.unwrap();
 
@@ -563,7 +603,7 @@ mod tests {
         fs::create_dir_all(workdir.join("demo-app")).unwrap();
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&workdir).unwrap();
-        let result = new_cli("demo-app", crate::pom::TARGET_RELEASE, false, false);
+        let result = new_cli("demo-app", crate::pom::TARGET_RELEASE, false, false, false);
         std::env::set_current_dir(&original_cwd).unwrap();
 
         assert!(result.is_err());
@@ -575,7 +615,7 @@ mod tests {
         let workdir = scratch("new-cli-no-git");
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&workdir).unwrap();
-        let result = new_cli("demo-app", crate::pom::TARGET_RELEASE, false, false);
+        let result = new_cli("demo-app", crate::pom::TARGET_RELEASE, false, false, false);
         std::env::set_current_dir(&original_cwd).unwrap();
         result.unwrap();
 
@@ -590,7 +630,7 @@ mod tests {
         let workdir = scratch("new-cli-git");
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&workdir).unwrap();
-        let result = new_cli("demo-app", crate::pom::TARGET_RELEASE, true, false);
+        let result = new_cli("demo-app", crate::pom::TARGET_RELEASE, true, false, false);
         std::env::set_current_dir(&original_cwd).unwrap();
         result.unwrap();
 
