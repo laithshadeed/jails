@@ -65,6 +65,10 @@ pub enum Capability {
     /// meter names declared once rather than per call site
     #[value(alias = "metrics")]
     Observability,
+    /// Network failure you can switch on: a Toxiproxy container in front of a
+    /// dependency, so a test can cut the connection or add latency
+    #[value(alias = "faults")]
+    Toxiproxy,
 }
 
 impl Capability {
@@ -85,6 +89,7 @@ impl Capability {
             Capability::Security => "security",
             Capability::Redis => "redis",
             Capability::Observability => "observability",
+            Capability::Toxiproxy => "toxiproxy",
         }
     }
 }
@@ -109,6 +114,16 @@ struct Plan {
     /// `application.properties` lines this capability owns, spliced into a
     /// `# jails:<label>` block so `remove` can take exactly them back out.
     properties: Vec<String>,
+    /// Dependencies an *earlier* jails added for this capability and the
+    /// current one no longer does. Removed by `remove`, never added by `add`.
+    ///
+    /// Without this a capability that drops an artifact leaves it behind
+    /// forever: `remove <cap>` unsplices `plan.deps`, and the artifact is not
+    /// in there any more. `add json` moving from Jackson 2 to Jackson 3 is the
+    /// case that needed it -- leaving `jackson-datatype-jsr310` in the pom
+    /// keeps a second Jackson major on the classpath, which is the exact
+    /// failure the move was meant to fix.
+    legacy_deps: Vec<Dependency>,
     /// Spring `add db` only: a test-classpath ApplicationContextInitializer
     /// so every `@SpringBootTest` gets a DataSource without editing those
     /// files. Docker Compose is skipped in tests by default.
@@ -229,7 +244,7 @@ pub fn add(
         }
         if let Some(cfg) = &plan.spring_test_import {
             install_db_properties(&root, true)?;
-            install_postgres_test_initializer(&root, cfg, true)?;
+            install_test_container_import(&root, cfg, true)?;
         }
         install_capability_properties(&root, capability.label(), &plan.properties, true)?;
         return Ok(());
@@ -287,8 +302,8 @@ pub fn add(
     let mut tests_wired = false;
     if let Some(cfg) = &plan.spring_test_import {
         tests_wired = install_db_properties(&root, false)?;
-        tests_wired |= install_postgres_test_initializer(&root, cfg, false)?;
-        tests_wired |= strip_legacy_postgres_imports(&root, cfg)?;
+        tests_wired |= remove_legacy_spring_factories(&root)?;
+        tests_wired |= install_test_container_import(&root, cfg, false)?;
     }
     tests_wired |=
         install_capability_properties(&root, capability.label(), &plan.properties, false)?;
@@ -388,7 +403,7 @@ pub fn remove(
 
     let mut updated_pom = pom_text.clone();
     let mut removed_deps: Vec<&Dependency> = Vec::new();
-    for dep in &plan.deps {
+    for dep in plan.deps.iter().chain(plan.legacy_deps.iter()) {
         match pom::remove_dependency(&updated_pom, dep.group_id, dep.artifact_id)? {
             Some(next) => {
                 updated_pom = next;
@@ -511,6 +526,7 @@ pub fn remove(
         for path in &tests_to_unwire {
             println!("  would unsplice @Import from {}", rel(&root, path));
         }
+        report_unowned_properties(&root, capability.label(), &plan.properties);
         if factories_present {
             println!(
                 "  would unsplice {}",
@@ -549,6 +565,7 @@ pub fn remove(
         for path in &tests_to_unwire {
             println!("  import in {}", rel(&root, path));
         }
+        report_unowned_properties(&root, capability.label(), &plan.properties);
         if factories_present {
             println!("  {}", rel(&root, &spring_factories_path(&root)));
         }
@@ -643,10 +660,11 @@ fn build_plan(
     package: Option<&str>,
 ) -> Result<Plan> {
     let base = base_package(root)?;
-    let place = |default: &str| subpackage(&base, package.unwrap_or(default));
+    let config = crate::config::Config::load(root)?;
+    let place = |default: &str| subpackage(&base, package.unwrap_or(config.layer(default)));
     match capability {
         Capability::Db => db_plan(root, flavor, &place("")),
-        Capability::Kafka => kafka_plan(root, flavor),
+        Capability::Kafka => kafka_plan(root, flavor, &place(crate::generate::layout::MESSAGING)),
         Capability::Csv => csv_plan(root, &place(layout::ADAPTERS), flavor, name),
         Capability::Sqlite => sqlite_plan(root, &place(layout::ADAPTERS), flavor, name),
         Capability::Json => json_plan(root, &place(layout::ADAPTERS), flavor, name),
@@ -679,6 +697,7 @@ fn build_plan(
             flavor,
             "observability",
         ),
+        Capability::Toxiproxy => toxiproxy_plan(root, &place(layout::TESTKIT)),
         Capability::Redis => spring_slice_plan(
             crate::spring::redis_slice(root, &place(layout::ADAPTERS)),
             flavor,
@@ -751,6 +770,25 @@ const POSTGRES_PINNED: Dependency = Dependency {
     scope: Some("runtime"),
     optional: false,
 };
+/// Flyway's Boot integration, which is a *different artifact* from Flyway.
+///
+/// Boot 4 split auto-configuration into ~130 modules, and there is no Flyway
+/// class in `spring-boot-autoconfigure` at all. With only `flyway-core` on the
+/// classpath the migrations are never run and nothing says so: no error, no
+/// warning, not one Flyway log line -- and then `relation "..." does not
+/// exist` from the first query, which reads like a broken migration rather
+/// than an absent one.
+///
+/// The general rule this is one instance of: in Boot 4 the technology jar and
+/// the auto-configuration jar are separate dependencies, and a capability that
+/// ships only the former ships something that does not run.
+const SPRING_BOOT_FLYWAY: Dependency = Dependency {
+    group_id: "org.springframework.boot",
+    artifact_id: "spring-boot-flyway",
+    version: None,
+    scope: None,
+    optional: false,
+};
 const FLYWAY_CORE_MANAGED: Dependency = Dependency {
     group_id: "org.flywaydb",
     artifact_id: "flyway-core",
@@ -802,13 +840,14 @@ const SPRING_TESTCONTAINERS: Dependency = Dependency {
 };
 
 const POSTGRES_IMAGE: &str = "postgres:17-alpine";
-const POSTGRES_CONTAINER_CONFIG: &str = "PostgresContainerConfig";
+const TESTCONTAINERS_CONFIG: &str = "TestcontainersConfig";
 
 fn db_plan(root: &std::path::Path, flavor: Flavor, pkg: &str) -> Result<Plan> {
     let mut deps = match flavor {
         Flavor::SpringBoot => vec![
             SPRING_JDBC,
             POSTGRES_MANAGED,
+            SPRING_BOOT_FLYWAY,
             FLYWAY_CORE_MANAGED,
             FLYWAY_POSTGRES_MANAGED,
         ],
@@ -827,12 +866,12 @@ fn db_plan(root: &std::path::Path, flavor: Flavor, pkg: &str) -> Result<Plan> {
     }];
     let spring_test_import = if flavor == Flavor::SpringBoot {
         files.push(NewFile {
-            path: test_dir(root, pkg).join(format!("{POSTGRES_CONTAINER_CONFIG}.java")),
-            contents: postgres_container_config_java(pkg),
+            path: test_dir(root, pkg).join(format!("{TESTCONTAINERS_CONFIG}.java")),
+            contents: testcontainers_config_java(pkg),
         });
         Some(SpringTestImport {
             pkg: pkg.to_string(),
-            class: POSTGRES_CONTAINER_CONFIG,
+            class: TESTCONTAINERS_CONFIG,
         })
     } else {
         None
@@ -847,101 +886,91 @@ fn db_plan(root: &std::path::Path, flavor: Flavor, pkg: &str) -> Result<Plan> {
     })
 }
 
-/// The test-side database wiring.
+/// The test-side database wiring: a container declared as a Spring bean.
 ///
-/// Two pieces in one file, because they answer two different questions.
-///
-/// `Containers` is the modern Spring Boot idiom: a container declared as a
-/// `@Bean` and annotated `@ServiceConnection`, which is how connection
-/// details reach auto-configuration. Boot's own reference docs recommend
-/// this over `@Testcontainers`/`@Container` static fields, because Spring
-/// caches an application context beyond the container's JUnit-managed
-/// lifetime and later tests then fail against a stopped container. Nothing
-/// here calls `start()`: `spring-boot-testcontainers` registers
+/// `@ServiceConnection` is how a container's url, username and password reach
+/// auto-configuration, and a container that is a `@Bean` is started and
+/// stopped with the context -- `spring-boot-testcontainers` contributes
 /// `TestcontainersLifecycleApplicationContextInitializer` from its own
-/// `spring.factories`, so a container that is a bean is started and stopped
-/// with the context.
+/// `spring.factories`, so nothing here calls `start()`. Boot's reference docs
+/// prefer this over a `@Testcontainers`/`@Container` static field, because
+/// Spring caches a context beyond the container's JUnit-managed lifetime and
+/// later tests then fail against a stopped container.
 ///
-/// The outer class exists only to register the inner one for *every* test.
-/// The documented way to use a `@TestConfiguration` is `@Import` on each
-/// test class, and that is the right default in a project that has some
-/// tests needing a database and some not. It is the wrong default here:
-/// once `spring-boot-starter-jdbc` is on the classpath, JDBC auto-config
-/// demands a DataSource for every `@SpringBootTest`, so a test that never
-/// touches the database still fails with "Failed to determine a suitable
-/// driver class". Registering the configuration from a test-classpath
-/// `ApplicationContextInitializer` makes that a non-problem without an
-/// annotation on every test class. `ServiceConnectionAutoConfiguration`
-/// finds the container by type (`getBeanNamesForType(Container.class)`), so
-/// it does not care that the bean definition was registered programmatically.
-fn postgres_container_config_java(pkg: &str) -> String {
+/// ## Why this is imported rather than registered globally
+///
+/// jails used to register this from a test-classpath `spring.factories`, so
+/// that every `@SpringBootTest` got a DataSource without an annotation. That
+/// solved a real problem -- once `spring-boot-starter-jdbc` is present, JDBC
+/// auto-config demands a DataSource for *every* context, including a test
+/// that never queries -- and created a worse one: **every** test paid for a
+/// PostgreSQL container, including pure slices and `@WebMvcTest`s that have
+/// no business touching a database. A test suite that starts a database it
+/// does not use is slow in a way that is nobody's fault and never fixed.
+///
+/// So the container is imported by the tests that need it, and `add db`
+/// splices that `@Import` into the `@SpringBootTest` classes already in the
+/// project (see [`import_into_spring_boot_tests`]) -- which is what keeps the
+/// original problem from coming back as a mysterious "Failed to determine a
+/// suitable driver class" on a test the user did not write.
+fn testcontainers_config_java(pkg: &str) -> String {
     format!(
         r#"package {pkg};
 
-import org.springframework.beans.factory.support.BeanDefinitionRegistry;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
-import org.springframework.context.ApplicationContextInitializer;
-import org.springframework.context.ConfigurableApplicationContext;
-import org.springframework.context.annotation.AnnotatedBeanDefinitionReader;
 import org.springframework.context.annotation.Bean;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 /**
- * Gives every {{@code @SpringBootTest}} a real PostgreSQL to talk to.
+ * A real PostgreSQL for the tests that need one.
  *
- * <p>Registered from {{@code META-INF/spring.factories}} on the test
- * classpath, so no test class needs an {{@code @Import}}. That matters
- * because JDBC auto-configuration requires a DataSource for every context
- * once the starter is present -- even a test that never queries anything.
+ * <p>Import it on a test class that talks to the database:
  *
- * <p>Docker Compose is skipped during tests by default, which is why the
- * container is here rather than left to {{@code compose.yaml}}.
+ * <pre>{{@code
+ * @SpringBootTest
+ * @Import(TestcontainersConfig.class)
+ * class RewardIngestionIT {{ ... }}
+ * }}</pre>
+ *
+ * <p>{{@code @ServiceConnection}} publishes the container's JDBC url, username
+ * and password to auto-configuration. Connection details take precedence over
+ * {{@code spring.datasource.*}}, so the application's own settings do not need
+ * to be overridden for tests.
+ *
+ * <p>Nothing calls {{@code start()}} -- a container that is a bean is started
+ * and stopped with the application context.
  */
-public class {POSTGRES_CONTAINER_CONFIG} implements ApplicationContextInitializer<ConfigurableApplicationContext> {{
+@TestConfiguration(proxyBeanMethods = false)
+public class {TESTCONTAINERS_CONFIG} {{
 
-    @Override
-    public void initialize(ConfigurableApplicationContext context) {{
-        if (context instanceof BeanDefinitionRegistry registry) {{
-            new AnnotatedBeanDefinitionReader(registry).register(Containers.class);
-        }}
-    }}
-
-    /**
-     * The container itself. {{@code @ServiceConnection}} publishes its JDBC
-     * url, username and password to auto-configuration -- connection details
-     * take precedence over {{@code spring.datasource.*}} properties, so the
-     * application's own settings do not have to be overridden for tests.
-     */
-    @TestConfiguration(proxyBeanMethods = false)
-    public static class Containers {{
-
-        @Bean
-        @ServiceConnection
-        PostgreSQLContainer postgresContainer() {{
-            return new PostgreSQLContainer("{POSTGRES_IMAGE}");
-        }}
+    @Bean
+    @ServiceConnection
+    PostgreSQLContainer postgresContainer() {{
+        return new PostgreSQLContainer("{POSTGRES_IMAGE}");
     }}
 }}
 "#
     )
 }
 
-/// Whether an existing `PostgresContainerConfig.java` predates the current
-/// shape and should be rewritten.
+/// Whether a previously generated container config should be rewritten.
 ///
-/// Two earlier generations exist and each has exactly one of the two things
-/// the current one needs: the original `@TestConfiguration` had
-/// `@ServiceConnection` but required an `@Import` on every test class, and
-/// the initializer that replaced it applied globally but injected
-/// `spring.datasource.*` properties by hand. So the test is for *both*
-/// markers -- checking either one alone leaves one generation unmigrated.
+/// Three generations exist now. The first was a `@TestConfiguration` that
+/// needed an `@Import`; the second an `ApplicationContextInitializer` that
+/// injected `spring.datasource.*` by hand; the third the initializer holding a
+/// nested `@ServiceConnection` bean. The current shape is back to an imported
+/// `@TestConfiguration`, on purpose -- see [`testcontainers_config_java`] --
+/// so the marker to look for is the *absence* of the initializer plus the
+/// presence of `@ServiceConnection`.
 fn should_replace_postgres_test_config(path: &Path) -> bool {
-    path.file_name()
-        .is_some_and(|n| n == "PostgresContainerConfig.java")
-        && fs::read_to_string(path).is_ok_and(|s| {
-            !(s.contains("ServiceConnection") && s.contains("ApplicationContextInitializer"))
-        })
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+    if name != "PostgresContainerConfig.java" && name != "TestcontainersConfig.java" {
+        return false;
+    }
+    fs::read_to_string(path).is_ok_and(|s| {
+        !s.contains("ServiceConnection") || s.contains("ApplicationContextInitializer")
+    })
 }
 
 fn spring_factories_path(root: &Path) -> PathBuf {
@@ -1052,6 +1081,68 @@ fn install_capability_properties(
 
 /// Remove one capability's marked property block, leaving every other line
 /// -- including another capability's block -- exactly as it was.
+/// Lines inside a `# jails:<label>` block that jails did not write.
+///
+/// The marked block is how `remove` knows what to take back out, and it is
+/// also, inevitably, where people tune the capability -- it is the block with
+/// the capability's name on it. A real project ended up with twenty
+/// hand-written Kafka properties inside jails' markers (an
+/// `ErrorHandlingDeserializer`, `acks=all`, a KIP-848 opt-in), every one of
+/// which `remove kafka` would have deleted without a word.
+///
+/// jails cannot refuse to remove them -- they are inside the block it owns --
+/// but it must not delete them silently. Naming them at the confirmation
+/// prompt turns an invisible loss into a decision.
+///
+/// Comments and blank lines are ignored: a comment inside the block is
+/// usually jails' own explanation of the property below it.
+fn unowned_properties(existing: &str, label: &str, owned: &[String]) -> Vec<String> {
+    let open = format!("# jails:{label}");
+    let close = format!("# /jails:{label}");
+    let mut found = Vec::new();
+    let mut inside = false;
+    for line in existing.lines() {
+        let trimmed = line.trim();
+        if trimmed == open {
+            inside = true;
+            continue;
+        }
+        if !inside {
+            continue;
+        }
+        if trimmed == close {
+            break;
+        }
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if !owned.iter().any(|p| p.trim() == trimmed) {
+            found.push(trimmed.to_string());
+        }
+    }
+    found
+}
+
+/// Warn about hand-written properties inside the block about to be deleted.
+fn report_unowned_properties(root: &Path, label: &str, owned: &[String]) {
+    let Ok(existing) = fs::read_to_string(application_properties_path(root)) else {
+        return;
+    };
+    let unowned = unowned_properties(&existing, label, owned);
+    if unowned.is_empty() {
+        return;
+    }
+    println!(
+        "  !! {} propert{} inside the # jails:{label} block were not written by jails",
+        unowned.len(),
+        if unowned.len() == 1 { "y" } else { "ies" }
+    );
+    for line in &unowned {
+        println!("     {line}");
+    }
+    println!("     these will be deleted with the block -- copy them out first if you need them");
+}
+
 fn remove_capability_properties(root: &Path, label: &str) -> Result<()> {
     let path = application_properties_path(root);
     let Ok(existing) = fs::read_to_string(&path) else {
@@ -1201,43 +1292,84 @@ fn maven_output_for(root: &Path, src: &Path) -> Option<PathBuf> {
 
 const SPRING_FACTORIES_KEY: &str = "org.springframework.context.ApplicationContextInitializer";
 
+#[cfg(test)]
 fn spring_factories_block(fqcn: &str) -> String {
     format!("# jails:db\n{SPRING_FACTORIES_KEY}={fqcn}\n# /jails:db\n")
 }
 
-/// Register the initializer on the test classpath. Returns whether the
-/// factories file was created or changed.
-fn install_postgres_test_initializer(
+/// Import the container config into every `@SpringBootTest` in the project.
+///
+/// This is an edit to a file the user owns, which jails does sparingly and
+/// only surgically: one annotation line above an anchor that is already
+/// there, and the import statement it needs. It is idempotent -- a class that
+/// already has the annotation is skipped, not duplicated.
+///
+/// Why `add db` does this at all rather than leaving it to the reader: the
+/// moment `spring-boot-starter-jdbc` lands in the pom, JDBC auto-config
+/// demands a DataSource for *every* `@SpringBootTest`, including the
+/// `contextLoads` test that came with the project and never touches a
+/// database. Adding the capability and walking away would break a test the
+/// user did not write, with a message ("Failed to determine a suitable driver
+/// class") that names neither the cause nor the fix.
+///
+/// Returns whether anything changed.
+fn install_test_container_import(
     root: &Path,
     cfg: &SpringTestImport,
     dry_run: bool,
 ) -> Result<bool> {
+    let annotation = import_annotation(cfg.class);
+    let mut changed = false;
+    for path in find_spring_boot_tests(&root.join("src/test/java")) {
+        let Ok(source) = fs::read_to_string(&path) else {
+            continue;
+        };
+        if source.contains(&annotation) {
+            println!("  exists  {} in {}", cfg.class, rel(root, &path));
+            continue;
+        }
+        let tests_pkg = package_of(&source).unwrap_or_else(|| cfg.pkg.clone());
+        let extra = import_of(&tests_pkg, &cfg.pkg, cfg.class);
+        let Some(next) = splice_spring_boot_test_import(&source, cfg.class, &extra) else {
+            continue;
+        };
+        if dry_run {
+            println!("  would import  {} into {}", cfg.class, rel(root, &path));
+            changed = true;
+            continue;
+        }
+        fs::write(&path, next).map_err(|e| format!("failed to write {}: {e}", path.display()))?;
+        println!("  import  {} -> {}", cfg.class, rel(root, &path));
+        changed = true;
+    }
+    Ok(changed)
+}
+
+/// Remove the test-classpath `spring.factories` an earlier jails wrote.
+///
+/// Left in place it would register the old global initializer *as well as* the
+/// new `@Import`, so every test would still start a container and the change
+/// would look like it had not worked.
+fn remove_legacy_spring_factories(root: &Path) -> Result<bool> {
     let path = spring_factories_path(root);
-    let existing = if path.exists() {
-        fs::read_to_string(&path).map_err(|e| format!("failed to read {}: {e}", path.display()))?
-    } else {
-        String::new()
-    };
-    let fqcn = cfg.fqcn();
-    if existing.contains(&fqcn) {
-        println!("  exists  {}", rel(root, &path));
+    if !path.exists() {
         return Ok(false);
     }
-    let next = if existing.trim().is_empty() {
-        spring_factories_block(&fqcn)
-    } else {
-        format!("{}\n{}", existing.trim_end(), spring_factories_block(&fqcn))
+    let existing =
+        fs::read_to_string(&path).map_err(|e| format!("failed to read {}: {e}", path.display()))?;
+    if !existing.contains(SPRING_FACTORIES_KEY) {
+        return Ok(false);
+    }
+    let Some(next) = remove_jails_db_block(&existing, SPRING_FACTORIES_KEY) else {
+        return Ok(false);
     };
-    if dry_run {
-        println!("  would register  {fqcn} in {}", rel(root, &path));
-        return Ok(true);
+    if next.trim().is_empty() {
+        fs::remove_file(&path).map_err(|e| format!("failed to remove {}: {e}", path.display()))?;
+        println!("  delete  {} (superseded by @Import)", rel(root, &path));
+    } else {
+        fs::write(&path, next).map_err(|e| format!("failed to write {}: {e}", path.display()))?;
+        println!("  unsplice  {}", rel(root, &path));
     }
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
-    }
-    fs::write(&path, next).map_err(|e| format!("failed to write {}: {e}", path.display()))?;
-    println!("  register  {fqcn} -> {}", rel(root, &path));
     Ok(true)
 }
 
@@ -1342,10 +1474,7 @@ fn find_spring_boot_tests(dir: &Path) -> Vec<PathBuf> {
 
 /// Insert `@Import(Class.class)` immediately above `@SpringBootTest` and add
 /// the annotation import (plus `extra` when the config lives in another
-/// package). `None` when the anchor is missing. Production only unsplices
-/// leftover imports from earlier jails versions; this helper exists so the
-/// unit test can prove the round-trip.
-#[cfg(test)]
+/// package). `None` when the anchor is missing.
 fn splice_spring_boot_test_import(source: &str, class: &str, extra: &str) -> Option<String> {
     let annotation = import_annotation(class);
     let anchor = source.find("@SpringBootTest")?;
@@ -1425,8 +1554,27 @@ const KAFKA_CLIENTS: Dependency = Dependency {
     scope: None,
     optional: false,
 };
+/// Without this no test can touch a broker, which is why `add kafka` used to
+/// produce a capability with no possible test.
+const TESTCONTAINERS_KAFKA: Dependency = Dependency {
+    group_id: "org.testcontainers",
+    artifact_id: "testcontainers-kafka",
+    version: Some("2.0.5"),
+    scope: Some("test"),
+    optional: false,
+};
+/// Consuming is asynchronous, so every meaningful Kafka test waits for
+/// something. Without a waiting primitive the generated test is a `Thread.sleep`
+/// that is either flaky or slow.
+const AWAITILITY: Dependency = Dependency {
+    group_id: "org.awaitility",
+    artifact_id: "awaitility",
+    version: None,
+    scope: Some("test"),
+    optional: false,
+};
 
-fn kafka_plan(root: &Path, flavor: Flavor) -> Result<Plan> {
+fn kafka_plan(root: &Path, flavor: Flavor, pkg: &str) -> Result<Plan> {
     // Spring projects also get the properties that make publish-and-consume
     // work at all. Without them the broker is up, the code compiles, and
     // nothing is ever received -- see `spring::kafka_properties` for why each
@@ -1447,11 +1595,29 @@ fn kafka_plan(root: &Path, flavor: Flavor) -> Result<Plan> {
         }
         Flavor::PlainMaven => Vec::new(),
     };
+    // The poison-message path is Spring-only: it is Spring Kafka's
+    // `DefaultErrorHandler` that routes a bad record, and a plain
+    // `kafka-clients` consumer has no equivalent to generate.
+    let (deps, files) = match flavor {
+        Flavor::SpringBoot => (
+            vec![
+                SPRING_KAFKA,
+                SPRING_TESTCONTAINERS,
+                TESTCONTAINERS_KAFKA,
+                TESTCONTAINERS_JUNIT,
+                AWAITILITY,
+            ],
+            crate::spring::kafka_files(root, pkg)
+                .into_iter()
+                .map(|(path, contents, _)| NewFile { path, contents })
+                .collect(),
+        ),
+        Flavor::PlainMaven => (vec![KAFKA_CLIENTS], Vec::new()),
+    };
+
     Ok(Plan {
-        deps: vec![match flavor {
-            Flavor::SpringBoot => SPRING_KAFKA,
-            Flavor::PlainMaven => KAFKA_CLIENTS,
-        }],
+        deps,
+        files,
         compose: vec![compose::KAFKA],
         properties,
         ..Plan::default()
@@ -1881,26 +2047,35 @@ class {database}Test {{
 // json
 // ---------------------------------------------------------------------------
 
-const JACKSON_VERSION: &str = "2.19.0";
+/// Jackson **3**, whose coordinates changed with the major version:
+/// `tools.jackson.core`, not `com.fasterxml.jackson.core`.
+///
+/// This matters more than a version bump usually does. Spring Boot 4's web
+/// starter already brings Jackson 3 in, so adding the 2.x artifact put *two
+/// Jackson majors on one classpath* and generated a utility written against
+/// the deprecated one. They do not conflict at the class level -- the
+/// packages differ -- which is exactly why nothing complains and the wrong
+/// mapper is used forever.
+const JACKSON_VERSION: &str = "3.0.1";
 
 const JACKSON: Dependency = Dependency {
-    group_id: "com.fasterxml.jackson.core",
+    group_id: "tools.jackson.core",
     artifact_id: "jackson-databind",
     version: Some(JACKSON_VERSION),
     scope: None,
     optional: false,
 };
 
-/// `findAndRegisterModules()` only finds modules that are actually on the
-/// classpath, and plain `jackson-databind` ships no `java.time` support. Since
-/// `generate`'s field-type table maps `date`/`datetime` to `LocalDate` and
-/// `LocalDateTime`, leaving this out means every generated date serialises as
-/// a nested `{"year":...}` object instead of an ISO string. Spring Boot pulls
-/// it in transitively, so only the plain-Maven flavor felt it.
+/// Jackson 3 needs **no** `jackson-datatype-jsr310`: java.time support moved
+/// into the core databind module, so the 2.x migration *deletes* a dependency
+/// rather than adding one.
+///
+/// Kept as a constant so `remove json` can still unsplice it from a project
+/// that jails wrote before the move.
 const JACKSON_JSR310: Dependency = Dependency {
     group_id: "com.fasterxml.jackson.datatype",
     artifact_id: "jackson-datatype-jsr310",
-    version: Some(JACKSON_VERSION),
+    version: Some("2.19.0"),
     scope: None,
     optional: false,
 };
@@ -1917,22 +2092,19 @@ fn json_plan(
     // Spring Boot's dependency management already pins Jackson (and the web
     // starter pulls it in transitively), so declaring a version here would
     // fight the parent pom.
+    // One artifact, not two: Jackson 3 has java.time built in. On Spring the
+    // version is left to the parent, which already manages Jackson 3.
     let deps = match flavor {
-        Flavor::SpringBoot => vec![
-            Dependency {
-                version: None,
-                ..JACKSON
-            },
-            Dependency {
-                version: None,
-                ..JACKSON_JSR310
-            },
-        ],
-        Flavor::PlainMaven => vec![JACKSON, JACKSON_JSR310],
+        Flavor::SpringBoot => vec![Dependency {
+            version: None,
+            ..JACKSON
+        }],
+        Flavor::PlainMaven => vec![JACKSON],
     };
 
     Ok(Plan {
         deps,
+        legacy_deps: vec![JACKSON_JSR310, Dependency { group_id: "com.fasterxml.jackson.core", ..JACKSON }],
         files: vec![
             NewFile {
                 path: main_dir(root, pkg).join(format!("{class}.java")),
@@ -1951,22 +2123,23 @@ fn json_java(pkg: &str, class: &str) -> String {
     format!(
         r#"package {pkg};
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
- * JSON reading and writing over one shared, thread-safe {{@link ObjectMapper}}.
+ * JSON reading and writing over one shared, thread-safe {{@link JsonMapper}}.
  *
- * <p>Records map to JSON objects without any annotations, and
- * {{@code findAndRegisterModules()}} picks up the java.time module that ships
- * alongside this class, so {{@code LocalDate}} round-trips as an ISO string.
+ * <p>Jackson 3 (`tools.jackson`), not the 2.x `com.fasterxml.jackson` line.
+ * java.time support is built in, so {{@code LocalDate}} round-trips as an ISO
+ * string with no module to register, and dates are written as strings by
+ * default rather than as numeric timestamps.
+ *
+ * <p>Records map to JSON objects without any annotations.
  *
  * <p>Two ways in, for two situations. {{@link #read}} binds the whole document
  * to a type -- right for input you control, wrong for input you do not, since
@@ -1976,9 +2149,7 @@ import java.util.List;
  */
 public final class {class} {{
 
-    private static final ObjectMapper MAPPER = new ObjectMapper()
-            .findAndRegisterModules()
-            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+    private static final JsonMapper MAPPER = JsonMapper.builder().build();
 
     private {class}() {{}}
 
@@ -2039,11 +2210,16 @@ public final class {class} {{
         }}
     }}
 
-    public static String toJson(Object value) throws JsonProcessingException {{
+    /**
+     * No {{@code throws}}: {{@code JacksonException}} extends
+     * {{@link RuntimeException}} in Jackson 3, where its 2.x counterpart was
+     * checked.
+     */
+    public static String toJson(Object value) {{
         return MAPPER.writeValueAsString(value);
     }}
 
-    public static <T> T parse(String json, Class<T> type) throws JsonProcessingException {{
+    public static <T> T parse(String json, Class<T> type) {{
         return MAPPER.readValue(json, type);
     }}
 }}
@@ -2566,6 +2742,340 @@ fn fake_plan(root: &std::path::Path, testkit: &str) -> Result<Plan> {
         ],
         ..Plan::default()
     })
+}
+
+// ---------------------------------------------------------------------------
+// toxiproxy -- network failure as something a test can switch on
+// ---------------------------------------------------------------------------
+
+const TESTCONTAINERS_TOXIPROXY: Dependency = Dependency {
+    group_id: "org.testcontainers",
+    artifact_id: "testcontainers-toxiproxy",
+    version: Some("2.0.5"),
+    scope: Some("test"),
+    optional: false,
+};
+/// The client the container speaks to. Testcontainers 2.x ships the container
+/// and nothing else -- `getProxy` lived on the 1.x class and is gone -- so the
+/// control API has to be driven directly.
+const TOXIPROXY_JAVA: Dependency = Dependency {
+    group_id: "eu.rekawek.toxiproxy",
+    artifact_id: "toxiproxy-java",
+    version: Some("2.1.11"),
+    scope: Some("test"),
+    optional: false,
+};
+
+fn toxiproxy_plan(root: &std::path::Path, testkit: &str) -> Result<Plan> {
+    let dir = test_dir(root, testkit);
+
+    Ok(Plan {
+        deps: vec![TESTCONTAINERS_TOXIPROXY, TOXIPROXY_JAVA, TESTCONTAINERS_JUNIT],
+        files: vec![
+            NewFile {
+                path: dir.join("Faults.java"),
+                contents: faults_java(testkit),
+            },
+            NewFile {
+                path: dir.join("FaultsTest.java"),
+                contents: faults_test_java(testkit),
+            },
+        ],
+        ..Plan::default()
+    })
+}
+
+fn faults_java(pkg: &str) -> String {
+    format!(
+        r##"package {pkg};
+
+import eu.rekawek.toxiproxy.Proxy;
+import eu.rekawek.toxiproxy.ToxiproxyClient;
+import eu.rekawek.toxiproxy.model.ToxicDirection;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.time.Duration;
+import java.util.concurrent.atomic.AtomicInteger;
+import org.testcontainers.Testcontainers;
+import org.testcontainers.containers.Network;
+import org.testcontainers.toxiproxy.ToxiproxyContainer;
+
+/**
+ * Network failure you can switch on and off inside a test.
+ *
+ * <p>A dependency reached through {{@link Faults}} is reached through a proxy
+ * you control, so "the database went away mid-transaction" and "the broker
+ * answers, slowly" stop being things you reason about and become things you
+ * assert. Stopping the dependency's container proves much less: it takes
+ * seconds, it cannot be undone, and it never reproduces the case that actually
+ * pages you -- a connection that is up, accepted, and then silent.
+ *
+ * <p>Point the application at {{@link Fault#host()}} and {{@link Fault#port()}}
+ * rather than at the dependency's own address. Traffic sent to the real address
+ * bypasses the proxy, and the test then passes for no reason:
+ *
+ * {{@snippet :
+ * try (var faults = Faults.start()) {{
+ *     var postgres = new PostgreSQLContainer("postgres:17-alpine")
+ *             .withNetwork(faults.network())
+ *             .withNetworkAliases("postgres");
+ *     postgres.start();
+ *     var db = faults.inFrontOf("postgres", 5432);
+ *
+ *     // ... point the datasource at db.host():db.port() ...
+ *     db.cut();
+ *     assertThatThrownBy(() -> repository.findAll()).isInstanceOf(DataAccessException.class);
+ *     db.restore();
+ * }}
+ * }}
+ */
+public final class Faults implements AutoCloseable {{
+
+    private static final String IMAGE = "ghcr.io/shopify/toxiproxy:2.12.0";
+
+    /**
+     * Toxiproxy listens on a port per proxy, and a container's ports have to be
+     * declared before it starts -- so a fixed handful are opened up front and
+     * handed out as proxies are created.
+     */
+    private static final int FIRST_LISTEN_PORT = 8666;
+
+    private static final int LISTEN_PORTS = 8;
+
+    private final Network network;
+    private final ToxiproxyContainer container;
+    private final ToxiproxyClient client;
+    private final AtomicInteger nextPort = new AtomicInteger(FIRST_LISTEN_PORT);
+
+    private Faults(Network network, ToxiproxyContainer container) {{
+        this.network = network;
+        this.container = container;
+        // getControlPort() is already the mapped port, not 8474 -- mapping it
+        // again asks for a port that was never exposed.
+        this.client = new ToxiproxyClient(container.getHost(), container.getControlPort());
+    }}
+
+    /** Starts the proxy. Put every container you want to disturb on {{@link #network()}}. */
+    public static Faults start() {{
+        var network = Network.newNetwork();
+        var ports = new Integer[LISTEN_PORTS + 1];
+        ports[0] = 8474;
+        for (int i = 0; i < LISTEN_PORTS; i++) {{
+            ports[i + 1] = FIRST_LISTEN_PORT + i;
+        }}
+        var container = new ToxiproxyContainer(IMAGE).withNetwork(network).withExposedPorts(ports);
+        container.start();
+        return new Faults(network, container);
+    }}
+
+    /** The network the proxy is on. A container is only reachable if it shares this. */
+    public Network network() {{
+        return network;
+    }}
+
+    /**
+     * A proxy in front of {{@code alias:port}}, where {{@code alias}} is the
+     * network alias of another container on {{@link #network()}}.
+     */
+    public Fault inFrontOf(String alias, int port) {{
+        return proxy(alias + "-" + port, alias + ":" + port);
+    }}
+
+    /**
+     * A proxy in front of a server running in this JVM -- a stub HTTP server, an
+     * embedded broker -- rather than in a container.
+     */
+    public Fault inFrontOfHost(int port) {{
+        Testcontainers.exposeHostPorts(port);
+        return proxy("host-" + port, "host.testcontainers.internal:" + port);
+    }}
+
+    private Fault proxy(String name, String upstream) {{
+        var listen = nextPort.getAndIncrement();
+        if (listen >= FIRST_LISTEN_PORT + LISTEN_PORTS) {{
+            throw new IllegalStateException("no listen port left: Faults opens " + LISTEN_PORTS);
+        }}
+        try {{
+            var proxy = client.createProxy(name, "0.0.0.0:" + listen, upstream);
+            return new Fault(proxy, container.getHost(), container.getMappedPort(listen));
+        }} catch (IOException error) {{
+            throw new UncheckedIOException("could not proxy " + upstream, error);
+        }}
+    }}
+
+    @Override
+    public void close() {{
+        container.stop();
+        network.close();
+    }}
+
+    /** One proxied dependency, and the ways it is allowed to misbehave. */
+    public record Fault(Proxy proxy, String host, int port) {{
+
+        /**
+         * Refuses every connection, and drops the ones already open. What a
+         * process being killed looks like from the other side.
+         */
+        public void cut() {{
+            run(proxy::disable);
+        }}
+
+        public void restore() {{
+            run(proxy::enable);
+        }}
+
+        /** Delays every packet, in both directions. Use to prove a timeout exists. */
+        public void latency(Duration delay) {{
+            run(() -> proxy.toxics().latency("latency", ToxicDirection.DOWNSTREAM, delay.toMillis()));
+        }}
+
+        /**
+         * Accepts the connection and then never answers, until {{@code after}}
+         * bytes have gone by. The failure a missing read timeout hangs on
+         * forever -- and the one that a "is the port open" health check misses.
+         */
+        public void blackhole() {{
+            run(() -> proxy.toxics().timeout("timeout", ToxicDirection.DOWNSTREAM, 0));
+        }}
+
+        /** Removes every toxic, leaving the proxy healthy. */
+        public void heal() {{
+            run(() -> {{
+                for (var toxic : proxy.toxics().getAll()) {{
+                    toxic.remove();
+                }}
+            }});
+        }}
+
+        private static void run(Failing action) {{
+            try {{
+                action.run();
+            }} catch (IOException error) {{
+                throw new UncheckedIOException("toxiproxy refused the change", error);
+            }}
+        }}
+
+        @FunctionalInterface
+        private interface Failing {{
+            void run() throws IOException;
+        }}
+    }}
+}}
+"##
+    )
+}
+
+fn faults_test_java(pkg: &str) -> String {
+    format!(
+        r##"package {pkg};
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
+import org.junit.jupiter.api.Test;
+
+/**
+ * Proves the fault injector itself works, so a failure elsewhere is never its
+ * fault. The upstream is a socket in this JVM rather than a second container --
+ * nothing about the proxy cares what is behind it, and this keeps the test to
+ * one image.
+ */
+class FaultsTest {{
+
+    private static final int CONNECT_TIMEOUT_MILLIS = 5_000;
+
+    /** What a healthy upstream answers with. Any other outcome is a broken path. */
+    private static final int HELLO = 'j';
+
+    @Test
+    void aProxiedDependencyAnswersUntilItIsCutAndThenAgainAfterItIsRestored() throws Exception {{
+        try (var upstream = new ServerSocket(0);
+                var faults = Faults.start()) {{
+            greetInBackground(upstream);
+            var fault = faults.inFrontOfHost(upstream.getLocalPort());
+
+            assertThat(reachable(fault)).as("the proxy passes traffic through").isTrue();
+
+            fault.cut();
+            assertThat(reachable(fault)).as("a cut dependency answers nothing").isFalse();
+
+            fault.restore();
+            assertThat(reachable(fault)).as("the dependency came back").isTrue();
+        }}
+    }}
+
+    @Test
+    void aBlackholedDependencyAcceptsTheConnectionAndThenSaysNothing() throws Exception {{
+        try (var upstream = new ServerSocket(0);
+                var faults = Faults.start()) {{
+            greetInBackground(upstream);
+            var fault = faults.inFrontOfHost(upstream.getLocalPort());
+            fault.blackhole();
+
+            // The failure a missing read timeout hangs on: the socket is open,
+            // so anything checking only for "connected" believes it is healthy.
+            assertThat(readWithTimeout(fault, 1_000)).isEqualTo(-1);
+
+            fault.heal();
+            assertThat(reachable(fault)).isTrue();
+        }}
+    }}
+
+    private static void greetInBackground(ServerSocket upstream) {{
+        Thread.ofVirtual().start(() -> {{
+            while (!upstream.isClosed()) {{
+                try (var accepted = upstream.accept()) {{
+                    accepted.getOutputStream().write(HELLO);
+                    accepted.getOutputStream().flush();
+                    // Wait for the client to hang up before closing. Closing on
+                    // top of a just-written byte can reset the connection and
+                    // take the greeting with it, which reads exactly like a
+                    // fault the test did not inject.
+                    accepted.getInputStream().read();
+                }} catch (IOException perConnection) {{
+                    // A client that hung up mid-greeting is what several of
+                    // these toxics look like from here. Keep serving, or the
+                    // upstream dies with the first fault and every later
+                    // assertion measures this thread instead of the proxy.
+                    if (upstream.isClosed()) {{
+                        return;
+                    }}
+                }}
+            }}
+        }});
+    }}
+
+    /**
+     * Whether the upstream's greeting arrives. Connecting is not enough to
+     * decide: the container's published port accepts the TCP handshake whether
+     * or not anything is listening behind it, so a test that only connects
+     * passes against a dependency that is entirely gone.
+     */
+    private static boolean reachable(Faults.Fault fault) {{
+        try {{
+            return readWithTimeout(fault, CONNECT_TIMEOUT_MILLIS) == HELLO;
+        }} catch (IOException unreachable) {{
+            return false;
+        }}
+    }}
+
+    private static int readWithTimeout(Faults.Fault fault, int millis) throws IOException {{
+        try (var socket = new Socket()) {{
+            socket.connect(new InetSocketAddress(fault.host(), fault.port()), CONNECT_TIMEOUT_MILLIS);
+            socket.setSoTimeout(millis);
+            try {{
+                return socket.getInputStream().read();
+            }} catch (java.net.SocketTimeoutException silent) {{
+                return -1;
+            }}
+        }}
+    }}
+}}
+"##
+    )
 }
 
 fn scripted_java(pkg: &str) -> String {
@@ -3118,7 +3628,7 @@ mod tests {
     fn json_pins_a_version_only_when_no_parent_manages_it() {
         // Spring Boot's parent already pins Jackson; declaring our own version
         // would override the curated one.
-        assert_eq!(JACKSON.version, Some("2.19.0"));
+        assert_eq!(JACKSON.version, Some("3.0.1"));
         let root = std::path::Path::new("/tmp/does-not-matter");
         let spring = json_plan(root, "com.example.demo", Flavor::SpringBoot, None).unwrap();
         assert!(spring.deps.iter().all(|d| d.version.is_none()));
@@ -3131,32 +3641,50 @@ mod tests {
         );
     }
 
-    /// Without jackson-datatype-jsr310 on the classpath,
-    /// `findAndRegisterModules()` finds no java.time support and every
-    /// LocalDate -- a type `generate`'s own field table emits -- serialises as
-    /// a nested object instead of an ISO string.
+    /// Moving a capability to a new artifact is only half a migration: the
+    /// old one has to come *out*, or `remove json && add json` leaves the 2.x
+    /// line beside the 3.x one -- the exact two-majors failure the move fixes.
     #[test]
-    fn json_ships_the_java_time_module_alongside_databind() {
+    fn remove_json_also_unsplices_the_jackson_2_artifacts_it_no_longer_adds() {
+        let root = std::path::Path::new("/tmp/does-not-matter");
+        let plan = json_plan(root, "com.example.demo", Flavor::PlainMaven, None).unwrap();
+        let legacy: Vec<(&str, &str)> = plan
+            .legacy_deps
+            .iter()
+            .map(|d| (d.group_id, d.artifact_id))
+            .collect();
+        assert!(
+            legacy.contains(&("com.fasterxml.jackson.datatype", "jackson-datatype-jsr310")),
+            "{legacy:?}"
+        );
+        assert!(
+            legacy.contains(&("com.fasterxml.jackson.core", "jackson-databind")),
+            "the 2.x databind is a different artifact from the 3.x one: {legacy:?}"
+        );
+        // ...and none of them are added.
+        let added: Vec<&str> = plan.deps.iter().map(|d| d.group_id).collect();
+        assert_eq!(added, vec!["tools.jackson.core"]);
+    }
+
+    /// Jackson 3 has java.time in databind, so the 2.x second artifact is not
+    /// merely unnecessary -- adding it would put a second Jackson major on the
+    /// classpath, which is the bug this capability had.
+    #[test]
+    fn json_ships_one_artifact_because_jackson_3_has_java_time_built_in() {
         let root = std::path::Path::new("/tmp/does-not-matter");
         for flavor in [Flavor::SpringBoot, Flavor::PlainMaven] {
             let plan = json_plan(root, "com.example.demo", flavor, None).unwrap();
             let artifacts: Vec<&str> = plan.deps.iter().map(|d| d.artifact_id).collect();
-            assert!(
-                artifacts.contains(&"jackson-databind"),
-                "{flavor:?} is missing databind"
+            assert_eq!(
+                artifacts,
+                vec!["jackson-databind"],
+                "{flavor:?} should get databind and nothing else"
             );
             assert!(
-                artifacts.contains(&"jackson-datatype-jsr310"),
-                "{flavor:?} is missing java.time support"
+                plan.deps.iter().all(|d| d.group_id == "tools.jackson.core"),
+                "{flavor:?}: Jackson 3 changed groupId; the 2.x one is a different library"
             );
         }
-    }
-
-    /// The two Jackson artifacts are released in lockstep and mixing versions
-    /// across them is a documented source of NoSuchMethodError.
-    #[test]
-    fn json_pins_both_jackson_artifacts_to_one_version() {
-        assert_eq!(JACKSON.version, JACKSON_JSR310.version);
     }
 
     /// `read(path, type)` loses the whole document to one bad element, so the
@@ -3166,7 +3694,7 @@ mod tests {
         let src = json_java("com.example.demo", "Json");
         assert!(src.contains("public static JsonNode readTree(Path path)"));
         assert!(src.contains("public static <T> T convert(JsonNode node, Class<T> type)"));
-        assert!(src.contains("import com.fasterxml.jackson.databind.JsonNode;"));
+        assert!(src.contains("import tools.jackson.databind.JsonNode;"));
 
         let test = json_test_java("com.example.demo", "Json");
         assert!(test.contains("keepsGoodElementsWhenSiblingsAreMalformed"));
@@ -3202,7 +3730,7 @@ mod tests {
             "should not fall back to java.io.File"
         );
         assert!(
-            src.contains("private static final ObjectMapper MAPPER"),
+            src.contains("private static final JsonMapper MAPPER"),
             "mapper should be shared"
         );
     }
@@ -3253,12 +3781,12 @@ mod tests {
             !plan
                 .files
                 .iter()
-                .any(|f| f.path.ends_with("PostgresContainerConfig.java"))
+                .any(|f| f.path.ends_with("TestcontainersConfig.java"))
         );
     }
 
     #[test]
-    fn db_plan_on_spring_registers_a_test_classpath_initializer() {
+    fn db_plan_on_spring_writes_an_importable_container_config() {
         let root = std::path::Path::new("/tmp/does-not-matter");
         let plan = db_plan(root, Flavor::SpringBoot, "com.example.demo").unwrap();
         let artifacts: Vec<&str> = plan.deps.iter().map(|d| d.artifact_id).collect();
@@ -3269,16 +3797,21 @@ mod tests {
         );
         assert!(plan.files.iter().any(|f| {
             f.path
-                .ends_with("src/test/java/com/example/demo/PostgresContainerConfig.java")
+                .ends_with("src/test/java/com/example/demo/TestcontainersConfig.java")
         }));
-        let src = postgres_container_config_java("com.example.demo");
-        // Registered globally, so no test class needs an @Import: JDBC
-        // auto-config demands a DataSource for every @SpringBootTest once
-        // the starter is present, including tests that never query.
-        assert!(src.contains("ApplicationContextInitializer"));
-        assert!(src.contains("AnnotatedBeanDefinitionReader"));
-        // ...but the container itself is a bean with @ServiceConnection,
-        // which is how connection details reach auto-configuration.
+        let src = testcontainers_config_java("com.example.demo");
+        // Imported by the tests that need a database, not registered for all
+        // of them: a global registration made every pure slice and
+        // @WebMvcTest start PostgreSQL. `add db` splices the @Import into the
+        // @SpringBootTest classes that already exist, which is what stops the
+        // original "no suitable driver class" problem from coming back.
+        assert!(
+            !src.contains("ApplicationContextInitializer"),
+            "the global initializer is what this replaced: {src}"
+        );
+        assert!(!src.contains("AnnotatedBeanDefinitionReader"), "{src}");
+        // The container is a bean with @ServiceConnection, which is how
+        // connection details reach auto-configuration.
         assert!(src.contains("@ServiceConnection"));
         assert!(src.contains("@TestConfiguration"));
         // Nothing starts the container by hand -- the lifecycle initializer
@@ -3297,8 +3830,42 @@ mod tests {
         assert!(!src.contains("GenericContainer"));
         let cfg = plan.spring_test_import.unwrap();
         assert_eq!(cfg.pkg, "com.example.demo");
-        assert_eq!(cfg.class, "PostgresContainerConfig");
-        assert_eq!(cfg.fqcn(), "com.example.demo.PostgresContainerConfig");
+        assert_eq!(cfg.class, "TestcontainersConfig");
+        assert_eq!(cfg.fqcn(), "com.example.demo.TestcontainersConfig");
+    }
+
+    /// A real project tuned Kafka inside jails' own marked block -- an
+    /// ErrorHandlingDeserializer, acks=all, a KIP-848 opt-in. `remove kafka`
+    /// would have deleted all of it without a word.
+    #[test]
+    fn hand_written_properties_inside_a_marked_block_are_reported() {
+        let owned = vec![
+            "spring.kafka.bootstrap-servers=localhost:9092".to_string(),
+            "spring.kafka.consumer.group-id=rewards".to_string(),
+        ];
+        let existing = "spring.application.name=rewards\n\
+                        # jails:kafka\n\
+                        spring.kafka.bootstrap-servers=localhost:9092\n\
+                        spring.kafka.consumer.group-id=rewards\n\
+                        # a comment jails wrote\n\
+                        spring.kafka.producer.acks=all\n\
+                        spring.kafka.consumer.properties.group.protocol=consumer\n\
+                        # /jails:kafka\n";
+        let unowned = unowned_properties(existing, "kafka", &owned);
+        assert_eq!(
+            unowned,
+            vec![
+                "spring.kafka.producer.acks=all",
+                "spring.kafka.consumer.properties.group.protocol=consumer"
+            ]
+        );
+    }
+
+    #[test]
+    fn properties_outside_the_block_are_not_reported_as_unowned() {
+        let owned = vec!["a=1".to_string()];
+        let existing = "untouched=yes\n# jails:db\na=1\n# /jails:db\nalso.untouched=yes\n";
+        assert!(unowned_properties(existing, "db", &owned).is_empty());
     }
 
     #[test]
@@ -3453,7 +4020,7 @@ class DemoApplicationTests {
         )
         .unwrap();
 
-        let spring = kafka_plan(&root, Flavor::SpringBoot).unwrap();
+        let spring = kafka_plan(&root, Flavor::SpringBoot, "com.example.app.messaging").unwrap();
         assert_eq!(spring.deps[0].artifact_id, "spring-boot-starter-kafka");
         assert!(spring.deps[0].version.is_none());
         assert_eq!(spring.compose, vec![compose::KAFKA]);
@@ -3483,7 +4050,7 @@ class DemoApplicationTests {
             spring.properties
         );
 
-        let plain = kafka_plan(&root, Flavor::PlainMaven).unwrap();
+        let plain = kafka_plan(&root, Flavor::PlainMaven, "com.example.app.messaging").unwrap();
         assert_eq!(plain.deps[0].artifact_id, "kafka-clients");
         assert_eq!(plain.deps[0].version, Some("4.1.0"));
         assert_eq!(plain.compose, vec![compose::KAFKA]);

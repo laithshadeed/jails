@@ -23,6 +23,27 @@ isn't already there.
   grows or shrinks an existing project by a whole slice (dependency + code +
   test, and for `db`/`kafka` a compose service). `Capability` is a
   `clap::ValueEnum` for the same completion reason as `ArtifactKind`.
+- `src/config.rs` — `jails.toml`, the per-project layout override. Hand-parsed
+  (jails' only dependencies are clap), understands one `[layout]` table of
+  `key = "value"` pairs, and the keys are a **closed set** matching
+  `generate::layout` — an unknown one is an error, because a `jails.toml`
+  saying `adapter = "persistence"` that silently kept writing to `adapters`
+  would be worse than no file. Read through the `place` closure in
+  `generate`/`destroy`/`add`, so a renamed layer is renamed everywhere.
+- `src/kafka.rs` — `jails kafka`: the broker counterpart to `jails db`. Runs
+  the image's own CLI tools inside the compose container, so nothing is
+  installed. Note `BROKER` is `kafka:19092`, the *inter-broker* listener —
+  `localhost:9092` is the host-side advertised one and works from inside the
+  container only by accident of the port mapping. `topics_in()` reads a
+  `TOPIC` constant out of source, using `java::blanked()` to locate the
+  declaration and the **original** string to read the value, since `blanked`
+  replaces the quotes too.
+- `src/migrate.rs` — `jails migrate --check`: applies every migration to a
+  scratch database (`create database` / `drop database` around the run) and
+  reports the first failure with psql's file and line. **Not a `doctor`
+  check** — doctor is read-only by contract and this writes. Ordering is
+  numeric, not lexical: `V10` sorts before `V9` as a string, which would apply
+  migrations in an order nobody has tested.
 - `src/pom.rs` — flavor and release-level detection, plus a comment-preserving
   dependency/plugin splice and unsplice. `TARGET_RELEASE` lives here.
 - `src/compose.rs` — the other user-owned file jails edits: `compose.yaml`.
@@ -140,6 +161,36 @@ Formatter *wrapping* is a different matter and cannot be predicted from a
 template, so `add format` runs `spotless:apply` once (best-effort -- a machine
 without Maven just gets a note).
 
+## Table constraints live in the field spec, and are a closed set
+
+`@pk`, `@unique`, `@index`, `@positive`, `@nonnegative` parse off the *type*
+(before the `!`/`?` suffix, so either order works) into `Field::constraints`,
+ride through `sql::Column`, and are read only by `create_table`. They change
+SQL and nothing about the Java type.
+
+Two rules that are the whole point:
+
+- **An unknown marker is an error, not a no-op.** `@primary` silently meaning
+  "no constraint" would produce a schema quietly missing the primary key
+  someone believed they had asked for -- which is the failure this feature
+  exists to remove, reintroduced.
+- **No arbitrary SQL.** `@check(...)` taking a predicate would be a string
+  jails passes through and cannot validate. `@positive` is one jails can
+  confirm it is emitting against a numeric column, and it rejects the spec
+  otherwise. The two exotic constraints a project actually needs are cheaper
+  to write by hand than a passthrough that fails at `flyway migrate`.
+
+`--index` (repeatable, on `g scaffold`) carries what a per-column marker
+cannot: composite or ordered. Its column names are validated against the table
+first -- `sql::validate_index` splits on whitespace so `created_at desc` is
+read as a column plus ordering rather than as a column called
+`"created_at desc"`.
+
+A record read off disk carries **no** constraints (`fields_from_record`
+defaults them): the Java type cannot say what the column is, and inferring a
+primary key from a component called `id` would put one in a schema nobody
+asked for.
+
 ## Field syntax: case is the rule
 
 `parse_fields` reads `name:type[!?]`. **Lowercase = jails' table, capitalised =
@@ -185,57 +236,60 @@ jails knows nothing about.
   require `*Application.java`, which only Spring projects have — `new-cli`
   projects have `App.java`, so `add` failed on exactly the projects it's
   most useful for.
-- **`add json` needs two Jackson artifacts, not one.**
-  `findAndRegisterModules()` only finds modules already on the classpath, and
-  `jackson-databind` alone has no `java.time` support — so without
-  `jackson-datatype-jsr310` every `LocalDate` (a type `generate`'s own field
-  table emits) serialises as `{"year":…}` instead of an ISO string. Spring
-  pulls it in transitively, so this only ever bit the plain-Maven flavor.
-  Keep both artifacts pinned to the same `JACKSON_VERSION`; mixing versions
-  across them is a documented `NoSuchMethodError`.
+- **`add json` is Jackson 3 (`tools.jackson`), and that is one artifact, not
+  two.** java.time is built into core databind in 3.x, so
+  `jackson-datatype-jsr310` is not merely unnecessary -- adding it drags in the
+  2.x line beside the 3.x one that Boot 4's web starter already provides. Two
+  Jackson majors do not conflict (the packages differ), nothing warns, and
+  half the code ends up on a mapper nobody configured. `doctor` reports that
+  case as a FAIL. Other 3.x differences the templates depend on, all verified
+  in `deps/jackson-databind`: `JsonMapper.builder().build()`,
+  `JacksonException extends RuntimeException` (so no `throws
+  JsonProcessingException`), and `WRITE_DATES_AS_TIMESTAMPS` moved to
+  `cfg.DateTimeFeature` where it already defaults to `false`.
 - **`jails check` is `mvn clean verify`.** Incremental `verify` leaves deleted
   tests in `target/`, and Surefire still runs the leftover `.class`. Don't
   "optimize" it back to bare verify.
-- **`add db`'s test wiring is a container *bean* registered globally.** Two
-  requirements pull in opposite directions and both have to be met. Boot's
-  own docs want the container declared as a `@Bean` with
-  `@ServiceConnection` (not a `@Testcontainers`/`@Container` static field:
-  Spring caches the context past the container's JUnit-managed lifetime, and
-  later tests then fail against a stopped container). But the documented way
-  to use that `@TestConfiguration` is `@Import` on each test class, which is
-  wrong here — JDBC auto-config demands a DataSource for *every*
-  `@SpringBootTest` once the starter is present, including tests that never
-  query. So `PostgresContainerConfig` is both: an `ApplicationContextInitializer`
-  listed in test `META-INF/spring.factories`, whose only job is to register a
-  nested `@TestConfiguration` holding the `@ServiceConnection` bean.
-  `ServiceConnectionAutoConfiguration` finds it by type
-  (`getBeanNamesForType(Container.class)`), so a programmatically registered
-  bean definition is fine. Nothing calls `start()` —
+- **`add db`'s test wiring is an imported `@TestConfiguration`, and both
+  halves are load-bearing.** The container is declared as a `@Bean` with
+  `@ServiceConnection` in `TestcontainersConfig` (not a
+  `@Testcontainers`/`@Container` static field: Spring caches the context past
+  the container's JUnit-managed lifetime, and later tests then fail against a
+  stopped container). It is `@Import`ed rather than registered globally --
+  jails used to list an `ApplicationContextInitializer` in test
+  `META-INF/spring.factories`, which gave every `@SpringBootTest` a DataSource
+  for free *and* made every pure slice and `@WebMvcTest` start a PostgreSQL it
+  never queried.
+  The reason the global version existed is still real: once the JDBC starter
+  is present, auto-config demands a DataSource for **every** `@SpringBootTest`,
+  including the `contextLoads` test that shipped with the project. So `add db`
+  splices `@Import(TestcontainersConfig.class)` into the `@SpringBootTest`
+  classes already on disk (`install_test_container_import`), including ones in
+  other packages, which need the import statement too. **Deleting a leftover
+  `spring.factories` is not optional** -- left behind it keeps registering the
+  old initializer, a second container starts for every test, and the migration
+  looks like it did not work. Nothing calls `start()`:
   `spring-boot-testcontainers` registers
   `TestcontainersLifecycleApplicationContextInitializer` from its own
-  `spring.factories`. That module is therefore a required dependency.
-  `should_replace_postgres_test_config` checks for **both** markers, because
-  each earlier generation had exactly one of them.
+  `spring.factories`, so that module is a required dependency.
 - **`add db` writes `spring.datasource.*` for the application itself**, read
   back out of `compose.yaml` rather than assumed. Spring's docker-compose
   module supplies these where it works and its connection details take
   precedence, so the properties are redundant there and load-bearing
   everywhere else — without them the app dies at startup on any machine
   whose compose provider Spring cannot drive.
-- **`add db` on Spring registers a test-classpath ApplicationContextInitializer.**
-  Docker Compose is skipped in tests (`spring.docker.compose.skip.in-tests=true`
-  by default), so JDBC auto-config has no URL and fails with "Failed to
-  determine a suitable driver class". `PostgresContainerConfig` implements
-  `ApplicationContextInitializer` and is listed in test-only
-  `META-INF/spring.factories`, so every `@SpringBootTest` sees a DataSource
-  without an `@Import` on the test class. JDBC auto-config also registers
+- **`add db` on Spring must wire tests, or `mvn verify` goes red on a test
+  nobody wrote.** Docker Compose is skipped in tests
+  (`spring.docker.compose.skip.in-tests=true` by default), so JDBC auto-config
+  has no URL and fails with "Failed to determine a suitable driver class". The
+  `@Import` splice above is what prevents it. JDBC auto-config also registers
   persistence-exception translation, which CGLIB-proxies every `@Repository`
   and fails on `final` classes; `add db` disables it with
   `spring.persistence.exceptiontranslation.enabled=false` in main
-  `application.properties` (raw SQL, no ORM). Do not "fix" this by setting
-  `skip.in-tests=false` (that would share the compose database with tests)
-  or by writing a `src/test/resources/application.properties` that shadows
-  the main one.
+  `application.properties` (raw SQL, no ORM). Do not "fix" any of this by
+  setting `skip.in-tests=false` (that would share the compose database with
+  tests) or by writing a `src/test/resources/application.properties` that
+  shadows the main one.
 - **`record`/`command` are the plain-Java kinds.** They work in `new-cli`
   projects without framework dependencies. A record occupies two paths
   (`<Name>.java` + `<Name>Test.java`), and `generate` refuses to overwrite
@@ -307,6 +361,41 @@ jails knows nothing about.
   `config().commonTags(...)`, which covers both. Boot 4 also moved that
   interface out of `actuate.autoconfigure` with no shim, so the import is
   version-sniffed like `@AutoConfigureMockMvc` is.
+- **Exactly one repository adapter may carry `@Repository`.** Two make two
+  beans qualify for one injection point and the scaffold compiles but cannot
+  start — the ambiguity `jails beans` exists to report.
+  `generate::repository_wiring` decides: with `spring-boot-starter-jdbc`
+  present the `JdbcClient` adapter is the bean and the in-memory one is an
+  unannotated fake; without it the adapter is plain `Connection` JDBC (not a
+  bean) and the in-memory one is. **`JdbcClient` is not a fallback choice** —
+  it lives in `spring-jdbc`, so without the starter the type does not exist
+  and the adapter would not compile. The first version of this change emitted
+  `JdbcClient` for every Spring project and broke `g scaffold` on any project
+  that had not run `add db`; only the real-toolchain tier caught it.
+- **A name that already carries its kind's suffix must not get it twice.**
+  `strip_redundant_suffix` runs in `generate` **and** `destroy` — applied to
+  one and not the other, `destroy` rebuilds different paths and strands the
+  files it claims to have deleted. `scaffold` is exempt: it spans Controller,
+  Service and Repository at once, so stripping any one corrupts the others.
+- **`package-info.java` is written from `write_new_file`, not per-kind**, for
+  the same reason import normalisation is — a rule twenty templates must
+  remember is a rule that decays. It is conditional on `org.jspecify:jspecify`
+  actually being a dependency: annotating a package that cannot resolve
+  `@NullMarked` hands the reader a compile error for a file they did not ask
+  for.
+- **`add kafka` cannot know a topic name, and must not guess one.** The
+  capability owns everything topic-agnostic (the `DefaultErrorHandler`, the
+  DLT routing, `ErrorHandlingDeserializer`); `g event` owns what needs a
+  payload type (`NewTopic` beans, `spring.json.value.default.type`). The
+  dead-letter destination is named **explicitly** in the recoverer:
+  `DeadLetterPublishingRecoverer` defaults to `<topic>-dlt` and the source
+  partition number, so a project declaring `<topic>.DLT` finds it empty with
+  only a WARN to say so.
+- **`remove <capability>` deletes a marked block wholesale**, and that block
+  is where people tune the capability — it has the capability's name on it.
+  `unowned_properties` diffs it against what jails would write so `remove`
+  can name the lines it did not write before deleting them. A real project
+  had ~20 hand-written Kafka properties inside jails' own markers.
 - **clap `alias` vs `visible_alias`**: hidden `alias` is invisible to
   `clap_complete`'s bash generator — `jails g <TAB>` fell back to top-level
   subcommand names instead of `generate`'s completions. Always use

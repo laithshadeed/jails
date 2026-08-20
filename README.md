@@ -38,8 +38,15 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
   situations mean (201 with `Location`, 204, 404 rather than an empty 200),
   and tests for each. `g scaffold Note id:uuid title:string!` then `jails run`
   gives you `POST /notes` → 201 and `GET /notes/nope` → 404 with nothing to
-  write. The JDBC adapter is deliberately *not* a bean; move `@Repository`
-  onto it when a real `DataSource` arrives and delete the in-memory one.
+  write. **Exactly one adapter is a bean**, and which one depends on whether
+  the project has a database yet: with `spring-boot-starter-jdbc` present the
+  JDBC adapter is a `@Repository` over `JdbcClient` with named parameters,
+  and the in-memory one becomes a plain fake for tests; without it there is no
+  `JdbcClient` type to compile against at all, so the adapter is plain JDBC
+  over a caller-owned `Connection` and the in-memory one carries
+  `@Repository` so the app still starts. Annotating both would make two beans
+  qualify for one injection point, which is the ambiguity `jails beans`
+  reports.
   When the project has a `db/migration` directory (i.e. `jails add db` has
   run), it also writes the `create table` for the same field spec — the DDL,
   the insert and the row mapper all come from one column list, which is what
@@ -90,14 +97,18 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
   receive the JDBC starter, `spring-boot-docker-compose` so the database
   starts with the app, `spring.datasource.*` properties read out of
   `compose.yaml` so the application can reach the database on any machine,
-  and a `PostgresContainerConfig` for tests. That last one declares the
+  and a `TestcontainersConfig` for tests. That last one declares the
   container as a `@Bean` with `@ServiceConnection` — Spring Boot's current
   idiom, and the one its own docs prefer over `@Testcontainers`/`@Container`
   static fields, because Spring caches a context past the container's
-  JUnit-managed lifetime. It registers itself from
-  `src/test/resources/META-INF/spring.factories`, so every `@SpringBootTest`
-  gets a DataSource without an `@Import` on the test class — Docker Compose
-  is skipped in tests, and without a DataSource Spring cannot pick a driver. JDBC would also
+  JUnit-managed lifetime. `add db` splices `@Import(TestcontainersConfig.class)`
+  into the `@SpringBootTest` classes already in the project, because Docker
+  Compose is skipped in tests and without a DataSource Spring cannot pick a
+  driver — so adding the capability and walking away would break the
+  `contextLoads` test that came with the project. It is an `@Import` rather
+  than a global `spring.factories` registration (which jails used to write)
+  so that pure slices and `@WebMvcTest`s do not each start a PostgreSQL they
+  never query. JDBC would also
   CGLIB-proxy every `@Repository`, which breaks `final` classes, so `add db`
   sets `spring.persistence.exceptiontranslation.enabled=false` (this
   capability is raw SQL, not JPA). `jails add` starts postgres immediately when Docker is
@@ -106,16 +117,34 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
   `compose.yaml` either way. This
   capability is raw SQL only: no persistence framework or generated schema.
 - `jails add|a kafka` — a Kafka client (`spring-boot-starter-kafka` or
-  `kafka-clients`) and a KRaft broker in `compose.yaml`. Stacks with `add db`
-  in one file; `remove kafka` takes only the broker back out.
+  `kafka-clients`), a KRaft broker in `compose.yaml`, and on Spring the
+  poison-message path every project writes on its second day: a `KafkaConfig`
+  with a `DefaultErrorHandler`, a `DeadLetterPublishingRecoverer` that names
+  `<topic>.DLT` explicitly (the recoverer's own default is `-dlt`, so a
+  project that declares `.DLT` and ships a consumer for it finds it empty),
+  and a retryable/fatal classification — a record that will not deserialize
+  fails identically on every attempt, and retrying it blocks the partition
+  with consumer lag as the only symptom. The properties include
+  `ErrorHandlingDeserializer` (without which that bad record never reaches
+  the error handler at all), `group.protocol=consumer` (KIP-848 is the broker
+  default since Kafka 4.0 but the *client* default is still `classic`),
+  `acks=all` and `enable.idempotence`. Test dependencies come too —
+  `testcontainers-kafka` and `awaitility`, without which no test can touch a
+  broker. Stacks with `add db` in one file; `remove kafka` takes only the
+  broker back out.
 - `jails add|a <csv|sqlite|json|testkit|fake|http|format> [--name <Base>] [--dry-run]` — grows an
   existing project by a whole capability: the dependency (spliced into
   `pom.xml`, comments and formatting preserved), the code that uses it, and
   a passing test. Idempotent, so re-running reports what is already there.
   `csv` gives a record-based reader over Commons CSV; `sqlite` gives a
   `Database` record plus a migration runner over plain JDBC (no ORM); `json`
-  gives a shared Jackson `ObjectMapper` wrapper, with `java.time` support
-  wired in and a tree API for input whose shape you can't trust.
+  gives a shared Jackson 3 (`tools.jackson`) `JsonMapper` wrapper and a tree
+  API for input whose shape you can't trust. Jackson 3 has `java.time` built
+  in, so this is **one** artifact rather than two -- and adding the 2.x
+  `com.fasterxml` pair to a Boot 4 project (whose web starter already brings
+  Jackson 3) put two Jackson majors on one classpath, which does not conflict,
+  does not warn, and leaves half the code on a mapper nobody configured.
+  `jails doctor` reports that case.
 - `jails remove|rm <capability>... [--force]` — the inverse of `add`: unsplices
   the same dependencies, deletes the same files, removes compose services, and
   stops their containers. Confirms unless `--force`.
@@ -208,7 +237,14 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
   CLI shim), each compose service, a real TCP connection to postgres, Flyway
   migrations, the test-classpath Testcontainers initializer `add db` installs,
   `DOCKER_HOST` for Testcontainers, both Jackson artifacts, the HTTP port, and
-  every constructor dependency that no bean supplies. Reads only — it never
+  every constructor dependency that no bean supplies. It also catches three
+  things that fail silently rather than loudly: a compose provider that is
+  podman-compose while `spring-boot-docker-compose` is on the classpath (the
+  app dies during startup before any of its own code runs), two Jackson majors
+  declared at once (they do not conflict, so half the code ends up on a mapper
+  nobody configured), and an `@Repository` still on an in-memory adapter in a
+  project that has a `DataSource` — which starts perfectly and serves every
+  request out of a map that empties on restart. Reads only — it never
   starts, stops or writes anything, so it is safe mid-debug. Each failing line
   carries the command that fixes it, and a failure exits non-zero so
   `jails doctor && jails run` works.
@@ -241,6 +277,25 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
   `compose.yaml`). Starts postgres first unless `--no-start`. Pass a SQLite
   file to open it with `sqlite3` instead. Extra args after `--` go to the
   client: `jails db -- -c 'select 1'`.
+- `jails migrate [--no-start]` — apply every migration to a scratch database,
+  in Flyway's order, and report the first one that fails with its file and
+  line. The database is created and dropped around the run, so your data is
+  untouched, and it is the same server and version the migrations will really
+  run against. Deliberately **not** a `doctor` check: doctor is read-only by
+  contract so it stays safe mid-debug, and it can only answer whether anything
+  *will* run the migrations — this answers whether they work. Exits non-zero on
+  failure.
+- `jails kafka <topics|describe|send|poison|tail|dlt|lag|reset> [--no-start]`
+  — the broker counterpart to `jails db`. Everything runs inside the compose
+  broker container, so there is nothing to install: the Kafka CLI tools ship
+  in the image. The topic defaults to the one the source declares (a `TOPIC`
+  constant, read textually so it answers on a project that does not compile)
+  and the group to `spring.kafka.consumer.group-id`. `send` publishes one JSON
+  record with a key — ordering is per partition and a null key round-robins;
+  `poison` publishes an unparseable one so you can watch it reach the DLT
+  rather than stall the partition; `dlt` tails the dead-letter topic with
+  headers, which is where the failure reason is; `lag` is the one number that
+  says whether a consumer is keeping up.
 - `jails console|c [--no-build] [-- <args>...]` — `jshell` with the project's
   compiled classes and Maven runtime classpath. This is not a Spring-booted
   REPL (Java has no `rails console`); it is a JDK shell that can see your
@@ -273,6 +328,30 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
 
 `generate`, `destroy`, `add` and `remove` all take `--package <sub>` to override where
 the code lands; `--package ''` writes straight into the base package.
+
+## `jails.toml`
+
+`--package` is a per-call override. For a project whose layout differs from
+jails' defaults throughout, put the per-project one at the project root next
+to `pom.xml`:
+
+```toml
+[layout]
+service   = "application"
+adapters  = "persistence"
+web       = "api"
+```
+
+The keys are the layer names in the table above (`domain`, `app`, `service`,
+`web`, `cli`, `adapters`, `api`, `testkit`, `clients`, `jobs`, `messaging`)
+and the values are package paths relative to the base package — dotted
+(`infra.jdbc`) for a nested one, empty for the base package itself. A key that
+is not a layer name is an error rather than a no-op: a `jails.toml` saying
+`adapter = "persistence"` that silently kept writing to `adapters` would be
+worse than no file at all. `--package` still wins for a single call.
+
+This renames layers and nothing else — no template overrides, no per-kind
+paths, no plugin hooks.
 
 Every command takes `--debug`, which prints the `mvnw`/`mvn`/`mvnd`/`java`/`git`/`curl`
 command lines jails shells out to instead of running them silently.
@@ -319,6 +398,38 @@ jails g value CanonicalTransaction id:string! amountMinor:long \
 The Java spellings of the built-ins (`String`, `LocalDate`, …) still mean the
 built-in, so `id:String` behaves like `id:string`.
 
+**An `@marker` picks the table constraint.** These change the generated SQL
+and nothing about the Java type — a record cannot say that this UUID and that
+string are together the primary key.
+
+| marker | in the migration |
+| --- | --- |
+| `@pk` | part of the primary key; several make it composite, in declaration order |
+| `@unique` | `unique` on the column |
+| `@index` | its own single-column index |
+| `@positive` | `check (col > 0)` — numeric columns only |
+| `@nonnegative` | `check (col >= 0)` — numeric columns only |
+
+Repeatable and order-independent (`amount:long@positive@index`), and they
+combine with the optionality suffix either way round. An unknown marker is an
+error listing the real ones, because a typo that parsed as "no constraint"
+would produce a schema quietly missing the primary key you thought you asked
+for. Falling back: with no `@pk`, a column named `id` is still the key, and
+failing that there is none — jails will not invent a surrogate.
+
+For the index a per-column marker cannot spell — composite, or ordered — pass
+`--index` (repeatable) to `g scaffold`:
+
+```
+jails g scaffold Reward transactionId:uuid@pk ruleId:string@pk \
+    customerId:uuid amount:long@positive createdAt:instant \
+    --index 'customer_id, created_at desc'
+```
+
+Column names in `--index` are checked against the table before anything is
+written; a typo there would otherwise surface at `flyway migrate` on whichever
+machine ran it first.
+
 **A suffix picks the validation.** `name:string!` is required *and* non-blank;
 `name:string?` becomes an `Optional<String>` component (pass `null` to mean
 absent); bare `name:string` is required but may be blank. Hardcoding one policy
@@ -337,6 +448,13 @@ Both `new` and `new-cli` lay down the standard Maven tree plus an empty
 empty directory) — the conventional home for sample CSV/JSON/SQL files that
 tests read off the classpath, which is exactly what `add testkit`'s `Fixtures`
 helper and the `add csv|json|sqlite` capabilities want.
+
+Every package jails writes a class into gets a null-marked
+`package-info.java` the first time, so `@NullMarked` covers the whole tree
+rather than the one package somebody remembered. It is written only when
+`org.jspecify:jspecify` is actually a dependency — `new` and `new-cli` add it
+— because annotating a package that cannot resolve `@NullMarked` would hand
+you a compile error for a file you did not ask for.
 
 Generated code goes into the subpackage its layer conventionally owns, not
 into one flat pile beside `App.java`:

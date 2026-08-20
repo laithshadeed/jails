@@ -67,7 +67,7 @@ you see them:
 ## 2. Dependency injection and beans
 
 ```java
-@Service
+@Component
 public class OrderService {
 
     private final OrderRepository orders;
@@ -94,7 +94,26 @@ Rules you hold to:
 - Never register more than one bean from a single `@Bean` method. When
   registration needs real logic or a variable number of beans, use the 7.0
   **`BeanRegistrar`** contract instead of a clever `@Bean` method.
+- **`@Component` for every bean you write — not `@Service`, `@Repository` or
+  `@Controller`.** The container treats all four identically; the specialised
+  names are commentary, and commentary that a package name already carries. Two
+  concrete reasons, not just taste:
+  - `@Repository` is not inert. It opts the class into exception translation,
+    which CGLIB-proxies the bean — so a `final` repository fails outright, and
+    the proxy is a frame in every stack trace for a translation most raw-JDBC
+    projects turn off anyway (see §8).
+  - One annotation means one thing to grep for when you ask "what is a bean
+    here", and no debates about whether a class that maps and validates is a
+    "service".
+
+  `@RestController` is the exception, and a hard one: Spring MVC's handler
+  mapping looks for `@Controller` specifically, so demoting it to `@Component`
+  silently unmaps every endpoint. Keep it.
 - `@Component` scanning for your own code; explicit `@Bean` for types you don't own.
+  The test is ownership, not taste: you cannot annotate `java.time.Clock` or a
+  `PostgreSQLContainer`, and you cannot pass a literal (an image tag, a pool
+  size) to a constructor Spring calls for you. When neither applies, scanning is
+  the lighter option — the declaration sits on the thing itself.
 - Proxy control is per-bean now via **`@Proxyable`** (`@Proxyable(INTERFACES)` /
   `@Proxyable(TARGET_CLASS)`) — CGLIB is the consistent global default in 7.0,
   including for `@Async` and friends.
@@ -374,7 +393,7 @@ are writing SQL either way — the only question is whether you can see it.
 ### The default: `JdbcClient`
 
 ```java
-@Repository
+@Component
 class JdbcOrderRepository implements OrderRepository {
 
     private static final String COLUMNS = "id, sku, quantity, placed_at";
@@ -447,7 +466,10 @@ let the listener do it after commit.
 - Note that with raw JDBC and no ORM you may want
   `spring.persistence.exceptiontranslation.enabled=false` — the auto-configured
   translator CGLIB-proxies every `@Repository`, which fails outright on a `final`
-  repository class.
+  repository class. Annotating the adapter `@Component` instead (§2) sidesteps
+  this: no `@Repository`, no translation, no proxy, and `final` works. The
+  property then buys nothing, which is a reason to prefer the annotation over
+  the setting.
 - Connection pool is HikariCP (Boot's default). Size it from measurement, not
   from a blog post; the correct number is usually much smaller than you think.
 - Test against the real database in a container. Never H2-as-Postgres — the
@@ -559,6 +581,17 @@ whole `spring-boot-starter-test` in where a slice would do.
 Layer-first packaging (`controller/`, `service/`, `repository/`) makes every
 feature a diagonal cut across the tree and every package a bag of unrelated
 things. Package by feature; keep the layer as the *inner* dimension if you need it.
+
+**With one caveat that decides when this applies at all.** A service with a
+single domain — which is most services, and every service on its first day —
+has exactly one feature package, so packaging by feature collapses to flat and
+the layer names are the only structure there is. A scaffolding tool therefore
+cannot start you anywhere else, and `jails` starting you at
+`domain`/`service`/`web`/`adapters` is not a contradiction of this section.
+What this section is really about is **the second feature**: that is the point
+where layer packages stop describing anything and the cut has to move to the
+feature. Doing it before then is ceremony; noticing it late is a refactor
+across every package in the tree, which is why it is worth watching for.
 
 ```
 com.example.orders

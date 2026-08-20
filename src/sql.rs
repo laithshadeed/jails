@@ -39,6 +39,9 @@ pub(crate) struct Column {
     /// the caller can work out which imports the generated expressions need
     /// without re-parsing them out of the strings.
     pub java_type: String,
+    /// The table constraints declared on the field spec. Carried through
+    /// unchanged -- `create_table` is the only reader.
+    pub constraints: crate::generate::Constraints,
 }
 
 impl Column {
@@ -86,19 +89,20 @@ fn column(field: &Field, root: &Path, pkg: &str, receiver: &str) -> Column {
             read: None,
             write: None,
             java_type: field.java_type.clone(),
+            constraints: field.constraints,
         };
     }
 
     let inner = inner_type(&field.java_type);
     if let Some((sql_type, read, write)) = builtin_mapping(&inner, &name, &accessor) {
-        return finish(name, sql_type, not_null, optional, read, write, &inner);
+        return finish(name, sql_type, not_null, optional, read, write, &inner, field.constraints);
     }
 
     // The one owned type with a knowable representation.
     if field.owned && crate::generate::is_enum_type(root, pkg, &inner) {
         let read = format!("{inner}.valueOf(rows.getString(\"{name}\"))");
         let write = format!("{accessor}.name()");
-        return finish(name, "text".into(), not_null, optional, read, write, &inner);
+        return finish(name, "text".into(), not_null, optional, read, write, &inner, field.constraints);
     }
 
     Column {
@@ -108,6 +112,7 @@ fn column(field: &Field, root: &Path, pkg: &str, receiver: &str) -> Column {
         read: None,
         write: None,
         java_type: inner,
+        constraints: field.constraints,
     }
 }
 
@@ -121,6 +126,7 @@ fn finish(
     read: String,
     write: String,
     inner: &str,
+    constraints: crate::generate::Constraints,
 ) -> Column {
     if !optional {
         return Column {
@@ -130,6 +136,7 @@ fn finish(
             read: Some(read),
             write: Some(write),
             java_type: inner.to_string(),
+            constraints,
         };
     }
     // A null column must come back as Optional.empty(), not as an Optional
@@ -149,6 +156,7 @@ fn finish(
         read: Some(read),
         write: Some(write),
         java_type: inner.to_string(),
+        constraints,
     }
 }
 
@@ -295,11 +303,23 @@ pub(crate) fn snake_case(name: &str) -> String {
 
 /// The `create table` for a scaffolded type, as a Flyway migration body.
 ///
-/// The primary key is whichever column is named `id` if there is one, and
-/// otherwise nothing -- jails will not invent a surrogate key, because a
-/// record whose components are its natural key (the common case for the
-/// value types jails generates) does not want one.
-pub(crate) fn create_table(type_name: &str, columns: &[Column]) -> String {
+/// The primary key is whichever columns are marked `@pk`, in declaration
+/// order, so a composite key is just several of them. Failing that it is a
+/// column named `id`, and failing *that* it is nothing -- jails will not
+/// invent a surrogate key, because a record whose components are its natural
+/// key (the common case for the value types jails generates) does not want
+/// one.
+///
+/// `@unique`, `@positive`/`@nonnegative` and `@index` come from the same
+/// field spec, which is the point: a generated schema that cannot express
+/// the constraints the table actually has gets hand-edited the moment it is
+/// written, and then the field spec and the schema disagree forever.
+///
+/// `extra_indexes` carries what a per-column marker cannot: a composite or
+/// ordered index (`customer_id, created_at desc`). Passed through as written
+/// after its column names are checked against the table, because index
+/// ordering is a real schema decision with no shorthand worth inventing.
+pub(crate) fn create_table(type_name: &str, columns: &[Column], extra_indexes: &[String]) -> String {
     let table = table_name(type_name);
     let width = columns.iter().map(|c| c.name.len()).max().unwrap_or(0).max(4);
     let type_width = columns
@@ -312,9 +332,14 @@ pub(crate) fn create_table(type_name: &str, columns: &[Column]) -> String {
     let mut body = String::new();
     for column in columns {
         let null = if column.not_null { " not null" } else { "" };
+        let check = match column.constraints.check {
+            Some(check) => format!(" check ({})", check.predicate(&column.name)),
+            None => String::new(),
+        };
+        let unique = if column.constraints.unique { " unique" } else { "" };
         // Trimmed before the comma: a nullable column would otherwise carry
         // the padding that only exists to line `not null` up.
-        let declaration = format!("{:type_width$}{null}", column.sql_type);
+        let declaration = format!("{:type_width$}{null}{unique}{check}", column.sql_type);
         body.push_str(&format!(
             "  {:width$}  {},\n",
             column.name,
@@ -322,10 +347,26 @@ pub(crate) fn create_table(type_name: &str, columns: &[Column]) -> String {
         ));
     }
 
-    let key = columns.iter().find(|c| c.name == "id");
-    let constraint = match key {
-        Some(id) => format!("\n  constraint {table}_pk\n    primary key ({})\n", id.name),
-        None => String::new(),
+    let marked: Vec<&Column> = columns
+        .iter()
+        .filter(|c| c.constraints.primary_key)
+        .collect();
+    let key_columns: Vec<&str> = if marked.is_empty() {
+        columns
+            .iter()
+            .filter(|c| c.name == "id")
+            .map(|c| c.name.as_str())
+            .collect()
+    } else {
+        marked.iter().map(|c| c.name.as_str()).collect()
+    };
+    let constraint = if key_columns.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\n  constraint {table}_pk\n    primary key ({})\n",
+            key_columns.join(", ")
+        )
     };
     // Trailing comma removed only when no constraint follows it.
     let body = if constraint.is_empty() {
@@ -349,10 +390,55 @@ pub(crate) fn create_table(type_name: &str, columns: &[Column]) -> String {
         )
     };
 
-    format!(
+    // Every statement is terminated. An unterminated `create table` followed
+    // by a `create index` is one unparseable statement, and Flyway reports it
+    // as a syntax error somewhere in the middle of the file.
+    let mut out = format!(
         "-- Forward-only migration, generated from the field spec.\n\
          {note}create table {table} (\n{body}{constraint});\n"
-    )
+    );
+
+    for column in columns.iter().filter(|c| c.constraints.indexed) {
+        out.push_str(&format!(
+            "\ncreate index {table}_{}_idx\n  on {table} ({});\n",
+            column.name, column.name
+        ));
+    }
+    for (n, spec) in extra_indexes.iter().enumerate() {
+        // Named by position rather than by content: an index over
+        // `created_at desc` cannot go in an identifier, and a name derived by
+        // stripping the ordering would collide with the plain one.
+        out.push_str(&format!(
+            "\ncreate index {table}_idx{}\n  on {table} ({});\n",
+            n + 1,
+            spec.trim()
+        ));
+    }
+    out
+}
+
+/// Check an `--index` spec against the table before it is written into a
+/// migration.
+///
+/// A typo here fails at `flyway migrate` with "column does not exist", which
+/// is a slow way to find out and happens on whichever machine runs it first.
+pub(crate) fn validate_index(spec: &str, columns: &[Column]) -> Result<(), String> {
+    let known: Vec<&str> = columns.iter().map(|c| c.name.as_str()).collect();
+    for part in spec.split(',') {
+        // `created_at desc` -- the column is the first word, the rest is
+        // ordering that Postgres parses and jails does not.
+        let column = part.trim().split_whitespace().next().unwrap_or("");
+        if column.is_empty() {
+            return Err(format!("--index '{spec}': empty column name"));
+        }
+        if !known.contains(&column) {
+            return Err(format!(
+                "--index '{spec}': no column '{column}' in this table. Columns: {}",
+                known.join(", ")
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Two rows of sample data for `src/test/resources/fixtures`, keyed by the
@@ -546,25 +632,93 @@ mod tests {
 
     #[test]
     fn create_table_emits_a_primary_key_only_for_an_id_column() {
-        let with_id = create_table("Reward", &cols(&["id:string!", "amount:long"]));
+        let with_id = create_table("Reward", &cols(&["id:string!", "amount:long"]), &[]);
         assert!(with_id.contains("primary key (id)"), "{with_id}");
         assert!(with_id.contains("create table rewards ("), "{with_id}");
         assert!(with_id.trim_end().ends_with(");"), "{with_id}");
 
         // No padding left dangling in front of a nullable column's comma.
-        let nullable = create_table("Reward", &cols(&["id:string!", "note:string?"]));
+        let nullable = create_table("Reward", &cols(&["id:string!", "note:string?"]), &[]);
         assert!(nullable.contains("note  text,"), "{nullable}");
         assert!(!nullable.contains(" ,"), "{nullable}");
 
-        let without = create_table("Reward", &cols(&["amount:long"]));
+        let without = create_table("Reward", &cols(&["amount:long"]), &[]);
         assert!(!without.contains("primary key"), "{without}");
         // No dangling comma when nothing follows the last column.
         assert!(!without.contains(",\n)"), "{without}");
     }
 
     #[test]
+    /// The migration `~/code/bank/rewards` had to hand-edit after generation:
+    /// a composite primary key, a positivity check, and a covering index.
+    /// None of it was expressible, so the generated schema was rewritten by
+    /// hand the moment it was written.
+    #[test]
+    fn the_field_spec_can_express_the_constraints_a_real_table_needed() {
+        let columns = cols(&[
+            "transactionId:uuid@pk",
+            "ruleId:string@pk",
+            "amount:long@positive",
+            "customerId:uuid",
+        ]);
+        let ddl = create_table("Reward", &columns, &["customer_id, created_at desc".to_string()]);
+
+        assert!(
+            ddl.contains("primary key (transaction_id, rule_id)"),
+            "composite key, in declaration order: {ddl}"
+        );
+        assert!(ddl.contains("check (amount > 0)"), "{ddl}");
+        assert!(
+            ddl.contains("on rewards (customer_id, created_at desc)"),
+            "an ordered index is passed through as written: {ddl}"
+        );
+    }
+
+    /// F2's original complaint: the generated file was one unparseable
+    /// statement because nothing was terminated.
+    #[test]
+    fn every_generated_statement_is_terminated() {
+        let ddl = create_table(
+            "Reward",
+            &cols(&["id:string!", "customerId:uuid@index"]),
+            &["id, customer_id".to_string()],
+        );
+        let statements = ddl
+            .lines()
+            .filter(|l| l.trim_start().starts_with("create "))
+            .count();
+        assert_eq!(statements, 3, "table + column index + explicit index: {ddl}");
+        assert_eq!(ddl.matches(';').count(), 3, "each one terminated: {ddl}");
+    }
+
+    #[test]
+    fn a_unique_column_says_so_in_its_declaration() {
+        let ddl = create_table("Reward", &cols(&["email:string@unique"]), &[]);
+        assert!(ddl.contains("unique"), "{ddl}");
+    }
+
+    /// An `id` column is still the default key, so nothing that worked before
+    /// this feature changes.
+    #[test]
+    fn an_id_column_is_still_the_key_when_nothing_is_marked() {
+        let ddl = create_table("Reward", &cols(&["id:string!", "amount:long"]), &[]);
+        assert!(ddl.contains("primary key (id)"), "{ddl}");
+    }
+
+    /// A typo in `--index` would otherwise surface at `flyway migrate` as
+    /// "column does not exist", on whichever machine ran it first.
+    #[test]
+    fn an_index_naming_a_column_that_does_not_exist_is_rejected() {
+        let columns = cols(&["id:string!", "customerId:uuid"]);
+        assert!(validate_index("customer_id, created_at desc", &columns).is_err());
+        assert!(validate_index("customer_id", &columns).is_ok());
+        // The ordering keyword is not mistaken for a column.
+        assert!(validate_index("customer_id desc, id", &columns).is_ok());
+    }
+
+    #[test]
     fn create_table_flags_the_columns_it_could_not_derive() {
-        let ddl = create_table("Thing", &cols(&["id:string!", "ref:SourceRef"]));
+        let ddl = create_table("Thing", &cols(&["id:string!", "ref:SourceRef"]), &[]);
         assert!(ddl.contains("could not derive"), "{ddl}");
         assert!(ddl.contains("ref"), "{ddl}");
     }

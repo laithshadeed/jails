@@ -177,7 +177,11 @@ fn generate_standalone_and_destroy_roundtrip() {
     let file = root.join("src/main/java/com/example/demo/web/CommentController.java");
     assert!(file.is_file());
     let contents = fs::read_to_string(&file).unwrap();
-    assert!(contents.contains("public class CommentController"));
+    assert!(contents.contains("class CommentController"));
+    assert!(
+        !contents.contains("public class"),
+        "spring.md §2: a controller is an entry point, not module API"
+    );
     // Rails generates a test alongside `generate controller`; jails matches that.
     let test_file = root.join("src/test/java/com/example/demo/web/CommentControllerTest.java");
     assert!(test_file.is_file(), "expected {}", test_file.display());
@@ -1518,25 +1522,30 @@ fn add_db_on_spring_wires_docker_compose_support() {
         "@ServiceConnection and the container-bean lifecycle live there: {pom}"
     );
     assert!(pom.contains("<optional>true</optional>"));
-    let config = root.join("src/test/java/com/example/demo/PostgresContainerConfig.java");
+    let config = root.join("src/test/java/com/example/demo/TestcontainersConfig.java");
     assert!(config.is_file(), "missing {}", config.display());
     let config_src = fs::read_to_string(&config).unwrap();
     assert!(
-        config_src.contains("ApplicationContextInitializer"),
-        "{config_src}"
+        !config_src.contains("ApplicationContextInitializer"),
+        "the global initializer made every slice start a container; it is gone: {config_src}"
     );
-    let factories =
-        fs::read_to_string(root.join("src/test/resources/META-INF/spring.factories")).unwrap();
+    assert!(config_src.contains("@ServiceConnection"), "{config_src}");
+    assert!(config_src.contains("@TestConfiguration"), "{config_src}");
     assert!(
-        factories.contains("com.example.demo.PostgresContainerConfig"),
-        "{factories}"
+        !root
+            .join("src/test/resources/META-INF/spring.factories")
+            .is_file(),
+        "the container is imported now, not registered globally"
     );
+    // The @SpringBootTest that came with the project has to be wired, or JDBC
+    // auto-config fails it with "Failed to determine a suitable driver class"
+    // on a test the user never wrote.
     let tests =
         fs::read_to_string(root.join("src/test/java/com/example/demo/DemoApplicationTests.java"))
             .unwrap();
     assert!(
-        !tests.contains("PostgresContainerConfig"),
-        "tests stay untouched; the initializer is registered globally: {tests}"
+        tests.contains("@Import(TestcontainersConfig.class)"),
+        "{tests}"
     );
     let properties =
         fs::read_to_string(root.join("src/main/resources/application.properties")).unwrap();
@@ -1546,7 +1555,7 @@ fn add_db_on_spring_wires_docker_compose_support() {
     );
 
     let stale_class =
-        root.join("target/test-classes/com/example/demo/PostgresContainerConfig.class");
+        root.join("target/test-classes/com/example/demo/TestcontainersConfig.class");
     fs::create_dir_all(stale_class.parent().unwrap()).unwrap();
     fs::write(&stale_class, []).unwrap();
     let stale_factories = root.join("target/test-classes/META-INF/spring.factories");
@@ -1563,7 +1572,7 @@ fn add_db_on_spring_wires_docker_compose_support() {
     let tests =
         fs::read_to_string(root.join("src/test/java/com/example/demo/DemoApplicationTests.java"))
             .unwrap();
-    assert!(!tests.contains("PostgresContainerConfig"), "{tests}");
+    assert!(!tests.contains("TestcontainersConfig"), "{tests}");
     assert!(!config.is_file());
     assert!(
         !root
@@ -1583,11 +1592,16 @@ fn add_db_on_spring_wires_docker_compose_support() {
     assert!(!stale_factories.is_file());
 }
 
-/// Re-running `add db` on a project that still has the old `@ServiceConnection`
-/// + `@Import` wiring must replace the config, register spring.factories, and
-/// take the import back out of existing tests.
+/// Re-running `add db` on a project still carrying the global
+/// `ApplicationContextInitializer` must migrate it: rewrite the config as an
+/// importable `@TestConfiguration`, drop the `spring.factories` registration,
+/// and splice the `@Import` into every `@SpringBootTest`.
+///
+/// The `spring.factories` deletion is the load-bearing half. Left behind, the
+/// old initializer would keep registering a second container for every test
+/// and the migration would look like it had not worked.
 #[test]
-fn add_db_on_spring_migrates_legacy_service_connection() {
+fn add_db_on_spring_migrates_the_global_initializer_to_an_import() {
     let root = temp_dir("add-db-spring-migrate");
     write_spring_fixture(&root);
     let fake = temp_dir("add-db-spring-migrate-bin");
@@ -1598,41 +1612,46 @@ fn add_db_on_spring_migrates_legacy_service_connection() {
         root.join("src/test/java/com/example/demo/PostgresContainerConfig.java"),
         r#"package com.example.demo;
 
+import org.springframework.beans.factory.support.BeanDefinitionRegistry;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.context.ApplicationContextInitializer;
+import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.context.annotation.AnnotatedBeanDefinitionReader;
 import org.springframework.context.annotation.Bean;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
-@TestConfiguration(proxyBeanMethods = false)
-public class PostgresContainerConfig {
+public class PostgresContainerConfig
+        implements ApplicationContextInitializer<ConfigurableApplicationContext> {
 
-    @Bean
-    @ServiceConnection
-    PostgreSQLContainer postgres() {
-        return new PostgreSQLContainer("postgres:17-alpine");
+    @Override
+    public void initialize(ConfigurableApplicationContext context) {
+        if (context instanceof BeanDefinitionRegistry registry) {
+            new AnnotatedBeanDefinitionReader(registry).register(Containers.class);
+        }
+    }
+
+    @TestConfiguration(proxyBeanMethods = false)
+    public static class Containers {
+
+        @Bean
+        @ServiceConnection
+        PostgreSQLContainer postgresContainer() {
+            return new PostgreSQLContainer("postgres:17-alpine");
+        }
     }
 }
 "#,
     )
     .unwrap();
+    let factories = root.join("src/test/resources/META-INF/spring.factories");
+    fs::create_dir_all(factories.parent().unwrap()).unwrap();
     fs::write(
-        root.join("src/test/java/com/example/demo/DemoApplicationTests.java"),
-        r#"package com.example.demo;
-
-import org.junit.jupiter.api.Test;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Import;
-
-@Import(PostgresContainerConfig.class)
-@SpringBootTest
-class DemoApplicationTests {
-
-    @Test
-    void contextLoads() {}
-}
-"#,
+        &factories,
+        "# jails:db\norg.springframework.context.ApplicationContextInitializer=com.example.demo.PostgresContainerConfig\n# /jails:db\n",
     )
     .unwrap();
+
     let api = root.join("src/test/java/com/example/demo/api");
     fs::create_dir_all(&api).unwrap();
     fs::write(
@@ -1659,24 +1678,38 @@ class ExtraSliceTest {
             .unwrap()
             .success()
     );
-    let config = fs::read_to_string(
-        root.join("src/test/java/com/example/demo/PostgresContainerConfig.java"),
-    )
-    .unwrap();
-    // The legacy @Import-per-test shape is rewritten to the current one:
-    // a container bean with @ServiceConnection, registered for every test by
-    // an initializer so no test class needs the @Import back.
-    assert!(config.contains("ApplicationContextInitializer"), "{config}");
+
+    let config =
+        fs::read_to_string(root.join("src/test/java/com/example/demo/TestcontainersConfig.java"))
+            .unwrap();
+    assert!(
+        !config.contains("ApplicationContextInitializer"),
+        "the global registration is what this migration removes: {config}"
+    );
     assert!(config.contains("@ServiceConnection"), "{config}");
+
+    assert!(
+        !factories.is_file(),
+        "a leftover spring.factories would keep registering the old initializer"
+    );
+
+    // Both @SpringBootTest classes get the import, including the one in a
+    // different package -- which needs the extra import statement too.
     let tests =
         fs::read_to_string(root.join("src/test/java/com/example/demo/DemoApplicationTests.java"))
             .unwrap();
-    assert!(!tests.contains("@Import"), "{tests}");
-    let factories =
-        fs::read_to_string(root.join("src/test/resources/META-INF/spring.factories")).unwrap();
     assert!(
-        factories.contains("com.example.demo.PostgresContainerConfig"),
-        "{factories}"
+        tests.contains("@Import(TestcontainersConfig.class)"),
+        "{tests}"
+    );
+    let slice = fs::read_to_string(api.join("ExtraSliceTest.java")).unwrap();
+    assert!(
+        slice.contains("@Import(TestcontainersConfig.class)"),
+        "{slice}"
+    );
+    assert!(
+        slice.contains("import com.example.demo.TestcontainersConfig;"),
+        "a test in another package needs the config imported by name: {slice}"
     );
 }
 

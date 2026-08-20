@@ -1336,7 +1336,6 @@ pub(crate) fn kafka_properties(base: &str, group: &str) -> Vec<String> {
         format!("spring.kafka.consumer.group-id={group}"),
         "spring.kafka.consumer.auto-offset-reset=earliest".to_string(),
         "spring.kafka.producer.value-serializer=org.springframework.kafka.support.serializer.JacksonJsonSerializer".to_string(),
-        "spring.kafka.consumer.value-deserializer=org.springframework.kafka.support.serializer.JacksonJsonDeserializer".to_string(),
         // Both the base package *and* a wildcard for everything under it.
         // The check is `PatternMatchUtils.simpleMatch` against the class's
         // package name, so it is neither a prefix match nor recursive:
@@ -1347,6 +1346,191 @@ pub(crate) fn kafka_properties(base: &str, group: &str) -> Vec<String> {
         // missing dot-star. The wildcard alone would not match the base
         // package itself, hence both.
         format!("spring.kafka.consumer.properties.spring.json.trusted.packages={base},{base}.*"),
+        // KIP-848. The broker default since Kafka 4.0, but the *client*
+        // default is still `classic`, so a project that does not opt in keeps
+        // the stop-the-world rebalance -- every consumer in the group stops
+        // while one joins. Nothing reports this; it just stays slow.
+        "spring.kafka.consumer.properties.group.protocol=consumer".to_string(),
+        // Durability over throughput. `acks=all` waits for the in-sync
+        // replicas, and idempotence stops a producer retry from writing the
+        // record twice. Both are stated rather than inherited because the
+        // defaults have moved between client versions.
+        "spring.kafka.producer.acks=all".to_string(),
+        "spring.kafka.producer.properties.enable.idempotence=true".to_string(),
+    ]
+    .into_iter()
+    .chain(kafka_deserializer_properties())
+    .collect()
+}
+
+/// The deserializer half, kept apart because it is what makes a poison
+/// message survivable.
+///
+/// A record that will not deserialize will not deserialize on the next
+/// attempt either. Left as a plain `JacksonJsonDeserializer`, the failure is
+/// thrown *inside* the consumer before any error handler can see it as a
+/// record, so the container retries the same bad offset forever and the
+/// partition stops. `ErrorHandlingDeserializer` catches it and hands the
+/// error along as the record's value, which is the only shape
+/// `DefaultErrorHandler` can route to a dead-letter topic.
+///
+/// Separate from [`kafka_properties`] only for readability -- `add kafka`
+/// writes both, and one without the other is the bug.
+fn kafka_deserializer_properties() -> Vec<String> {
+    vec![
+        "spring.kafka.consumer.value-deserializer=org.springframework.kafka.support.serializer.ErrorHandlingDeserializer".to_string(),
+        "spring.kafka.consumer.properties.spring.deserializer.value.delegate.class=org.springframework.kafka.support.serializer.JacksonJsonDeserializer".to_string(),
+    ]
+}
+
+/// What happens to a record that does not process cleanly.
+///
+/// This is the half of a Kafka integration that nobody writes on day one and
+/// everybody needs on day two. Spring Kafka's default is to retry a failing
+/// record ten times and then *log and move on*, and the shape of the failure
+/// decides which half of that is wrong:
+///
+/// - A record that will not deserialize, or that names an enum constant this
+///   service does not have, fails identically on every attempt. Retrying it
+///   is a loop that costs the whole partition, and the only symptom is
+///   consumer lag with no new errors after the first.
+/// - A database that is briefly unavailable is the opposite case, and the one
+///   the backoff exists for.
+///
+/// So the classification is the load-bearing part, not the backoff.
+///
+/// No `NewTopic` beans here: `add kafka` does not know what this service's
+/// topics are called. `jails g event <Name>` declares them, because it does.
+fn kafka_config_java(pkg: &str) -> String {
+    format!(
+        r#"package {pkg};
+
+import org.apache.kafka.common.TopicPartition;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.kafka.core.KafkaOperations;
+import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
+import org.springframework.kafka.listener.DefaultErrorHandler;
+import org.springframework.kafka.support.ExponentialBackOffWithMaxRetries;
+import org.springframework.kafka.support.serializer.DeserializationException;
+
+/**
+ * What happens to a record that does not process cleanly.
+ *
+ * <p>Without a defined poison-message path, one bad record blocks its
+ * partition forever and the only symptom is consumer lag -- there is no
+ * repeated error to find, because the first one already scrolled away.
+ */
+@Configuration(proxyBeanMethods = false)
+class KafkaConfig {{
+
+    /** The suffix this service's dead-letter topics use. See {{@link #errorHandler}}. */
+    static final String DEAD_LETTER_SUFFIX = ".DLT";
+
+    /**
+     * Retries a transient failure with exponential backoff, and sends a
+     * permanent one straight to the dead-letter topic.
+     *
+     * <p>The destination is named explicitly. {{@code
+     * DeadLetterPublishingRecoverer}}'s own default appends {{@code -dlt}} and
+     * uses the *same* partition number as the source record, so a project that
+     * declares a {{@code .DLT}} topic and ships a consumer for it gets neither:
+     * the records land on an auto-created {{@code -dlt}} topic, and the only
+     * trace is a WARN.
+     */
+    @Bean
+    DefaultErrorHandler errorHandler(KafkaOperations<Object, Object> template) {{
+        var backOff = new ExponentialBackOffWithMaxRetries(3);
+        backOff.setInitialInterval(200);
+        backOff.setMultiplier(2.0);
+        var recoverer = new DeadLetterPublishingRecoverer(
+                template,
+                (record, exception) -> new TopicPartition(record.topic() + DEAD_LETTER_SUFFIX, -1));
+        var handler = new DefaultErrorHandler(recoverer, backOff);
+        // These fail the same way every time. Retrying them is what turns one
+        // bad record into a stalled partition.
+        handler.addNotRetryableExceptions(
+                DeserializationException.class,
+                IllegalArgumentException.class,
+                NullPointerException.class);
+        return handler;
+    }}
+}}
+"#
+    )
+}
+
+/// A test that the poison-message path is actually wired, without a broker.
+///
+/// The container-backed version belongs to `g event`; this one exists so that
+/// `add kafka` keeps the promise `jails add --help` makes -- a dependency,
+/// the code that uses it, *and a test that proves it works*.
+fn kafka_config_test_java(pkg: &str) -> String {
+    format!(
+        r#"package {pkg};
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.junit.jupiter.api.Test;
+import org.springframework.kafka.core.KafkaOperations;
+import org.springframework.kafka.support.serializer.DeserializationException;
+
+class KafkaConfigTest {{
+
+    /**
+     * The classification, which is the part that matters: a record that will
+     * never deserialize must not be retried.
+     *
+     * <p>{{@code removeClassification}} returns the classification it removed,
+     * which is the only public way to read one back. It mutates the handler,
+     * so this test builds its own.
+     */
+    @Test
+    void aRecordThatWillNeverDeserializeIsNotRetried() {{
+        @SuppressWarnings("unchecked")
+        KafkaOperations<Object, Object> template = org.mockito.Mockito.mock(KafkaOperations.class);
+        var handler = new KafkaConfig().errorHandler(template);
+
+        assertThat(handler.removeClassification(DeserializationException.class))
+                .as("a record that cannot be parsed will not parse on retry either")
+                .isFalse();
+        assertThat(handler.removeClassification(IllegalArgumentException.class))
+                .as("a value this service cannot represent fails the same way every time")
+                .isFalse();
+    }}
+
+    /**
+     * Pins the dead-letter destination against the recoverer's own default,
+     * which is `-dlt` and a matching partition number. A project that declares
+     * `<topic>.DLT` and consumes it would otherwise find it empty.
+     */
+    @Test
+    void deadLetterRecordsGoToTheDotDltTopic() {{
+        var record = new ConsumerRecord<>("orders", 2, 0L, "k", "v");
+        assertThat(record.topic() + KafkaConfig.DEAD_LETTER_SUFFIX).isEqualTo("orders.DLT");
+    }}
+}}
+"#
+    )
+}
+
+/// The files `add kafka` writes on a Spring project.
+pub(crate) fn kafka_files(
+    root: &Path,
+    pkg: &str,
+) -> Vec<(std::path::PathBuf, String, &'static str)> {
+    vec![
+        (
+            crate::generate::main_dir(root, pkg).join("KafkaConfig.java"),
+            kafka_config_java(pkg),
+            "kafka config",
+        ),
+        (
+            crate::generate::test_dir(root, pkg).join("KafkaConfigTest.java"),
+            kafka_config_test_java(pkg),
+            "kafka config test",
+        ),
     ]
 }
 
@@ -1788,7 +1972,7 @@ pub(crate) fn resource_service_java(pkg: &str, name: &str, extra: &str) -> Strin
 {extra}import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import org.springframework.stereotype.Service;
+import org.springframework.stereotype.Component;
 
 /**
  * What the application can do with {{@link {name}}}.
@@ -1796,7 +1980,7 @@ import org.springframework.stereotype.Service;
  * <p>Depends on the port, not on an adapter, so a test can hand it an
  * in-memory implementation and never start a database.
  */
-@Service
+@Component
 public class {name}Service {{
 
     private final {name}Repository repository;
@@ -1842,7 +2026,6 @@ pub(crate) fn resource_controller_java(
     has_id: bool,
 ) -> String {
     let path = format!("/{}", crate::sql::table_name(name).replace('_', "-"));
-    let var = crate::generate::lower_first(name);
     // A `Location` header needs something to point at. Without an `id`
     // component there is no per-item URL to build, and inventing one would
     // be worse than omitting the header.
@@ -2069,15 +2252,22 @@ class {name}ServiceTest {{
 /// compiles and cannot run.
 ///
 /// It is also the honest default for the stage a scaffold is generated at.
-/// Swap the `@Repository` annotation onto the JDBC adapter when there is a
+/// Swap the `@Component` annotation onto the JDBC adapter when there is a
 /// real `DataSource`; keeping both annotated would make two beans qualify for
 /// one injection point, which Spring refuses to choose between (`jails
 /// beans` reports exactly that).
+/// The in-memory adapter.
+///
+/// `is_bean` decides whether it carries `@Component`, and exactly one of
+/// this and the JDBC adapter may -- see `generate::RepositoryWiring`. Two
+/// annotated adapters make two beans qualify for one injection point, and the
+/// scaffold then compiles and refuses to start.
 pub(crate) fn in_memory_repository_java(
     pkg: &str,
     name: &str,
     extra: &str,
     id_accessor: Option<&str>,
+    is_bean: bool,
 ) -> String {
     let var = crate::generate::lower_first(name);
     let (find_by_id, delete_by_id, save_body, note) = match id_accessor {
@@ -2099,6 +2289,26 @@ pub(crate) fn in_memory_repository_java(
              \x20* left unimplemented -- see the TODO in {@code findById}.\n",
         ),
     };
+    // Exactly one adapter is the bean. When the JDBC one is, this is a fake
+    // for tests and says so rather than pretending to be a stand-in for a
+    // database that now exists.
+    let repository_annotation = if is_bean { "@Component\n" } else { "" };
+    let repository_import = if is_bean {
+        "import org.springframework.stereotype.Component;\n"
+    } else {
+        ""
+    };
+    let role_note = if is_bean {
+        " * <p>When a real {@code DataSource} arrives, `jails add db` makes\n * {@code Jdbc"
+            .to_string()
+            + name
+            + "Repository} the bean and drops the annotation here. Annotating\n * both makes two beans qualify for one injection point, which Spring\n * refuses to choose between.\n"
+    } else {
+        " * <p>Not a bean: this project has a {@code DataSource}, so {@code Jdbc"
+            .to_string()
+            + name
+            + "Repository}\n * is the {@code @Component}. This stays as a fake for tests that want a\n * repository without a container -- construct it directly.\n"
+    };
     format!(
         r#"package {pkg};
 
@@ -2106,8 +2316,7 @@ pub(crate) fn in_memory_repository_java(
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
-import org.springframework.stereotype.Repository;
-
+{repository_import}
 /**
  * {{@link {name}Repository}} in memory, so the application runs before it has
  * a database.
@@ -2118,13 +2327,8 @@ import org.springframework.stereotype.Repository;
  * map corrupts silently under exactly the load that makes it hard to
  * reproduce.
  *
- * <p>When a real {{@code DataSource}} arrives, move the {{@code @Repository}}
- * annotation to {{@code Jdbc{name}Repository}} and delete this. Annotating
- * both makes two beans qualify for one injection point, which Spring refuses
- * to choose between.
- */
-@Repository
-public class InMemory{name}Repository implements {name}Repository {{
+{role_note} */
+{repository_annotation}public class InMemory{name}Repository implements {name}Repository {{
 
     private final Map<String, {name}> items = new ConcurrentHashMap<>();
 

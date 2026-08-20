@@ -12,7 +12,7 @@ pub enum ArtifactKind {
     Scaffold,
     /// A Spring `@RestController` stub and its test
     Controller,
-    /// A `@Service` stub and its test
+    /// A `@Component` stub and its test
     Service,
     /// A plain `final class` and its test, in the base package
     Class,
@@ -60,7 +60,7 @@ pub enum ArtifactKind {
     IntegrationTest,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Field {
     pub name: String,
     pub java_type: String,
@@ -72,6 +72,52 @@ pub struct Field {
     /// A `List` or `Map` component: copied defensively and defaulted to empty
     /// rather than null-checked.
     pub collection: bool,
+    /// What this column is in the *table*. Purely a SQL concern -- these
+    /// markers change the generated DDL and nothing about the Java type.
+    pub constraints: Constraints,
+}
+
+/// The table-level facts about a component that the Java type cannot carry.
+///
+/// A record says a component is a `UUID`; it cannot say that this UUID and
+/// that string are together the primary key, or that an amount must be
+/// positive, or that lookups come in by customer. Those are real constraints
+/// that a generated migration was silently omitting -- so every generated
+/// schema got hand-edited immediately, which defeats the point of generating
+/// it.
+///
+/// Deliberately a **closed set**, not arbitrary SQL. `@positive` is a
+/// constraint jails can check it is emitting against a numeric column;
+/// `@check(whatever you like)` would be a string jails passes through and
+/// cannot validate, which is a worse trade than making people write the two
+/// exotic constraints by hand.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub struct Constraints {
+    /// Part of the primary key. Several components marked `@pk` make it
+    /// composite, in the order they were declared.
+    pub primary_key: bool,
+    pub unique: bool,
+    /// Gets its own single-column index. For a composite or ordered one, use
+    /// `--index`.
+    pub indexed: bool,
+    pub check: Option<NumericCheck>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum NumericCheck {
+    /// `check (col > 0)`
+    Positive,
+    /// `check (col >= 0)`
+    NonNegative,
+}
+
+impl NumericCheck {
+    pub(crate) fn predicate(self, column: &str) -> String {
+        match self {
+            NumericCheck::Positive => format!("{column} > 0"),
+            NumericCheck::NonNegative => format!("{column} >= 0"),
+        }
+    }
 }
 
 /// What a `!` or `?` suffix on a field type means.
@@ -268,6 +314,11 @@ fn parse_fields(args: &[String]) -> Result<Vec<Field>> {
                 .ok_or_else(|| format!("field '{arg}' must be name:type"))?;
 
             let ty = ty.trim();
+            // Table markers come off first, so `amount:long@pk!` and
+            // `amount:long!@pk` mean the same thing rather than one of them
+            // being a confusing parse error about an empty type.
+            let (ty, constraints) = parse_constraints(ty, arg)?;
+            let ty = ty.trim();
             let (ty, optionality) = match ty.strip_suffix('!') {
                 Some(rest) => (rest, Optionality::NonBlank),
                 None => match ty.strip_suffix('?') {
@@ -293,6 +344,27 @@ fn parse_fields(args: &[String]) -> Result<Vec<Field>> {
                 ));
             }
 
+            if let Some(check) = constraints.check {
+                // A check jails cannot emit correctly is worse than none: the
+                // migration would fail to apply, which is exactly the class of
+                // failure the field spec is supposed to remove.
+                if !is_numeric(&resolved.java_type) {
+                    return Err(format!(
+                        "'{arg}': {} only applies to a numeric column, and {} is not one",
+                        match check {
+                            NumericCheck::Positive => "@positive",
+                            NumericCheck::NonNegative => "@nonnegative",
+                        },
+                        resolved.java_type
+                    ));
+                }
+            }
+            if constraints.primary_key && optionality == Optionality::Nullable {
+                return Err(format!(
+                    "'{arg}': a primary key column cannot be nullable -- drop the '?' or the '@pk'"
+                ));
+            }
+
             Ok(Field {
                 name: name.trim().to_string(),
                 java_type: resolved.java_type,
@@ -300,9 +372,55 @@ fn parse_fields(args: &[String]) -> Result<Vec<Field>> {
                 optionality,
                 owned: resolved.owned,
                 collection: resolved.collection,
+                constraints,
             })
         })
         .collect()
+}
+
+/// Strip `@marker` suffixes off a field's type and read them as table
+/// constraints.
+///
+/// Repeatable and order-independent: `amount:long@positive@index` and
+/// `amount:long@index@positive` are the same column. An unknown marker is an
+/// error listing the real ones -- a typo that parsed as "no constraint" would
+/// produce a schema quietly missing the primary key someone thought they had
+/// asked for, which is the failure mode this whole feature exists to prevent.
+fn parse_constraints<'a>(ty: &'a str, arg: &str) -> Result<(&'a str, Constraints)> {
+    const KNOWN: &str = "@pk, @unique, @index, @positive, @nonnegative";
+    let mut constraints = Constraints::default();
+    let mut rest = ty;
+
+    // Read markers right-to-left so the remaining head is still the type.
+    while let Some(at) = rest.rfind('@') {
+        let marker = rest[at + 1..].trim();
+        match marker {
+            "pk" => constraints.primary_key = true,
+            "unique" => constraints.unique = true,
+            "index" => constraints.indexed = true,
+            "positive" => constraints.check = Some(NumericCheck::Positive),
+            "nonnegative" => constraints.check = Some(NumericCheck::NonNegative),
+            "" => return Err(format!("'{arg}': trailing '@' with no marker. Known: {KNOWN}")),
+            other => {
+                return Err(format!(
+                    "'{arg}': unknown column marker '@{other}'. Known: {KNOWN}"
+                ));
+            }
+        }
+        rest = &rest[..at];
+    }
+    if rest.trim().is_empty() {
+        return Err(format!("'{arg}': markers but no type"));
+    }
+    Ok((rest, constraints))
+}
+
+/// Java types a numeric `check` can be emitted against.
+fn is_numeric(java_type: &str) -> bool {
+    matches!(
+        java_type,
+        "long" | "Long" | "int" | "Integer" | "double" | "Double" | "BigDecimal"
+    )
 }
 
 fn capitalize(s: &str) -> String {
@@ -310,6 +428,50 @@ fn capitalize(s: &str) -> String {
     match chars.next() {
         Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
         None => String::new(),
+    }
+}
+
+/// The suffix each kind appends to the name it is given.
+///
+/// `None` for kinds that use the name verbatim (`record`, `enum`, `scaffold`
+/// -- which spans several suffixes and cannot have one of them stripped).
+fn kind_suffix(kind: ArtifactKind) -> Option<&'static str> {
+    match kind {
+        ArtifactKind::Controller => Some("Controller"),
+        ArtifactKind::Service => Some("Service"),
+        ArtifactKind::Repo => Some("Repository"),
+        ArtifactKind::Cli => Some("Cli"),
+        ArtifactKind::Job => Some("Job"),
+        ArtifactKind::Client => Some("Client"),
+        ArtifactKind::Test => Some("Test"),
+        ArtifactKind::IntegrationTest => Some("IT"),
+        _ => None,
+    }
+}
+
+/// Drop the suffix a kind is about to add, when the name already carries it.
+///
+/// `jails g service RewardHistoryService` should write
+/// `RewardHistoryService.java`, not `RewardHistoryServiceService.java`. Naming
+/// the type the way it will appear in the source is the obvious thing to type
+/// -- it is what the file is called, and what every other reference to it
+/// says -- and jails punished it with a rename.
+///
+/// Only a *whole* trailing suffix counts, and never the entire name: `g
+/// service Service` means a type called `Service`, and stripping it would
+/// leave nothing to name the file after. `g repo Rewards` keeps its `s`
+/// because `Repository` is matched, not `y`.
+///
+/// **This has to run in `destroy` too.** `destroy` rebuilds the paths that
+/// `generate` wrote, so a normalisation applied to one and not the other
+/// leaves files behind that the tool then claims to have deleted.
+fn strip_redundant_suffix(kind: ArtifactKind, name: &str) -> String {
+    match kind_suffix(kind) {
+        Some(suffix) => match name.strip_suffix(suffix) {
+            Some(stem) if !stem.is_empty() => stem.to_string(),
+            _ => name.to_string(),
+        },
+        None => name.to_string(),
     }
 }
 
@@ -693,11 +855,95 @@ pub(crate) fn write_new_file(path: &Path, contents: &str) -> Result<()> {
             .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
     }
     let contents = if path.extension().is_some_and(|e| e == "java") {
+        ensure_package_info(path)?;
         normalize_imports(contents)
     } else {
         contents.to_string()
     };
     fs::write(path, &contents).map_err(|e| format!("failed to write {}: {e}", path.display()))
+}
+
+/// Give a package a null-marked `package-info.java` the first time jails puts
+/// a class in it.
+///
+/// JSpecify's `@NullMarked` is a *package-level* opt-in: without it every
+/// reference type in the package is "unspecified nullness" and a nullness
+/// checker has nothing to check. `java.md` calls this the standard rather
+/// than a proposal, and jails generated seven packages in one real project
+/// without a single one.
+///
+/// Done here rather than per-kind for the same reason import ordering is: a
+/// rule that each of twenty templates has to remember is a rule that decays.
+/// Writing it at the moment a package first receives a class also means it
+/// lands exactly once, with no bookkeeping about which packages exist.
+///
+/// Only for `src/main/java` -- a nullness contract on test sources buys
+/// nothing and would put a file in every test package.
+///
+/// **This is best-effort on purpose.** A project that has not added the
+/// `org.jspecify:jspecify` dependency would not compile with the annotation,
+/// so nothing is written unless the annotation is actually available. That is
+/// checked by the caller chain rather than here; see `jspecify_available`.
+fn ensure_package_info(class_path: &Path) -> Result<()> {
+    let Some(dir) = class_path.parent() else {
+        return Ok(());
+    };
+    if !dir.to_string_lossy().contains("src/main/java") {
+        return Ok(());
+    }
+    let info = dir.join("package-info.java");
+    if info.exists() {
+        return Ok(());
+    }
+    let Ok(root) = find_project_root() else {
+        return Ok(());
+    };
+    if !jspecify_available(&root) {
+        return Ok(());
+    }
+    let Some(pkg) = package_of_dir(&root, dir) else {
+        return Ok(());
+    };
+    let contents = format!(
+        r#"/**
+ * Every reference type in this package is non-null unless it is explicitly
+ * annotated {{@code @Nullable}}.
+ *
+ * <p>This is a package-level opt-in because that is the only level JSpecify
+ * offers: without it the package is "unspecified nullness" and a nullness
+ * checker has nothing to check.
+ */
+@NullMarked
+package {pkg};
+
+import org.jspecify.annotations.NullMarked;
+"#
+    );
+    fs::write(&info, contents).map_err(|e| format!("failed to write {}: {e}", info.display()))?;
+    Ok(())
+}
+
+/// Whether `org.jspecify:jspecify` is a declared dependency.
+///
+/// Annotating a package that cannot resolve `@NullMarked` would hand the
+/// reader a compile error for a file they did not ask for, which is the exact
+/// opposite of what a scaffold is for.
+fn jspecify_available(root: &Path) -> bool {
+    crate::pom::read(root)
+        .map(|pom| crate::pom::has_dependency(&pom, "org.jspecify", "jspecify"))
+        .unwrap_or(false)
+}
+
+/// The package name for a directory under `src/main/java`.
+fn package_of_dir(root: &Path, dir: &Path) -> Option<String> {
+    let src_root = root.join("src/main/java");
+    let rel = dir.strip_prefix(&src_root).ok()?;
+    let pkg = rel
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join(".");
+    (!pkg.is_empty()).then_some(pkg)
 }
 
 /// Rewrite a generated file's import block into the order
@@ -781,6 +1027,7 @@ pub fn generate(
     name: &str,
     fields: &[String],
     package: Option<&str>,
+    indexes: &[String],
     pretend: bool,
 ) -> Result<()> {
     let root = find_project_root()?;
@@ -799,13 +1046,16 @@ pub fn generate(
         return generate_migration(&root, name);
     }
 
-    let name = capitalize(name);
+    let name = strip_redundant_suffix(kind, &capitalize(name));
     // `--package` replaces the conventional home for every artifact in this
     // call; without it each kind goes where its convention says.
-    let place = |default: &str| subpackage(&base, package.unwrap_or(default));
+    let config = crate::config::Config::load(&root)?;
+    let place = |default: &str| subpackage(&base, package.unwrap_or(config.layer(default)));
 
     let artifacts = match kind {
-        ArtifactKind::Scaffold => scaffold_artifacts(&root, &base, &name, fields, package)?,
+        ArtifactKind::Scaffold => {
+            scaffold_artifacts(&root, &base, &name, fields, package, indexes)?
+        }
         ArtifactKind::Controller => {
             let web = place(layout::WEB);
             vec![
@@ -1027,7 +1277,8 @@ pub fn generate(
             artifacts.push(Artifact {
                 kind: "JDBC adapter",
                 path: main_dir(&root, &adapters).join(format!("Jdbc{name}Repository.java")),
-                contents: jdbc_repository(
+                contents: jdbc_repository_for(
+                    &root,
                     &adapters,
                     &name,
                     &format!(
@@ -1225,10 +1476,12 @@ fn scaffold_artifacts(
     name: &str,
     fields: &[String],
     package: Option<&str>,
+    indexes: &[String],
 ) -> Result<Vec<Artifact>> {
     let parsed = parse_fields(fields)?;
 
-    let place = |default: &str| subpackage(base, package.unwrap_or(default));
+    let config = crate::config::Config::load(root)?;
+    let place = |default: &str| subpackage(base, package.unwrap_or(config.layer(default)));
     let domain = place(layout::DOMAIN);
     let repository = place(layout::APP);
     let adapters = place(layout::ADAPTERS);
@@ -1264,10 +1517,15 @@ fn scaffold_artifacts(
     if migration_dir.is_dir() && !columns.is_empty() {
         let version = next_migration_version(&migration_dir)?;
         let table = crate::sql::table_name(name);
+        // Checked before it is written: a typo here fails at `flyway migrate`
+        // with "column does not exist", on whichever machine runs it first.
+        for spec in indexes {
+            crate::sql::validate_index(spec, &columns)?;
+        }
         artifacts.push(Artifact {
             kind: "migration",
             path: migration_dir.join(format!("V{version:03}__create_{table}.sql")),
-            contents: crate::sql::create_table(name, &columns),
+            contents: crate::sql::create_table(name, &columns, indexes),
         });
     }
 
@@ -1290,7 +1548,8 @@ fn scaffold_artifacts(
         Artifact {
             kind: "JDBC adapter",
             path: main_dir(root, &adapters).join(format!("Jdbc{name}Repository.java")),
-            contents: jdbc_repository(
+            contents: jdbc_repository_for(
+                root,
                 &adapters,
                 name,
                 &format!(
@@ -1321,6 +1580,7 @@ fn scaffold_artifacts(
                     import_of(&adapters, &repository, &format!("{name}Repository"))
                 ),
                 parsed.iter().find(|f| f.name == "id").map(|f| f.name.as_str()),
+                repository_wiring(root) != RepositoryWiring::JdbcClientBean,
             ),
         },
         Artifact {
@@ -1393,11 +1653,12 @@ pub fn destroy(
 ) -> Result<()> {
     let root = find_project_root()?;
     let base = base_package(&root)?;
-    let place = |default: &str| subpackage(&base, package.unwrap_or(default));
+    let config = crate::config::Config::load(&root)?;
+    let place = |default: &str| subpackage(&base, package.unwrap_or(config.layer(default)));
     // `cases` is addressed by the markdown path it was generated from, which
     // must not be run through capitalize like a class name.
     let raw_name = name.to_string();
-    let name = capitalize(name);
+    let name = strip_redundant_suffix(kind, &capitalize(name));
 
     let paths: Vec<PathBuf> = match kind {
         ArtifactKind::Scaffold => vec![
@@ -1575,11 +1836,18 @@ fn stub_controller(pkg: &str, name: &str) -> String {
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+/**
+ * Package-private, and so is every handler on it.
+ *
+ * <p>Spring instantiates and calls this by reflection, so {{@code public}} buys
+ * it nothing -- it only widens the surface other packages can compile
+ * against. A controller is an entry point, not module API.
+ */
 @RestController
-public class {name}Controller {{
+class {name}Controller {{
 
     @GetMapping("/{route}")
-    public String get() {{
+    String get() {{
         return "{name}";
     }}
 }}
@@ -1592,10 +1860,15 @@ fn stub_service(pkg: &str, name: &str) -> String {
     format!(
         r#"package {pkg};
 
-import org.springframework.stereotype.Service;
+import org.springframework.stereotype.Component;
 
-@Service
-public class {name}Service {{
+/**
+ * Package-private: Spring injects this by type, and nothing outside this
+ * package should be compiling against it. Widen it when something genuinely
+ * outside needs it, not before.
+ */
+@Component
+class {name}Service {{
 }}
 "#
     )
@@ -1611,29 +1884,50 @@ public final class {name} {{
     )
 }
 
-/// The companion test for `generate class`. It instantiates the class rather
-/// than asserting `true`: a bare class has an implicit no-arg constructor, so
-/// this compiles the moment it is generated, and the day a real constructor
-/// arrives the test stops compiling -- which is the reminder to write the real
-/// assertion, not a failure.
+/// The companion test for `generate class`.
+///
+/// It used to construct the class and assert `isNotNull()`, which is three
+/// bad things at once: it **passes while the class is entirely broken** (one
+/// real project reported 39 green tests over a repository that could not read
+/// or write), it inflates the count so the suite looks covered, and passing
+/// `null` for a constructor argument teaches that as the pattern. `java.md`
+/// §7 -- "don't test getters, records' `equals`, or Spring's wiring" -- is the
+/// same rule stated generally.
+///
+/// So it is `@Disabled` with a name that says what to prove. That is jails'
+/// existing idiom for "you have to finish this" (the field-spec sample
+/// problem emits `@Disabled` tests for the same reason), and it fixes every
+/// one of the three defects: a disabled test is reported as skipped rather
+/// than counted as green, so it is visible in the surefire output and cannot
+/// masquerade as coverage.
+///
+/// Deliberately **not** a failing test, which was the other candidate: `jails
+/// new` followed by `jails check` would then be red on a project where
+/// nothing is wrong, and a red build that is expected is a red build nobody
+/// reads.
+///
+/// The construction is kept. A bare class has an implicit no-arg constructor,
+/// so this compiles the moment it is written, and stops compiling the day a
+/// real constructor arrives -- which is the prompt to write the real
+/// assertion.
 fn class_test(pkg: &str, name: &str) -> String {
     let victim = lower_first(name);
     format!(
         r#"package {pkg};
 
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
-
-import static org.assertj.core.api.Assertions.assertThat;
 
 class {name}Test {{
 
     @Test
-    void shouldDoSomething() {{
+    @Disabled("todo: state what {name} is supposed to do, then assert it")
+    void todo() {{
         {name} {victim} = new {name}();
 
-        assertThat({victim}).isNotNull();
+        // Replace this with the behaviour {name} exists for. Asserting that
+        // it is not null would pass while the class is entirely broken.
     }}
-
 }}
 "#
     )
@@ -1855,7 +2149,9 @@ fn record_test(root: &Path, pkg: &str, name: &str, fields: &[Field]) -> String {
     if first_reference.is_some() {
         out += "import static org.assertj.core.api.Assertions.assertThatNullPointerException;\n";
     }
-    if !unfabricable.is_empty() {
+    // Disabled is needed for an unfabricable sample *or* for the
+    // no-validation `todo` body below.
+    if !unfabricable.is_empty() || first_reference.is_none() {
         out += "\nimport org.junit.jupiter.api.Disabled;\n";
     }
     out += "\n";
@@ -1867,24 +2163,27 @@ fn record_test(root: &Path, pkg: &str, name: &str, fields: &[Field]) -> String {
     }
     out += &format!("class {name}Test {{\n\n");
 
-    out += "    @Test\n    void accessorsReturnWhatWasConstructed() {\n";
-    out += &format!("        {name} {var} = new {name}({args});\n\n");
-    if fields.is_empty() {
-        out += &format!("        assertThat({var}).isEqualTo(new {name}());\n");
-    } else {
-        for (field, sample) in fields.iter().zip(&samples) {
-            match sample {
-                Some(value) => {
-                    out += &format!(
-                        "        assertThat({var}.{}()).isEqualTo({value});\n",
-                        field.name
-                    )
-                }
-                None => out += &format!("        // TODO: assert on {}\n", field.name),
-            }
-        }
+    // No accessor round-trip test. `assertThat(m.amount()).isEqualTo(1L)` on
+    // a record tests that javac generated an accessor, which `java.md` §7
+    // names directly ("don't test getters, records' `equals`"). It cannot
+    // fail for any reason a reader would want to know about.
+    //
+    // What *is* worth pinning is the compact constructor: the validation the
+    // field spec asked for, which is real behaviour and really can regress.
+    // When the record has none, there is nothing honest to assert, so the
+    // test says so rather than manufacturing a green tick -- the same
+    // reasoning as `class_test`.
+    if first_reference.is_none() {
+        out += &format!(
+            "    @Test\n    @Disabled(\"todo: state what {name} guarantees, then assert it\")\n"
+        );
+        out += "    void todo() {\n";
+        out += &format!("        {name} {var} = new {name}({args});\n\n");
+        out += &format!(
+            "        // {name} has no validation to pin, so assert on what it is\n        // *for*. Asserting that an accessor returns what was passed in\n        // only tests that javac generated the accessor.\n"
+        );
+        out += "    }\n";
     }
-    out += "    }\n";
 
     if let Some(first) = first_reference {
         // Only one component is nulled out: one case proves the compact
@@ -2082,6 +2381,12 @@ pub(crate) fn fields_from_record(root: &Path, pkg: &str, name: &str) -> Option<V
                 java_type: java_type.clone(),
                 imports: builtin.and_then(|(_, import)| import).into_iter().collect(),
                 optionality,
+                // A record read off disk carries no table markers: the Java
+                // type cannot say what the column is. `g repo` on an existing
+                // record therefore derives no constraints, which is honest --
+                // guessing a primary key from a component called `id` is how
+                // a schema ends up with one nobody asked for.
+                constraints: Constraints::default(),
                 owned: builtin.is_none(),
                 collection: java_type.starts_with("List") || java_type.starts_with("Map"),
             }
@@ -2775,6 +3080,314 @@ public interface {name}Repository {{
 /// nothing left to fill in. `columns` empty falls back to the old shape --
 /// `select *`, and a `map`/`bind` pair that throws -- because inventing
 /// columns for a type whose fields are unknown would be worse than saying so.
+/// Which repository adapter shape this project gets, and which adapter is the
+/// bean.
+///
+/// `JdbcClient` lives in `spring-jdbc`, so a plain Maven project genuinely
+/// cannot have it -- there the caller-owned `Connection` adapter is not a
+/// second-best choice, it is the only one. Where Spring *is* present the
+/// named-parameter, injectable version wins on both counts that matter: it
+/// cannot swap two same-typed columns, and it is an ordinary bean.
+///
+/// The second half is the part that is easy to get wrong. A `JdbcClient`
+/// adapter carrying `@Component` and an in-memory adapter carrying
+/// `@Component` make **two** beans qualify for one injection point, and
+/// Spring refuses to choose -- a scaffold that compiles and cannot start,
+/// which is precisely the failure `jails beans` exists to report. So exactly
+/// one of them is annotated, and which one depends on whether this project
+/// has a database yet:
+///
+/// - **`add db` has run** (the JDBC starter is present, so auto-configuration
+///   will produce a `JdbcClient`): the JDBC adapter is the bean, and the
+///   in-memory one is written as a plain fake with no annotation. That is
+///   also its honest role at that point -- a fake for tests, not a stand-in
+///   for the database that now exists.
+/// - **No database yet**: `spring-jdbc` is not even on the classpath, so
+///   `JdbcClient` is not a type that exists -- the adapter is the plain
+///   caller-owned `Connection` one, it is not a bean, and the in-memory
+///   adapter keeps `@Component` so the application still starts. This is
+///   what makes `g scaffold Note` then `jails run` work with nothing else
+///   installed.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum RepositoryWiring {
+    /// Spring *and* `spring-boot-starter-jdbc`: `JdbcClient` adapter, and it
+    /// is the bean.
+    JdbcClientBean,
+    /// Anything else: the caller-owned `Connection` adapter, which needs
+    /// nothing but the JDK. On Spring the in-memory adapter is the bean.
+    PlainJdbc,
+}
+
+fn repository_wiring(root: &Path) -> RepositoryWiring {
+    let Ok(pom) = crate::pom::read(root) else {
+        return RepositoryWiring::PlainJdbc;
+    };
+    if !matches!(crate::pom::flavor(&pom), crate::pom::Flavor::SpringBoot) {
+        return RepositoryWiring::PlainJdbc;
+    }
+    // The starter is what brings `JdbcClientAutoConfiguration` in. Checking
+    // for it rather than for `compose.yaml` or a migration directory means
+    // the answer matches what Spring will actually do at startup.
+    if crate::pom::has_dependency(&pom, "org.springframework.boot", "spring-boot-starter-jdbc") {
+        RepositoryWiring::JdbcClientBean
+    } else {
+        // `JdbcClient` lives in spring-jdbc, which the starter brings in.
+        // Without it the type does not exist and the adapter would not
+        // compile -- so this is not a stylistic fallback, it is the only
+        // adapter that can be written.
+        RepositoryWiring::PlainJdbc
+    }
+}
+
+fn jdbc_repository_for(
+    root: &Path,
+    pkg: &str,
+    name: &str,
+    extra: &str,
+    columns: &[crate::sql::Column],
+    owner: &str,
+) -> String {
+    match repository_wiring(root) {
+        RepositoryWiring::JdbcClientBean => {
+            jdbc_client_repository(pkg, name, extra, columns, owner)
+        }
+        RepositoryWiring::PlainJdbc => jdbc_repository(pkg, name, extra, columns, owner),
+    }
+}
+
+/// The Spring flavour of the same adapter, over `JdbcClient` with **named**
+/// parameters.
+///
+/// Two things make this the right default wherever Spring is present, and
+/// both are failure modes rather than preferences:
+///
+/// - **Named parameters.** A positional `?` list is a silent-swap bug waiting
+///   for a schema change: reorder two same-typed columns in the insert and
+///   nothing fails to compile, nothing throws, and the data is wrong. A
+///   seven-column insert has forty-two ways to be subtly wrong and one to be
+///   right.
+/// - **It is a bean.** The plain-JDBC adapter takes a `Connection` the caller
+///   owns, which is why it cannot carry `@Component` and why `scaffold` has
+///   to ship an in-memory adapter alongside it just so the context starts.
+///   `JdbcClient` is injected, so the adapter is an ordinary bean and that
+///   whole dance disappears.
+///
+/// The row mapper is shared with the plain-JDBC template: `JdbcClient` hands
+/// a `ResultSet` to a `RowMapper` just the same, so `sql::Column::read` needs
+/// no second form.
+fn jdbc_client_repository(
+    pkg: &str,
+    name: &str,
+    extra: &str,
+    columns: &[crate::sql::Column],
+    owner: &str,
+) -> String {
+    let var = lower_first(name);
+    let table = crate::sql::table_name(name);
+    let mapped: Vec<&crate::sql::Column> = columns.iter().filter(|c| c.mapped()).collect();
+    let derived = !mapped.is_empty();
+
+    // One column list feeds the select, the insert, the bind and the mapper.
+    // That is the entire reason this is generated rather than written.
+    let select_list = if derived {
+        mapped
+            .iter()
+            .map(|c| format!("            {},", c.name))
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim_end_matches(',')
+            .to_string()
+    } else {
+        "            *".to_string()
+    };
+    let key = mapped.iter().find(|c| c.name == "id").or(mapped.first());
+    let id_column = key.map(|c| c.name.clone()).unwrap_or_else(|| "id".to_string());
+    // The port takes a String id, so a non-text key column needs the cast
+    // spelled out -- Postgres will not compare a uuid column to a text
+    // parameter on its own.
+    let key_placeholder = match key {
+        Some(column) if column.sql_type != "text" => {
+            format!("cast(:id as {})", column.sql_type)
+        }
+        _ => ":id".to_string(),
+    };
+    let key_note = match key {
+        Some(column) if column.name != "id" => format!(
+            " * <p>There is no {{@code id}} component, so lookups are keyed on\n * {{@code {}}} -- change the two lookup statements if the real key is a\n * different or a composite one.\n",
+            column.name
+        ),
+        _ => String::new(),
+    };
+    let insert_columns = if derived {
+        mapped
+            .iter()
+            .map(|c| c.name.clone())
+            .collect::<Vec<_>>()
+            .join(", ")
+    } else {
+        "id".to_string()
+    };
+    let placeholders = if derived {
+        mapped
+            .iter()
+            .map(|c| format!(":{}", c.name))
+            .collect::<Vec<_>>()
+            .join(", ")
+    } else {
+        ":id".to_string()
+    };
+    let mut sql_imports = crate::sql::imports(columns)
+        .into_iter()
+        .map(|i| format!("import {i};\n"))
+        .collect::<String>();
+    for column in &mapped {
+        if builtin_by_java_name(&column.java_type).is_none() {
+            sql_imports.push_str(&import_of(pkg, owner, &column.java_type));
+        }
+    }
+
+    let map_body = if derived {
+        let args = mapped
+            .iter()
+            .map(|c| format!("                {}", c.read.as_deref().unwrap_or("null")))
+            .collect::<Vec<_>>()
+            .join(",\n");
+        format!("        return new {name}(\n{args});")
+    } else {
+        format!("        throw new UnsupportedOperationException(\"TODO: map a {table} row to {name}\");")
+    };
+    // `.param(name, value)` rather than a positional list: the binding and
+    // the statement name the same thing, so they cannot drift apart.
+    let bind_body = if derived {
+        mapped
+            .iter()
+            .map(|c| {
+                format!(
+                    "                .param(\"{}\", {})",
+                    c.name,
+                    c.write.as_deref().unwrap_or("null")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        format!("                .param(\"id\", {var}.toString())")
+    };
+
+    let unmapped: Vec<&str> = columns
+        .iter()
+        .filter(|c| !c.mapped())
+        .map(|c| c.name.as_str())
+        .collect();
+    let doc_note = if !derived {
+        " * <p>The statements are yours to finish: this adapter was generated without a\n * field spec, so jails knows the columns of exactly nothing.\n".to_string()
+    } else if unmapped.is_empty() {
+        " * <p>The SQL, the bind and the row mapper are all derived from the same field\n * spec, so they cannot disagree about a column name or a type.\n".to_string()
+    } else {
+        format!(
+            " * <p>The SQL, the bind and the row mapper are derived from the field spec.\n\
+             * Not persisted, because jails has no mapping for the type: {}.\n\
+             * Add those columns by hand, or model them as their own table.\n",
+            unmapped.join(", ")
+        )
+    };
+
+    format!(
+        r#"package {pkg};
+
+{extra}{sql_imports}import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.stereotype.Component;
+
+/**
+ * {{@link {name}Repository}} over {{@link JdbcClient}}. No ORM: the queries are
+ * visible, and the only abstraction is a named parameter.
+ *
+ * <p>Parameters are named rather than positional on purpose. A {{@code ?}} list
+ * is a silent-swap bug waiting for a schema change -- reorder two columns of
+ * the same type and nothing fails to compile and nothing throws.
+ *
+{doc_note}{key_note} */
+@Component
+public final class Jdbc{name}Repository implements {name}Repository {{
+
+    /**
+     * One column list, shared by the select, the insert and the row mapper.
+     * A hand-maintained pair drifts -- {{@code amount}} in the insert against
+     * {{@code amount_minor}} in the select compiles fine and fails at runtime.
+     */
+    private static final String COLUMNS =
+            """
+{select_list}
+            """;
+
+    private final JdbcClient db;
+
+    public Jdbc{name}Repository(JdbcClient db) {{
+        this.db = Objects.requireNonNull(db, "db is required");
+    }}
+
+    @Override
+    public Optional<{name}> findById(String id) {{
+        Objects.requireNonNull(id, "id is required");
+        return db.sql("""
+                        select %s
+                        from {table}
+                        where {id_column} = {key_placeholder}
+                        """.formatted(COLUMNS))
+                .param("id", id)
+                .query(Jdbc{name}Repository::map)
+                .optional();
+    }}
+
+    @Override
+    public List<{name}> findAll() {{
+        // Ordered explicitly: SQL does not otherwise promise row order.
+        return db.sql("""
+                        select %s
+                        from {table}
+                        order by {id_column}
+                        """.formatted(COLUMNS))
+                .query(Jdbc{name}Repository::map)
+                .list();
+    }}
+
+    @Override
+    public void save({name} {var}) {{
+        Objects.requireNonNull({var}, "{var} is required");
+        db.sql("""
+                        insert into {table} ({insert_columns})
+                        values ({placeholders})
+                        """)
+{bind_body}
+                .update();
+    }}
+
+    @Override
+    public boolean deleteById(String id) {{
+        Objects.requireNonNull(id, "id is required");
+        return db.sql("""
+                        delete from {table}
+                        where {id_column} = {key_placeholder}
+                        """)
+                .param("id", id)
+                .update()
+                > 0;
+    }}
+
+    /** Builds a {name} from the current row. */
+    private static {name} map(ResultSet rows, int rowNumber) throws SQLException {{
+{map_body}
+    }}
+}}
+"#
+    )
+}
+
 fn jdbc_repository(
     pkg: &str,
     name: &str,
@@ -3822,6 +4435,126 @@ mod tests {
         dir
     }
 
+    /// The invariant that keeps a scaffold able to *start*: exactly one
+    /// adapter is a bean. Two makes Spring refuse to choose; zero leaves the
+    /// service with no repository at all.
+    #[test]
+    fn exactly_one_repository_adapter_carries_the_bean_annotation() {
+        let columns = crate::sql::columns(
+            &parse_fields(&["id:string!".to_string(), "title:string".to_string()]).unwrap(),
+            Path::new("/tmp/does-not-matter"),
+            "com.example.app.domain",
+            "note",
+        );
+        let jdbc_bean = jdbc_client_repository("com.example.app.adapters", "Note", "", &columns, "com.example.app.domain");
+        let in_memory_fake = crate::spring::in_memory_repository_java(
+            "com.example.app.adapters",
+            "Note",
+            "",
+            Some("id"),
+            false,
+        );
+        // The annotation on the declaration, not the word in the Javadoc.
+        assert!(jdbc_bean.contains("@Component\npublic final class"), "{jdbc_bean}");
+        assert!(
+            !in_memory_fake.contains("@Component\npublic class"),
+            "the JDBC adapter is the bean here, so this one must not be: {in_memory_fake}"
+        );
+        assert!(
+            !in_memory_fake.contains("import org.springframework.stereotype.Component;"),
+            "an unused import would fail a strict build: {in_memory_fake}"
+        );
+
+        // ...and the other way round, before `add db` has run.
+        let in_memory_bean = crate::spring::in_memory_repository_java(
+            "com.example.app.adapters",
+            "Note",
+            "",
+            Some("id"),
+            true,
+        );
+        assert!(in_memory_bean.contains("@Component\npublic class"), "{in_memory_bean}");
+    }
+
+    /// `spring.md` calls a positional `?` list in a multi-column insert a
+    /// silent-swap bug waiting for a schema change, and the generator used to
+    /// emit exactly that.
+    #[test]
+    fn the_spring_adapter_binds_by_name_and_shares_one_column_list() {
+        let columns = crate::sql::columns(
+            &parse_fields(&[
+                "id:uuid".to_string(),
+                "amount:long".to_string(),
+                "currency:string".to_string(),
+            ])
+            .unwrap(),
+            Path::new("/tmp/does-not-matter"),
+            "com.example.app.domain",
+            "reward",
+        );
+        let src = jdbc_client_repository("com.example.app.adapters", "Reward", "", &columns, "com.example.app.domain");
+        assert!(src.contains("JdbcClient"), "{src}");
+        assert!(!src.contains("PreparedStatement"), "{src}");
+        // Named, not positional.
+        assert!(src.contains(".param(\"amount\""), "{src}");
+        assert!(src.contains(":amount"), "{src}");
+        assert!(!src.contains("setObject("), "{src}");
+        // One column list, interpolated into the reads.
+        assert!(src.contains("private static final String COLUMNS"), "{src}");
+        assert!(src.contains(".formatted(COLUMNS)"), "{src}");
+    }
+
+    /// Typing the name the type will actually have is the obvious thing to
+    /// do, and it used to produce `RewardHistoryServiceService.java`. A real
+    /// project renamed four generated files by hand because of this.
+    #[test]
+    fn a_name_that_already_carries_its_kinds_suffix_does_not_get_it_twice() {
+        for (kind, given, want) in [
+            (ArtifactKind::Service, "RewardHistoryService", "RewardHistory"),
+            (ArtifactKind::Controller, "RewardController", "Reward"),
+            (ArtifactKind::Repo, "RewardRepository", "Reward"),
+            (ArtifactKind::Test, "MoneyTest", "Money"),
+            (ArtifactKind::IntegrationTest, "PaymentIT", "Payment"),
+            (ArtifactKind::Job, "ReconcileJob", "Reconcile"),
+            (ArtifactKind::Client, "LedgerClient", "Ledger"),
+            (ArtifactKind::Cli, "AdminCli", "Admin"),
+        ] {
+            assert_eq!(strip_redundant_suffix(kind, given), want, "{given}");
+        }
+    }
+
+    #[test]
+    fn a_name_without_the_suffix_is_left_alone() {
+        assert_eq!(
+            strip_redundant_suffix(ArtifactKind::Service, "RewardHistory"),
+            "RewardHistory"
+        );
+        // `Repository` is matched whole -- `Rewards` does not lose its `s`.
+        assert_eq!(strip_redundant_suffix(ArtifactKind::Repo, "Rewards"), "Rewards");
+    }
+
+    /// Stripping the whole name would leave nothing to name the file after,
+    /// so `g service Service` means a type called `Service`.
+    #[test]
+    fn a_name_that_is_only_the_suffix_survives() {
+        assert_eq!(strip_redundant_suffix(ArtifactKind::Service, "Service"), "Service");
+        assert_eq!(strip_redundant_suffix(ArtifactKind::Test, "Test"), "Test");
+    }
+
+    /// `scaffold` spans Controller, Service and Repository at once; stripping
+    /// any one of them would corrupt the other two.
+    #[test]
+    fn scaffold_and_record_use_the_name_verbatim() {
+        assert_eq!(
+            strip_redundant_suffix(ArtifactKind::Scaffold, "RewardService"),
+            "RewardService"
+        );
+        assert_eq!(
+            strip_redundant_suffix(ArtifactKind::Record, "RewardResponse"),
+            "RewardResponse"
+        );
+    }
+
     #[test]
     fn capitalize_uppercases_first_letter_only() {
         assert_eq!(capitalize("post"), "Post");
@@ -3859,6 +4592,56 @@ mod tests {
     #[test]
     fn field_type_rejects_unknown_tokens() {
         assert!(field_type("nope").is_err());
+    }
+
+    #[test]
+    fn column_markers_parse_in_any_order_and_combine() {
+        let fields = parse_fields(&[
+            "transactionId:uuid@pk".to_string(),
+            "amount:long@positive@index".to_string(),
+            "email:string!@unique".to_string(),
+        ])
+        .unwrap();
+        assert!(fields[0].constraints.primary_key);
+        assert_eq!(fields[1].constraints.check, Some(NumericCheck::Positive));
+        assert!(fields[1].constraints.indexed);
+        assert!(fields[2].constraints.unique);
+        // The markers do not disturb the type or the optionality suffix.
+        assert_eq!(fields[0].java_type, "UUID");
+        assert_eq!(fields[2].java_type, "String");
+        assert_eq!(fields[2].optionality, Optionality::NonBlank);
+    }
+
+    /// A marker typo that parsed as "no constraint" would produce a schema
+    /// quietly missing the primary key someone thought they had asked for --
+    /// the exact failure this feature exists to prevent.
+    #[test]
+    fn an_unknown_column_marker_is_an_error_listing_the_real_ones() {
+        let err = parse_fields(&["id:uuid@primary".to_string()]).unwrap_err();
+        assert!(err.contains("@primary"), "{err}");
+        assert!(err.contains("@pk"), "{err}");
+    }
+
+    /// `check (name > 0)` on a text column fails at `flyway migrate`, which is
+    /// a slow and remote way to learn about a typo.
+    #[test]
+    fn a_numeric_check_on_a_non_numeric_column_is_rejected() {
+        let err = parse_fields(&["name:string@positive".to_string()]).unwrap_err();
+        assert!(err.contains("numeric"), "{err}");
+        assert!(parse_fields(&["amount:long@positive".to_string()]).is_ok());
+        assert!(parse_fields(&["price:decimal@nonnegative".to_string()]).is_ok());
+    }
+
+    #[test]
+    fn a_nullable_primary_key_is_rejected() {
+        let err = parse_fields(&["id:uuid?@pk".to_string()]).unwrap_err();
+        assert!(err.contains("nullable"), "{err}");
+    }
+
+    #[test]
+    fn a_field_with_no_markers_has_no_constraints() {
+        let fields = parse_fields(&["title:string".to_string()]).unwrap();
+        assert_eq!(fields[0].constraints, Constraints::default());
     }
 
     #[test]
@@ -4210,8 +4993,19 @@ mod tests {
             src.contains("MoneyMoved moneyMoved = new MoneyMoved();"),
             "{src}"
         );
-        assert!(src.contains("assertThat(moneyMoved).isNotNull();"), "{src}");
         assert!(src.contains("import org.junit.jupiter.api.Test;"), "{src}");
+        // The three defects of the old `isNotNull()` body: it passed while
+        // the class was broken, it counted as coverage, and it taught `null`
+        // as a constructor argument.
+        assert!(
+            !src.contains("isNotNull"),
+            "a test that passes over a broken class is worse than no test: {src}"
+        );
+        assert!(src.contains("@Disabled("), "{src}");
+        assert!(
+            src.contains("todo: state what MoneyMoved is supposed to do"),
+            "the disabled reason has to say what to prove: {src}"
+        );
     }
 
     #[test]
@@ -4284,8 +5078,12 @@ mod tests {
         assert!(time < objects, "java.time should sort before java.util");
     }
 
+    /// The compact constructor's validation is real behaviour and can
+    /// regress. An accessor round-trip cannot: it asserts that javac
+    /// generated an accessor, which `java.md` §7 names as a thing not to
+    /// test.
     #[test]
-    fn record_test_covers_the_accessors_and_the_null_rejection() {
+    fn record_test_pins_the_validation_and_not_the_accessors() {
         let fields =
             parse_fields(&["amount:long".to_string(), "currency:string".to_string()]).unwrap();
         let test = record_test(
@@ -4296,12 +5094,36 @@ mod tests {
         );
 
         assert!(test.contains("class MoneyTest"));
-        assert!(test.contains("new Money(1L, \"sample\")"));
-        assert!(test.contains("assertThat(money.amount()).isEqualTo(1L);"));
         assert!(test.contains("assertThatNullPointerException()"));
-        // `amount` is a primitive now, so the null case has to target the first
+        // `amount` is a primitive, so the null case has to target the first
         // *reference* component or the generated test would not compile.
         assert!(test.contains("new Money(1L, null)"), "{test}");
+
+        assert!(
+            !test.contains("accessorsReturnWhatWasConstructed"),
+            "{test}"
+        );
+        assert!(
+            !test.contains("assertThat(money.amount()).isEqualTo(1L);"),
+            "testing the compiler: {test}"
+        );
+    }
+
+    /// A record with nothing to validate has nothing honest to assert, so it
+    /// says so rather than emitting a green tick over an unproven type.
+    #[test]
+    fn a_record_with_no_validation_gets_a_disabled_todo_rather_than_a_tick() {
+        let fields = parse_fields(&["amount:long".to_string()]).unwrap();
+        let test = record_test(
+            Path::new("/nonexistent"),
+            "com.example.demo",
+            "Money",
+            &fields,
+        );
+        assert!(test.contains("@Disabled("), "{test}");
+        assert!(test.contains("todo: state what Money guarantees"), "{test}");
+        assert!(test.contains("import org.junit.jupiter.api.Disabled;"), "{test}");
+        assert!(!test.contains("assertThatNullPointerException"), "{test}");
     }
 
     /// With no fields there is no null to reject, so the test that asserts the
@@ -4359,9 +5181,19 @@ mod tests {
     #[test]
     fn stub_templates_use_the_package_and_class_name() {
         assert!(
-            stub_controller("com.example.blog", "Post").contains("public class PostController")
+            stub_controller("com.example.blog", "Post").contains("class PostController")
         );
-        assert!(stub_service("com.example.blog", "Post").contains("public class PostService"));
+        // Package-private: Spring wires these by reflection, so `public` only
+        // widens what other packages can compile against.
+        assert!(stub_service("com.example.blog", "Post").contains("\n@Component\nclass PostService"));
+        assert!(
+            !stub_service("com.example.blog", "Post").contains("public class"),
+            "spring.md §2: public only where the type is module API"
+        );
+        assert!(
+            !stub_controller("com.example.blog", "Post").contains("public class"),
+            "spring.md §2: public only where the type is module API"
+        );
         assert!(
             interface_java("com.example.blog", "PostStore").contains("public interface PostStore")
         );
@@ -4388,6 +5220,7 @@ mod tests {
             "post",
             &["title:string".to_string()],
             None,
+         &[],
          false,
         );
         std::env::set_current_dir(original_cwd).unwrap();
@@ -4459,7 +5292,7 @@ mod tests {
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        let result = generate(ArtifactKind::Controller, "health", &[], None, false);
+        let result = generate(ArtifactKind::Controller, "health", &[], None, &[], false);
         std::env::set_current_dir(original_cwd).unwrap();
         result.unwrap();
 
@@ -4491,7 +5324,7 @@ mod tests {
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        let result = generate(ArtifactKind::Service, "billing", &[], None, false);
+        let result = generate(ArtifactKind::Service, "billing", &[], None, &[], false);
         std::env::set_current_dir(original_cwd).unwrap();
         result.unwrap();
 
@@ -4520,7 +5353,7 @@ mod tests {
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        let result = generate(ArtifactKind::Repo, "widget", &[], None, false);
+        let result = generate(ArtifactKind::Repo, "widget", &[], None, &[], false);
         std::env::set_current_dir(original_cwd).unwrap();
         result.unwrap();
 
@@ -4561,9 +5394,10 @@ mod tests {
             "money",
             &["amount:long".to_string()],
             None,
+         &[],
          false,
         );
-        let command = generate(ArtifactKind::Command, "greet", &[], None, false);
+        let command = generate(ArtifactKind::Command, "greet", &[], None, &[], false);
         std::env::set_current_dir(original_cwd).unwrap();
         record.unwrap();
         command.unwrap();
@@ -4601,7 +5435,7 @@ mod tests {
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        generate(ArtifactKind::Command, "greet", &[], None, false).unwrap();
+        generate(ArtifactKind::Command, "greet", &[], None, &[], false).unwrap();
         let result = destroy(ArtifactKind::Command, "greet", true, None, false);
         std::env::set_current_dir(original_cwd).unwrap();
 
@@ -4635,6 +5469,7 @@ mod tests {
             "tag",
             &["name:string".to_string()],
             None,
+         &[],
          false,
         )
         .unwrap();
@@ -4643,6 +5478,7 @@ mod tests {
             "tag",
             &["name:string".to_string()],
             None,
+         &[],
          false,
         );
         let result = destroy(ArtifactKind::Record, "tag", true, None, false);
@@ -4679,7 +5515,7 @@ mod tests {
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        let result = generate(ArtifactKind::Controller, "comment", &[], None, false);
+        let result = generate(ArtifactKind::Controller, "comment", &[], None, &[], false);
         std::env::set_current_dir(original_cwd).unwrap();
 
         assert!(result.is_err());
@@ -4709,6 +5545,7 @@ mod tests {
             "tag",
             &["name:string".to_string()],
             None,
+         &[],
          false,
         )
         .unwrap();

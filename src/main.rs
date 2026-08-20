@@ -1,9 +1,12 @@
 mod add;
 mod compose;
+mod config;
 mod console;
 mod doctor;
 mod generate;
 mod inspect;
+mod kafka;
+mod migrate;
 mod java;
 mod new;
 mod pom;
@@ -144,6 +147,14 @@ enum Command {
         /// empty string to write straight into the base package.
         #[arg(long)]
         package: Option<String>,
+        /// A composite or ordered index for the generated migration, as the
+        /// column list Postgres wants. Repeatable.
+        ///
+        /// Per-column `@index` covers the single-column case; this is for the
+        /// ones it cannot spell:
+        ///   --index 'customer_id, created_at desc'
+        #[arg(long = "index", value_name = "COLUMNS")]
+        indexes: Vec<String>,
     },
     /// Add one or more capabilities to an existing project: dependencies, code and tests
     ///
@@ -236,6 +247,28 @@ enum Command {
         /// Emit machine-readable output for editor integrations
         #[arg(long)]
         json: bool,
+    },
+    /// Apply the migrations to a scratch database and report the first failure
+    ///
+    /// Not a `doctor` check: doctor is read-only by contract, and applying
+    /// migrations writes. Doctor can say whether anything will run them;
+    /// this says whether they work.
+    Migrate {
+        /// Apply to a scratch database and drop it. The only mode today --
+        /// jails does not run migrations against a real database, Flyway does.
+        #[arg(long, default_value_t = true)]
+        check: bool,
+        /// Do not `docker compose up` postgres first
+        #[arg(long)]
+        no_start: bool,
+    },
+    /// Send messages to the compose broker and inspect what is on it
+    Kafka {
+        #[command(subcommand)]
+        command: kafka::KafkaCommand,
+        /// Do not `docker compose up` kafka first
+        #[arg(long)]
+        no_start: bool,
     },
     /// Open a database client (`psql` against compose postgres, or sqlite3)
     #[command(visible_alias = "dbconsole")]
@@ -345,7 +378,8 @@ fn main() {
             name,
             fields,
             package,
-        } => generate::generate(kind, &name, &fields, package.as_deref(), pretend),
+            indexes,
+        } => generate::generate(kind, &name, &fields, package.as_deref(), &indexes, pretend),
         Command::Add {
             capabilities,
             name,
@@ -398,6 +432,8 @@ fn main() {
         Command::Notes { tag } => inspect::notes(tag.as_deref()),
         Command::Routes { json } => inspect::routes(json),
         Command::Beans { pattern, json } => inspect::beans(pattern.as_deref(), json),
+        Command::Migrate { check: _, no_start } => migrate::check(no_start, debug),
+        Command::Kafka { command, no_start } => kafka::kafka(command, no_start, debug),
         Command::Db {
             file,
             no_start,

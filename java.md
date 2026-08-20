@@ -354,10 +354,19 @@ Stack: **JUnit 6 + AssertJ + Mockito 5 + Testcontainers 2**.
   type is a readability regression, not a modern flourish.
 - **`final` on fields, always. On locals, only where it earns its keep.**
   Peppering `final` on every local is noise the compiler already knows.
-- **Package by feature, not by layer.** `com.example.orders.{Order, OrderService,
-  OrderController}` beats `com.example.{model, service, controller}` — the
-  package boundary should be where you'd cut a module, and `orders` is; `service`
-  isn't. (Spring Modulith makes this enforceable if it matters.)
+- **Package by feature, not by layer — once there is more than one feature.**
+  `com.example.orders.{Order, OrderService, OrderController}` beats
+  `com.example.{model, service, controller}` — the package boundary should be
+  where you'd cut a module, and `orders` is; `service` isn't. (Spring Modulith
+  makes this enforceable if it matters.)
+  The exception is the single-domain service, which is most services: a
+  rewards service packaged by feature has exactly one feature package, so the
+  layout collapses to flat and the layer names are the only structure left.
+  That is why `jails` scaffolds `domain`/`service`/`web`/`adapters` and is not
+  wrong to. **The rule is about the second feature**: the moment a service
+  grows one, the layer packages become bags of unrelated things and the cut
+  has to move. `jails.toml`'s `[layout]` renames those packages; it does not
+  make that decision for you.
 - **Javadoc every public type and method, and nothing else.** Say what it does
   and what it guarantees, not how. `@param`/`@return` only when they add
   information beyond the name. Markdown Javadoc (`/// ...`, final in 23) is fine

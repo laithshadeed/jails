@@ -120,7 +120,9 @@ fn run_checks(root: &Path) -> Vec<Check> {
     checks.push(maven_check(root));
     checks.push(jdk_check(&pom_text));
     checks.extend(compose_checks(root, &pom_text));
+    checks.extend(compose_provider_check(&pom_text));
     checks.extend(database_checks(root, &pom_text));
+    checks.extend(in_memory_adapter_check(root, &pom_text));
     checks.push(testcontainers_check(&pom_text));
     checks.push(kafka_check(root, &pom_text));
     checks.push(jackson_check(&pom_text));
@@ -204,6 +206,88 @@ fn jdk_check(pom_text: &str) -> Check {
             format!("java {have} on PATH, project targets {want}"),
         ),
     }
+}
+
+/// Whether the compose provider is one `spring-boot-docker-compose` can drive.
+///
+/// This is a static fact about the machine that decides whether the
+/// application can start at all, and until now it was only discoverable by
+/// running it and reading `jails why` afterwards.
+///
+/// `spring-boot-docker-compose` shells out with Docker Compose v2 syntax
+/// (`--ansi never`, `config --format=json`). podman-compose spells the first
+/// `--no-ansi` and has no `--format` at all, so it exits 2 and the app dies
+/// during startup, before any of its own code runs.
+///
+/// The distinguishing string is the provider's own version banner: real
+/// Compose v2 says "Docker Compose version v…" whatever is underneath it,
+/// including when it is a CLI plugin driving podman over `DOCKER_HOST` --
+/// which is the configuration that works and the one this recommends.
+///
+/// Note the fix jails' `why` rule used to suggest,
+/// `spring.docker.compose.enabled=false`, trades one failure for another: it
+/// also removes the datasource URL the module was contributing, so the app
+/// then dies on "no database URL" instead. Installing real Compose v2 is the
+/// fix that leaves nothing broken.
+fn compose_provider_check(pom_text: &str) -> Option<Check> {
+    if !pom::has_dependency(
+        pom_text,
+        "org.springframework.boot",
+        "spring-boot-docker-compose",
+    ) {
+        return None;
+    }
+    if !run::find_on_path("docker") {
+        // The docker check above already reports this; one message is enough.
+        return None;
+    }
+    let output = std::process::Command::new("docker")
+        .args(["compose", "version"])
+        .output()
+        .ok()?;
+    Some(classify_compose_provider(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
+}
+
+/// Read a `docker compose version` banner. Split out from the subprocess so
+/// the interesting half can be tested.
+///
+/// The banner is noisier than it looks: podman's docker shim prints its own
+/// notices around the real output, so this matches a substring rather than
+/// parsing a line.
+fn classify_compose_provider(banner: &str) -> Check {
+    if banner.contains("Docker Compose version") {
+        let version = banner
+            .lines()
+            .find(|l| l.contains("Docker Compose version"))
+            .unwrap_or("Docker Compose v2")
+            .trim();
+        return Check::new(
+            Status::Ok,
+            "compose provider",
+            format!("{version} -- spring-boot-docker-compose can drive it"),
+        );
+    }
+
+    let provider = if banner.contains("podman-compose") {
+        "podman-compose"
+    } else {
+        "an unrecognised compose provider"
+    };
+    Check::new(
+        Status::Fail,
+        "compose provider",
+        format!(
+            "spring-boot-docker-compose is on the classpath but `docker compose` is \
+             {provider} -- it rejects the Compose v2 syntax the module uses \
+             (--ansi never, config --format=json) and the application dies during startup"
+        ),
+    )
+    .fix(
+        "install Compose v2 as a docker CLI plugin (~/.docker/cli-plugins/docker-compose); \
+         it drives podman fine over DOCKER_HOST",
+    )
 }
 
 fn compose_checks(root: &Path, _pom_text: &str) -> Vec<Check> {
@@ -314,6 +398,28 @@ fn database_checks(root: &Path, pom_text: &str) -> Vec<Check> {
         })
         .unwrap_or(0);
     let has_flyway = pom::has_dependency(pom_text, "org.flywaydb", "flyway-core");
+    // Counting the files answers the wrong question. `flyway-core` alone runs
+    // nothing on Boot 4 -- the auto-configuration lives in the separate
+    // `spring-boot-flyway` module -- and the failure is silent: no error, no
+    // warning, no Flyway log line, then `relation "..." does not exist`. So
+    // the check is "will these run", not "do these exist".
+    let is_spring = matches!(pom::flavor(pom_text), pom::Flavor::SpringBoot);
+    let has_boot_flyway =
+        pom::has_dependency(pom_text, "org.springframework.boot", "spring-boot-flyway");
+    if is_spring && has_flyway && !has_boot_flyway {
+        checks.push(
+            Check::new(
+                Status::Fail,
+                "migrations",
+                format!(
+                    "{count} .sql file(s) and flyway-core, but not spring-boot-flyway -- \
+                     Boot 4 keeps Flyway's auto-configuration in that module, so nothing \
+                     runs them and nothing says so"
+                ),
+            )
+            .fix("jails add db (idempotent -- it re-writes only what is missing)"),
+        );
+    } else {
     checks.push(match (has_flyway, count) {
         (true, 0) => Check::new(
             Status::Warn,
@@ -334,29 +440,43 @@ fn database_checks(root: &Path, pom_text: &str) -> Vec<Check> {
         .fix("jails add db"),
         (false, _) => Check::new(Status::Skip, "migrations", "no Flyway, no migration directory"),
     });
+    }
 
     // The two pieces of test-side wiring `add db` installs on Spring. Both
     // are invisible until a @SpringBootTest fails with "Failed to determine
     // a suitable driver class", and both are easy to lose to a rebase.
     if matches!(pom::flavor(pom_text), pom::Flavor::SpringBoot) {
-        let factories = root.join("src/test/resources/META-INF/spring.factories");
-        let initializer_registered = std::fs::read_to_string(&factories)
-            .map(|t| t.contains("ApplicationContextInitializer"))
-            .unwrap_or(false);
-        checks.push(if initializer_registered {
-            Check::new(
-                Status::Ok,
-                "test datasource",
-                "Testcontainers initializer registered in test spring.factories",
-            )
-        } else {
-            Check::new(
+        // What matters is that a container bean exists *and* that every
+        // @SpringBootTest can see one. Checking the file alone would pass on
+        // a project where a rebase dropped the @Import and every context test
+        // is red; checking the imports alone would pass on a project whose
+        // config file was deleted.
+        let (container_config, unimported) = test_container_wiring(root);
+        checks.push(match (&container_config, unimported.as_slice()) {
+            (None, _) => Check::new(
                 Status::Fail,
                 "test datasource",
-                "Spring + postgres, but no test-classpath ApplicationContextInitializer -- \
-                 @SpringBootTest will fail with \"Failed to determine a suitable driver class\"",
+                "Spring + postgres, but no @ServiceConnection container config on the test \
+                 classpath -- @SpringBootTest will fail with \"Failed to determine a suitable \
+                 driver class\"",
             )
-            .fix("jails add db (idempotent -- it re-writes only what is missing)")
+            .fix("jails add db (idempotent -- it re-writes only what is missing)"),
+            (Some(class), []) => Check::new(
+                Status::Ok,
+                "test datasource",
+                format!("{class} declares an @ServiceConnection container, imported where needed"),
+            ),
+            (Some(class), missing) => Check::new(
+                Status::Fail,
+                "test datasource",
+                format!(
+                    "{} @SpringBootTest class(es) do not import {class} -- they will fail with \
+                     \"Failed to determine a suitable driver class\": {}",
+                    missing.len(),
+                    missing.join(", ")
+                ),
+            )
+            .fix("jails add db (idempotent -- it re-writes only what is missing)"),
         });
 
         let properties = root.join("src/main/resources/application.properties");
@@ -385,6 +505,135 @@ fn database_checks(root: &Path, pom_text: &str) -> Vec<Check> {
 /// "Could not find a valid Docker environment" -- the two look at different
 /// sockets, which is why `jails start` succeeding proves nothing about
 /// whether the test suite can start a container.
+/// The test-side container wiring: which class declares the container, and
+/// which `@SpringBootTest` classes cannot see it.
+///
+/// Deliberately textual, like the rest of jails' Java reading -- it answers on
+/// a project that does not compile, which is the case that matters when
+/// something is already broken.
+fn test_container_wiring(root: &Path) -> (Option<String>, Vec<String>) {
+    let mut config: Option<String> = None;
+    let mut boot_tests: Vec<(String, String)> = Vec::new();
+
+    let mut stack = vec![root.join("src/test/java")];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if !path.extension().is_some_and(|e| e == "java") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let stem = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or_default()
+                .to_string();
+            if text.contains("@ServiceConnection") && text.contains("@TestConfiguration") {
+                config = Some(stem.clone());
+            }
+            if text.contains("@SpringBootTest") {
+                boot_tests.push((stem, text));
+            }
+        }
+    }
+
+    let unimported = match &config {
+        Some(class) => {
+            let annotation = format!("@Import({class}.class)");
+            let mut missing: Vec<String> = boot_tests
+                .into_iter()
+                // The config class itself may carry @SpringBootTest in a
+                // sample snippet; it obviously does not import itself.
+                .filter(|(stem, text)| stem != class && !text.contains(&annotation))
+                .map(|(stem, _)| stem)
+                .collect();
+            missing.sort();
+            missing
+        }
+        None => Vec::new(),
+    };
+    (config, unimported)
+}
+
+/// A project with a real database whose repository bean is still the
+/// in-memory one.
+///
+/// This is the quiet half of the two-adapter problem. Two annotated
+/// adapters is loud -- Spring refuses to start and `jails beans` reports the
+/// ambiguity. *One*, on the in-memory adapter, with a `DataSource` sitting
+/// right there, starts perfectly and serves every request out of a
+/// `ConcurrentHashMap` that is empty on each boot. Nothing fails. The data
+/// just is not there, and the first person to notice is whoever asks why
+/// last week's records are gone.
+///
+/// It is the state a project lands in by scaffolding first and running
+/// `jails add db` second, because `add db` does not rewrite an
+/// already-generated scaffold -- deliberately: those files may have been
+/// edited by hand since, and silently regenerating them would cost more than
+/// this check does.
+fn in_memory_adapter_check(root: &Path, pom_text: &str) -> Option<Check> {
+    if !pom::has_dependency(pom_text, "org.springframework.boot", "spring-boot-starter-jdbc") {
+        return None;
+    }
+    let mut in_memory_beans = Vec::new();
+    let mut stack = vec![root.join("src/main/java")];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
+            if !stem.starts_with("InMemory") || !path.extension().is_some_and(|e| e == "java") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            // The annotation on a declaration, not the word in a Javadoc.
+            let annotated = ["@Component", "@Repository"]
+                .iter()
+                .any(|a| text.contains(&format!("{a}\npublic class")) || text.contains(&format!("{a}\nclass")));
+            if annotated {
+                in_memory_beans.push(stem.to_string());
+            }
+        }
+    }
+    if in_memory_beans.is_empty() {
+        return None;
+    }
+    in_memory_beans.sort();
+    Some(
+        Check::new(
+            Status::Fail,
+            "repository bean",
+            format!(
+                "this project has a DataSource, but {} is still a bean -- \
+                 the application starts and serves every request from memory, losing \
+                 everything on restart, with no error anywhere",
+                in_memory_beans.join(", ")
+            ),
+        )
+        .fix(
+            "re-generate the adapter so the JDBC one is the bean: \
+             jails destroy repo <Name> && jails g repo <Name> <fields...>",
+        ),
+    )
+}
+
 fn testcontainers_check(pom_text: &str) -> Check {
     // Matched on the groupId alone, not on artifact ids: Testcontainers 2.0
     // renamed every module (`postgresql` -> `testcontainers-postgresql`),
@@ -454,32 +703,61 @@ fn kafka_check(root: &Path, pom_text: &str) -> Check {
     }
 }
 
-/// Both Jackson artifacts have to be present and pinned together, or every
-/// `LocalDate` silently serialises as `{"year":...}` instead of an ISO
-/// string. Spring pulls the second one in transitively, so this only ever
-/// bites the plain-Maven flavor.
+/// Which Jackson majors are on the classpath, and whether the java.time
+/// problem is real for this project.
+///
+/// Two different failures live here, and they belong to different majors:
+///
+/// - **Jackson 2 without `jackson-datatype-jsr310`**: `findAndRegisterModules()`
+///   finds no java.time support and every `LocalDate` serialises as
+///   `{"year":...}` instead of an ISO string.
+/// - **Both majors at once**: Boot 4's web starter brings Jackson 3
+///   (`tools.jackson`), and an added 2.x `com.fasterxml` artifact sits beside
+///   it quite happily -- different packages, no conflict, no warning. Half
+///   the code then uses a mapper configured by nobody. This is the one that
+///   is genuinely hard to see, so it outranks the other.
 fn jackson_check(pom_text: &str) -> Check {
-    let databind = pom::has_dependency(pom_text, "com.fasterxml.jackson.core", "jackson-databind");
+    let jackson3 = pom::has_dependency(pom_text, "tools.jackson.core", "jackson-databind");
+    let jackson2 = pom::has_dependency(pom_text, "com.fasterxml.jackson.core", "jackson-databind");
     let jsr310 = pom::has_dependency(
         pom_text,
         "com.fasterxml.jackson.datatype",
         "jackson-datatype-jsr310",
     );
-    match (databind, jsr310) {
-        (false, _) => Check::new(Status::Skip, "json", "Jackson is not in use"),
-        (true, true) => Check::new(Status::Ok, "json", "jackson-databind and jackson-datatype-jsr310 both present"),
-        (true, false) => Check::new(
+
+    if jackson3 && (jackson2 || jsr310) {
+        return Check::new(
             Status::Fail,
             "json",
-            "jackson-databind without jackson-datatype-jsr310 -- java.time values will serialise \
-             as objects, not ISO strings",
+            "both Jackson majors are declared (tools.jackson and com.fasterxml) -- they do \
+             not conflict, so nothing warns, and code written against one is configured by \
+             neither",
+        )
+        .fix("jails remove json && jails add json   # re-adds Jackson 3 alone");
+    }
+    match (jackson3, jackson2, jsr310) {
+        (true, _, _) => Check::new(
+            Status::Ok,
+            "json",
+            "Jackson 3 (tools.jackson) -- java.time is built in",
+        ),
+        (false, false, _) => Check::new(Status::Skip, "json", "Jackson is not in use"),
+        (false, true, true) => Check::new(
+            Status::Warn,
+            "json",
+            "Jackson 2 with jackson-datatype-jsr310 -- works, but Boot 4 ships Jackson 3",
+        )
+        .fix("jails remove json && jails add json   # migrates to tools.jackson"),
+        (false, true, false) => Check::new(
+            Status::Fail,
+            "json",
+            "jackson-databind 2.x without jackson-datatype-jsr310 -- java.time values will \
+             serialise as objects, not ISO strings",
         )
         .fix("jails add json"),
     }
 }
 
-/// "Port 8080 was already in use" is a top-three Spring startup failure and
-/// costs nothing to detect before the JVM even starts.
 fn port_check(root: &Path) -> Check {
     let properties = root.join("src/main/resources/application.properties");
     let configured = std::fs::read_to_string(&properties)
@@ -550,7 +828,7 @@ fn beans_check(root: &Path) -> Check {
     Check::new(Status::Fail, "beans", detail).fix(if missing.is_empty() {
         "mark one candidate @Primary, or drop the stereotype from the fake"
     } else {
-        "annotate the implementation (@Service/@Repository/@Component) or add an @Bean method"
+        "annotate the implementation (@Component) or add an @Bean method"
     })
 }
 
@@ -728,13 +1006,95 @@ volumes:
         assert_eq!(jackson_check(pom).status, Status::Fail);
     }
 
+    /// A working Jackson 2 pair still works -- it is just a version behind,
+    /// so it warns rather than failing.
     #[test]
-    fn both_jackson_artifacts_pass() {
+    fn both_jackson_2_artifacts_warn_rather_than_fail() {
         let pom = "<dependency><groupId>com.fasterxml.jackson.core</groupId>\
                    <artifactId>jackson-databind</artifactId></dependency>\
                    <dependency><groupId>com.fasterxml.jackson.datatype</groupId>\
                    <artifactId>jackson-datatype-jsr310</artifactId></dependency>";
+        assert_eq!(jackson_check(pom).status, Status::Warn);
+    }
+
+    /// The failure that loses data without an error: a DataSource exists, but
+    /// the bean serving every request is a HashMap that empties on restart.
+    #[test]
+    fn an_in_memory_repository_bean_beside_a_datasource_is_a_failure() {
+        let root = std::env::temp_dir().join(format!("jails-inmem-check-{}", std::process::id()));
+        let pkg = root.join("src/main/java/com/example/demo/adapters");
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(
+            pkg.join("InMemoryNoteRepository.java"),
+            "package com.example.demo.adapters;\n\n@Repository\npublic class InMemoryNoteRepository {}\n",
+        )
+        .unwrap();
+
+        let pom = "<dependency><groupId>org.springframework.boot</groupId>\
+                   <artifactId>spring-boot-starter-jdbc</artifactId></dependency>";
+        let check = in_memory_adapter_check(&root, pom).expect("should report");
+        assert_eq!(check.status, Status::Fail);
+        assert!(check.detail.contains("InMemoryNoteRepository"), "{}", check.detail);
+
+        // Without a DataSource it is the correct design, not a problem.
+        assert!(in_memory_adapter_check(&root, "<project/>").is_none());
+
+        // And once the annotation moves, there is nothing to report.
+        std::fs::write(
+            pkg.join("InMemoryNoteRepository.java"),
+            "package com.example.demo.adapters;\n\npublic class InMemoryNoteRepository {}\n",
+        )
+        .unwrap();
+        assert!(in_memory_adapter_check(&root, pom).is_none());
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// The banner real Compose v2 prints, even when it is a CLI plugin
+    /// driving podman -- which is the setup that works.
+    #[test]
+    fn a_real_compose_v2_banner_passes_even_under_podman() {
+        let banner = ">>>> Executing external compose provider \
+                      \"/home/me/.docker/cli-plugins/docker-compose\" <<<<\n\
+                      Docker Compose version v5.5.0\n";
+        let check = classify_compose_provider(banner);
+        assert_eq!(check.status, Status::Ok);
+        assert!(check.detail.contains("v5.5.0"), "{}", check.detail);
+    }
+
+    /// The failure this check exists for: the app dies during startup, before
+    /// any of its own code runs, and the message names neither cause nor fix.
+    #[test]
+    fn a_podman_compose_provider_fails_with_the_plugin_fix() {
+        let check = classify_compose_provider("podman-compose version 1.6.0\n");
+        assert_eq!(check.status, Status::Fail);
+        assert!(check.detail.contains("podman-compose"), "{}", check.detail);
+        assert!(
+            check.fix.contains("cli-plugins"),
+            "the fix must be the one that leaves nothing broken: {:?}",
+            check.fix
+        );
+    }
+
+    #[test]
+    fn jackson_3_alone_is_the_happy_path() {
+        let pom = "<dependency><groupId>tools.jackson.core</groupId>\
+                   <artifactId>jackson-databind</artifactId></dependency>";
         assert_eq!(jackson_check(pom).status, Status::Ok);
+    }
+
+    /// The failure nothing else reports: two majors coexist quietly because
+    /// their packages differ, and half the code ends up on a mapper nobody
+    /// configured.
+    #[test]
+    fn two_jackson_majors_at_once_is_a_failure() {
+        let pom = "<dependency><groupId>tools.jackson.core</groupId>\
+                   <artifactId>jackson-databind</artifactId></dependency>\
+                   <dependency><groupId>com.fasterxml.jackson.core</groupId>\
+                   <artifactId>jackson-databind</artifactId></dependency>";
+        let check = jackson_check(pom);
+        assert_eq!(check.status, Status::Fail);
+        assert!(check.detail.contains("both Jackson majors"), "{}", check.detail);
     }
 
     #[test]

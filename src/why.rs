@@ -162,9 +162,10 @@ const RULES: &[Rule] = &[
                       nothing supplied a datasource URL. In tests this is the usual case: Spring \
                       Boot skips Docker Compose during tests by default \
                       (spring.docker.compose.skip.in-tests=true), so the compose database is not \
-                      started and no URL is contributed. `jails add db` installs a Testcontainers \
-                      ApplicationContextInitializer in src/test/resources/META-INF/spring.factories \
-                      for exactly this; if that file is missing, every @SpringBootTest fails here."
+                      started and no URL is contributed. `jails add db` writes a \
+                      TestcontainersConfig holding an @ServiceConnection container bean, and \
+                      splices @Import(TestcontainersConfig.class) onto the @SpringBootTest \
+                      classes for exactly this; a test class missing that @Import fails here."
                 .into(),
             fixes: vec![
                 "jails doctor        # the 'test datasource' check reports whether it is registered".into(),
@@ -185,13 +186,13 @@ const RULES: &[Rule] = &[
                 because: format!(
                     "A constructor asks for {short}, but no class in the context is registered \
                      as one. Two ways that happens: the implementation exists but has no \
-                     stereotype annotation (@Service/@Repository/@Component), or it has one but \
+                     stereotype annotation (@Component), or it has one but \
                      sits outside the @SpringBootApplication class's package tree, which is what \
                      Spring actually scans."
                 ),
                 fixes: vec![
                     "jails beans      # lists every registered bean and flags unresolvable dependencies".into(),
-                    format!("Annotate the implementation of {short} with @Service/@Repository/@Component"),
+                    format!("Annotate the implementation of {short} with @Component"),
                     "Check the implementation lives under the application class's package".into(),
                 ],
             }
@@ -704,7 +705,11 @@ mod tests {
                    Reason: Failed to determine a suitable driver class";
         let found = explain(log);
         assert_eq!(found.len(), 1);
-        assert!(found[0].because.contains("spring.factories"), "{}", found[0].because);
+        assert!(
+            found[0].because.contains("@Import(TestcontainersConfig.class)"),
+            "{}",
+            found[0].because
+        );
     }
 
     #[test]

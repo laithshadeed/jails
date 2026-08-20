@@ -75,6 +75,7 @@ pub fn new(
         set_java_release(Path::new(name), initializer_java, java)?;
     }
     write_fixtures_dir(Path::new(name))?;
+    finish_spring_project(Path::new(name), deps)?;
 
     // start.spring.io's zip already ships a .gitignore, so just init.
     if git {
@@ -83,6 +84,118 @@ pub fn new(
 
     println!("Created ./{name} (deps: {deps}, Java {java})");
     Ok(())
+}
+
+
+/// The three things a freshly bootstrapped Spring project needs and
+/// start.spring.io does not provide.
+///
+/// Run once, after the zip is extracted and before git init, so the initial
+/// commit is of a project that is already in the shape jails maintains.
+fn finish_spring_project(root: &Path, requested_deps: &str) -> Result<()> {
+    verify_requested_deps(root, requested_deps);
+    add_jspecify(root)?;
+    write_default_properties(root)
+}
+
+/// Report any `--deps` that did not arrive.
+///
+/// Initializr silently drops a dependency id it does not recognise -- a typo,
+/// or an id that was renamed between Boot versions -- and returns 200 with a
+/// project that is missing it. The failure then surfaces much later as an
+/// unresolvable import. A warning here is cheap and turns a puzzling compile
+/// error into a line at creation time.
+///
+/// A warning rather than an error: the mapping from an Initializr id to the
+/// artifact it contributes is not always one to one, so a false positive must
+/// not stop a project from being created.
+fn verify_requested_deps(root: &Path, requested: &str) {
+    let Ok(pom) = crate::pom::read(root) else {
+        return;
+    };
+    let missing: Vec<&str> = requested
+        .split(',')
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        // Initializr ids mostly map to `spring-boot-starter-<id>`, and where
+        // they do not, the id itself appears in the artifactId often enough
+        // to make this a low-noise check.
+        .filter(|id| !pom.contains(&format!("spring-boot-starter-{id}")) && !pom.contains(*id))
+        .collect();
+    if !missing.is_empty() {
+        eprintln!(
+            "jails: warning: start.spring.io did not include: {}. Check the dependency id, \
+             or add it with `jails add`.",
+            missing.join(", ")
+        );
+    }
+}
+
+/// JSpecify, so the null-marked `package-info.java` every generator writes
+/// compiles. Boot's dependency management does not pin it, hence the version.
+fn add_jspecify(root: &Path) -> Result<()> {
+    let pom = crate::pom::read(root)?;
+    if crate::pom::has_dependency(&pom, "org.jspecify", "jspecify") {
+        return Ok(());
+    }
+    let dep = crate::pom::Dependency {
+        group_id: "org.jspecify",
+        artifact_id: "jspecify",
+        version: Some("1.0.0"),
+        scope: None,
+        optional: false,
+    };
+    if let Some(updated) = crate::pom::add_dependency(&pom, &dep)? {
+        fs::write(root.join("pom.xml"), updated)
+            .map_err(|e| format!("failed to write pom.xml: {e}"))?;
+    }
+    Ok(())
+}
+
+/// Two settings both persona files call the default posture, and which an
+/// empty `application.properties` leaves off.
+///
+/// Neither is discoverable from a failure: virtual threads absent just means
+/// the service is quietly less concurrent than it should be, and
+/// problemdetails absent means error bodies are Boot's ad-hoc map instead of
+/// RFC 9457 -- which nobody notices until a client has already parsed the
+/// wrong shape.
+fn write_default_properties(root: &Path) -> Result<()> {
+    let path = root.join("src/main/resources/application.properties");
+    let existing = fs::read_to_string(&path).unwrap_or_default();
+    let defaults = [
+        (
+            "# Blocking JDBC and blocking HTTP on a virtual thread is the intended\n\
+             # shape on JDK 21+, and is not the default.",
+            "spring.threads.virtual.enabled=true",
+        ),
+        (
+            "# RFC 9457 problem+json error bodies instead of Boot's default error map.",
+            "spring.mvc.problemdetails.enabled=true",
+        ),
+    ];
+    let mut addition = String::new();
+    for (comment, property) in defaults {
+        let key = property.split('=').next().unwrap_or(property);
+        if existing.contains(key) {
+            continue;
+        }
+        addition.push('\n');
+        addition.push_str(comment);
+        addition.push('\n');
+        addition.push_str(property);
+        addition.push('\n');
+    }
+    if addition.is_empty() {
+        return Ok(());
+    }
+    let mut next = existing.trim_end().to_string();
+    next.push('\n');
+    next.push_str(&addition);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
+    }
+    fs::write(&path, next).map_err(|e| format!("failed to write {}: {e}", path.display()))
 }
 
 fn initializr_java(requested: &str) -> &str {
@@ -244,6 +357,16 @@ fn pom_xml(artifact: &str, package: &str, java: &str) -> String {
     </properties>
 
     <dependencies>
+        <!--
+          JSpecify's @NullMarked is a package-level opt-in, and every package
+          jails generates carries one. Without this dependency those
+          package-info.java files do not compile.
+        -->
+        <dependency>
+            <groupId>org.jspecify</groupId>
+            <artifactId>jspecify</artifactId>
+            <version>1.0.0</version>
+        </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
