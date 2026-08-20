@@ -72,7 +72,7 @@ pub enum Capability {
 }
 
 impl Capability {
-    fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             Capability::Db => "db",
             Capability::Kafka => "kafka",
@@ -366,6 +366,10 @@ pub fn add(
     }
 
     if created == 0 && !pom_changed && compose_added.is_empty() && !tests_wired {
+        // Still recorded: the capability *is* part of this project, and a
+        // manifest that omits it because it happened to be installed before
+        // the manifest existed is a manifest `sync` would act on wrongly.
+        crate::config::record_capability(&root, capability.label())?;
         println!("{} is already set up -- nothing to do", capability.label());
         return Ok(());
     }
@@ -412,6 +416,8 @@ pub fn add(
         );
     }
 
+    // The manifest is written last, so it records what actually landed.
+    crate::config::record_capability(&root, capability.label())?;
     println!(
         "added {} ({})",
         capability.label(),
@@ -420,6 +426,73 @@ pub fn add(
             Flavor::PlainMaven => "plain maven",
         }
     );
+    Ok(())
+}
+
+/// Make the project match what `jails.toml` says it is made of.
+///
+/// The manifest is the point: `add` records every capability it applies, so
+/// the file is a true description of the project rather than one somebody has
+/// to remember to update. `sync` reads it back and applies whatever is
+/// missing.
+///
+/// What that buys, in the order it matters:
+///
+/// - A fresh clone becomes the project it claims to be in one command,
+///   instead of whoever set it up recalling which `jails add` calls they ran.
+/// - A project regenerates against a newer jails. The rewards audit ends with
+///   exactly this problem -- a project still carrying hand-written files that
+///   jails now produces, with no way to take the improvements but to redo the
+///   commands.
+/// - `--pretend` answers "what is this project missing?" without writing.
+///
+/// Every capability is idempotent and reports what is already there, so a
+/// `sync` over a project that is already correct changes nothing and says so.
+pub fn sync(dry_run: bool, debug: bool, no_start: bool) -> Result<()> {
+    use clap::ValueEnum;
+
+    let root = find_project_root()?;
+    let config = crate::config::Config::load(&root)?;
+    let labels = config.capabilities();
+
+    if labels.is_empty() {
+        println!(
+            "{} declares no capabilities, so there is nothing to sync.\n\n\
+             `jails add <capability>` records what it applies, so the file\n\
+             describes the project from then on. To adopt a project that was\n\
+             built before the manifest existed, re-run the `add` calls it had:\n\
+             each one reports what is already there and changes nothing else.",
+            crate::config::FILE
+        );
+        return Ok(());
+    }
+
+    // Parsing is validated at load, so an unknown label cannot reach here --
+    // but resolving every one before applying any keeps `sync` consistent
+    // with `add A B`, which preflights for the same reason.
+    let mut capabilities = Vec::with_capacity(labels.len());
+    for label in labels {
+        let capability = Capability::value_variants()
+            .iter()
+            .find(|c| c.label() == label)
+            .copied()
+            .ok_or_else(|| format!("{}: unknown capability `{label}`", crate::config::FILE))?;
+        capabilities.push(capability);
+    }
+    preflight(&capabilities, None, None)?;
+
+    println!(
+        "{} declares {}: {}\n",
+        crate::config::FILE,
+        match capabilities.len() {
+            1 => "1 capability".to_string(),
+            n => format!("{n} capabilities"),
+        },
+        labels.join(", ")
+    );
+    for capability in capabilities {
+        add(capability, None, dry_run, None, debug, no_start)?;
+    }
     Ok(())
 }
 
@@ -671,6 +744,9 @@ pub fn remove(
         delete_maven_output(&root, &application_properties_path(&root));
     }
 
+    // The exact inverse of the record in `add`: left listed, the next `sync`
+    // would put back what was just removed.
+    crate::config::forget_capability(&root, capability.label())?;
     println!("removed {}", capability.label());
     Ok(())
 }

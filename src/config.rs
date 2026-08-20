@@ -1,5 +1,5 @@
-//! `jails.toml` -- the one thing a project gets to say about where generated
-//! code lands.
+//! `jails.toml` -- what a project says about itself: where generated code
+//! lands, and what the project is made of.
 //!
 //! jails ships a layer layout (`domain`, `service`, `web`, `app`, `adapters`)
 //! and every generator writes into it. That is a fine default and a bad
@@ -8,23 +8,37 @@
 //! a file in a package the project does not otherwise use. `--package` is a
 //! per-call override; this is the per-project one.
 //!
-//! Deliberately not a general config file. It renames layers and nothing
-//! else -- no template overrides, no plugin hooks, no per-kind paths. The
-//! keys are exactly the constants in [`crate::generate::layout`], so a name
-//! that is not one of them is a typo and is reported as such rather than
-//! ignored. Silently accepting `adapter = "persistence"` (singular) would
-//! put files in `adapters` forever while the file claims otherwise.
+//! `[project] capabilities` is the other half, and the reason `jails sync`
+//! can exist: `add` records every capability it applies and `remove` takes it
+//! back out, so the file is a true description of the project rather than one
+//! somebody has to remember to update. A manifest that is merely *aspirational*
+//! would be worse than none, because `sync` acts on it.
+//!
+//! Still deliberately not a general config file -- no template overrides, no
+//! plugin hooks, no per-kind paths. Both tables are **closed sets**: the layout
+//! keys are exactly the constants in [`crate::generate::layout`], and the
+//! capability names are derived from the `Capability` enum rather than
+//! restated. A name that is not one of them is a typo and is reported as such
+//! rather than ignored -- silently accepting `adapter = "persistence"`
+//! (singular) would put files in `adapters` forever while the file claims
+//! otherwise, and silently accepting `postgress` would leave a capability
+//! that looks declared and never syncs.
 //!
 //! ## Why this is hand-parsed
 //!
 //! jails has two dependencies, both clap. The grammar needed here is one
 //! table of `key = "value"` pairs, which is about forty lines to read
 //! directly and does not justify pulling in a TOML parser plus its error
-//! types. The cost is that this understands a *subset* of TOML: `[layout]`,
-//! bare keys, double-quoted values, `#` comments. Anything else in the file
-//! is ignored, and anything malformed *inside* `[layout]` is an error --
-//! quietly skipping a line the user clearly meant is the failure mode this
-//! whole module exists to avoid.
+//! types. The cost is that this understands a *subset* of TOML: `[layout]`
+//! and `[project]`, bare keys, double-quoted values, single-line string
+//! arrays, `#` comments. Anything else in the file is ignored, and anything
+//! malformed *inside* a table it knows is an error -- quietly skipping a line
+//! the user clearly meant is the failure mode this whole module exists to
+//! avoid.
+//!
+//! Writing back is a targeted splice, not a round trip: `record_capability`
+//! rewrites the one `capabilities = [...]` line and leaves every other byte
+//! alone, for the same reason `pom.rs` does. This is a file people edit.
 
 use std::collections::HashMap;
 use std::fs;
@@ -54,6 +68,11 @@ const LAYERS: &[&str] = &[
     layout::MESSAGING,
 ];
 
+/// The table naming the capabilities the project is meant to have.
+const PROJECT_TABLE: &str = "project";
+/// The one key in it.
+const CAPABILITIES_KEY: &str = "capabilities";
+
 /// A project's layout overrides: default layer name -> the name to use.
 ///
 /// An absent file is an empty map, not an error -- the overwhelming majority
@@ -62,6 +81,10 @@ const LAYERS: &[&str] = &[
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct Config {
     layout: HashMap<String, String>,
+    /// Capability labels, in the order the file lists them. Validated against
+    /// the real `Capability` set at parse time, so a typo is an error naming
+    /// the real ones rather than a capability that silently never syncs.
+    capabilities: Vec<String>,
 }
 
 impl Config {
@@ -89,24 +112,64 @@ impl Config {
             .unwrap_or(default)
     }
 
+    /// The capabilities this project declares, in file order.
+    pub(crate) fn capabilities(&self) -> &[String] {
+        &self.capabilities
+    }
+
     fn parse(text: &str) -> Result<Self, String> {
         let mut layout = HashMap::new();
-        let mut in_layout = false;
+        let mut capabilities = Vec::new();
+        let mut table = String::new();
 
         for (i, raw) in text.lines().enumerate() {
             let line = strip_comment(raw).trim();
             if line.is_empty() {
                 continue;
             }
-            if let Some(table) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
-                in_layout = table.trim() == "layout";
-                continue;
-            }
-            if !in_layout {
+            if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+                table = name.trim().to_string();
                 continue;
             }
 
             let lineno = i + 1;
+
+            if table == PROJECT_TABLE {
+                let (key, value) = line.split_once('=').ok_or_else(|| {
+                    format!("line {lineno}: expected `key = value`, found `{line}`")
+                })?;
+                let key = key.trim();
+                if key != CAPABILITIES_KEY {
+                    return Err(format!(
+                        "line {lineno}: unknown key `{key}` in [{PROJECT_TABLE}]. \
+                         The only key is `{CAPABILITIES_KEY}`."
+                    ));
+                }
+                for label in parse_string_array(value.trim())
+                    .ok_or_else(|| {
+                        format!(
+                            "line {lineno}: `{CAPABILITIES_KEY}` must be a list of \
+                             double-quoted names, e.g. \
+                             `{CAPABILITIES_KEY} = [\"db\", \"json\"]`"
+                        )
+                    })?
+                {
+                    if !is_known_capability(&label) {
+                        return Err(format!(
+                            "line {lineno}: unknown capability `{label}`. Known: {}",
+                            known_capabilities().join(", ")
+                        ));
+                    }
+                    if !capabilities.contains(&label) {
+                        capabilities.push(label);
+                    }
+                }
+                continue;
+            }
+
+            if table != "layout" {
+                continue;
+            }
             let (key, value) = line.split_once('=').ok_or_else(|| {
                 format!("line {lineno}: expected `key = \"value\"`, found `{line}`")
             })?;
@@ -128,8 +191,160 @@ impl Config {
             layout.insert(key.to_string(), value.to_string());
         }
 
-        Ok(Self { layout })
+        Ok(Self {
+            layout,
+            capabilities,
+        })
     }
+}
+
+/// Add a capability to `[project] capabilities`, creating `jails.toml` if the
+/// project has none.
+///
+/// Called by `add` after it succeeds, so the manifest stays true without
+/// anyone maintaining it by hand -- a file you have to remember to update is
+/// a file that is wrong, and a wrong manifest is worse than none because
+/// `sync` would act on it.
+///
+/// Rewrites only the one line. Everything else in the file -- comments, the
+/// `[layout]` table, key order -- is left byte-for-byte alone, for the same
+/// reason `pom.rs` splices rather than round-trips: this is a file people
+/// edit.
+pub(crate) fn record_capability(root: &Path, label: &str) -> Result<(), String> {
+    edit_capabilities(root, |labels| {
+        if labels.iter().any(|l| l == label) {
+            return false;
+        }
+        labels.push(label.to_string());
+        true
+    })
+}
+
+/// Take a capability back out, for `remove`. The exact inverse of
+/// `record_capability`: leaving it listed would have the next `sync` put back
+/// what you just removed.
+pub(crate) fn forget_capability(root: &Path, label: &str) -> Result<(), String> {
+    edit_capabilities(root, |labels| {
+        let before = labels.len();
+        labels.retain(|l| l != label);
+        labels.len() != before
+    })
+}
+
+/// Read the declared list, let `change` mutate it, and write the file back if
+/// it said something changed.
+fn edit_capabilities(
+    root: &Path,
+    change: impl FnOnce(&mut Vec<String>) -> bool,
+) -> Result<(), String> {
+    let path = root.join(FILE);
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(format!("failed to read {}: {e}", path.display())),
+    };
+
+    let mut labels = Config::parse(&text)
+        .map_err(|e| format!("{FILE}: {e}"))?
+        .capabilities;
+    if !change(&mut labels) {
+        return Ok(());
+    }
+
+    let rendered = format!("{CAPABILITIES_KEY} = {}", render_string_array(&labels));
+    let updated = match replace_capabilities_line(&text, &rendered) {
+        Some(updated) => updated,
+        None => append_project_table(&text, &rendered),
+    };
+    fs::write(&path, updated).map_err(|e| format!("failed to write {}: {e}", path.display()))
+}
+
+/// Swap the existing `capabilities = [...]` line in place, keeping its
+/// indentation. `None` when the file has no `[project]` table yet.
+fn replace_capabilities_line(text: &str, rendered: &str) -> Option<String> {
+    let mut table = String::new();
+    let mut out: Vec<String> = Vec::new();
+    let mut replaced = false;
+    for raw in text.lines() {
+        let line = strip_comment(raw).trim();
+        if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            table = name.trim().to_string();
+            out.push(raw.to_string());
+            continue;
+        }
+        let is_target = table == PROJECT_TABLE
+            && line
+                .split_once('=')
+                .is_some_and(|(key, _)| key.trim() == CAPABILITIES_KEY);
+        if is_target {
+            let indent: String = raw.chars().take_while(|c| c.is_whitespace()).collect();
+            out.push(format!("{indent}{rendered}"));
+            replaced = true;
+        } else {
+            out.push(raw.to_string());
+        }
+    }
+    if !replaced {
+        return None;
+    }
+    let mut joined = out.join("\n");
+    if text.ends_with('\n') {
+        joined.push('\n');
+    }
+    Some(joined)
+}
+
+fn append_project_table(text: &str, rendered: &str) -> String {
+    let mut out = String::new();
+    if text.trim().is_empty() {
+        out.push_str(
+            "# What this project is made of. `jails sync` makes the project\n\
+             # match this file; `jails add` and `jails remove` keep it true.\n",
+        );
+    } else {
+        out.push_str(text);
+        if !text.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push('\n');
+    }
+    out.push_str(&format!("[{PROJECT_TABLE}]\n{rendered}\n"));
+    out
+}
+
+fn render_string_array(labels: &[String]) -> String {
+    let items: Vec<String> = labels.iter().map(|l| format!("\"{l}\"")).collect();
+    format!("[{}]", items.join(", "))
+}
+
+/// Every capability label jails knows, derived from the `Capability` enum
+/// rather than restated here -- a capability added there without a thought
+/// for the manifest is then automatically valid in it, instead of being a
+/// name this file rejects for no reason a reader could find.
+fn known_capabilities() -> Vec<&'static str> {
+    use clap::ValueEnum;
+    crate::add::Capability::value_variants()
+        .iter()
+        .map(|c| c.label())
+        .collect()
+}
+
+fn is_known_capability(label: &str) -> bool {
+    known_capabilities().contains(&label)
+}
+
+/// `["a", "b"]` on one line. Deliberately not multi-line: the grammar this
+/// module understands is a subset, and `jails add` writes the file itself, so
+/// the one shape jails emits is the one it has to read.
+fn parse_string_array(value: &str) -> Option<Vec<String>> {
+    let inner = value.strip_prefix('[')?.strip_suffix(']')?.trim();
+    if inner.is_empty() {
+        return Some(Vec::new());
+    }
+    inner
+        .split(',')
+        .map(|item| unquote(item.trim()).map(str::to_string))
+        .collect()
 }
 
 /// Drop a trailing `#` comment, but not one inside a quoted value --
@@ -264,6 +479,125 @@ mod tests {
     fn an_unquoted_value_is_an_error() {
         let err = Config::parse("[layout]\nservice = application\n").unwrap_err();
         assert!(err.contains("double-quoted"), "{err}");
+    }
+
+    // ---- the manifest: what the project is made of ----
+
+    #[test]
+    fn declared_capabilities_are_read_in_file_order() {
+        let config =
+            Config::parse("[project]\ncapabilities = [\"db\", \"json\", \"kafka\"]\n").unwrap();
+        assert_eq!(config.capabilities(), ["db", "json", "kafka"]);
+    }
+
+    #[test]
+    fn a_project_with_no_manifest_declares_nothing() {
+        assert!(Config::default().capabilities().is_empty());
+        assert!(
+            Config::parse("[layout]\nservice = \"application\"\n")
+                .unwrap()
+                .capabilities()
+                .is_empty()
+        );
+    }
+
+    /// The same rule as a misspelled layer, and for the same reason: a
+    /// capability jails does not know would sit in the file looking applied
+    /// and never sync, which is the failure a manifest exists to remove.
+    #[test]
+    fn an_unknown_capability_is_an_error_naming_the_real_ones() {
+        let err = Config::parse("[project]\ncapabilities = [\"postgress\"]\n").unwrap_err();
+        assert!(err.contains("unknown capability `postgress`"), "{err}");
+        assert!(err.contains("db"), "the message should list the real ones: {err}");
+    }
+
+    #[test]
+    fn an_unknown_key_in_project_is_an_error() {
+        let err = Config::parse("[project]\nname = \"demo\"\n").unwrap_err();
+        assert!(err.contains("unknown key `name`"), "{err}");
+    }
+
+    #[test]
+    fn a_capability_list_must_be_a_list() {
+        let err = Config::parse("[project]\ncapabilities = \"db\"\n").unwrap_err();
+        assert!(err.contains("list of"), "{err}");
+    }
+
+    /// An alias is not a label. `postgres` is accepted on the command line
+    /// because clap maps it to `Db`, but the manifest stores what `add`
+    /// wrote, and two spellings of one capability would let a project list
+    /// it twice.
+    #[test]
+    fn the_manifest_stores_labels_not_aliases() {
+        assert!(is_known_capability("db"));
+        assert!(!is_known_capability("postgres"));
+    }
+
+    fn manifest_dir(label: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "jails-manifest-{label}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        fs::remove_dir_all(&dir).ok();
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn recording_a_capability_creates_the_file_and_is_idempotent() {
+        let dir = manifest_dir("record");
+        record_capability(&dir, "db").unwrap();
+        record_capability(&dir, "json").unwrap();
+        // Twice is not two entries.
+        record_capability(&dir, "db").unwrap();
+
+        assert_eq!(Config::load(&dir).unwrap().capabilities(), ["db", "json"]);
+        let text = fs::read_to_string(dir.join(FILE)).unwrap();
+        assert!(text.contains("capabilities = [\"db\", \"json\"]"), "{text}");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// This is a file people edit. Recording rewrites one line and leaves
+    /// every other byte -- comments, the `[layout]` table, key order -- alone,
+    /// for the same reason `pom.rs` splices rather than round-trips.
+    #[test]
+    fn recording_preserves_everything_else_in_the_file() {
+        let dir = manifest_dir("preserve");
+        let original = "# how this project is laid out\n\
+                        [layout]\n\
+                        adapters = \"persistence\" # not `adapters`\n\
+                        \n\
+                        [project]\n\
+                        capabilities = [\"db\"]\n";
+        fs::write(dir.join(FILE), original).unwrap();
+
+        record_capability(&dir, "kafka").unwrap();
+
+        let text = fs::read_to_string(dir.join(FILE)).unwrap();
+        assert!(text.contains("# how this project is laid out"), "{text}");
+        assert!(text.contains("adapters = \"persistence\" # not `adapters`"), "{text}");
+        assert!(text.contains("capabilities = [\"db\", \"kafka\"]"), "{text}");
+        // The layout override still parses and still applies.
+        let config = Config::load(&dir).unwrap();
+        assert_eq!(config.layer(layout::ADAPTERS), "persistence");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Left listed, the next `sync` would put back what `remove` just took
+    /// out. The two have to be exact inverses.
+    #[test]
+    fn forgetting_a_capability_is_the_inverse_of_recording_it() {
+        let dir = manifest_dir("forget");
+        record_capability(&dir, "db").unwrap();
+        record_capability(&dir, "kafka").unwrap();
+        forget_capability(&dir, "db").unwrap();
+        assert_eq!(Config::load(&dir).unwrap().capabilities(), ["kafka"]);
+
+        // Forgetting one that was never there is not an error.
+        forget_capability(&dir, "redis").unwrap();
+        assert_eq!(Config::load(&dir).unwrap().capabilities(), ["kafka"]);
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

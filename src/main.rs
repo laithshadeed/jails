@@ -199,6 +199,22 @@ enum Command {
         #[arg(long)]
         package: Option<String>,
     },
+    /// Apply every capability `jails.toml` declares that is not there yet
+    ///
+    /// `jails add` records what it applies, so `jails.toml` describes what the
+    /// project is made of. `sync` reads it back and makes the project match --
+    /// one command for a fresh clone, or for taking a newer jails' output.
+    ///
+    /// Every capability is idempotent, so a sync over a correct project
+    /// changes nothing and says so. `--pretend` answers "what is missing?".
+    Sync {
+        /// Print what would change without touching the project
+        #[arg(long)]
+        dry_run: bool,
+        /// Write compose.yaml but do not run `docker compose up`
+        #[arg(long)]
+        no_start: bool,
+    },
     /// Remove what a matching add call would have created
     #[command(visible_alias = "rm")]
     Remove {
@@ -421,6 +437,9 @@ fn main() {
                 )
             })
         }),
+        Command::Sync { dry_run, no_start } => {
+            add::sync(dry_run || pretend, debug, no_start)
+        }
         Command::Remove {
             capabilities,
             name,

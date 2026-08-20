@@ -364,8 +364,36 @@ is not a layer name is an error rather than a no-op: a `jails.toml` saying
 `adapter = "persistence"` that silently kept writing to `adapters` would be
 worse than no file at all. `--package` still wins for a single call.
 
-This renames layers and nothing else — no template overrides, no per-kind
-paths, no plugin hooks.
+### `[project]` — what the project is made of
+
+The other half of the file is the list of capabilities the project has:
+
+```toml
+[project]
+capabilities = ["db", "kafka", "json", "testkit", "format"]
+```
+
+You do not maintain this. `jails add` records every capability it applies and
+`jails remove` takes it back out, so the file is a true description of the
+project rather than one somebody has to remember to update — which matters,
+because `jails sync` acts on it.
+
+- `jails sync [--dry-run] [--no-start]` — apply every declared capability that
+  is not there yet. A fresh clone becomes the project it claims to be in one
+  command, instead of whoever set it up recalling which `add` calls they ran.
+  It is also how a project takes a newer jails' output: every capability is
+  idempotent and reports what is already there, so a sync over a correct
+  project changes nothing and says so. With `--dry-run` it answers "what is
+  this project missing?" without writing.
+
+A capability name that jails does not know is an error listing the real ones,
+for the same reason a misspelled layer is: `postgress` sitting in the file
+would look declared and never sync. The names are the labels `add` uses, not
+its aliases — `db`, not `postgres` — so one capability cannot be listed twice
+under two spellings.
+
+Both tables are closed sets. This renames layers and declares capabilities and
+nothing else — no template overrides, no per-kind paths, no plugin hooks.
 
 Every command takes `--debug`, which prints the `mvnw`/`mvn`/`mvnd`/`java`/`git`/`curl`
 command lines jails shells out to instead of running them silently.

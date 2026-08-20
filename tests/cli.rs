@@ -3727,3 +3727,128 @@ fn destroy_strategy_removes_the_implementations_it_did_not_name() {
         "an implementation of a deleted interface was left behind"
     );
 }
+
+// ---- the manifest: `jails.toml` describes the project, `sync` makes it true ----
+
+/// The loop that makes a manifest trustworthy: `add` records what it applied,
+/// so nobody has to maintain the file, and `remove` takes it back out -- left
+/// listed, the next `sync` would put back what was just removed.
+#[test]
+fn add_records_what_it_applied_and_remove_takes_it_back_out() {
+    let root = temp_dir("manifest-round-trip");
+    write_plain_fixture(&root);
+
+    assert!(
+        jails_cmd(&root, None)
+            .args(["add", "csv"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let manifest = fs::read_to_string(root.join("jails.toml")).unwrap();
+    assert!(
+        manifest.contains(r#"capabilities = ["csv"]"#),
+        "add did not record the capability it applied:\n{manifest}"
+    );
+
+    assert!(
+        jails_cmd(&root, None)
+            .args(["remove", "csv", "--force"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let manifest = fs::read_to_string(root.join("jails.toml")).unwrap();
+    assert!(
+        manifest.contains("capabilities = []"),
+        "remove left the capability declared, so the next sync would restore it:\n{manifest}"
+    );
+}
+
+/// The case the manifest exists for: a project that declares what it is made
+/// of and does not have it yet -- a fresh clone, or one taking a newer jails'
+/// output. One command, and the `[layout]` renames apply at the same time.
+#[test]
+fn sync_applies_what_the_manifest_declares() {
+    let root = temp_dir("manifest-sync");
+    write_plain_fixture(&root);
+    fs::write(
+        root.join("jails.toml"),
+        "[layout]\nadapters = \"persistence\"\n\n[project]\ncapabilities = [\"csv\"]\n",
+    )
+    .unwrap();
+
+    // --pretend first: it answers "what is this project missing?".
+    let preview = jails_cmd(&root, None)
+        .args(["sync", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(preview.status.success());
+    let shown = String::from_utf8_lossy(&preview.stdout);
+    assert!(shown.contains("would create"), "{shown}");
+    assert!(
+        !root.join("src/main/java/com/example/demo/persistence").exists(),
+        "--dry-run wrote files"
+    );
+
+    assert!(
+        jails_cmd(&root, None)
+            .args(["sync"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        root.join("src/main/java/com/example/demo/persistence/CsvReader.java")
+            .is_file(),
+        "sync did not apply the declared capability into the configured layer"
+    );
+}
+
+/// Every capability is idempotent, so a sync over a project that is already
+/// correct changes nothing and says so rather than reporting work.
+#[test]
+fn sync_over_a_correct_project_changes_nothing() {
+    let root = temp_dir("manifest-sync-idempotent");
+    write_plain_fixture(&root);
+    jails_cmd(&root, None).args(["add", "csv"]).status().unwrap();
+
+    let pom_before = fs::read_to_string(root.join("pom.xml")).unwrap();
+    let output = jails_cmd(&root, None).args(["sync"]).output().unwrap();
+    assert!(output.status.success());
+    let shown = String::from_utf8_lossy(&output.stdout);
+    assert!(shown.contains("already set up"), "{shown}");
+    assert_eq!(fs::read_to_string(root.join("pom.xml")).unwrap(), pom_before);
+}
+
+/// A project with no manifest is not an error -- most projects never have
+/// one. It says what the file is for instead of failing.
+#[test]
+fn sync_without_a_manifest_explains_rather_than_fails() {
+    let root = temp_dir("manifest-sync-absent");
+    write_plain_fixture(&root);
+
+    let output = jails_cmd(&root, None).args(["sync"]).output().unwrap();
+    assert!(output.status.success());
+    let shown = String::from_utf8_lossy(&output.stdout);
+    assert!(shown.contains("no capabilities"), "{shown}");
+}
+
+/// A capability jails does not know would sit in the file looking applied and
+/// never sync, which is the failure a manifest exists to remove.
+#[test]
+fn sync_refuses_a_manifest_naming_a_capability_that_does_not_exist() {
+    let root = temp_dir("manifest-sync-typo");
+    write_plain_fixture(&root);
+    fs::write(
+        root.join("jails.toml"),
+        "[project]\ncapabilities = [\"postgress\"]\n",
+    )
+    .unwrap();
+
+    let output = jails_cmd(&root, None).args(["sync"]).output().unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unknown capability `postgress`"), "{stderr}");
+    assert!(stderr.contains("db"), "should list the real ones: {stderr}");
+}

@@ -23,6 +23,18 @@ isn't already there.
   grows or shrinks an existing project by a whole slice (dependency + code +
   test, and for `db`/`kafka` a compose service). `Capability` is a
   `clap::ValueEnum` for the same completion reason as `ArtifactKind`.
+- **`jails.toml` is a manifest, and its truth is maintained by `add`, not by
+  the user.** `[project] capabilities` is what `jails sync` applies. `add`
+  records every capability it applies — *including* on the "already set up"
+  path, since a capability installed before the manifest existed is still part
+  of the project — and `remove` takes it back out, because left listed the next
+  `sync` would restore what was just removed. This is the whole design: a
+  manifest somebody has to remember to update is a manifest that is wrong, and
+  a wrong one is worse than none because `sync` acts on it. The names stored
+  are `Capability::label()`, never clap aliases, or one capability could be
+  listed twice under two spellings. Writing back is a targeted one-line splice
+  that leaves comments and `[layout]` byte-for-byte alone — this is a file
+  people edit, same rule as `pom.rs`.
 - `src/config.rs` — `jails.toml`, the per-project layout override. Hand-parsed
   (jails' only dependencies are clap), understands one `[layout]` table of
   `key = "value"` pairs, and the keys are a **closed set** matching
