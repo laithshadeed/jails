@@ -16,9 +16,26 @@ isn't already there.
 - `src/new.rs` — `new` (start.spring.io wrapper, real network) and `new-cli`
   (hand-written pom/App/AppTest, no network). Both also seed
   `src/test/resources/fixtures/.gitkeep`.
-- `src/generate.rs` — all Java templates (`format!`, no template engine) +
-  `generate`/`destroy`. `ArtifactKind` is a `clap::ValueEnum` — keep it that
-  way, see gotcha below.
+- `src/generate.rs` — `generate`/`destroy` dispatch, `scaffold_artifacts`,
+  the write path and the project helpers. `ArtifactKind` is a
+  `clap::ValueEnum` — keep it that way, see gotcha below. The per-kind
+  generators live in submodules beside it:
+  - `generate/field.rs` — the field spec and everything derived from it on
+    the Java side (`sql.rs` is the SQL/JDBC projection of the same spec).
+  - `generate/domain.rs` — `record`, `value`, `enum`, `sealed`, `strategy`.
+  - `generate/web.rs` — the `controller`/`service` stubs and `handler`.
+  - `generate/repository.rs` — `repo`: the port and the JDBC adapters.
+  - `generate/cli.rs` — `command`, `cli`, and dispatcher registration.
+  - `generate/migration.rs` — `migration` and `cases`, the two kinds whose
+    NAME is not a Java class.
+
+  **The test module still lives in `generate.rs`**, not beside each
+  submodule, which is the one place this tree does not follow the colocated
+  convention. Moving it is a real improvement and was attempted and backed
+  out: the tests contain Java strings full of braces, so a mechanical
+  extractor cut them mid-identifier. Do it by hand, a few at a time, or not
+  at all — `scratch()` is already hoisted to module level so a submodule
+  test mod can use it.
 - `src/add.rs` — `add`/`remove <capability>` (csv/sqlite/json/db/kafka/…):
   grows or shrinks an existing project by a whole slice (dependency + code +
   test, and for `db`/`kafka` a compose service). `Capability` is a
