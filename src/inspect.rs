@@ -126,10 +126,23 @@ fn file_routes(source: &str, label: &str) -> Vec<Route> {
     }
 
     // A type-level @RequestMapping is a prefix for every method below it.
+    //
+    // Its argument is not always a literal: a controller that keeps its path
+    // in a constant writes `@RequestMapping(FooController.PATH)`, which is
+    // better code and reads as an empty prefix to a scanner that only looks
+    // for quotes. `jails g scaffold` generates exactly that shape, so falling
+    // back to the constant's own value is not an edge case.
     let base = annotations
         .iter()
         .find(|a| a.name == "RequestMapping" && matches!(a.target, Target::Type(_)))
-        .and_then(|a| java::annotation_string(&a.args))
+        .and_then(|a| {
+            java::annotation_string(&a.args).or_else(|| {
+                a.args
+                    .contains("PATH")
+                    .then(|| path_constant(source))
+                    .flatten()
+            })
+        })
         .unwrap_or_default();
 
     let mut found = Vec::new();
@@ -517,6 +530,24 @@ public final class RewardController {
             rendered.contains(&"POST /rewards RewardController#create".to_string()),
             "{rendered:?}"
         );
+    }
+
+    #[test]
+    fn a_type_level_mapping_can_be_a_constant_rather_than_a_literal() {
+        // What `g scaffold` generates: the path lives in one constant that
+        // the controller, its test and any link builder all reference.
+        let src = r#"
+package com.example.web;
+@RestController
+@RequestMapping(NoteController.PATH)
+public final class NoteController {
+    public static final String PATH = "/notes";
+    @GetMapping("/{id}")
+    public Note byId(String id) { return null; }
+}"#;
+        let found = file_routes(src, "web/NoteController.java");
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].path, "/notes/{id}", "{found:?}");
     }
 
     #[test]

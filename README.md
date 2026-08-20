@@ -30,8 +30,16 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
   project (hand-written `pom.xml`, `App.java`, `AppTest.java`), no network
   required. `App.java` is a working command dispatcher, not a Hello World
   stub, so `generate command` has something to register into from the start.
-- `jails generate|g scaffold <Name> [field:type ...]` — immutable record,
-  repository port, raw-JDBC adapter, service/controller stubs, and tests.
+- `jails generate|g scaffold <Name> [field:type ...]` — a REST resource that
+  **runs**, not a set of stubs: immutable record, repository port, a derived
+  raw-JDBC adapter, an in-memory adapter (so the app starts before there is a
+  database), request/response DTOs with validation from the field spec, a
+  service, a controller with the four operations and the status codes the
+  situations mean (201 with `Location`, 204, 404 rather than an empty 200),
+  and tests for each. `g scaffold Note id:uuid title:string!` then `jails run`
+  gives you `POST /notes` → 201 and `GET /notes/nope` → 404 with nothing to
+  write. The JDBC adapter is deliberately *not* a bean; move `@Repository`
+  onto it when a real `DataSource` arrives and delete the in-memory one.
   When the project has a `db/migration` directory (i.e. `jails add db` has
   run), it also writes the `create table` for the same field spec — the DDL,
   the insert and the row mapper all come from one column list, which is what

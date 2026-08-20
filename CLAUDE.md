@@ -374,6 +374,25 @@ Three things confirmed in those checkouts and relied on by the templates:
   (`org.springframework.boot.testcontainers.service.connection`) is how the
   connection details reach auto-configuration.
 
+## `scaffold` produces a running resource, and that constrains it
+
+The scaffold's controller/service/DTOs are real, not stubs, which means the
+generated application has to *start*. Two consequences that are easy to undo
+by accident:
+
+- **An in-memory adapter is generated and carries `@Repository`; the JDBC one
+  does not.** The JDBC adapter takes a `Connection` the caller owns, so it
+  cannot be a bean. Without the in-memory one the context fails with "no
+  qualifying bean of type ...Repository" — a scaffold that compiles and
+  cannot run. Annotating both would make two beans qualify for one injection
+  point, which is the ambiguity `jails beans` reports.
+- **`Field.java_type` always holds the *inner* type**, with `Optionality`
+  carrying the rest; `component_type` is the only place that wraps it back
+  into `Optional<...>`. `fields_from_record` used to store `Optional<String>`
+  there instead, so a template that worked for `parse_fields` input produced
+  uncompilable code for a record read off disk. Two representations of one
+  thing is how that happens.
+
 ## A generator that emits code must supply the dependency it needs
 
 `g dto` splices `spring-boot-starter-validation`; `g client` splices

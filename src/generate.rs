@@ -503,30 +503,49 @@ fn shallowest_java_file(dir: &Path) -> Option<PathBuf> {
 /// `org.springframework.boot.test.autoconfigure.web.servlet` to
 /// `org.springframework.boot.webmvc.test.autoconfigure` with no back-compat
 /// shim, so the scaffolded controller test needs to import the right one.
+/// `@WebMvcTest` moved in Spring Boot 4 the same way `@AutoConfigureMockMvc`
+/// did, and for the same reason -- the web slice became its own module.
+fn webmvc_test_import(root: &Path) -> &'static str {
+    const LEGACY: &str = "org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest";
+    const CURRENT: &str = "org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest";
+    if spring_boot_major(root) >= 4 {
+        CURRENT
+    } else {
+        LEGACY
+    }
+}
+
+/// The Spring Boot major version from the parent pom, defaulting to 3 when it
+/// cannot be read -- the conservative choice, since the pre-4 package names
+/// still exist as deprecated aliases in some builds while the 4 ones simply
+/// do not exist before 4.
+fn spring_boot_major(root: &Path) -> u32 {
+    let Ok(pom) = fs::read_to_string(root.join("pom.xml")) else {
+        return 3;
+    };
+    let Some(idx) = pom.find("spring-boot-starter-parent") else {
+        return 3;
+    };
+    let after = &pom[idx..];
+    let Some(vstart) = after.find("<version>").map(|i| i + "<version>".len()) else {
+        return 3;
+    };
+    let Some(vend) = after[vstart..].find("</version>") else {
+        return 3;
+    };
+    after[vstart..vstart + vend]
+        .split('.')
+        .next()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(3)
+}
+
 fn mockmvc_autoconfigure_import(root: &Path) -> &'static str {
     const LEGACY: &str =
         "org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc";
     const CURRENT: &str = "org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc";
 
-    let pom = match fs::read_to_string(root.join("pom.xml")) {
-        Ok(s) => s,
-        Err(_) => return LEGACY,
-    };
-    let Some(idx) = pom.find("spring-boot-starter-parent") else {
-        return LEGACY;
-    };
-    let after = &pom[idx..];
-    let Some(vstart) = after.find("<version>").map(|i| i + "<version>".len()) else {
-        return LEGACY;
-    };
-    let Some(vend) = after[vstart..].find("</version>") else {
-        return LEGACY;
-    };
-    let major: Option<u32> = after[vstart..vstart + vend]
-        .split('.')
-        .next()
-        .and_then(|s| s.parse().ok());
-    if major.is_some_and(|m| m >= 4) {
+    if spring_boot_major(root) >= 4 {
         CURRENT
     } else {
         LEGACY
@@ -1098,7 +1117,7 @@ pub fn generate(
             println!("would register {name} in the project's command dispatcher");
         }
         if let Some(dep) = match kind {
-            ArtifactKind::Dto => Some(&crate::spring::VALIDATION_STARTER),
+            ArtifactKind::Dto | ArtifactKind::Scaffold => Some(&crate::spring::VALIDATION_STARTER),
             ArtifactKind::Client => Some(&crate::spring::RESTCLIENT_STARTER),
             ArtifactKind::Event => Some(&crate::spring::TESTCONTAINERS_KAFKA),
             _ => None,
@@ -1126,7 +1145,9 @@ pub fn generate(
     // remove. Splicing is idempotent -- pom.rs reports when it is already
     // there and changes nothing.
     match kind {
-        ArtifactKind::Dto => ensure_dependency(&root, &crate::spring::VALIDATION_STARTER)?,
+        ArtifactKind::Dto | ArtifactKind::Scaffold => {
+            ensure_dependency(&root, &crate::spring::VALIDATION_STARTER)?
+        }
         ArtifactKind::Client => ensure_dependency(&root, &crate::spring::RESTCLIENT_STARTER)?,
         ArtifactKind::Event => {
             ensure_dependency(&root, &crate::spring::TESTCONTAINERS_KAFKA)?;
@@ -1241,24 +1262,74 @@ fn scaffold_artifacts(
             contents: jdbc_repository_test(&adapters, name),
         },
         Artifact {
+            kind: "in-memory adapter",
+            path: main_dir(root, &adapters).join(format!("InMemory{name}Repository.java")),
+            contents: crate::spring::in_memory_repository_java(
+                &adapters,
+                name,
+                &format!(
+                    "{}{}",
+                    domain_in(&adapters),
+                    import_of(&adapters, &repository, &format!("{name}Repository"))
+                ),
+                parsed.iter().find(|f| f.name == "id").map(|f| f.name.as_str()),
+            ),
+        },
+        Artifact {
+            kind: "request",
+            path: main_dir(root, &web).join(format!("{name}Request.java")),
+            contents: crate::spring::request_java_for(&web, name, &parsed, &domain_in(&web), &domain),
+        },
+        Artifact {
+            kind: "response",
+            path: main_dir(root, &web).join(format!("{name}Response.java")),
+            contents: crate::spring::response_java_for(&web, name, &parsed, &domain_in(&web), &domain),
+        },
+        Artifact {
             kind: "service",
             path: main_dir(root, &service).join(format!("{name}Service.java")),
-            contents: stub_service(&service, name),
+            contents: crate::spring::resource_service_java(
+                &service,
+                name,
+                &format!(
+                    "{}{}",
+                    domain_in(&service),
+                    import_of(&service, &repository, &format!("{name}Repository"))
+                ),
+            ),
         },
         Artifact {
             kind: "service test",
             path: test_dir(root, &service).join(format!("{name}ServiceTest.java")),
-            contents: service_stub_test(&service, name),
+            contents: crate::spring::resource_service_test_java(
+                &service,
+                name,
+                &import_of(&service, &repository, &format!("{name}Repository")),
+            ),
         },
         Artifact {
             kind: "controller",
             path: main_dir(root, &web).join(format!("{name}Controller.java")),
-            contents: stub_controller(&web, name),
+            contents: crate::spring::resource_controller_java(
+                &web,
+                name,
+                &format!(
+                    "{}{}",
+                    domain_in(&web),
+                    import_of(&web, &service, &format!("{name}Service"))
+                ),
+                parsed.iter().any(|f| f.name == "id"),
+            ),
         },
         Artifact {
             kind: "controller test",
             path: test_dir(root, &web).join(format!("{name}ControllerTest.java")),
-            contents: controller_stub_test(&web, name, mockmvc_autoconfigure_import(root)),
+            contents: crate::spring::resource_controller_test_java(
+                &web,
+                name,
+                &import_of(&web, &service, &format!("{name}Service")),
+                webmvc_test_import(root),
+            ),
         },
     ]);
 
@@ -1287,10 +1358,13 @@ pub fn destroy(
             main_dir(&root, &place(layout::APP)).join(format!("{name}Repository.java")),
             main_dir(&root, &place(layout::ADAPTERS)).join(format!("Jdbc{name}Repository.java")),
             test_dir(&root, &place(layout::ADAPTERS)).join(format!("Jdbc{name}RepositoryIT.java")),
+            main_dir(&root, &place(layout::ADAPTERS)).join(format!("InMemory{name}Repository.java")),
             main_dir(&root, &place(layout::SERVICE)).join(format!("{name}Service.java")),
             test_dir(&root, &place(layout::SERVICE)).join(format!("{name}ServiceTest.java")),
             main_dir(&root, &place(layout::WEB)).join(format!("{name}Controller.java")),
             test_dir(&root, &place(layout::WEB)).join(format!("{name}ControllerTest.java")),
+            main_dir(&root, &place(layout::WEB)).join(format!("{name}Request.java")),
+            main_dir(&root, &place(layout::WEB)).join(format!("{name}Response.java")),
         ],
         ArtifactKind::Controller => vec![
             main_dir(&root, &place(layout::WEB)).join(format!("{name}Controller.java")),
@@ -1517,7 +1591,7 @@ class {name}Test {{
     )
 }
 
-fn lower_first(name: &str) -> String {
+pub(crate) fn lower_first(name: &str) -> String {
     let mut chars = name.chars();
     match chars.next() {
         Some(first) => first.to_lowercase().collect::<String>() + chars.as_str(),
@@ -1952,10 +2026,12 @@ pub(crate) fn fields_from_record(root: &Path, pkg: &str, name: &str) -> Option<V
             let builtin = builtin_by_java_name(&java_type);
             Field {
                 name: param.name.clone(),
-                java_type: match &optionality {
-                    Optionality::Nullable => format!("Optional<{java_type}>"),
-                    _ => java_type.clone(),
-                },
+                // The *inner* type, exactly as `parse_fields` records it:
+                // optionality lives in `optionality`, and `component_type`
+                // is the one place that wraps it back into an `Optional`.
+                // Two representations of the same thing is how a template
+                // that works for one source of fields breaks for the other.
+                java_type: java_type.clone(),
                 imports: builtin.and_then(|(_, import)| import).into_iter().collect(),
                 optionality,
                 owned: builtin.is_none(),

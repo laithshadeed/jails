@@ -909,12 +909,12 @@ pub(crate) fn dto_files(
     vec![
         (
             main.join(format!("{name}Request.java")),
-            request_java(pkg, name, fields, &domain_import),
+            request_java_for(pkg, name, fields, &domain_import, domain),
             "request",
         ),
         (
             main.join(format!("{name}Response.java")),
-            response_java(pkg, name, fields, &domain_import),
+            response_java_for(pkg, name, fields, &domain_import, domain),
             "response",
         ),
         (
@@ -957,17 +957,39 @@ fn is_primitive(java_type: &str) -> bool {
 /// absent-vs-null-valued Optional, and Jackson serialising an `Optional`
 /// without the JDK8 module produces `{"present":true}` rather than the value.
 fn wire_type(field: &crate::generate::Field) -> String {
-    field
-        .java_type
-        .strip_prefix("Optional<")
-        .and_then(|rest| rest.strip_suffix('>'))
-        .unwrap_or(&field.java_type)
-        .to_string()
+    // `java_type` is always the inner type; `optionality` says whether the
+    // record wraps it. The wire type is the inner one either way.
+    field.java_type.clone()
 }
 
-fn dto_imports(fields: &[crate::generate::Field], with_validation: bool) -> String {
+/// Imports for the DTO's own components.
+///
+/// `owner`/`user` are the domain package and the DTO's package: a component
+/// whose type the project declares (an enum, most often) needs importing from
+/// wherever the domain lives, and `field.imports` cannot carry that because
+/// jails only knows the built-in types' packages. Missing it produces a
+/// record that names a type it cannot see, which javac catches and no
+/// template review does.
+fn dto_imports(
+    fields: &[crate::generate::Field],
+    with_validation: bool,
+    owner: &str,
+    user: &str,
+) -> String {
     let mut imports: Vec<String> = Vec::new();
     for field in fields {
+        if field.owned {
+            let import = crate::generate::import_of(user, owner, &field.java_type);
+            if !import.is_empty() {
+                imports.push(
+                    import
+                        .trim()
+                        .trim_start_matches("import ")
+                        .trim_end_matches(';')
+                        .to_string(),
+                );
+            }
+        }
         for import in &field.imports {
             // Optional itself never reaches the wire type, so its import
             // would be unused -- and an unused import fails `jails check`
@@ -1011,18 +1033,22 @@ fn components(fields: &[crate::generate::Field], with_validation: bool) -> Strin
 /// once, here, rather than at every call site.
 fn read_from_domain(field: &crate::generate::Field, receiver: &str) -> String {
     let accessor = format!("{receiver}.{}()", field.name);
-    if field.java_type.starts_with("Optional<") {
+    if is_optional(field) {
         format!("{accessor}.orElse(null)")
     } else {
         accessor
     }
 }
 
+fn is_optional(field: &crate::generate::Field) -> bool {
+    field.optionality == crate::generate::Optionality::Nullable
+}
+
 /// The reverse: a nullable wire component becomes an `Optional` again. The
 /// generated record's compact constructor normalises a null Optional, so
 /// `ofNullable` is enough.
 fn write_to_domain(field: &crate::generate::Field) -> String {
-    if field.java_type.starts_with("Optional<") {
+    if is_optional(field) {
         format!("Optional.ofNullable({})", field.name)
     } else {
         field.name.clone()
@@ -1030,16 +1056,17 @@ fn write_to_domain(field: &crate::generate::Field) -> String {
 }
 
 fn needs_optional(fields: &[crate::generate::Field]) -> bool {
-    fields.iter().any(|f| f.java_type.starts_with("Optional<"))
+    fields.iter().any(is_optional)
 }
 
-fn request_java(
+pub(crate) fn request_java_for(
     pkg: &str,
     name: &str,
     fields: &[crate::generate::Field],
     domain_import: &str,
+    domain: &str,
 ) -> String {
-    let imports = dto_imports(fields, true);
+    let imports = dto_imports(fields, true, domain, pkg);
     let optional_import = if needs_optional(fields) {
         "import java.util.Optional;\n"
     } else {
@@ -1081,13 +1108,14 @@ public record {name}Request(
     )
 }
 
-fn response_java(
+pub(crate) fn response_java_for(
     pkg: &str,
     name: &str,
     fields: &[crate::generate::Field],
     domain_import: &str,
+    domain: &str,
 ) -> String {
-    let imports = dto_imports(fields, false);
+    let imports = dto_imports(fields, false, domain, pkg);
     let components = components(fields, false);
     let arguments = fields
         .iter()
@@ -1146,7 +1174,7 @@ fn dto_test_java(
     let samples: Vec<Option<String>> = fields
         .iter()
         .map(|field| {
-            if field.java_type.starts_with("Optional<") {
+            if is_optional(field) {
                 Some("null".to_string())
             } else {
                 crate::generate::sample_value(field, root, domain)
@@ -1187,7 +1215,7 @@ fn dto_test_java(
     // The sample literals need the same imports the wire types do
     // (`UUID.fromString`, `Instant.parse`, ...), and `dto_imports` already
     // computes exactly that set with Optional filtered out.
-    let sample_imports = dto_imports(fields, false);
+    let sample_imports = dto_imports(fields, false, domain, pkg);
 
     format!(
         r#"package {pkg};
@@ -1672,6 +1700,389 @@ class SecurityConfigTest {{
         // 404 rather than 401: the credentials were accepted and there is
         // simply nothing mapped at that path yet.
         assertThat(mvc.get().uri("/anything").header("Authorization", BASIC)).hasStatus(404);
+    }}
+}}
+"#
+    )
+}
+
+// ---------------------------------------------------------------------------
+// The scaffold's service and controller -- working CRUD rather than stubs.
+// ---------------------------------------------------------------------------
+
+/// The application service a scaffolded resource gets.
+///
+/// Thin on purpose: it delegates to the port and returns domain types. What
+/// it buys is a seam -- the controller depends on this rather than on a
+/// repository, so the day one of these operations grows a rule (a permission
+/// check, an event to publish) there is somewhere for it to go that is not a
+/// controller method.
+pub(crate) fn resource_service_java(pkg: &str, name: &str, extra: &str) -> String {
+    let var = crate::generate::lower_first(name);
+    format!(
+        r#"package {pkg};
+
+{extra}import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import org.springframework.stereotype.Service;
+
+/**
+ * What the application can do with {{@link {name}}}.
+ *
+ * <p>Depends on the port, not on an adapter, so a test can hand it an
+ * in-memory implementation and never start a database.
+ */
+@Service
+public class {name}Service {{
+
+    private final {name}Repository repository;
+
+    public {name}Service({name}Repository repository) {{
+        this.repository = Objects.requireNonNull(repository, "repository is required");
+    }}
+
+    public List<{name}> findAll() {{
+        return repository.findAll();
+    }}
+
+    public Optional<{name}> findById(String id) {{
+        return repository.findById(id);
+    }}
+
+    public {name} create({name} {var}) {{
+        repository.save({var});
+        return {var};
+    }}
+
+    /** @return true when a row was actually removed. */
+    public boolean deleteById(String id) {{
+        return repository.deleteById(id);
+    }}
+}}
+"#
+    )
+}
+
+/// A REST resource with the four operations that actually exist, wired to
+/// the service and speaking in DTOs.
+///
+/// The status codes are the ones the situations mean, which is most of what
+/// distinguishes a REST API from a set of methods reachable over HTTP: 201
+/// with a `Location` for a creation, 204 for a delete that removed
+/// something, 404 for one that did not, and 404 rather than an empty 200 for
+/// a missing item.
+pub(crate) fn resource_controller_java(
+    pkg: &str,
+    name: &str,
+    extra: &str,
+    has_id: bool,
+) -> String {
+    let path = format!("/{}", crate::sql::table_name(name).replace('_', "-"));
+    let var = crate::generate::lower_first(name);
+    // A `Location` header needs something to point at. Without an `id`
+    // component there is no per-item URL to build, and inventing one would
+    // be worse than omitting the header.
+    let (location_import, created) = if has_id {
+        (
+            "import java.net.URI;\n",
+            format!(
+                "        return ResponseEntity.created(URI.create(PATH + \"/\" + created.id()))\n\
+                 \x20               .body({name}Response.from(created));"
+            ),
+        )
+    } else {
+        (
+            "",
+            format!(
+                "        // No `id` component, so there is no per-item URL to\n\
+                 \x20       // advertise in a Location header.\n\
+                 \x20       return ResponseEntity.status(HttpStatus.CREATED).body({name}Response.from(created));"
+            ),
+        )
+    };
+    let status_import = if has_id {
+        ""
+    } else {
+        "import org.springframework.http.HttpStatus;\n"
+    };
+    format!(
+        r#"package {pkg};
+
+{extra}{location_import}import jakarta.validation.Valid;
+import java.util.List;
+import java.util.Objects;
+{status_import}import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+/**
+ * HTTP for {{@link {name}}}.
+ *
+ * <p>Speaks in {{@link {name}Request}} and {{@link {name}Response}} rather
+ * than the domain type, so the wire contract and the domain can change
+ * independently.
+ *
+ * <p>{{@code @Valid}} rejects a malformed body before any application code
+ * runs. With {{@code jails add api}} the rejection is reported as an RFC 9457
+ * problem naming each bad field; without it, Spring's default 400 says only
+ * that something was wrong.
+ */
+@RestController
+@RequestMapping({name}Controller.PATH)
+public class {name}Controller {{
+
+    /** The collection this controller serves. */
+    public static final String PATH = "{path}";
+
+    private final {name}Service service;
+
+    public {name}Controller({name}Service service) {{
+        this.service = Objects.requireNonNull(service, "service is required");
+    }}
+
+    @GetMapping
+    public List<{name}Response> list() {{
+        return service.findAll().stream().map({name}Response::from).toList();
+    }}
+
+    /** 404 rather than an empty 200: "no such thing" and "here is nothing" differ. */
+    @GetMapping("/{{id}}")
+    public ResponseEntity<{name}Response> byId(@PathVariable String id) {{
+        return service.findById(id)
+                .map({name}Response::from)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }}
+
+    @PostMapping
+    public ResponseEntity<{name}Response> create(@Valid @RequestBody {name}Request request) {{
+        {name} created = service.create(request.toDomain());
+{created}
+    }}
+
+    /** 204 when something was removed, 404 when there was nothing to remove. */
+    @DeleteMapping("/{{id}}")
+    public ResponseEntity<Void> delete(@PathVariable String id) {{
+        return service.deleteById(id)
+                ? ResponseEntity.noContent().build()
+                : ResponseEntity.notFound().build();
+    }}
+}}
+"#
+    )
+}
+
+/// The controller's test: a web-layer slice with the service replaced.
+///
+/// `@WebMvcTest` starts the web layer and nothing else -- no database, no
+/// component scan of the whole application -- so it runs in a fraction of
+/// the time a `@SpringBootTest` takes and fails for reasons that are about
+/// HTTP. The service is a `@MockitoBean`, which is the current spelling:
+/// `@MockBean` no longer exists in Spring Boot 4.
+pub(crate) fn resource_controller_test_java(
+    pkg: &str,
+    name: &str,
+    extra: &str,
+    webmvc_test_import: &str,
+) -> String {
+    format!(
+        r#"package {pkg};
+
+{extra}import java.util.List;
+import java.util.Optional;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.servlet.assertj.MockMvcTester;
+import {webmvc_test_import};
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.BDDMockito.given;
+
+@WebMvcTest({name}Controller.class)
+class {name}ControllerTest {{
+
+    @Autowired
+    private MockMvcTester mvc;
+
+    @MockitoBean
+    private {name}Service service;
+
+    @Test
+    void anEmptyCollectionIsAnEmptyArray() {{
+        given(service.findAll()).willReturn(List.of());
+
+        assertThat(mvc.get().uri({name}Controller.PATH))
+                .hasStatusOk()
+                .bodyJson()
+                .isEqualTo("[]");
+    }}
+
+    @Test
+    void aMissingItemIs404() {{
+        given(service.findById("nope")).willReturn(Optional.empty());
+
+        assertThat(mvc.get().uri({name}Controller.PATH + "/nope")).hasStatus(404);
+    }}
+
+    @Test
+    void aDeleteThatRemovedNothingIs404() {{
+        given(service.deleteById("nope")).willReturn(false);
+
+        assertThat(mvc.delete().uri({name}Controller.PATH + "/nope")).hasStatus(404);
+    }}
+}}
+"#
+    )
+}
+
+/// The scaffolded service's test.
+///
+/// The repository is a Mockito mock rather than a hand-written fake, for one
+/// reason: a fake has to key items by something, and jails cannot know which
+/// component of an arbitrary record is its identity. A mock needs no such
+/// knowledge, so this test compiles for every field spec.
+///
+/// What it pins is delegation and the two boolean-ish outcomes that are easy
+/// to get backwards -- an absent item is `Optional.empty()`, and a delete
+/// reports whether anything was actually removed.
+pub(crate) fn resource_service_test_java(pkg: &str, name: &str, extra: &str) -> String {
+    format!(
+        r#"package {pkg};
+
+{extra}import java.util.List;
+import java.util.Optional;
+import org.junit.jupiter.api.Test;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.mock;
+
+class {name}ServiceTest {{
+
+    private final {name}Repository repository = mock({name}Repository.class);
+    private final {name}Service service = new {name}Service(repository);
+
+    @Test
+    void findAllDelegatesToThePort() {{
+        given(repository.findAll()).willReturn(List.of());
+
+        assertThat(service.findAll()).isEmpty();
+    }}
+
+    @Test
+    void aMissingIdIsEmptyRatherThanNull() {{
+        given(repository.findById("nope")).willReturn(Optional.empty());
+
+        assertThat(service.findById("nope")).isEmpty();
+    }}
+
+    @Test
+    void deleteReportsWhetherAnythingWasRemoved() {{
+        given(repository.deleteById("gone")).willReturn(true);
+        given(repository.deleteById("never-existed")).willReturn(false);
+
+        assertThat(service.deleteById("gone")).isTrue();
+        assertThat(service.deleteById("never-existed")).isFalse();
+    }}
+}}
+"#
+    )
+}
+
+/// An in-memory adapter, so a freshly scaffolded application starts and
+/// serves requests before anyone has wired a database.
+///
+/// This is the piece that makes `jails g scaffold` produce something you can
+/// actually run: the JDBC adapter is deliberately not a bean (it takes a
+/// `Connection`, which the caller owns), so without this the context fails to
+/// start with "no qualifying bean of type ...Repository" -- a scaffold that
+/// compiles and cannot run.
+///
+/// It is also the honest default for the stage a scaffold is generated at.
+/// Swap the `@Repository` annotation onto the JDBC adapter when there is a
+/// real `DataSource`; keeping both annotated would make two beans qualify for
+/// one injection point, which Spring refuses to choose between (`jails
+/// beans` reports exactly that).
+pub(crate) fn in_memory_repository_java(
+    pkg: &str,
+    name: &str,
+    extra: &str,
+    id_accessor: Option<&str>,
+) -> String {
+    let var = crate::generate::lower_first(name);
+    let (find_by_id, delete_by_id, save_body, note) = match id_accessor {
+        Some(accessor) => (
+            format!("        return Optional.ofNullable(items.get(id));"),
+            format!("        return items.remove(id) != null;"),
+            format!("        items.put(String.valueOf({var}.{accessor}()), {var});"),
+            " * <p>Keyed on the record's own {@code id} component.\n",
+        ),
+        None => (
+            "        // TODO: this type has no `id` component, so jails cannot\n\
+             \x20       // tell which part of it is the identity. Pick one and key\n\
+             \x20       // `items` on it.\n\
+             \x20       return Optional.empty();"
+                .to_string(),
+            "        return items.remove(id) != null;".to_string(),
+            format!("        items.put(String.valueOf(items.size()), {var});"),
+            " * <p>This type declares no {@code id} component, so lookups by id are\n\
+             \x20* left unimplemented -- see the TODO in {@code findById}.\n",
+        ),
+    };
+    format!(
+        r#"package {pkg};
+
+{extra}import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import org.springframework.stereotype.Repository;
+
+/**
+ * {{@link {name}Repository}} in memory, so the application runs before it has
+ * a database.
+ *
+{note} *
+ * <p>{{@link ConcurrentHashMap}} rather than {{@link java.util.HashMap}}: a web
+ * application serves requests on many threads at once, and an unsynchronised
+ * map corrupts silently under exactly the load that makes it hard to
+ * reproduce.
+ *
+ * <p>When a real {{@code DataSource}} arrives, move the {{@code @Repository}}
+ * annotation to {{@code Jdbc{name}Repository}} and delete this. Annotating
+ * both makes two beans qualify for one injection point, which Spring refuses
+ * to choose between.
+ */
+@Repository
+public class InMemory{name}Repository implements {name}Repository {{
+
+    private final Map<String, {name}> items = new ConcurrentHashMap<>();
+
+    @Override
+    public Optional<{name}> findById(String id) {{
+{find_by_id}
+    }}
+
+    @Override
+    public List<{name}> findAll() {{
+        return List.copyOf(items.values());
+    }}
+
+    @Override
+    public void save({name} {var}) {{
+{save_body}
+    }}
+
+    @Override
+    public boolean deleteById(String id) {{
+{delete_by_id}
     }}
 }}
 "#

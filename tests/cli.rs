@@ -2644,6 +2644,16 @@ fn a_scaffold_with_database_types_compiles_including_its_derived_jdbc_adapter() 
     // The column list is shared by the select and the insert, so they agree.
     assert!(adapter.contains("insert into payouts (id, amount, currency, paid_at, note)"), "{adapter}");
 
+    // The DTOs name the project's own enum, so they have to import it --
+    // `field.imports` only carries the built-in types' packages.
+    let request =
+        fs::read_to_string(root.join("src/main/java/com/example/demo/web/PayoutRequest.java"))
+            .unwrap();
+    assert!(
+        request.contains("import com.example.demo.domain.Currency;"),
+        "{request}"
+    );
+
     let status = jails_cmd_with_path(&root, &path)
         .arg("test")
         .status()
