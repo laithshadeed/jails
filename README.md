@@ -206,6 +206,20 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
   either order both leave `prometheus` exposed. The generated test scrapes the
   live endpoint rather than the registry, since a missing registry is not an
   error — it is a 404 nobody notices for days.
+- `jails add|a toxiproxy` (alias `faults`) — network failure you can switch on.
+  A Toxiproxy container goes in front of a dependency and `Faults` gives the
+  test three verbs: `cut()` refuses connections, `latency()` slows them, and
+  `blackhole()` accepts the connection and then says nothing. The third is the
+  one worth having — stopping a container proves only that a dead dependency
+  fails, while the outage that actually pages you is a socket that stays open
+  and never answers, which every "is the port open" check calls healthy and
+  which hangs the calling thread forever unless a read timeout is set. Point
+  the application at `fault.host()`/`fault.port()`, not at the dependency's own
+  address, or the traffic misses the proxy and the test passes for no reason.
+  `heal()` undoes toxics *and* re-enables a cut proxy, so one test cannot leave
+  the next one failing against something it never touched. The generated test
+  proxies Toxiproxy's own control API — no second image, and a failure there
+  can only be the proxy.
 - `jails add|a security` — an explicit `SecurityFilterChain` instead of the
   default one. Adding the starter alone secures every endpoint and prints a
   generated password at startup, which is safe and opaque — and the usual

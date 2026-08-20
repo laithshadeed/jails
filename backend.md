@@ -301,7 +301,22 @@ production-ready in 4.2; Spring Kafka has `ShareConsumerFactory` and
 - **`@RetryableTopic` for non-blocking retry** — retries go to delay topics instead of
   stalling the main partition. Blocking retry inside the listener stalls everything behind it.
 - **Distinguish retryable from fatal.** A deserialization failure will never succeed;
-  retrying it is a loop. Classify explicitly.
+  retrying it is a loop. Classify explicitly — but classify on a *domain* marker
+  exception, not on JDK types. Spring already treats `DeserializationException`,
+  `MessageConversionException`, `ConversionException`, `MethodArgumentResolutionException`
+  and `ClassCastException` as fatal (`ExceptionClassifier.defaultFatalExceptionsList`), so
+  re-listing one of them reads as if that list were the whole policy and hides the rest.
+  The only thing the framework cannot infer is "this parsed fine and the domain still
+  cannot process it" — an unknown currency, a status with no constant. Throw a
+  `NonRetryableException` for that and classify on it alone.
+- **Never classify `NullPointerException` as fatal.** It is a bug in your listener, not a
+  bad record. Dead-lettering it commits the offset and turns a loud repeating failure into
+  a silent one — with real production data in the graveyard. The test is not "expected vs
+  unexpected", it is "would a retry change the outcome".
+- **Count what you dead-letter.** A `.DLT` nothing alerts on is silent discard with extra
+  steps. A counter in the recoverer, tagged by source topic, is what a depth alarm is built
+  from — and it counts routing *attempts*, not durable arrivals, since it fires before the
+  publish is confirmed.
 - **Manual acknowledgement when the work is not transactional.** Ack after the side effect
   succeeded, not before.
 - **Schemas are contracts.** Avro/Protobuf with a registry and enforced backward

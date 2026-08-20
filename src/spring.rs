@@ -1399,20 +1399,36 @@ fn kafka_deserializer_properties() -> Vec<String> {
 ///
 /// So the classification is the load-bearing part, not the backoff.
 ///
+/// It is expressed as *one* marker exception rather than a list of JDK types,
+/// for two reasons that come out of
+/// `deps/spring-kafka/.../listener/ExceptionClassifier.java`:
+///
+/// - The framework already treats `DeserializationException`,
+///   `MessageConversionException`, `ConversionException`,
+///   `MethodArgumentResolutionException` and `ClassCastException` as fatal
+///   (`defaultFatalExceptionsList`). Re-listing one of those reads as if the
+///   generated list were the whole policy, and hides the other four.
+/// - Naming `NullPointerException` there is worse than redundant. An NPE is a
+///   bug in the listener, not a bad record; classifying it permanent commits
+///   the offset and destroys the repeating failure that would have surfaced
+///   it. Only the domain knows what is genuinely unprocessable, so only the
+///   domain gets to say so -- see [`non_retryable_exception_java`].
+///
 /// No `NewTopic` beans here: `add kafka` does not know what this service's
 /// topics are called. `jails g event <Name>` declares them, because it does.
 fn kafka_config_java(pkg: &str) -> String {
     format!(
         r#"package {pkg};
 
+import io.micrometer.core.instrument.MeterRegistry;
 import org.apache.kafka.common.TopicPartition;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.core.KafkaOperations;
 import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
 import org.springframework.kafka.listener.DefaultErrorHandler;
 import org.springframework.kafka.support.ExponentialBackOffWithMaxRetries;
-import org.springframework.kafka.support.serializer.DeserializationException;
 
 /**
  * What happens to a record that does not process cleanly.
@@ -1428,6 +1444,21 @@ class KafkaConfig {{
     static final String DEAD_LETTER_SUFFIX = ".DLT";
 
     /**
+     * Counts records routed to a dead-letter topic, tagged by source topic.
+     *
+     * <p>A dead-letter topic nothing alerts on is silent discard with extra
+     * steps, and this is the number a depth alarm is built from.
+     *
+     * <p>Two things to know before writing that alarm. The series does not
+     * exist until the first record dead-letters, because the topic tag is only
+     * known once there is a record to tag -- so alert on presence, not on
+     * {{@code rate() == 0}}. And it counts *routing attempts*, not records
+     * durably in the topic: it increments before the publish is confirmed, so a
+     * failed publish means a redelivery and a second increment.
+     */
+    static final String DEAD_LETTER_METRIC = "kafka.dlt";
+
+    /**
      * Retries a transient failure with exponential backoff, and sends a
      * permanent one straight to the dead-letter topic.
      *
@@ -1437,23 +1468,87 @@ class KafkaConfig {{
      * declares a {{@code .DLT}} topic and ships a consumer for it gets neither:
      * the records land on an auto-created {{@code -dlt}} topic, and the only
      * trace is a WARN.
+     *
+     * <p>The {{@code MeterRegistry}} is optional on purpose. Spring Kafka
+     * declares Micrometer as an optional dependency, so a project that has not
+     * run {{@code jails add observability}} has the API on the classpath but no
+     * registry bean; injecting one directly would fail the context at startup.
+     * {{@code ObjectProvider}} makes the counter appear when a registry does and
+     * cost nothing when it does not.
      */
     @Bean
-    DefaultErrorHandler errorHandler(KafkaOperations<Object, Object> template) {{
+    DefaultErrorHandler errorHandler(
+            KafkaOperations<Object, Object> template, ObjectProvider<MeterRegistry> registries) {{
         var backOff = new ExponentialBackOffWithMaxRetries(3);
         backOff.setInitialInterval(200);
         backOff.setMultiplier(2.0);
-        var recoverer = new DeadLetterPublishingRecoverer(
-                template,
-                (record, exception) -> new TopicPartition(record.topic() + DEAD_LETTER_SUFFIX, -1));
+        var registry = registries.getIfAvailable();
+        var recoverer = new DeadLetterPublishingRecoverer(template, (record, exception) -> {{
+            if (registry != null) {{
+                registry.counter(DEAD_LETTER_METRIC, "topic", record.topic()).increment();
+            }}
+            return new TopicPartition(record.topic() + DEAD_LETTER_SUFFIX, -1);
+        }});
         var handler = new DefaultErrorHandler(recoverer, backOff);
-        // These fail the same way every time. Retrying them is what turns one
-        // bad record into a stalled partition.
-        handler.addNotRetryableExceptions(
-                DeserializationException.class,
-                IllegalArgumentException.class,
-                NullPointerException.class);
+        // Spring already classifies DeserializationException,
+        // MessageConversionException, ConversionException,
+        // MethodArgumentResolutionException and ClassCastException as fatal --
+        // see ExceptionClassifier.defaultFatalExceptionsList(). This adds the
+        // one thing the framework cannot infer: the domain's own "no retry will
+        // ever fix this". Deliberately *not* NullPointerException -- that is a
+        // bug in this service, not a bad record, and dead-lettering it commits
+        // the offset and buries it.
+        handler.addNotRetryableExceptions(NonRetryableException.class);
         return handler;
+    }}
+}}
+"#
+    )
+}
+
+/// The domain's own "no retry will ever fix this".
+///
+/// Deliberately unlike [`api_exception_java`], which is sealed, abstract and
+/// stack-trace-free. This one is open -- callers throw and subclass it -- and it
+/// keeps its stack trace, because it wraps a real cause and that cause is what
+/// a human reads out of the dead-letter headers.
+fn non_retryable_exception_java(pkg: &str) -> String {
+    format!(
+        r#"package {pkg};
+
+/**
+ * A failure that will fail identically on every redelivery.
+ *
+ * <p>This is the only classification the Kafka error handler cannot work out
+ * for itself. Spring already knows that a record which will not deserialize is
+ * unprocessable; it cannot know that a value which parsed perfectly names a
+ * currency, region or status this service has no constant for. That is a
+ * property of the domain, so the domain declares it -- throw this and the
+ * record goes to the dead-letter topic on the first attempt instead of costing
+ * the partition three retries first.
+ *
+ * <p>The distinction that matters is not "expected vs unexpected", it is
+ * "would a retry change the outcome". A database that is briefly unavailable is
+ * unexpected and worth retrying. A {{@code NullPointerException}} is a bug in
+ * this service: do <em>not</em> wrap it in this, or the bug is committed past
+ * and buried in the dead-letter topic along with genuinely bad records.
+ *
+ * <p>Keeps its stack trace, unlike an expected-outcome exception: something
+ * has to be readable when the dead-lettered record is investigated.
+ */
+public class NonRetryableException extends RuntimeException {{
+
+    public NonRetryableException(String message) {{
+        super(message);
+    }}
+
+    /**
+     * @param cause the failure that proves the record unprocessable -- an enum
+     *     lookup that found nothing, a value out of range. Kept, because the
+     *     dead-letter headers carry it.
+     */
+    public NonRetryableException(String message, Throwable cause) {{
+        super(message, cause);
     }}
 }}
 "#
@@ -1471,33 +1566,68 @@ fn kafka_config_test_java(pkg: &str) -> String {
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.kafka.core.KafkaOperations;
+import org.springframework.kafka.listener.DefaultErrorHandler;
 import org.springframework.kafka.support.serializer.DeserializationException;
 
 class KafkaConfigTest {{
 
     /**
-     * The classification, which is the part that matters: a record that will
-     * never deserialize must not be retried.
+     * Builds the handler the way a context with no {{@code MeterRegistry}}
+     * would -- i.e. a project that has not run {{@code jails add observability}}.
+     * If this throws, the optional-registry wiring is wrong and every such
+     * project fails at startup.
+     */
+    @SuppressWarnings("unchecked")
+    private static DefaultErrorHandler handlerWithoutRegistry() {{
+        KafkaOperations<Object, Object> template = org.mockito.Mockito.mock(KafkaOperations.class);
+        ObjectProvider<MeterRegistry> noRegistry = org.mockito.Mockito.mock(ObjectProvider.class);
+        org.mockito.Mockito.when(noRegistry.getIfAvailable()).thenReturn(null);
+        return new KafkaConfig().errorHandler(template, noRegistry);
+    }}
+
+    /**
+     * The classification, which is the part that matters.
      *
      * <p>{{@code removeClassification}} returns the classification it removed,
      * which is the only public way to read one back. It mutates the handler,
      * so this test builds its own.
      */
     @Test
-    void aRecordThatWillNeverDeserializeIsNotRetried() {{
-        @SuppressWarnings("unchecked")
-        KafkaOperations<Object, Object> template = org.mockito.Mockito.mock(KafkaOperations.class);
-        var handler = new KafkaConfig().errorHandler(template);
+    void aRecordThatCanNeverSucceedIsNotRetried() {{
+        var handler = handlerWithoutRegistry();
 
+        assertThat(handler.removeClassification(NonRetryableException.class))
+                .as("the domain said this record can never be processed")
+                .isFalse();
+        // Not added by this config -- inherited from
+        // ExceptionClassifier.defaultFatalExceptionsList(). Pinned because the
+        // generated config deliberately relies on it instead of restating it.
         assertThat(handler.removeClassification(DeserializationException.class))
                 .as("a record that cannot be parsed will not parse on retry either")
                 .isFalse();
-        assertThat(handler.removeClassification(IllegalArgumentException.class))
-                .as("a value this service cannot represent fails the same way every time")
-                .isFalse();
+    }}
+
+    /**
+     * The deliberate omission, pinned so nobody "helpfully" adds it back.
+     *
+     * <p>A {{@code NullPointerException}} is a bug in this service, not a bad
+     * record. Classifying it permanent would dead-letter it and commit the
+     * offset, turning a loud repeating failure into a silent one.
+     *
+     * <p>{{@code removeClassification}} is a map removal, so {{@code null}} means
+     * "never classified either way" -- which is the assertion wanted here. It
+     * falls through to the classifier's default and is retried.
+     */
+    @Test
+    void aBugInTheListenerStaysRetryableAndStaysLoud() {{
+        assertThat(handlerWithoutRegistry().removeClassification(NullPointerException.class))
+                .as("an NPE is a defect to fix, not a record to quarantine")
+                .isNull();
     }}
 
     /**
@@ -1525,6 +1655,11 @@ pub(crate) fn kafka_files(
             crate::generate::main_dir(root, pkg).join("KafkaConfig.java"),
             kafka_config_java(pkg),
             "kafka config",
+        ),
+        (
+            crate::generate::main_dir(root, pkg).join("NonRetryableException.java"),
+            non_retryable_exception_java(pkg),
+            "non-retryable exception",
         ),
         (
             crate::generate::test_dir(root, pkg).join("KafkaConfigTest.java"),

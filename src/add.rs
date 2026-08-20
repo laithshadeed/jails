@@ -1563,6 +1563,28 @@ const TESTCONTAINERS_KAFKA: Dependency = Dependency {
     scope: Some("test"),
     optional: false,
 };
+/// The `MeterRegistry` *API*, so the generated error handler can count
+/// dead-lettered records.
+///
+/// Needed explicitly, which is not obvious: `spring-kafka` declares
+/// micrometer-core as `optionalApi` and `spring-boot-kafka` declares it
+/// `optional`, and neither kind is inherited by a downstream consumer. Without
+/// this line `KafkaConfig` does not compile.
+///
+/// The API only. No registry *bean* is auto-configured without Actuator --
+/// `MetricsAutoConfiguration` and `CompositeMeterRegistryAutoConfiguration` are
+/// `@ConditionalOnClass` inside a module that only
+/// `spring-boot-starter-actuator` puts on the classpath. That is why the
+/// generated bean takes an `ObjectProvider<MeterRegistry>` rather than a
+/// `MeterRegistry`: asking for a broker should not drag in Actuator and its
+/// endpoints. `jails add observability` is what supplies the registry.
+const MICROMETER_CORE: Dependency = Dependency {
+    group_id: "io.micrometer",
+    artifact_id: "micrometer-core",
+    version: None,
+    scope: None,
+    optional: false,
+};
 /// Consuming is asynchronous, so every meaningful Kafka test waits for
 /// something. Without a waiting primitive the generated test is a `Thread.sleep`
 /// that is either flaky or slow.
@@ -1602,6 +1624,7 @@ fn kafka_plan(root: &Path, flavor: Flavor, pkg: &str) -> Result<Plan> {
         Flavor::SpringBoot => (
             vec![
                 SPRING_KAFKA,
+                MICROMETER_CORE,
                 SPRING_TESTCONTAINERS,
                 TESTCONTAINERS_KAFKA,
                 TESTCONTAINERS_JUNIT,
@@ -2770,7 +2793,10 @@ fn toxiproxy_plan(root: &std::path::Path, testkit: &str) -> Result<Plan> {
     let dir = test_dir(root, testkit);
 
     Ok(Plan {
-        deps: vec![TESTCONTAINERS_TOXIPROXY, TOXIPROXY_JAVA, TESTCONTAINERS_JUNIT],
+        // Deliberately not TESTCONTAINERS_JUNIT: the generated test drives the
+        // container itself, and claiming a dependency another capability also
+        // owns means `remove toxiproxy` takes it away from `db` too.
+        deps: vec![TESTCONTAINERS_TOXIPROXY, TOXIPROXY_JAVA],
         files: vec![
             NewFile {
                 path: dir.join("Faults.java"),
@@ -2840,6 +2866,11 @@ public final class Faults implements AutoCloseable {{
      */
     private static final int FIRST_LISTEN_PORT = 8666;
 
+    /** The proxy's own alias on {{@link #network()}}, and its control port. */
+    public static final String ALIAS = "toxiproxy";
+
+    public static final int CONTROL_PORT = 8474;
+
     private static final int LISTEN_PORTS = 8;
 
     private final Network network;
@@ -2859,11 +2890,14 @@ public final class Faults implements AutoCloseable {{
     public static Faults start() {{
         var network = Network.newNetwork();
         var ports = new Integer[LISTEN_PORTS + 1];
-        ports[0] = 8474;
+        ports[0] = CONTROL_PORT;
         for (int i = 0; i < LISTEN_PORTS; i++) {{
             ports[i + 1] = FIRST_LISTEN_PORT + i;
         }}
-        var container = new ToxiproxyContainer(IMAGE).withNetwork(network).withExposedPorts(ports);
+        var container = new ToxiproxyContainer(IMAGE)
+                .withNetwork(network)
+                .withNetworkAliases(ALIAS)
+                .withExposedPorts(ports);
         container.start();
         return new Faults(network, container);
     }}
@@ -2938,12 +2972,20 @@ public final class Faults implements AutoCloseable {{
             run(() -> proxy.toxics().timeout("timeout", ToxicDirection.DOWNSTREAM, 0));
         }}
 
-        /** Removes every toxic, leaving the proxy healthy. */
+        /**
+         * Undoes everything: removes every toxic *and* re-enables a cut proxy.
+         *
+         * <p>Both, deliberately. A {{@code heal}} that only dropped the toxics
+         * would leave a {{@link #cut}} in place, and the next test would fail
+         * against a dependency it never touched -- with an error that points at
+         * the wrong test.
+         */
         public void heal() {{
             run(() -> {{
                 for (var toxic : proxy.toxics().getAll()) {{
                     toxic.remove();
                 }}
+                proxy.enable();
             }});
         }}
 
@@ -2970,119 +3012,88 @@ fn faults_test_java(pkg: &str) -> String {
         r##"package {pkg};
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
-import java.net.InetSocketAddress;
-import java.net.ServerSocket;
-import java.net.Socket;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
+import java.time.Duration;
 import org.junit.jupiter.api.Test;
 
 /**
  * Proves the fault injector itself works, so a failure elsewhere is never its
- * fault. The upstream is a socket in this JVM rather than a second container --
- * nothing about the proxy cares what is behind it, and this keeps the test to
- * one image.
+ * fault.
+ *
+ * <p>The upstream is Toxiproxy's own control API, reached through a proxy that
+ * Toxiproxy is running. That sounds cute but it is the most honest option
+ * available: it needs no second image and no bridge back to a port on the test
+ * JVM, so a failure here is the proxy misbehaving and cannot be anything else.
  */
 class FaultsTest {{
 
-    private static final int CONNECT_TIMEOUT_MILLIS = 5_000;
+    private static final Duration PATIENCE = Duration.ofSeconds(5);
 
-    /** What a healthy upstream answers with. Any other outcome is a broken path. */
-    private static final int HELLO = 'j';
+    /** Long enough to rule out slowness, short enough that a hang fails fast. */
+    private static final Duration IMPATIENCE = Duration.ofSeconds(2);
 
     @Test
     void aProxiedDependencyAnswersUntilItIsCutAndThenAgainAfterItIsRestored() throws Exception {{
-        try (var upstream = new ServerSocket(0);
-                var faults = Faults.start()) {{
-            greetInBackground(upstream);
-            var fault = faults.inFrontOfHost(upstream.getLocalPort());
+        try (var faults = Faults.start()) {{
+            var fault = faults.inFrontOf(Faults.ALIAS, Faults.CONTROL_PORT);
 
-            assertThat(reachable(fault)).as("the proxy passes traffic through").isTrue();
+            assertThat(status(fault, PATIENCE)).as("the proxy passes traffic through").isEqualTo(200);
 
             fault.cut();
-            assertThat(reachable(fault)).as("a cut dependency answers nothing").isFalse();
+            assertThatThrownBy(() -> status(fault, PATIENCE))
+                    .as("a cut dependency refuses the connection")
+                    .isInstanceOf(IOException.class);
 
             fault.restore();
-            assertThat(reachable(fault)).as("the dependency came back").isTrue();
+            assertThat(status(fault, PATIENCE)).as("the dependency came back").isEqualTo(200);
         }}
     }}
 
     @Test
     void aBlackholedDependencyAcceptsTheConnectionAndThenSaysNothing() throws Exception {{
-        try (var upstream = new ServerSocket(0);
-                var faults = Faults.start()) {{
-            greetInBackground(upstream);
-            var fault = faults.inFrontOfHost(upstream.getLocalPort());
+        try (var faults = Faults.start()) {{
+            var fault = faults.inFrontOf(Faults.ALIAS, Faults.CONTROL_PORT);
             fault.blackhole();
 
-            // The failure a missing read timeout hangs on: the socket is open,
-            // so anything checking only for "connected" believes it is healthy.
-            assertThat(readWithTimeout(fault, 1_000)).isEqualTo(-1);
+            // The failure a missing read timeout hangs on forever: the socket
+            // is open, so anything that checks only "did it connect" believes
+            // the dependency is healthy.
+            assertThatThrownBy(() -> status(fault, IMPATIENCE))
+                    .isInstanceOf(HttpTimeoutException.class);
 
             fault.heal();
-            assertThat(reachable(fault)).isTrue();
+            assertThat(status(fault, PATIENCE)).isEqualTo(200);
         }}
     }}
 
-    /**
-     * Answers every connection with {{@link #HELLO}}, one virtual thread per
-     * connection.
-     *
-     * <p>Per connection, not one loop: a blackholed connection is held open by
-     * the proxy long after its client has gone, and a single-threaded upstream
-     * stuck on that one never accepts the next -- so the test after the fault
-     * measures this server rather than the proxy.
-     */
-    private static void greetInBackground(ServerSocket upstream) {{
-        Thread.ofVirtual().start(() -> {{
-            while (!upstream.isClosed()) {{
-                try {{
-                    var accepted = upstream.accept();
-                    Thread.ofVirtual().start(() -> greet(accepted));
-                }} catch (IOException stopping) {{
-                    return;
-                }}
-            }}
-        }});
-    }}
+    @Test
+    void latencyIsAddedToAnOtherwiseHealthyDependency() throws Exception {{
+        try (var faults = Faults.start()) {{
+            var fault = faults.inFrontOf(Faults.ALIAS, Faults.CONTROL_PORT);
+            fault.latency(Duration.ofSeconds(3));
 
-    private static void greet(Socket accepted) {{
-        try (accepted) {{
-            accepted.getOutputStream().write(HELLO);
-            accepted.getOutputStream().flush();
-            // Wait for the client to hang up before closing. Closing on top of
-            // a just-written byte can reset the connection and take the
-            // greeting with it, which reads exactly like a fault the test did
-            // not inject.
-            accepted.getInputStream().read();
-        }} catch (IOException hungUp) {{
-            // The client left. Nothing to say about it.
+            assertThatThrownBy(() -> status(fault, IMPATIENCE))
+                    .as("a caller more impatient than the delay gives up")
+                    .isInstanceOf(HttpTimeoutException.class);
+
+            fault.heal();
+            assertThat(status(fault, PATIENCE)).isEqualTo(200);
         }}
     }}
 
-    /**
-     * Whether the upstream's greeting arrives. Connecting is not enough to
-     * decide: the container's published port accepts the TCP handshake whether
-     * or not anything is listening behind it, so a test that only connects
-     * passes against a dependency that is entirely gone.
-     */
-    private static boolean reachable(Faults.Fault fault) {{
-        try {{
-            return readWithTimeout(fault, CONNECT_TIMEOUT_MILLIS) == HELLO;
-        }} catch (IOException unreachable) {{
-            return false;
-        }}
-    }}
-
-    private static int readWithTimeout(Faults.Fault fault, int millis) throws IOException {{
-        try (var socket = new Socket()) {{
-            socket.connect(new InetSocketAddress(fault.host(), fault.port()), CONNECT_TIMEOUT_MILLIS);
-            socket.setSoTimeout(millis);
-            try {{
-                return socket.getInputStream().read();
-            }} catch (java.net.SocketTimeoutException silent) {{
-                return -1;
-            }}
+    private static int status(Faults.Fault fault, Duration timeout) throws Exception {{
+        try (var http = HttpClient.newHttpClient()) {{
+            var request = HttpRequest.newBuilder(URI.create("http://%s:%d/version".formatted(fault.host(), fault.port())))
+                    .timeout(timeout)
+                    .build();
+            return http.send(request, HttpResponse.BodyHandlers.discarding()).statusCode();
         }}
     }}
 }}

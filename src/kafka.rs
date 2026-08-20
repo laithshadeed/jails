@@ -131,9 +131,13 @@ pub fn kafka(command: KafkaCommand, no_start: bool, debug: bool) -> Result<()> {
         }
         KafkaCommand::Poison { topic } => {
             let topic = resolve_topic(&root, topic)?;
-            // Deliberately not JSON. This is the record that proves the
-            // error handler routes rather than retries -- the failure jails'
-            // generated `KafkaConfig` classifies as not-retryable.
+            // Deliberately not JSON. This is the record that proves the error
+            // handler routes rather than retries. It fails as a
+            // `DeserializationException`, which Spring itself classifies as
+            // fatal -- so this exercises the inherited half of the policy. The
+            // half jails generates, `NonRetryableException`, needs a record
+            // that parses and *then* fails: `jails kafka send` with a value the
+            // domain has no constant for.
             println!("publishing an unparseable record to {topic}");
             println!("watch where it lands:  jails kafka dlt {topic}");
             send(&root, &topic, Some("poison"), "{ not json", debug)
