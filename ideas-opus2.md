@@ -19,6 +19,12 @@ acceleration."
 came out of it. Its rule: *nothing goes in here that I did not run.* Where I
 could not run something, it is marked UNVERIFIED and it is not load-bearing.
 
+It also measures the half the other four barely touch. They are all, including
+`ideas-opus.md`'s "ordered by loop latency," about **how long you wait**. The
+other budget is **how much you type** — the generator surface, where a missing
+command does not cost you seconds of waiting but an afternoon of mechanical
+edits. §5 counts that one, and per occurrence it is the larger number.
+
 Read the other four for design breadth. Read this one for what is true.
 
 ---

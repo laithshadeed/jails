@@ -241,7 +241,12 @@ it already draws for hand-written properties inside a jails-owned block.
   publisher keyed by event id (ordering is per partition; a null key
   round-robins), a listener that deliberately does not catch (swallowing
   commits an offset for a message never processed), and an `IT` that publishes
-  through a real broker via Testcontainers and waits on a latch. `jails add
+  through a real broker via Testcontainers and waits on a latch. Field
+  declarations use the same typed model as the other generators (for example,
+  `id:uuid crawlRunId:uuid url:uri occurredAt:instant`); a typed event requires
+  a non-optional `id`, and the generated publisher key, samples, and assertions
+  derive from those fields. With no fields, the legacy `String id, Instant
+  occurredAt` contract remains available. `jails add
   kafka` on Spring now also writes the properties that make this work at all —
   `auto-offset-reset=earliest` (a new consumer group otherwise starts at the
   end of the topic and sees nothing published before it joined), the

@@ -1,0 +1,45 @@
+# An Intercom-shaped support inbox expressed with the same generic intents.
+schema = 1
+capabilities = ["db", "api", "actuator", "observability", "security", "json", "testkit", "kafka"]
+
+[[generate]]
+kind = "enum"
+name = "ConversationStatus"
+fields = ["OPEN", "PENDING", "CLOSED"]
+
+[[generate]]
+kind = "enum"
+name = "MessageDirection"
+fields = ["INBOUND", "OUTBOUND"]
+
+[[generate]]
+kind = "scaffold"
+name = "Workspace"
+fields = ["id:uuid@pk", "name:string!@unique", "createdAt:instant"]
+
+[[generate]]
+kind = "scaffold"
+name = "Contact"
+fields = ["id:uuid@pk", "workspaceId:uuid@index", "email:string!", "displayName:string?", "createdAt:instant"]
+indexes = ["workspace_id, email"]
+
+[[generate]]
+kind = "scaffold"
+name = "Conversation"
+fields = ["id:uuid@pk", "workspaceId:uuid@index", "contactId:uuid@index", "status:ConversationStatus@index", "lastMessageAt:instant", "version:long@nonnegative"]
+indexes = ["workspace_id, status, last_message_at desc"]
+
+[[generate]]
+kind = "scaffold"
+name = "Message"
+fields = ["id:uuid@pk", "workspaceId:uuid@index", "conversationId:uuid@index", "direction:MessageDirection", "body:text!", "createdAt:instant"]
+indexes = ["conversation_id, created_at"]
+
+[[generate]]
+kind = "event"
+name = "MessageReceived"
+fields = ["id:uuid", "workspaceId:uuid", "conversationId:uuid", "occurredAt:instant"]
+
+[[generate]]
+kind = "job"
+name = "OutboundDelivery"
