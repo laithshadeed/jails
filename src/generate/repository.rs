@@ -171,7 +171,9 @@ pub(super) fn jdbc_client_repository(
         "            *".to_string()
     };
     let key = mapped.iter().find(|c| c.name == "id").or(mapped.first());
-    let id_column = key.map(|c| c.name.clone()).unwrap_or_else(|| "id".to_string());
+    let id_column = key
+        .map(|c| c.name.clone())
+        .unwrap_or_else(|| "id".to_string());
     // The port takes a String id, so a non-text key column needs the cast
     // spelled out -- Postgres will not compare a uuid column to a text
     // parameter on its own.
@@ -224,7 +226,9 @@ pub(super) fn jdbc_client_repository(
             .join(",\n");
         format!("        return new {name}(\n{args});")
     } else {
-        format!("        throw new UnsupportedOperationException(\"TODO: map a {table} row to {name}\");")
+        format!(
+            "        throw new UnsupportedOperationException(\"TODO: map a {table} row to {name}\");"
+        )
     };
     // `.param(name, value)` rather than a positional list: the binding and
     // the statement name the same thing, so they cannot drift apart.
@@ -394,7 +398,9 @@ pub(super) fn jdbc_repository(
     // types jails generates) has no surrogate. The Javadoc says which was
     // chosen whenever it was not the obvious one.
     let key = mapped.iter().find(|c| c.name == "id").or(mapped.first());
-    let id_column = key.map(|c| c.name.clone()).unwrap_or_else(|| "id".to_string());
+    let id_column = key
+        .map(|c| c.name.clone())
+        .unwrap_or_else(|| "id".to_string());
     // The port takes a String id, so a non-text key column needs the cast
     // spelled out -- Postgres will not compare a uuid column to a text
     // parameter on its own.
@@ -445,7 +451,9 @@ pub(super) fn jdbc_repository(
             .join(",\n");
         format!("        return new {name}(\n{args});")
     } else {
-        format!("        throw new UnsupportedOperationException(\"TODO: map a {table} row to {name}\");")
+        format!(
+            "        throw new UnsupportedOperationException(\"TODO: map a {table} row to {name}\");"
+        )
     };
     let bind_body = if derived {
         mapped
@@ -461,7 +469,9 @@ pub(super) fn jdbc_repository(
             .collect::<Vec<_>>()
             .join("\n")
     } else {
-        format!("        throw new UnsupportedOperationException(\"TODO: bind {name} to the insert\");")
+        format!(
+            "        throw new UnsupportedOperationException(\"TODO: bind {name} to the insert\");"
+        )
     };
 
     // Anything jails could not map is named rather than quietly dropped --
@@ -480,7 +490,8 @@ pub(super) fn jdbc_repository(
     } else if unmapped.is_empty() {
         " * <p>The SQL, the bind and the row mapper are all derived from the same field
  * spec, so they cannot disagree about a column name or a type.
-".to_string()
+"
+        .to_string()
     } else {
         format!(
             " * <p>The SQL, the bind and the row mapper are derived from the field spec.\n\
@@ -607,5 +618,8 @@ public final class Jdbc{name}Repository implements {name}Repository {{
 }
 
 pub(super) fn jdbc_repository_test(pkg: &str, name: &str) -> String {
-    crate::template::render(include_str!("../../templates/generate/jdbc_repository_test.java"), &[("pkg", pkg), ("name", name)])
+    crate::template::render(
+        include_str!("../../templates/generate/jdbc_repository_test.java"),
+        &[("pkg", pkg), ("name", name)],
+    )
 }

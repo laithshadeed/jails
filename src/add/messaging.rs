@@ -118,4 +118,3 @@ pub(super) fn kafka_plan(root: &Path, flavor: Flavor, pkg: &str) -> Result<Plan>
         ..Plan::default()
     })
 }
-

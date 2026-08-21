@@ -75,7 +75,7 @@ This proposal is based on the live Jails source, the projects under `ideas/`, th
 
 ### Friction and correctness gaps worth fixing first
 
-1. **The default toolchain can request unreleased Java.** The current project defaults to Java 27 even though JDK 27 general availability is scheduled for 2026-09-15. Spring Boot 4.1 currently documents compatibility only through Java 26. A productivity tool must never generate a project that the selected framework cannot compile on the user’s stable machine. See the [OpenJDK 27 schedule](https://openjdk.org/projects/jdk/27/spec/) and [Spring Boot system requirements](https://docs.spring.io/spring-boot/system-requirements.html).
+1. **Toolchain compatibility must remain a resolved policy.** Dogfooding found that the project defaulted to unreleased Java 27 even though JDK 27 general availability is scheduled for 2026-09-15. Jails now defaults to the Java 25 LTS, derives CI/image releases from the POM, and leaves newer GA/EA choices explicit. This closes the immediate defect; a framework/JDK compatibility catalog and upgrade policy are still needed. See the [OpenJDK 27 schedule](https://openjdk.org/projects/jdk/27/spec/) and [Spring Boot system requirements](https://docs.spring.io/spring-boot/system-requirements.html).
 
 2. **The fast Maven daemon is normally bypassed.** [`src/run.rs`](src/run.rs) prefers a project `mvnw` over `mvnd`. Spring Initializr projects contain `mvnw`, so the repository’s pinned `mvnd` often does not accelerate generated applications.
 
@@ -475,7 +475,7 @@ The current `add::Plan` can be adapted rather than discarded.
 
 Jails already has an unusually strong `scaffold`: one field model drives the record, repository port, JDBC and in-memory adapters, request/response types, service, controller, migration, fixture, and tests. That shared source of truth is the right idea. The next step is not dozens of unrelated artifact kinds; it is a generator engine that understands project context, composes complete artifact graphs, and evolves them safely.
 
-The first dogfood increment now proves this direction beyond CRUD: both the crawler and inbox manifests declare ordinary typed Kafka events, and Jails derives the Java record, imports, publisher key, realistic constructor values, assertion oracle, and real-broker integration test from the same field declarations. Running both full manifests exposed and fixed two composition bugs in the generic machinery—non-repeatable Spring `@Import` annotations must be merged, and test examples/assertions must share one value model. This is useful evidence, not a reason to add crawler or inbox concepts to core. The next leverage is generic `usecase`, typed `query`, domain-event, and durable `job` intents plus output provenance and drift repair.
+The dogfood increment now proves this direction beyond CRUD: both manifests declare ordinary typed Kafka events, executable create use cases, typed equality queries, leased durable work, production/local security profiles, scope-bearing request boundaries, CI, and images. The crawler also selects a generic bounded fetch port. Jails derives Java records/imports, application ports, transactional implementations, MVC adapters, visible named-parameter PostgreSQL adapters, realistic examples, and focused plus real-container tests from one field model. Running both full manifests exposed generic composition/runtime bugs that shallow golden tests missed: Spring `@Import` values must merge, test examples and assertions must share one value model, transactional components must be proxyable, nullable JDBC transforms must wrap the raw value before dereferencing, PostgreSQL `UPDATE ... FROM` return columns must be qualified, and a validated hostname must be DNS-pinned through connection. This is useful evidence, not a reason to add crawler or inbox concepts to core. The next leverage is a generic workflow/composition IR, transactional outbox semantics, output provenance, and drift repair.
 
 ### From template selection to intent compilation
 
@@ -2403,11 +2403,17 @@ Gate:
 - the feature can be navigated and tested from Neovim without browsing global layers.
 
 Current dogfood baseline: the two declarative manifests already compose DB,
-security, observability, schedules, scaffolds, and typed Kafka events without
-manual Java edits, and both pass real PostgreSQL/Kafka verification. This is a
-production-shaped generation test, not a production-ready crawler or inbox:
-their user-owned traversal, assignment, tenancy, idempotency, and durable-work
-semantics remain the Phase 5/6 work.
+security, observability, schedules, scaffolds, typed Kafka events, executable
+create use cases, typed PostgreSQL queries, PostgreSQL-leased/idempotent work,
+JWT production authentication, generic `@scope` request checks, a bounded
+SSRF-resistant HTTP fetcher, pinned CI, and non-root images without manual
+Java edits. Both pass real PostgreSQL/Kafka verification. This remains a
+production-shaped generation test, not yet a production-ready crawler or
+inbox: finite traversal/robots/cancellation, end-to-end association tenancy,
+optimistic transitions, transactional outbox/provider delivery, local image
+build verification, and hosted CI execution remain Phase 5/6 work. The
+executable boundary is checked in at `examples/ACCEPTANCE.md`; prose claims
+must not outrun that gate.
 
 ### Phase 5: crawler proof — roughly 3–4 weeks for Slice 1, then measure
 

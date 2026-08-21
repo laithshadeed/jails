@@ -98,7 +98,16 @@ fn column(field: &Field, root: &Path, pkg: &str, receiver: &str) -> Column {
         if optional {
             write = optional_write(&inner, &accessor);
         }
-        return finish(name, sql_type, not_null, optional, read, write, &inner, field.constraints);
+        return finish(
+            name,
+            sql_type,
+            not_null,
+            optional,
+            read,
+            write,
+            &inner,
+            field.constraints,
+        );
     }
 
     // The one owned type with a knowable representation.
@@ -109,7 +118,16 @@ fn column(field: &Field, root: &Path, pkg: &str, receiver: &str) -> Column {
         } else {
             format!("{accessor}.name()")
         };
-        return finish(name, "text".into(), not_null, optional, read, write, &inner, field.constraints);
+        return finish(
+            name,
+            "text".into(),
+            not_null,
+            optional,
+            read,
+            write,
+            &inner,
+            field.constraints,
+        );
     }
 
     Column {
@@ -208,9 +226,21 @@ fn inner_type(java_type: &str) -> String {
 /// the string conversions that make hand-written mappers wrong.
 fn builtin_mapping(inner: &str, column: &str, accessor: &str) -> Option<(String, String, String)> {
     let (sql, read, write) = match inner {
-        "String" => ("text", format!("rows.getString(\"{column}\")"), accessor.to_string()),
-        "Integer" | "int" => ("integer", format!("rows.getInt(\"{column}\")"), accessor.to_string()),
-        "Long" | "long" => ("bigint", format!("rows.getLong(\"{column}\")"), accessor.to_string()),
+        "String" => (
+            "text",
+            format!("rows.getString(\"{column}\")"),
+            accessor.to_string(),
+        ),
+        "Integer" | "int" => (
+            "integer",
+            format!("rows.getInt(\"{column}\")"),
+            accessor.to_string(),
+        ),
+        "Long" | "long" => (
+            "bigint",
+            format!("rows.getLong(\"{column}\")"),
+            accessor.to_string(),
+        ),
         "Boolean" | "boolean" => (
             "boolean",
             format!("rows.getBoolean(\"{column}\")"),
@@ -277,7 +307,11 @@ pub(crate) fn imports(columns: &[Column]) -> Vec<&'static str> {
             "BigDecimal" => &["java.math.BigDecimal"],
             // An Instant is read through OffsetDateTime and written through
             // java.sql.Timestamp, so the mapping needs three imports, not one.
-            "Instant" => &["java.time.Instant", "java.time.OffsetDateTime", "java.sql.Timestamp"],
+            "Instant" => &[
+                "java.time.Instant",
+                "java.time.OffsetDateTime",
+                "java.sql.Timestamp",
+            ],
             "URI" => &["java.net.URI"],
             _ => &[],
         };
@@ -344,9 +378,18 @@ pub(crate) fn snake_case(name: &str) -> String {
 /// ordered index (`customer_id, created_at desc`). Passed through as written
 /// after its column names are checked against the table, because index
 /// ordering is a real schema decision with no shorthand worth inventing.
-pub(crate) fn create_table(type_name: &str, columns: &[Column], extra_indexes: &[String]) -> String {
+pub(crate) fn create_table(
+    type_name: &str,
+    columns: &[Column],
+    extra_indexes: &[String],
+) -> String {
     let table = table_name(type_name);
-    let width = columns.iter().map(|c| c.name.len()).max().unwrap_or(0).max(4);
+    let width = columns
+        .iter()
+        .map(|c| c.name.len())
+        .max()
+        .unwrap_or(0)
+        .max(4);
     let type_width = columns
         .iter()
         .map(|c| c.sql_type.len())
@@ -361,7 +404,11 @@ pub(crate) fn create_table(type_name: &str, columns: &[Column], extra_indexes: &
             Some(check) => format!(" check ({})", check.predicate(&column.name)),
             None => String::new(),
         };
-        let unique = if column.constraints.unique { " unique" } else { "" };
+        let unique = if column.constraints.unique {
+            " unique"
+        } else {
+            ""
+        };
         // Trimmed before the comma: a nullable column would otherwise carry
         // the padding that only exists to line `not null` up.
         let declaration = format!("{:type_width$}{null}{unique}{check}", column.sql_type);
@@ -478,7 +525,10 @@ pub(crate) fn validate_index(spec: &str, columns: &[Column]) -> Result<(), Strin
 /// The keys are the *column* names, not the component names, so the fixture
 /// lines up with what the database actually holds -- which is the point of
 /// having it next to a JDBC adapter rather than a Java builder.
-pub(crate) fn fixture_json(columns: &[Column], enum_constant: &dyn Fn(&str) -> Option<String>) -> String {
+pub(crate) fn fixture_json(
+    columns: &[Column],
+    enum_constant: &dyn Fn(&str) -> Option<String>,
+) -> String {
     let rows: Vec<String> = (1..=2)
         .map(|row| {
             let fields: Vec<String> = columns
@@ -499,7 +549,11 @@ pub(crate) fn fixture_json(columns: &[Column], enum_constant: &dyn Fn(&str) -> O
 
 /// A JSON sample for one column. `row` is 1 or 2, so the two rows differ --
 /// two identical rows would let a `findAll` that returns one of them pass.
-fn sample_value(column: &Column, row: u8, enum_constant: &dyn Fn(&str) -> Option<String>) -> String {
+fn sample_value(
+    column: &Column,
+    row: u8,
+    enum_constant: &dyn Fn(&str) -> Option<String>,
+) -> String {
     // A nullable column is null in the second row: the shape most likely to
     // break a mapper is the absent one, so the fixture should contain it.
     if !column.not_null && row == 2 {
@@ -535,7 +589,12 @@ mod tests {
 
     fn cols(specs: &[&str]) -> Vec<Column> {
         let fields = parse(&specs.iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap();
-        columns(&fields, &PathBuf::from("/nonexistent"), "com.example", "value")
+        columns(
+            &fields,
+            &PathBuf::from("/nonexistent"),
+            "com.example",
+            "value",
+        )
     }
 
     #[test]
@@ -571,9 +630,27 @@ mod tests {
     fn an_optional_component_is_nullable_and_unwrapped() {
         let columns = cols(&["note:string?"]);
         assert!(!columns[0].not_null);
-        assert!(columns[0].read.as_ref().unwrap().contains("Optional.ofNullable"));
-        assert!(columns[0].write.as_ref().unwrap().ends_with(".orElse(null)"));
-        assert!(columns[0].write.as_ref().unwrap().starts_with("value.note()"));
+        assert!(
+            columns[0]
+                .read
+                .as_ref()
+                .unwrap()
+                .contains("Optional.ofNullable")
+        );
+        assert!(
+            columns[0]
+                .write
+                .as_ref()
+                .unwrap()
+                .ends_with(".orElse(null)")
+        );
+        assert!(
+            columns[0]
+                .write
+                .as_ref()
+                .unwrap()
+                .starts_with("value.note()")
+        );
     }
 
     #[test]
@@ -589,6 +666,16 @@ mod tests {
     #[test]
     fn optional_transformed_types_map_before_unwrapping() {
         let columns = cols(&["finishedAt:instant?", "callback:uri?"]);
+        assert_eq!(
+            columns[0].read.as_deref(),
+            Some(
+                "Optional.ofNullable(rows.getObject(\"finished_at\", OffsetDateTime.class)).map(OffsetDateTime::toInstant)"
+            )
+        );
+        assert_eq!(
+            columns[1].read.as_deref(),
+            Some("Optional.ofNullable(rows.getString(\"callback\")).map(URI::create)")
+        );
         assert_eq!(
             columns[0].write.as_deref(),
             Some("value.finishedAt().map(Timestamp::from).orElse(null)")
@@ -634,7 +721,10 @@ mod tests {
         assert!(!json.contains("transactionId"), "camelCase leaked: {json}");
         // Two rows, and they differ -- one row cannot catch an ordering bug.
         assert_eq!(json.matches("transaction_id").count(), 2, "{json}");
-        assert!(json.contains("...1\"") || json.contains("00000001"), "{json}");
+        assert!(
+            json.contains("...1\"") || json.contains("00000001"),
+            "{json}"
+        );
         assert!(json.contains("00000002"), "{json}");
     }
 
@@ -698,7 +788,11 @@ mod tests {
             "amount:long@positive",
             "customerId:uuid",
         ]);
-        let ddl = create_table("Reward", &columns, &["customer_id, created_at desc".to_string()]);
+        let ddl = create_table(
+            "Reward",
+            &columns,
+            &["customer_id, created_at desc".to_string()],
+        );
 
         assert!(
             ddl.contains("primary key (transaction_id, rule_id)"),
@@ -724,7 +818,10 @@ mod tests {
             .lines()
             .filter(|l| l.trim_start().starts_with("create "))
             .count();
-        assert_eq!(statements, 3, "table + column index + explicit index: {ddl}");
+        assert_eq!(
+            statements, 3,
+            "table + column index + explicit index: {ddl}"
+        );
         assert_eq!(ddl.matches(';').count(), 3, "each one terminated: {ddl}");
     }
 

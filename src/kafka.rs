@@ -108,13 +108,7 @@ pub fn kafka(command: KafkaCommand, no_start: bool, debug: bool) -> Result<()> {
     }
 
     match command {
-        KafkaCommand::Topics => tool(
-            &root,
-            "kafka-topics.sh",
-            &["--list".into()],
-            None,
-            debug,
-        ),
+        KafkaCommand::Topics => tool(&root, "kafka-topics.sh", &["--list".into()], None, debug),
         KafkaCommand::Describe { topic } => {
             let topic = resolve_topic(&root, topic)?;
             tool(
@@ -275,7 +269,13 @@ fn send(root: &Path, topic: &str, key: Option<&str>, json: &str, debug: bool) ->
             "key.separator=\t".to_string(),
         ]);
     }
-    tool(root, "kafka-console-producer.sh", &args, Some(&record), debug)?;
+    tool(
+        root,
+        "kafka-console-producer.sh",
+        &args,
+        Some(&record),
+        debug,
+    )?;
     println!("sent to {topic}");
     Ok(())
 }

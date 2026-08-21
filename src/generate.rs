@@ -65,9 +65,18 @@ pub enum ArtifactKind {
     /// A declarative HTTP client: `@HttpExchange` interface, group
     /// registration, and a test against a real socket (Spring only)
     Client,
+    /// A bounded outbound HTTP fetch port with redirect revalidation, DNS
+    /// pinning, SSRF protection, metrics, and real-socket adversarial tests
+    /// (Spring only)
+    Fetcher,
     /// Scheduled work: a `@Scheduled` component that cannot cancel its own
     /// schedule by throwing (Spring only)
     Job,
+    /// PostgreSQL-backed, leased, bounded-retry work that invokes an existing
+    /// generated create use case. `--on` names the use case and `--yields`
+    /// names its resource; fields include the stable resource `id`.
+    #[value(name = "durable-job", alias = "djob")]
+    DurableJob,
     /// Request/response records for a domain type, with the mapping and a
     /// round-trip test (Spring only)
     Dto,
@@ -275,9 +284,11 @@ fn ensure_failsafe(root: &Path, artifacts: &[Artifact]) -> Result<()> {
         return Ok(());
     }
     let pom = crate::pom::read(root)?;
-    if let Some(updated) =
-        crate::pom::add_plugin(&pom, crate::spring::FAILSAFE_ARTIFACT, crate::spring::FAILSAFE_PLUGIN)?
-    {
+    if let Some(updated) = crate::pom::add_plugin(
+        &pom,
+        crate::spring::FAILSAFE_ARTIFACT,
+        crate::spring::FAILSAFE_PLUGIN,
+    )? {
         fs::write(root.join("pom.xml"), updated)
             .map_err(|e| format!("failed to write pom.xml: {e}"))?;
         println!("  plugin {}", crate::spring::FAILSAFE_ARTIFACT);
@@ -685,6 +696,24 @@ pub fn generate(
                 })
                 .collect()
         }
+        ArtifactKind::Fetcher => {
+            require_spring_project(&root, "fetcher")?;
+            if !fields.is_empty() || strategy_on.is_some() || strategy_yields.is_some() {
+                return Err(
+                    "fetcher takes only a name; limits and policy are external configuration"
+                        .to_string(),
+                );
+            }
+            let pkg = place(layout::CLIENTS);
+            crate::spring::fetcher_files(&root, &pkg, &name)
+                .into_iter()
+                .map(|(path, contents, kind)| Artifact {
+                    kind,
+                    path,
+                    contents,
+                })
+                .collect()
+        }
         ArtifactKind::Job => {
             require_spring_project(&root, "job")?;
             let pkg = place(layout::JOBS);
@@ -696,6 +725,45 @@ pub fn generate(
                     contents,
                 })
                 .collect()
+        }
+        ArtifactKind::DurableJob => {
+            require_spring_project(&root, "durable-job")?;
+            let usecase = strategy_on.ok_or_else(|| {
+                format!(
+                    "durable-job {name} needs the create use case it invokes.\n       fix: pass `--on <UseCase>`, for example `--on QueueCrawl`."
+                )
+            })?;
+            let target = strategy_yields.ok_or_else(|| {
+                format!(
+                    "durable-job {name} needs the resource that proves completion.\n       fix: pass `--yields <Resource>`, for example `--yields CrawlRun`."
+                )
+            })?;
+            let jobs = place(layout::JOBS);
+            let web = subpackage(&base, config.layer(layout::WEB));
+            let service = subpackage(&base, config.layer(layout::SERVICE));
+            let app = subpackage(&base, config.layer(layout::APP));
+            let domain = subpackage(&base, config.layer(layout::DOMAIN));
+            let parsed = parse_fields(fields)?;
+            crate::spring::durable_job_files(
+                &root,
+                &base,
+                &jobs,
+                &web,
+                &service,
+                &app,
+                &domain,
+                &name,
+                &capitalize(usecase),
+                &capitalize(target),
+                &parsed,
+            )?
+            .into_iter()
+            .map(|(path, contents, kind)| Artifact {
+                kind,
+                path,
+                contents,
+            })
+            .collect()
         }
         ArtifactKind::Usecase => {
             require_spring_project(&root, "usecase")?;
@@ -722,6 +790,7 @@ pub fn generate(
             let parsed = parse_fields(fields)?;
             crate::spring::usecase_files(
                 &root,
+                &base,
                 &service,
                 &web,
                 &domain,
@@ -737,7 +806,7 @@ pub fn generate(
                 path,
                 contents,
             })
-                .collect()
+            .collect()
         }
         ArtifactKind::Query => {
             require_spring_project(&root, "query")?;
@@ -747,7 +816,10 @@ pub fn generate(
                 )
             })?;
             if strategy_yields.is_some() {
-                return Err("`--yields` is not valid for a query; queries return the target resource".to_string());
+                return Err(
+                    "`--yields` is not valid for a query; queries return the target resource"
+                        .to_string(),
+                );
             }
             let service = place(layout::SERVICE);
             let web = place(layout::WEB);
@@ -757,6 +829,7 @@ pub fn generate(
             let parsed = parse_fields(fields)?;
             crate::spring::query_files(
                 &root,
+                &base,
                 &service,
                 &web,
                 &domain,
@@ -1114,6 +1187,7 @@ pub fn generate(
         if let Some(dep) = match kind {
             ArtifactKind::Dto | ArtifactKind::Scaffold => Some(&crate::spring::VALIDATION_STARTER),
             ArtifactKind::Client => Some(&crate::spring::RESTCLIENT_STARTER),
+            ArtifactKind::Fetcher => Some(&crate::spring::APACHE_HTTPCLIENT),
             ArtifactKind::Event => Some(&crate::spring::TESTCONTAINERS_KAFKA),
             _ => None,
         } {
@@ -1145,6 +1219,10 @@ pub fn generate(
             ensure_dependency(&root, &crate::spring::VALIDATION_STARTER)?
         }
         ArtifactKind::Client => ensure_dependency(&root, &crate::spring::RESTCLIENT_STARTER)?,
+        ArtifactKind::Fetcher => {
+            ensure_dependency(&root, &crate::spring::APACHE_HTTPCLIENT)?;
+            ensure_dependency(&root, &crate::spring::ACTUATOR_STARTER)?;
+        }
         ArtifactKind::Event => {
             ensure_dependency(&root, &crate::spring::TESTCONTAINERS_KAFKA)?;
             ensure_dependency(&root, &crate::spring::SPRING_TESTCONTAINERS)?;
@@ -1184,6 +1262,8 @@ fn scaffold_artifacts(
     let adapters = place(layout::ADAPTERS);
     let service = place(layout::SERVICE);
     let web = place(layout::WEB);
+
+    crate::spring::require_scope_authorizer(root, base, "scaffold", name, &parsed)?;
 
     let domain_in = |user: &str| import_of(user, &domain, name);
     let columns = crate::sql::columns(&parsed, root, &domain, &lower_first(name));
@@ -1276,19 +1356,34 @@ fn scaffold_artifacts(
                     domain_in(&adapters),
                     import_of(&adapters, &repository, &format!("{name}Repository"))
                 ),
-                parsed.iter().find(|f| f.name == "id").map(|f| f.name.as_str()),
+                parsed
+                    .iter()
+                    .find(|f| f.name == "id")
+                    .map(|f| f.name.as_str()),
                 repository_wiring(root) != RepositoryWiring::JdbcClientBean,
             ),
         },
         Artifact {
             kind: "request",
             path: main_dir(root, &web).join(format!("{name}Request.java")),
-            contents: crate::spring::request_java_for(&web, name, &parsed, &domain_in(&web), &domain),
+            contents: crate::spring::request_java_for(
+                &web,
+                name,
+                &parsed,
+                &domain_in(&web),
+                &domain,
+            ),
         },
         Artifact {
             kind: "response",
             path: main_dir(root, &web).join(format!("{name}Response.java")),
-            contents: crate::spring::response_java_for(&web, name, &parsed, &domain_in(&web), &domain),
+            contents: crate::spring::response_java_for(
+                &web,
+                name,
+                &parsed,
+                &domain_in(&web),
+                &domain,
+            ),
         },
         Artifact {
             kind: "service",
@@ -1316,6 +1411,7 @@ fn scaffold_artifacts(
             kind: "controller",
             path: main_dir(root, &web).join(format!("{name}Controller.java")),
             contents: crate::spring::resource_controller_java(
+                base,
                 &web,
                 name,
                 &format!(
@@ -1324,15 +1420,18 @@ fn scaffold_artifacts(
                     import_of(&web, &service, &format!("{name}Service"))
                 ),
                 parsed.iter().any(|f| f.name == "id"),
+                &parsed,
             ),
         },
         Artifact {
             kind: "controller test",
             path: test_dir(root, &web).join(format!("{name}ControllerTest.java")),
             contents: crate::spring::resource_controller_test_java(
+                base,
                 &web,
                 name,
                 &import_of(&web, &service, &format!("{name}Service")),
+                &parsed,
                 webmvc_test_import(root),
             ),
         },
@@ -1364,7 +1463,8 @@ pub fn destroy(
             main_dir(&root, &place(layout::APP)).join(format!("{name}Repository.java")),
             main_dir(&root, &place(layout::ADAPTERS)).join(format!("Jdbc{name}Repository.java")),
             test_dir(&root, &place(layout::ADAPTERS)).join(format!("Jdbc{name}RepositoryIT.java")),
-            main_dir(&root, &place(layout::ADAPTERS)).join(format!("InMemory{name}Repository.java")),
+            main_dir(&root, &place(layout::ADAPTERS))
+                .join(format!("InMemory{name}Repository.java")),
             main_dir(&root, &place(layout::SERVICE)).join(format!("{name}Service.java")),
             test_dir(&root, &place(layout::SERVICE)).join(format!("{name}ServiceTest.java")),
             main_dir(&root, &place(layout::WEB)).join(format!("{name}Controller.java")),
@@ -1457,11 +1557,31 @@ pub fn destroy(
                 test_dir(&root, &pkg).join(format!("{name}ClientTest.java")),
             ]
         }
+        ArtifactKind::Fetcher => {
+            let pkg = place(layout::CLIENTS);
+            vec![
+                main_dir(&root, &pkg).join(format!("{name}Fetcher.java")),
+                main_dir(&root, &pkg).join(format!("Safe{name}Fetcher.java")),
+                test_dir(&root, &pkg).join(format!("Safe{name}FetcherTest.java")),
+            ]
+        }
         ArtifactKind::Job => {
             let pkg = place(layout::JOBS);
             vec![
                 main_dir(&root, &pkg).join(format!("{name}Job.java")),
                 test_dir(&root, &pkg).join(format!("{name}JobTest.java")),
+            ]
+        }
+        ArtifactKind::DurableJob => {
+            let jobs = place(layout::JOBS);
+            let web = subpackage(&base, config.layer(layout::WEB));
+            vec![
+                main_dir(&root, &jobs).join(format!("{name}Work.java")),
+                main_dir(&root, &jobs).join(format!("{name}Queue.java")),
+                main_dir(&root, &jobs).join(format!("Jdbc{name}Store.java")),
+                main_dir(&root, &jobs).join(format!("{name}Worker.java")),
+                main_dir(&root, &web).join(format!("{name}JobController.java")),
+                test_dir(&root, &jobs).join(format!("{name}JobIT.java")),
             ]
         }
         ArtifactKind::Event => {
@@ -1594,7 +1714,13 @@ mod tests {
             "com.example.app.domain",
             "note",
         );
-        let jdbc_bean = jdbc_client_repository("com.example.app.adapters", "Note", "", &columns, "com.example.app.domain");
+        let jdbc_bean = jdbc_client_repository(
+            "com.example.app.adapters",
+            "Note",
+            "",
+            &columns,
+            "com.example.app.domain",
+        );
         let in_memory_fake = crate::spring::in_memory_repository_java(
             "com.example.app.adapters",
             "Note",
@@ -1603,7 +1729,10 @@ mod tests {
             false,
         );
         // The annotation on the declaration, not the word in the Javadoc.
-        assert!(jdbc_bean.contains("@Component\npublic final class"), "{jdbc_bean}");
+        assert!(
+            jdbc_bean.contains("@Component\npublic final class"),
+            "{jdbc_bean}"
+        );
         assert!(
             !in_memory_fake.contains("@Component\npublic class"),
             "the JDBC adapter is the bean here, so this one must not be: {in_memory_fake}"
@@ -1621,7 +1750,10 @@ mod tests {
             Some("id"),
             true,
         );
-        assert!(in_memory_bean.contains("@Component\npublic class"), "{in_memory_bean}");
+        assert!(
+            in_memory_bean.contains("@Component\npublic class"),
+            "{in_memory_bean}"
+        );
     }
 
     /// `spring.md` calls a positional `?` list in a multi-column insert a
@@ -1640,7 +1772,13 @@ mod tests {
             "com.example.app.domain",
             "reward",
         );
-        let src = jdbc_client_repository("com.example.app.adapters", "Reward", "", &columns, "com.example.app.domain");
+        let src = jdbc_client_repository(
+            "com.example.app.adapters",
+            "Reward",
+            "",
+            &columns,
+            "com.example.app.domain",
+        );
         assert!(src.contains("JdbcClient"), "{src}");
         assert!(!src.contains("PreparedStatement"), "{src}");
         // Named, not positional.
@@ -1658,7 +1796,11 @@ mod tests {
     #[test]
     fn a_name_that_already_carries_its_kinds_suffix_does_not_get_it_twice() {
         for (kind, given, want) in [
-            (ArtifactKind::Service, "RewardHistoryService", "RewardHistory"),
+            (
+                ArtifactKind::Service,
+                "RewardHistoryService",
+                "RewardHistory",
+            ),
             (ArtifactKind::Controller, "RewardController", "Reward"),
             (ArtifactKind::Repo, "RewardRepository", "Reward"),
             (ArtifactKind::Test, "MoneyTest", "Money"),
@@ -1678,14 +1820,20 @@ mod tests {
             "RewardHistory"
         );
         // `Repository` is matched whole -- `Rewards` does not lose its `s`.
-        assert_eq!(strip_redundant_suffix(ArtifactKind::Repo, "Rewards"), "Rewards");
+        assert_eq!(
+            strip_redundant_suffix(ArtifactKind::Repo, "Rewards"),
+            "Rewards"
+        );
     }
 
     /// Stripping the whole name would leave nothing to name the file after,
     /// so `g service Service` means a type called `Service`.
     #[test]
     fn a_name_that_is_only_the_suffix_survives() {
-        assert_eq!(strip_redundant_suffix(ArtifactKind::Service, "Service"), "Service");
+        assert_eq!(
+            strip_redundant_suffix(ArtifactKind::Service, "Service"),
+            "Service"
+        );
         assert_eq!(strip_redundant_suffix(ArtifactKind::Test, "Test"), "Test");
     }
 
@@ -1748,12 +1896,15 @@ mod tests {
             "transactionId:uuid@pk".to_string(),
             "amount:long@positive@index".to_string(),
             "email:string!@unique".to_string(),
+            "workspaceId:uuid@scope@index".to_string(),
         ])
         .unwrap();
         assert!(fields[0].constraints.primary_key);
         assert_eq!(fields[1].constraints.check, Some(NumericCheck::Positive));
         assert!(fields[1].constraints.indexed);
         assert!(fields[2].constraints.unique);
+        assert!(fields[3].constraints.scoped);
+        assert!(fields[3].constraints.indexed);
         // The markers do not disturb the type or the optionality suffix.
         assert_eq!(fields[0].java_type, "UUID");
         assert_eq!(fields[2].java_type, "String");
@@ -1885,7 +2036,13 @@ mod tests {
 
     #[test]
     fn jdbc_adapter_uses_plain_jdbc_and_no_orm() {
-        let src = jdbc_repository("com.example.demo.adapters", "Transaction", "", &[], "com.example.demo.domain");
+        let src = jdbc_repository(
+            "com.example.demo.adapters",
+            "Transaction",
+            "",
+            &[],
+            "com.example.demo.domain",
+        );
 
         assert!(src.contains("implements TransactionRepository"), "{src}");
         assert!(src.contains("connection.prepareStatement"), "{src}");
@@ -2020,13 +2177,25 @@ mod tests {
     /// misspelled is the first thing anyone sees of the pattern.
     #[test]
     fn generated_strategy_test_names_are_english() {
-        let yielding =
-            strategy_impl_test("d", "RewardRule", "CoffeeRewardRule", "Transaction", Some("Reward"));
-        assert!(yielding.contains("void grantsWhenTheTransactionQualifies()"), "{yielding}");
+        let yielding = strategy_impl_test(
+            "d",
+            "RewardRule",
+            "CoffeeRewardRule",
+            "Transaction",
+            Some("Reward"),
+        );
+        assert!(
+            yielding.contains("void grantsWhenTheTransactionQualifies()"),
+            "{yielding}"
+        );
         assert!(!yielding.contains("applys"), "{yielding}");
 
-        let predicate = strategy_impl_test("d", "RewardRule", "CoffeeRewardRule", "Transaction", None);
-        assert!(predicate.contains("void matchesWhenTheTransactionQualifies()"), "{predicate}");
+        let predicate =
+            strategy_impl_test("d", "RewardRule", "CoffeeRewardRule", "Transaction", None);
+        assert!(
+            predicate.contains("void matchesWhenTheTransactionQualifies()"),
+            "{predicate}"
+        );
 
         // @Disabled, not a passing assertion over an unwritten class: it is
         // reported as skipped rather than counted green.
@@ -2354,7 +2523,10 @@ mod tests {
         );
         assert!(test.contains("@Disabled("), "{test}");
         assert!(test.contains("todo: state what Money guarantees"), "{test}");
-        assert!(test.contains("import org.junit.jupiter.api.Disabled;"), "{test}");
+        assert!(
+            test.contains("import org.junit.jupiter.api.Disabled;"),
+            "{test}"
+        );
         assert!(!test.contains("assertThatNullPointerException"), "{test}");
     }
 
@@ -2412,12 +2584,12 @@ mod tests {
 
     #[test]
     fn stub_templates_use_the_package_and_class_name() {
-        assert!(
-            stub_controller("com.example.blog", "Post").contains("class PostController")
-        );
+        assert!(stub_controller("com.example.blog", "Post").contains("class PostController"));
         // Package-private: Spring wires these by reflection, so `public` only
         // widens what other packages can compile against.
-        assert!(stub_service("com.example.blog", "Post").contains("\n@Component\nclass PostService"));
+        assert!(
+            stub_service("com.example.blog", "Post").contains("\n@Component\nclass PostService")
+        );
         assert!(
             !stub_service("com.example.blog", "Post").contains("public class"),
             "spring.md §2: public only where the type is module API"
@@ -2452,8 +2624,11 @@ mod tests {
             "post",
             &["title:string".to_string()],
             None,
-         &[],
-         None, None, false,);
+            &[],
+            None,
+            None,
+            false,
+        );
         std::env::set_current_dir(original_cwd).unwrap();
         result.unwrap();
 
@@ -2523,7 +2698,16 @@ mod tests {
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        let result = generate(ArtifactKind::Controller, "health", &[], None, &[], None, None, false);
+        let result = generate(
+            ArtifactKind::Controller,
+            "health",
+            &[],
+            None,
+            &[],
+            None,
+            None,
+            false,
+        );
         std::env::set_current_dir(original_cwd).unwrap();
         result.unwrap();
 
@@ -2555,7 +2739,16 @@ mod tests {
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        let result = generate(ArtifactKind::Service, "billing", &[], None, &[], None, None, false);
+        let result = generate(
+            ArtifactKind::Service,
+            "billing",
+            &[],
+            None,
+            &[],
+            None,
+            None,
+            false,
+        );
         std::env::set_current_dir(original_cwd).unwrap();
         result.unwrap();
 
@@ -2584,7 +2777,16 @@ mod tests {
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        let result = generate(ArtifactKind::Repo, "widget", &[], None, &[], None, None, false);
+        let result = generate(
+            ArtifactKind::Repo,
+            "widget",
+            &[],
+            None,
+            &[],
+            None,
+            None,
+            false,
+        );
         std::env::set_current_dir(original_cwd).unwrap();
         result.unwrap();
 
@@ -2625,9 +2827,21 @@ mod tests {
             "money",
             &["amount:long".to_string()],
             None,
-         &[],
-         None, None, false,);
-        let command = generate(ArtifactKind::Command, "greet", &[], None, &[], None, None, false);
+            &[],
+            None,
+            None,
+            false,
+        );
+        let command = generate(
+            ArtifactKind::Command,
+            "greet",
+            &[],
+            None,
+            &[],
+            None,
+            None,
+            false,
+        );
         std::env::set_current_dir(original_cwd).unwrap();
         record.unwrap();
         command.unwrap();
@@ -2665,7 +2879,17 @@ mod tests {
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        generate(ArtifactKind::Command, "greet", &[], None, &[], None, None, false).unwrap();
+        generate(
+            ArtifactKind::Command,
+            "greet",
+            &[],
+            None,
+            &[],
+            None,
+            None,
+            false,
+        )
+        .unwrap();
         let result = destroy(ArtifactKind::Command, "greet", true, None, false);
         std::env::set_current_dir(original_cwd).unwrap();
 
@@ -2709,7 +2933,17 @@ mod tests {
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        generate(ArtifactKind::Command, "greet", &[], None, &[], None, None, false).unwrap();
+        generate(
+            ArtifactKind::Command,
+            "greet",
+            &[],
+            None,
+            &[],
+            None,
+            None,
+            false,
+        )
+        .unwrap();
         let registered = fs::read_to_string(src.join("App.java")).unwrap();
         let result = destroy(ArtifactKind::Command, "greet", true, None, false);
         std::env::set_current_dir(original_cwd).unwrap();
@@ -2745,7 +2979,17 @@ mod tests {
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        generate(ArtifactKind::Command, "greet", &[], None, &[], None, None, false).unwrap();
+        generate(
+            ArtifactKind::Command,
+            "greet",
+            &[],
+            None,
+            &[],
+            None,
+            None,
+            false,
+        )
+        .unwrap();
         fs::remove_file(src.join("cli/GreetCommand.java")).unwrap();
         fs::remove_file(root.join("src/test/java/com/example/demo/cli/GreetCommandTest.java"))
             .unwrap();
@@ -2786,16 +3030,22 @@ mod tests {
             "tag",
             &["name:string".to_string()],
             None,
-         &[],
-         None, None, false,)
+            &[],
+            None,
+            None,
+            false,
+        )
         .unwrap();
         let clash = generate(
             ArtifactKind::Record,
             "tag",
             &["name:string".to_string()],
             None,
-         &[],
-         None, None, false,);
+            &[],
+            None,
+            None,
+            false,
+        );
         let result = destroy(ArtifactKind::Record, "tag", true, None, false);
         std::env::set_current_dir(original_cwd).unwrap();
 
@@ -2830,7 +3080,16 @@ mod tests {
 
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&root).unwrap();
-        let result = generate(ArtifactKind::Controller, "comment", &[], None, &[], None, None, false);
+        let result = generate(
+            ArtifactKind::Controller,
+            "comment",
+            &[],
+            None,
+            &[],
+            None,
+            None,
+            false,
+        );
         std::env::set_current_dir(original_cwd).unwrap();
 
         assert!(result.is_err());
@@ -2860,8 +3119,11 @@ mod tests {
             "tag",
             &["name:string".to_string()],
             None,
-         &[],
-         None, None, false,)
+            &[],
+            None,
+            None,
+            false,
+        )
         .unwrap();
         let result = destroy(ArtifactKind::Record, "tag", true, None, false);
         std::env::set_current_dir(original_cwd).unwrap();

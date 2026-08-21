@@ -5,9 +5,9 @@
 //! different lists of the same generic intents; neither gets a command,
 //! branch, enum, or template in Jails core.
 
+use crate::Result;
 use crate::add::Capability;
 use crate::generate::{self, ArtifactKind};
-use crate::Result;
 use clap::{Subcommand, ValueEnum};
 use std::collections::HashSet;
 use std::fs;

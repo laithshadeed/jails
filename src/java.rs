@@ -252,7 +252,8 @@ fn target_at(text: &str, mut at: usize) -> Target {
             // A nested annotation on the same declaration -- skip it whole.
             b'@' => {
                 let mut end = at + 1;
-                while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_')
+                while end < bytes.len()
+                    && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_')
                 {
                     end += 1;
                 }
@@ -365,7 +366,8 @@ pub(crate) fn type_info(source: &str) -> Option<TypeInfo> {
     let bytes = text.as_bytes();
     let name_start = skip_space(&text, keyword_at + keyword.len());
     let mut name_end = name_start;
-    while name_end < bytes.len() && (bytes[name_end].is_ascii_alphanumeric() || bytes[name_end] == b'_')
+    while name_end < bytes.len()
+        && (bytes[name_end].is_ascii_alphanumeric() || bytes[name_end] == b'_')
     {
         name_end += 1;
     }
@@ -382,9 +384,7 @@ pub(crate) fn type_info(source: &str) -> Option<TypeInfo> {
     for clause in ["extends", "implements", "permits"] {
         if let Some(at) = header.find(clause) {
             let rest = &header[at + clause.len()..];
-            let end = rest
-                .find(|c| c == '{')
-                .unwrap_or(rest.len());
+            let end = rest.find(|c| c == '{').unwrap_or(rest.len());
             let end = ["extends", "implements", "permits"]
                 .iter()
                 .filter_map(|next| rest.find(next))
@@ -441,7 +441,9 @@ fn widest_constructor(text: &str, class_name: &str) -> Vec<Param> {
         }
         // `new Name(...)` and `class Name` are not constructor declarations.
         let preceding = text[..at].trim_end();
-        if preceding.ends_with("new") || preceding.ends_with("class") || preceding.ends_with("record")
+        if preceding.ends_with("new")
+            || preceding.ends_with("class")
+            || preceding.ends_with("record")
         {
             continue;
         }
@@ -591,7 +593,9 @@ pub(crate) fn annotation_string(args: &str) -> Option<String> {
     }
     // A bare `@GetMapping("/x")` has no key at all -- but `@GetMapping(produces
     // = "application/json")` does, and its literal is not a path.
-    if args.contains('=') && !args.trim_start().starts_with('"') && !args.trim_start().starts_with('{')
+    if args.contains('=')
+        && !args.trim_start().starts_with('"')
+        && !args.trim_start().starts_with('{')
     {
         return None;
     }
@@ -656,7 +660,10 @@ public final class RewardController {
 }"#;
         let found = annotations(src);
         let by = |n: &str| found.iter().find(|a| a.name == n).cloned().unwrap();
-        assert_eq!(by("RestController").target, Target::Type("RewardController".into()));
+        assert_eq!(
+            by("RestController").target,
+            Target::Type("RewardController".into())
+        );
         assert_eq!(by("RequestMapping").args, r#""/rewards""#);
         assert_eq!(
             by("GetMapping").target,

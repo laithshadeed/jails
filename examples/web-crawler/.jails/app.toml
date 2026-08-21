@@ -1,6 +1,6 @@
 # Generic Jails application manifest: no crawler-specific core command exists.
 schema = 1
-capabilities = ["db", "api", "actuator", "observability", "security", "json", "testkit", "kafka"]
+capabilities = ["db", "api", "actuator", "observability", "security", "json", "testkit", "kafka", "docker", "ci"]
 
 [[generate]]
 kind = "enum"
@@ -22,13 +22,13 @@ indexes = ["crawl_run_id, discovered_at desc"]
 [[generate]]
 kind = "usecase"
 name = "QueueCrawl"
-fields = ["seedUrl:uri"]
+fields = ["id:uuid", "seedUrl:uri"]
 strategy_on = "CrawlRun"
 
 [[generate]]
 kind = "usecase"
 name = "RecordCrawledPage"
-fields = ["crawlRunId:uuid", "url:uri", "statusCode:int"]
+fields = ["id:uuid", "crawlRunId:uuid", "url:uri", "statusCode:int"]
 strategy_on = "CrawledPage"
 
 [[generate]]
@@ -44,7 +44,7 @@ fields = ["crawlRunId:uuid"]
 strategy_on = "CrawledPage"
 
 [[generate]]
-kind = "client"
+kind = "fetcher"
 name = "PageFetcher"
 
 [[generate]]
@@ -53,5 +53,8 @@ name = "PageDiscovered"
 fields = ["id:uuid", "crawlRunId:uuid", "url:uri", "occurredAt:instant"]
 
 [[generate]]
-kind = "job"
+kind = "durable-job"
 name = "CrawlDispatcher"
+fields = ["id:uuid", "seedUrl:uri"]
+strategy_on = "QueueCrawl"
+strategy_yields = "CrawlRun"

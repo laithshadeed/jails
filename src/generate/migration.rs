@@ -29,7 +29,7 @@ pub(super) fn generate_migration(root: &Path, description: &str, pretend: bool) 
     Ok(())
 }
 
-pub(super) fn next_migration_version(dir: &Path) -> Result<u32> {
+pub(crate) fn next_migration_version(dir: &Path) -> Result<u32> {
     if !dir.exists() {
         return Ok(1);
     }
@@ -348,4 +348,3 @@ pub(super) fn cases_java(pkg: &str, class: &str, brief: &Path, cases: &[String])
     out += "}\n";
     out
 }
-

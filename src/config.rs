@@ -176,15 +176,13 @@ impl Config {
                          The only key is `{CAPABILITIES_KEY}`."
                     ));
                 }
-                for label in parse_string_array(value.trim())
-                    .ok_or_else(|| {
-                        format!(
-                            "line {lineno}: `{CAPABILITIES_KEY}` must be a list of \
+                for label in parse_string_array(value.trim()).ok_or_else(|| {
+                    format!(
+                        "line {lineno}: `{CAPABILITIES_KEY}` must be a list of \
                              double-quoted names, e.g. \
                              `{CAPABILITIES_KEY} = [\"db\", \"json\"]`"
-                        )
-                    })?
-                {
+                    )
+                })? {
                     if !is_known_capability(&label) {
                         return Err(format!(
                             "line {lineno}: unknown capability `{label}`. Known: {}",
@@ -464,7 +462,10 @@ mod tests {
     fn a_misspelled_layer_is_an_error_not_a_no_op() {
         let err = Config::parse("[layout]\nadapter = \"persistence\"\n").unwrap_err();
         assert!(err.contains("unknown layer `adapter`"), "{err}");
-        assert!(err.contains("adapters"), "the message should list the real names: {err}");
+        assert!(
+            err.contains("adapters"),
+            "the message should list the real names: {err}"
+        );
     }
 
     #[test]
@@ -539,7 +540,10 @@ mod tests {
     fn an_unknown_capability_is_an_error_naming_the_real_ones() {
         let err = Config::parse("[project]\ncapabilities = [\"postgress\"]\n").unwrap_err();
         assert!(err.contains("unknown capability `postgress`"), "{err}");
-        assert!(err.contains("db"), "the message should list the real ones: {err}");
+        assert!(
+            err.contains("db"),
+            "the message should list the real ones: {err}"
+        );
     }
 
     #[test]
@@ -607,8 +611,14 @@ mod tests {
 
         let text = fs::read_to_string(dir.join(FILE)).unwrap();
         assert!(text.contains("# how this project is laid out"), "{text}");
-        assert!(text.contains("adapters = \"persistence\" # not `adapters`"), "{text}");
-        assert!(text.contains("capabilities = [\"db\", \"kafka\"]"), "{text}");
+        assert!(
+            text.contains("adapters = \"persistence\" # not `adapters`"),
+            "{text}"
+        );
+        assert!(
+            text.contains("capabilities = [\"db\", \"kafka\"]"),
+            "{text}"
+        );
         // The layout override still parses and still applies.
         let config = Config::load(&dir).unwrap();
         assert_eq!(config.layer(layout::ADAPTERS), "persistence");

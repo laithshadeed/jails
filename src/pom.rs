@@ -20,25 +20,16 @@ use std::path::Path;
 ///
 /// **This is the one place the target is decided.** Three other files
 /// describe the same toolchain and have to agree with it: `mise.toml` (which
-/// JDK this machine installs), `new::initializr_java` (the newest release
-/// start.spring.io will accept, currently 26 -- projects are bootstrapped
-/// there and then set to this), and `tests/common/mod.rs`'s `TARGET_RELEASE`
+/// JDK this machine installs) and `tests/common/mod.rs`'s `TARGET_RELEASE`
 /// (the integration tests compile against the binary, not the library, so the
 /// constant cannot be imported; `target_release_matches_the_binary` pins them
 /// together).
 ///
-/// 27 is deliberate and is not free. It is not GA until 2026-09-15, so on a
-/// machine whose `javac` is older, **every real-toolchain test self-skips** --
-/// the suite still reports green while the one tier that answers "does this
-/// produce a project that compiles?" has not run. `mise.toml` provides a JDK
-/// that satisfies it; if you change this constant, change that pin with it.
-///
-/// This doc used to argue for 25 while the constant said 27, which is how a
-/// reader ends up trusting the wrong half. The floor for *generated code* is
-/// a separate question and a lower number -- see `MIN_RELEASE`, which is what
-/// `add` checks, so a project pinned below this default is still one jails
-/// can grow.
-pub const TARGET_RELEASE: &str = "27";
+/// Java 25 is the current LTS and the conservative production default. Newer
+/// GA or early-access releases remain an explicit `--java`/`--release`
+/// choice; the default must not make real-toolchain tests silently skip while
+/// waiting for a future JDK to ship.
+pub const TARGET_RELEASE: &str = "25";
 
 /// The oldest release the *generated* Java actually needs. Everything jails
 /// emits -- records, sealed interfaces, text blocks, pattern-matching switch,

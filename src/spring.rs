@@ -67,6 +67,18 @@ pub(crate) const RESTCLIENT_STARTER: Dependency = Dependency {
     optional: false,
 };
 
+/// Apache HttpClient is used by the safe fetcher because its DNS resolver can
+/// be pinned to the addresses that passed policy validation. JDK HttpClient
+/// does not expose that boundary, leaving a DNS-rebinding window between
+/// validation and connection.
+pub(crate) const APACHE_HTTPCLIENT: Dependency = Dependency {
+    group_id: "org.apache.httpcomponents.client5",
+    artifact_id: "httpclient5",
+    version: None,
+    scope: None,
+    optional: false,
+};
+
 /// Caffeine is the cache Spring Boot picks up automatically when it is on
 /// the classpath and nothing else claims the slot. Version managed by the
 /// Boot parent so it moves with the platform.
@@ -114,10 +126,7 @@ pub(crate) fn api_slice(root: &Path, pkg: &str) -> SpringSlice {
     SpringSlice {
         deps: vec![VALIDATION_STARTER],
         files: vec![
-            (
-                main.join("ApiException.java"),
-                api_exception_java(pkg),
-            ),
+            (main.join("ApiException.java"), api_exception_java(pkg)),
             (
                 main.join("ApiExceptionHandler.java"),
                 api_exception_handler_java(pkg),
@@ -138,15 +147,24 @@ pub(crate) fn api_slice(root: &Path, pkg: &str) -> SpringSlice {
 /// With `permits` spelled out, adding one breaks the build at the switch --
 /// which is where the decision about its status code belongs.
 fn api_exception_java(pkg: &str) -> String {
-    crate::template::render(include_str!("../templates/spring/api_exception_java.java"), &[("pkg", pkg)])
+    crate::template::render(
+        include_str!("../templates/spring/api_exception_java.java"),
+        &[("pkg", pkg)],
+    )
 }
 
 fn api_exception_handler_java(pkg: &str) -> String {
-    crate::template::render(include_str!("../templates/spring/api_exception_handler_java.java"), &[("pkg", pkg)])
+    crate::template::render(
+        include_str!("../templates/spring/api_exception_handler_java.java"),
+        &[("pkg", pkg)],
+    )
 }
 
 fn api_exception_handler_test_java(pkg: &str) -> String {
-    crate::template::render(include_str!("../templates/spring/api_exception_handler_test_java.java"), &[("pkg", pkg)])
+    crate::template::render(
+        include_str!("../templates/spring/api_exception_handler_test_java.java"),
+        &[("pkg", pkg)],
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -209,7 +227,10 @@ pub(crate) fn actuator_slice(root: &Path, pkg: &str) -> SpringSlice {
 }
 
 fn actuator_test_java(pkg: &str, mockmvc_import: &str) -> String {
-    crate::template::render(include_str!("../templates/spring/actuator_test_java.java"), &[("pkg", pkg), ("mockmvc_import", mockmvc_import)])
+    crate::template::render(
+        include_str!("../templates/spring/actuator_test_java.java"),
+        &[("pkg", pkg), ("mockmvc_import", mockmvc_import)],
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -234,11 +255,17 @@ pub(crate) fn cache_slice(root: &Path, pkg: &str) -> SpringSlice {
 }
 
 fn cache_config_java(pkg: &str) -> String {
-    crate::template::render(include_str!("../templates/spring/cache_config_java.java"), &[("pkg", pkg)])
+    crate::template::render(
+        include_str!("../templates/spring/cache_config_java.java"),
+        &[("pkg", pkg)],
+    )
 }
 
 fn cache_test_java(pkg: &str) -> String {
-    crate::template::render(include_str!("../templates/spring/cache_test_java.java"), &[("pkg", pkg)])
+    crate::template::render(
+        include_str!("../templates/spring/cache_test_java.java"),
+        &[("pkg", pkg)],
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -326,7 +353,10 @@ public interface {name}Client {{
 }
 
 fn client_config_java(pkg: &str, group: &str) -> String {
-    crate::template::render(include_str!("../templates/spring/client_config_java.java"), &[("pkg", pkg), ("group", group)])
+    crate::template::render(
+        include_str!("../templates/spring/client_config_java.java"),
+        &[("pkg", pkg), ("group", group)],
+    )
 }
 
 fn client_test_java(pkg: &str, name: &str, group: &str) -> String {
@@ -415,6 +445,46 @@ class {name}ClientTest {{
 }
 
 // ---------------------------------------------------------------------------
+// `generate fetcher` -- bounded, SSRF-safe outbound bytes.
+// ---------------------------------------------------------------------------
+
+pub(crate) fn fetcher_files(
+    root: &Path,
+    pkg: &str,
+    name: &str,
+) -> Vec<(std::path::PathBuf, String, &'static str)> {
+    let main = crate::generate::main_dir(root, pkg);
+    let test = crate::generate::test_dir(root, pkg);
+    let property = crate::sql::snake_case(name).replace('_', "-");
+    vec![
+        (
+            main.join(format!("{name}Fetcher.java")),
+            crate::template::render(
+                include_str!("../templates/spring/fetcher_port_java.java"),
+                &[("pkg", pkg), ("name", name)],
+            ),
+            "safe fetch port",
+        ),
+        (
+            main.join(format!("Safe{name}Fetcher.java")),
+            crate::template::render(
+                include_str!("../templates/spring/safe_fetcher_java.java"),
+                &[("pkg", pkg), ("name", name), ("property", &property)],
+            ),
+            "safe fetch adapter",
+        ),
+        (
+            test.join(format!("Safe{name}FetcherTest.java")),
+            crate::template::render(
+                include_str!("../templates/spring/safe_fetcher_test_java.java"),
+                &[("pkg", pkg), ("name", name)],
+            ),
+            "safe fetch adversarial test",
+        ),
+    ]
+}
+
+// ---------------------------------------------------------------------------
 // `generate job` -- scheduled work.
 // ---------------------------------------------------------------------------
 
@@ -496,11 +566,874 @@ public class {name}Job {{
 }
 
 fn scheduling_config_java(pkg: &str) -> String {
-    crate::template::render(include_str!("../templates/spring/scheduling_config_java.java"), &[("pkg", pkg)])
+    crate::template::render(
+        include_str!("../templates/spring/scheduling_config_java.java"),
+        &[("pkg", pkg)],
+    )
 }
 
 fn job_test_java(pkg: &str, name: &str) -> String {
-    crate::template::render(include_str!("../templates/spring/job_test_java.java"), &[("pkg", pkg), ("name", name)])
+    crate::template::render(
+        include_str!("../templates/spring/job_test_java.java"),
+        &[("pkg", pkg), ("name", name)],
+    )
+}
+
+// ---------------------------------------------------------------------------
+// `generate durable-job` -- leased PostgreSQL work composed with a use case.
+// ---------------------------------------------------------------------------
+
+/// Generate at-least-once durable execution without teaching Jails a domain.
+///
+/// The work fields must exactly match an existing generated command and must
+/// include its stable UUID `id`. `--yields` names the resource created by the
+/// use case. That lets a reclaimed execution observe an already-committed
+/// resource and mark the work successful after a crash between the business
+/// commit and the queue acknowledgement.
+pub(crate) fn durable_job_files(
+    root: &Path,
+    security: &str,
+    jobs: &str,
+    web: &str,
+    service: &str,
+    app: &str,
+    domain: &str,
+    name: &str,
+    usecase: &str,
+    target: &str,
+    fields: &[crate::generate::Field],
+) -> crate::Result<Vec<(std::path::PathBuf, String, &'static str)>> {
+    require_scope_authorizer(root, security, "durable-job", name, fields)?;
+    let pom = std::fs::read_to_string(root.join("pom.xml"))
+        .map_err(|e| format!("failed to read pom.xml: {e}"))?;
+    if !crate::pom::has_dependency(&pom, "org.springframework.boot", "spring-boot-starter-jdbc") {
+        return Err(format!(
+            "durable-job {name} needs PostgreSQL/JDBC for durable leasing.\n       fix: run `jails add db` before generating it."
+        ));
+    }
+    let id = fields
+        .iter()
+        .find(|field| field.name == "id")
+        .ok_or_else(|| format!("durable-job {name} needs a stable `id:uuid` field"))?;
+    if usecase_normalized_type(&id.java_type) != "UUID"
+        || id.optionality == crate::generate::Optionality::Nullable
+    {
+        return Err(format!(
+            "durable-job {name} needs required `id:uuid`; it received id:{}",
+            id.java_type
+        ));
+    }
+    if let Some(field) = fields.iter().find(|field| {
+        field.optionality == crate::generate::Optionality::Nullable || field.collection
+    }) {
+        return Err(format!(
+            "durable-job {name} field `{}` is optional or a collection. Durable payload v1 accepts required scalar JDBC fields so storage and equality are exact.",
+            field.name
+        ));
+    }
+    let command_name = format!("{usecase}Command");
+    let command_fields = crate::generate::fields_from_record(root, service, &command_name)
+        .ok_or_else(|| {
+            format!(
+                "durable-job {name} cannot read {command_name}.java. Generate usecase {usecase} first."
+            )
+        })?;
+    if fields.len() != command_fields.len()
+        || fields.iter().zip(&command_fields).any(|(work, command)| {
+            work.name != command.name
+                || usecase_normalized_type(&work.java_type)
+                    != usecase_normalized_type(&command.java_type)
+                || (work.optionality == crate::generate::Optionality::Nullable)
+                    != (command.optionality == crate::generate::Optionality::Nullable)
+        })
+    {
+        let wanted = command_fields
+            .iter()
+            .map(|field| format!("{}:{}", field.name, usecase_field_type(field)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(format!(
+            "durable-job {name} fields must exactly match {command_name} in declaration order.\n       expected: {wanted}"
+        ));
+    }
+    let target_fields = crate::generate::fields_from_record(root, domain, target)
+        .ok_or_else(|| format!("durable-job {name} cannot read target resource {target}.java"))?;
+    let target_id = target_fields
+        .iter()
+        .find(|field| field.name == "id")
+        .ok_or_else(|| format!("durable-job {name} target {target} has no stable id"))?;
+    if usecase_normalized_type(&target_id.java_type) != "UUID" {
+        return Err(format!(
+            "durable-job {name} v1 needs {target}.id to be UUID so work and effect share one stable identity"
+        ));
+    }
+
+    let columns = crate::sql::columns(fields, root, domain, "work");
+    let unmapped = columns
+        .iter()
+        .filter(|column| !column.mapped())
+        .map(|column| column.name.as_str())
+        .collect::<Vec<_>>();
+    if !unmapped.is_empty() {
+        return Err(format!(
+            "durable-job {name} cannot map payload column(s): {}",
+            unmapped.join(", ")
+        ));
+    }
+
+    let migration_dir = root.join("src/main/resources/db/migration");
+    let version = crate::generate::next_migration_version(&migration_dir)?;
+    let table = format!("{}_jobs", crate::sql::snake_case(name));
+    let main_jobs = crate::generate::main_dir(root, jobs);
+    let test_jobs = crate::generate::test_dir(root, jobs);
+    let main_web = crate::generate::main_dir(root, web);
+    Ok(vec![
+        (
+            main_jobs.join(format!("{name}Work.java")),
+            durable_work_java(jobs, domain, name, fields),
+            "durable work payload",
+        ),
+        (
+            main_jobs.join(format!("{name}Queue.java")),
+            durable_queue_java(jobs, name),
+            "durable work queue port",
+        ),
+        (
+            main_jobs.join(format!("Jdbc{name}Store.java")),
+            durable_store_java(jobs, domain, name, &table, &columns),
+            "durable PostgreSQL store",
+        ),
+        (
+            main_jobs.join(format!("{name}Worker.java")),
+            durable_worker_java(jobs, service, app, name, usecase, target, fields),
+            "durable worker",
+        ),
+        (
+            main_web.join(format!("{name}JobController.java")),
+            durable_job_controller_java(security, jobs, web, name, fields),
+            "durable job controller",
+        ),
+        (
+            test_jobs.join(format!("{name}JobIT.java")),
+            durable_job_it_java(root, jobs, app, domain, name, target, &table, fields),
+            "durable job integration test",
+        ),
+        (
+            migration_dir.join(format!("V{version:03}__create_{table}.sql")),
+            durable_job_migration(&table, &columns),
+            "durable job migration",
+        ),
+    ])
+}
+
+fn durable_work_java(
+    pkg: &str,
+    domain: &str,
+    name: &str,
+    fields: &[crate::generate::Field],
+) -> String {
+    let class = format!("{name}Work");
+    let mut source = crate::generate::record_java(pkg, &class, fields);
+    let mut imports = fields
+        .iter()
+        .filter(|field| field.owned && domain != pkg)
+        .map(|field| format!("import {domain}.{};", field.java_type))
+        .collect::<Vec<_>>();
+    imports.sort();
+    imports.dedup();
+    if !imports.is_empty() {
+        let package = format!("package {pkg};\n");
+        source = source.replacen(&package, &format!("{package}\n{}\n", imports.join("\n")), 1);
+        source = crate::generate::normalize_imports(&source);
+    }
+    source.replace(
+        &format!(" * An immutable {class} value."),
+        &format!(" * Stable, persistable input for the {name} durable job."),
+    )
+}
+
+fn durable_queue_java(pkg: &str, name: &str) -> String {
+    format!(
+        r#"package {pkg};
+
+import java.time.Instant;
+import java.util.Optional;
+import java.util.UUID;
+
+/** Application-facing durable work queue. Reusing an id requires equal payload. */
+public interface {name}Queue {{
+
+    void enqueue({name}Work work);
+
+    Optional<Status> status(UUID id);
+
+    enum State {{ PENDING, RUNNING, SUCCEEDED, FAILED }}
+
+    record Status(UUID id, State state, int attempts, Instant nextAttemptAt,
+                  Optional<String> lastError, Optional<Instant> completedAt) {{}}
+
+    final class IdempotencyConflictException extends RuntimeException {{
+        public IdempotencyConflictException(UUID id) {{
+            super("work id " + id + " was already used with a different payload");
+        }}
+    }}
+}}
+"#
+    )
+}
+
+fn durable_store_java(
+    pkg: &str,
+    domain: &str,
+    name: &str,
+    table: &str,
+    columns: &[crate::sql::Column],
+) -> String {
+    let property = crate::sql::snake_case(name).replace('_', "-");
+    let mut imports = crate::sql::imports(columns)
+        .into_iter()
+        .map(|import| format!("import {import};\n"))
+        .collect::<String>();
+    for column in columns {
+        if crate::generate::builtin_by_java_name(&column.java_type).is_none() {
+            imports.push_str(&crate::generate::import_of(pkg, domain, &column.java_type));
+        }
+    }
+    let names = columns
+        .iter()
+        .map(|column| column.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let placeholders = columns
+        .iter()
+        .map(|column| format!(":{}", column.name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let bindings = columns
+        .iter()
+        .map(|column| {
+            format!(
+                "                .param(\"{}\", {})",
+                column.name,
+                column.write.as_deref().expect("mapped durable column")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let select = columns
+        .iter()
+        .map(|column| column.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let returning = columns
+        .iter()
+        .map(|column| format!("jobs.{} as {}", column.name, column.name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let map_args = columns
+        .iter()
+        .map(|column| format!("                    {}", column.read.as_deref().unwrap()))
+        .collect::<Vec<_>>()
+        .join(",\n");
+    format!(
+        r#"package {pkg};
+
+{imports}import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.UUID;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
+
+/** PostgreSQL queue with skip-locked claiming, leases, bounded retry and terminal failure. */
+@Component
+public class Jdbc{name}Store implements {name}Queue {{
+
+    private final JdbcClient db;
+    private final int maxAttempts;
+    private final int leaseSeconds;
+
+    public Jdbc{name}Store(
+            JdbcClient db,
+            @Value("${{jobs.{property}.max-attempts:10}}") int maxAttempts,
+            @Value("${{jobs.{property}.lease-seconds:30}}") int leaseSeconds) {{
+        this.db = Objects.requireNonNull(db, "db is required");
+        if (maxAttempts < 1 || leaseSeconds < 1) {{
+            throw new IllegalArgumentException("max attempts and lease seconds must be positive");
+        }}
+        this.maxAttempts = maxAttempts;
+        this.leaseSeconds = leaseSeconds;
+    }}
+
+    @Override
+    @Transactional
+    public void enqueue({name}Work work) {{
+        Objects.requireNonNull(work, "work is required");
+        int inserted = db.sql("""
+                        insert into {table} ({names}, state, attempts, max_attempts,
+                                next_attempt_at, created_at)
+                        values ({placeholders}, 'PENDING', 0, :maxAttempts, now(), now())
+                        on conflict (id) do nothing
+                        """)
+{bindings}
+                .param("maxAttempts", maxAttempts)
+                .update();
+        if (inserted == 0) {{
+            var existing = findWork(work.id()).orElseThrow();
+            if (!existing.equals(work)) {{
+                throw new {name}Queue.IdempotencyConflictException(work.id());
+            }}
+        }}
+    }}
+
+    @Override
+    public Optional<Status> status(UUID id) {{
+        Objects.requireNonNull(id, "id is required");
+        return db.sql("""
+                        select id, state, attempts, next_attempt_at, last_error, completed_at
+                        from {table}
+                        where id = :id
+                        """)
+                .param("id", id)
+                .query((rows, rowNumber) -> new Status(
+                        rows.getObject("id", UUID.class),
+                        State.valueOf(rows.getString("state")),
+                        rows.getInt("attempts"),
+                        rows.getObject("next_attempt_at", OffsetDateTime.class).toInstant(),
+                        Optional.ofNullable(rows.getString("last_error")),
+                        Optional.ofNullable(rows.getObject("completed_at", OffsetDateTime.class))
+                                .map(OffsetDateTime::toInstant)))
+                .optional();
+    }}
+
+    @Transactional
+    public Optional<Claimed> claim() {{
+        return db.sql("""
+                        with candidate as (
+                            select id
+                            from {table}
+                            where (state = 'PENDING' and next_attempt_at <= now())
+                               or (state = 'RUNNING' and lease_until <= now())
+                            order by next_attempt_at, created_at
+                            for update skip locked
+                            limit 1
+                        )
+                        update {table} jobs
+                        set state = 'RUNNING',
+                            attempts = jobs.attempts + 1,
+                            lease_until = now() + make_interval(secs => :leaseSeconds)
+                        from candidate
+                        where jobs.id = candidate.id
+                        returning {returning}, jobs.attempts
+                        """)
+                .param("leaseSeconds", leaseSeconds)
+                .query(Jdbc{name}Store::mapClaim)
+                .optional();
+    }}
+
+    @Transactional
+    public void succeed(UUID id) {{
+        db.sql("""
+                        update {table}
+                        set state = 'SUCCEEDED', completed_at = now(), lease_until = null,
+                            last_error = null
+                        where id = :id and state = 'RUNNING'
+                        """)
+                .param("id", id)
+                .update();
+    }}
+
+    @Transactional
+    public void fail(UUID id, RuntimeException failure) {{
+        String error = String.valueOf(failure.getMessage());
+        if (error.length() > 4000) error = error.substring(0, 4000);
+        db.sql("""
+                        update {table}
+                        set state = case when attempts >= max_attempts then 'FAILED' else 'PENDING' end,
+                            next_attempt_at = now() + make_interval(
+                                    secs => least(300, cast(power(2, attempts) as integer))),
+                            lease_until = null,
+                            last_error = :error,
+                            completed_at = case when attempts >= max_attempts then now() else null end
+                        where id = :id and state = 'RUNNING'
+                        """)
+                .param("id", id)
+                .param("error", error)
+                .update();
+    }}
+
+    private Optional<{name}Work> findWork(UUID id) {{
+        return db.sql("select {select} from {table} where id = :id")
+                .param("id", id)
+                .query((rows, rowNumber) -> mapWork(rows))
+                .optional();
+    }}
+
+    private static Claimed mapClaim(ResultSet rows, int rowNumber) throws SQLException {{
+        return new Claimed(mapWork(rows), rows.getInt("attempts"));
+    }}
+
+    private static {name}Work mapWork(ResultSet rows) throws SQLException {{
+        return new {name}Work(
+{map_args});
+    }}
+
+    public record Claimed({name}Work work, int attempt) {{}}
+}}
+"#
+    )
+}
+
+fn durable_worker_java(
+    pkg: &str,
+    service: &str,
+    app: &str,
+    name: &str,
+    usecase: &str,
+    target: &str,
+    fields: &[crate::generate::Field],
+) -> String {
+    let command_import = crate::generate::import_of(pkg, service, &format!("{usecase}Command"));
+    let usecase_import = crate::generate::import_of(pkg, service, &format!("{usecase}UseCase"));
+    let repo_import = crate::generate::import_of(pkg, app, &format!("{target}Repository"));
+    let args = fields
+        .iter()
+        .map(|field| format!("                    work.{}()", field.name))
+        .collect::<Vec<_>>()
+        .join(",\n");
+    let property = crate::sql::snake_case(name).replace('_', "-");
+    format!(
+        r#"package {pkg};
+
+{command_import}{usecase_import}{repo_import}import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
+
+/** At-least-once worker; an expired lease is reclaimed after process death. */
+@Component
+public final class {name}Worker {{
+
+    private static final Logger log = LoggerFactory.getLogger({name}Worker.class);
+    private final Jdbc{name}Store store;
+    private final {usecase}UseCase useCase;
+    private final {target}Repository results;
+
+    public {name}Worker(Jdbc{name}Store store, {usecase}UseCase useCase,
+                       {target}Repository results) {{
+        this.store = store;
+        this.useCase = useCase;
+        this.results = results;
+    }}
+
+    @Scheduled(
+            fixedDelayString = "${{jobs.{property}.delay:PT1S}}",
+            initialDelayString = "${{jobs.{property}.initial-delay:PT1S}}")
+    public void run() {{
+        try {{
+            runOnce();
+        }} catch (RuntimeException infrastructureFailure) {{
+            log.error("{name} could not claim durable work; the schedule continues", infrastructureFailure);
+        }}
+    }}
+
+    public void runOnce() {{
+        store.claim().ifPresent(this::execute);
+    }}
+
+    private void execute(Jdbc{name}Store.Claimed claimed) {{
+        var work = claimed.work();
+        try {{
+            // A process can die after the use-case transaction commits and
+            // before this queue row is acknowledged. The stable shared id is
+            // the recovery proof: do not repeat an already-visible effect.
+            if (results.findById(String.valueOf(work.id())).isEmpty()) {{
+                useCase.execute(new {usecase}Command(
+{args}));
+            }}
+            store.succeed(work.id());
+        }} catch (RuntimeException failure) {{
+            store.fail(work.id(), failure);
+            log.warn("{name} attempt {{}} failed", claimed.attempt(), failure);
+        }}
+    }}
+}}
+"#
+    )
+}
+
+fn durable_job_controller_java(
+    security: &str,
+    jobs: &str,
+    web: &str,
+    name: &str,
+    fields: &[crate::generate::Field],
+) -> String {
+    let queue_import = crate::generate::import_of(web, jobs, &format!("{name}Queue"));
+    let work_import = crate::generate::import_of(web, jobs, &format!("{name}Work"));
+    let (
+        scope_import,
+        scope_field,
+        scope_constructor,
+        scope_assignment,
+        scope_parameter,
+        scope_checks,
+    ) = scope_controller_parts(security, web, fields, "work");
+    let path = format!("/jobs/{}", crate::sql::snake_case(name).replace('_', "-"));
+    format!(
+        r#"package {web};
+
+{queue_import}{work_import}{scope_import}import jakarta.validation.Valid;
+import java.net.URI;
+import java.util.UUID;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
+
+import static org.springframework.http.HttpStatus.CONFLICT;
+import static org.springframework.http.HttpStatus.NOT_FOUND;
+
+/** HTTP submission/status adapter for durable work. */
+@RestController
+@RequestMapping({name}JobController.PATH)
+public final class {name}JobController {{
+
+    public static final String PATH = "{path}";
+    private final {name}Queue queue;
+{scope_field}
+
+    public {name}JobController({name}Queue queue{scope_constructor}) {{
+        this.queue = queue;
+{scope_assignment}
+    }}
+
+    @PostMapping
+    public ResponseEntity<{name}Queue.Status> enqueue(
+            @Valid @RequestBody {name}Work work{scope_parameter}) {{
+{scope_checks}
+        try {{
+            queue.enqueue(work);
+        }} catch ({name}Queue.IdempotencyConflictException conflict) {{
+            throw new ResponseStatusException(CONFLICT, conflict.getMessage(), conflict);
+        }}
+        var status = queue.status(work.id()).orElseThrow();
+        return ResponseEntity.accepted()
+                .location(URI.create(PATH + "/" + work.id()))
+                .body(status);
+    }}
+
+    @GetMapping("/{{id}}")
+    public {name}Queue.Status status(@PathVariable UUID id) {{
+        return queue.status(id)
+                .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "work not found"));
+    }}
+}}
+"#
+    )
+}
+
+fn durable_job_it_java(
+    root: &Path,
+    pkg: &str,
+    app: &str,
+    domain: &str,
+    name: &str,
+    target: &str,
+    table: &str,
+    fields: &[crate::generate::Field],
+) -> String {
+    let property = crate::sql::snake_case(name).replace('_', "-");
+    let samples = fields
+        .iter()
+        .map(|field| crate::generate::sample_value(field, root, domain))
+        .collect::<Option<Vec<_>>>();
+    let disabled = samples.is_none();
+    let args = samples.unwrap_or_default().join(",\n                ");
+    let alternate = fields.iter().enumerate().find_map(|(index, field)| {
+        (field.name != "id")
+            .then(|| durable_alternate_sample(field))
+            .flatten()
+            .map(|value| (index, value))
+    });
+    let conflict_test = alternate.map_or_else(String::new, |(changed, alternate)| {
+        let alternate_args = fields
+            .iter()
+            .enumerate()
+            .map(|(index, field)| {
+                if index == changed {
+                    alternate.clone()
+                } else {
+                    crate::generate::sample_value(field, root, domain).unwrap()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(",\n                ");
+        format!(
+            r#"
+    @Test
+    void reusingAnIdWithDifferentPayloadIsAConflict() {{
+        var original = new {name}Work(
+                {args});
+        var conflicting = new {name}Work(
+                {alternate_args});
+
+        queue.enqueue(original);
+
+        assertThatThrownBy(() -> queue.enqueue(conflicting))
+                .isInstanceOf({name}Queue.IdempotencyConflictException.class);
+    }}
+"#
+        )
+    });
+    let imports = java_literal_imports(fields, domain)
+        .into_iter()
+        .map(|import| format!("import {import};\n"))
+        .collect::<String>();
+    let repository_import = crate::generate::import_of(pkg, app, &format!("{target}Repository"));
+    let disabled_import = if disabled {
+        "import org.junit.jupiter.api.Disabled;\n"
+    } else {
+        ""
+    };
+    let annotation = if disabled {
+        "@Disabled(\"todo: supply a durable-work sample Jails cannot fabricate\")\n"
+    } else {
+        ""
+    };
+    format!(
+        r#"package {pkg};
+
+{repository_import}{imports}{disabled_import}import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+{annotation}@SpringBootTest(properties = {{
+        "jobs.{property}.initial-delay=PT1H",
+        "jobs.{property}.max-attempts=2"
+}})
+@org.springframework.transaction.annotation.Transactional
+class {name}JobIT {{
+
+    @Autowired private {name}Queue queue;
+    @Autowired private {name}Worker worker;
+    @Autowired private Jdbc{name}Store store;
+    @Autowired private org.springframework.jdbc.core.simple.JdbcClient db;
+    @Autowired private {target}Repository results;
+
+    @Test
+    void committedWorkRunsAndRepeatingTheSameIdIsIdempotent() {{
+        var work = new {name}Work(
+                {args});
+
+        queue.enqueue(work);
+        queue.enqueue(work);
+        worker.runOnce();
+
+        assertThat(results.findById(String.valueOf(work.id()))).isPresent();
+        assertThat(queue.status(work.id())).get()
+                .extracting({name}Queue.Status::state)
+                .isEqualTo({name}Queue.State.SUCCEEDED);
+    }}
+
+    @Test
+    void anExpiredLeaseIsReclaimedAndBoundedFailureBecomesVisible() {{
+        var work = new {name}Work(
+                {args});
+        queue.enqueue(work);
+
+        assertThat(store.claim()).isPresent();
+        db.sql("update {table} set lease_until = now() - interval '1 second' where id = :id")
+                .param("id", work.id())
+                .update();
+        var reclaimed = store.claim().orElseThrow();
+        store.fail(work.id(), new IllegalStateException("test failure"));
+
+        assertThat(reclaimed.attempt()).isEqualTo(2);
+        assertThat(queue.status(work.id())).get()
+                .satisfies(status -> {{
+                    assertThat(status.state()).isEqualTo({name}Queue.State.FAILED);
+                    assertThat(status.lastError()).contains("test failure");
+                }});
+    }}
+{conflict_test}
+}}
+"#
+    )
+}
+
+fn durable_alternate_sample(field: &crate::generate::Field) -> Option<String> {
+    match usecase_normalized_type(&field.java_type) {
+        "String" => Some("\"different-payload\"".to_string()),
+        "UUID" => Some("UUID.fromString(\"00000000-0000-0000-0000-000000000002\")".to_string()),
+        "URI" => Some("URI.create(\"https://different.example.test/\")".to_string()),
+        "Integer" => Some("2".to_string()),
+        "Long" => Some("2L".to_string()),
+        "Double" => Some("2.5".to_string()),
+        "Boolean" => Some("false".to_string()),
+        _ => None,
+    }
+}
+
+fn durable_job_migration(table: &str, columns: &[crate::sql::Column]) -> String {
+    let payload = columns
+        .iter()
+        .map(|column| format!("  {} {} not null,", column.name, column.sql_type))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "-- Durable, leased, at-least-once work.\n\
+         create table {table} (\n\
+         {payload}\n\
+           state text not null check (state in ('PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED')),\n\
+           attempts integer not null check (attempts >= 0),\n\
+           max_attempts integer not null check (max_attempts > 0),\n\
+           next_attempt_at timestamptz not null,\n\
+           lease_until timestamptz,\n\
+           last_error text,\n\
+           created_at timestamptz not null,\n\
+           completed_at timestamptz,\n\
+           constraint {table}_pk primary key (id)\n\
+         );\n\n\
+         create index {table}_runnable_idx\n\
+           on {table} (state, next_attempt_at)\n\
+           where state in ('PENDING', 'RUNNING');\n"
+    )
+}
+
+#[cfg(test)]
+mod durable_job_tests {
+    use super::*;
+
+    fn fixture(tag: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "jails-durable-job-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        for package in ["domain", "service"] {
+            std::fs::create_dir_all(root.join(format!("src/main/java/com/example/demo/{package}")))
+                .unwrap();
+        }
+        std::fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+        std::fs::write(
+            root.join("pom.xml"),
+            "<project><dependencies><dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-jdbc</artifactId></dependency></dependencies></project>",
+        )
+        .unwrap();
+        root
+    }
+
+    fn write_record(root: &Path, package: &str, name: &str, specs: &[&str]) {
+        let fields = crate::generate::parse_fields(
+            &specs
+                .iter()
+                .map(|spec| (*spec).to_string())
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        std::fs::write(
+            root.join(format!(
+                "src/main/java/com/example/demo/{package}/{name}.java"
+            )),
+            crate::generate::record_java(&format!("com.example.demo.{package}"), name, &fields),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn durable_job_has_leasing_bounded_retry_idempotency_and_recovery() {
+        let root = fixture("contract");
+        write_record(&root, "domain", "CrawlRun", &["id:uuid", "seedUrl:uri"]);
+        write_record(
+            &root,
+            "service",
+            "QueueCrawlCommand",
+            &["id:uuid", "seedUrl:uri"],
+        );
+        let fields =
+            crate::generate::parse_fields(&["id:uuid".to_string(), "seedUrl:uri".to_string()])
+                .unwrap();
+
+        let files = durable_job_files(
+            &root,
+            "com.example.demo",
+            "com.example.demo.jobs",
+            "com.example.demo.web",
+            "com.example.demo.service",
+            "com.example.demo.app",
+            "com.example.demo.domain",
+            "CrawlDispatcher",
+            "QueueCrawl",
+            "CrawlRun",
+            &fields,
+        )
+        .unwrap();
+        let store = &files
+            .iter()
+            .find(|(_, _, kind)| *kind == "durable PostgreSQL store")
+            .unwrap()
+            .1;
+        let worker = &files
+            .iter()
+            .find(|(_, _, kind)| *kind == "durable worker")
+            .unwrap()
+            .1;
+        let migration = &files
+            .iter()
+            .find(|(_, _, kind)| *kind == "durable job migration")
+            .unwrap()
+            .1;
+
+        assert!(store.contains("for update skip locked"), "{store}");
+        assert!(store.contains("lease_until <= now()"), "{store}");
+        assert!(store.contains("attempts >= max_attempts"), "{store}");
+        assert!(store.contains("on conflict (id) do nothing"), "{store}");
+        assert!(store.contains("jobs.id as id"), "{store}");
+        assert!(worker.contains("results.findById"), "{worker}");
+        assert!(worker.contains("store.succeed(work.id())"), "{worker}");
+        assert!(migration.contains("state in ('PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED')"));
+    }
+
+    #[test]
+    fn durable_job_requires_a_stable_id_shared_with_the_command() {
+        let root = fixture("identity");
+        write_record(&root, "domain", "CrawlRun", &["id:uuid", "seedUrl:uri"]);
+        write_record(&root, "service", "QueueCrawlCommand", &["seedUrl:uri"]);
+        let fields = crate::generate::parse_fields(&["seedUrl:uri".to_string()]).unwrap();
+
+        let error = durable_job_files(
+            &root,
+            "com.example.demo",
+            "com.example.demo.jobs",
+            "com.example.demo.web",
+            "com.example.demo.service",
+            "com.example.demo.app",
+            "com.example.demo.domain",
+            "CrawlDispatcher",
+            "QueueCrawl",
+            "CrawlRun",
+            &fields,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("stable `id:uuid`"), "{error}");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -829,7 +1762,9 @@ fn dto_test_java(
         .map(|(field, sample)| {
             format!(
                 "                {}",
-                sample.clone().unwrap_or_else(|| format!("null /* {} */", field.java_type))
+                sample
+                    .clone()
+                    .unwrap_or_else(|| format!("null /* {} */", field.java_type))
             )
         })
         .collect::<Vec<_>>()
@@ -880,6 +1815,92 @@ import static org.assertj.core.api.Assertions.assertThat;
 // `generate usecase` -- an executable create operation over a scaffold.
 // ---------------------------------------------------------------------------
 
+pub(crate) fn require_scope_authorizer(
+    root: &Path,
+    security: &str,
+    kind: &str,
+    name: &str,
+    fields: &[crate::generate::Field],
+) -> crate::Result<()> {
+    if !fields.iter().any(|field| field.constraints.scoped) {
+        return Ok(());
+    }
+    let guard = crate::generate::main_dir(root, security).join("ScopeAuthorizer.java");
+    if !guard.exists() {
+        return Err(format!(
+            "{kind} {name} uses @scope, but the project has no ScopeAuthorizer.\n       fix: run `jails add security` before generating scoped HTTP operations."
+        ));
+    }
+    Ok(())
+}
+
+fn scope_controller_parts(
+    security: &str,
+    web: &str,
+    fields: &[crate::generate::Field],
+    request: &str,
+) -> (String, String, String, String, String, String) {
+    let scoped = fields
+        .iter()
+        .filter(|field| field.constraints.scoped)
+        .collect::<Vec<_>>();
+    if scoped.is_empty() {
+        return (
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+        );
+    }
+    let import = format!(
+        "{}import org.springframework.security.core.Authentication;\n",
+        crate::generate::import_of(web, security, "ScopeAuthorizer")
+    );
+    let checks = scoped
+        .iter()
+        .map(|field| {
+            format!(
+                "        scopeAuthorizer.require(authentication, \"{}\", {request}.{}());",
+                field.name, field.name
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    (
+        import,
+        "    private final ScopeAuthorizer scopeAuthorizer;\n".to_string(),
+        ", ScopeAuthorizer scopeAuthorizer".to_string(),
+        "        this.scopeAuthorizer = scopeAuthorizer;".to_string(),
+        ",\n            Authentication authentication".to_string(),
+        checks,
+    )
+}
+
+fn scope_test_parts(
+    security: &str,
+    web: &str,
+    fields: &[crate::generate::Field],
+) -> (String, String) {
+    if !fields.iter().any(|field| field.constraints.scoped) {
+        return (String::new(), String::new());
+    }
+    (
+        format!(
+            "{}import org.springframework.mock.env.MockEnvironment;\n",
+            crate::generate::import_of(web, security, "ScopeAuthorizer")
+        ),
+        r#"
+        @Bean
+        ScopeAuthorizer scopeAuthorizer() {
+            return new ScopeAuthorizer(new MockEnvironment());
+        }
+"#
+        .to_string(),
+    )
+}
+
 /// Turn a small operation declaration into a complete vertical behavior.
 ///
 /// `fields` are the values a caller supplies; `target` is an existing
@@ -891,6 +1912,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// code.
 pub(crate) fn usecase_files(
     root: &Path,
+    security: &str,
     service: &str,
     web: &str,
     domain: &str,
@@ -900,6 +1922,7 @@ pub(crate) fn usecase_files(
     target: &str,
     fields: &[crate::generate::Field],
 ) -> crate::Result<Vec<(std::path::PathBuf, String, &'static str)>> {
+    require_scope_authorizer(root, security, "usecase", name, fields)?;
     let target_fields = crate::generate::fields_from_record(root, domain, target).ok_or_else(|| {
         format!(
             "usecase {name} targets {target}, but no record components could be read from {target}.java.\n       fix: generate the {target} scaffold first, or correct `--on {target}`."
@@ -918,7 +1941,9 @@ pub(crate) fn usecase_files(
         })?;
 
     for field in fields {
-        let Some(target_field) = target_fields.iter().find(|candidate| candidate.name == field.name)
+        let Some(target_field) = target_fields
+            .iter()
+            .find(|candidate| candidate.name == field.name)
         else {
             return Err(format!(
                 "usecase {name} accepts `{}`, but {target} has no component with that name",
@@ -964,11 +1989,7 @@ pub(crate) fn usecase_files(
     default_imports.dedup();
 
     let transactional = crate::pom::read(root).is_ok_and(|pom| {
-        crate::pom::has_dependency(
-            &pom,
-            "org.springframework.boot",
-            "spring-boot-starter-jdbc",
-        )
+        crate::pom::has_dependency(&pom, "org.springframework.boot", "spring-boot-starter-jdbc")
     });
     let main_service = crate::generate::main_dir(root, service);
     let test_service = crate::generate::test_dir(root, service);
@@ -1016,13 +2037,14 @@ pub(crate) fn usecase_files(
         ),
         (
             main_web.join(format!("{name}Controller.java")),
-            usecase_controller_java(service, web, target, name),
+            usecase_controller_java(security, service, web, target, name, fields),
             "usecase controller",
         ),
         (
             test_web.join(format!("{name}ControllerTest.java")),
             usecase_controller_test_java(
                 root,
+                security,
                 service,
                 web,
                 domain,
@@ -1128,11 +2150,7 @@ fn usecase_command_java(
     imports.dedup();
     if !imports.is_empty() {
         let package = format!("package {pkg};\n");
-        source = source.replacen(
-            &package,
-            &format!("{package}\n{}\n", imports.join("\n")),
-            1,
-        );
+        source = source.replacen(&package, &format!("{package}\n{}\n", imports.join("\n")), 1);
         source = crate::generate::normalize_imports(&source);
     }
     source.replace(
@@ -1179,7 +2197,10 @@ fn usecase_impl_java(
         .join(",\n");
     let var = crate::generate::lower_first(target);
     let (transaction_import, annotation) = if transactional {
-        ("import org.springframework.transaction.annotation.Transactional;\n", "    @Transactional\n")
+        (
+            "import org.springframework.transaction.annotation.Transactional;\n",
+            "    @Transactional\n",
+        )
     } else {
         ("", "")
     };
@@ -1212,10 +2233,7 @@ public class Default{name}UseCase implements {name}UseCase {{
     )
 }
 
-fn java_literal_imports(
-    fields: &[crate::generate::Field],
-    domain: &str,
-) -> Vec<String> {
+fn java_literal_imports(fields: &[crate::generate::Field], domain: &str) -> Vec<String> {
     let mut imports = fields
         .iter()
         .flat_map(|field| field.imports.iter().map(|import| (*import).to_string()))
@@ -1281,11 +2299,8 @@ fn usecase_test_java(
         .map(|import| format!("import {import};\n"))
         .collect::<String>();
     let target_import = crate::generate::import_of(pkg, domain, target);
-    let adapter_import = crate::generate::import_of(
-        pkg,
-        adapters,
-        &format!("InMemory{target}Repository"),
-    );
+    let adapter_import =
+        crate::generate::import_of(pkg, adapters, &format!("InMemory{target}Repository"));
     let disabled_import = if missing.is_empty() {
         ""
     } else {
@@ -1334,19 +2349,32 @@ import static org.assertj.core.api.Assertions.assertThat;
 }
 
 fn usecase_controller_java(
+    security: &str,
     service: &str,
     web: &str,
     target: &str,
     name: &str,
+    fields: &[crate::generate::Field],
 ) -> String {
     let command_import = crate::generate::import_of(web, service, &format!("{name}Command"));
     let usecase_import = crate::generate::import_of(web, service, &format!("{name}UseCase"));
-    let path = format!("/actions/{}", crate::sql::snake_case(name).replace('_', "-"));
+    let path = format!(
+        "/actions/{}",
+        crate::sql::snake_case(name).replace('_', "-")
+    );
     let resource_path = format!("/{}", crate::sql::table_name(target).replace('_', "-"));
+    let (
+        scope_import,
+        scope_field,
+        scope_constructor,
+        scope_assignment,
+        scope_parameter,
+        scope_checks,
+    ) = scope_controller_parts(security, web, fields, "command");
     format!(
         r#"package {web};
 
-{command_import}{usecase_import}import jakarta.validation.Valid;
+{command_import}{usecase_import}{scope_import}import jakarta.validation.Valid;
 import java.net.URI;
 import java.util.Objects;
 import org.springframework.http.ResponseEntity;
@@ -1364,14 +2392,17 @@ public final class {name}Controller {{
     private static final String RESOURCE_PATH = "{resource_path}";
 
     private final {name}UseCase useCase;
+{scope_field}
 
-    public {name}Controller({name}UseCase useCase) {{
+    public {name}Controller({name}UseCase useCase{scope_constructor}) {{
         this.useCase = Objects.requireNonNull(useCase, "useCase is required");
+{scope_assignment}
     }}
 
     @PostMapping
     public ResponseEntity<{target}Response> execute(
-            @Valid @RequestBody {name}Command command) {{
+            @Valid @RequestBody {name}Command command{scope_parameter}) {{
+{scope_checks}
         var created = useCase.execute(command);
         return ResponseEntity.created(URI.create(RESOURCE_PATH + "/" + created.id()))
                 .body({target}Response.from(created));
@@ -1381,11 +2412,7 @@ public final class {name}Controller {{
     )
 }
 
-fn json_sample(
-    root: &Path,
-    domain: &str,
-    field: &crate::generate::Field,
-) -> Option<String> {
+fn json_sample(root: &Path, domain: &str, field: &crate::generate::Field) -> Option<String> {
     if field.optionality == crate::generate::Optionality::Nullable {
         return Some("null".to_string());
     }
@@ -1415,9 +2442,7 @@ fn json_sample(
     match field.java_type.as_str() {
         "int" | "Integer" => Some("7".to_string()),
         "long" | "Long" => Some("7".to_string()),
-        "double" | "Double" | "float" | "Float" | "BigDecimal" => {
-            Some("12.5".to_string())
-        }
+        "double" | "Double" | "float" | "Float" | "BigDecimal" => Some("12.5".to_string()),
         "boolean" | "Boolean" => Some("true".to_string()),
         _ => None,
     }
@@ -1425,6 +2450,7 @@ fn json_sample(
 
 fn usecase_controller_test_java(
     root: &Path,
+    security: &str,
     service: &str,
     web: &str,
     domain: &str,
@@ -1452,7 +2478,9 @@ fn usecase_controller_test_java(
         None
     };
     let json = json.unwrap_or_default().join(",\n");
-    let target_args = target_samples.unwrap_or_default().join(",\n                    ");
+    let target_args = target_samples
+        .unwrap_or_default()
+        .join(",\n                    ");
     let command_import = crate::generate::import_of(web, service, &format!("{name}Command"));
     let usecase_import = crate::generate::import_of(web, service, &format!("{name}UseCase"));
     let target_import = crate::generate::import_of(web, domain, target);
@@ -1467,10 +2495,11 @@ fn usecase_controller_test_java(
         ),
         None => ("", String::new()),
     };
+    let (scope_import, scope_bean) = scope_test_parts(security, web, fields);
     format!(
         r#"package {web};
 
-{command_import}{usecase_import}{target_import}{imports}{disabled_import}import org.junit.jupiter.api.Test;
+{command_import}{usecase_import}{target_import}{scope_import}{imports}{disabled_import}import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
@@ -1509,6 +2538,7 @@ class {name}ControllerTest {{
             return command -> new {target}(
                     {target_args});
         }}
+{scope_bean}
     }}
 }}
 "#
@@ -1534,7 +2564,10 @@ mod usecase_tests {
 
     fn write_record(root: &Path, name: &str, specs: &[&str]) {
         let fields = crate::generate::parse_fields(
-            &specs.iter().map(|spec| (*spec).to_string()).collect::<Vec<_>>(),
+            &specs
+                .iter()
+                .map(|spec| (*spec).to_string())
+                .collect::<Vec<_>>(),
         )
         .unwrap();
         std::fs::write(
@@ -1572,6 +2605,7 @@ mod usecase_tests {
 
         let files = usecase_files(
             &root,
+            "com.example.demo",
             "com.example.demo.service",
             "com.example.demo.web",
             "com.example.demo.domain",
@@ -1588,13 +2622,31 @@ mod usecase_tests {
             .unwrap()
             .1;
 
-        assert!(implementation.contains("UUID.randomUUID()"), "{implementation}");
-        assert!(implementation.contains("command.seedUrl()"), "{implementation}");
-        assert!(implementation.contains("CrawlStatus.values()[0]"), "{implementation}");
+        assert!(
+            implementation.contains("UUID.randomUUID()"),
+            "{implementation}"
+        );
+        assert!(
+            implementation.contains("command.seedUrl()"),
+            "{implementation}"
+        );
+        assert!(
+            implementation.contains("CrawlStatus.values()[0]"),
+            "{implementation}"
+        );
         assert!(implementation.contains("0L"), "{implementation}");
-        assert!(implementation.contains("Optional.empty()"), "{implementation}");
-        assert!(implementation.contains("repository.save(crawlRun)"), "{implementation}");
-        assert!(implementation.contains("@Transactional"), "{implementation}");
+        assert!(
+            implementation.contains("Optional.empty()"),
+            "{implementation}"
+        );
+        assert!(
+            implementation.contains("repository.save(crawlRun)"),
+            "{implementation}"
+        );
+        assert!(
+            implementation.contains("@Transactional"),
+            "{implementation}"
+        );
         assert!(!implementation.contains("final class"), "{implementation}");
         assert!(!implementation.contains("TODO"), "{implementation}");
     }
@@ -1606,6 +2658,7 @@ mod usecase_tests {
 
         let error = usecase_files(
             &root,
+            "com.example.demo",
             "com.example.demo.service",
             "com.example.demo.web",
             "com.example.demo.domain",
@@ -1617,7 +2670,10 @@ mod usecase_tests {
         )
         .unwrap_err();
 
-        assert!(error.contains("cannot safely infer `workspaceId`"), "{error}");
+        assert!(
+            error.contains("cannot safely infer `workspaceId`"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -1628,6 +2684,7 @@ mod usecase_tests {
 
         let error = usecase_files(
             &root,
+            "com.example.demo",
             "com.example.demo.service",
             "com.example.demo.web",
             "com.example.demo.domain",
@@ -1649,6 +2706,7 @@ mod usecase_tests {
 
 pub(crate) fn query_files(
     root: &Path,
+    security: &str,
     service: &str,
     web: &str,
     domain: &str,
@@ -1658,6 +2716,7 @@ pub(crate) fn query_files(
     target: &str,
     fields: &[crate::generate::Field],
 ) -> crate::Result<Vec<(std::path::PathBuf, String, &'static str)>> {
+    require_scope_authorizer(root, security, "query", name, fields)?;
     if fields.is_empty() {
         return Err(format!(
             "query {name} needs at least one typed filter; use the scaffold's list endpoint for an unfiltered read"
@@ -1675,7 +2734,9 @@ pub(crate) fn query_files(
         format!("query {name} targets {target}, but no record components could be read from {target}.java")
     })?;
     for field in fields {
-        let Some(target_field) = target_fields.iter().find(|candidate| candidate.name == field.name)
+        let Some(target_field) = target_fields
+            .iter()
+            .find(|candidate| candidate.name == field.name)
         else {
             return Err(format!(
                 "query {name} filters `{}`, but {target} has no component with that name",
@@ -1751,13 +2812,14 @@ pub(crate) fn query_files(
         ),
         (
             main_web.join(format!("{name}QueryController.java")),
-            query_controller_java(service, web, name, target),
+            query_controller_java(security, service, web, name, target, fields),
             "query controller",
         ),
         (
             test_web.join(format!("{name}QueryControllerTest.java")),
             query_controller_test_java(
                 root,
+                security,
                 service,
                 web,
                 domain,
@@ -1789,11 +2851,7 @@ fn query_record_java(
     imports.dedup();
     if !imports.is_empty() {
         let package = format!("package {pkg};\n");
-        source = source.replacen(
-            &package,
-            &format!("{package}\n{}\n", imports.join("\n")),
-            1,
-        );
+        source = source.replacen(&package, &format!("{package}\n{}\n", imports.join("\n")), 1);
         source = crate::generate::normalize_imports(&source);
     }
     source.replace(
@@ -1836,10 +2894,12 @@ fn jdbc_query_java(
         .chain(crate::sql::imports(filter_columns))
         .map(|import| format!("import {import};\n"))
         .collect::<String>();
-    if target_columns
-        .iter()
-        .any(|column| column.read.as_deref().is_some_and(|read| read.contains("Optional.")))
-    {
+    if target_columns.iter().any(|column| {
+        column
+            .read
+            .as_deref()
+            .is_some_and(|read| read.contains("Optional."))
+    }) {
         imports.push_str("import java.util.Optional;\n");
     }
     for column in target_columns.iter().chain(filter_columns.iter()) {
@@ -1954,8 +3014,12 @@ fn jdbc_query_it_java(
         .map(|field| crate::generate::sample_value(field, root, domain))
         .collect::<Option<Vec<_>>>();
     let disabled = query_samples.is_none() || target_samples.is_none();
-    let query_args = query_samples.unwrap_or_default().join(",\n                ");
-    let target_args = target_samples.unwrap_or_default().join(",\n                ");
+    let query_args = query_samples
+        .unwrap_or_default()
+        .join(",\n                ");
+    let target_args = target_samples
+        .unwrap_or_default()
+        .join(",\n                ");
     let target_import = crate::generate::import_of(pkg, domain, target);
     let query_import = crate::generate::import_of(pkg, service, &format!("{name}Query"));
     let port_import = crate::generate::import_of(pkg, service, &format!("{name}QueryPort"));
@@ -1967,8 +3031,16 @@ fn jdbc_query_it_java(
         .into_iter()
         .map(|import| format!("import {import};\n"))
         .collect::<String>();
-    let disabled_import = if disabled { "import org.junit.jupiter.api.Disabled;\n" } else { "" };
-    let annotation = if disabled { "@Disabled(\"todo: supply query/target samples Jails cannot fabricate\")\n" } else { "" };
+    let disabled_import = if disabled {
+        "import org.junit.jupiter.api.Disabled;\n"
+    } else {
+        ""
+    };
+    let annotation = if disabled {
+        "@Disabled(\"todo: supply query/target samples Jails cannot fabricate\")\n"
+    } else {
+        ""
+    };
     format!(
         r#"package {pkg};
 
@@ -2003,14 +3075,32 @@ class Jdbc{name}QueryIT {{
     )
 }
 
-fn query_controller_java(service: &str, web: &str, name: &str, target: &str) -> String {
+fn query_controller_java(
+    security: &str,
+    service: &str,
+    web: &str,
+    name: &str,
+    target: &str,
+    fields: &[crate::generate::Field],
+) -> String {
     let query_import = crate::generate::import_of(web, service, &format!("{name}Query"));
     let port_import = crate::generate::import_of(web, service, &format!("{name}QueryPort"));
-    let path = format!("/queries/{}", crate::sql::snake_case(name).replace('_', "-"));
+    let path = format!(
+        "/queries/{}",
+        crate::sql::snake_case(name).replace('_', "-")
+    );
+    let (
+        scope_import,
+        scope_field,
+        scope_constructor,
+        scope_assignment,
+        scope_parameter,
+        scope_checks,
+    ) = scope_controller_parts(security, web, fields, "query");
     format!(
         r#"package {web};
 
-{query_import}{port_import}import jakarta.validation.Valid;
+{query_import}{port_import}{scope_import}import jakarta.validation.Valid;
 import java.util.List;
 import java.util.Objects;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -2026,13 +3116,17 @@ public final class {name}QueryController {{
     public static final String PATH = "{path}";
 
     private final {name}QueryPort queryPort;
+{scope_field}
 
-    public {name}QueryController({name}QueryPort queryPort) {{
+    public {name}QueryController({name}QueryPort queryPort{scope_constructor}) {{
         this.queryPort = Objects.requireNonNull(queryPort, "queryPort is required");
+{scope_assignment}
     }}
 
     @PostMapping
-    public List<{target}Response> execute(@Valid @RequestBody {name}Query query) {{
+    public List<{target}Response> execute(
+            @Valid @RequestBody {name}Query query{scope_parameter}) {{
+{scope_checks}
         return queryPort.execute(query).stream().map({target}Response::from).toList();
     }}
 }}
@@ -2042,6 +3136,7 @@ public final class {name}QueryController {{
 
 fn query_controller_test_java(
     root: &Path,
+    security: &str,
     service: &str,
     web: &str,
     domain: &str,
@@ -2053,7 +3148,9 @@ fn query_controller_test_java(
 ) -> String {
     let json = fields
         .iter()
-        .map(|field| json_sample(root, domain, field).map(|sample| format!("  \"{}\": {sample}", field.name)))
+        .map(|field| {
+            json_sample(root, domain, field).map(|sample| format!("  \"{}\": {sample}", field.name))
+        })
         .collect::<Option<Vec<_>>>();
     let target_samples = target_fields
         .iter()
@@ -2061,19 +3158,30 @@ fn query_controller_test_java(
         .collect::<Option<Vec<_>>>();
     let disabled = json.is_none() || target_samples.is_none();
     let json = json.unwrap_or_default().join(",\n");
-    let target_args = target_samples.unwrap_or_default().join(",\n                    ");
+    let target_args = target_samples
+        .unwrap_or_default()
+        .join(",\n                    ");
     let port_import = crate::generate::import_of(web, service, &format!("{name}QueryPort"));
     let target_import = crate::generate::import_of(web, domain, target);
     let imports = java_literal_imports(target_fields, domain)
         .into_iter()
         .map(|import| format!("import {import};\n"))
         .collect::<String>();
-    let disabled_import = if disabled { "import org.junit.jupiter.api.Disabled;\n" } else { "" };
-    let annotation = if disabled { "    @Disabled(\"todo: supply query/target samples Jails cannot fabricate\")\n" } else { "" };
+    let disabled_import = if disabled {
+        "import org.junit.jupiter.api.Disabled;\n"
+    } else {
+        ""
+    };
+    let annotation = if disabled {
+        "    @Disabled(\"todo: supply query/target samples Jails cannot fabricate\")\n"
+    } else {
+        ""
+    };
+    let (scope_import, scope_bean) = scope_test_parts(security, web, fields);
     format!(
         r#"package {web};
 
-{port_import}{target_import}{imports}{disabled_import}import java.util.List;
+{port_import}{target_import}{scope_import}{imports}{disabled_import}import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -2114,10 +3222,147 @@ class {name}QueryControllerTest {{
             return query -> List.of(new {target}(
                     {target_args}));
         }}
+{scope_bean}
     }}
 }}
 "#
     )
+}
+
+#[cfg(test)]
+mod query_tests {
+    use super::*;
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "jails-query-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("src/main/java/com/example/demo/domain")).unwrap();
+        root
+    }
+
+    fn write_record(root: &Path, name: &str, specs: &[&str]) {
+        let fields = crate::generate::parse_fields(
+            &specs
+                .iter()
+                .map(|spec| (*spec).to_string())
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        std::fs::write(
+            root.join(format!("src/main/java/com/example/demo/domain/{name}.java")),
+            crate::generate::record_java("com.example.demo.domain", name, &fields),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn query_generates_visible_named_parameter_sql_and_real_database_test() {
+        let root = scratch("sql");
+        write_record(
+            &root,
+            "Message",
+            &[
+                "id:uuid",
+                "conversationId:uuid",
+                "body:string!",
+                "createdAt:instant",
+            ],
+        );
+        let fields = crate::generate::parse_fields(&["conversationId:uuid".to_string()]).unwrap();
+
+        let files = query_files(
+            &root,
+            "com.example.demo",
+            "com.example.demo.service",
+            "com.example.demo.web",
+            "com.example.demo.domain",
+            "com.example.demo.app",
+            "com.example.demo.adapters",
+            "MessagesByConversation",
+            "Message",
+            &fields,
+        )
+        .unwrap();
+        let adapter = &files
+            .iter()
+            .find(|(_, _, kind)| *kind == "JDBC query adapter")
+            .unwrap()
+            .1;
+        let integration_test = &files
+            .iter()
+            .find(|(_, _, kind)| *kind == "JDBC query integration test")
+            .unwrap()
+            .1;
+
+        assert!(
+            adapter.contains("where conversation_id = :conversation_id"),
+            "{adapter}"
+        );
+        assert!(adapter.contains(".param(\"conversation_id\""), "{adapter}");
+        assert!(adapter.contains("order by id"), "{adapter}");
+        assert!(
+            integration_test.contains("repository.save(stored)"),
+            "{integration_test}"
+        );
+        assert!(
+            integration_test.contains("contains(stored)"),
+            "{integration_test}"
+        );
+    }
+
+    #[test]
+    fn query_rejects_an_unfiltered_read_instead_of_guessing_pagination() {
+        let root = scratch("empty");
+        write_record(&root, "Contact", &["id:uuid", "workspaceId:uuid"]);
+
+        let error = query_files(
+            &root,
+            "com.example.demo",
+            "com.example.demo.service",
+            "com.example.demo.web",
+            "com.example.demo.domain",
+            "com.example.demo.app",
+            "com.example.demo.adapters",
+            "Contacts",
+            "Contact",
+            &[],
+        )
+        .unwrap_err();
+
+        assert!(error.contains("at least one typed filter"), "{error}");
+    }
+
+    #[test]
+    fn query_rejects_nullable_filters_instead_of_inventing_null_semantics() {
+        let root = scratch("nullable");
+        write_record(&root, "Contact", &["id:uuid", "email:string?"]);
+        let fields = crate::generate::parse_fields(&["email:string?".to_string()]).unwrap();
+
+        let error = query_files(
+            &root,
+            "com.example.demo",
+            "com.example.demo.service",
+            "com.example.demo.web",
+            "com.example.demo.domain",
+            "com.example.demo.app",
+            "com.example.demo.adapters",
+            "ContactsByEmail",
+            "Contact",
+            &fields,
+        )
+        .unwrap_err();
+
+        assert!(
+            error.contains("null/list semantics are never guessed"),
+            "{error}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2246,7 +3491,10 @@ fn kafka_deserializer_properties() -> Vec<String> {
 /// No `NewTopic` beans here: `add kafka` does not know what this service's
 /// topics are called. `jails g event <Name>` declares them, because it does.
 fn kafka_config_java(pkg: &str) -> String {
-    crate::template::render(include_str!("../templates/spring/kafka_config_java.java"), &[("pkg", pkg)])
+    crate::template::render(
+        include_str!("../templates/spring/kafka_config_java.java"),
+        &[("pkg", pkg)],
+    )
 }
 
 /// The domain's own "no retry will ever fix this".
@@ -2256,7 +3504,10 @@ fn kafka_config_java(pkg: &str) -> String {
 /// keeps its stack trace, because it wraps a real cause and that cause is what
 /// a human reads out of the dead-letter headers.
 fn non_retryable_exception_java(pkg: &str) -> String {
-    crate::template::render(include_str!("../templates/spring/non_retryable_exception_java.java"), &[("pkg", pkg)])
+    crate::template::render(
+        include_str!("../templates/spring/non_retryable_exception_java.java"),
+        &[("pkg", pkg)],
+    )
 }
 
 /// A test that the poison-message path is actually wired, without a broker.
@@ -2265,7 +3516,10 @@ fn non_retryable_exception_java(pkg: &str) -> String {
 /// `add kafka` keeps the promise `jails add --help` makes -- a dependency,
 /// the code that uses it, *and a test that proves it works*.
 fn kafka_config_test_java(pkg: &str) -> String {
-    crate::template::render(include_str!("../templates/spring/kafka_config_test_java.java"), &[("pkg", pkg)])
+    crate::template::render(
+        include_str!("../templates/spring/kafka_config_test_java.java"),
+        &[("pkg", pkg)],
+    )
 }
 
 /// The files `add kafka` writes on a Spring project.
@@ -2310,7 +3564,9 @@ pub(crate) fn event_files(
         ));
     }
     if id.is_some_and(|field| field.optionality == crate::generate::Optionality::Nullable) {
-        return Err("an event `id` cannot be optional: a null key loses per-entity ordering".to_string());
+        return Err(
+            "an event `id` cannot be optional: a null key loses per-entity ordering".to_string(),
+        );
     }
     let key = id
         .filter(|field| field.java_type != "String")
@@ -2374,11 +3630,17 @@ fn publisher_java(pkg: &str, name: &str, topic: &str, key: &str) -> String {
         include_str!("../templates/spring/publisher_java.java"),
         &[("pkg", pkg), ("name", name), ("topic", topic)],
     );
-    source.replace("kafka.send(topic, event.id(), event)", &format!("kafka.send(topic, {key}, event)"))
+    source.replace(
+        "kafka.send(topic, event.id(), event)",
+        &format!("kafka.send(topic, {key}, event)"),
+    )
 }
 
 fn listener_java(pkg: &str, name: &str, topic: &str) -> String {
-    crate::template::render(include_str!("../templates/spring/listener_java.java"), &[("pkg", pkg), ("name", name), ("topic", topic)])
+    crate::template::render(
+        include_str!("../templates/spring/listener_java.java"),
+        &[("pkg", pkg), ("name", name), ("topic", topic)],
+    )
 }
 
 fn messaging_it_java(
@@ -2445,7 +3707,13 @@ fn messaging_it_java(
             .map(|import| format!("import {import};\n"))
             .collect::<String>();
         if missing.is_empty() {
-            (imports, String::new(), String::new(), event_args, expected_id)
+            (
+                imports,
+                String::new(),
+                String::new(),
+                event_args,
+                expected_id,
+            )
         } else {
             (
                 imports,
@@ -2501,9 +3769,18 @@ mod event_tests {
         let publisher = &files[1].1;
         assert!(publisher.contains("kafka.send(topic, String.valueOf(event.id()), event)"));
         let integration_test = &files[3].1;
-        assert!(integration_test.contains("UUID.fromString"), "{integration_test}");
-        assert!(integration_test.contains("URI.create"), "{integration_test}");
-        assert!(integration_test.contains("Instant.parse"), "{integration_test}");
+        assert!(
+            integration_test.contains("UUID.fromString"),
+            "{integration_test}"
+        );
+        assert!(
+            integration_test.contains("URI.create"),
+            "{integration_test}"
+        );
+        assert!(
+            integration_test.contains("Instant.parse"),
+            "{integration_test}"
+        );
         assert!(
             integration_test.contains("isEqualTo(UUID.fromString"),
             "{integration_test}"
@@ -2512,8 +3789,8 @@ mod event_tests {
 
     #[test]
     fn typed_events_refuse_to_invent_a_durable_identity() {
-        let fields = crate::generate::parse_fields_for_test(&["occurredAt:instant".to_string()])
-            .unwrap();
+        let fields =
+            crate::generate::parse_fields_for_test(&["occurredAt:instant".to_string()]).unwrap();
         let error = event_files(
             Path::new("/tmp/jails-event-field-test"),
             "com.example.messaging",
@@ -2545,6 +3822,14 @@ pub(crate) const SECURITY_TEST: Dependency = Dependency {
     optional: false,
 };
 
+pub(crate) const OAUTH2_RESOURCE_SERVER: Dependency = Dependency {
+    group_id: "org.springframework.boot",
+    artifact_id: "spring-boot-starter-oauth2-resource-server",
+    version: None,
+    scope: None,
+    optional: false,
+};
+
 /// The security slice.
 ///
 /// Adding `spring-boot-starter-security` on its own changes the application
@@ -2561,21 +3846,63 @@ pub(crate) fn security_slice(root: &Path, pkg: &str) -> SpringSlice {
     let main = crate::generate::main_dir(root, pkg);
     let test = crate::generate::test_dir(root, pkg);
     SpringSlice {
-        deps: vec![SECURITY_STARTER, SECURITY_TEST],
+        deps: vec![SECURITY_STARTER, OAUTH2_RESOURCE_SERVER, SECURITY_TEST],
         files: vec![
             (main.join("SecurityConfig.java"), security_config_java(pkg)),
-            (test.join("SecurityConfigTest.java"), security_test_java(pkg)),
+            (
+                main.join("ProductionSecurityConfig.java"),
+                production_security_config_java(pkg),
+            ),
+            (
+                main.join("ScopeAuthorizer.java"),
+                scope_authorizer_java(pkg),
+            ),
+            (
+                test.join("SecurityConfigTest.java"),
+                security_test_java(pkg),
+            ),
+            (
+                test.join("ScopeAuthorizerTest.java"),
+                scope_authorizer_test_java(pkg),
+            ),
         ],
         properties: Vec::new(),
     }
 }
 
 fn security_config_java(pkg: &str) -> String {
-    crate::template::render(include_str!("../templates/spring/security_config_java.java"), &[("pkg", pkg)])
+    crate::template::render(
+        include_str!("../templates/spring/security_config_java.java"),
+        &[("pkg", pkg)],
+    )
+}
+
+fn production_security_config_java(pkg: &str) -> String {
+    crate::template::render(
+        include_str!("../templates/spring/production_security_config_java.java"),
+        &[("pkg", pkg)],
+    )
 }
 
 fn security_test_java(pkg: &str) -> String {
-    crate::template::render(include_str!("../templates/spring/security_test_java.java"), &[("pkg", pkg)])
+    crate::template::render(
+        include_str!("../templates/spring/security_test_java.java"),
+        &[("pkg", pkg)],
+    )
+}
+
+fn scope_authorizer_java(pkg: &str) -> String {
+    crate::template::render(
+        include_str!("../templates/spring/scope_authorizer_java.java"),
+        &[("pkg", pkg)],
+    )
+}
+
+fn scope_authorizer_test_java(pkg: &str) -> String {
+    crate::template::render(
+        include_str!("../templates/spring/scope_authorizer_test_java.java"),
+        &[("pkg", pkg)],
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -2645,11 +3972,16 @@ public class {name}Service {{
 /// something, 404 for one that did not, and 404 rather than an empty 200 for
 /// a missing item.
 pub(crate) fn resource_controller_java(
+    security: &str,
     pkg: &str,
     name: &str,
     extra: &str,
     has_id: bool,
+    fields: &[crate::generate::Field],
 ) -> String {
+    if fields.iter().any(|field| field.constraints.scoped) {
+        return scoped_resource_controller_java(security, pkg, name, extra, has_id, fields);
+    }
     let path = format!("/{}", crate::sql::table_name(name).replace('_', "-"));
     // A `Location` header needs something to point at. Without an `id`
     // component there is no per-item URL to build, and inventing one would
@@ -2749,6 +4081,87 @@ public class {name}Controller {{
     )
 }
 
+fn scoped_resource_controller_java(
+    security: &str,
+    pkg: &str,
+    name: &str,
+    extra: &str,
+    has_id: bool,
+    fields: &[crate::generate::Field],
+) -> String {
+    let path = format!("/{}", crate::sql::table_name(name).replace('_', "-"));
+    let (
+        scope_import,
+        scope_field,
+        scope_constructor,
+        scope_assignment,
+        scope_parameter,
+        scope_checks,
+    ) = scope_controller_parts(security, pkg, fields, "request");
+    let (location_import, created) = if has_id {
+        (
+            "import java.net.URI;\n",
+            format!(
+                "        return ResponseEntity.created(URI.create(PATH + \"/\" + created.id()))\n                 .body({name}Response.from(created));"
+            ),
+        )
+    } else {
+        (
+            "",
+            format!(
+                "        return ResponseEntity.status(HttpStatus.CREATED).body({name}Response.from(created));"
+            ),
+        )
+    };
+    let status_import = if has_id {
+        ""
+    } else {
+        "import org.springframework.http.HttpStatus;\n"
+    };
+    format!(
+        r#"package {pkg};
+
+{extra}{scope_import}{location_import}import jakarta.validation.Valid;
+import java.util.Objects;
+{status_import}import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+/**
+ * Scope-safe creation endpoint for {{@link {name}}}.
+ *
+ * <p>The broad list, id lookup and delete routes are intentionally absent:
+ * a plain repository operation cannot prove a tenant boundary. Generate an
+ * {{@code @scope}} query or use case for each authorized operation instead.
+ */
+@RestController
+@RequestMapping({name}Controller.PATH)
+public class {name}Controller {{
+
+    public static final String PATH = "{path}";
+
+    private final {name}Service service;
+{scope_field}
+
+    public {name}Controller({name}Service service{scope_constructor}) {{
+        this.service = Objects.requireNonNull(service, "service is required");
+{scope_assignment}
+    }}
+
+    @PostMapping
+    public ResponseEntity<{name}Response> create(
+            @Valid @RequestBody {name}Request request{scope_parameter}) {{
+{scope_checks}
+        {name} created = service.create(request.toDomain());
+{created}
+    }}
+}}
+"#
+    )
+}
+
 /// The controller's test: a web-layer slice with the service replaced.
 ///
 /// `@WebMvcTest` starts the web layer and nothing else -- no database, no
@@ -2757,11 +4170,42 @@ public class {name}Controller {{
 /// HTTP. The service is a `@MockitoBean`, which is the current spelling:
 /// `@MockBean` no longer exists in Spring Boot 4.
 pub(crate) fn resource_controller_test_java(
+    security: &str,
     pkg: &str,
     name: &str,
     extra: &str,
+    fields: &[crate::generate::Field],
     webmvc_test_import: &str,
 ) -> String {
+    if fields.iter().any(|field| field.constraints.scoped) {
+        let guard_import = crate::generate::import_of(pkg, security, "ScopeAuthorizer");
+        return format!(
+            r#"package {pkg};
+
+{extra}{guard_import}import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.servlet.assertj.MockMvcTester;
+import {webmvc_test_import};
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+@WebMvcTest({name}Controller.class)
+class {name}ControllerTest {{
+
+    @Autowired private MockMvcTester mvc;
+    @MockitoBean private {name}Service service;
+    @MockitoBean private ScopeAuthorizer scopeAuthorizer;
+
+    @Test
+    void broadUnscopedReadsAreNotExposed() {{
+        assertThat(mvc.get().uri({name}Controller.PATH)).hasStatus(405);
+        assertThat(mvc.get().uri({name}Controller.PATH + "/other-tenant-id")).hasStatus(405);
+    }}
+}}
+"#
+        );
+    }
     format!(
         r#"package {pkg};
 
@@ -2929,8 +4373,7 @@ pub(crate) fn in_memory_repository_java(
             + name
             + "Repository} the bean and drops the annotation here. Annotating\n * both makes two beans qualify for one injection point, which Spring\n * refuses to choose between.\n"
     } else {
-        " * <p>Not a bean: this project has a {@code DataSource}, so {@code Jdbc"
-            .to_string()
+        " * <p>Not a bean: this project has a {@code DataSource}, so {@code Jdbc".to_string()
             + name
             + "Repository}\n * is the {@code @Component}. This stays as a fake for tests that want a\n * repository without a container -- construct it directly.\n"
     };
@@ -3042,7 +4485,10 @@ pub(crate) fn redis_slice(root: &Path, pkg: &str) -> SpringSlice {
         deps: vec![REDIS_STARTER, TESTCONTAINERS_CORE, SPRING_TESTCONTAINERS],
         files: vec![
             (main.join("KeyValueStore.java"), key_value_store_java(pkg)),
-            (test.join("KeyValueStoreIT.java"), key_value_store_it_java(pkg)),
+            (
+                test.join("KeyValueStoreIT.java"),
+                key_value_store_it_java(pkg),
+            ),
         ],
         properties: vec![
             "spring.data.redis.host=localhost".to_string(),
@@ -3056,7 +4502,10 @@ pub(crate) fn redis_slice(root: &Path, pkg: &str) -> SpringSlice {
 }
 
 fn key_value_store_java(pkg: &str) -> String {
-    crate::template::render(include_str!("../templates/spring/key_value_store_java.java"), &[("pkg", pkg)])
+    crate::template::render(
+        include_str!("../templates/spring/key_value_store_java.java"),
+        &[("pkg", pkg)],
+    )
 }
 
 fn key_value_store_it_java(pkg: &str) -> String {
@@ -3102,7 +4551,10 @@ pub(crate) fn observability_slice(root: &Path, pkg: &str) -> SpringSlice {
             (test.join("AppMetricsTest.java"), app_metrics_test_java(pkg)),
             (
                 test.join("PrometheusScrapeTest.java"),
-                prometheus_scrape_test_java(pkg, crate::generate::mockmvc_autoconfigure_import(root)),
+                prometheus_scrape_test_java(
+                    pkg,
+                    crate::generate::mockmvc_autoconfigure_import(root),
+                ),
             ),
         ],
         properties: vec![
@@ -3115,11 +4567,17 @@ pub(crate) fn observability_slice(root: &Path, pkg: &str) -> SpringSlice {
 }
 
 fn app_metrics_java(pkg: &str) -> String {
-    crate::template::render(include_str!("../templates/spring/app_metrics_java.java"), &[("pkg", pkg)])
+    crate::template::render(
+        include_str!("../templates/spring/app_metrics_java.java"),
+        &[("pkg", pkg)],
+    )
 }
 
 fn app_metrics_test_java(pkg: &str) -> String {
-    crate::template::render(include_str!("../templates/spring/app_metrics_test_java.java"), &[("pkg", pkg)])
+    crate::template::render(
+        include_str!("../templates/spring/app_metrics_test_java.java"),
+        &[("pkg", pkg)],
+    )
 }
 
 #[cfg(test)]
@@ -3191,7 +4649,10 @@ mod observability_tests {
 }
 
 fn prometheus_scrape_test_java(pkg: &str, mockmvc_import: &str) -> String {
-    crate::template::render(include_str!("../templates/spring/prometheus_scrape_test_java.java"), &[("pkg", pkg), ("mockmvc_import", mockmvc_import)])
+    crate::template::render(
+        include_str!("../templates/spring/prometheus_scrape_test_java.java"),
+        &[("pkg", pkg), ("mockmvc_import", mockmvc_import)],
+    )
 }
 
 /// Boot 4 moved `MeterRegistryCustomizer` out of `actuate.autoconfigure`, with
@@ -3209,5 +4670,8 @@ fn meter_registry_customizer_import(root: &Path) -> &'static str {
 }
 
 fn metrics_config_java(pkg: &str, customizer_import: &str) -> String {
-    crate::template::render(include_str!("../templates/spring/metrics_config_java.java"), &[("pkg", pkg), ("customizer_import", customizer_import)])
+    crate::template::render(
+        include_str!("../templates/spring/metrics_config_java.java"),
+        &[("pkg", pkg), ("customizer_import", customizer_import)],
+    )
 }

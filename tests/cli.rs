@@ -238,10 +238,17 @@ fn app_manifest_plan_is_domain_blind_and_writes_nothing() {
         .arg(&manifest)
         .output()
         .unwrap();
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("ensure capability  db"), "{stdout}");
-    assert!(stdout.contains("pending  generate scaffold CrawlRun"), "{stdout}");
+    assert!(
+        stdout.contains("pending  generate scaffold CrawlRun"),
+        "{stdout}"
+    );
     assert!(!root.join("jails.toml").exists());
     assert!(!root.join(".jails/app-state-v1").exists());
 }
@@ -279,15 +286,38 @@ fn app_manifest_builds_the_crawler_skeleton_and_is_resumable() {
     assert!(main.join("service/DefaultQueueCrawlUseCase.java").is_file());
     assert!(main.join("web/QueueCrawlController.java").is_file());
     assert!(main.join("service/RecordCrawledPageUseCase.java").is_file());
-    assert!(main.join("clients/PageFetcherClient.java").is_file());
+    assert!(main.join("service/CrawlRunsByStatusQuery.java").is_file());
+    assert!(
+        main.join("adapters/JdbcCrawlRunsByStatusQuery.java")
+            .is_file()
+    );
+    assert!(
+        main.join("web/CrawlRunsByStatusQueryController.java")
+            .is_file()
+    );
+    assert!(main.join("service/PagesByCrawlRunQuery.java").is_file());
+    assert!(
+        main.join("adapters/JdbcPagesByCrawlRunQuery.java")
+            .is_file()
+    );
+    assert!(main.join("clients/PageFetcher.java").is_file());
+    let safe_fetcher = fs::read_to_string(main.join("clients/SafePageFetcher.java")).unwrap();
+    assert!(safe_fetcher.contains("new PinnedResolver"), "{safe_fetcher}");
+    assert!(safe_fetcher.contains("private or reserved address"), "{safe_fetcher}");
     assert!(main.join("messaging/PageDiscoveredEvent.java").is_file());
-    assert!(main.join("jobs/CrawlDispatcherJob.java").is_file());
+    assert!(main.join("jobs/CrawlDispatcherWork.java").is_file());
+    assert!(main.join("jobs/JdbcCrawlDispatcherStore.java").is_file());
+    assert!(main.join("jobs/CrawlDispatcherWorker.java").is_file());
+    assert!(main.join("web/CrawlDispatcherJobController.java").is_file());
     assert!(root.join(".jails/app-state-v1").is_file());
+    assert!(root.join("Dockerfile").is_file());
+    assert!(root.join(".github/workflows/ci.yml").is_file());
+    assert!(root.join(".github/workflows/image.yml").is_file());
     assert_eq!(
         fs::read_dir(root.join("src/main/resources/db/migration"))
             .unwrap()
             .count(),
-        3
+        4
     );
 }
 
@@ -315,12 +345,7 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
     );
 
     let main = root.join("src/main/java/com/example/demo");
-    for name in [
-        "Workspace",
-        "Contact",
-        "Conversation",
-        "Message",
-    ] {
+    for name in ["Workspace", "Contact", "Conversation", "Message"] {
         assert!(main.join(format!("domain/{name}.java")).is_file(), "{name}");
         assert!(
             main.join(format!("web/{name}Controller.java")).is_file(),
@@ -344,13 +369,47 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
             "{name} controller"
         );
     }
+    for name in [
+        "ContactsByWorkspace",
+        "ConversationsByWorkspace",
+        "MessagesByConversation",
+    ] {
+        assert!(
+            main.join(format!("service/{name}Query.java")).is_file(),
+            "{name} query"
+        );
+        assert!(
+            main.join(format!("adapters/Jdbc{name}Query.java"))
+                .is_file(),
+            "{name} JDBC adapter"
+        );
+        assert!(
+            main.join(format!("web/{name}QueryController.java"))
+                .is_file(),
+            "{name} controller"
+        );
+    }
     assert!(main.join("messaging/MessageReceivedEvent.java").is_file());
-    assert!(main.join("jobs/OutboundDeliveryJob.java").is_file());
+    assert!(main.join("jobs/OutboundDeliveryWork.java").is_file());
+    assert!(main.join("jobs/JdbcOutboundDeliveryStore.java").is_file());
+    assert!(main.join("jobs/OutboundDeliveryWorker.java").is_file());
+    assert!(
+        main.join("web/OutboundDeliveryJobController.java")
+            .is_file()
+    );
+    let contacts = fs::read_to_string(main.join("web/ContactsByWorkspaceQueryController.java"))
+        .unwrap();
+    assert!(contacts.contains("scopeAuthorizer.require"), "{contacts}");
+    let contact_controller = fs::read_to_string(main.join("web/ContactController.java")).unwrap();
+    assert!(contact_controller.contains("Scope-safe creation endpoint"));
+    assert!(!contact_controller.contains("@GetMapping"), "{contact_controller}");
+    assert!(root.join("Dockerfile").is_file());
+    assert!(root.join(".github/workflows/ci.yml").is_file());
     assert_eq!(
         fs::read_dir(root.join("src/main/resources/db/migration"))
             .unwrap()
             .count(),
-        5
+        6
     );
 }
 
@@ -448,7 +507,10 @@ fn app_manifests_pass_the_full_generated_verification_gate() {
             .args(["-q", "verify"])
             .status()
             .unwrap();
-        assert!(status.success(), "{name} failed its generated Maven verification");
+        assert!(
+            status.success(),
+            "{name} failed its generated Maven verification"
+        );
     }
 }
 
@@ -1243,7 +1305,9 @@ fn new_cli_project_passes_real_mvn_test() {
         return;
     }
     if !real_java_supports_target_release() {
-        skip(&format!("javac on PATH does not support --release {TARGET_RELEASE}"));
+        skip(&format!(
+            "javac on PATH does not support --release {TARGET_RELEASE}"
+        ));
         return;
     }
     let path = real_path_without_mvnd();
@@ -1348,7 +1412,9 @@ fn record_and_command_compile_and_pass_in_a_plain_cli_project() {
         return;
     }
     if !real_java_supports_target_release() {
-        skip(&format!("javac on PATH does not support --release {TARGET_RELEASE}"));
+        skip(&format!(
+            "javac on PATH does not support --release {TARGET_RELEASE}"
+        ));
         return;
     }
     let path = real_path_without_mvnd();
@@ -1616,7 +1682,9 @@ fn add_csv_produces_a_project_that_compiles_and_passes_tests() {
         return;
     }
     if !real_java_supports_target_release() {
-        skip(&format!("javac on PATH does not support --release {TARGET_RELEASE}"));
+        skip(&format!(
+            "javac on PATH does not support --release {TARGET_RELEASE}"
+        ));
         return;
     }
     let path = real_path_without_mvnd();
@@ -1784,8 +1852,7 @@ fn add_db_on_spring_wires_docker_compose_support() {
         "{properties}"
     );
 
-    let stale_class =
-        root.join("target/test-classes/com/example/demo/TestcontainersConfig.class");
+    let stale_class = root.join("target/test-classes/com/example/demo/TestcontainersConfig.class");
     fs::create_dir_all(stale_class.parent().unwrap()).unwrap();
     fs::write(&stale_class, []).unwrap();
     let stale_factories = root.join("target/test-classes/META-INF/spring.factories");
@@ -1954,7 +2021,9 @@ fn add_db_on_spring_makes_context_loads_pass() {
         return;
     }
     if !real_java_supports_target_release() {
-        skip(&format!("javac on PATH does not support --release {TARGET_RELEASE}"));
+        skip(&format!(
+            "javac on PATH does not support --release {TARGET_RELEASE}"
+        ));
         return;
     }
     if !real_docker_available() {
@@ -2211,7 +2280,9 @@ fn every_capability_together_produces_a_project_that_compiles_and_passes_tests()
         return;
     }
     if !real_java_supports_target_release() {
-        skip(&format!("javac on PATH does not support --release {TARGET_RELEASE}"));
+        skip(&format!(
+            "javac on PATH does not support --release {TARGET_RELEASE}"
+        ));
         return;
     }
     let path = real_path_without_mvnd();
@@ -2252,7 +2323,9 @@ fn every_generator_and_capability_together_compiles_and_passes_tests() {
         return;
     }
     if !real_java_supports_target_release() {
-        skip(&format!("javac on PATH does not support --release {TARGET_RELEASE}"));
+        skip(&format!(
+            "javac on PATH does not support --release {TARGET_RELEASE}"
+        ));
         return;
     }
     let path = real_path_without_mvnd();
@@ -2324,7 +2397,9 @@ fn generators_compose_through_user_owned_field_types() {
         return;
     }
     if !real_java_supports_target_release() {
-        skip(&format!("javac on PATH does not support --release {TARGET_RELEASE}"));
+        skip(&format!(
+            "javac on PATH does not support --release {TARGET_RELEASE}"
+        ));
         return;
     }
     let path = real_path_without_mvnd();
@@ -2431,7 +2506,9 @@ fn a_generated_command_is_reachable_by_name_through_jails_run() {
         return;
     }
     if !real_java_supports_target_release() {
-        skip(&format!("javac on PATH does not support --release {TARGET_RELEASE}"));
+        skip(&format!(
+            "javac on PATH does not support --release {TARGET_RELEASE}"
+        ));
         return;
     }
     let path = real_path_without_mvnd();
@@ -2487,7 +2564,9 @@ fn a_freshly_generated_project_passes_check_with_no_manual_formatting() {
         return;
     }
     if !real_java_supports_target_release() {
-        skip(&format!("javac on PATH does not support --release {TARGET_RELEASE}"));
+        skip(&format!(
+            "javac on PATH does not support --release {TARGET_RELEASE}"
+        ));
         return;
     }
     let path = real_path_without_mvnd();
@@ -2547,7 +2626,9 @@ fn add_json_on_a_spring_project_defers_to_the_parents_version_and_compiles() {
         return;
     }
     if !real_java_supports_target_release() {
-        skip(&format!("javac on PATH does not support --release {TARGET_RELEASE}"));
+        skip(&format!(
+            "javac on PATH does not support --release {TARGET_RELEASE}"
+        ));
         return;
     }
     let path = real_path_without_mvnd();
@@ -2705,7 +2786,7 @@ fn doctor_reports_a_jdk_older_than_the_target_release() {
 
     let output = jails_cmd(&root, None).arg("doctor").output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // The project targets release 27 and declares no compose services, so
+    // The project targets a current release and declares no compose services, so
     // the report must at least name the project and reach a verdict.
     assert!(stdout.contains("project"), "{stdout}");
     assert!(stdout.contains("checks"), "{stdout}");
@@ -2725,10 +2806,17 @@ fn doctor_exits_non_zero_when_a_check_fails() {
     let root = temp_dir("doctor-exit");
     // No pom.xml at all below this directory is not the case under test --
     // an empty project *with* a pom is: it has no src/main/java.
-    fs::write(root.join("pom.xml"), "<project><artifactId>x</artifactId></project>").unwrap();
+    fs::write(
+        root.join("pom.xml"),
+        "<project><artifactId>x</artifactId></project>",
+    )
+    .unwrap();
 
     let output = jails_cmd(&root, None).arg("doctor").output().unwrap();
-    assert!(!output.status.success(), "doctor should fail on a broken project");
+    assert!(
+        !output.status.success(),
+        "doctor should fail on a broken project"
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("FAIL"), "{stdout}");
     // The report is the message; a redundant `jails: ` line under it is not.
@@ -2828,7 +2916,12 @@ fn rename_refuses_a_package_qualified_name() {
     write_inspectable_project(&root);
 
     let output = jails_cmd(&root, None)
-        .args(["rename", "dev.example.shop.domain.Order", "Purchase", "--force"])
+        .args([
+            "rename",
+            "dev.example.shop.domain.Order",
+            "Purchase",
+            "--force",
+        ])
         .output()
         .unwrap();
     assert!(!output.status.success());
@@ -2898,14 +2991,29 @@ fn a_scaffold_with_database_types_compiles_including_its_derived_jdbc_adapter() 
     )
     .unwrap();
     // Derived, not left as a TODO.
-    assert!(!adapter.contains("UnsupportedOperationException"), "{adapter}");
-    assert!(adapter.contains("Timestamp.from(payout.paidAt())"), "{adapter}");
-    assert!(adapter.contains("Currency.valueOf(rows.getString(\"currency\"))"), "{adapter}");
+    assert!(
+        !adapter.contains("UnsupportedOperationException"),
+        "{adapter}"
+    );
+    assert!(
+        adapter.contains("Timestamp.from(payout.paidAt())"),
+        "{adapter}"
+    );
+    assert!(
+        adapter.contains("Currency.valueOf(rows.getString(\"currency\"))"),
+        "{adapter}"
+    );
     // An Optional component is unwrapped on the way out and rebuilt on the way in.
-    assert!(adapter.contains("Optional.ofNullable(rows.getString(\"note\"))"), "{adapter}");
+    assert!(
+        adapter.contains("Optional.ofNullable(rows.getString(\"note\"))"),
+        "{adapter}"
+    );
     assert!(adapter.contains("payout.note().orElse(null)"), "{adapter}");
     // The column list is shared by the select and the insert, so they agree.
-    assert!(adapter.contains("insert into payouts (id, amount, currency, paid_at, note)"), "{adapter}");
+    assert!(
+        adapter.contains("insert into payouts (id, amount, currency, paid_at, note)"),
+        "{adapter}"
+    );
 
     // The DTOs name the project's own enum, so they have to import it --
     // `field.imports` only carries the built-in types' packages.
@@ -2949,12 +3057,14 @@ fn a_scaffold_emits_a_migration_whose_columns_match_the_adapter() {
         .unwrap();
     assert!(output.status.success(), "{output:?}");
 
-    let migration = fs::read_to_string(
-        root.join("src/main/resources/db/migration/V001__create_payouts.sql"),
-    )
-    .unwrap();
+    let migration =
+        fs::read_to_string(root.join("src/main/resources/db/migration/V001__create_payouts.sql"))
+            .unwrap();
     assert!(migration.contains("create table payouts ("), "{migration}");
-    assert!(migration.contains("uuid") && migration.contains("numeric"), "{migration}");
+    assert!(
+        migration.contains("uuid") && migration.contains("numeric"),
+        "{migration}"
+    );
     // An Instant needs a zone-aware column or it comes back reinterpreted.
     assert!(migration.contains("timestamptz not null"), "{migration}");
     // The nullable component is the only one without `not null`.
@@ -3151,8 +3261,14 @@ fn add_db_upgrades_an_out_of_date_properties_block() {
 
     let next = fs::read_to_string(&properties).unwrap();
     assert!(next.contains("spring.application.name=demo"), "{next}");
-    assert!(next.contains("spring.datasource.url=jdbc:postgresql://"), "{next}");
-    assert!(next.contains("spring.docker.compose.enabled=false"), "{next}");
+    assert!(
+        next.contains("spring.datasource.url=jdbc:postgresql://"),
+        "{next}"
+    );
+    assert!(
+        next.contains("spring.docker.compose.enabled=false"),
+        "{next}"
+    );
     // The block is replaced, not duplicated.
     assert_eq!(next.matches("# jails:db").count(), 1, "{next}");
     assert_eq!(
@@ -3187,11 +3303,20 @@ fn add_api_generates_problem_detail_handling_that_compiles_and_passes() {
     )
     .unwrap();
     // Spring's own base class, so framework exceptions keep their statuses.
-    assert!(handler.contains("extends ResponseEntityExceptionHandler"), "{handler}");
+    assert!(
+        handler.contains("extends ResponseEntityExceptionHandler"),
+        "{handler}"
+    );
     // RFC 9457, not a hand-rolled error envelope.
-    assert!(handler.contains("ProblemDetail.forStatusAndDetail"), "{handler}");
+    assert!(
+        handler.contains("ProblemDetail.forStatusAndDetail"),
+        "{handler}"
+    );
     // Field errors ride in an extension member rather than a bespoke shape.
-    assert!(handler.contains("problem.setProperty(\"fields\""), "{handler}");
+    assert!(
+        handler.contains("problem.setProperty(\"fields\""),
+        "{handler}"
+    );
     let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
     assert!(pom.contains("spring-boot-starter-validation"), "{pom}");
 
@@ -3261,7 +3386,10 @@ fn add_actuator_exposes_health_and_nothing_dangerous() {
         .arg("test")
         .status()
         .unwrap();
-    assert!(status.success(), "mvn test failed after `jails add actuator`");
+    assert!(
+        status.success(),
+        "mvn test failed after `jails add actuator`"
+    );
 }
 
 #[test]
@@ -3300,7 +3428,11 @@ fn add_observability_serves_a_prometheus_scrape() {
     let surefire = fs::read_dir(root.join("target/surefire-reports"))
         .unwrap()
         .filter_map(|e| e.ok())
-        .any(|e| e.file_name().to_string_lossy().contains("PrometheusScrapeTest"));
+        .any(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .contains("PrometheusScrapeTest")
+        });
     assert!(surefire, "PrometheusScrapeTest did not run");
 }
 
@@ -3347,7 +3479,10 @@ fn a_spring_capability_is_refused_in_a_plain_maven_project() {
     )
     .unwrap();
 
-    let output = jails_cmd(&root, None).args(["add", "api"]).output().unwrap();
+    let output = jails_cmd(&root, None)
+        .args(["add", "api"])
+        .output()
+        .unwrap();
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("Spring Boot capability"), "{stderr}");
@@ -3387,7 +3522,10 @@ fn capability_property_blocks_do_not_clobber_each_other() {
     assert!(!after.contains("# jails:cache"), "{after}");
     assert!(!after.contains("spring.cache.type"), "{after}");
     assert!(after.contains("# jails:actuator"), "{after}");
-    assert!(after.contains("management.endpoints.web.exposure.include"), "{after}");
+    assert!(
+        after.contains("management.endpoints.web.exposure.include"),
+        "{after}"
+    );
 }
 
 #[test]
@@ -3408,7 +3546,12 @@ fn generate_dto_client_and_job_compile_and_pass_against_real_spring() {
     assert!(
         jails_cmd_with_path(&root, &path)
             .args([
-                "generate", "record", "Payout", "id:uuid", "amount:long", "note:string?"
+                "generate",
+                "record",
+                "Payout",
+                "id:uuid",
+                "amount:long",
+                "note:string?"
             ])
             .status()
             .unwrap()
@@ -3452,10 +3595,13 @@ fn generate_dto_client_and_job_compile_and_pass_against_real_spring() {
         root.join("src/main/java/com/example/demo/clients/HttpClientsConfig.java"),
     )
     .unwrap();
-    assert!(config.contains("@ImportHttpServices(group = \"billing\""), "{config}");
+    assert!(
+        config.contains("@ImportHttpServices(group = \"billing\""),
+        "{config}"
+    );
 
-    let job = fs::read_to_string(root.join("src/main/java/com/example/demo/jobs/SweepJob.java"))
-        .unwrap();
+    let job =
+        fs::read_to_string(root.join("src/main/java/com/example/demo/jobs/SweepJob.java")).unwrap();
     // fixedDelay, not fixedRate: a slow run must not queue another on top.
     assert!(job.contains("fixedDelayString"), "{job}");
     // An exception escaping a @Scheduled method cancels every future run.
@@ -3568,9 +3714,18 @@ fn add_kafka_and_generate_event_compile_against_real_spring() {
     );
     let properties =
         fs::read_to_string(root.join("src/main/resources/application.properties")).unwrap();
-    assert!(properties.contains("auto-offset-reset=earliest"), "{properties}");
-    assert!(properties.contains("JacksonJsonDeserializer"), "{properties}");
-    assert!(!properties.contains("serializer.JsonDeserializer"), "{properties}");
+    assert!(
+        properties.contains("auto-offset-reset=earliest"),
+        "{properties}"
+    );
+    assert!(
+        properties.contains("JacksonJsonDeserializer"),
+        "{properties}"
+    );
+    assert!(
+        !properties.contains("serializer.JsonDeserializer"),
+        "{properties}"
+    );
     // Both the base package and a wildcard under it: the match is neither a
     // prefix nor recursive, so `com.example.demo` alone rejects the payload
     // `g event` writes into `com.example.demo.messaging`.
@@ -3663,14 +3818,21 @@ fn add_security_writes_an_explicit_chain_that_denies_by_default() {
     }
 
     let config =
-        fs::read_to_string(root.join("src/main/java/com/example/demo/SecurityConfig.java")).unwrap();
+        fs::read_to_string(root.join("src/main/java/com/example/demo/SecurityConfig.java"))
+            .unwrap();
     // Default deny: a new endpoint is protected until someone says otherwise.
     assert!(config.contains(".anyRequest()"), "{config}");
     assert!(config.contains(".authenticated()"), "{config}");
     // CSRF is only disabled alongside STATELESS -- the two are safe together
     // and unsafe apart, so neither should appear without the other.
-    assert!(config.contains("SessionCreationPolicy.STATELESS"), "{config}");
-    assert!(config.contains("csrf(AbstractHttpConfigurer::disable)"), "{config}");
+    assert!(
+        config.contains("SessionCreationPolicy.STATELESS"),
+        "{config}"
+    );
+    assert!(
+        config.contains("csrf(AbstractHttpConfigurer::disable)"),
+        "{config}"
+    );
     // Only health is public. `env` and `heapdump` must not be.
     assert!(config.contains("/actuator/health/**"), "{config}");
     assert!(!config.contains("/actuator/**"), "{config}");
@@ -3679,7 +3841,10 @@ fn add_security_writes_an_explicit_chain_that_denies_by_default() {
         .arg("test")
         .status()
         .unwrap();
-    assert!(status.success(), "mvn test failed after `jails add security`");
+    assert!(
+        status.success(),
+        "mvn test failed after `jails add security`"
+    );
 }
 
 #[test]
@@ -3860,10 +4025,7 @@ fn add_preflight_holds_when_the_refused_capability_is_named_first() {
         .unwrap();
 
     assert!(!output.status.success());
-    assert_eq!(
-        fs::read_to_string(root.join("pom.xml")).unwrap(),
-        before
-    );
+    assert_eq!(fs::read_to_string(root.join("pom.xml")).unwrap(), before);
 }
 
 /// The tier that answers what the tool is for. A strategy's interface,
@@ -3879,7 +4041,9 @@ fn generate_strategy_produces_a_project_that_compiles_and_passes_tests() {
         return;
     }
     if !real_java_supports_target_release() {
-        skip(&format!("javac on PATH does not support --release {TARGET_RELEASE}"));
+        skip(&format!(
+            "javac on PATH does not support --release {TARGET_RELEASE}"
+        ));
         return;
     }
     let path = real_path_without_mvnd();
@@ -3905,8 +4069,15 @@ fn generate_strategy_produces_a_project_that_compiles_and_passes_tests() {
     assert!(
         jails_cmd_with_path(&root, &path)
             .args([
-                "g", "strategy", "RewardRule", "Coffee", "LargeTransaction", "--on",
-                "Transaction", "--yields", "Reward",
+                "g",
+                "strategy",
+                "RewardRule",
+                "Coffee",
+                "LargeTransaction",
+                "--on",
+                "Transaction",
+                "--yields",
+                "Reward",
             ])
             .status()
             .unwrap()
@@ -3915,7 +4086,14 @@ fn generate_strategy_produces_a_project_that_compiles_and_passes_tests() {
     // The predicate mode, whose method returns `boolean` rather than Optional.
     assert!(
         jails_cmd_with_path(&root, &path)
-            .args(["g", "strategy", "Eligibility", "Domestic", "--on", "Transaction"])
+            .args([
+                "g",
+                "strategy",
+                "Eligibility",
+                "Domestic",
+                "--on",
+                "Transaction"
+            ])
             .status()
             .unwrap()
             .success()
@@ -3944,7 +4122,14 @@ fn destroy_strategy_removes_the_implementations_it_did_not_name() {
 
     assert!(
         jails_cmd(&root, None)
-            .args(["g", "strategy", "RewardRule", "Coffee", "--on", "Transaction"])
+            .args([
+                "g",
+                "strategy",
+                "RewardRule",
+                "Coffee",
+                "--on",
+                "Transaction"
+            ])
             .status()
             .unwrap()
             .success()
@@ -4039,7 +4224,9 @@ fn sync_applies_what_the_manifest_declares() {
     let shown = String::from_utf8_lossy(&preview.stdout);
     assert!(shown.contains("would create"), "{shown}");
     assert!(
-        !root.join("src/main/java/com/example/demo/persistence").exists(),
+        !root
+            .join("src/main/java/com/example/demo/persistence")
+            .exists(),
         "--dry-run wrote files"
     );
 
@@ -4063,14 +4250,20 @@ fn sync_applies_what_the_manifest_declares() {
 fn sync_over_a_correct_project_changes_nothing() {
     let root = temp_dir("manifest-sync-idempotent");
     write_plain_fixture(&root);
-    jails_cmd(&root, None).args(["add", "csv"]).status().unwrap();
+    jails_cmd(&root, None)
+        .args(["add", "csv"])
+        .status()
+        .unwrap();
 
     let pom_before = fs::read_to_string(root.join("pom.xml")).unwrap();
     let output = jails_cmd(&root, None).args(["sync"]).output().unwrap();
     assert!(output.status.success());
     let shown = String::from_utf8_lossy(&output.stdout);
     assert!(shown.contains("already set up"), "{shown}");
-    assert_eq!(fs::read_to_string(root.join("pom.xml")).unwrap(), pom_before);
+    assert_eq!(
+        fs::read_to_string(root.join("pom.xml")).unwrap(),
+        pom_before
+    );
 }
 
 /// A project with no manifest is not an error -- most projects never have
@@ -4101,7 +4294,10 @@ fn sync_refuses_a_manifest_naming_a_capability_that_does_not_exist() {
     let output = jails_cmd(&root, None).args(["sync"]).output().unwrap();
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("unknown capability `postgress`"), "{stderr}");
+    assert!(
+        stderr.contains("unknown capability `postgress`"),
+        "{stderr}"
+    );
     assert!(stderr.contains("db"), "should list the real ones: {stderr}");
 }
 
@@ -4119,7 +4315,10 @@ fn sync_refuses_a_manifest_naming_a_capability_that_does_not_exist() {
 fn remove_names_generated_files_that_were_edited_before_deleting_them() {
     let root = temp_dir("remove-edited-files");
     write_plain_fixture(&root);
-    jails_cmd(&root, None).args(["add", "csv"]).status().unwrap();
+    jails_cmd(&root, None)
+        .args(["add", "csv"])
+        .status()
+        .unwrap();
 
     let generated = root.join("src/main/java/com/example/demo/adapters/CsvReader.java");
     let mut edited = fs::read_to_string(&generated).unwrap();
@@ -4146,7 +4345,10 @@ fn remove_names_generated_files_that_were_edited_before_deleting_them() {
 fn remove_says_nothing_about_files_that_were_not_edited() {
     let root = temp_dir("remove-unedited-files");
     write_plain_fixture(&root);
-    jails_cmd(&root, None).args(["add", "csv"]).status().unwrap();
+    jails_cmd(&root, None)
+        .args(["add", "csv"])
+        .status()
+        .unwrap();
 
     let output = jails_cmd(&root, None)
         .args(["remove", "csv", "--force"])
@@ -4165,10 +4367,17 @@ fn remove_says_nothing_about_files_that_were_not_edited() {
 fn dry_run_remove_names_edited_files() {
     let root = temp_dir("remove-edited-dry-run");
     write_plain_fixture(&root);
-    jails_cmd(&root, None).args(["add", "csv"]).status().unwrap();
+    jails_cmd(&root, None)
+        .args(["add", "csv"])
+        .status()
+        .unwrap();
 
     let generated = root.join("src/main/java/com/example/demo/adapters/CsvReader.java");
-    fs::write(&generated, "package com.example.demo.adapters;\nclass CsvReader {}\n").unwrap();
+    fs::write(
+        &generated,
+        "package com.example.demo.adapters;\nclass CsvReader {}\n",
+    )
+    .unwrap();
 
     let output = jails_cmd(&root, None)
         .args(["remove", "csv", "--dry-run"])
@@ -4187,8 +4396,15 @@ fn dry_run_remove_names_edited_files() {
 fn stats_counts_a_renamed_layer_under_its_configured_name() {
     let root = temp_dir("stats-renamed-layer");
     write_plain_fixture(&root);
-    fs::write(root.join("jails.toml"), "[layout]\nadapters = \"persistence\"\n").unwrap();
-    jails_cmd(&root, None).args(["add", "csv"]).status().unwrap();
+    fs::write(
+        root.join("jails.toml"),
+        "[layout]\nadapters = \"persistence\"\n",
+    )
+    .unwrap();
+    jails_cmd(&root, None)
+        .args(["add", "csv"])
+        .status()
+        .unwrap();
 
     let output = jails_cmd(&root, None).args(["stats"]).output().unwrap();
     assert!(output.status.success());
@@ -4363,5 +4579,9 @@ fn new_cli_inside_another_project_uses_the_new_projects_root() {
         "the package-info names the surrounding project's package:\n{text}"
     );
     // And the outer project is left alone.
-    assert!(!outer.join("src/main/java/com/outer/package-info.java").exists());
+    assert!(
+        !outer
+            .join("src/main/java/com/outer/package-info.java")
+            .exists()
+    );
 }

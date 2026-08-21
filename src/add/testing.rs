@@ -58,23 +58,38 @@ pub(super) fn testkit_plan(root: &std::path::Path, testkit: &str) -> Result<Plan
 pub(super) const EXAMPLE_FIXTURE: &str = "{\n  \"name\": \"bolt\",\n  \"qty\": 7\n}\n";
 
 pub(super) fn clocks_java(pkg: &str) -> String {
-    crate::template::render(include_str!("../../templates/add/clocks_java.java"), &[("pkg", pkg)])
+    crate::template::render(
+        include_str!("../../templates/add/clocks_java.java"),
+        &[("pkg", pkg)],
+    )
 }
 
 pub(super) fn ids_java(pkg: &str) -> String {
-    crate::template::render(include_str!("../../templates/add/ids_java.java"), &[("pkg", pkg)])
+    crate::template::render(
+        include_str!("../../templates/add/ids_java.java"),
+        &[("pkg", pkg)],
+    )
 }
 
 pub(super) fn fixtures_java(pkg: &str) -> String {
-    crate::template::render(include_str!("../../templates/add/fixtures_java.java"), &[("pkg", pkg)])
+    crate::template::render(
+        include_str!("../../templates/add/fixtures_java.java"),
+        &[("pkg", pkg)],
+    )
 }
 
 pub(super) fn testkit_cli_java(pkg: &str) -> String {
-    crate::template::render(include_str!("../../templates/add/testkit_cli_java.java"), &[("pkg", pkg)])
+    crate::template::render(
+        include_str!("../../templates/add/testkit_cli_java.java"),
+        &[("pkg", pkg)],
+    )
 }
 
 pub(super) fn testkit_test_java(pkg: &str) -> String {
-    crate::template::render(include_str!("../../templates/add/testkit_test_java.java"), &[("pkg", pkg)])
+    crate::template::render(
+        include_str!("../../templates/add/testkit_test_java.java"),
+        &[("pkg", pkg)],
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -438,10 +453,15 @@ class FaultsTest {{
 }
 
 pub(super) fn scripted_java(pkg: &str) -> String {
-    crate::template::render(include_str!("../../templates/add/scripted_java.java"), &[("pkg", pkg)])
+    crate::template::render(
+        include_str!("../../templates/add/scripted_java.java"),
+        &[("pkg", pkg)],
+    )
 }
 
 pub(super) fn scripted_test_java(pkg: &str) -> String {
-    crate::template::render(include_str!("../../templates/add/scripted_test_java.java"), &[("pkg", pkg)])
+    crate::template::render(
+        include_str!("../../templates/add/scripted_test_java.java"),
+        &[("pkg", pkg)],
+    )
 }
-

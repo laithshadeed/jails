@@ -195,7 +195,6 @@ pub(super) fn record_test(root: &Path, pkg: &str, name: &str, fields: &[Field]) 
     out
 }
 
-
 pub(crate) fn sample_value(field: &Field, root: &Path, pkg: &str) -> Option<String> {
     // An absent Optional is a sample of anything, so `?` rescues even a type
     // jails knows nothing about.
@@ -621,7 +620,6 @@ class {name}Test {{
     )
 }
 
-
 // ---- sealed: the closed set whose cases carry different data, which is the
 // one an enum cannot model. ----
 
@@ -800,7 +798,11 @@ pub(super) fn strategy_method(on: &str, yields: Option<&str>) -> (String, String
             "apply".to_string(),
             format!("{on} {param}"),
         ),
-        None => ("boolean".to_string(), "matches".to_string(), format!("{on} {param}")),
+        None => (
+            "boolean".to_string(),
+            "matches".to_string(),
+            format!("{on} {param}"),
+        ),
     }
 }
 
@@ -916,11 +918,21 @@ pub(super) fn strategy_impl_java(
 /// A `@Disabled` test naming what to prove, per the rule the audit settled:
 /// a generated test that passes over an unwritten class inflates the count and
 /// teaches the pattern, and a failing one makes a fresh project red.
-pub(super) fn strategy_impl_test(pkg: &str, name: &str, class: &str, on: &str, yields: Option<&str>) -> String {
+pub(super) fn strategy_impl_test(
+    pkg: &str,
+    name: &str,
+    class: &str,
+    on: &str,
+    yields: Option<&str>,
+) -> String {
     // A verb per mode rather than the method name with an `s` glued on:
     // `apply` + `s` reads `applys`, and a generated test whose name is
     // misspelled is the first thing anyone sees of the pattern.
-    let verb = if yields.is_some() { "grants" } else { "matches" };
+    let verb = if yields.is_some() {
+        "grants"
+    } else {
+        "matches"
+    };
     let param_name = lower_first(on);
     let mut out = format!("package {pkg};\n\n");
     out += "import org.junit.jupiter.api.Disabled;\n";
@@ -949,7 +961,8 @@ pub(super) fn strategy_impl_test(pkg: &str, name: &str, class: &str, on: &str, y
     out += "    @Test\n";
     out += &format!("    void declinesWhenThe{on}DoesNot() {{\n");
     out += &format!("        var {} = new {class}();\n", lower_first(class));
-    out += &format!("        // TODO: assert {class} declines a {param_name} it should not match.\n");
+    out +=
+        &format!("        // TODO: assert {class} declines a {param_name} it should not match.\n");
     out += "    }\n";
     out += &format!("}}\n");
     let _ = name;

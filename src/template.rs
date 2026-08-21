@@ -69,9 +69,12 @@ pub(crate) fn render(template: &str, values: &[(&str, &str)]) -> String {
     while let Some(at) = rest.find("{{") {
         out.push_str(&rest[..at]);
         let after = &rest[at + 2..];
-        let end = after
-            .find("}}")
-            .unwrap_or_else(|| panic!("unterminated template placeholder near `{}`", &after[..after.len().min(30)]));
+        let end = after.find("}}").unwrap_or_else(|| {
+            panic!(
+                "unterminated template placeholder near `{}`",
+                &after[..after.len().min(30)]
+            )
+        });
         let key = &after[..end];
         let value = values
             .iter()
@@ -134,7 +137,8 @@ mod tests {
     /// untouched, so a template is a real `.java` file and needs no escaping.
     #[test]
     fn java_braces_and_javadoc_pass_through_untouched() {
-        let template = "/**\n * {@code public} buys nothing.\n */\nclass {{name}} {\n    void f() {}\n}\n";
+        let template =
+            "/**\n * {@code public} buys nothing.\n */\nclass {{name}} {\n    void f() {}\n}\n";
         let out = render(template, &[("name", "Health")]);
         assert!(out.contains("{@code public}"), "{out}");
         assert!(out.contains("void f() {}"), "{out}");
@@ -145,7 +149,10 @@ mod tests {
     /// not the placeholder syntax. It must survive rendering.
     #[test]
     fn a_spring_property_placeholder_is_not_a_template_placeholder() {
-        let out = render("@Value(\"${app.url}\")\nString {{field}};\n", &[("field", "url")]);
+        let out = render(
+            "@Value(\"${app.url}\")\nString {{field}};\n",
+            &[("field", "url")],
+        );
         assert!(out.contains("${app.url}"), "{out}");
     }
 
@@ -163,7 +170,10 @@ mod tests {
     #[test]
     #[should_panic(expected = "is not used by this template")]
     fn a_value_the_template_does_not_use_is_an_error() {
-        render("class {{name}} {}", &[("name", "Note"), ("pkg", "com.example")]);
+        render(
+            "class {{name}} {}",
+            &[("name", "Note"), ("pkg", "com.example")],
+        );
     }
 
     /// Values are substituted, not re-scanned: a value that happens to

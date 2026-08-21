@@ -29,8 +29,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @SpringBootTest(
         properties = {
-            "spring.security.user.name=probe",
-            "spring.security.user.password=probe"
+            "app.security.dev.username=probe",
+            "app.security.dev.password=probe"
         })
 @AutoConfigureMockMvc
 class SecurityConfigTest {

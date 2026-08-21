@@ -64,6 +64,11 @@ pub enum Capability {
     Http,
     /// Automatic formatting on `mvn verify` (Spotless + palantir-java-format)
     Format,
+    /// Least-privilege GitHub Actions verification with immutable action pins
+    Ci,
+    /// Multi-stage, non-root OCI image using the project's configured Java release
+    #[value(alias = "image")]
+    Docker,
     /// RFC 9457 problem responses and bean validation, handled in one place
     #[value(alias = "errors")]
     Api,
@@ -98,6 +103,8 @@ impl Capability {
             Capability::Fake => "fake",
             Capability::Http => "http",
             Capability::Format => "format",
+            Capability::Ci => "ci",
+            Capability::Docker => "docker",
             Capability::Api => "api",
             Capability::Actuator => "actuator",
             Capability::Cache => "cache",
@@ -364,16 +371,16 @@ pub fn add(
     // make sure something runs it. Failsafe is not in the Spring Boot
     // parent's default build, so without this `mvn verify` completes,
     // reports success, and executes none of them.
-    if plan
-        .files
-        .iter()
-        .any(|f| f.path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.ends_with("IT.java")))
-        && let Some(next) = pom::add_plugin(
-            &updated_pom,
-            crate::spring::FAILSAFE_ARTIFACT,
-            crate::spring::FAILSAFE_PLUGIN,
-        )?
-    {
+    if plan.files.iter().any(|f| {
+        f.path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.ends_with("IT.java"))
+    }) && let Some(next) = pom::add_plugin(
+        &updated_pom,
+        crate::spring::FAILSAFE_ARTIFACT,
+        crate::spring::FAILSAFE_PLUGIN,
+    )? {
         std::fs::write(root.join("pom.xml"), &next)
             .map_err(|e| format!("failed to write pom.xml: {e}"))?;
         println!("  plugin  {}", crate::spring::FAILSAFE_ARTIFACT);
@@ -807,6 +814,8 @@ fn build_plan(
         Capability::Fake => fake_plan(root, &place(layout::TESTKIT)),
         Capability::Http => http_plan(root, &place(layout::API), name),
         Capability::Format => format_plan(),
+        Capability::Ci => ci_plan(root),
+        Capability::Docker => docker_plan(root),
         Capability::Api => spring_slice_plan(
             crate::spring::api_slice(root, &place(layout::API)),
             flavor,
@@ -1269,7 +1278,10 @@ mod tests {
             block.contains("spring.datasource.url=jdbc:postgresql://localhost:5544/rewards"),
             "{block}"
         );
-        assert!(block.contains("spring.datasource.username=rewards"), "{block}");
+        assert!(
+            block.contains("spring.datasource.username=rewards"),
+            "{block}"
+        );
     }
 
     #[test]
@@ -1404,7 +1416,10 @@ class TransactionMessagingIT {}
         // The Jackson-prefixed serializers: the older pair is deprecated for
         // removal since Spring Kafka 4.0.
         assert!(
-            spring.properties.iter().any(|p| p.contains("JacksonJsonSerializer")),
+            spring
+                .properties
+                .iter()
+                .any(|p| p.contains("JacksonJsonSerializer")),
             "{:?}",
             spring.properties
         );

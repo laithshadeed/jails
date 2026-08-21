@@ -73,9 +73,7 @@ pub fn read_log(log: &Path) -> String {
 /// The real-toolchain tests self-skip when Maven, a new enough JDK or Docker
 /// is missing, which is right on a laptop and wrong in CI: the suite reports
 /// green while the one tier that answers "does this produce a project that
-/// compiles?" has not run, and nothing in the output says so. On this machine
-/// that is the normal state, because `TARGET_RELEASE` is a release whose JDK
-/// is not GA yet.
+/// compiles?" has not run, and nothing in the output says so.
 ///
 /// So the default stays permissive and CI opts in. A run with this set either
 /// exercises the tier or fails naming what was missing -- it never passes
@@ -99,10 +97,9 @@ pub fn real_java_available() -> bool {
 
 /// Whether the `javac` on PATH understands the release jails generates for
 /// (`pom::TARGET_RELEASE`). Presence of a JDK is not enough: a JDK older than
-/// the target rejects `--release N` outright, which is the normal state of
-/// the world in the months before a new Java GA. Tests that really compile
-/// generated code skip on this rather than going red until the toolchain
-/// catches up -- see mise.toml for how 27 is provided here.
+/// the target rejects `--release N` outright. Tests that really compile
+/// generated code skip on this rather than hiding the reason in a javac
+/// failure; required CI sets `JAILS_REQUIRE_TOOLCHAIN=1` so it cannot skip.
 pub fn real_java_supports_target_release() -> bool {
     Command::new("javac")
         .arg(format!("--release={TARGET_RELEASE}"))
@@ -128,7 +125,7 @@ pub fn real_docker_available() -> bool {
 /// `target_release_matches_the_binary` in tests/cli.rs -- the integration
 /// tests compile against the binary, not the library, so the constant cannot
 /// simply be imported.
-pub const TARGET_RELEASE: &str = "27";
+pub const TARGET_RELEASE: &str = "25";
 
 fn real_path_dirs() -> impl Iterator<Item = PathBuf> {
     std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
@@ -195,7 +192,7 @@ const SPRING_FIXTURE_POM: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
     <artifactId>demo</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <properties>
-        <java.version>26</java.version>
+        <java.version>25</java.version>
     </properties>
     <dependencies>
         <dependency>

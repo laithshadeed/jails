@@ -66,8 +66,13 @@ pub fn check(no_start: bool, debug: bool) -> Result<()> {
     // one, and so a leftover is obviously jails' rather than someone's.
     let scratch = format!("jails_migration_check_{}", std::process::id());
 
-    psql(&conn, &conn.database, &format!("create database {scratch}"), debug)
-        .map_err(|e| format!("could not create the scratch database: {e}"))?;
+    psql(
+        &conn,
+        &conn.database,
+        &format!("create database {scratch}"),
+        debug,
+    )
+    .map_err(|e| format!("could not create the scratch database: {e}"))?;
 
     let mut failure = None;
     for migration in &migrations {

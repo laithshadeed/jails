@@ -49,11 +49,17 @@ pub(super) fn csv_plan(
 }
 
 pub(super) fn csv_reader_java(pkg: &str, class: &str) -> String {
-    crate::template::render(include_str!("../../templates/add/csv_reader_java.java"), &[("pkg", pkg), ("class", class)])
+    crate::template::render(
+        include_str!("../../templates/add/csv_reader_java.java"),
+        &[("pkg", pkg), ("class", class)],
+    )
 }
 
 pub(super) fn csv_reader_test_java(pkg: &str, class: &str) -> String {
-    crate::template::render(include_str!("../../templates/add/csv_reader_test_java.java"), &[("pkg", pkg), ("class", class)])
+    crate::template::render(
+        include_str!("../../templates/add/csv_reader_test_java.java"),
+        &[("pkg", pkg), ("class", class)],
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -117,7 +123,13 @@ pub(super) fn json_plan(
 
     Ok(Plan {
         deps,
-        legacy_deps: vec![JACKSON_JSR310, Dependency { group_id: "com.fasterxml.jackson.core", ..JACKSON }],
+        legacy_deps: vec![
+            JACKSON_JSR310,
+            Dependency {
+                group_id: "com.fasterxml.jackson.core",
+                ..JACKSON
+            },
+        ],
         files: vec![
             NewFile {
                 path: main_dir(root, pkg).join(format!("{class}.java")),
@@ -133,10 +145,15 @@ pub(super) fn json_plan(
 }
 
 pub(super) fn json_java(pkg: &str, class: &str) -> String {
-    crate::template::render(include_str!("../../templates/add/json_java.java"), &[("pkg", pkg), ("class", class)])
+    crate::template::render(
+        include_str!("../../templates/add/json_java.java"),
+        &[("pkg", pkg), ("class", class)],
+    )
 }
 
 pub(super) fn json_test_java(pkg: &str, class: &str) -> String {
-    crate::template::render(include_str!("../../templates/add/json_test_java.java"), &[("pkg", pkg), ("class", class)])
+    crate::template::render(
+        include_str!("../../templates/add/json_test_java.java"),
+        &[("pkg", pkg), ("class", class)],
+    )
 }
-

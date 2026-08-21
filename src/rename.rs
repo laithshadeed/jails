@@ -139,7 +139,11 @@ fn validate(old: &str, new: &str) -> Result<()> {
         if name.is_empty() {
             return Err(format!("the {label} name is empty"));
         }
-        if !name.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_') {
+        if !name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_alphabetic() || c == '_')
+        {
             return Err(format!(
                 "`{name}` is not a Java identifier -- the {label} name must start with a letter"
             ));
@@ -239,7 +243,11 @@ fn literal_end(source: &str, at: usize) -> Option<usize> {
     let bytes = source.as_bytes();
     if source[at..].starts_with(r#"""""#) {
         let rest = &source[at + 3..];
-        return Some(rest.find(r#"""""#).map(|o| at + 3 + o + 3).unwrap_or(bytes.len()));
+        return Some(
+            rest.find(r#"""""#)
+                .map(|o| at + 3 + o + 3)
+                .unwrap_or(bytes.len()),
+        );
     }
     let quote = match bytes.get(at) {
         Some(b'"') => b'"',

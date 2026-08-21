@@ -35,7 +35,11 @@ class {name}IT {{
 pub(super) fn stub_controller(pkg: &str, name: &str) -> String {
     crate::template::render(
         include_str!("../../templates/generate/stub_controller.java"),
-        &[("pkg", pkg), ("name", name), ("route", &name.to_lowercase())],
+        &[
+            ("pkg", pkg),
+            ("name", name),
+            ("route", &name.to_lowercase()),
+        ],
     )
 }
 
@@ -483,5 +487,3 @@ class {name}HandlerTest {{
 "#
     )
 }
-
-

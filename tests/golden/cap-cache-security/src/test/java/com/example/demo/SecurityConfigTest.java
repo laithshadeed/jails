@@ -29,8 +29,8 @@ import org.springframework.test.web.servlet.assertj.MockMvcTester;
  */
 @SpringBootTest(
         properties = {
-            "spring.security.user.name=probe",
-            "spring.security.user.password=probe"
+            "app.security.dev.username=probe",
+            "app.security.dev.password=probe"
         })
 @AutoConfigureMockMvc
 class SecurityConfigTest {

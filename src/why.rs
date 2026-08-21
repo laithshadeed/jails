@@ -57,7 +57,8 @@ const RULES: &[Rule] = &[
         // means the retry text is the one more often pasted into a search.
         signatures: &["Previous attempts to find a Docker environment failed"],
         group: "docker-env",
-        explain: |_| Diagnosis {
+        explain: |_| {
+            Diagnosis {
             headline: "Testcontainers gave up looking for a container engine".into(),
             because: "This is the *second* failure, not the first: Testcontainers probes for an \
                       engine once per JVM and caches the answer, so every test after the first \
@@ -72,6 +73,7 @@ const RULES: &[Rule] = &[
                 "export TESTCONTAINERS_RYUK_DISABLED=true   # rootless podman cannot run Ryuk".into(),
                 "jails doctor                                # its testcontainers check reports this".into(),
             ],
+        }
         },
     },
     Rule {
@@ -89,15 +91,14 @@ const RULES: &[Rule] = &[
                       JVM and needs no socket at all; the trade is isolation, so a snippet that \
                       calls System.exit takes the shell with it."
                 .into(),
-            fixes: vec![
-                "jails console -- --execution local".into(),
-            ],
+            fixes: vec!["jails console -- --execution local".into()],
         },
     },
     Rule {
         signatures: &["mvnd/registry", "Read-only file system"],
         group: "mvnd-registry",
-        explain: |_| Diagnosis {
+        explain: |_| {
+            Diagnosis {
             headline: "The Maven daemon cannot write its registry".into(),
             because: "mvnd keeps a registry of running daemons under ~/.m2/mvnd, and cannot start \
                       when that path is read-only -- which is what a sandbox with a read-only home \
@@ -108,6 +109,7 @@ const RULES: &[Rule] = &[
                 "jails mvn -- <goal>   # jails prefers the project's ./mvnw, which is not mvnd".into(),
                 "rm -rf ~/.m2/mvnd/registry   # if the registry is merely stale rather than read-only".into(),
             ],
+        }
         },
     },
     Rule {
@@ -123,9 +125,12 @@ const RULES: &[Rule] = &[
                 .into(),
             fixes: vec![
                 "export DOCKER_HOST=unix://$XDG_RUNTIME_DIR/podman/podman.sock".into(),
-                "export TESTCONTAINERS_RYUK_DISABLED=true   # rootless podman cannot run Ryuk".into(),
-                "systemctl --user start podman.socket        # if the socket does not exist yet".into(),
-                "jails doctor                                 # confirms which of these is missing".into(),
+                "export TESTCONTAINERS_RYUK_DISABLED=true   # rootless podman cannot run Ryuk"
+                    .into(),
+                "systemctl --user start podman.socket        # if the socket does not exist yet"
+                    .into(),
+                "jails doctor                                 # confirms which of these is missing"
+                    .into(),
             ],
         },
     },
@@ -136,7 +141,8 @@ const RULES: &[Rule] = &[
         // symptom and this is the cause.
         signatures: &["podman-compose", "spring-boot-docker-compose"],
         group: "compose-provider",
-        explain: |_| Diagnosis {
+        explain: |_| {
+            Diagnosis {
             headline: "Spring Boot's Docker Compose module cannot drive podman-compose".into(),
             because: "`spring-boot-docker-compose` shells out to the compose provider with \
                       Docker Compose v2 syntax -- `--ansi never` and `config --format=json`. \
@@ -151,12 +157,14 @@ const RULES: &[Rule] = &[
                 "echo 'spring.docker.compose.enabled=false' >> src/main/resources/application.properties".into(),
                 "jails start db   # jails starts the services instead, which it already did".into(),
             ],
+        }
         },
     },
     Rule {
         signatures: &["Failed to determine a suitable driver class"],
         group: "datasource",
-        explain: |_| Diagnosis {
+        explain: |_| {
+            Diagnosis {
             headline: "Spring has no database URL, so it cannot pick a JDBC driver".into(),
             because: "JDBC auto-configuration is active (the starter is on the classpath) but \
                       nothing supplied a datasource URL. In tests this is the usual case: Spring \
@@ -172,6 +180,7 @@ const RULES: &[Rule] = &[
                 "jails add db        # idempotent: re-writes only what is missing".into(),
                 "For a main-app (not test) failure: jails start db, then check compose.yaml".into(),
             ],
+        }
         },
     },
     Rule {
@@ -245,15 +254,18 @@ const RULES: &[Rule] = &[
         signatures: &["UnsatisfiedDependencyException"],
         group: "missing-bean",
         explain: |_| Diagnosis {
-            headline: "A bean could not be constructed because one of its dependencies could not be"
-                .into(),
-            because: "Spring reports the outermost bean, but the cause is further down: read to the \
+            headline:
+                "A bean could not be constructed because one of its dependencies could not be"
+                    .into(),
+            because:
+                "Spring reports the outermost bean, but the cause is further down: read to the \
                       last `Caused by:` and it will name a type. That type either has no \
                       implementation registered, or has more than one and Spring will not choose. \
                       Both are visible without starting the application."
-                .into(),
+                    .into(),
             fixes: vec![
-                "jails beans     # every registered bean, and which dependencies do not resolve".into(),
+                "jails beans     # every registered bean, and which dependencies do not resolve"
+                    .into(),
                 "jails doctor    # the same check, as a pass/fail line".into(),
             ],
         },
@@ -274,7 +286,8 @@ const RULES: &[Rule] = &[
                      about ambiguity, so this is the zero case."
                 ),
                 fixes: vec![
-                    "jails beans      # shows which types are registered and what they provide".into(),
+                    "jails beans      # shows which types are registered and what they provide"
+                        .into(),
                     format!("Annotate the class that implements {short}, not {short} itself"),
                 ],
             }
@@ -303,7 +316,8 @@ const RULES: &[Rule] = &[
     Rule {
         signatures: &["Connection to", "refused"],
         group: "db-unreachable",
-        explain: |_| Diagnosis {
+        explain: |_| {
+            Diagnosis {
             headline: "Nothing is listening where the database should be".into(),
             because: "The JDBC URL points at a host and port with no server on it. With a \
                       jails-managed compose database this means the container is not running, or \
@@ -315,6 +329,7 @@ const RULES: &[Rule] = &[
                 "jails start db".into(),
                 "jails doctor      # its postgres check makes a real connection, not just a container check".into(),
             ],
+        }
         },
     },
     Rule {
@@ -345,7 +360,8 @@ const RULES: &[Rule] = &[
     Rule {
         signatures: &["Validate failed", "checksum"],
         group: "flyway-checksum",
-        explain: |_| Diagnosis {
+        explain: |_| {
+            Diagnosis {
             headline: "A migration file changed after it was applied".into(),
             because: "Flyway records a checksum for every migration it runs. Editing an already-\
                       applied file breaks the record, on purpose: the database in front of you no \
@@ -356,6 +372,7 @@ const RULES: &[Rule] = &[
                 "Revert the edit and write a new migration for the change instead".into(),
                 "For a throwaway local database: jails stop db && docker volume rm <project>_postgres-data".into(),
             ],
+        }
         },
     },
     Rule {
@@ -428,7 +445,8 @@ const RULES: &[Rule] = &[
     Rule {
         signatures: &["cannot find symbol"],
         group: "compile",
-        explain: |_| Diagnosis {
+        explain: |_| {
+            Diagnosis {
             headline: "A compile error, not a runtime one".into(),
             because: "javac cannot resolve a name. In a jails project the common causes are a \
                       class that was renamed on one side only, a missing import (generated code \
@@ -443,6 +461,7 @@ const RULES: &[Rule] = &[
                 "<leader>jq on the error for a one-symbol import fix; <leader>ji to organize imports".into(),
                 "jails check     # format check + clean compile + tests".into(),
             ],
+        }
         },
     },
     Rule {
@@ -469,7 +488,10 @@ pub fn why(input: Option<&Path>, debug: bool) -> Result<()> {
     if found.is_empty() {
         println!("jails does not recognise this failure.");
         println!();
-        println!("It matches none of the {} failure shapes it knows about. Two things that", RULES.len());
+        println!(
+            "It matches none of the {} failure shapes it knows about. Two things that",
+            RULES.len()
+        );
         println!("narrow down an unknown one:");
         println!();
         println!("  jails doctor    everything that has to be true before the app can start");
@@ -647,7 +669,15 @@ fn run_and_capture(debug: bool) -> Result<String> {
 /// anything not recognised is prose and is marked as prose.
 fn is_command(fix: &str) -> bool {
     const RUNNABLE: [&str; 9] = [
-        "jails ", "export ", "lsof ", "kill ", "systemctl ", "mise ", "mvn ", "docker ", "echo ",
+        "jails ",
+        "export ",
+        "lsof ",
+        "kill ",
+        "systemctl ",
+        "mise ",
+        "mvn ",
+        "docker ",
+        "echo ",
     ];
     RUNNABLE.iter().any(|prefix| fix.starts_with(prefix))
 }
@@ -706,7 +736,9 @@ mod tests {
         let found = explain(log);
         assert_eq!(found.len(), 1);
         assert!(
-            found[0].because.contains("@Import(TestcontainersConfig.class)"),
+            found[0]
+                .because
+                .contains("@Import(TestcontainersConfig.class)"),
             "{}",
             found[0].because
         );
@@ -733,7 +765,11 @@ mod tests {
     fn a_missing_table_is_named() {
         let log = r#"ERROR: relation "rewards" does not exist"#;
         let found = explain(log);
-        assert!(found[0].headline.contains("rewards"), "{}", found[0].headline);
+        assert!(
+            found[0].headline.contains("rewards"),
+            "{}",
+            found[0].headline
+        );
     }
 
     #[test]
@@ -751,7 +787,9 @@ mod tests {
         let log = "ERROR 288515 --- [rewards] [  restartedMain] o.s.boot.SpringApplication \
                    : Application run failed\n[INFO] BUILD SUCCESS";
         assert!(looks_fatal(log));
-        assert!(!looks_fatal("[INFO] BUILD SUCCESS\nStarted RewardsApplication in 1.2 seconds"));
+        assert!(!looks_fatal(
+            "[INFO] BUILD SUCCESS\nStarted RewardsApplication in 1.2 seconds"
+        ));
     }
 
     /// Every distinct root cause found in a month of this machine's real
@@ -819,9 +857,16 @@ mod tests {
                    ~[spring-boot-docker-compose-4.1.0.jar:4.1.0]";
         let found = explain(log);
         assert_eq!(found.len(), 1, "{}", found.len());
-        assert!(found[0].headline.contains("podman-compose"), "{}", found[0].headline);
         assert!(
-            found[0].fixes.iter().any(|f| f.contains("spring.docker.compose.enabled=false")),
+            found[0].headline.contains("podman-compose"),
+            "{}",
+            found[0].headline
+        );
+        assert!(
+            found[0]
+                .fixes
+                .iter()
+                .any(|f| f.contains("spring.docker.compose.enabled=false")),
             "{:?}",
             found[0].fixes
         );
@@ -834,8 +879,16 @@ mod tests {
                    \t- jdbcRewardRepository: defined in file [y]";
         let found = explain(log);
         assert_eq!(found.len(), 1, "{}", found.len());
-        assert!(found[0].headline.contains("Two or more"), "{}", found[0].headline);
-        assert!(found[0].because.contains("inMemoryRewardRepository"), "{}", found[0].because);
+        assert!(
+            found[0].headline.contains("Two or more"),
+            "{}",
+            found[0].headline
+        );
+        assert!(
+            found[0].because.contains("inMemoryRewardRepository"),
+            "{}",
+            found[0].because
+        );
         assert!(found[0].fixes.iter().any(|f| f.contains("@Primary")));
     }
 

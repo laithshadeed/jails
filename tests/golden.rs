@@ -54,7 +54,14 @@ const SCENARIOS: &[Scenario] = &[
     Scenario {
         name: "record",
         fixture: Fixture::Plain,
-        steps: &[&["g", "record", "Note", "title:string!", "body:string?", "at:instant"]],
+        steps: &[&[
+            "g",
+            "record",
+            "Note",
+            "title:string!",
+            "body:string?",
+            "at:instant",
+        ]],
     },
     Scenario {
         name: "value",
@@ -76,10 +83,24 @@ const SCENARIOS: &[Scenario] = &[
             &["g", "record", "Transaction", "id:uuid", "amount:long"],
             &["g", "record", "Reward", "id:uuid", "amount:long"],
             &[
-                "g", "strategy", "RewardRule", "Coffee", "Large", "--on", "Transaction",
-                "--yields", "Reward",
+                "g",
+                "strategy",
+                "RewardRule",
+                "Coffee",
+                "Large",
+                "--on",
+                "Transaction",
+                "--yields",
+                "Reward",
             ],
-            &["g", "strategy", "Eligibility", "Domestic", "--on", "Transaction"],
+            &[
+                "g",
+                "strategy",
+                "Eligibility",
+                "Domestic",
+                "--on",
+                "Transaction",
+            ],
         ],
     },
     Scenario {
@@ -106,7 +127,12 @@ const SCENARIOS: &[Scenario] = &[
         name: "scaffold-plain",
         fixture: Fixture::Plain,
         steps: &[&[
-            "g", "scaffold", "Note", "id:uuid@pk", "title:string!", "amount:long@positive",
+            "g",
+            "scaffold",
+            "Note",
+            "id:uuid@pk",
+            "title:string!",
+            "amount:long@positive",
             "createdAt:instant",
         ]],
     },
@@ -120,8 +146,14 @@ const SCENARIOS: &[Scenario] = &[
         name: "scaffold-spring",
         fixture: Fixture::Spring,
         steps: &[&[
-            "g", "scaffold", "Note", "id:uuid@pk", "title:string!", "createdAt:instant",
-            "--index", "title, created_at desc",
+            "g",
+            "scaffold",
+            "Note",
+            "id:uuid@pk",
+            "title:string!",
+            "createdAt:instant",
+            "--index",
+            "title, created_at desc",
         ]],
     },
     Scenario {
@@ -168,7 +200,10 @@ const SCENARIOS: &[Scenario] = &[
     Scenario {
         name: "cap-http",
         fixture: Fixture::Plain,
-        steps: &[&["add", "http", "--no-start"], &["g", "handler", "WorkItem"]],
+        steps: &[
+            &["add", "http", "--no-start"],
+            &["g", "handler", "WorkItem"],
+        ],
     },
     // `add format` is deliberately absent: it shells out to spotless:apply
     // as a best-effort last step, and whether that succeeds depends on the

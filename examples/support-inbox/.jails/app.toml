@@ -1,6 +1,6 @@
 # An Intercom-shaped support inbox expressed with the same generic intents.
 schema = 1
-capabilities = ["db", "api", "actuator", "observability", "security", "json", "testkit", "kafka"]
+capabilities = ["db", "api", "actuator", "observability", "security", "json", "testkit", "kafka", "docker", "ci"]
 
 [[generate]]
 kind = "enum"
@@ -15,66 +15,66 @@ fields = ["INBOUND", "OUTBOUND"]
 [[generate]]
 kind = "scaffold"
 name = "Workspace"
-fields = ["id:uuid@pk", "name:string!@unique", "createdAt:instant"]
+fields = ["id:uuid@pk@scope", "name:string!@unique", "createdAt:instant"]
 
 [[generate]]
 kind = "scaffold"
 name = "Contact"
-fields = ["id:uuid@pk", "workspaceId:uuid@index", "email:string!", "displayName:string?", "createdAt:instant"]
+fields = ["id:uuid@pk", "workspaceId:uuid@index@scope", "email:string!", "displayName:string?", "createdAt:instant"]
 indexes = ["workspace_id, email"]
 
 [[generate]]
 kind = "scaffold"
 name = "Conversation"
-fields = ["id:uuid@pk", "workspaceId:uuid@index", "contactId:uuid@index", "status:ConversationStatus@index", "lastMessageAt:instant", "version:long@nonnegative"]
+fields = ["id:uuid@pk", "workspaceId:uuid@index@scope", "contactId:uuid@index", "status:ConversationStatus@index", "lastMessageAt:instant", "version:long@nonnegative"]
 indexes = ["workspace_id, status, last_message_at desc"]
 
 [[generate]]
 kind = "scaffold"
 name = "Message"
-fields = ["id:uuid@pk", "workspaceId:uuid@index", "conversationId:uuid@index", "direction:MessageDirection", "body:text!", "createdAt:instant"]
+fields = ["id:uuid@pk", "workspaceId:uuid@index@scope", "conversationId:uuid@index", "direction:MessageDirection", "body:text!", "createdAt:instant"]
 indexes = ["conversation_id, created_at"]
 
 [[generate]]
 kind = "usecase"
 name = "CreateWorkspace"
-fields = ["name:string!"]
+fields = ["id:uuid@scope", "name:string!"]
 strategy_on = "Workspace"
 
 [[generate]]
 kind = "usecase"
 name = "CreateContact"
-fields = ["workspaceId:uuid", "email:string!", "displayName:string?"]
+fields = ["id:uuid", "workspaceId:uuid@scope", "email:string!", "displayName:string?"]
 strategy_on = "Contact"
 
 [[generate]]
 kind = "usecase"
 name = "OpenConversation"
-fields = ["workspaceId:uuid", "contactId:uuid"]
+fields = ["id:uuid", "workspaceId:uuid@scope", "contactId:uuid"]
 strategy_on = "Conversation"
 
 [[generate]]
 kind = "usecase"
 name = "ReceiveMessage"
-fields = ["workspaceId:uuid", "conversationId:uuid", "direction:MessageDirection", "body:text!"]
+fields = ["id:uuid", "workspaceId:uuid@scope", "conversationId:uuid", "direction:MessageDirection", "body:text!"]
 strategy_on = "Message"
 
 [[generate]]
 kind = "query"
 name = "ContactsByWorkspace"
-fields = ["workspaceId:uuid"]
+fields = ["workspaceId:uuid@scope"]
 strategy_on = "Contact"
 
 [[generate]]
 kind = "query"
 name = "ConversationsByWorkspace"
-fields = ["workspaceId:uuid"]
+fields = ["workspaceId:uuid@scope"]
 strategy_on = "Conversation"
 
 [[generate]]
 kind = "query"
 name = "MessagesByConversation"
-fields = ["conversationId:uuid"]
+fields = ["workspaceId:uuid@scope", "conversationId:uuid"]
 strategy_on = "Message"
 
 [[generate]]
@@ -83,5 +83,8 @@ name = "MessageReceived"
 fields = ["id:uuid", "workspaceId:uuid", "conversationId:uuid", "occurredAt:instant"]
 
 [[generate]]
-kind = "job"
+kind = "durable-job"
 name = "OutboundDelivery"
+fields = ["id:uuid", "workspaceId:uuid@scope", "conversationId:uuid", "direction:MessageDirection", "body:text!"]
+strategy_on = "ReceiveMessage"
+strategy_yields = "Message"

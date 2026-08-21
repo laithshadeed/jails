@@ -20,13 +20,14 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
   presence, Maven wrapper/command, and recursively declared modules. It works
   from any directory below a module. `--json` emits the versioned contract
   used by editor integrations and other tools.
-- `jails new <name> [--deps web,jdbc] [--java 27] [--no-git] [--no-devtools]`
+- `jails new <name> [--deps web,jdbc] [--java 25] [--no-git] [--no-devtools]`
   — new Spring Boot project via start.spring.io. `git init` + `.gitignore`
   and `spring-boot-devtools` (needed for `run --watch`) are on by default.
   It creates `./<name>` and refuses to overwrite an existing directory. Java
-  defaults to 27; while Initializr only accepts an earlier bootstrap release,
-  Jails retargets the generated Maven project to the requested release.
-- `jails new-cli <name> [--release 27] [--no-git]` — new plain Maven CLI
+  defaults to the Java 25 LTS. Newer GA or EA releases are explicit choices;
+  when Initializr only accepts an earlier bootstrap release, Jails retargets
+  the generated Maven project to the requested release.
+- `jails new-cli <name> [--release 25] [--no-git]` — new plain Maven CLI
   project (hand-written `pom.xml`, `App.java`, `AppTest.java`), no network
   required. `App.java` is a working command dispatcher, not a Hello World
   stub, so `generate command` has something to register into from the start.
@@ -189,9 +190,23 @@ it already draws for hand-written properties inside a jails-owned block.
   `spring-boot-starter-restclient`, without which the proxies are built but no
   base URL is ever applied (the failure reads "URI with undefined scheme" and
   says nothing about a missing dependency).
+- `jails generate|g fetcher <Name>` — a bounded outbound byte-fetch port and
+  Apache HttpClient adapter. Every HTTP redirect is revalidated, requests stay
+  on the exact original host, HTTPS cannot downgrade, private/reserved DNS
+  answers are rejected, and the connection is pinned to the addresses that
+  passed validation to close the DNS-rebinding window. Timeouts, response
+  size, redirect count, user agent, and allowed media types are properties;
+  metrics and adversarial real-socket tests are generated with it.
 - `jails generate|g job <Name>` — a `@Scheduled` component whose interval is a
   property, not a constant, and which catches its own failures: an exception
   escaping a scheduled method cancels every future run, silently.
+- `jails generate|g durable-job <Name> <field:type...> --on <Usecase>
+  --yields <Resource>` (alias `djob`) — PostgreSQL-backed work with atomic
+  claim, expiring leases, `SKIP LOCKED`, bounded exponential retry, observable
+  terminal failure, and payload idempotency. The payload must exactly match an
+  existing generated command and carry the resource's stable UUID identity;
+  replay after a crash between the business commit and queue acknowledgement
+  observes that identity before repeating the effect.
 - `jails add|a redis` — a `KeyValueStore` wrapper, a compose service, and an
   `IT` against a real container. Every write takes a lifetime:
   `opsForValue().set(k, v)` with no expiry stores a key forever, so the TTL is
@@ -231,12 +246,20 @@ it already draws for hand-written properties inside a jails-owned block.
 - `jails add|a security` — an explicit `SecurityFilterChain` instead of the
   default one. Adding the starter alone secures every endpoint and prints a
   generated password at startup, which is safe and opaque — and the usual
-  reaction is a blanket `permitAll()` nobody revisits. The generated chain is
-  default-deny, permits only `/actuator/health/**`, and is stateless with CSRF
+  reaction is a blanket `permitAll()` nobody revisits. The generated local
+  profile has explicit BCrypt development credentials; `prod` is a JWT
+  resource server and cannot fall back to that user. Both chains are
+  default-deny, permit only `/actuator/health/**`, and are stateless with CSRF
   off (safe *only* together: CSRF protects ambient credentials, and a chain
-  that issues no session cookie has none). The test asserts both directions,
-  because a test that authenticated requests succeed passes just as happily
-  against `permitAll()` on everything.
+  that issues no session cookie has none). A generated `ScopeAuthorizer`
+  enforces same-named JWT claims for fields marked `@scope` and reports
+  mismatches as 404 to prevent cross-tenant enumeration.
+- `jails add|a docker` (alias `image`) — a multi-stage OCI `Dockerfile`, narrow
+  build context, Java release derived from the project POM, and an image CI
+  check that asserts the numeric non-root runtime user.
+- `jails add|a ci` — a least-privilege GitHub Actions `clean verify` gate with
+  timeouts, concurrency cancellation, Maven caching, and immutable action
+  commit pins.
 - `jails generate|g event <Name>` — a Kafka slice: the payload record, a
   publisher keyed by event id (ordering is per partition; a null key
   round-robins), a listener that deliberately does not catch (swallowing
@@ -364,7 +387,7 @@ plugin or a second programming language:
 
 ```toml
 schema = 1
-capabilities = ["db", "api", "actuator", "security"]
+capabilities = ["db", "api", "actuator", "security", "docker", "ci"]
 
 [[generate]]
 kind = "enum"
@@ -376,7 +399,28 @@ kind = "scaffold"
 name = "Task"
 fields = ["id:uuid@pk", "status:TaskStatus@index", "createdAt:instant"]
 indexes = ["status, created_at desc"]
+
+[[generate]]
+kind = "usecase"
+name = "CreateTask"
+fields = []
+strategy_on = "Task"
+
+[[generate]]
+kind = "query"
+name = "TasksByStatus"
+fields = ["status:TaskStatus"]
+strategy_on = "Task"
 ```
+
+`usecase` generates a typed command, application port, transactional
+implementation, POST adapter, and mock-free tests over an existing scaffold.
+It only derives conservative values (identity, timestamp, status default,
+empty optional/collection, zero counter, or false); if a required value cannot
+be proven, generation stops and asks for that field. `query` generates a typed
+read port, visible named-parameter JDBC SQL, POST adapter, and a real PostgreSQL
+test. Its first contract deliberately accepts only required scalar equality
+filters instead of guessing null, list, pagination, or sort semantics.
 
 - `jails app plan [--manifest <path>]` validates the manifest and shows its
   capability and generation intents without writing.
@@ -396,7 +440,8 @@ The manifest is intentionally a closed schema: `schema`, `capabilities`, and
 `strategy_on`, and `strategy_yields`. Unknown keys fail instead of being
 silently ignored. See [`examples/DOGFOOD.md`](examples/DOGFOOD.md) for the
 complete crawler and support-inbox flows and the friction ledger driving the
-next generic improvements.
+next generic improvements. [`examples/ACCEPTANCE.md`](examples/ACCEPTANCE.md)
+is the executable done/not-done boundary for both applications.
 
 This first slice records resumable intent; it does not yet provide the
 planned universal atomic `ChangeSet`, safe field evolution, or production
@@ -528,15 +573,15 @@ jails g value CanonicalTransaction id:string! amountMinor:long \
 The Java spellings of the built-ins (`String`, `LocalDate`, …) still mean the
 built-in, so `id:String` behaves like `id:string`.
 
-**An `@marker` picks the table constraint.** These change the generated SQL
-and nothing about the Java type — a record cannot say that this UUID and that
-string are together the primary key.
+**An `@marker` adds a constraint the Java type cannot carry.** Most change the
+generated SQL. `@scope` instead changes generated HTTP boundaries.
 
 | marker | in the migration |
 | --- | --- |
 | `@pk` | part of the primary key; several make it composite, in declaration order |
 | `@unique` | `unique` on the column |
 | `@index` | its own single-column index |
+| `@scope` | require the request value to equal the authenticated JWT's same-named claim; scoped scaffolds omit unsafe broad list/get/delete routes |
 | `@positive` | `check (col > 0)` — numeric columns only |
 | `@nonnegative` | `check (col >= 0)` — numeric columns only |
 

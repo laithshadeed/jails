@@ -41,7 +41,7 @@ pub fn new(
     fs::create_dir_all(&tmp).map_err(|e| format!("failed to create temp dir: {e}"))?;
     let zip_path = tmp.join("starter.zip");
 
-    // Spring Initializr does not advertise the upcoming Java 27 release yet.
+    // Explicit future/EA choices may be newer than Initializr advertises.
     // Bootstrap with the newest version it accepts, then set the generated
     // Maven release to the version the user actually requested.
     let initializer_java = initializr_java(java);
@@ -101,7 +101,6 @@ pub fn new(
     println!("Created ./{name} (deps: {deps}, Java {java})");
     Ok(())
 }
-
 
 /// The three things a freshly bootstrapped Spring project needs and
 /// start.spring.io does not provide.
@@ -209,7 +208,8 @@ fn write_default_properties(root: &Path) -> Result<()> {
     next.push('\n');
     next.push_str(&addition);
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
     }
     fs::write(&path, next).map_err(|e| format!("failed to write {}: {e}", path.display()))
 }

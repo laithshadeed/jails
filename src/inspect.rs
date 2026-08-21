@@ -150,16 +150,14 @@ fn file_routes(source: &str, label: &str) -> Vec<Route> {
         let Target::Method { name: method, .. } = &annotation.target else {
             continue;
         };
-        let verb = if let Some((_, verb)) = VERB_ANNOTATIONS
-            .iter()
-            .find(|(a, _)| *a == annotation.name)
-        {
-            (*verb).to_string()
-        } else if annotation.name == "RequestMapping" {
-            request_mapping_verb(&annotation.args)
-        } else {
-            continue;
-        };
+        let verb =
+            if let Some((_, verb)) = VERB_ANNOTATIONS.iter().find(|(a, _)| *a == annotation.name) {
+                (*verb).to_string()
+            } else if annotation.name == "RequestMapping" {
+                request_mapping_verb(&annotation.args)
+            } else {
+                continue;
+            };
         let suffix = java::annotation_string(&annotation.args).unwrap_or_default();
         found.push(Route {
             path: join_path(&base, &suffix),
@@ -198,14 +196,22 @@ fn join_path(base: &str, suffix: &str) -> String {
     let base = base.trim_end_matches('/');
     let suffix = suffix.trim();
     if suffix.is_empty() {
-        return if base.is_empty() { "/".into() } else { base.into() };
+        return if base.is_empty() {
+            "/".into()
+        } else {
+            base.into()
+        };
     }
     // `@PostMapping(path = "/")` on a type-level-prefixed controller maps
     // the collection itself, not a child of it -- so a suffix that is only
     // separators contributes nothing.
     let suffix = suffix.trim_matches('/');
     if suffix.is_empty() {
-        return if base.is_empty() { "/".into() } else { base.into() };
+        return if base.is_empty() {
+            "/".into()
+        } else {
+            base.into()
+        };
     }
     format!("{base}/{suffix}")
 }
@@ -292,7 +298,11 @@ pub fn beans(pattern: Option<&str>, json: bool) -> Result<()> {
         .map(|b| b.stereotype.len() + 1)
         .max()
         .unwrap_or(0);
-    let type_width = filtered.iter().map(|b| b.type_name.len()).max().unwrap_or(0);
+    let type_width = filtered
+        .iter()
+        .map(|b| b.type_name.len())
+        .max()
+        .unwrap_or(0);
     let mut unsatisfied = 0usize;
     let mut ambiguous = 0usize;
     for bean in &filtered {
@@ -308,7 +318,10 @@ pub fn beans(pattern: Option<&str>, json: bool) -> Result<()> {
             bean.type_name,
         );
         for need in &bean.needs {
-            let candidates = supplied.get(need.as_str()).map(Vec::as_slice).unwrap_or(&[]);
+            let candidates = supplied
+                .get(need.as_str())
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
             let note = match candidates.len() {
                 1 => "ok".to_string(),
                 // Spring refuses to choose between candidates, so two is as
@@ -566,7 +579,10 @@ public final class WorkItemHandler implements HttpHandler {
 }"#;
         let found = file_routes(src, "api/WorkItemHandler.java");
         assert_eq!(found.len(), 2, "{found:?}");
-        assert!(found.iter().all(|r| r.path.starts_with("/work-items")), "{found:?}");
+        assert!(
+            found.iter().all(|r| r.path.starts_with("/work-items")),
+            "{found:?}"
+        );
         assert!(found.iter().any(|r| r.verb == "POST"), "{found:?}");
     }
 
@@ -661,7 +677,10 @@ pub fn stats() -> Result<()> {
     }
 
     let width = rows.iter().map(|r| r.label.len()).max().unwrap_or(0).max(5);
-    println!("{:width$}  {:>6}  {:>7}  {:>7}", "Layer", "files", "lines", "code");
+    println!(
+        "{:width$}  {:>6}  {:>7}  {:>7}",
+        "Layer", "files", "lines", "code"
+    );
     println!("{}", "-".repeat(width + 26));
     for row in &rows {
         println!(
@@ -675,10 +694,7 @@ pub fn stats() -> Result<()> {
     let files: usize = main.iter().map(|r| r.files).sum();
     let test_files: usize = test.iter().map(|r| r.files).sum();
     println!("{}", "-".repeat(width + 26));
-    println!(
-        "{:width$}  {:>6}  {:>7}  {:>7}",
-        "Main", files, "", code
-    );
+    println!("{:width$}  {:>6}  {:>7}  {:>7}", "Main", files, "", code);
     println!(
         "{:width$}  {:>6}  {:>7}  {:>7}",
         "Test", test_files, "", test_code
@@ -861,7 +877,10 @@ mod layer_tests {
     #[test]
     fn a_layer_matches_a_whole_segment_not_a_prefix() {
         assert!(contains_package(&segs("com/example/web/Foo.java"), "web"));
-        assert!(!contains_package(&segs("com/example/webshop/Foo.java"), "web"));
+        assert!(!contains_package(
+            &segs("com/example/webshop/Foo.java"),
+            "web"
+        ));
     }
 
     /// `jails.toml` allows a nested package, so the match has to span
@@ -871,7 +890,10 @@ mod layer_tests {
         let path = segs("com/example/demo/infra/jdbc/CsvReader.java");
         assert!(contains_package(&path, "infra.jdbc"));
         // Not the same thing as either half on its own appearing somewhere.
-        assert!(!contains_package(&segs("com/example/jdbc/infra/X.java"), "infra.jdbc"));
+        assert!(!contains_package(
+            &segs("com/example/jdbc/infra/X.java"),
+            "infra.jdbc"
+        ));
     }
 
     /// An empty layer value means the base package, which every file is

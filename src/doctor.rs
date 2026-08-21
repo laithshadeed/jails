@@ -241,8 +241,8 @@ fn compose_provider_check(pom_text: &str) -> Option<Check> {
     // provider jails would actually drive. Hardcoding `docker` here meant a
     // machine with only the standalone `docker-compose` had `jails start`
     // working while this said Docker was missing.
-    let spec = crate::process::compose_spec(["version"])?
-        .output(crate::process::OutputMode::Capture);
+    let spec =
+        crate::process::compose_spec(["version"])?.output(crate::process::OutputMode::Capture);
     let done = crate::process::run(&spec, crate::process::Diagnostics::Normal).ok()?;
     Some(classify_compose_provider(&done.stdout_string()))
 }
@@ -380,7 +380,10 @@ fn database_checks(root: &Path, pom_text: &str) -> Vec<Check> {
         Check::new(
             Status::Fail,
             "postgres",
-            format!("nothing accepting connections on {}:{}", conn.host, conn.port),
+            format!(
+                "nothing accepting connections on {}:{}",
+                conn.host, conn.port
+            ),
         )
         .fix("jails start db")
     });
@@ -417,7 +420,7 @@ fn database_checks(root: &Path, pom_text: &str) -> Vec<Check> {
             .fix("jails add db (idempotent -- it re-writes only what is missing)"),
         );
     } else {
-    checks.push(match (has_flyway, count) {
+        checks.push(match (has_flyway, count) {
         (true, 0) => Check::new(
             Status::Warn,
             "migrations",
@@ -578,7 +581,11 @@ fn test_container_wiring(root: &Path) -> (Option<String>, Vec<String>) {
 /// edited by hand since, and silently regenerating them would cost more than
 /// this check does.
 fn in_memory_adapter_check(root: &Path, pom_text: &str) -> Option<Check> {
-    if !pom::has_dependency(pom_text, "org.springframework.boot", "spring-boot-starter-jdbc") {
+    if !pom::has_dependency(
+        pom_text,
+        "org.springframework.boot",
+        "spring-boot-starter-jdbc",
+    ) {
         return None;
     }
     let mut in_memory_beans = Vec::new();
@@ -593,7 +600,10 @@ fn in_memory_adapter_check(root: &Path, pom_text: &str) -> Option<Check> {
                 stack.push(path);
                 continue;
             }
-            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
+            let stem = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or_default();
             if !stem.starts_with("InMemory") || !path.extension().is_some_and(|e| e == "java") {
                 continue;
             }
@@ -601,9 +611,10 @@ fn in_memory_adapter_check(root: &Path, pom_text: &str) -> Option<Check> {
                 continue;
             };
             // The annotation on a declaration, not the word in a Javadoc.
-            let annotated = ["@Component", "@Repository"]
-                .iter()
-                .any(|a| text.contains(&format!("{a}\npublic class")) || text.contains(&format!("{a}\nclass")));
+            let annotated = ["@Component", "@Repository"].iter().any(|a| {
+                text.contains(&format!("{a}\npublic class"))
+                    || text.contains(&format!("{a}\nclass"))
+            });
             if annotated {
                 in_memory_beans.push(stem.to_string());
             }
@@ -648,7 +659,11 @@ fn testcontainers_check(pom_text: &str) -> Check {
         );
     }
     if Path::new("/var/run/docker.sock").exists() {
-        return Check::new(Status::Ok, "testcontainers", "/var/run/docker.sock is present");
+        return Check::new(
+            Status::Ok,
+            "testcontainers",
+            "/var/run/docker.sock is present",
+        );
     }
     if let Some(socket) = podman_socket() {
         return Check::new(
@@ -679,12 +694,20 @@ fn podman_socket() -> Option<std::path::PathBuf> {
 
 fn kafka_check(root: &Path, pom_text: &str) -> Check {
     let has_client = pom::has_dependency(pom_text, "org.apache.kafka", "kafka-clients")
-        || pom::has_dependency(pom_text, "org.springframework.boot", "spring-boot-starter-kafka");
+        || pom::has_dependency(
+            pom_text,
+            "org.springframework.boot",
+            "spring-boot-starter-kafka",
+        );
     let yaml = compose::read(root).unwrap_or_default();
     let has_broker = yaml.contains("# jails:kafka") || yaml.contains("\n  kafka:");
     match (has_client, has_broker) {
         (false, false) => Check::new(Status::Skip, "kafka", "not in use"),
-        (true, true) => Check::new(Status::Ok, "kafka", "client dependency and broker service both present"),
+        (true, true) => Check::new(
+            Status::Ok,
+            "kafka",
+            "client dependency and broker service both present",
+        ),
         (true, false) => Check::new(
             Status::Fail,
             "kafka",
@@ -760,17 +783,26 @@ fn port_check(root: &Path) -> Check {
     let configured = std::fs::read_to_string(&properties)
         .ok()
         .and_then(|text| {
-            text.lines()
-                .find_map(|l| l.trim().strip_prefix("server.port=")?.trim().parse::<u16>().ok())
+            text.lines().find_map(|l| {
+                l.trim()
+                    .strip_prefix("server.port=")?
+                    .trim()
+                    .parse::<u16>()
+                    .ok()
+            })
         })
         .unwrap_or(8080);
     if tcp_reachable("localhost", configured, Duration::from_millis(250)) {
         Check::new(
             Status::Warn,
             "http port",
-            format!("something is already listening on {configured} -- a second app will fail to bind"),
+            format!(
+                "something is already listening on {configured} -- a second app will fail to bind"
+            ),
         )
-        .fix(format!("stop it, or set server.port to a free port (`lsof -i :{configured}`)"))
+        .fix(format!(
+            "stop it, or set server.port to a free port (`lsof -i :{configured}`)"
+        ))
     } else {
         Check::new(Status::Ok, "http port", format!("{configured} is free"))
     }
@@ -781,7 +813,11 @@ fn port_check(root: &Path) -> Check {
 fn beans_check(root: &Path) -> Check {
     let (beans, project_types) = inspect::collect_beans(root);
     if beans.is_empty() {
-        return Check::new(Status::Skip, "beans", "no Spring stereotypes in src/main/java");
+        return Check::new(
+            Status::Skip,
+            "beans",
+            "no Spring stereotypes in src/main/java",
+        );
     }
     let supplied = inspect::providers(&beans);
     let mut missing = Vec::new();
@@ -808,7 +844,10 @@ fn beans_check(root: &Path) -> Check {
         return Check::new(
             Status::Ok,
             "beans",
-            format!("{} bean(s), every project-typed dependency resolvable", beans.len()),
+            format!(
+                "{} bean(s), every project-typed dependency resolvable",
+                beans.len()
+            ),
         );
     }
     let mut detail = String::new();
@@ -943,9 +982,9 @@ fn running_containers() -> Vec<String> {
 /// Compose v2), so the service name is matched as a delimited segment
 /// rather than compared whole.
 fn service_is_running(service: &str, containers: &[String]) -> bool {
-    containers.iter().any(|name| {
-        name.split(['_', '-']).any(|segment| segment == service)
-    })
+    containers
+        .iter()
+        .any(|name| name.split(['_', '-']).any(|segment| segment == service))
 }
 
 /// A bounded TCP connect. `doctor` must never hang: a firewalled host would
@@ -1040,7 +1079,11 @@ volumes:
                    <artifactId>spring-boot-starter-jdbc</artifactId></dependency>";
         let check = in_memory_adapter_check(&root, pom).expect("should report");
         assert_eq!(check.status, Status::Fail);
-        assert!(check.detail.contains("InMemoryNoteRepository"), "{}", check.detail);
+        assert!(
+            check.detail.contains("InMemoryNoteRepository"),
+            "{}",
+            check.detail
+        );
 
         // Without a DataSource it is the correct design, not a problem.
         assert!(in_memory_adapter_check(&root, "<project/>").is_none());
@@ -1100,7 +1143,11 @@ volumes:
                    <artifactId>jackson-databind</artifactId></dependency>";
         let check = jackson_check(pom);
         assert_eq!(check.status, Status::Fail);
-        assert!(check.detail.contains("both Jackson majors"), "{}", check.detail);
+        assert!(
+            check.detail.contains("both Jackson majors"),
+            "{}",
+            check.detail
+        );
     }
 
     #[test]
@@ -1114,7 +1161,10 @@ volumes:
 
     #[test]
     fn a_service_is_matched_inside_the_compose_container_name() {
-        let containers = vec!["rewards_postgres_1".to_string(), "other-kafka-1".to_string()];
+        let containers = vec![
+            "rewards_postgres_1".to_string(),
+            "other-kafka-1".to_string(),
+        ];
         assert!(service_is_running("postgres", &containers));
         assert!(service_is_running("kafka", &containers));
         assert!(!service_is_running("redis", &containers));

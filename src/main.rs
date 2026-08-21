@@ -6,14 +6,14 @@ mod console;
 mod doctor;
 mod generate;
 mod inspect;
+mod java;
 mod kafka;
 mod migrate;
-mod java;
 mod new;
 mod pom;
 mod process;
-mod rename;
 mod project;
+mod rename;
 mod run;
 mod spring;
 mod sql;
@@ -165,14 +165,15 @@ enum Command {
         indexes: Vec<String>,
         /// For `strategy`, the type each implementation examines. For
         /// `usecase`, the existing scaffolded resource the operation creates;
-        /// for `query`, the scaffolded resource it reads.
+        /// for `query`, the scaffolded resource it reads; for `durable-job`,
+        /// the existing generated use case it invokes.
         ///
         ///   jails g strategy RewardRule Coffee Large --on Transaction --yields Reward
         #[arg(long = "on", value_name = "TYPE")]
         strategy_on: Option<String>,
         /// For `strategy`: what a matching implementation produces. Omit and
-        /// the strategy is a predicate returning `boolean`. Reserved for a
-        /// usecase's published event in a later manifest schema.
+        /// the strategy is a predicate returning `boolean`. For
+        /// `durable-job`, the resource whose stable id proves completion.
         #[arg(long = "yields", value_name = "TYPE")]
         strategy_yields: Option<String>,
     },
@@ -456,9 +457,7 @@ fn main() -> std::process::ExitCode {
                 )
             })
         }),
-        Command::Sync { dry_run, no_start } => {
-            add::sync(dry_run || pretend, debug, no_start)
-        }
+        Command::Sync { dry_run, no_start } => add::sync(dry_run || pretend, debug, no_start),
         Command::Remove {
             capabilities,
             name,
@@ -497,10 +496,12 @@ fn main() -> std::process::ExitCode {
         Command::Beans { pattern, json } => inspect::beans(pattern.as_deref(), json),
         Command::Migrate { check, no_start } => {
             if !check {
-                Err("`--check` is the only mode jails has: it applies the migrations to a \
+                Err(
+                    "`--check` is the only mode jails has: it applies the migrations to a \
                      scratch database and drops it. Applying them for real is Flyway's job, \
                      which the application does at startup.\n\nfix: run `jails migrate`."
-                    .to_string())
+                        .to_string(),
+                )
             } else {
                 migrate::check(no_start, debug)
             }

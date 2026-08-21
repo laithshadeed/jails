@@ -28,8 +28,9 @@ pub struct Field {
     /// A `List` or `Map` component: copied defensively and defaulted to empty
     /// rather than null-checked.
     pub collection: bool,
-    /// What this column is in the *table*. Purely a SQL concern -- these
-    /// markers change the generated DDL and nothing about the Java type.
+    /// Facts attached to this field that its Java type cannot express.
+    /// Most affect SQL; `@scope` instead marks a request boundary that must
+    /// equal the authenticated principal's same-named claim.
     pub constraints: Constraints,
 }
 
@@ -56,6 +57,9 @@ pub struct Constraints {
     /// Gets its own single-column index. For a composite or ordered one, use
     /// `--index`.
     pub indexed: bool,
+    /// HTTP operations carrying this field must authorize it against the
+    /// authenticated principal. It deliberately has no SQL effect.
+    pub scoped: bool,
     pub check: Option<NumericCheck>,
 }
 
@@ -334,8 +338,7 @@ pub(crate) fn parse_fields(args: &[String]) -> Result<Vec<Field>> {
         .collect()
 }
 
-/// Strip `@marker` suffixes off a field's type and read them as table
-/// constraints.
+/// Strip `@marker` suffixes off a field's type and read their constraints.
 ///
 /// Repeatable and order-independent: `amount:long@positive@index` and
 /// `amount:long@index@positive` are the same column. An unknown marker is an
@@ -343,7 +346,7 @@ pub(crate) fn parse_fields(args: &[String]) -> Result<Vec<Field>> {
 /// produce a schema quietly missing the primary key someone thought they had
 /// asked for, which is the failure mode this whole feature exists to prevent.
 pub(super) fn parse_constraints<'a>(ty: &'a str, arg: &str) -> Result<(&'a str, Constraints)> {
-    const KNOWN: &str = "@pk, @unique, @index, @positive, @nonnegative";
+    const KNOWN: &str = "@pk, @unique, @index, @scope, @positive, @nonnegative";
     let mut constraints = Constraints::default();
     let mut rest = ty;
 
@@ -354,9 +357,14 @@ pub(super) fn parse_constraints<'a>(ty: &'a str, arg: &str) -> Result<(&'a str, 
             "pk" => constraints.primary_key = true,
             "unique" => constraints.unique = true,
             "index" => constraints.indexed = true,
+            "scope" => constraints.scoped = true,
             "positive" => constraints.check = Some(NumericCheck::Positive),
             "nonnegative" => constraints.check = Some(NumericCheck::NonNegative),
-            "" => return Err(format!("'{arg}': trailing '@' with no marker. Known: {KNOWN}")),
+            "" => {
+                return Err(format!(
+                    "'{arg}': trailing '@' with no marker. Known: {KNOWN}"
+                ));
+            }
             other => {
                 return Err(format!(
                     "'{arg}': unknown column marker '@{other}'. Known: {KNOWN}"
@@ -398,7 +406,9 @@ pub(super) fn kind_suffix(kind: ArtifactKind) -> Option<&'static str> {
         ArtifactKind::Repo => Some("Repository"),
         ArtifactKind::Cli => Some("Cli"),
         ArtifactKind::Job => Some("Job"),
+        ArtifactKind::DurableJob => Some("Job"),
         ArtifactKind::Client => Some("Client"),
+        ArtifactKind::Fetcher => Some("Fetcher"),
         ArtifactKind::Usecase => Some("UseCase"),
         ArtifactKind::Query => Some("Query"),
         ArtifactKind::Test => Some("Test"),

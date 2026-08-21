@@ -64,7 +64,10 @@ public final class {name}Command {{
 }
 
 pub(super) fn command_test(pkg: &str, name: &str) -> String {
-    crate::template::render(include_str!("../../templates/generate/command_test.java"), &[("pkg", pkg), ("name", name)])
+    crate::template::render(
+        include_str!("../../templates/generate/command_test.java"),
+        &[("pkg", pkg), ("name", name)],
+    )
 }
 
 /// A literal a generated test can construct the component from.
@@ -382,7 +385,11 @@ pub(crate) fn package_of(source: &str) -> Option<String> {
 /// line's indentation, and add `import` if the command lives elsewhere.
 /// Returns `None` when the anchor is missing, so the caller can say so rather
 /// than write a mangled file.
-pub(super) fn splice_registration(source: &str, command_class: &str, import: &str) -> Option<String> {
+pub(super) fn splice_registration(
+    source: &str,
+    command_class: &str,
+    import: &str,
+) -> Option<String> {
     let anchor = source.find("return commands;")?;
     let line_start = source[..anchor].rfind('\n').map(|i| i + 1)?;
     let indent: String = source[line_start..anchor].to_string();
@@ -457,11 +464,7 @@ pub(super) fn unregister_command(root: &Path, name: &str) -> Result<()> {
         };
         fs::write(&dispatcher, unspliced)
             .map_err(|e| format!("failed to write {}: {e}", dispatcher.display()))?;
-        println!(
-            "unregistered {command_class} from {}",
-            dispatcher.display()
-        );
+        println!("unregistered {command_class} from {}", dispatcher.display());
     }
     Ok(())
 }
-

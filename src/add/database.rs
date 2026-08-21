@@ -179,7 +179,11 @@ pub(super) fn db_plan(root: &std::path::Path, flavor: Flavor, pkg: &str) -> Resu
 pub(super) fn testcontainers_config_java(pkg: &str) -> String {
     crate::template::render(
         include_str!("../../templates/add/testcontainers_config_java.java"),
-        &[("pkg", pkg), ("TESTCONTAINERS_CONFIG", TESTCONTAINERS_CONFIG), ("POSTGRES_IMAGE", POSTGRES_IMAGE)],
+        &[
+            ("pkg", pkg),
+            ("TESTCONTAINERS_CONFIG", TESTCONTAINERS_CONFIG),
+            ("POSTGRES_IMAGE", POSTGRES_IMAGE),
+        ],
     )
 }
 
@@ -193,7 +197,10 @@ pub(super) fn testcontainers_config_java(pkg: &str) -> String {
 /// so the marker to look for is the *absence* of the initializer plus the
 /// presence of `@ServiceConnection`.
 pub(super) fn should_replace_postgres_test_config(path: &Path) -> bool {
-    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default();
     if name != "PostgresContainerConfig.java" && name != "TestcontainersConfig.java" {
         return false;
     }
@@ -371,9 +378,7 @@ pub(super) fn unowned_properties(existing: &str, label: &str, owned: &[String]) 
 pub(super) fn edited_files<'a>(plan: &'a Plan) -> Vec<&'a PathBuf> {
     plan.files
         .iter()
-        .filter(|f| {
-            fs::read_to_string(&f.path).is_ok_and(|on_disk| on_disk != f.contents)
-        })
+        .filter(|f| fs::read_to_string(&f.path).is_ok_and(|on_disk| on_disk != f.contents))
         .map(|f| &f.path)
         .collect()
 }
@@ -568,7 +573,8 @@ pub(super) fn maven_output_for(root: &Path, src: &Path) -> Option<PathBuf> {
     Some(out)
 }
 
-pub(super) const SPRING_FACTORIES_KEY: &str = "org.springframework.context.ApplicationContextInitializer";
+pub(super) const SPRING_FACTORIES_KEY: &str =
+    "org.springframework.context.ApplicationContextInitializer";
 
 #[cfg(test)]
 pub(super) fn spring_factories_block(fqcn: &str) -> String {
@@ -651,7 +657,10 @@ pub(super) fn remove_legacy_spring_factories(root: &Path) -> Result<bool> {
     Ok(true)
 }
 
-pub(super) fn uninstall_postgres_test_initializer(root: &Path, cfg: &SpringTestImport) -> Result<()> {
+pub(super) fn uninstall_postgres_test_initializer(
+    root: &Path,
+    cfg: &SpringTestImport,
+) -> Result<()> {
     let path = spring_factories_path(root);
     if !path.exists() {
         return Ok(());
@@ -782,7 +791,11 @@ pub(super) fn find_spring_boot_tests(dir: &Path) -> Vec<PathBuf> {
 /// Insert `@Import(Class.class)` immediately above `@SpringBootTest` and add
 /// the annotation import (plus `extra` when the config lives in another
 /// package). `None` when the anchor is missing.
-pub(super) fn splice_spring_boot_test_import(source: &str, class: &str, extra: &str) -> Option<String> {
+pub(super) fn splice_spring_boot_test_import(
+    source: &str,
+    class: &str,
+    extra: &str,
+) -> Option<String> {
     let annotation = import_annotation(class);
     let anchor = source.find("@SpringBootTest")?;
     let line_start = source[..anchor].rfind('\n').map(|i| i + 1).unwrap_or(0);
@@ -826,7 +839,11 @@ pub(super) fn splice_spring_boot_test_import(source: &str, class: &str, extra: &
     Some(normalize_imports(&out))
 }
 
-pub(super) fn unsplice_spring_boot_test_import(source: &str, class: &str, extra: &str) -> Option<String> {
+pub(super) fn unsplice_spring_boot_test_import(
+    source: &str,
+    class: &str,
+    extra: &str,
+) -> Option<String> {
     let target = format!("{class}.class");
     let extra = extra.trim();
     let mut removed = false;
@@ -848,7 +865,9 @@ pub(super) fn unsplice_spring_boot_test_import(source: &str, class: &str, extra:
     if !removed {
         return None;
     }
-    let dropping_import_stmt = !lines.iter().any(|line| line.trim_start().starts_with("@Import("));
+    let dropping_import_stmt = !lines
+        .iter()
+        .any(|line| line.trim_start().starts_with("@Import("));
     lines.retain(|line| {
         let trimmed = line.trim();
         if !extra.is_empty() && trimmed == extra {
@@ -863,7 +882,6 @@ pub(super) fn unsplice_spring_boot_test_import(source: &str, class: &str, extra:
     }
     Some(normalize_imports(&out))
 }
-
 
 // ---------------------------------------------------------------------------
 // sqlite
@@ -915,7 +933,8 @@ pub(super) fn sqlite_plan(
     })
 }
 
-pub(super) const FIRST_MIGRATION: &str = "-- Applied once, in filename order, by Migrations.applyAll.
+pub(super) const FIRST_MIGRATION: &str =
+    "-- Applied once, in filename order, by Migrations.applyAll.
 create table if not exists item (
     id integer primary key autoincrement,
     name text not null,
@@ -924,13 +943,26 @@ create table if not exists item (
 ";
 
 pub(super) fn database_java(pkg: &str, class: &str) -> String {
-    crate::template::render(include_str!("../../templates/add/database_java.java"), &[("pkg", pkg), ("class", class)])
+    crate::template::render(
+        include_str!("../../templates/add/database_java.java"),
+        &[("pkg", pkg), ("class", class)],
+    )
 }
 
 pub(super) fn migrations_java(pkg: &str, class: &str) -> String {
-    crate::template::render(include_str!("../../templates/add/migrations_java.java"), &[("pkg", pkg), ("class", class)])
+    crate::template::render(
+        include_str!("../../templates/add/migrations_java.java"),
+        &[("pkg", pkg), ("class", class)],
+    )
 }
 
 pub(super) fn database_test_java(pkg: &str, database: &str, migrations: &str) -> String {
-    crate::template::render(include_str!("../../templates/add/database_test_java.java"), &[("pkg", pkg), ("database", database), ("migrations", migrations)])
+    crate::template::render(
+        include_str!("../../templates/add/database_test_java.java"),
+        &[
+            ("pkg", pkg),
+            ("database", database),
+            ("migrations", migrations),
+        ],
+    )
 }
