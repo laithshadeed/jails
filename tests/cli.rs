@@ -511,6 +511,24 @@ fn app_manifests_pass_the_full_generated_verification_gate() {
             status.success(),
             "{name} failed its generated Maven verification"
         );
+
+        let image = format!("jails-dogfood-{name}:test");
+        let status = std::process::Command::new("docker")
+            .current_dir(&root)
+            .args(["build", "--pull", "--tag", &image, "."])
+            .status()
+            .unwrap();
+        assert!(status.success(), "{name} failed its generated OCI image build");
+        let inspect = std::process::Command::new("docker")
+            .args(["image", "inspect", &image, "--format", "{{.Config.User}}"])
+            .output()
+            .unwrap();
+        assert!(inspect.status.success(), "could not inspect {image}");
+        assert_eq!(
+            String::from_utf8_lossy(&inspect.stdout).trim(),
+            "10001:10001",
+            "{name} image did not retain the non-root runtime user"
+        );
     }
 }
 
