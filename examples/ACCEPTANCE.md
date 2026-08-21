@@ -66,10 +66,13 @@ generate pinned least-privilege CI and non-root multi-stage image assets.
 The inbox also generates an atomic `transition` slice: tenant scope is part of
 the SQL predicate, a numeric version is compared and incremented in one
 statement, and real PostgreSQL tests prove stale retries and cross-scope writes
-cannot mutate the row.
+cannot mutate the row. A use case with `strategy_yields` now generates a
+transactional Kafka outbox: the business row and stable event payload commit
+together, the leased relay waits for broker acknowledgement, and PostgreSQL
+tests prove bounded retry plus inspectable terminal failure.
 
 Still open—and therefore not advertised as production-ready—is composition of
 the fetch boundary into finite HTML traversal, robots/cancellation tests,
 tenant enforcement against every persisted association, transactional
-outbox/provider delivery, and running the hosted CI files. Both OCI images are
-now built locally and inspected for their non-root runtime user by the gate.
+provider delivery, and running the hosted CI files. Both OCI images are now
+built locally and inspected for their non-root runtime user by the gate.

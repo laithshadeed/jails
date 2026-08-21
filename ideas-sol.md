@@ -2406,13 +2406,13 @@ Current dogfood baseline: the two declarative manifests already compose DB,
 security, observability, schedules, scaffolds, typed Kafka events, executable
 create use cases, typed PostgreSQL queries, PostgreSQL-leased/idempotent work,
 JWT production authentication, generic `@scope` request checks, a bounded
-SSRF-resistant HTTP fetcher, scope-aware optimistic transitions, pinned CI,
-and non-root images without manual Java edits. Both pass real PostgreSQL/Kafka
-verification. This remains a
+SSRF-resistant HTTP fetcher, scope-aware optimistic transitions, a
+transactional Kafka outbox with acknowledged delivery and bounded retries,
+pinned CI, and non-root images without manual Java edits. Both pass real
+PostgreSQL/Kafka verification. This remains a
 production-shaped generation test, not yet a production-ready crawler or
 inbox: finite traversal/robots/cancellation, end-to-end association tenancy,
-transactional outbox/provider delivery, and hosted CI execution remain Phase
-5/6 work. The
+provider-specific delivery, and hosted CI execution remain Phase 5/6 work. The
 executable boundary is checked in at `examples/ACCEPTANCE.md`; prose claims
 must not outrun that gate.
 

@@ -3,7 +3,8 @@
 Written 2026-08-21/22 against the tree at `94107ef`, merging `ideas-opus.md`
 (461 lines), `ideas-grok.md` (1,001), `ideas-kimi.md` (915), `ideas-sol.md`
 (2,578), `ideas-fable.md` (1,269) and `ideas-opus2.md` (1,517) — 7,741 lines
-in total — plus the 22,593 lines of Rust in `src/`, the 5,020 lines of tests,
+in total — plus the **27,485** lines of Rust in `src/` (33 files), the 51
+Java templates, the 162 golden snapshots, the 5,000-odd lines of tests,
 and the upstream checkouts under `deps/`.
 
 The six documents disagree in about a dozen load-bearing places. This file
@@ -26,7 +27,7 @@ wait — you spend an afternoon on mechanical edits across six files.
 Per occurrence, authorship is the larger number and it has been the
 under-counted one. A test that reruns in 11 ms is worth little on a model you
 cannot change without editing six files by hand. So this plan puts the
-generator surface (§5) ahead of the test daemon (§6), and puts nine live
+generator surface (§5) ahead of the test daemon (§6), and puts eleven live
 defects (§4) ahead of both, because a tool that silently writes a broken
 project costs more than either budget can measure.
 
@@ -51,12 +52,22 @@ not, and are superseded where they conflict.
 
 **A note on the baseline.** The working tree has moved substantially since
 five of the six documents were written, and this file is written against the
-tree, not against them. `usecase`, `query`, `fetcher` and `durable-job` are
-shipped `ArtifactKind`s; `ci` and `docker` are shipped `Capability`s; `@scope`
-is a shipped field marker; and `TARGET_RELEASE` is now `"25"`. Several things
-the source documents propose as future work are done, and several things they
-rule out are consequently unblocked. Where this file and they disagree, check
-the tree.
+tree, not against them. `usecase`, `query`, `fetcher`, `durable-job` and
+(in flight) `transition` are shipped `ArtifactKind`s; `ci` and `docker` are
+shipped `Capability`s; `@scope` is a shipped, *enforced* field marker; and
+`TARGET_RELEASE` is now `"25"`. Several things the source documents propose as
+future work are done, and several things they rule out are consequently
+unblocked. Where this file and they disagree, check the tree.
+
+The growth is not evenly distributed, and where it is uneven is itself a
+finding. `src/spring.rs` is now **5,808 lines** — larger than `generate.rs`
+(3,213) and more than the whole of `add.rs` (1,444) plus its five submodules.
+It holds 42 complete Java files as inline `format!` strings with doubled
+braces, while `templates/` holds 51 real `.java` files, and the newest six
+kinds have **no golden snapshots at all**. So the machinery that grew fastest
+is the machinery with the least byte-level verification and the least
+tool-checkable source. That is 4.10 and 4.11, and it is why Tier 0 got longer
+rather than shorter.
 
 ---
 
@@ -210,7 +221,7 @@ assumed. Verified against the working tree today:
 
 | | |
 |---|---|
-| `ArtifactKind` | **26** variants — including `usecase`, `query`, `fetcher`, `durable-job`, which three documents propose as future work |
+| `ArtifactKind` | **27** variants — including `usecase`, `query`, `fetcher`, `durable-job` and `transition`, four of which three source documents propose as future work |
 | `Capability` | **18** — including `ci` and `docker`, which two documents propose as future work |
 | `pom::TARGET_RELEASE` | **`"25"`** — the LTS decision two documents argued for **has been made**; see §14 for what that unblocks |
 | `@scope` | A generic field marker that compares a request field against a same-named JWT claim, and suppresses scaffold routes that cannot prove the boundary. Tenancy without the word "tenant" in core |
@@ -328,7 +339,7 @@ rule.
 |---|---|
 | Tenant enforcement against every persisted *association* (not just the request boundary) | `@scope` propagated through relations — needs **relations** first, §5.2 |
 | Optimistic transitions — `version` is a column nothing checks | A generic `--expect <field>` on `usecase`, generating the compare-and-set and the 409 |
-| Transactional outbox / provider delivery | **`add queue`**'s reaper and stable delivery ID — §9.3 |
+| Transactional outbox / provider delivery | **Partly there already**: `usecase --yields <Event>` emits an outbox use-case, store, worker, IT and migration (`spring::outbox_files`). The manifest's `ReceiveMessage` does not use it — it routes through a `durable-job` instead. Try `--yields` first and see what the clause still needs; only then §9.3 |
 | Realtime: an agent inbox that updates without a refresh | **`add sse`** — §9.2, with the four details both source documents get wrong |
 | A browser widget can't call it at all | **`add cors`** — §9.1. `grep -rni cors src/ templates/` still returns nothing |
 | `conversationId` is a bare `uuid` | **Relations** — §5.2 |
@@ -553,8 +564,10 @@ the source documents report (`doctor` reading `java` on PATH instead of
 | 4.5 | **`jails run --watch` cannot report a failed startup** — the documented fix has one caller and it is the *non-watch* branch. `mvn spring-boot:run` exits 0 over a dead app because devtools catches on `restartedMain`. | `src/run.rs:83` (`run_watched`), sole caller `:372`; `watch()` at `:264` uses a bare `.spawn()` with inherited stdio. | Route `watch()` through `run_watched`. | 1 h |
 | 4.6 | **The watcher only stats `.java`**, so editing `application.properties` or dropping a migration triggers nothing; it compares max-mtime, so it cannot name the changed file, misses deletions, and misses `git checkout` / `stash pop` (older mtimes). | `src/run.rs:325-346`. | Replace with a `HashMap<PathBuf, SystemTime>` over `src/main/java`, `src/test/java`, `src/main/resources/**`, `db/migration`, `pom.xml`, `compose.yaml`, `jails.toml`; compare with `!=`; report added/changed/**deleted**. Still polling, no crate. | 2 h |
 | 4.7 | **Nothing asks whether the generated project builds.** Tier 1 tests pure functions, tier 2 tests argv, tier 3 compiles only the combinations someone wrote a test for (`new-cli` + `g scaffold` is not one), and the golden tier compares bytes to bytes — it cannot tell a correct pom from an unparseable one. | The structural cause of 4.1 and 4.3. | A tier-3 matrix over `{new-cli, new-spring}` × `{scaffold, dto, repo, handler, command, event, client, job}` × `{none, add db, add json}` running **`mvn -o validate`** (~2 s a cell, under a minute total). Gate it like the other tier-3 tests and add it to `JAILS_REQUIRE_TOOLCHAIN`. Two cells fail today. | 2–3 h |
-| 4.8 | **`doctor` reports health over a pom Maven refuses to parse** (`ok maven`, `ok beans`, `9 checks all clear`), because `pom::read` falls back to `unwrap_or_default`. | `src/doctor.rs:117`. | At minimum make an unparseable pom a loud FAIL. Optionally `mvn -o -q validate` — it writes nothing so it stays inside doctor's read-only contract, at the cost of a subprocess. | 1 h |
-| 4.9 | **Drift.** `g cases` is implemented (`ArtifactKind::Cases`, `src/generate/migration.rs`) and **absent from README** — `grep -c cases README.md` returns 1, and it is about sample values. `jails.nvim`'s lists are missing `toxiproxy` and `app` (checked today), plus aliases, `repository`/`mig`/`it`, `--check` on `migrate`, and `--debug` everywhere. `validation/README.md`'s status table blocks nine workouts on features that have shipped. | greps run today. | Fix each, then **a Rust test pinning the four Lua tables to `Capability::label()`, `ArtifactKind` and the clap tree.** That test is what stops the class of bug rather than an instance — every idea in every document adds an enum variant. | 1 h |
+| 4.8 | **`doctor` reports health over a pom Maven refuses to parse** (`ok maven`, `ok beans`, and a clean report over 50 checks), because `pom::read` falls back to `unwrap_or_default`. | `src/doctor.rs:117`. | At minimum make an unparseable pom a loud FAIL. Optionally `mvn -o -q validate` — it writes nothing so it stays inside doctor's read-only contract, at the cost of a subprocess. | 1 h |
+| 4.9 | **Drift.** `g cases` is implemented (`ArtifactKind::Cases`, `src/generate/migration.rs`) and **absent from README** — `grep -c cases README.md` still returns 1, and it is about sample values. `jails.nvim`'s lists are missing `toxiproxy` and `app`, plus aliases, `repository`/`mig`/`it`, `--check` on `migrate`, and `--debug` everywhere. `validation/README.md`'s status table blocks nine workouts on features that have shipped. CLAUDE.md still documents the JDK 27 pin and the mise symlink, which `TARGET_RELEASE = "25"` has superseded. | greps run today. | Fix each, then **a Rust test pinning the four Lua tables to `Capability::label()`, `ArtifactKind` and the clap tree.** That test is what stops the class of bug rather than an instance — every idea in every document adds an enum variant. | 1 h |
+| 4.10 | **Six kinds and three capabilities have zero golden coverage — and the golden suite claims otherwise.** `tests/golden.rs:50` says *"Every artifact kind and every capability, in the smallest invocation that exercises it."* Counted today: `"usecase"`, `"query"`, `"transition"`, `"durable-job"`, `"fetcher"`, `"cases"`, `"format"`, `"ci"` and `"docker"` appear **0 times** in `tests/golden.rs`. These are the newest and by a wide margin the most complex generators — a durable store with `for update skip locked`, an outbox, a 14 KB safe fetcher — and their only byte-level verification is the two dogfood manifests, which are a *composition* test, not a snapshot. | `grep -c '"usecase"' tests/golden.rs` → 0, and so on for all nine. 25 scenarios, 162 files. | A test that enumerates `ArtifactKind` and `Capability` and **fails when one has no `Scenario`** — the same shape as the Lua-list pinning test in 4.9, and predicted by `ideas-fable.md` §8.11 before it happened. Then add the nine scenarios. A false comment in the test that is supposed to be the safety net is the worst version of this. | 2–3 h |
+| 4.11 | **`src/spring.rs` is 5,808 lines and holds 42 whole Java files as inline `format!` strings.** `grep -c 'r#"' src/spring.rs` → 42, each opening `r#"package {pkg};`. So every brace in them is doubled — the exact tax `src/template.rs` exists to remove — and they are not Java that any editor or compiler can check. The migration is done for `add` (7 `include_str!`, 2 `format!` left in `add/testing.rs`, so `ideas-fable.md` §8.11's "Toxiproxy is still `format!` strings" is **stale/fixed**) and half done for `spring` (30 templates against 42 inline bodies). `generate/` has 4 templates against ~300 `format!` calls. | line counts and greps today. | Not urgent, and explicitly *not* a rewrite. But CLAUDE.md's stated reason for the `add.rs`/`spring.rs` split — *"`add.rs` was already the biggest file here"* — is now **inverted**: `spring.rs` (5,808) is larger than `generate.rs` (3,213) and `add.rs` (1,444) combined is not. Extract the newest bodies to templates as you touch them, and fix the rationale in CLAUDE.md so the next split is made on a true premise. | ongoing |
 
 Two `jails.nvim` bugs worth folding in while there: `setqflist({}, 'r', …)`
 **replaces** the error list jdtls just built (should be `' '`), and
@@ -572,19 +585,55 @@ This is the section the latency framing was crowding out. Everything in it is
 a record, resolving a foreign key, pluralising a noun and reading a field spec
 are not crawler features or inbox features.
 
-**What is already done here, so this list stays honest.** The generator
-surface has grown a great deal: `usecase` (a create workflow with a
-transaction boundary, an MVC route, a port, an implementation and focused
-mock-free tests), `query` (typed parameters and results with a JDBC adapter
-and a real-database test), `durable-job` (PostgreSQL-leased work with replay,
-lease reclaim, bounded retry and terminal-failure visibility), `fetcher` (a
-safe outbound boundary), plus the `ci` and `docker` capabilities. All of them
-derive from the one shared field model, which is why the `DOGFOOD.md` defect
-table reads the way it does — most of those bugs were *two* outputs of one
-model disagreeing, and each fix collapsed them onto one source of truth.
+**What is already done here, so this list stays honest.** Read the source
+before reading the gaps: the generator surface is much further along than four
+of the six documents assume, and it is further along in the *right* direction.
 
-Everything below is what that model still cannot do, and each item names the
-proof app that exposed it.
+`usecase --on <Resource>` does not merely stamp out a template. It:
+
+1. reads the target record off disk (`fields_from_record`) and **refuses** if
+   it cannot — naming the fix (`generate the {target} scaffold first, or
+   correct --on`);
+2. requires the target to carry a **stable non-optional `id`**, so it can
+   return a resource location and verify persistence;
+3. **type-checks every declared input against the target's component** — same
+   normalised Java type *and* same nullability — and refuses with both
+   spellings when they disagree;
+4. **infers every component you did not supply**, and refuses to guess the
+   rest: *"Jails only infers ids, timestamps, status defaults, counters,
+   flags, and empty optional/collection values"*, naming the field and the
+   fix.
+
+That is `ideas-sol.md`'s "infer aggressively, guess conservatively" principle,
+implemented — and point 4 is the exact bar the rest of jails is held to: an
+unknown case is an error, never a silent default.
+
+Around it: `query --on` (typed parameters and results, a JDBC adapter, a real
+database test), `transition --on` (in flight — the update counterpart, with
+`version` and `@scope` in its own refusal message), `durable-job --on <UseCase>
+--yields <Resource>` (PostgreSQL-leased work: `for update skip locked`,
+`lease_until <= now()`, `attempts >= max_attempts`, `on conflict (id) do
+nothing` — all pinned by source assertions), `fetcher` (the safe outbound
+boundary), and **`usecase --yields <Event>`, which additionally emits a
+transactional outbox** — use-case, store, worker, IT and migration.
+
+`@scope` is enforced rather than decorative: `require_scope_authorizer`
+refuses any scoped operation when `security` has not written a
+`ScopeAuthorizer`, with the fix line naming `jails add security`.
+
+**Eight call sites now read a record off disk** — `repo`, `dto`, `usecase`,
+`query`, `transition`, `durable-job` (twice: the command and the target) and
+`outbox` (the event and the target). That is the shared field model doing its
+job, and it is why `DOGFOOD.md`'s defect table reads the way it does: most of
+those twenty-one bugs were *two outputs of one model disagreeing*, and each
+fix collapsed them onto a single source of truth rather than patching a
+template.
+
+**So the gap is no longer "generate more kinds."** Creation, reading and
+(shortly) updating are covered. What remains is **evolution** — changing a
+resource that already exists — plus three naming/derivation defects that
+survive because nothing forces them through the model. Each item below names
+the proof app that exposed it.
 
 ### 5.1 `g field` — the single highest-value generator jails does not have
 
@@ -704,15 +753,24 @@ rules plus a short irregular table, and keep refusing to guess beyond it.
 
 ### 5.4 One rule for where fields come from
 
-`g repo Draft` with no field spec reads `Draft.java` and derives everything
-(`generate.rs:710`). So does `g dto` (`:789`). `g scaffold Draft` does not —
-it refuses because `Draft.java` exists. So the natural workflow, model the
-type first then generate the machinery around it, is blocked on the one kind
-that spans the most files.
+Eight call sites read a record off disk today, and they disagree about what
+happens when they cannot. `g repo` reads it and errors with a message; `g dto`
+reads it with `unwrap_or_default()` — a silent empty field list; `usecase`,
+`query`, `transition`, `durable-job` and `outbox` each read it and each raise
+their own differently-worded refusal. **And `g scaffold Draft` does not read
+it at all** — it refuses because `Draft.java` exists.
+
+So the natural workflow — model the type first, then generate the machinery
+around it — is blocked on the one kind that spans the most files, while five
+newer kinds already require exactly that workflow. `usecase --on CrawlRun`
+*only* works if the scaffold ran first.
 
 **State the rule once and implement it once:** a kind's fields come from the
 spec if given, else from the record on disk if there is one, else it is an
-error. Today that rule is implemented three times and differs each time.
+error naming the record and the fix. `scaffold` joins the list; `dto`'s
+`unwrap_or_default()` stops being the one silent case. This is a small
+refactor with a disproportionate payoff, because every future kind inherits
+one behaviour instead of inventing an eighth.
 
 ### 5.5 `--timestamps`
 
@@ -721,6 +779,14 @@ Verified absent (`jails g --help` lists `--package`, `--index`, `--on`,
 `updated_at`; both minicom tables do, in all four language stubs. So you type
 `createdAt:instant updatedAt:instant` on every scaffold — and then the
 `updatedAt` half is a lie because nothing updates it.
+
+**Half of this already exists in the wrong half of the tool.** `usecase`
+infers timestamps rather than making you pass them — that is one of the five
+categories in its inference list. So the model already knows what a timestamp
+component *means*; what is missing is the **DDL and adapter** side, which is
+where the lie lives. Both proof manifests hand-declare `createdAt:instant` /
+`discoveredAt:instant` on every scaffold, which is the friction showing up as
+data.
 
 `--timestamps` adds both columns, puts `created_at` in the insert with the
 clock the project already has (`add testkit` generates one), and — the part
@@ -793,15 +859,34 @@ That answers `ideas-opus.md` B2's `new --template` and `ideas-grok.md` §8.5's
 "a README section, not a command" — both are superseded; build on the
 manifest.
 
-But the state file records completed intent keys and **skips** them, so
-editing a `fields` line and re-running `app apply` does nothing at all.
-`examples/DOGFOOD.md` already flags this in its own friction ledger.
+**The engine is better than the source documents credit, and the failure is
+sharper than they describe.** Reading `app.rs`:
+
+- `plan` runs `add::preflight` over the capability list and prints
+  `ensure`/`applied`/`pending` per line, writing nothing. Preconditions are
+  therefore checked before any write — a real plan-before-apply property.
+- `apply` installs capabilities, runs each pending intent, and **writes state
+  after every single one**, so an interrupted apply resumes where it stopped.
+- It then **reconciles every capability a second time**, because a generator
+  can create a new integration point for an already-installed capability.
+  That is `DOGFOOD.md`'s third defect, fixed generically, and the comment in
+  the source says exactly why.
+
+The gap is the state key: `kind|name|package|fields|indexes|on|yields`.
+**Change a `fields` line and you change the key**, so the old intent stays in
+state forever and the edited one arrives as *pending*. `apply` then calls
+`generate`, which finds the files already on disk and refuses. So editing a
+manifest field does not silently do nothing — **it fails, with §5.8's useless
+refusal message naming a fixture file.** Worse than the source documents say,
+and more fixable, because the two halves are already identified.
 
 That is §5.1 one level up. **`g field` is the primitive the manifest needs to
 become editable**, because "reconcile drift for a changed `fields` line" *is*
 "add the field that is in the manifest and not in the record". Build the
 command first, then let `app apply` call it — the other order writes the
-reconciliation logic twice.
+reconciliation logic twice. `DOGFOOD.md`'s friction ledger already names the
+durable fix: *"store output fingerprints and reconcile drift instead of
+blindly skipping."*
 
 Two more manifest notes:
 
@@ -1159,7 +1244,7 @@ Then three guards so the degraded mode is honest rather than lying:
 - The eight Maven-inherent commands (`test build clean fmt check mvn run
   console`) get a one-line `require_maven` guard.
 - **`doctor` reports the real build tool.** Not optional: with a stub pom,
-  doctor today prints `9 checks, all clear` over a Gradle Boot 2.7 project —
+  doctor today prints a clean run over a Gradle Boot 2.7 project —
   and a confident wrong report is worse than a refusal.
 
 **Frame it correctly in README**: *jails never reads, writes, parses or invokes
@@ -1294,10 +1379,30 @@ a `CountDownLatch`, never a sleep.
 
 ### 9.3 `add queue` — the backbone both verticals silently assume
 
-Rails 8 moved the job queue into the database because requiring Redis to send
-an email later was the wrong shape for small apps. jails has `add redis` and
-no queue; `g job` is a *timer*. Mailer delivery, webhook re-delivery, crawl
-frontier persistence and digest jobs each re-derive the same five mistakes.
+**Read this before building it: most of it exists.** `g durable-job` already
+generates a PostgreSQL-leased queue whose store is pinned by source assertions
+to contain `for update skip locked`, `lease_until <= now()`,
+`attempts >= max_attempts` and `on conflict (id) do nothing`, with an IT
+covering same-payload replay, conflicting idempotency keys, expired-lease
+reclaim, bounded retry, terminal-error visibility, and recovery after the
+business effect committed but before queue acknowledgement. `usecase --yields`
+adds the transactional outbox on top. `g job` remains the *timer*.
+
+So the honest framing is not "jails has no queue". It is: **jails generates a
+queue per durable job, and has no shared one.** Two questions decide whether
+`add queue` is even the right answer, and both are answerable by reading the
+generated output of the two proof apps rather than by design:
+
+1. Do two `durable-job` intents in one project produce two tables and two
+   workers, or share one? If they share, `add queue` may already be redundant
+   and the remaining work is a `jails queue list|failed|retry` CLI.
+2. Does the generated store have a **reaper** for `running` rows with a stale
+   lease? `lease_until <= now()` in the claim suggests reclaim-on-claim, which
+   is the cheaper and mostly-equivalent design — in which case the classic
+   "`kill -9` strands a job forever" failure is already closed.
+
+Answer those first. What follows is the specification to check the generated
+code *against*, not a greenfield design:
 
 One `jobs` table (jsonb payload, `state in (ready,running,done,dead)`,
 `run_at`, `attempts`, `max_attempts`, `locked_at/by`, `idempotency_key`), with:
@@ -1553,7 +1658,7 @@ control, **—** = infrastructure for the plan itself.
 | # | Item | § | Effort | Proves | Why here |
 |---|---|---|---|---|---|
 | 0 | **Stand up App C** (`examples/ledger-cli/.jails/app.toml` + its acceptance contract + a gate cell) | §2.5 | S | C | Costs an afternoon and immediately makes 4.1 a failing gate instead of folklore. It is also the only thing that can falsify "generic" along the Spring axis |
-| 1 | Tier 0: all nine defects + the `mvn validate` matrix + the Lua-pinning test | §4 | 1 day | A B **C** | Features land on top of it. Two of them make jails write a broken project, and C hits one on its first run |
+| 1 | Tier 0: all eleven defects + the `mvn validate` matrix + the Lua-pinning test + the golden-coverage test | §4 | 1–2 days | A B **C** | Features land on top of it. Two of them make jails write a broken project, and C hits one on its first run |
 | 2 | Editor config: jdt.ls settings + bundles + HCR, `'path'`/`src.zip`, `:compiler jails`, keymap split, `javac_lint --release`/opt-in | §10 | S, no Rust | — | Test-at-cursor, debugging, `gf` and quickfix — today, with no Rust written |
 | 3 | Testcontainers reuse + doctor + `jails setup`; `spring-devtools.properties`; `mise.toml` from `new` | §6.1 | S | A B | −8 s per container test. The full gate takes 196 s today; most of it is containers |
 | 4 | `jails test` flags: `Class#method`, `path:line`, `--failed`, `--fail-fast`, `--slowest`, rerun snippet, `failIfNoSpecifiedTests=false` | §6.1 | S–M | — | Every test run, including every gate run |
@@ -1709,6 +1814,19 @@ test still asserts only `rewards`/`work_items`/`news`), §5.4
 not), §5.5 (no `--timestamps` anywhere in `src/`), §8 (`generate.rs:86-96`,
 `pom.xml` only), §9.1 (**zero** `cors` matches in `src/`, `templates/`,
 `README.md`), §6.1 (**zero** `withReuse` matches).
+
+**A second pass over `src/` and `templates/` added** §4.10 (nine kinds and
+capabilities with zero golden coverage, against `tests/golden.rs:50`'s claim
+of total coverage), §4.11 (`spring.rs` at 5,808 lines with 42 inline Java
+bodies; the `add`-side template migration confirmed **done**, which retires
+`ideas-fable.md` §8.11's Toxiproxy item), the eight record-readers in §5.4,
+`usecase`'s compatibility-check-and-infer engine and `require_scope_authorizer`
+in §5's preamble, and the precise `app.rs` state-key mechanism in §5.9.
+Counted today: 27,485 lines of Rust across 33 files; 51 templates (4
+`generate`, 17 `add`, 30 `spring`); 162 golden files in 25 scenarios; 50
+`doctor` checks; 20 `why` rules; `--json` on exactly three commands
+(`about`, `routes`, `beans`), and `line` numbers on `Note` but not on `Route`
+or `Bean`.
 
 **Corrected while writing this file** — the earlier draft of this plan got
 these wrong by truncating an enum extraction, and they matter because four of

@@ -149,6 +149,27 @@ cargo fmt --all && cargo check
 cargo fmt --all && cargo test app_manifest_builds_the_support_inbox_from_the_same_generic_intents -- --nocapture
 cargo test app_manifests_compile_without_manual_source_edits -- --nocapture
 cargo fmt --all && cargo test app_manifests_pass_the_full_generated_verification_gate -- --nocapture
+cargo fmt --all && cargo test app_manifest_builds_the_support_inbox_from_the_same_generic_intents -- --nocapture
+cargo test app_manifests_compile_without_manual_source_edits -- --nocapture
+cargo fmt --all && cargo test app_manifests_pass_the_full_generated_verification_gate -- --nocapture
+cargo fmt --all && cargo test app_manifests_compile_without_manual_source_edits -- --nocapture
+cargo test app_manifests_pass_the_full_generated_verification_gate -- --nocapture
+cargo fmt --all && cargo test app_manifest_builds_the_support_inbox_from_the_same_generic_intents -- --nocapture
+cargo test app_manifests_compile_without_manual_source_edits -- --nocapture
+cargo test app_manifests_compile_without_manual_source_edits -- --nocapture
+cargo fmt --all && cargo check
+cargo fmt --all && cargo test app_manifests_compile_without_manual_source_edits -- --nocapture
+cargo test app_manifests_pass_the_full_generated_verification_gate -- --nocapture
+cargo test app_manifests_pass_the_full_generated_verification_gate -- --nocapture
+cargo test --test golden -- --nocapture
+UPDATE_GOLDEN=1 cargo test --test golden -q
+cargo test --bin jails
+cargo test --test cli
+cargo test --test cli generate_scaffold_produces_a_project_that_compiles_and_passes_tests -- --exact --nocapture
+cargo test --test cli a_scaffold_with_database_types_compiles_including_its_derived_jdbc_adapter -- --exact --nocapture
+cargo test --test cli generate_dto_client_and_job_compile_and_pass_against_real_spring -- --exact --nocapture
+cargo test --test cli every_generator_and_capability_together_compiles_and_passes_tests -- --exact --nocapture
+cargo fmt -- --check && cargo test --test golden -q && git diff --check
 ```
 
 Results:
@@ -158,8 +179,9 @@ Results:
 - Both manifests pass `mvn -q verify` against real Testcontainers/PostgreSQL
   and Kafka. The durable-work baseline gate took 196.38 seconds; the first
   gate with scoped authorization, the adversarial safe fetcher suite, and real
-  OCI builds took 297.04 seconds.
-- The crawler generated 3 Flyway migrations and the support inbox generated 5;
+  OCI builds took 297.04 seconds. The final gate including optimistic
+  transitions and the acknowledged transactional outbox took 225.29 seconds.
+- The crawler generated 3 Flyway migrations and the support inbox generated 6;
   both complete generated test suites passed.
 - The crawler's typed `PageDiscovered(UUID id, UUID crawlRunId, URI url,
   Instant occurredAt)` event and the inbox's typed
@@ -186,12 +208,21 @@ Results:
   Its generated compare-and-swap includes tenant scope and version in the SQL
   predicate, increments the version atomically, and distinguishes cross-scope
   absence from a stale version.
+- `ReceiveMessage` now uses ordinary `strategy_yields = "MessageReceived"`.
+  Jails turns that generic linkage into a same-transaction outbox write and a
+  leased relay that waits for Kafka acknowledgement. Its real PostgreSQL/Kafka
+  test covers the happy path, stable event identity, bounded retries, and an
+  inspectable terminal failure.
 - The targeted `rustfmt --edition 2021` probe was invalid for this Rust 2024
   crate and also reported the same pre-existing whole-file drift. The manifest
   confirms the actual edition; the independent `git diff --check` whitespace
   check is clean.
 - The first formatted `docker info` probe was not portable to the local Podman
   compatibility API; plain `docker info` confirmed the runtime was healthy.
+- The sandboxed all-CLI sweep passed 118/122 tests; four real-Spring fixtures
+  could not open local sockets or let Mockito self-attach. Each of those four
+  passed unchanged when rerun with local-runtime access, so this was an
+  execution-sandbox limitation rather than a generated-code regression.
 
 The full interactive flow above remains the acceptance path for project
 creation. It additionally requires Initializr/network access. When any step
@@ -226,6 +257,8 @@ is evidence for the next generic generator improvement.
 | generate | the first optimistic-transition binding compared Java lower-camel component names with SQL snake-case column names and panicked on `workspaceId` | transition parameters now resolve through the shared SQL column model, so names, JDBC values, and predicates cannot drift |
 | verify | the transactional JDBC transition was generated `final`, preventing Spring from creating its class-based transaction proxy | transactional transition adapters are proxyable classes, matching the invariant already enforced for generated use-case implementations |
 | compile | the first outbox decorator returned the target domain record from the service package without importing it | outbox composition now derives and emits the target import from the same configured package model as ordinary use cases |
+| verify | committed query integration fixtures reused the generator-wide sample UUID and collided with later transition tests | generated database query tests are transactional and roll back their fixtures, making the shared Testcontainers database deterministic |
+| verify | an outbox test compared a freshly created `Instant` with PostgreSQL's microsecond-precision round trip | the generated assertion proves the persisted business effect by stable identity and leaves temporal precision to repository mapping tests |
 
 ## Friction ledger
 
@@ -235,7 +268,7 @@ is evidence for the next generic generator improvement.
 | Both | manifest setup | user copies `.jails/app.toml` manually | `jails app init --manifest <path>` or `new --app <path>` |
 | Both | apply | application planning currently describes logical intents but does not yet produce one atomic `ChangeSet` | lower the whole manifest through the universal planner |
 | Both | resume | `.jails/app-state-v1` records completed intent keys but does not yet notice a generated file deleted afterward | store output fingerprints and reconcile drift instead of blindly skipping |
-| Both | domain behavior | executable creates, typed equality queries, and optimistic transitions remove the first behavior boilerplate; crawler traversal, conversation assignment, durable publication, and richer query semantics remain | domain-event linkage, transactional outbox, pagination/sort, and policy-bearing workflow intents |
+| Both | domain behavior | executable creates, typed equality queries, optimistic transitions, durable work, and transactional publication remove the first behavior boilerplate; crawler traversal, conversation assignment, provider delivery, and richer query semantics remain | pagination/sort and policy-bearing workflow intents built from the same generic composition model |
 | Both | architecture | current scaffold is layer-first unless `--package` flattens the slice | feature-first placement with verified Modulith boundaries |
 | Both | security | production JWT identity and explicit `@scope` enforcement now exist; role/permission policy and audit are not generated yet | closed authorization-policy inputs plus generated allowed/denied HTTP integration tests |
 | Both | tests | scheduled jobs and Kafka listeners start in broad `@SpringBootTest` contexts; differing contexts start several PostgreSQL containers and unrelated tests produce large broker logs | generated test profile, selective listener startup, and shared container/context conventions |
