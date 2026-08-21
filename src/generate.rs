@@ -89,6 +89,10 @@ pub enum ArtifactKind {
     /// JDBC adapter, HTTP adapter, and a real-database test. `--on` names the
     /// target resource and fields become equality filters (Spring only).
     Query,
+    /// An optimistic, scope-aware update over an existing scaffold. `id`,
+    /// `@scope` fields, and `version` identify the row; every other field is
+    /// updated and the stored version is incremented atomically (Spring only).
+    Transition,
     /// A Kafka slice: payload record, publisher, listener, and an IT against
     /// a real broker (Spring only)
     Event,
@@ -772,12 +776,6 @@ pub fn generate(
                     "usecase {name} needs the resource it creates.\n       fix: pass `--on <Resource>`, for example `jails g usecase {name} seedUrl:uri --on CrawlRun`."
                 )
             })?;
-            if strategy_yields.is_some() {
-                return Err(
-                    "`--yields` for usecases is reserved for the event/publication slice and is not implemented yet"
-                        .to_string(),
-                );
-            }
             let service = place(layout::SERVICE);
             let web = place(layout::WEB);
             // `--package` places the operation itself. The target resource
@@ -787,8 +785,10 @@ pub fn generate(
             let domain = subpackage(&base, config.layer(layout::DOMAIN));
             let app = subpackage(&base, config.layer(layout::APP));
             let adapters = subpackage(&base, config.layer(layout::ADAPTERS));
+            let messaging = subpackage(&base, config.layer(layout::MESSAGING));
+            let jobs = subpackage(&base, config.layer(layout::JOBS));
             let parsed = parse_fields(fields)?;
-            crate::spring::usecase_files(
+            let mut files = crate::spring::usecase_files(
                 &root,
                 &base,
                 &service,
@@ -799,14 +799,30 @@ pub fn generate(
                 &name,
                 &capitalize(target),
                 &parsed,
-            )?
-            .into_iter()
-            .map(|(path, contents, kind)| Artifact {
-                kind,
-                path,
-                contents,
-            })
-            .collect()
+            )?;
+            if let Some(event) = strategy_yields {
+                files.extend(crate::spring::outbox_files(
+                    &root,
+                    &service,
+                    &domain,
+                    &app,
+                    &adapters,
+                    &messaging,
+                    &jobs,
+                    &name,
+                    &capitalize(target),
+                    &capitalize(event),
+                    &parsed,
+                )?);
+            }
+            files
+                .into_iter()
+                .map(|(path, contents, kind)| Artifact {
+                    kind,
+                    path,
+                    contents,
+                })
+                .collect()
         }
         ArtifactKind::Query => {
             require_spring_project(&root, "query")?;
@@ -828,6 +844,45 @@ pub fn generate(
             let adapters = subpackage(&base, config.layer(layout::ADAPTERS));
             let parsed = parse_fields(fields)?;
             crate::spring::query_files(
+                &root,
+                &base,
+                &service,
+                &web,
+                &domain,
+                &app,
+                &adapters,
+                &name,
+                &capitalize(target),
+                &parsed,
+            )?
+            .into_iter()
+            .map(|(path, contents, kind)| Artifact {
+                kind,
+                path,
+                contents,
+            })
+            .collect()
+        }
+        ArtifactKind::Transition => {
+            require_spring_project(&root, "transition")?;
+            let target = strategy_on.ok_or_else(|| {
+                format!(
+                    "transition {name} needs the resource it updates.\n       fix: pass `--on <Resource>`, for example `jails g transition {name} id:uuid workspaceId:uuid@scope status:Status version:long --on Conversation`."
+                )
+            })?;
+            if strategy_yields.is_some() {
+                return Err(
+                    "`--yields` is not valid for a transition; transitions return the updated target resource"
+                        .to_string(),
+                );
+            }
+            let service = place(layout::SERVICE);
+            let web = place(layout::WEB);
+            let domain = subpackage(&base, config.layer(layout::DOMAIN));
+            let app = subpackage(&base, config.layer(layout::APP));
+            let adapters = subpackage(&base, config.layer(layout::ADAPTERS));
+            let parsed = parse_fields(fields)?;
+            crate::spring::transition_files(
                 &root,
                 &base,
                 &service,
@@ -1596,6 +1651,7 @@ pub fn destroy(
         ArtifactKind::Usecase => {
             let service = place(layout::SERVICE);
             let web = place(layout::WEB);
+            let jobs = place(layout::JOBS);
             vec![
                 main_dir(&root, &service).join(format!("{name}Command.java")),
                 main_dir(&root, &service).join(format!("{name}UseCase.java")),
@@ -1603,6 +1659,10 @@ pub fn destroy(
                 test_dir(&root, &service).join(format!("{name}UseCaseTest.java")),
                 main_dir(&root, &web).join(format!("{name}Controller.java")),
                 test_dir(&root, &web).join(format!("{name}ControllerTest.java")),
+                main_dir(&root, &service).join(format!("Outbox{name}UseCase.java")),
+                main_dir(&root, &jobs).join(format!("Jdbc{name}Outbox.java")),
+                main_dir(&root, &jobs).join(format!("{name}OutboxWorker.java")),
+                test_dir(&root, &jobs).join(format!("{name}OutboxIT.java")),
             ]
         }
         ArtifactKind::Query => {
@@ -1616,6 +1676,19 @@ pub fn destroy(
                 test_dir(&root, &adapters).join(format!("Jdbc{name}QueryIT.java")),
                 main_dir(&root, &web).join(format!("{name}QueryController.java")),
                 test_dir(&root, &web).join(format!("{name}QueryControllerTest.java")),
+            ]
+        }
+        ArtifactKind::Transition => {
+            let service = place(layout::SERVICE);
+            let web = place(layout::WEB);
+            let adapters = place(layout::ADAPTERS);
+            vec![
+                main_dir(&root, &service).join(format!("{name}Command.java")),
+                main_dir(&root, &service).join(format!("{name}UseCase.java")),
+                main_dir(&root, &adapters).join(format!("Jdbc{name}Transition.java")),
+                test_dir(&root, &adapters).join(format!("Jdbc{name}TransitionIT.java")),
+                main_dir(&root, &web).join(format!("{name}Controller.java")),
+                test_dir(&root, &web).join(format!("{name}ControllerTest.java")),
             ]
         }
         ArtifactKind::Dto => {

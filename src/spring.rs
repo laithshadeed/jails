@@ -1313,6 +1313,529 @@ fn durable_job_migration(table: &str, columns: &[crate::sql::Column]) -> String 
     )
 }
 
+/// Attach a generated use case to a typed event through a transactional
+/// PostgreSQL outbox. `usecase --yields Event` is deliberately composition,
+/// not a second domain-specific workflow language: the event's components
+/// must come from the command/result or one safe timestamp default.
+pub(crate) fn outbox_files(
+    root: &Path,
+    service: &str,
+    domain: &str,
+    app: &str,
+    adapters: &str,
+    messaging: &str,
+    jobs: &str,
+    usecase: &str,
+    target: &str,
+    event: &str,
+    command_fields: &[crate::generate::Field],
+) -> crate::Result<Vec<(std::path::PathBuf, String, &'static str)>> {
+    let json = crate::generate::main_dir(root, adapters).join("Json.java");
+    if !json.exists() {
+        return Err(format!(
+            "usecase {usecase} --yields {event} needs the generic JSON capability for durable payloads.\n       fix: run `jails add json` first."
+        ));
+    }
+    let event_class = format!("{event}Event");
+    let event_fields = crate::generate::fields_from_record(root, messaging, &event_class)
+        .ok_or_else(|| {
+            format!(
+                "usecase {usecase} yields {event}, but {event_class}.java does not exist or is not a record. Generate the typed event first."
+            )
+        })?;
+    let event_id = event_fields
+        .iter()
+        .find(|field| field.name == "id")
+        .ok_or_else(|| format!("outbox event {event_class} needs a stable id"))?;
+    if usecase_normalized_type(&event_id.java_type) != "UUID"
+        || event_id.optionality == crate::generate::Optionality::Nullable
+    {
+        return Err(format!(
+            "transactional outbox v1 requires {event_class}.id to be a required UUID"
+        ));
+    }
+    let target_fields = crate::generate::fields_from_record(root, domain, target)
+        .ok_or_else(|| format!("usecase {usecase} cannot read target {target}.java"))?;
+    let mut expressions = Vec::with_capacity(event_fields.len());
+    let mut needs_instant = false;
+    for event_field in &event_fields {
+        if let Some(field) = target_fields
+            .iter()
+            .find(|candidate| candidate.name == event_field.name)
+        {
+            ensure_outbox_type(usecase, event_field, field, target)?;
+            expressions.push(format!("result.{}()", field.name));
+        } else if let Some(field) = command_fields
+            .iter()
+            .find(|candidate| candidate.name == event_field.name)
+        {
+            ensure_outbox_type(usecase, event_field, field, "command")?;
+            expressions.push(format!("command.{}()", field.name));
+        } else if event_field.java_type == "Instant"
+            && event_field.optionality != crate::generate::Optionality::Nullable
+            && event_field.name.ends_with("At")
+        {
+            needs_instant = true;
+            expressions.push("Instant.now()".to_string());
+        } else {
+            return Err(format!(
+                "usecase {usecase} cannot derive event field `{}` for {event_class}.\n       fix: use a component from the command/result, or a required Instant name ending in `At`.",
+                event_field.name
+            ));
+        }
+    }
+    let table = format!("{}_outbox", crate::sql::snake_case(usecase));
+    let property = crate::sql::snake_case(usecase).replace('_', "-");
+    let migration_dir = root.join("src/main/resources/db/migration");
+    let version = crate::generate::next_migration_version(&migration_dir)?;
+    let main_service = crate::generate::main_dir(root, service);
+    let main_jobs = crate::generate::main_dir(root, jobs);
+    let test_jobs = crate::generate::test_dir(root, jobs);
+    Ok(vec![
+        (
+            main_service.join(format!("Outbox{usecase}UseCase.java")),
+            outbox_usecase_java(
+                service,
+                domain,
+                messaging,
+                jobs,
+                usecase,
+                target,
+                event,
+                &expressions,
+                needs_instant,
+            ),
+            "transactional outbox use case",
+        ),
+        (
+            main_jobs.join(format!("Jdbc{usecase}Outbox.java")),
+            outbox_store_java(jobs, adapters, messaging, usecase, event, &table, &property),
+            "transactional outbox store",
+        ),
+        (
+            main_jobs.join(format!("{usecase}OutboxWorker.java")),
+            outbox_worker_java(jobs, messaging, usecase, event, &property),
+            "transactional outbox worker",
+        ),
+        (
+            test_jobs.join(format!("{usecase}OutboxIT.java")),
+            outbox_it_java(
+                root,
+                jobs,
+                service,
+                domain,
+                app,
+                usecase,
+                target,
+                &property,
+                command_fields,
+            ),
+            "transactional outbox integration test",
+        ),
+        (
+            migration_dir.join(format!("V{version:03}__create_{table}.sql")),
+            outbox_migration(&table),
+            "transactional outbox migration",
+        ),
+    ])
+}
+
+fn ensure_outbox_type(
+    usecase: &str,
+    event: &crate::generate::Field,
+    source: &crate::generate::Field,
+    owner: &str,
+) -> crate::Result<()> {
+    if usecase_normalized_type(&event.java_type) != usecase_normalized_type(&source.java_type)
+        || (event.optionality == crate::generate::Optionality::Nullable)
+            != (source.optionality == crate::generate::Optionality::Nullable)
+    {
+        return Err(format!(
+            "usecase {usecase} cannot map event field `{}` ({}) from {owner} ({})",
+            event.name, event.java_type, source.java_type
+        ));
+    }
+    Ok(())
+}
+
+fn outbox_usecase_java(
+    service: &str,
+    domain: &str,
+    messaging: &str,
+    jobs: &str,
+    usecase: &str,
+    target: &str,
+    event: &str,
+    expressions: &[String],
+    needs_instant: bool,
+) -> String {
+    let target_import = crate::generate::import_of(service, domain, target);
+    let event_import = crate::generate::import_of(service, messaging, &format!("{event}Event"));
+    let store_import = crate::generate::import_of(service, jobs, &format!("Jdbc{usecase}Outbox"));
+    let instant_import = if needs_instant {
+        "import java.time.Instant;\n"
+    } else {
+        ""
+    };
+    let args = expressions
+        .iter()
+        .map(|expression| format!("                {expression}"))
+        .collect::<Vec<_>>()
+        .join(",\n");
+    format!(
+        r#"package {service};
+
+{target_import}{event_import}{store_import}{instant_import}import java.util.Objects;
+import org.springframework.context.annotation.Primary;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
+
+/** Creates the resource and stages its event in the same database transaction. */
+@Primary
+@Component
+public class Outbox{usecase}UseCase implements {usecase}UseCase {{
+
+    private final Default{usecase}UseCase delegate;
+    private final Jdbc{usecase}Outbox outbox;
+
+    public Outbox{usecase}UseCase(Default{usecase}UseCase delegate, Jdbc{usecase}Outbox outbox) {{
+        this.delegate = Objects.requireNonNull(delegate, "delegate is required");
+        this.outbox = Objects.requireNonNull(outbox, "outbox is required");
+    }}
+
+    @Override
+    @Transactional
+    public {target} execute({usecase}Command command) {{
+        var result = delegate.execute(command);
+        outbox.stage(new {event}Event(
+{args}));
+        return result;
+    }}
+}}
+"#
+    )
+}
+
+fn outbox_store_java(
+    pkg: &str,
+    adapters: &str,
+    messaging: &str,
+    usecase: &str,
+    event: &str,
+    table: &str,
+    property: &str,
+) -> String {
+    let json_import = crate::generate::import_of(pkg, adapters, "Json");
+    let event_import = crate::generate::import_of(pkg, messaging, &format!("{event}Event"));
+    format!(
+        r#"package {pkg};
+
+{json_import}{event_import}import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.UUID;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
+
+/** PostgreSQL transactional outbox with leases, bounded retry and stable event identity. */
+@Component
+public class Jdbc{usecase}Outbox {{
+
+    private final JdbcClient db;
+    private final int maxAttempts;
+    private final int leaseSeconds;
+
+    public Jdbc{usecase}Outbox(
+            JdbcClient db,
+            @Value("${{outbox.{property}.max-attempts:10}}") int maxAttempts,
+            @Value("${{outbox.{property}.lease-seconds:30}}") int leaseSeconds) {{
+        this.db = Objects.requireNonNull(db, "db is required");
+        if (maxAttempts < 1 || leaseSeconds < 1) throw new IllegalArgumentException("positive limits required");
+        this.maxAttempts = maxAttempts;
+        this.leaseSeconds = leaseSeconds;
+    }}
+
+    @Transactional
+    public void stage({event}Event event) {{
+        Objects.requireNonNull(event, "event is required");
+        String payload = Json.toJson(event);
+        int inserted = db.sql("""
+                        insert into {table} (id, payload, state, attempts, max_attempts,
+                                next_attempt_at, created_at)
+                        values (:id, cast(:payload as jsonb), 'PENDING', 0, :maxAttempts, now(), now())
+                        on conflict (id) do nothing
+                        """)
+                .param("id", event.id())
+                .param("payload", payload)
+                .param("maxAttempts", maxAttempts)
+                .update();
+        if (inserted == 0) {{
+            var existing = db.sql("select payload::text from {table} where id = :id")
+                    .param("id", event.id()).query(String.class).single();
+            if (!Json.parse(existing, {event}Event.class).equals(event)) {{
+                throw new IllegalStateException("event id already staged with different payload: " + event.id());
+            }}
+        }}
+    }}
+
+    public Optional<Status> status(UUID id) {{
+        return db.sql("""
+                        select id, state, attempts, last_error, completed_at
+                        from {table} where id = :id
+                        """)
+                .param("id", id)
+                .query((rows, rowNumber) -> new Status(
+                        rows.getObject("id", UUID.class),
+                        State.valueOf(rows.getString("state")), rows.getInt("attempts"),
+                        Optional.ofNullable(rows.getString("last_error")),
+                        Optional.ofNullable(rows.getObject("completed_at", OffsetDateTime.class))
+                                .map(OffsetDateTime::toInstant)))
+                .optional();
+    }}
+
+    @Transactional
+    public Optional<Claimed> claim() {{
+        return db.sql("""
+                        with candidate as (
+                            select id from {table}
+                            where (state = 'PENDING' and next_attempt_at <= now())
+                               or (state = 'RUNNING' and lease_until <= now())
+                            order by next_attempt_at, created_at
+                            for update skip locked limit 1
+                        )
+                        update {table} events
+                        set state = 'RUNNING', attempts = events.attempts + 1,
+                            lease_until = now() + make_interval(secs => :leaseSeconds)
+                        from candidate where events.id = candidate.id
+                        returning events.id, events.payload::text as payload, events.attempts
+                        """)
+                .param("leaseSeconds", leaseSeconds)
+                .query((rows, rowNumber) -> new Claimed(
+                        rows.getObject("id", UUID.class),
+                        Json.parse(rows.getString("payload"), {event}Event.class),
+                        rows.getInt("attempts")))
+                .optional();
+    }}
+
+    @Transactional
+    public void succeed(UUID id) {{
+        db.sql("""
+                        update {table} set state = 'SUCCEEDED', lease_until = null,
+                            last_error = null, completed_at = now()
+                        where id = :id and state = 'RUNNING'
+                        """).param("id", id).update();
+    }}
+
+    @Transactional
+    public void fail(UUID id, RuntimeException failure) {{
+        String error = String.valueOf(failure.getMessage());
+        if (error.length() > 4000) error = error.substring(0, 4000);
+        db.sql("""
+                        update {table}
+                        set state = case when attempts >= max_attempts then 'FAILED' else 'PENDING' end,
+                            next_attempt_at = now() + make_interval(
+                                    secs => least(300, cast(power(2, attempts) as integer))),
+                            lease_until = null, last_error = :error,
+                            completed_at = case when attempts >= max_attempts then now() else null end
+                        where id = :id and state = 'RUNNING'
+                        """).param("id", id).param("error", error).update();
+    }}
+
+    public enum State {{ PENDING, RUNNING, SUCCEEDED, FAILED }}
+    public record Status(UUID id, State state, int attempts,
+                         Optional<String> lastError, Optional<Instant> completedAt) {{}}
+    public record Claimed(UUID id, {event}Event event, int attempt) {{}}
+}}
+"#
+    )
+}
+
+fn outbox_worker_java(
+    pkg: &str,
+    messaging: &str,
+    usecase: &str,
+    event: &str,
+    property: &str,
+) -> String {
+    let publisher_import = crate::generate::import_of(pkg, messaging, &format!("{event}Publisher"));
+    format!(
+        r#"package {pkg};
+
+{publisher_import}import java.util.concurrent.CompletionException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
+
+/** Leased outbox relay; success means Kafka acknowledged the record, not merely accepted a future. */
+@Component
+public final class {usecase}OutboxWorker {{
+
+    private static final Logger log = LoggerFactory.getLogger({usecase}OutboxWorker.class);
+    private final Jdbc{usecase}Outbox outbox;
+    private final {event}Publisher publisher;
+
+    public {usecase}OutboxWorker(Jdbc{usecase}Outbox outbox, {event}Publisher publisher) {{
+        this.outbox = outbox;
+        this.publisher = publisher;
+    }}
+
+    @Scheduled(
+            fixedDelayString = "${{outbox.{property}.delay:PT1S}}",
+            initialDelayString = "${{outbox.{property}.initial-delay:PT1S}}")
+    public void run() {{
+        try {{ runOnce(); }}
+        catch (RuntimeException infrastructureFailure) {{
+            log.error("{usecase} outbox could not claim work; the schedule continues", infrastructureFailure);
+        }}
+    }}
+
+    public void runOnce() {{ outbox.claim().ifPresent(this::publish); }}
+
+    private void publish(Jdbc{usecase}Outbox.Claimed claimed) {{
+        try {{
+            publisher.publish(claimed.event()).join();
+            outbox.succeed(claimed.id());
+        }} catch (CompletionException failure) {{
+            var cause = failure.getCause();
+            var recorded = cause instanceof RuntimeException runtime ? runtime : failure;
+            outbox.fail(claimed.id(), recorded);
+            log.warn("{usecase} outbox attempt {{}} failed", claimed.attempt(), recorded);
+        }} catch (RuntimeException failure) {{
+            outbox.fail(claimed.id(), failure);
+            log.warn("{usecase} outbox attempt {{}} failed", claimed.attempt(), failure);
+        }}
+    }}
+}}
+"#
+    )
+}
+
+fn outbox_it_java(
+    root: &Path,
+    pkg: &str,
+    service: &str,
+    domain: &str,
+    app: &str,
+    usecase: &str,
+    target: &str,
+    property: &str,
+    fields: &[crate::generate::Field],
+) -> String {
+    let samples = fields
+        .iter()
+        .map(|field| crate::generate::sample_value(field, root, domain))
+        .collect::<Option<Vec<_>>>();
+    let disabled = samples.is_none();
+    let args = samples.unwrap_or_default().join(",\n                ");
+    let command_import = crate::generate::import_of(pkg, service, &format!("{usecase}Command"));
+    let usecase_import = crate::generate::import_of(pkg, service, &format!("{usecase}UseCase"));
+    let target_import = crate::generate::import_of(pkg, domain, target);
+    let repo_import = crate::generate::import_of(pkg, app, &format!("{target}Repository"));
+    let imports = java_literal_imports(fields, domain)
+        .into_iter()
+        .map(|import| format!("import {import};\n"))
+        .collect::<String>();
+    let disabled_import = if disabled {
+        "import org.junit.jupiter.api.Disabled;\n"
+    } else {
+        ""
+    };
+    let annotation = if disabled {
+        "@Disabled(\"todo: supply outbox command samples\")\n"
+    } else {
+        ""
+    };
+    format!(
+        r#"package {pkg};
+
+{command_import}{usecase_import}{target_import}{repo_import}{imports}{disabled_import}import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+{annotation}@SpringBootTest(properties = {{
+        "outbox.{property}.initial-delay=PT1H",
+        "outbox.{property}.max-attempts=2"
+}})
+@org.springframework.transaction.annotation.Transactional
+class {usecase}OutboxIT {{
+
+    @Autowired private {usecase}UseCase useCase;
+    @Autowired private {target}Repository results;
+    @Autowired private Jdbc{usecase}Outbox outbox;
+    @Autowired private {usecase}OutboxWorker worker;
+    @Autowired private org.springframework.jdbc.core.simple.JdbcClient db;
+
+    @Test
+    void businessEffectAndEventAreStagedTogetherThenKafkaAcknowledgementCompletesDelivery() {{
+        var command = new {usecase}Command(
+                {args});
+
+        var result = useCase.execute(command);
+
+        assertThat(results.findById(String.valueOf(result.id())))
+                .get().extracting({target}::id).isEqualTo(result.id());
+        assertThat(outbox.status(result.id())).get()
+                .extracting(Jdbc{usecase}Outbox.Status::state)
+                .isEqualTo(Jdbc{usecase}Outbox.State.PENDING);
+
+        worker.runOnce();
+
+        assertThat(outbox.status(result.id())).get()
+                .extracting(Jdbc{usecase}Outbox.Status::state)
+                .isEqualTo(Jdbc{usecase}Outbox.State.SUCCEEDED);
+    }}
+
+    @Test
+    void retriesKeepTheStableEventIdAndTerminalFailureIsInspectable() {{
+        var command = new {usecase}Command(
+                {args});
+        var result = useCase.execute(command);
+
+        var first = outbox.claim().orElseThrow();
+        outbox.fail(first.id(), new IllegalStateException("provider unavailable"));
+        db.sql("update {usecase_snake}_outbox set next_attempt_at = now() where id = :id")
+                .param("id", first.id()).update();
+        var second = outbox.claim().orElseThrow();
+        outbox.fail(second.id(), new IllegalStateException("provider unavailable"));
+
+        assertThat(second.id()).isEqualTo(result.id()).isEqualTo(first.id());
+        assertThat(outbox.status(result.id())).get().satisfies(status -> {{
+            assertThat(status.state()).isEqualTo(Jdbc{usecase}Outbox.State.FAILED);
+            assertThat(status.lastError()).contains("provider unavailable");
+        }});
+    }}
+}}
+"#,
+        usecase_snake = crate::sql::snake_case(usecase)
+    )
+}
+
+fn outbox_migration(table: &str) -> String {
+    format!(
+        "-- Transactional outbox: business writes and event staging share one commit.\n\
+         create table {table} (\n\
+           id uuid primary key,\n\
+           payload jsonb not null,\n\
+           state text not null check (state in ('PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED')),\n\
+           attempts integer not null check (attempts >= 0),\n\
+           max_attempts integer not null check (max_attempts > 0),\n\
+           next_attempt_at timestamptz not null,\n\
+           lease_until timestamptz,\n\
+           last_error text,\n\
+           created_at timestamptz not null,\n\
+           completed_at timestamptz\n\
+         );\n\n\
+         create index {table}_runnable_idx on {table} (state, next_attempt_at)\n\
+           where state in ('PENDING', 'RUNNING');\n"
+    )
+}
+
 #[cfg(test)]
 mod durable_job_tests {
     use super::*;
@@ -2701,6 +3224,613 @@ mod usecase_tests {
 }
 
 // ---------------------------------------------------------------------------
+// `generate transition` -- scope-safe optimistic updates in PostgreSQL.
+// ---------------------------------------------------------------------------
+
+pub(crate) fn transition_files(
+    root: &Path,
+    security: &str,
+    service: &str,
+    web: &str,
+    domain: &str,
+    app: &str,
+    adapters: &str,
+    name: &str,
+    target: &str,
+    fields: &[crate::generate::Field],
+) -> crate::Result<Vec<(std::path::PathBuf, String, &'static str)>> {
+    require_scope_authorizer(root, security, "transition", name, fields)?;
+    let target_fields = crate::generate::fields_from_record(root, domain, target).ok_or_else(|| {
+        format!("transition {name} targets {target}, but no record components could be read from {target}.java")
+    })?;
+    if fields.iter().any(|field| {
+        field.optionality == crate::generate::Optionality::Nullable || field.collection
+    }) {
+        return Err(format!(
+            "transition {name} accepts required scalar fields only so match and update semantics stay exact"
+        ));
+    }
+    for field in fields {
+        let Some(target_field) = target_fields
+            .iter()
+            .find(|candidate| candidate.name == field.name)
+        else {
+            return Err(format!(
+                "transition {name} declares `{}`, but {target} has no component with that name",
+                field.name
+            ));
+        };
+        if usecase_normalized_type(&field.java_type)
+            != usecase_normalized_type(&target_field.java_type)
+        {
+            return Err(format!(
+                "transition {name} declares `{}` as {}, but {target} stores it as {}",
+                field.name, field.java_type, target_field.java_type
+            ));
+        }
+    }
+    let id = fields
+        .iter()
+        .find(|field| field.name == "id")
+        .ok_or_else(|| format!("transition {name} needs the target's required `id` field"))?;
+    let version = fields
+        .iter()
+        .find(|field| field.name == "version")
+        .ok_or_else(|| format!("transition {name} needs a required numeric `version` field"))?;
+    if !matches!(usecase_normalized_type(&version.java_type), "long" | "int") {
+        return Err(format!(
+            "transition {name} needs `version:long` or `version:int`, not version:{}",
+            version.java_type
+        ));
+    }
+    let update_fields = fields
+        .iter()
+        .filter(|field| {
+            field.name != id.name && field.name != version.name && !field.constraints.scoped
+        })
+        .collect::<Vec<_>>();
+    if update_fields.is_empty() {
+        return Err(format!(
+            "transition {name} needs at least one field to update in addition to id, @scope fields, and version"
+        ));
+    }
+    let target_columns = crate::sql::columns(&target_fields, root, domain, "rows");
+    let command_columns = crate::sql::columns(fields, root, domain, "command");
+    if target_columns
+        .iter()
+        .chain(command_columns.iter())
+        .any(|column| !column.mapped())
+    {
+        return Err(format!(
+            "transition {name} contains a field Jails cannot map to JDBC"
+        ));
+    }
+    let main_service = crate::generate::main_dir(root, service);
+    let main_adapters = crate::generate::main_dir(root, adapters);
+    let test_adapters = crate::generate::test_dir(root, adapters);
+    let main_web = crate::generate::main_dir(root, web);
+    let test_web = crate::generate::test_dir(root, web);
+    Ok(vec![
+        (
+            main_service.join(format!("{name}Command.java")),
+            usecase_command_java(service, domain, name, fields),
+            "transition command",
+        ),
+        (
+            main_service.join(format!("{name}UseCase.java")),
+            transition_port_java(service, domain, name, target),
+            "transition port",
+        ),
+        (
+            main_adapters.join(format!("Jdbc{name}Transition.java")),
+            jdbc_transition_java(
+                adapters,
+                service,
+                domain,
+                name,
+                target,
+                fields,
+                &target_columns,
+                &command_columns,
+                &update_fields,
+            ),
+            "optimistic JDBC transition",
+        ),
+        (
+            test_adapters.join(format!("Jdbc{name}TransitionIT.java")),
+            jdbc_transition_it_java(
+                root,
+                adapters,
+                service,
+                domain,
+                app,
+                name,
+                target,
+                fields,
+                &target_fields,
+            ),
+            "optimistic transition integration test",
+        ),
+        (
+            main_web.join(format!("{name}Controller.java")),
+            transition_controller_java(security, service, web, name, target, fields),
+            "transition controller",
+        ),
+        (
+            test_web.join(format!("{name}ControllerTest.java")),
+            transition_controller_test_java(
+                root,
+                security,
+                service,
+                web,
+                domain,
+                name,
+                target,
+                fields,
+                &target_fields,
+                crate::generate::webmvc_test_import(root),
+            ),
+            "transition controller test",
+        ),
+    ])
+}
+
+fn transition_port_java(pkg: &str, domain: &str, name: &str, target: &str) -> String {
+    let target_import = crate::generate::import_of(pkg, domain, target);
+    format!(
+        r#"package {pkg};
+
+{target_import}/** Atomic state change guarded by tenant scope and an optimistic version. */
+@FunctionalInterface
+public interface {name}UseCase {{
+
+    {target} execute({name}Command command);
+
+    final class NotFoundException extends RuntimeException {{
+        public NotFoundException() {{ super("resource not found in the authorized scope"); }}
+    }}
+
+    final class StaleVersionException extends RuntimeException {{
+        public StaleVersionException() {{ super("resource version is stale"); }}
+    }}
+}}
+"#
+    )
+}
+
+fn jdbc_transition_java(
+    pkg: &str,
+    service: &str,
+    domain: &str,
+    name: &str,
+    target: &str,
+    fields: &[crate::generate::Field],
+    target_columns: &[crate::sql::Column],
+    command_columns: &[crate::sql::Column],
+    update_fields: &[&crate::generate::Field],
+) -> String {
+    let target_import = crate::generate::import_of(pkg, domain, target);
+    let command_import = crate::generate::import_of(pkg, service, &format!("{name}Command"));
+    let port_import = crate::generate::import_of(pkg, service, &format!("{name}UseCase"));
+    let mut imports = crate::sql::imports(target_columns)
+        .into_iter()
+        .chain(crate::sql::imports(command_columns))
+        .map(|import| format!("import {import};\n"))
+        .collect::<String>();
+    if target_columns.iter().any(|column| {
+        column
+            .read
+            .as_deref()
+            .is_some_and(|read| read.contains("Optional."))
+    }) {
+        imports.push_str("import java.util.Optional;\n");
+    }
+    for column in target_columns.iter().chain(command_columns.iter()) {
+        if crate::generate::builtin_by_java_name(&column.java_type).is_none() {
+            imports.push_str(&crate::generate::import_of(pkg, domain, &column.java_type));
+        }
+    }
+    let assignments = update_fields
+        .iter()
+        .map(|field| {
+            let column = crate::sql::snake_case(&field.name);
+            format!("{column} = :{column}")
+        })
+        .chain(std::iter::once("version = version + 1".to_string()))
+        .collect::<Vec<_>>()
+        .join(",\n                            ");
+    let match_fields = fields
+        .iter()
+        .filter(|field| field.name == "id" || field.constraints.scoped)
+        .collect::<Vec<_>>();
+    let optimistic_predicates = match_fields
+        .iter()
+        .map(|field| {
+            let column = crate::sql::snake_case(&field.name);
+            format!("{column} = :{column}")
+        })
+        .chain(std::iter::once("version = :version".to_string()))
+        .collect::<Vec<_>>()
+        .join("\n                          and ");
+    let existence_predicates = match_fields
+        .iter()
+        .map(|field| {
+            let column = crate::sql::snake_case(&field.name);
+            format!("{column} = :{column}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n                                  and ");
+    let bindings_for = |selected: &[&crate::generate::Field], indent: &str| {
+        selected
+            .iter()
+            .map(|field| {
+                let column = command_columns
+                    .iter()
+                    .find(|column| column.name == crate::sql::snake_case(&field.name))
+                    .expect("validated transition column");
+                format!(
+                    "{indent}.param(\"{}\", {})",
+                    column.name,
+                    column.write.as_deref().expect("mapped transition column")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let all = fields.iter().collect::<Vec<_>>();
+    let update_bindings = bindings_for(&all, "                ");
+    let existence_bindings = bindings_for(&match_fields, "                ");
+    let select = target_columns
+        .iter()
+        .map(|column| column.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let map_args = target_columns
+        .iter()
+        .map(|column| format!("                {}", column.read.as_deref().unwrap()))
+        .collect::<Vec<_>>()
+        .join(",\n");
+    let table = crate::sql::table_name(target);
+    format!(
+        r#"package {pkg};
+
+{target_import}{command_import}{port_import}{imports}import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.Objects;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
+
+/** One SQL compare-and-swap: scoped matches cannot mutate another tenant's row. */
+@Component
+public class Jdbc{name}Transition implements {name}UseCase {{
+
+    private final JdbcClient db;
+
+    public Jdbc{name}Transition(JdbcClient db) {{
+        this.db = Objects.requireNonNull(db, "db is required");
+    }}
+
+    @Override
+    @Transactional
+    public {target} execute({name}Command command) {{
+        Objects.requireNonNull(command, "command is required");
+        var updated = db.sql("""
+                        update {table}
+                        set {assignments}
+                        where {optimistic_predicates}
+                        returning {select}
+                        """)
+{update_bindings}
+                .query(Jdbc{name}Transition::map)
+                .optional();
+        if (updated.isPresent()) return updated.orElseThrow();
+
+        boolean existsInScope = db.sql("""
+                        select exists(
+                            select 1 from {table}
+                            where {existence_predicates}
+                        )
+                        """)
+{existence_bindings}
+                .query(Boolean.class)
+                .single();
+        if (existsInScope) throw new {name}UseCase.StaleVersionException();
+        throw new {name}UseCase.NotFoundException();
+    }}
+
+    private static {target} map(ResultSet rows, int rowNumber) throws SQLException {{
+        return new {target}(
+{map_args});
+    }}
+}}
+"#
+    )
+}
+
+fn transition_controller_java(
+    security: &str,
+    service: &str,
+    web: &str,
+    name: &str,
+    target: &str,
+    fields: &[crate::generate::Field],
+) -> String {
+    let command_import = crate::generate::import_of(web, service, &format!("{name}Command"));
+    let usecase_import = crate::generate::import_of(web, service, &format!("{name}UseCase"));
+    let (
+        scope_import,
+        scope_field,
+        scope_constructor,
+        scope_assignment,
+        scope_parameter,
+        scope_checks,
+    ) = scope_controller_parts(security, web, fields, "command");
+    let path = format!(
+        "/actions/{}",
+        crate::sql::snake_case(name).replace('_', "-")
+    );
+    format!(
+        r#"package {web};
+
+{command_import}{usecase_import}{scope_import}import jakarta.validation.Valid;
+import java.util.Objects;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
+
+import static org.springframework.http.HttpStatus.CONFLICT;
+import static org.springframework.http.HttpStatus.NOT_FOUND;
+
+/** HTTP adapter for one optimistic state transition. */
+@RestController
+@RequestMapping({name}Controller.PATH)
+public final class {name}Controller {{
+
+    public static final String PATH = "{path}";
+    private final {name}UseCase useCase;
+{scope_field}
+
+    public {name}Controller({name}UseCase useCase{scope_constructor}) {{
+        this.useCase = Objects.requireNonNull(useCase, "useCase is required");
+{scope_assignment}
+    }}
+
+    @PutMapping
+    public {target}Response execute(
+            @Valid @RequestBody {name}Command command{scope_parameter}) {{
+{scope_checks}
+        try {{
+            return {target}Response.from(useCase.execute(command));
+        }} catch ({name}UseCase.NotFoundException missing) {{
+            throw new ResponseStatusException(NOT_FOUND, missing.getMessage(), missing);
+        }} catch ({name}UseCase.StaleVersionException stale) {{
+            throw new ResponseStatusException(CONFLICT, stale.getMessage(), stale);
+        }}
+    }}
+}}
+"#
+    )
+}
+
+fn jdbc_transition_it_java(
+    root: &Path,
+    pkg: &str,
+    service: &str,
+    domain: &str,
+    app: &str,
+    name: &str,
+    target: &str,
+    fields: &[crate::generate::Field],
+    target_fields: &[crate::generate::Field],
+) -> String {
+    let command_samples = fields
+        .iter()
+        .map(|field| crate::generate::sample_value(field, root, domain))
+        .collect::<Option<Vec<_>>>();
+    let target_samples = target_fields
+        .iter()
+        .map(|field| crate::generate::sample_value(field, root, domain))
+        .collect::<Option<Vec<_>>>();
+    let disabled = command_samples.is_none() || target_samples.is_none();
+    let command_values = command_samples.unwrap_or_default();
+    let command_args = command_values.join(",\n                ");
+    let target_args = target_samples
+        .unwrap_or_default()
+        .join(",\n                ");
+    let wrong_scope_test = fields
+        .iter()
+        .enumerate()
+        .find_map(|(index, field)| {
+            field
+                .constraints
+                .scoped
+                .then(|| durable_alternate_sample(field).map(|value| (index, value)))
+                .flatten()
+        })
+        .map_or_else(String::new, |(changed, alternate)| {
+            let args = command_values
+                .iter()
+                .enumerate()
+                .map(|(index, value)| {
+                    if index == changed {
+                        alternate.clone()
+                    } else {
+                        value.clone()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(",\n                ");
+            format!(
+                r#"
+    @Test
+    void aDifferentPersistedScopeIsNotFoundAndCannotMutateTheRow() {{
+        var stored = new {target}(
+                {target_args});
+        repository.save(stored);
+        var wrongScope = new {name}Command(
+                {args});
+
+        assertThatThrownBy(() -> useCase.execute(wrongScope))
+                .isInstanceOf({name}UseCase.NotFoundException.class);
+        assertThat(repository.findById(String.valueOf(stored.id()))).contains(stored);
+    }}
+"#
+            )
+        });
+    let target_import = crate::generate::import_of(pkg, domain, target);
+    let command_import = crate::generate::import_of(pkg, service, &format!("{name}Command"));
+    let port_import = crate::generate::import_of(pkg, service, &format!("{name}UseCase"));
+    let repository_import = crate::generate::import_of(pkg, app, &format!("{target}Repository"));
+    let imports = java_literal_imports(target_fields, domain)
+        .into_iter()
+        .chain(java_literal_imports(fields, domain))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .map(|import| format!("import {import};\n"))
+        .collect::<String>();
+    let disabled_import = if disabled {
+        "import org.junit.jupiter.api.Disabled;\n"
+    } else {
+        ""
+    };
+    let annotation = if disabled {
+        "@Disabled(\"todo: supply transition samples Jails cannot fabricate\")\n"
+    } else {
+        ""
+    };
+    format!(
+        r#"package {pkg};
+
+{target_import}{command_import}{port_import}{repository_import}{imports}{disabled_import}import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+{annotation}@SpringBootTest
+@org.springframework.transaction.annotation.Transactional
+class Jdbc{name}TransitionIT {{
+
+    @Autowired private {target}Repository repository;
+    @Autowired private {name}UseCase useCase;
+
+    @Test
+    void updatesOnceAndRejectsTheStaleVersionWithoutAnotherMutation() {{
+        repository.save(new {target}(
+                {target_args}));
+        var command = new {name}Command(
+                {command_args});
+
+        var updated = useCase.execute(command);
+
+        assertThat(updated.version()).isEqualTo(command.version() + 1);
+        assertThatThrownBy(() -> useCase.execute(command))
+                .isInstanceOf({name}UseCase.StaleVersionException.class);
+        assertThat(repository.findById(String.valueOf(command.id())))
+                .get().extracting({target}::version)
+                .isEqualTo(updated.version());
+    }}
+{wrong_scope_test}
+}}
+"#
+    )
+}
+
+fn transition_controller_test_java(
+    root: &Path,
+    security: &str,
+    service: &str,
+    web: &str,
+    domain: &str,
+    name: &str,
+    target: &str,
+    fields: &[crate::generate::Field],
+    target_fields: &[crate::generate::Field],
+    webmvc_test_import: &str,
+) -> String {
+    let json = fields
+        .iter()
+        .map(|field| {
+            json_sample(root, domain, field).map(|sample| format!("  \"{}\": {sample}", field.name))
+        })
+        .collect::<Option<Vec<_>>>();
+    let target_samples = target_fields
+        .iter()
+        .map(|field| crate::generate::sample_value(field, root, domain))
+        .collect::<Option<Vec<_>>>();
+    let disabled = json.is_none() || target_samples.is_none();
+    let json = json.unwrap_or_default().join(",\n");
+    let target_args = target_samples
+        .unwrap_or_default()
+        .join(",\n                    ");
+    let command_import = crate::generate::import_of(web, service, &format!("{name}Command"));
+    let usecase_import = crate::generate::import_of(web, service, &format!("{name}UseCase"));
+    let target_import = crate::generate::import_of(web, domain, target);
+    let imports = java_literal_imports(target_fields, domain)
+        .into_iter()
+        .map(|import| format!("import {import};\n"))
+        .collect::<String>();
+    let disabled_import = if disabled {
+        "import org.junit.jupiter.api.Disabled;\n"
+    } else {
+        ""
+    };
+    let annotation = if disabled {
+        "    @Disabled(\"todo: supply transition samples\")\n"
+    } else {
+        ""
+    };
+    let (scope_import, scope_bean) = scope_test_parts(security, web, fields);
+    format!(
+        r#"package {web};
+
+{command_import}{usecase_import}{target_import}{scope_import}{imports}{disabled_import}import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.assertj.MockMvcTester;
+import {webmvc_test_import};
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+@WebMvcTest({name}Controller.class)
+@Import({name}ControllerTest.Config.class)
+class {name}ControllerTest {{
+
+    @Autowired private MockMvcTester mvc;
+
+{annotation}    @Test
+    void putExecutesTheTransition() {{
+        assertThat(mvc.put().uri({name}Controller.PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+{{
+{json}
+}}
+"""))
+                .hasStatusOk();
+    }}
+
+    @TestConfiguration(proxyBeanMethods = false)
+    static class Config {{
+        @Bean
+        {name}UseCase useCase() {{
+            return command -> new {target}(
+                    {target_args});
+        }}
+{scope_bean}    }}
+}}
+"#
+    )
+}
+
+// ---------------------------------------------------------------------------
 // `generate query` -- typed equality filters executed by PostgreSQL.
 // ---------------------------------------------------------------------------
 
@@ -3051,6 +4181,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import static org.assertj.core.api.Assertions.assertThat;
 
 {annotation}@SpringBootTest
+@org.springframework.transaction.annotation.Transactional
 class Jdbc{name}QueryIT {{
 
     @Autowired
@@ -4200,7 +5331,7 @@ class {name}ControllerTest {{
     @Test
     void broadUnscopedReadsAreNotExposed() {{
         assertThat(mvc.get().uri({name}Controller.PATH)).hasStatus(405);
-        assertThat(mvc.get().uri({name}Controller.PATH + "/other-tenant-id")).hasStatus(405);
+        assertThat(mvc.get().uri({name}Controller.PATH + "/other-tenant-id")).hasStatus(404);
     }}
 }}
 "#

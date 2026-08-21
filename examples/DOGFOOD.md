@@ -140,6 +140,15 @@ cargo fmt --all && cargo test spring:: --no-fail-fast -q
 cargo test app_manifest_builds_the_web_crawler -- --nocapture && cargo test app_manifests_compile_without_manual_source_edits -- --nocapture
 cargo test app_manifests_compile_without_manual_source_edits -- --nocapture
 cargo test app_manifests_pass_the_full_generated_verification_gate -- --nocapture
+cargo test add_observability_serves_a_prometheus_scrape -- --nocapture
+cargo test app_manifests_pass_the_full_generated_verification_gate -- --nocapture
+cargo fmt --all && cargo test app_manifest_builds_ --no-fail-fast -q && cargo test delivery_tests -q
+cargo test app_manifest_builds_the_ --no-fail-fast -q
+cargo test app_manifests_pass_the_full_generated_verification_gate -- --nocapture
+cargo fmt --all && cargo check
+cargo fmt --all && cargo test app_manifest_builds_the_support_inbox_from_the_same_generic_intents -- --nocapture
+cargo test app_manifests_compile_without_manual_source_edits -- --nocapture
+cargo fmt --all && cargo test app_manifests_pass_the_full_generated_verification_gate -- --nocapture
 ```
 
 Results:
@@ -147,9 +156,9 @@ Results:
 - Both manifests compile from untouched generated source with
   `mvn -q -DskipTests package`.
 - Both manifests pass `mvn -q verify` against real Testcontainers/PostgreSQL
-  and Kafka. The durable-work baseline gate took 196.38 seconds; the newest
-  gate additionally exercises scoped authorization and the adversarial safe
-  fetcher suite (record its duration when the running command completes).
+  and Kafka. The durable-work baseline gate took 196.38 seconds; the first
+  gate with scoped authorization, the adversarial safe fetcher suite, and real
+  OCI builds took 297.04 seconds.
 - The crawler generated 3 Flyway migrations and the support inbox generated 5;
   both complete generated test suites passed.
 - The crawler's typed `PageDiscovered(UUID id, UUID crawlRunId, URI url,
@@ -165,15 +174,18 @@ Results:
   from the same field model.
 - Both applications now select generic `docker` and `ci` capabilities. Their
   generated workflows pin checkout/setup-java by full commit SHA, and their
-  multi-stage images derive Java from the POM and run as `10001:10001`.
+  multi-stage images derive Java from the POM and run as `10001:10001`. The
+  local gate built and inspected `jails-dogfood-web-crawler:test` and
+  `jails-dogfood-support-inbox:test`.
 - Inbox request boundaries mark arbitrary fields with `@scope`; Jails compares
   those values with same-named JWT claims in `prod`. Broad scaffold reads and
   deletes that cannot prove scope are not emitted. The crawler's generic
   fetcher revalidates redirects, pins validated DNS results, rejects reserved
   networks, caps bytes/time/redirects/media types, and reports metrics.
-- `cargo fmt -- --check` remains red because the existing worktree contains
-  broad formatting drift outside this slice. A repository-wide formatter was
-  deliberately not run because it would rewrite unrelated work.
+- The inbox now uses the generic `transition` intent for conversation status.
+  Its generated compare-and-swap includes tenant scope and version in the SQL
+  predicate, increments the version atomically, and distinguishes cross-scope
+  absence from a stale version.
 - The targeted `rustfmt --edition 2021` probe was invalid for this Rust 2024
   crate and also reported the same pre-existing whole-file drift. The manifest
   confirms the actual edition; the independent `git diff --check` whitespace
@@ -210,6 +222,10 @@ is evidence for the next generic generator improvement.
 | crawler | the ordinary service client followed a different trust model and did not close DNS rebinding | generic `fetcher` validates and pins every hop, bounds the response, classifies failures, emits metrics, and includes adversarial socket tests |
 | verify | Spring saw the fetcher's public production constructor plus its package-private test seam and looked for a nonexistent default constructor | the production constructor is explicitly selected for injection; the restricted constructor remains available only to same-package adversarial tests |
 | verify | the authenticated Prometheus probe still configured Boot's removed default-user property names after security moved to explicit local credentials | every generated authenticated probe now uses `app.security.dev.*`, the single local credential contract owned by the security capability |
+| verify | a scoped scaffold test expected both removed read shapes to return 405, but Spring correctly reports an unmapped item path as 404 | the contract now distinguishes “method absent on an existing collection path” (405) from “no item route/resource exists” (404) while proving neither broad read is callable |
+| generate | the first optimistic-transition binding compared Java lower-camel component names with SQL snake-case column names and panicked on `workspaceId` | transition parameters now resolve through the shared SQL column model, so names, JDBC values, and predicates cannot drift |
+| verify | the transactional JDBC transition was generated `final`, preventing Spring from creating its class-based transaction proxy | transactional transition adapters are proxyable classes, matching the invariant already enforced for generated use-case implementations |
+| compile | the first outbox decorator returned the target domain record from the service package without importing it | outbox composition now derives and emits the target import from the same configured package model as ordinary use cases |
 
 ## Friction ledger
 
@@ -219,12 +235,12 @@ is evidence for the next generic generator improvement.
 | Both | manifest setup | user copies `.jails/app.toml` manually | `jails app init --manifest <path>` or `new --app <path>` |
 | Both | apply | application planning currently describes logical intents but does not yet produce one atomic `ChangeSet` | lower the whole manifest through the universal planner |
 | Both | resume | `.jails/app-state-v1` records completed intent keys but does not yet notice a generated file deleted afterward | store output fingerprints and reconcile drift instead of blindly skipping |
-| Both | domain behavior | executable create use cases and typed equality queries now remove the first behavior boilerplate; crawler traversal, conversation assignment, durable publication/work, and richer query semantics remain | domain-event linkage, durable `job`, pagination/sort, and policy-bearing workflow intents |
+| Both | domain behavior | executable creates, typed equality queries, and optimistic transitions remove the first behavior boilerplate; crawler traversal, conversation assignment, durable publication, and richer query semantics remain | domain-event linkage, transactional outbox, pagination/sort, and policy-bearing workflow intents |
 | Both | architecture | current scaffold is layer-first unless `--package` flattens the slice | feature-first placement with verified Modulith boundaries |
 | Both | security | production JWT identity and explicit `@scope` enforcement now exist; role/permission policy and audit are not generated yet | closed authorization-policy inputs plus generated allowed/denied HTTP integration tests |
 | Both | tests | scheduled jobs and Kafka listeners start in broad `@SpringBootTest` contexts; differing contexts start several PostgreSQL containers and unrelated tests produce large broker logs | generated test profile, selective listener startup, and shared container/context conventions |
 | Both | JDK | the Kafka configuration test is now mock-free, but generated controller tests still warn that Mockito dynamic self-attachment will stop working on a future JDK | prefer mock-free contracts where practical and generate explicit Maven test-agent configuration for the remaining mock-based tests |
-| Both | delivery | image and CI are generated, but the local acceptance gate does not yet build both images or execute hosted Actions | add a local OCI build assertion and keep hosted CI as a required repository check |
+| Both | delivery | image and CI are generated and the local gate builds/inspects both images, but it cannot execute hosted Actions | keep hosted CI as a required repository check |
 
 Do not hide this table by hand-fixing the examples. The purpose of both apps
 is to turn repeated friction into evidence-backed improvements to generic

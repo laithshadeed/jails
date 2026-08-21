@@ -207,6 +207,12 @@ it already draws for hand-written properties inside a jails-owned block.
   existing generated command and carry the resource's stable UUID identity;
   replay after a crash between the business commit and queue acknowledgement
   observes that identity before repeating the effect.
+- `jails generate|g transition <Name> <field:type...> --on <Resource>` — an
+  atomic PostgreSQL compare-and-swap for state changes. `id`, fields marked
+  `@scope`, and the required numeric `version` match the row; every remaining
+  field is updated and the version increments in the same statement. Missing
+  or cross-scope rows become 404, stale versions become 409, and generated
+  real-database tests prove a stale retry cannot mutate twice.
 - `jails add|a redis` — a `KeyValueStore` wrapper, a compose service, and an
   `IT` against a real container. Every write takes a lifetime:
   `opsForValue().set(k, v)` with no expiry stores a key forever, so the TTL is
@@ -417,10 +423,18 @@ strategy_on = "Task"
 implementation, POST adapter, and mock-free tests over an existing scaffold.
 It only derives conservative values (identity, timestamp, status default,
 empty optional/collection, zero counter, or false); if a required value cannot
-be proven, generation stops and asks for that field. `query` generates a typed
+be proven, generation stops and asks for that field. With
+`strategy_yields = "SomeEvent"` (CLI: `--yields SomeEvent`), the event must
+already be generated; Jails wraps the use case with a PostgreSQL transactional
+outbox, leased bounded-retry relay, stable event identity, and a real
+database/broker test. The relay waits for Kafka acknowledgement before marking
+delivery successful. `query` generates a typed
 read port, visible named-parameter JDBC SQL, POST adapter, and a real PostgreSQL
 test. Its first contract deliberately accepts only required scalar equality
 filters instead of guessing null, list, pagination, or sort semantics.
+`transition` generates a scope-aware optimistic update: `id`, `@scope` fields,
+and `version` match the row; remaining fields update and version increments in
+one statement.
 
 - `jails app plan [--manifest <path>]` validates the manifest and shows its
   capability and generation intents without writing.

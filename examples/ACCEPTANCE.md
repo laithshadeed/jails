@@ -63,9 +63,13 @@ redirect policy, HTTPS downgrade prevention, private/reserved-address SSRF
 rejection, DNS pinning after validation, byte/media/time/redirect bounds,
 failure classification, metrics, and adversarial real-socket tests. Both apps
 generate pinned least-privilege CI and non-root multi-stage image assets.
+The inbox also generates an atomic `transition` slice: tenant scope is part of
+the SQL predicate, a numeric version is compared and incremented in one
+statement, and real PostgreSQL tests prove stale retries and cross-scope writes
+cannot mutate the row.
 
 Still open—and therefore not advertised as production-ready—is composition of
 the fetch boundary into finite HTML traversal, robots/cancellation tests,
-tenant enforcement against every persisted association, optimistic
-conversation transitions, transactional outbox/provider delivery, actually
-building both OCI images in the local gate, and running the hosted CI files.
+tenant enforcement against every persisted association, transactional
+outbox/provider delivery, and running the hosted CI files. Both OCI images are
+now built locally and inspected for their non-root runtime user by the gate.

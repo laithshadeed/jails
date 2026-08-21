@@ -302,8 +302,14 @@ fn app_manifest_builds_the_crawler_skeleton_and_is_resumable() {
     );
     assert!(main.join("clients/PageFetcher.java").is_file());
     let safe_fetcher = fs::read_to_string(main.join("clients/SafePageFetcher.java")).unwrap();
-    assert!(safe_fetcher.contains("new PinnedResolver"), "{safe_fetcher}");
-    assert!(safe_fetcher.contains("private or reserved address"), "{safe_fetcher}");
+    assert!(
+        safe_fetcher.contains("new PinnedResolver"),
+        "{safe_fetcher}"
+    );
+    assert!(
+        safe_fetcher.contains("private or reserved address"),
+        "{safe_fetcher}"
+    );
     assert!(main.join("messaging/PageDiscoveredEvent.java").is_file());
     assert!(main.join("jobs/CrawlDispatcherWork.java").is_file());
     assert!(main.join("jobs/JdbcCrawlDispatcherStore.java").is_file());
@@ -390,6 +396,33 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
         );
     }
     assert!(main.join("messaging/MessageReceivedEvent.java").is_file());
+    assert!(
+        main.join("service/OutboxReceiveMessageUseCase.java")
+            .is_file()
+    );
+    let outbox = fs::read_to_string(main.join("jobs/JdbcReceiveMessageOutbox.java")).unwrap();
+    assert!(outbox.contains("for update skip locked"), "{outbox}");
+    assert!(main.join("jobs/ReceiveMessageOutboxWorker.java").is_file());
+    assert!(
+        main.join("service/ChangeConversationStatusUseCase.java")
+            .is_file()
+    );
+    let transition =
+        fs::read_to_string(main.join("adapters/JdbcChangeConversationStatusTransition.java"))
+            .unwrap();
+    assert!(transition.contains("version = version + 1"), "{transition}");
+    assert!(
+        transition.contains("public class JdbcChangeConversationStatusTransition"),
+        "{transition}"
+    );
+    assert!(
+        transition.contains("workspace_id = :workspace_id"),
+        "{transition}"
+    );
+    assert!(
+        main.join("web/ChangeConversationStatusController.java")
+            .is_file()
+    );
     assert!(main.join("jobs/OutboundDeliveryWork.java").is_file());
     assert!(main.join("jobs/JdbcOutboundDeliveryStore.java").is_file());
     assert!(main.join("jobs/OutboundDeliveryWorker.java").is_file());
@@ -397,19 +430,22 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
         main.join("web/OutboundDeliveryJobController.java")
             .is_file()
     );
-    let contacts = fs::read_to_string(main.join("web/ContactsByWorkspaceQueryController.java"))
-        .unwrap();
+    let contacts =
+        fs::read_to_string(main.join("web/ContactsByWorkspaceQueryController.java")).unwrap();
     assert!(contacts.contains("scopeAuthorizer.require"), "{contacts}");
     let contact_controller = fs::read_to_string(main.join("web/ContactController.java")).unwrap();
     assert!(contact_controller.contains("Scope-safe creation endpoint"));
-    assert!(!contact_controller.contains("@GetMapping"), "{contact_controller}");
+    assert!(
+        !contact_controller.contains("@GetMapping"),
+        "{contact_controller}"
+    );
     assert!(root.join("Dockerfile").is_file());
     assert!(root.join(".github/workflows/ci.yml").is_file());
     assert_eq!(
         fs::read_dir(root.join("src/main/resources/db/migration"))
             .unwrap()
             .count(),
-        6
+        7
     );
 }
 
@@ -518,7 +554,10 @@ fn app_manifests_pass_the_full_generated_verification_gate() {
             .args(["build", "--pull", "--tag", &image, "."])
             .status()
             .unwrap();
-        assert!(status.success(), "{name} failed its generated OCI image build");
+        assert!(
+            status.success(),
+            "{name} failed its generated OCI image build"
+        );
         let inspect = std::process::Command::new("docker")
             .args(["image", "inspect", &image, "--format", "{{.Config.User}}"])
             .output()

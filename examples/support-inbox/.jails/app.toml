@@ -54,10 +54,16 @@ fields = ["id:uuid", "workspaceId:uuid@scope", "contactId:uuid"]
 strategy_on = "Conversation"
 
 [[generate]]
+kind = "event"
+name = "MessageReceived"
+fields = ["id:uuid", "workspaceId:uuid", "conversationId:uuid", "occurredAt:instant"]
+
+[[generate]]
 kind = "usecase"
 name = "ReceiveMessage"
 fields = ["id:uuid", "workspaceId:uuid@scope", "conversationId:uuid", "direction:MessageDirection", "body:text!"]
 strategy_on = "Message"
+strategy_yields = "MessageReceived"
 
 [[generate]]
 kind = "query"
@@ -78,9 +84,10 @@ fields = ["workspaceId:uuid@scope", "conversationId:uuid"]
 strategy_on = "Message"
 
 [[generate]]
-kind = "event"
-name = "MessageReceived"
-fields = ["id:uuid", "workspaceId:uuid", "conversationId:uuid", "occurredAt:instant"]
+kind = "transition"
+name = "ChangeConversationStatus"
+fields = ["id:uuid", "workspaceId:uuid@scope", "status:ConversationStatus", "version:long@nonnegative"]
+strategy_on = "Conversation"
 
 [[generate]]
 kind = "durable-job"

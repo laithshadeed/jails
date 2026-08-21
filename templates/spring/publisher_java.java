@@ -1,7 +1,9 @@
 package {{pkg}};
 
+import java.util.concurrent.CompletableFuture;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.SendResult;
 import org.springframework.stereotype.Component;
 
 /**
@@ -29,8 +31,8 @@ public class {{name}}Publisher {
         this.topic = topic;
     }
 
-    /** Publishes asynchronously; the send is in flight when this returns. */
-    public void publish({{name}}Event event) {
-        kafka.send(topic, event.id(), event);
+    /** The returned acknowledgement lets durable callers mark success only after Kafka accepts it. */
+    public CompletableFuture<SendResult<String, {{name}}Event>> publish({{name}}Event event) {
+        return kafka.send(topic, event.id(), event);
     }
 }
