@@ -877,6 +877,1250 @@ import static org.assertj.core.api.Assertions.assertThat;
 }
 
 // ---------------------------------------------------------------------------
+// `generate usecase` -- an executable create operation over a scaffold.
+// ---------------------------------------------------------------------------
+
+/// Turn a small operation declaration into a complete vertical behavior.
+///
+/// `fields` are the values a caller supplies; `target` is an existing
+/// scaffolded record named by `--on`. Every target component must either be
+/// supplied or have one conservative conventional value Jails can prove how
+/// to construct (identity, timestamp, empty optional/collection, zero counter,
+/// false flag, or the first declared `status` enum constant). Anything else
+/// is rejected at generation time rather than becoming a TODO in production
+/// code.
+pub(crate) fn usecase_files(
+    root: &Path,
+    service: &str,
+    web: &str,
+    domain: &str,
+    app: &str,
+    adapters: &str,
+    name: &str,
+    target: &str,
+    fields: &[crate::generate::Field],
+) -> crate::Result<Vec<(std::path::PathBuf, String, &'static str)>> {
+    let target_fields = crate::generate::fields_from_record(root, domain, target).ok_or_else(|| {
+        format!(
+            "usecase {name} targets {target}, but no record components could be read from {target}.java.\n       fix: generate the {target} scaffold first, or correct `--on {target}`."
+        )
+    })?;
+    let id = target_fields
+        .iter()
+        .find(|field| {
+            field.name == "id"
+                && field.optionality != crate::generate::Optionality::Nullable
+        })
+        .ok_or_else(|| {
+            format!(
+                "usecase {name} needs {target} to have a stable non-optional `id` component so it can return a resource location and verify persistence"
+            )
+        })?;
+
+    for field in fields {
+        let Some(target_field) = target_fields.iter().find(|candidate| candidate.name == field.name)
+        else {
+            return Err(format!(
+                "usecase {name} accepts `{}`, but {target} has no component with that name",
+                field.name
+            ));
+        };
+        if usecase_normalized_type(&field.java_type)
+            != usecase_normalized_type(&target_field.java_type)
+            || (field.optionality == crate::generate::Optionality::Nullable)
+                != (target_field.optionality == crate::generate::Optionality::Nullable)
+        {
+            return Err(format!(
+                "usecase {name} declares `{}` as {}, but {target} declares it as {}{}",
+                field.name,
+                usecase_field_type(field),
+                target_field.java_type,
+                if target_field.optionality == crate::generate::Optionality::Nullable {
+                    "?"
+                } else {
+                    ""
+                }
+            ));
+        }
+    }
+
+    let mut expressions = Vec::with_capacity(target_fields.len());
+    let mut default_imports = Vec::new();
+    for field in &target_fields {
+        if fields.iter().any(|input| input.name == field.name) {
+            expressions.push(format!("command.{}()", field.name));
+            continue;
+        }
+        let Some((expression, imports)) = usecase_default(root, domain, field) else {
+            return Err(format!(
+                "usecase {name} cannot safely infer `{}` ({}) for {target}.\n       fix: add `{}:<type>` to the usecase fields; Jails only infers ids, timestamps, status defaults, counters, flags, and empty optional/collection values.",
+                field.name, field.java_type, field.name
+            ));
+        };
+        expressions.push(expression);
+        default_imports.extend(imports);
+    }
+    default_imports.sort();
+    default_imports.dedup();
+
+    let transactional = crate::pom::read(root).is_ok_and(|pom| {
+        crate::pom::has_dependency(
+            &pom,
+            "org.springframework.boot",
+            "spring-boot-starter-jdbc",
+        )
+    });
+    let main_service = crate::generate::main_dir(root, service);
+    let test_service = crate::generate::test_dir(root, service);
+    let main_web = crate::generate::main_dir(root, web);
+    let test_web = crate::generate::test_dir(root, web);
+    Ok(vec![
+        (
+            main_service.join(format!("{name}Command.java")),
+            usecase_command_java(service, domain, name, fields),
+            "usecase command",
+        ),
+        (
+            main_service.join(format!("{name}UseCase.java")),
+            usecase_port_java(service, domain, name, target),
+            "usecase port",
+        ),
+        (
+            main_service.join(format!("Default{name}UseCase.java")),
+            usecase_impl_java(
+                service,
+                domain,
+                app,
+                name,
+                target,
+                &expressions,
+                &default_imports,
+                transactional,
+            ),
+            "usecase implementation",
+        ),
+        (
+            test_service.join(format!("{name}UseCaseTest.java")),
+            usecase_test_java(
+                root,
+                service,
+                domain,
+                adapters,
+                name,
+                target,
+                fields,
+                &target_fields,
+                id,
+            ),
+            "usecase test",
+        ),
+        (
+            main_web.join(format!("{name}Controller.java")),
+            usecase_controller_java(service, web, target, name),
+            "usecase controller",
+        ),
+        (
+            test_web.join(format!("{name}ControllerTest.java")),
+            usecase_controller_test_java(
+                root,
+                service,
+                web,
+                domain,
+                name,
+                target,
+                fields,
+                &target_fields,
+                crate::generate::webmvc_test_import(root),
+            ),
+            "usecase controller test",
+        ),
+    ])
+}
+
+fn usecase_normalized_type(java_type: &str) -> &str {
+    match java_type {
+        "Integer" => "int",
+        "Long" => "long",
+        "Double" => "double",
+        "Float" => "float",
+        "Boolean" => "boolean",
+        "Short" => "short",
+        "Byte" => "byte",
+        "Character" => "char",
+        other => other,
+    }
+}
+
+fn usecase_field_type(field: &crate::generate::Field) -> String {
+    if field.optionality == crate::generate::Optionality::Nullable {
+        format!("Optional<{}>", field.java_type)
+    } else {
+        field.java_type.clone()
+    }
+}
+
+fn usecase_default(
+    root: &Path,
+    domain: &str,
+    field: &crate::generate::Field,
+) -> Option<(String, Vec<String>)> {
+    use crate::generate::Optionality;
+    if field.optionality == Optionality::Nullable {
+        return Some((
+            "Optional.empty()".to_string(),
+            vec!["java.util.Optional".to_string()],
+        ));
+    }
+    if field.collection {
+        let (expression, import) = if field.java_type.starts_with("Map") {
+            ("Map.of()", "java.util.Map")
+        } else {
+            ("List.of()", "java.util.List")
+        };
+        return Some((expression.to_string(), vec![import.to_string()]));
+    }
+    match field.java_type.as_str() {
+        "UUID" if field.name == "id" => Some((
+            "UUID.randomUUID()".to_string(),
+            vec!["java.util.UUID".to_string()],
+        )),
+        "String" if field.name == "id" => Some((
+            "UUID.randomUUID().toString()".to_string(),
+            vec!["java.util.UUID".to_string()],
+        )),
+        "Instant" => Some((
+            "Instant.now()".to_string(),
+            vec!["java.time.Instant".to_string()],
+        )),
+        "int" | "Integer" => Some(("0".to_string(), Vec::new())),
+        "long" | "Long" => Some(("0L".to_string(), Vec::new())),
+        "double" | "Double" => Some(("0.0d".to_string(), Vec::new())),
+        "float" | "Float" => Some(("0.0f".to_string(), Vec::new())),
+        "short" | "Short" => Some(("(short) 0".to_string(), Vec::new())),
+        "byte" | "Byte" => Some(("(byte) 0".to_string(), Vec::new())),
+        "boolean" | "Boolean" => Some(("false".to_string(), Vec::new())),
+        owned if field.owned && field.name == "status" => {
+            crate::generate::first_enum_constant(root, domain, owned).map(|_| {
+                (
+                    format!("{owned}.values()[0]"),
+                    vec![format!("{domain}.{owned}")],
+                )
+            })
+        }
+        _ => None,
+    }
+}
+
+fn usecase_command_java(
+    pkg: &str,
+    domain: &str,
+    name: &str,
+    fields: &[crate::generate::Field],
+) -> String {
+    let command = format!("{name}Command");
+    let mut source = crate::generate::record_java(pkg, &command, fields);
+    let mut imports = fields
+        .iter()
+        .filter(|field| field.owned && domain != pkg)
+        .map(|field| format!("import {domain}.{};", field.java_type))
+        .collect::<Vec<_>>();
+    imports.sort();
+    imports.dedup();
+    if !imports.is_empty() {
+        let package = format!("package {pkg};\n");
+        source = source.replacen(
+            &package,
+            &format!("{package}\n{}\n", imports.join("\n")),
+            1,
+        );
+        source = crate::generate::normalize_imports(&source);
+    }
+    source.replace(
+        &format!(" * An immutable {command} value."),
+        &format!(" * Validated input for the {name} use case."),
+    )
+}
+
+fn usecase_port_java(pkg: &str, domain: &str, name: &str, target: &str) -> String {
+    let target_import = crate::generate::import_of(pkg, domain, target);
+    format!(
+        r#"package {pkg};
+
+{target_import}/** A single application operation, independent of HTTP and persistence adapters. */
+@FunctionalInterface
+public interface {name}UseCase {{
+
+    {target} execute({name}Command command);
+}}
+"#
+    )
+}
+
+fn usecase_impl_java(
+    pkg: &str,
+    domain: &str,
+    app: &str,
+    name: &str,
+    target: &str,
+    expressions: &[String],
+    default_imports: &[String],
+    transactional: bool,
+) -> String {
+    let target_import = crate::generate::import_of(pkg, domain, target);
+    let repository_import = crate::generate::import_of(pkg, app, &format!("{target}Repository"));
+    let imports = default_imports
+        .iter()
+        .map(|import| format!("import {import};\n"))
+        .collect::<String>();
+    let args = expressions
+        .iter()
+        .map(|expression| format!("                {expression}"))
+        .collect::<Vec<_>>()
+        .join(",\n");
+    let var = crate::generate::lower_first(target);
+    let (transaction_import, annotation) = if transactional {
+        ("import org.springframework.transaction.annotation.Transactional;\n", "    @Transactional\n")
+    } else {
+        ("", "")
+    };
+    format!(
+        r#"package {pkg};
+
+{target_import}{repository_import}{imports}import java.util.Objects;
+import org.springframework.stereotype.Component;
+{transaction_import}
+/** The conventional implementation generated from the target record's field model. */
+@Component
+public class Default{name}UseCase implements {name}UseCase {{
+
+    private final {target}Repository repository;
+
+    public Default{name}UseCase({target}Repository repository) {{
+        this.repository = Objects.requireNonNull(repository, "repository is required");
+    }}
+
+{annotation}    @Override
+    public {target} execute({name}Command command) {{
+        Objects.requireNonNull(command, "command is required");
+        {target} {var} = new {target}(
+{args});
+        repository.save({var});
+        return {var};
+    }}
+}}
+"#
+    )
+}
+
+fn java_literal_imports(
+    fields: &[crate::generate::Field],
+    domain: &str,
+) -> Vec<String> {
+    let mut imports = fields
+        .iter()
+        .flat_map(|field| field.imports.iter().map(|import| (*import).to_string()))
+        .collect::<Vec<_>>();
+    imports.extend(
+        fields
+            .iter()
+            .filter(|field| field.owned)
+            .map(|field| format!("{domain}.{}", field.java_type)),
+    );
+    if fields
+        .iter()
+        .any(|field| field.optionality == crate::generate::Optionality::Nullable)
+    {
+        imports.push("java.util.Optional".to_string());
+    }
+    imports.sort();
+    imports.dedup();
+    imports
+}
+
+fn usecase_test_java(
+    root: &Path,
+    pkg: &str,
+    domain: &str,
+    adapters: &str,
+    name: &str,
+    target: &str,
+    fields: &[crate::generate::Field],
+    target_fields: &[crate::generate::Field],
+    id: &crate::generate::Field,
+) -> String {
+    let samples = fields
+        .iter()
+        .map(|field| crate::generate::sample_value(field, root, domain))
+        .collect::<Vec<_>>();
+    let missing = fields
+        .iter()
+        .zip(&samples)
+        .filter(|(_, sample)| sample.is_none())
+        .map(|(field, _)| field.name.as_str())
+        .collect::<Vec<_>>();
+    let args = fields
+        .iter()
+        .zip(samples)
+        .map(|(field, sample)| {
+            sample.unwrap_or_else(|| format!("null /* TODO: a {} */", field.java_type))
+        })
+        .collect::<Vec<_>>()
+        .join(",\n                ");
+    let copied = fields
+        .iter()
+        .map(|field| {
+            format!(
+                "        assertThat(created.{}()).isEqualTo(command.{}());",
+                field.name, field.name
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let imports = java_literal_imports(fields, domain)
+        .into_iter()
+        .map(|import| format!("import {import};\n"))
+        .collect::<String>();
+    let target_import = crate::generate::import_of(pkg, domain, target);
+    let adapter_import = crate::generate::import_of(
+        pkg,
+        adapters,
+        &format!("InMemory{target}Repository"),
+    );
+    let disabled_import = if missing.is_empty() {
+        ""
+    } else {
+        "import org.junit.jupiter.api.Disabled;\n"
+    };
+    let disabled = if missing.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "@Disabled(\"todo: supply a sample for {} -- Jails cannot fabricate it\")\n",
+            missing.join(", ")
+        )
+    };
+    let id_assertion = if id.java_type == "String" {
+        "        assertThat(created.id()).isNotBlank();"
+    } else {
+        "        assertThat(created.id()).isNotNull();"
+    };
+    let _ = target_fields;
+    format!(
+        r#"package {pkg};
+
+{target_import}{adapter_import}{imports}{disabled_import}import org.junit.jupiter.api.Test;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+{disabled}class {name}UseCaseTest {{
+
+    private final InMemory{target}Repository repository = new InMemory{target}Repository();
+    private final {name}UseCase useCase = new Default{name}UseCase(repository);
+
+    @Test
+    void createsAndPersistsTheResource() {{
+        {name}Command command = new {name}Command(
+                {args});
+
+        {target} created = useCase.execute(command);
+
+{id_assertion}
+{copied}
+        assertThat(repository.findById(String.valueOf(created.id()))).contains(created);
+    }}
+}}
+"#
+    )
+}
+
+fn usecase_controller_java(
+    service: &str,
+    web: &str,
+    target: &str,
+    name: &str,
+) -> String {
+    let command_import = crate::generate::import_of(web, service, &format!("{name}Command"));
+    let usecase_import = crate::generate::import_of(web, service, &format!("{name}UseCase"));
+    let path = format!("/actions/{}", crate::sql::snake_case(name).replace('_', "-"));
+    let resource_path = format!("/{}", crate::sql::table_name(target).replace('_', "-"));
+    format!(
+        r#"package {web};
+
+{command_import}{usecase_import}import jakarta.validation.Valid;
+import java.net.URI;
+import java.util.Objects;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+/** HTTP adapter for one application use case; the operation itself knows nothing about HTTP. */
+@RestController
+@RequestMapping({name}Controller.PATH)
+public final class {name}Controller {{
+
+    public static final String PATH = "{path}";
+    private static final String RESOURCE_PATH = "{resource_path}";
+
+    private final {name}UseCase useCase;
+
+    public {name}Controller({name}UseCase useCase) {{
+        this.useCase = Objects.requireNonNull(useCase, "useCase is required");
+    }}
+
+    @PostMapping
+    public ResponseEntity<{target}Response> execute(
+            @Valid @RequestBody {name}Command command) {{
+        var created = useCase.execute(command);
+        return ResponseEntity.created(URI.create(RESOURCE_PATH + "/" + created.id()))
+                .body({target}Response.from(created));
+    }}
+}}
+"#
+    )
+}
+
+fn json_sample(
+    root: &Path,
+    domain: &str,
+    field: &crate::generate::Field,
+) -> Option<String> {
+    if field.optionality == crate::generate::Optionality::Nullable {
+        return Some("null".to_string());
+    }
+    if field.collection {
+        return Some(if field.java_type.starts_with("Map") {
+            "{}".to_string()
+        } else {
+            "[]".to_string()
+        });
+    }
+    let quoted = match field.java_type.as_str() {
+        "String" => Some("sample".to_string()),
+        "UUID" => Some("00000000-0000-0000-0000-000000000001".to_string()),
+        "Instant" => Some("2024-01-01T00:00:00Z".to_string()),
+        "LocalDate" => Some("2024-01-01".to_string()),
+        "LocalDateTime" => Some("2024-01-01T00:00:00".to_string()),
+        "Duration" => Some("PT1M".to_string()),
+        "URI" => Some("https://example.test/items/1".to_string()),
+        "Path" => Some("/tmp/example".to_string()),
+        "ZoneId" => Some("UTC".to_string()),
+        owned if field.owned => crate::generate::first_enum_constant(root, domain, owned),
+        _ => None,
+    };
+    if let Some(value) = quoted {
+        return Some(format!("\"{value}\""));
+    }
+    match field.java_type.as_str() {
+        "int" | "Integer" => Some("7".to_string()),
+        "long" | "Long" => Some("7".to_string()),
+        "double" | "Double" | "float" | "Float" | "BigDecimal" => {
+            Some("12.5".to_string())
+        }
+        "boolean" | "Boolean" => Some("true".to_string()),
+        _ => None,
+    }
+}
+
+fn usecase_controller_test_java(
+    root: &Path,
+    service: &str,
+    web: &str,
+    domain: &str,
+    name: &str,
+    target: &str,
+    fields: &[crate::generate::Field],
+    target_fields: &[crate::generate::Field],
+    webmvc_test_import: &str,
+) -> String {
+    let json = fields
+        .iter()
+        .map(|field| {
+            json_sample(root, domain, field).map(|sample| format!("  \"{}\": {sample}", field.name))
+        })
+        .collect::<Option<Vec<_>>>();
+    let target_samples = target_fields
+        .iter()
+        .map(|field| crate::generate::sample_value(field, root, domain))
+        .collect::<Option<Vec<_>>>();
+    let disabled_reason = if json.is_none() {
+        Some("Jails cannot serialize one of the command field samples")
+    } else if target_samples.is_none() {
+        Some("Jails cannot construct the target resource sample")
+    } else {
+        None
+    };
+    let json = json.unwrap_or_default().join(",\n");
+    let target_args = target_samples.unwrap_or_default().join(",\n                    ");
+    let command_import = crate::generate::import_of(web, service, &format!("{name}Command"));
+    let usecase_import = crate::generate::import_of(web, service, &format!("{name}UseCase"));
+    let target_import = crate::generate::import_of(web, domain, target);
+    let imports = java_literal_imports(target_fields, domain)
+        .into_iter()
+        .map(|import| format!("import {import};\n"))
+        .collect::<String>();
+    let (disabled_import, disabled) = match disabled_reason {
+        Some(reason) => (
+            "import org.junit.jupiter.api.Disabled;\n",
+            format!("    @Disabled(\"todo: {reason}\")\n"),
+        ),
+        None => ("", String::new()),
+    };
+    format!(
+        r#"package {web};
+
+{command_import}{usecase_import}{target_import}{imports}{disabled_import}import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.assertj.MockMvcTester;
+import {webmvc_test_import};
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+@WebMvcTest({name}Controller.class)
+@Import({name}ControllerTest.Config.class)
+class {name}ControllerTest {{
+
+    @Autowired
+    private MockMvcTester mvc;
+
+{disabled}    @Test
+    void postExecutesTheUseCase() {{
+        assertThat(mvc.post()
+                .uri({name}Controller.PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+{{
+{json}
+}}
+"""))
+                .hasStatus(201);
+    }}
+
+    @TestConfiguration(proxyBeanMethods = false)
+    static class Config {{
+
+        @Bean
+        {name}UseCase useCase() {{
+            return command -> new {target}(
+                    {target_args});
+        }}
+    }}
+}}
+"#
+    )
+}
+
+#[cfg(test)]
+mod usecase_tests {
+    use super::*;
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "jails-usecase-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("src/main/java/com/example/demo/domain")).unwrap();
+        root
+    }
+
+    fn write_record(root: &Path, name: &str, specs: &[&str]) {
+        let fields = crate::generate::parse_fields(
+            &specs.iter().map(|spec| (*spec).to_string()).collect::<Vec<_>>(),
+        )
+        .unwrap();
+        std::fs::write(
+            root.join(format!("src/main/java/com/example/demo/domain/{name}.java")),
+            crate::generate::record_java("com.example.demo.domain", name, &fields),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn usecase_derives_only_conservative_defaults_and_persists_the_result() {
+        let root = scratch("defaults");
+        std::fs::write(
+            root.join("pom.xml"),
+            r#"<project><dependencies><dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-jdbc</artifactId></dependency></dependencies></project>"#,
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("src/main/java/com/example/demo/domain/CrawlStatus.java"),
+            "package com.example.demo.domain;\npublic enum CrawlStatus { QUEUED, RUNNING }\n",
+        )
+        .unwrap();
+        write_record(
+            &root,
+            "CrawlRun",
+            &[
+                "id:uuid",
+                "seedUrl:uri",
+                "status:CrawlStatus",
+                "pagesVisited:long",
+                "startedAt:instant?",
+            ],
+        );
+        let fields = crate::generate::parse_fields(&["seedUrl:uri".to_string()]).unwrap();
+
+        let files = usecase_files(
+            &root,
+            "com.example.demo.service",
+            "com.example.demo.web",
+            "com.example.demo.domain",
+            "com.example.demo.app",
+            "com.example.demo.adapters",
+            "QueueCrawl",
+            "CrawlRun",
+            &fields,
+        )
+        .unwrap();
+        let implementation = &files
+            .iter()
+            .find(|(_, _, kind)| *kind == "usecase implementation")
+            .unwrap()
+            .1;
+
+        assert!(implementation.contains("UUID.randomUUID()"), "{implementation}");
+        assert!(implementation.contains("command.seedUrl()"), "{implementation}");
+        assert!(implementation.contains("CrawlStatus.values()[0]"), "{implementation}");
+        assert!(implementation.contains("0L"), "{implementation}");
+        assert!(implementation.contains("Optional.empty()"), "{implementation}");
+        assert!(implementation.contains("repository.save(crawlRun)"), "{implementation}");
+        assert!(implementation.contains("@Transactional"), "{implementation}");
+        assert!(!implementation.contains("final class"), "{implementation}");
+        assert!(!implementation.contains("TODO"), "{implementation}");
+    }
+
+    #[test]
+    fn usecase_refuses_to_invent_a_foreign_identity() {
+        let root = scratch("foreign-id");
+        write_record(&root, "Membership", &["id:uuid", "workspaceId:uuid"]);
+
+        let error = usecase_files(
+            &root,
+            "com.example.demo.service",
+            "com.example.demo.web",
+            "com.example.demo.domain",
+            "com.example.demo.app",
+            "com.example.demo.adapters",
+            "CreateMembership",
+            "Membership",
+            &[],
+        )
+        .unwrap_err();
+
+        assert!(error.contains("cannot safely infer `workspaceId`"), "{error}");
+    }
+
+    #[test]
+    fn usecase_rejects_input_that_the_target_cannot_store() {
+        let root = scratch("unknown-input");
+        write_record(&root, "Workspace", &["id:uuid", "name:string"]);
+        let fields = crate::generate::parse_fields(&["slug:string".to_string()]).unwrap();
+
+        let error = usecase_files(
+            &root,
+            "com.example.demo.service",
+            "com.example.demo.web",
+            "com.example.demo.domain",
+            "com.example.demo.app",
+            "com.example.demo.adapters",
+            "CreateWorkspace",
+            "Workspace",
+            &fields,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("Workspace has no component"), "{error}");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// `generate query` -- typed equality filters executed by PostgreSQL.
+// ---------------------------------------------------------------------------
+
+pub(crate) fn query_files(
+    root: &Path,
+    service: &str,
+    web: &str,
+    domain: &str,
+    app: &str,
+    adapters: &str,
+    name: &str,
+    target: &str,
+    fields: &[crate::generate::Field],
+) -> crate::Result<Vec<(std::path::PathBuf, String, &'static str)>> {
+    if fields.is_empty() {
+        return Err(format!(
+            "query {name} needs at least one typed filter; use the scaffold's list endpoint for an unfiltered read"
+        ));
+    }
+    if let Some(field) = fields.iter().find(|field| {
+        field.optionality == crate::generate::Optionality::Nullable || field.collection
+    }) {
+        return Err(format!(
+            "query {name} filter `{}` is optional or a collection. This first query contract only accepts required scalar equality filters so null/list semantics are never guessed.",
+            field.name
+        ));
+    }
+    let target_fields = crate::generate::fields_from_record(root, domain, target).ok_or_else(|| {
+        format!("query {name} targets {target}, but no record components could be read from {target}.java")
+    })?;
+    for field in fields {
+        let Some(target_field) = target_fields.iter().find(|candidate| candidate.name == field.name)
+        else {
+            return Err(format!(
+                "query {name} filters `{}`, but {target} has no component with that name",
+                field.name
+            ));
+        };
+        if usecase_normalized_type(&field.java_type)
+            != usecase_normalized_type(&target_field.java_type)
+        {
+            return Err(format!(
+                "query {name} declares `{}` as {}, but {target} stores it as {}",
+                field.name, field.java_type, target_field.java_type
+            ));
+        }
+    }
+    let target_columns = crate::sql::columns(&target_fields, root, domain, "row");
+    let filter_columns = crate::sql::columns(fields, root, domain, "query");
+    let unmapped = target_columns
+        .iter()
+        .chain(filter_columns.iter())
+        .filter(|column| !column.mapped())
+        .map(|column| column.name.as_str())
+        .collect::<Vec<_>>();
+    if !unmapped.is_empty() {
+        return Err(format!(
+            "query {name} cannot map database column(s): {}. Model collections/owned values separately or add an explicit mapping before generating the query.",
+            unmapped.join(", ")
+        ));
+    }
+    let main_service = crate::generate::main_dir(root, service);
+    let main_adapters = crate::generate::main_dir(root, adapters);
+    let test_adapters = crate::generate::test_dir(root, adapters);
+    let main_web = crate::generate::main_dir(root, web);
+    let test_web = crate::generate::test_dir(root, web);
+    Ok(vec![
+        (
+            main_service.join(format!("{name}Query.java")),
+            query_record_java(service, domain, name, fields),
+            "query input",
+        ),
+        (
+            main_service.join(format!("{name}QueryPort.java")),
+            query_port_java(service, domain, name, target),
+            "query port",
+        ),
+        (
+            main_adapters.join(format!("Jdbc{name}Query.java")),
+            jdbc_query_java(
+                adapters,
+                service,
+                domain,
+                name,
+                target,
+                &target_columns,
+                &filter_columns,
+            ),
+            "JDBC query adapter",
+        ),
+        (
+            test_adapters.join(format!("Jdbc{name}QueryIT.java")),
+            jdbc_query_it_java(
+                root,
+                adapters,
+                service,
+                domain,
+                app,
+                name,
+                target,
+                fields,
+                &target_fields,
+            ),
+            "JDBC query integration test",
+        ),
+        (
+            main_web.join(format!("{name}QueryController.java")),
+            query_controller_java(service, web, name, target),
+            "query controller",
+        ),
+        (
+            test_web.join(format!("{name}QueryControllerTest.java")),
+            query_controller_test_java(
+                root,
+                service,
+                web,
+                domain,
+                name,
+                target,
+                fields,
+                &target_fields,
+                crate::generate::webmvc_test_import(root),
+            ),
+            "query controller test",
+        ),
+    ])
+}
+
+fn query_record_java(
+    pkg: &str,
+    domain: &str,
+    name: &str,
+    fields: &[crate::generate::Field],
+) -> String {
+    let class = format!("{name}Query");
+    let mut source = crate::generate::record_java(pkg, &class, fields);
+    let mut imports = fields
+        .iter()
+        .filter(|field| field.owned && domain != pkg)
+        .map(|field| format!("import {domain}.{};", field.java_type))
+        .collect::<Vec<_>>();
+    imports.sort();
+    imports.dedup();
+    if !imports.is_empty() {
+        let package = format!("package {pkg};\n");
+        source = source.replacen(
+            &package,
+            &format!("{package}\n{}\n", imports.join("\n")),
+            1,
+        );
+        source = crate::generate::normalize_imports(&source);
+    }
+    source.replace(
+        &format!(" * An immutable {class} value."),
+        &format!(" * Typed filters for the {name} query."),
+    )
+}
+
+fn query_port_java(pkg: &str, domain: &str, name: &str, target: &str) -> String {
+    let target_import = crate::generate::import_of(pkg, domain, target);
+    format!(
+        r#"package {pkg};
+
+{target_import}import java.util.List;
+
+/** Read-side port; the application contract contains no JDBC or HTTP types. */
+@FunctionalInterface
+public interface {name}QueryPort {{
+
+    List<{target}> execute({name}Query query);
+}}
+"#
+    )
+}
+
+fn jdbc_query_java(
+    pkg: &str,
+    service: &str,
+    domain: &str,
+    name: &str,
+    target: &str,
+    target_columns: &[crate::sql::Column],
+    filter_columns: &[crate::sql::Column],
+) -> String {
+    let target_import = crate::generate::import_of(pkg, domain, target);
+    let query_import = crate::generate::import_of(pkg, service, &format!("{name}Query"));
+    let port_import = crate::generate::import_of(pkg, service, &format!("{name}QueryPort"));
+    let mut imports = crate::sql::imports(target_columns)
+        .into_iter()
+        .chain(crate::sql::imports(filter_columns))
+        .map(|import| format!("import {import};\n"))
+        .collect::<String>();
+    if target_columns
+        .iter()
+        .any(|column| column.read.as_deref().is_some_and(|read| read.contains("Optional.")))
+    {
+        imports.push_str("import java.util.Optional;\n");
+    }
+    for column in target_columns.iter().chain(filter_columns.iter()) {
+        if crate::generate::builtin_by_java_name(&column.java_type).is_none() {
+            imports.push_str(&crate::generate::import_of(pkg, domain, &column.java_type));
+        }
+    }
+    let select = target_columns
+        .iter()
+        .map(|column| format!("            {},", column.name))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim_end_matches(',')
+        .to_string();
+    let predicates = filter_columns
+        .iter()
+        .map(|column| format!("{} = :{}", column.name, column.name))
+        .collect::<Vec<_>>()
+        .join("\n                          and ");
+    let bindings = filter_columns
+        .iter()
+        .map(|column| {
+            format!(
+                "                .param(\"{}\", {})",
+                column.name,
+                column.write.as_deref().expect("mapped query column")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let map_args = target_columns
+        .iter()
+        .map(|column| {
+            format!(
+                "                {}",
+                column.read.as_deref().expect("mapped target column")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",\n");
+    let table = crate::sql::table_name(target);
+    let order = target_columns
+        .iter()
+        .find(|column| column.name == "id")
+        .map(|column| column.name.as_str())
+        .unwrap_or(&target_columns[0].name);
+    format!(
+        r#"package {pkg};
+
+{target_import}{query_import}{port_import}{imports}import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.List;
+import java.util.Objects;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.stereotype.Component;
+
+/** Visible, named-parameter SQL generated from the target and filter field models. */
+@Component
+public final class Jdbc{name}Query implements {name}QueryPort {{
+
+    private static final String COLUMNS =
+            """
+{select}
+            """;
+
+    private final JdbcClient db;
+
+    public Jdbc{name}Query(JdbcClient db) {{
+        this.db = Objects.requireNonNull(db, "db is required");
+    }}
+
+    @Override
+    public List<{target}> execute({name}Query query) {{
+        Objects.requireNonNull(query, "query is required");
+        return db.sql("""
+                        select %s
+                        from {table}
+                        where {predicates}
+                        order by {order}
+                        """.formatted(COLUMNS))
+{bindings}
+                .query(Jdbc{name}Query::map)
+                .list();
+    }}
+
+    private static {target} map(ResultSet rows, int rowNumber) throws SQLException {{
+        return new {target}(
+{map_args});
+    }}
+}}
+"#
+    )
+}
+
+fn jdbc_query_it_java(
+    root: &Path,
+    pkg: &str,
+    service: &str,
+    domain: &str,
+    app: &str,
+    name: &str,
+    target: &str,
+    fields: &[crate::generate::Field],
+    target_fields: &[crate::generate::Field],
+) -> String {
+    let query_samples = fields
+        .iter()
+        .map(|field| crate::generate::sample_value(field, root, domain))
+        .collect::<Option<Vec<_>>>();
+    let target_samples = target_fields
+        .iter()
+        .map(|field| crate::generate::sample_value(field, root, domain))
+        .collect::<Option<Vec<_>>>();
+    let disabled = query_samples.is_none() || target_samples.is_none();
+    let query_args = query_samples.unwrap_or_default().join(",\n                ");
+    let target_args = target_samples.unwrap_or_default().join(",\n                ");
+    let target_import = crate::generate::import_of(pkg, domain, target);
+    let query_import = crate::generate::import_of(pkg, service, &format!("{name}Query"));
+    let port_import = crate::generate::import_of(pkg, service, &format!("{name}QueryPort"));
+    let repository_import = crate::generate::import_of(pkg, app, &format!("{target}Repository"));
+    let imports = java_literal_imports(target_fields, domain)
+        .into_iter()
+        .chain(java_literal_imports(fields, domain))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .map(|import| format!("import {import};\n"))
+        .collect::<String>();
+    let disabled_import = if disabled { "import org.junit.jupiter.api.Disabled;\n" } else { "" };
+    let annotation = if disabled { "@Disabled(\"todo: supply query/target samples Jails cannot fabricate\")\n" } else { "" };
+    format!(
+        r#"package {pkg};
+
+{target_import}{query_import}{port_import}{repository_import}{imports}{disabled_import}import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+{annotation}@SpringBootTest
+class Jdbc{name}QueryIT {{
+
+    @Autowired
+    private {target}Repository repository;
+
+    @Autowired
+    private {name}QueryPort queryPort;
+
+    @Test
+    void filtersInTheRealDatabase() {{
+        {target} stored = new {target}(
+                {target_args});
+        repository.save(stored);
+
+        var found = queryPort.execute(new {name}Query(
+                {query_args}));
+
+        assertThat(found).contains(stored);
+    }}
+}}
+"#
+    )
+}
+
+fn query_controller_java(service: &str, web: &str, name: &str, target: &str) -> String {
+    let query_import = crate::generate::import_of(web, service, &format!("{name}Query"));
+    let port_import = crate::generate::import_of(web, service, &format!("{name}QueryPort"));
+    let path = format!("/queries/{}", crate::sql::snake_case(name).replace('_', "-"));
+    format!(
+        r#"package {web};
+
+{query_import}{port_import}import jakarta.validation.Valid;
+import java.util.List;
+import java.util.Objects;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+/** HTTP adapter for a typed read-side port. */
+@RestController
+@RequestMapping({name}QueryController.PATH)
+public final class {name}QueryController {{
+
+    public static final String PATH = "{path}";
+
+    private final {name}QueryPort queryPort;
+
+    public {name}QueryController({name}QueryPort queryPort) {{
+        this.queryPort = Objects.requireNonNull(queryPort, "queryPort is required");
+    }}
+
+    @PostMapping
+    public List<{target}Response> execute(@Valid @RequestBody {name}Query query) {{
+        return queryPort.execute(query).stream().map({target}Response::from).toList();
+    }}
+}}
+"#
+    )
+}
+
+fn query_controller_test_java(
+    root: &Path,
+    service: &str,
+    web: &str,
+    domain: &str,
+    name: &str,
+    target: &str,
+    fields: &[crate::generate::Field],
+    target_fields: &[crate::generate::Field],
+    webmvc_test_import: &str,
+) -> String {
+    let json = fields
+        .iter()
+        .map(|field| json_sample(root, domain, field).map(|sample| format!("  \"{}\": {sample}", field.name)))
+        .collect::<Option<Vec<_>>>();
+    let target_samples = target_fields
+        .iter()
+        .map(|field| crate::generate::sample_value(field, root, domain))
+        .collect::<Option<Vec<_>>>();
+    let disabled = json.is_none() || target_samples.is_none();
+    let json = json.unwrap_or_default().join(",\n");
+    let target_args = target_samples.unwrap_or_default().join(",\n                    ");
+    let port_import = crate::generate::import_of(web, service, &format!("{name}QueryPort"));
+    let target_import = crate::generate::import_of(web, domain, target);
+    let imports = java_literal_imports(target_fields, domain)
+        .into_iter()
+        .map(|import| format!("import {import};\n"))
+        .collect::<String>();
+    let disabled_import = if disabled { "import org.junit.jupiter.api.Disabled;\n" } else { "" };
+    let annotation = if disabled { "    @Disabled(\"todo: supply query/target samples Jails cannot fabricate\")\n" } else { "" };
+    format!(
+        r#"package {web};
+
+{port_import}{target_import}{imports}{disabled_import}import java.util.List;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.assertj.MockMvcTester;
+import {webmvc_test_import};
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+@WebMvcTest({name}QueryController.class)
+@Import({name}QueryControllerTest.Config.class)
+class {name}QueryControllerTest {{
+
+    @Autowired
+    private MockMvcTester mvc;
+
+{annotation}    @Test
+    void postExecutesTheDatabaseQueryPort() {{
+        assertThat(mvc.post()
+                .uri({name}QueryController.PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+{{
+{json}
+}}
+"""))
+                .hasStatusOk()
+                .bodyJson();
+    }}
+
+    @TestConfiguration(proxyBeanMethods = false)
+    static class Config {{
+
+        @Bean
+        {name}QueryPort queryPort() {{
+            return query -> List.of(new {target}(
+                    {target_args}));
+        }}
+    }}
+}}
+"#
+    )
+}
+
+// ---------------------------------------------------------------------------
 // `generate event` -- a Kafka publisher, listener and payload, as one slice.
 // ---------------------------------------------------------------------------
 

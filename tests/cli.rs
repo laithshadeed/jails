@@ -275,6 +275,10 @@ fn app_manifest_builds_the_crawler_skeleton_and_is_resumable() {
     assert!(main.join("domain/CrawlStatus.java").is_file());
     assert!(main.join("domain/CrawlRun.java").is_file());
     assert!(main.join("domain/CrawledPage.java").is_file());
+    assert!(main.join("service/QueueCrawlUseCase.java").is_file());
+    assert!(main.join("service/DefaultQueueCrawlUseCase.java").is_file());
+    assert!(main.join("web/QueueCrawlController.java").is_file());
+    assert!(main.join("service/RecordCrawledPageUseCase.java").is_file());
     assert!(main.join("clients/PageFetcherClient.java").is_file());
     assert!(main.join("messaging/PageDiscoveredEvent.java").is_file());
     assert!(main.join("jobs/CrawlDispatcherJob.java").is_file());
@@ -325,6 +329,21 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
     }
     assert!(main.join("domain/ConversationStatus.java").is_file());
     assert!(main.join("domain/MessageDirection.java").is_file());
+    for name in [
+        "CreateWorkspace",
+        "CreateContact",
+        "OpenConversation",
+        "ReceiveMessage",
+    ] {
+        assert!(
+            main.join(format!("service/{name}UseCase.java")).is_file(),
+            "{name} usecase"
+        );
+        assert!(
+            main.join(format!("web/{name}Controller.java")).is_file(),
+            "{name} controller"
+        );
+    }
     assert!(main.join("messaging/MessageReceivedEvent.java").is_file());
     assert!(main.join("jobs/OutboundDeliveryJob.java").is_file());
     assert_eq!(

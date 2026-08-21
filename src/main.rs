@@ -163,13 +163,16 @@ enum Command {
         ///   --index 'customer_id, created_at desc'
         #[arg(long = "index", value_name = "COLUMNS")]
         indexes: Vec<String>,
-        /// For `strategy`: the type each implementation examines.
+        /// For `strategy`, the type each implementation examines. For
+        /// `usecase`, the existing scaffolded resource the operation creates;
+        /// for `query`, the scaffolded resource it reads.
         ///
         ///   jails g strategy RewardRule Coffee Large --on Transaction --yields Reward
         #[arg(long = "on", value_name = "TYPE")]
         strategy_on: Option<String>,
         /// For `strategy`: what a matching implementation produces. Omit and
-        /// the strategy is a predicate returning `boolean`.
+        /// the strategy is a predicate returning `boolean`. Reserved for a
+        /// usecase's published event in a later manifest schema.
         #[arg(long = "yields", value_name = "TYPE")]
         strategy_yields: Option<String>,
     },

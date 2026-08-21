@@ -152,6 +152,14 @@ fn finish(
     // null check on its result.
     let read = if is_primitive_read(inner) {
         format!("rows.getObject(\"{name}\") == null ? Optional.empty() : Optional.of({read})")
+    } else if inner == "Instant" {
+        format!(
+            "Optional.ofNullable(rows.getObject(\"{name}\", OffsetDateTime.class)).map(OffsetDateTime::toInstant)"
+        )
+    } else if inner == "URI" {
+        format!("Optional.ofNullable(rows.getString(\"{name}\")).map(URI::create)")
+    } else if read.starts_with(&format!("{inner}.valueOf(")) {
+        format!("Optional.ofNullable(rows.getString(\"{name}\")).map({inner}::valueOf)")
     } else {
         format!("Optional.ofNullable({read})")
     };

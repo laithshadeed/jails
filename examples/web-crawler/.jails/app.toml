@@ -20,6 +20,30 @@ fields = ["id:uuid@pk", "crawlRunId:uuid@index", "url:uri", "statusCode:int", "d
 indexes = ["crawl_run_id, discovered_at desc"]
 
 [[generate]]
+kind = "usecase"
+name = "QueueCrawl"
+fields = ["seedUrl:uri"]
+strategy_on = "CrawlRun"
+
+[[generate]]
+kind = "usecase"
+name = "RecordCrawledPage"
+fields = ["crawlRunId:uuid", "url:uri", "statusCode:int"]
+strategy_on = "CrawledPage"
+
+[[generate]]
+kind = "query"
+name = "CrawlRunsByStatus"
+fields = ["status:CrawlStatus"]
+strategy_on = "CrawlRun"
+
+[[generate]]
+kind = "query"
+name = "PagesByCrawlRun"
+fields = ["crawlRunId:uuid"]
+strategy_on = "CrawledPage"
+
+[[generate]]
 kind = "client"
 name = "PageFetcher"
 

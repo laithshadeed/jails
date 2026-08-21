@@ -234,7 +234,7 @@ pub(super) fn field_type(token: &str) -> Result<(&'static str, Option<&'static s
 
 /// The Java spellings of the built-in table, so `date:LocalDate` and
 /// `date:date` mean the same thing.
-pub(super) fn builtin_by_java_name(ty: &str) -> Option<(&'static str, Option<&'static str>)> {
+pub(crate) fn builtin_by_java_name(ty: &str) -> Option<(&'static str, Option<&'static str>)> {
     match ty {
         "String" => Some(("String", None)),
         "Integer" | "int" => Some(("Integer", None)),
@@ -262,7 +262,7 @@ pub(crate) fn parse_fields_for_test(args: &[String]) -> Result<Vec<Field>> {
     parse_fields(args)
 }
 
-pub(super) fn parse_fields(args: &[String]) -> Result<Vec<Field>> {
+pub(crate) fn parse_fields(args: &[String]) -> Result<Vec<Field>> {
     args.iter()
         .map(|arg| {
             let (name, ty) = arg
@@ -399,6 +399,8 @@ pub(super) fn kind_suffix(kind: ArtifactKind) -> Option<&'static str> {
         ArtifactKind::Cli => Some("Cli"),
         ArtifactKind::Job => Some("Job"),
         ArtifactKind::Client => Some("Client"),
+        ArtifactKind::Usecase => Some("UseCase"),
+        ArtifactKind::Query => Some("Query"),
         ArtifactKind::Test => Some("Test"),
         ArtifactKind::IntegrationTest => Some("IT"),
         _ => None,
@@ -554,4 +556,3 @@ pub(super) fn blank_checks(fields: &[&Field]) -> String {
     }
     out
 }
-

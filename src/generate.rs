@@ -71,6 +71,15 @@ pub enum ArtifactKind {
     /// Request/response records for a domain type, with the mapping and a
     /// round-trip test (Spring only)
     Dto,
+    /// An executable create operation over an existing scaffold: typed
+    /// command, use-case port and implementation, HTTP adapter, and tests
+    /// (Spring only). `--on` names the target resource.
+    #[value(alias = "uc")]
+    Usecase,
+    /// A typed read operation over an existing scaffold: query record, port,
+    /// JDBC adapter, HTTP adapter, and a real-database test. `--on` names the
+    /// target resource and fields become equality filters (Spring only).
+    Query,
     /// A Kafka slice: payload record, publisher, listener, and an IT against
     /// a real broker (Spring only)
     Event,
@@ -170,7 +179,7 @@ fn shallowest_java_file(dir: &Path) -> Option<PathBuf> {
 /// shim, so the scaffolded controller test needs to import the right one.
 /// `@WebMvcTest` moved in Spring Boot 4 the same way `@AutoConfigureMockMvc`
 /// did, and for the same reason -- the web slice became its own module.
-fn webmvc_test_import(root: &Path) -> &'static str {
+pub(crate) fn webmvc_test_import(root: &Path) -> &'static str {
     const LEGACY: &str = "org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest";
     const CURRENT: &str = "org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest";
     if spring_boot_major(root) >= 4 {
@@ -687,6 +696,83 @@ pub fn generate(
                     contents,
                 })
                 .collect()
+        }
+        ArtifactKind::Usecase => {
+            require_spring_project(&root, "usecase")?;
+            let target = strategy_on.ok_or_else(|| {
+                format!(
+                    "usecase {name} needs the resource it creates.\n       fix: pass `--on <Resource>`, for example `jails g usecase {name} seedUrl:uri --on CrawlRun`."
+                )
+            })?;
+            if strategy_yields.is_some() {
+                return Err(
+                    "`--yields` for usecases is reserved for the event/publication slice and is not implemented yet"
+                        .to_string(),
+                );
+            }
+            let service = place(layout::SERVICE);
+            let web = place(layout::WEB);
+            // `--package` places the operation itself. The target resource
+            // already exists in the project's configured scaffold layers;
+            // moving the operation must not make Jails look for a second copy
+            // of that resource in the override package.
+            let domain = subpackage(&base, config.layer(layout::DOMAIN));
+            let app = subpackage(&base, config.layer(layout::APP));
+            let adapters = subpackage(&base, config.layer(layout::ADAPTERS));
+            let parsed = parse_fields(fields)?;
+            crate::spring::usecase_files(
+                &root,
+                &service,
+                &web,
+                &domain,
+                &app,
+                &adapters,
+                &name,
+                &capitalize(target),
+                &parsed,
+            )?
+            .into_iter()
+            .map(|(path, contents, kind)| Artifact {
+                kind,
+                path,
+                contents,
+            })
+                .collect()
+        }
+        ArtifactKind::Query => {
+            require_spring_project(&root, "query")?;
+            let target = strategy_on.ok_or_else(|| {
+                format!(
+                    "query {name} needs the resource it reads.\n       fix: pass `--on <Resource>`, for example `jails g query {name} status:CrawlStatus --on CrawlRun`."
+                )
+            })?;
+            if strategy_yields.is_some() {
+                return Err("`--yields` is not valid for a query; queries return the target resource".to_string());
+            }
+            let service = place(layout::SERVICE);
+            let web = place(layout::WEB);
+            let domain = subpackage(&base, config.layer(layout::DOMAIN));
+            let app = subpackage(&base, config.layer(layout::APP));
+            let adapters = subpackage(&base, config.layer(layout::ADAPTERS));
+            let parsed = parse_fields(fields)?;
+            crate::spring::query_files(
+                &root,
+                &service,
+                &web,
+                &domain,
+                &app,
+                &adapters,
+                &name,
+                &capitalize(target),
+                &parsed,
+            )?
+            .into_iter()
+            .map(|(path, contents, kind)| Artifact {
+                kind,
+                path,
+                contents,
+            })
+            .collect()
         }
         ArtifactKind::Event => {
             require_spring_project(&root, "event")?;
@@ -1385,6 +1471,31 @@ pub fn destroy(
                 main_dir(&root, &pkg).join(format!("{name}Publisher.java")),
                 main_dir(&root, &pkg).join(format!("{name}Listener.java")),
                 test_dir(&root, &pkg).join(format!("{name}MessagingIT.java")),
+            ]
+        }
+        ArtifactKind::Usecase => {
+            let service = place(layout::SERVICE);
+            let web = place(layout::WEB);
+            vec![
+                main_dir(&root, &service).join(format!("{name}Command.java")),
+                main_dir(&root, &service).join(format!("{name}UseCase.java")),
+                main_dir(&root, &service).join(format!("Default{name}UseCase.java")),
+                test_dir(&root, &service).join(format!("{name}UseCaseTest.java")),
+                main_dir(&root, &web).join(format!("{name}Controller.java")),
+                test_dir(&root, &web).join(format!("{name}ControllerTest.java")),
+            ]
+        }
+        ArtifactKind::Query => {
+            let service = place(layout::SERVICE);
+            let web = place(layout::WEB);
+            let adapters = place(layout::ADAPTERS);
+            vec![
+                main_dir(&root, &service).join(format!("{name}Query.java")),
+                main_dir(&root, &service).join(format!("{name}QueryPort.java")),
+                main_dir(&root, &adapters).join(format!("Jdbc{name}Query.java")),
+                test_dir(&root, &adapters).join(format!("Jdbc{name}QueryIT.java")),
+                main_dir(&root, &web).join(format!("{name}QueryController.java")),
+                test_dir(&root, &web).join(format!("{name}QueryControllerTest.java")),
             ]
         }
         ArtifactKind::Dto => {

@@ -36,6 +36,48 @@ fields = ["id:uuid@pk", "workspaceId:uuid@index", "conversationId:uuid@index", "
 indexes = ["conversation_id, created_at"]
 
 [[generate]]
+kind = "usecase"
+name = "CreateWorkspace"
+fields = ["name:string!"]
+strategy_on = "Workspace"
+
+[[generate]]
+kind = "usecase"
+name = "CreateContact"
+fields = ["workspaceId:uuid", "email:string!", "displayName:string?"]
+strategy_on = "Contact"
+
+[[generate]]
+kind = "usecase"
+name = "OpenConversation"
+fields = ["workspaceId:uuid", "contactId:uuid"]
+strategy_on = "Conversation"
+
+[[generate]]
+kind = "usecase"
+name = "ReceiveMessage"
+fields = ["workspaceId:uuid", "conversationId:uuid", "direction:MessageDirection", "body:text!"]
+strategy_on = "Message"
+
+[[generate]]
+kind = "query"
+name = "ContactsByWorkspace"
+fields = ["workspaceId:uuid"]
+strategy_on = "Contact"
+
+[[generate]]
+kind = "query"
+name = "ConversationsByWorkspace"
+fields = ["workspaceId:uuid"]
+strategy_on = "Conversation"
+
+[[generate]]
+kind = "query"
+name = "MessagesByConversation"
+fields = ["conversationId:uuid"]
+strategy_on = "Message"
+
+[[generate]]
 kind = "event"
 name = "MessageReceived"
 fields = ["id:uuid", "workspaceId:uuid", "conversationId:uuid", "occurredAt:instant"]
