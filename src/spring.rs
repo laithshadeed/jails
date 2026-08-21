@@ -741,11 +741,11 @@ pub(crate) fn response_java_for(
     let components = components(fields, false);
     let arguments = fields
         .iter()
-        .map(|field| read_from_domain(field, &name.to_lowercase()))
+        .map(|field| read_from_domain(field, &crate::generate::lower_first(name)))
         .map(|a| format!("                {a}"))
         .collect::<Vec<_>>()
         .join(",\n");
-    let var = name.to_lowercase();
+    let var = crate::generate::lower_first(name);
     format!(
         r#"package {pkg};
 
@@ -789,7 +789,7 @@ fn dto_test_java(
     root: &Path,
     domain: &str,
 ) -> String {
-    let var = name.to_lowercase();
+    let var = crate::generate::lower_first(name);
     // A request component is the *wire* type: an Optional domain component is
     // a plain nullable field here, so `Optional.empty()` would not compile as
     // its sample. `null` is the honest wire-level equivalent.
@@ -1051,20 +1051,36 @@ pub(crate) fn kafka_files(
 pub(crate) fn event_files(
     root: &Path,
     pkg: &str,
+    domain: &str,
     name: &str,
-) -> Vec<(std::path::PathBuf, String, &'static str)> {
+    fields: &[crate::generate::Field],
+) -> Result<Vec<(std::path::PathBuf, String, &'static str)>> {
     let main = crate::generate::main_dir(root, pkg);
     let test = crate::generate::test_dir(root, pkg);
     let topic = crate::sql::snake_case(name).replace('_', "-");
-    vec![
+    let id = fields.iter().find(|field| field.name == "id");
+    if !fields.is_empty() && id.is_none() {
+        return Err(format!(
+            "an event payload needs a stable `id` field for deduplication and Kafka partitioning.\n       \
+             Add `id:string!` or `id:uuid` to `jails g event {name} ...`."
+        ));
+    }
+    if id.is_some_and(|field| field.optionality == crate::generate::Optionality::Nullable) {
+        return Err("an event `id` cannot be optional: a null key loses per-entity ordering".to_string());
+    }
+    let key = id
+        .filter(|field| field.java_type != "String")
+        .map(|_| "String.valueOf(event.id())")
+        .unwrap_or("event.id()");
+    Ok(vec![
         (
             main.join(format!("{name}Event.java")),
-            event_java(pkg, name),
+            event_java(pkg, domain, name, fields),
             "event",
         ),
         (
             main.join(format!("{name}Publisher.java")),
-            publisher_java(pkg, name, &topic),
+            publisher_java(pkg, name, &topic, key),
             "publisher",
         ),
         (
@@ -1074,26 +1090,196 @@ pub(crate) fn event_files(
         ),
         (
             test.join(format!("{name}MessagingIT.java")),
-            messaging_it_java(pkg, name, &topic),
+            messaging_it_java(root, pkg, domain, name, &topic, fields),
             "messaging integration test",
         ),
-    ]
+    ])
 }
 
-fn event_java(pkg: &str, name: &str) -> String {
-    crate::template::render(include_str!("../templates/spring/event_java.java"), &[("pkg", pkg), ("name", name)])
+fn event_java(pkg: &str, domain: &str, name: &str, fields: &[crate::generate::Field]) -> String {
+    if fields.is_empty() {
+        return crate::template::render(
+            include_str!("../templates/spring/event_java.java"),
+            &[("pkg", pkg), ("name", name)],
+        );
+    }
+
+    let event = format!("{name}Event");
+    let mut source = crate::generate::record_java(pkg, &event, fields);
+    let mut imports = fields
+        .iter()
+        .filter(|field| field.owned && domain != pkg)
+        .map(|field| format!("import {domain}.{};", field.java_type))
+        .collect::<Vec<_>>();
+    imports.sort();
+    imports.dedup();
+    if !imports.is_empty() {
+        let package = format!("package {pkg};\n");
+        let replacement = format!("{package}\n{}\n", imports.join("\n"));
+        source = source.replacen(&package, &replacement, 1);
+        source = crate::generate::normalize_imports(&source);
+    }
+    source.replace(
+        &format!(" * An immutable {event} value."),
+        &format!(" * Immutable payload published as {event}."),
+    )
 }
 
-fn publisher_java(pkg: &str, name: &str, topic: &str) -> String {
-    crate::template::render(include_str!("../templates/spring/publisher_java.java"), &[("pkg", pkg), ("name", name), ("topic", topic)])
+fn publisher_java(pkg: &str, name: &str, topic: &str, key: &str) -> String {
+    let source = crate::template::render(
+        include_str!("../templates/spring/publisher_java.java"),
+        &[("pkg", pkg), ("name", name), ("topic", topic)],
+    );
+    source.replace("kafka.send(topic, event.id(), event)", &format!("kafka.send(topic, {key}, event)"))
 }
 
 fn listener_java(pkg: &str, name: &str, topic: &str) -> String {
     crate::template::render(include_str!("../templates/spring/listener_java.java"), &[("pkg", pkg), ("name", name), ("topic", topic)])
 }
 
-fn messaging_it_java(pkg: &str, name: &str, topic: &str) -> String {
-    crate::template::render(include_str!("../templates/spring/messaging_it_java.java"), &[("pkg", pkg), ("name", name), ("topic", topic)])
+fn messaging_it_java(
+    root: &Path,
+    pkg: &str,
+    domain: &str,
+    name: &str,
+    topic: &str,
+    fields: &[crate::generate::Field],
+) -> String {
+    let (event_imports, disabled_import, disabled, event_args, expected_id) = if fields.is_empty() {
+        (
+            "import java.time.Instant;\n".to_string(),
+            String::new(),
+            String::new(),
+            "\"probe-1\", Instant.parse(\"2024-01-01T00:00:00Z\")".to_string(),
+            "\"probe-1\"".to_string(),
+        )
+    } else {
+        let samples = fields
+            .iter()
+            .map(|field| crate::generate::sample_value(field, root, domain))
+            .collect::<Vec<_>>();
+        let missing = fields
+            .iter()
+            .zip(&samples)
+            .filter(|(_, sample)| sample.is_none())
+            .map(|(field, _)| field.name.as_str())
+            .collect::<Vec<_>>();
+        let expected_id = fields
+            .iter()
+            .zip(&samples)
+            .find(|(field, _)| field.name == "id")
+            .and_then(|(_, sample)| sample.clone())
+            .unwrap_or_else(|| "null /* TODO: an event id sample */".to_string());
+        let event_args = fields
+            .iter()
+            .zip(samples)
+            .map(|(field, sample)| {
+                sample.unwrap_or_else(|| format!("null /* TODO: a {} */", field.java_type))
+            })
+            .collect::<Vec<_>>()
+            .join(",\n                ");
+        let mut imports = fields
+            .iter()
+            .flat_map(|field| field.imports.iter().copied().map(str::to_string))
+            .collect::<Vec<_>>();
+        imports.extend(
+            fields
+                .iter()
+                .filter(|field| field.owned && domain != pkg)
+                .map(|field| format!("{domain}.{}", field.java_type)),
+        );
+        if fields
+            .iter()
+            .any(|field| field.optionality == crate::generate::Optionality::Nullable)
+        {
+            imports.push("java.util.Optional".to_string());
+        }
+        imports.sort();
+        imports.dedup();
+        let imports = imports
+            .into_iter()
+            .map(|import| format!("import {import};\n"))
+            .collect::<String>();
+        if missing.is_empty() {
+            (imports, String::new(), String::new(), event_args, expected_id)
+        } else {
+            (
+                imports,
+                "import org.junit.jupiter.api.Disabled;\n".to_string(),
+                format!(
+                    "@Disabled(\"todo: supply a sample for {} -- jails cannot build the full event\")\n",
+                    missing.join(", ")
+                ),
+                event_args,
+                expected_id,
+            )
+        }
+    };
+    crate::template::render(
+        include_str!("../templates/spring/messaging_it_java.java"),
+        &[
+            ("pkg", pkg),
+            ("name", name),
+            ("topic", topic),
+            ("event_imports", &event_imports),
+            ("disabled_import", &disabled_import),
+            ("disabled", &disabled),
+            ("event_args", &event_args),
+            ("expected_id", &expected_id),
+        ],
+    )
+}
+
+#[cfg(test)]
+mod event_tests {
+    use super::*;
+
+    #[test]
+    fn typed_events_share_the_field_model_and_keep_a_string_kafka_key() {
+        let fields = crate::generate::parse_fields_for_test(&[
+            "id:uuid".to_string(),
+            "url:uri".to_string(),
+            "occurredAt:instant".to_string(),
+        ])
+        .unwrap();
+        let root = Path::new("/tmp/jails-event-field-test");
+        let files = event_files(
+            root,
+            "com.example.messaging",
+            "com.example.domain",
+            "PageDiscovered",
+            &fields,
+        )
+        .unwrap();
+
+        let event = &files[0].1;
+        assert!(event.contains("record PageDiscoveredEvent(UUID id, URI url, Instant occurredAt)"));
+        let publisher = &files[1].1;
+        assert!(publisher.contains("kafka.send(topic, String.valueOf(event.id()), event)"));
+        let integration_test = &files[3].1;
+        assert!(integration_test.contains("UUID.fromString"), "{integration_test}");
+        assert!(integration_test.contains("URI.create"), "{integration_test}");
+        assert!(integration_test.contains("Instant.parse"), "{integration_test}");
+        assert!(
+            integration_test.contains("isEqualTo(UUID.fromString"),
+            "{integration_test}"
+        );
+    }
+
+    #[test]
+    fn typed_events_refuse_to_invent_a_durable_identity() {
+        let fields = crate::generate::parse_fields_for_test(&["occurredAt:instant".to_string()])
+            .unwrap();
+        let error = event_files(
+            Path::new("/tmp/jails-event-field-test"),
+            "com.example.messaging",
+            "com.example.domain",
+            "PageDiscovered",
+            &fields,
+        )
+        .unwrap_err();
+        assert!(error.contains("stable `id`"), "{error}");
+    }
 }
 // ---------------------------------------------------------------------------
 // `add security` -- an explicit filter chain, rather than the default one.

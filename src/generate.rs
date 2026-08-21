@@ -22,7 +22,7 @@ pub(crate) use domain::*;
 mod repository;
 pub(crate) use repository::*;
 
-#[derive(Clone, Copy, ValueEnum)]
+#[derive(Clone, Copy, Debug, ValueEnum)]
 #[value(rename_all = "lowercase")]
 pub enum ArtifactKind {
     /// A REST resource that runs: record, port, JDBC + in-memory adapters,
@@ -691,7 +691,9 @@ pub fn generate(
         ArtifactKind::Event => {
             require_spring_project(&root, "event")?;
             let pkg = place(layout::MESSAGING);
-            crate::spring::event_files(&root, &pkg, &name)
+            let domain = place(layout::DOMAIN);
+            let parsed = parse_fields(fields)?;
+            crate::spring::event_files(&root, &pkg, &domain, &name, &parsed)?
                 .into_iter()
                 .map(|(path, contents, kind)| Artifact {
                     kind,
@@ -831,7 +833,7 @@ pub fn generate(
                         import_of(&adapters, &domain, &name),
                         import_of(&adapters, &app, &format!("{name}Repository"))
                     ),
-                    &crate::sql::columns(&record_fields, &root, &domain, &name.to_lowercase()),
+                    &crate::sql::columns(&record_fields, &root, &domain, &lower_first(&name)),
                     &domain,
                 ),
             });
@@ -1098,7 +1100,7 @@ fn scaffold_artifacts(
     let web = place(layout::WEB);
 
     let domain_in = |user: &str| import_of(user, &domain, name);
-    let columns = crate::sql::columns(&parsed, root, &domain, &name.to_lowercase());
+    let columns = crate::sql::columns(&parsed, root, &domain, &lower_first(name));
 
     // The migration is emitted only when the project has somewhere to put
     // one -- `jails add db` creates db/migration, and a .sql file in a
@@ -1168,7 +1170,7 @@ fn scaffold_artifacts(
                 ),
                 // The record was just written from these same fields, so the
                 // adapter and the type it maps cannot disagree.
-                &crate::sql::columns(&parsed, root, &domain, &name.to_lowercase()),
+                &crate::sql::columns(&parsed, root, &domain, &lower_first(name)),
                 &domain,
             ),
         },

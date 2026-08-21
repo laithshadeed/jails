@@ -11,7 +11,7 @@ use super::*;
 // no framework annotations, and a compact constructor so an invalid value cannot be
 // constructed in the first place. ----
 
-pub(super) fn record_java(pkg: &str, name: &str, fields: &[Field]) -> String {
+pub(crate) fn record_java(pkg: &str, name: &str, fields: &[Field]) -> String {
     // Only reference components can be null, and only ones not marked `?`
     // are checked -- if that leaves nothing, the compact constructor is dead
     // weight.
@@ -107,7 +107,7 @@ pub(super) fn record_test(root: &Path, pkg: &str, name: &str, fields: &[Field]) 
         })
         .collect::<Vec<_>>()
         .join(", ");
-    let var = name.to_lowercase();
+    let var = lower_first(name);
     if has_optional(fields) {
         imports.push("java.util.Optional");
         imports.sort();
@@ -955,4 +955,3 @@ pub(super) fn strategy_impl_test(pkg: &str, name: &str, class: &str, on: &str, y
     let _ = name;
     out
 }
-

@@ -1338,6 +1338,36 @@ class DemoApplicationTests {
     }
 
     #[test]
+    fn splice_merges_with_an_existing_spring_import_and_unsplice_preserves_it() {
+        let source = r#"package com.example.demo;
+
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
+
+@SpringBootTest
+@Import(TransactionMessagingIT.Containers.class)
+class TransactionMessagingIT {}
+"#;
+        let spliced =
+            splice_spring_boot_test_import(source, "PostgresContainerConfig", "").unwrap();
+        assert!(
+            spliced.contains(
+                "@Import({TransactionMessagingIT.Containers.class, PostgresContainerConfig.class})"
+            ),
+            "{spliced}"
+        );
+        assert_eq!(spliced.matches("@Import(").count(), 1, "{spliced}");
+
+        let restored =
+            unsplice_spring_boot_test_import(&spliced, "PostgresContainerConfig", "").unwrap();
+        assert!(
+            restored.contains("@Import(TransactionMessagingIT.Containers.class)"),
+            "{restored}"
+        );
+        assert!(restored.contains("org.springframework.context.annotation.Import"));
+    }
+
+    #[test]
     fn kafka_plan_is_a_client_plus_a_compose_broker() {
         // The Spring path reads the base package, for the deserializer's
         // trusted-packages list -- so it needs a project to read.

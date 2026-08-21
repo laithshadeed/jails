@@ -11,7 +11,7 @@ use super::*;
 // implements it. The one pattern java.md names by name. ----
 
 pub(super) fn repository_port(pkg: &str, name: &str, extra: &str) -> String {
-    let var = name.to_lowercase();
+    let var = lower_first(name);
     format!(
         r#"package {pkg};
 
@@ -368,7 +368,7 @@ pub(super) fn jdbc_repository(
     // when it happens to sit in the same package as the enum.
     owner: &str,
 ) -> String {
-    let var = name.to_lowercase();
+    let var = lower_first(name);
     let table = crate::sql::table_name(name);
     let mapped: Vec<&crate::sql::Column> = columns.iter().filter(|c| c.mapped()).collect();
     let derived = !mapped.is_empty();

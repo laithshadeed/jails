@@ -37,11 +37,12 @@ The missing leverage is between those commands and after the first scaffold. Tod
 1. Make `jails dev` a fast, resident, measured feedback loop.
 2. Give every mutating command one `ChangeSet` engine, provenance lock, journaled crash recovery, and a machine-readable plan.
 3. Generate the CLI schema and diagnostic events for Neovim and agents; stop duplicating command knowledge.
-4. Define and enforce a versioned production application contract.
-5. Add package-by-feature and a small declarative application model.
-6. Add exact-version dependency source navigation as soon as the typed location/editor protocol exists.
-7. Prove the generic kernel with a small reference service, then two deliberately different verticals: a safe crawler and a production-shaped support inbox.
-8. Only then add versioned packs and automated upgrades.
+4. Replace one-file template dispatch with a context-aware generator engine that produces and evolves complete slices.
+5. Define and enforce a versioned production application contract.
+6. Add package-by-feature and a small declarative application model.
+7. Add exact-version dependency source navigation as soon as the typed location/editor protocol exists.
+8. Prove the generic kernel with a small reference service, then two deliberately different verticals: a safe crawler and a production-shaped support inbox.
+9. Only then add versioned packs and automated upgrades.
 
 The intended experience is closer to Rails in *workflow*, while keeping Java’s static types and Spring’s ecosystem:
 
@@ -166,6 +167,8 @@ This gives Jails a reusable multiplication point: application specs, blueprints,
 12. **Capabilities own lifecycle, not just installation.** A capability includes compatibility, invariants, verification, provenance, upgrade, and removal.
 13. **Keep the generic core domain-blind.** Core IR knows resources, routes, configuration, migrations, jobs, events, checks, and artifacts—not conversations, books, or crawl selectors.
 14. **Prefer policy profiles over option soup.** Offer a few coherent, inspectable profiles with explicit overrides rather than dozens of independent booleans that create untested combinations.
+15. **Generators should remove decisions, not merely keystrokes.** Infer safe choices from the project, explain them in the plan, generate complete behavior, and ask only for information that cannot be derived reliably.
+16. **Smart means deterministic and context-aware.** AI may propose an intent, but the generator, migration, dependency, ownership, and verification decisions must be reproducible and testable offline.
 
 ## Prioritized bets
 
@@ -175,6 +178,7 @@ This gives Jails a reusable multiplication point: application specs, blueprints,
 | P0 | Resident `jails dev` loop | Improves every minute of every Java task | 2–3 weeks | Save-to-healthy and focused-test feedback normally land in a few seconds |
 | P0 | CLI schema and event protocol | Unblocks reliable Neovim and agent integrations | 1–2 weeks, parallel | No command/capability lists are hand-copied in the editor plugin |
 | P0 | `ChangeSet` + provenance + recovery | Makes all higher-level automation safer | 3–5 weeks | Every write can be planned, explained, journaled, recovered after a crash, and given an explicit inverse where possible |
+| P1 | Context-aware generator engine | Removes recurring application plumbing safely, including later evolution | 3–5 weeks for the engine and first slices | One intent produces a compiling vertical slice with dependencies, migration, API, tests, examples, and provenance; later field changes are safe forward plans |
 | P1 | Production contract + reference service | Defines what Jails promises before broadening generation | 2–3 weeks for v1 | A generated reference API passes architecture, config, security, DB, observability, test, image, and CI conformance checks |
 | P1 | Feature-first layout + Modulith verification | Removes navigation and ownership entropy | 2–3 weeks | A feature is one directory with a verified public boundary |
 | P1 | Declarative app model | Multiplies generator value across complete slices | 3–5 weeks | One small spec produces a working resource/workflow and tests without owning user logic |
@@ -467,6 +471,208 @@ The current `add::Plan` can be adapted rather than discarded.
 
 ---
 
+## Cross-cutting foundation: smarter generators that erase boilerplate
+
+Jails already has an unusually strong `scaffold`: one field model drives the record, repository port, JDBC and in-memory adapters, request/response types, service, controller, migration, fixture, and tests. That shared source of truth is the right idea. The next step is not dozens of unrelated artifact kinds; it is a generator engine that understands project context, composes complete artifact graphs, and evolves them safely.
+
+The first dogfood increment now proves this direction beyond CRUD: both the crawler and inbox manifests declare ordinary typed Kafka events, and Jails derives the Java record, imports, publisher key, realistic constructor values, assertion oracle, and real-broker integration test from the same field declarations. Running both full manifests exposed and fixed two composition bugs in the generic machinery—non-repeatable Spring `@Import` annotations must be merged, and test examples/assertions must share one value model. This is useful evidence, not a reason to add crawler or inbox concepts to core. The next leverage is generic `usecase`, typed `query`, domain-event, and durable `job` intents plus output provenance and drift repair.
+
+### From template selection to intent compilation
+
+The current mental model is close to:
+
+```text
+artifact kind + name + fields -> template functions -> files
+```
+
+The stronger generic model is:
+
+```text
+user intent
+  + discovered project context
+  + selected capability/profile policy
+  + existing application graph and provenance
+                    |
+                    v
+           resolved generation model
+                    |
+                    v
+       artifact graph + invariants + checks
+                    |
+                    v
+                 ChangeSet
+```
+
+The resolved model should answer once, before rendering:
+
+- which Maven module, source set, base package, and feature own the change;
+- which Boot/JDK APIs and test annotations are valid for this project;
+- which capabilities and dependencies are present, missing, incompatible, or implied;
+- whether persistence is JDBC, in-memory-only, or another explicitly supported adapter;
+- which table, route, bean, type, migration, configuration key, and test names already exist;
+- which files are Jails-owned, safely patchable, adopted, conflicted, or user-owned;
+- which production-profile invariants apply;
+- which generated checks must pass before the intent is considered complete.
+
+Renderers receive this typed model. They should not rediscover project state, inspect the filesystem ad hoc, or make independent naming and dependency decisions.
+
+### A small set of high-value intents
+
+Keep low-level kinds for experts and composition, but optimize the default commands around work developers actually need:
+
+```bash
+jails generate resource Customer id:uuid@pk email:string!@unique
+jails generate usecase SuspendCustomer customerId:uuid! reason:string!
+jails generate query ActiveCustomers status:CustomerStatus! --page cursor
+jails generate client Billing --base-url app.clients.billing.base-url
+jails generate event CustomerSuspended customerId:uuid! occurredAt:instant!
+jails generate job PurgeExpiredSessions --schedule app.jobs.purge.cron
+jails generate field Customer displayName:string? --migration
+jails generate factory Customer
+```
+
+Each intent expands only as far as the project context warrants:
+
+- `resource` creates a usable vertical slice, not empty controller/service/repository stubs;
+- `usecase` creates input/output contracts, a transaction boundary, endpoint or message adapter when requested, error mapping, and focused tests;
+- `query` creates typed parameters/results, visible SQL, mapping, pagination rules, and a real-database test;
+- `client` creates immutable validated configuration, the Boot-version-correct HTTP client, explicit timeouts, error translation, a WireMock test, and observability hooks selected by policy;
+- `event` creates the contract and local publisher/listener seams, adding broker-specific adapters only when that capability is selected;
+- `job` creates bounded execution, configuration, metrics, idempotency/locking seams where required, and failure tests—not just `@Scheduled`;
+- `field` understands the existing resource and emits a forward schema/code/test evolution plan;
+- `factory` derives valid defaults and typed overrides from the same field/constraint model used by production code.
+
+These are generic application concepts. Domain blueprints merely submit several such intents and connect them.
+
+### Infer aggressively, guess conservatively
+
+Generators save the most time when the common command is short. Jails should infer:
+
+- feature and package from the nearest owned type or explicit application graph;
+- table and column names from one naming policy;
+- imports and nullability from resolved field types;
+- validation annotations, SQL constraints, sample values, fixture values, and test cases from one constraint model;
+- migration sequence and dependency additions from current project state;
+- test slice from the generated boundary;
+- route pluralization and conventional status codes from a versioned API policy;
+- Boot 3 versus Boot 4 APIs from the effective POM, never from the Jails build version;
+- whether a generated adapter should be the Spring bean from the active persistence capability.
+
+It must stop and require explicit input for ambiguous or dangerous decisions:
+
+- rename versus drop-and-add;
+- destructive schema changes or data conversion;
+- aggregate ownership and cross-feature dependencies;
+- tenant/security boundaries;
+- retry and idempotency semantics;
+- public route compatibility;
+- external side effects;
+- edits to user-owned logic.
+
+Every inference appears in `plan` with a reason and origin:
+
+```text
+route: POST /api/customers
+  inferred from: resource policy v1 + pluralization(customers)
+persistence: jdbc
+  inferred from: capability db@2, active adapter jdbc
+test: @WebMvcTest(CustomerController.class)
+  inferred from: Spring Boot 4.1 test policy
+migration: V004__add_customer_display_name.sql
+  inferred from: applied max V003; nullable additive field
+```
+
+`--explain` expands this reasoning; JSON exposes stable reason codes. A user can override a supported choice explicitly, and the override is recorded in the application model so the next generator does not ask again.
+
+### Generate complete code, not ceremonial layers
+
+The quality bar is “less boring code remains,” not “more files were generated.” A smart generator should:
+
+- omit a layer that adds no boundary or behavior;
+- prefer records, constructor injection, compact immutable configuration, and visible SQL;
+- generate mappings mechanically from one model rather than hand-maintained field copies;
+- create realistic success, validation, not-found, conflict, authorization, and persistence tests appropriate to the intent;
+- add executable HTTP examples and valid fixtures;
+- add required dependencies/capabilities in the same plan;
+- compile and run the smallest relevant verification automatically after apply;
+- leave obvious extension seams without `TODO` methods that only throw `UnsupportedOperationException`;
+- never generate speculative abstractions “for later.”
+
+Measure **authored lines and decisions after generation**, not generated line count. If a developer must immediately repair imports, align DTO fields, add a migration, invent fixtures, wire a bean, or create the first meaningful test, the generator is incomplete.
+
+### Safe composition and evolution
+
+Creation is a minority of application work. The engine needs three modes:
+
+1. **Create**: produce a new owned artifact graph.
+2. **Extend**: add behavior through known structural anchors or new owned files.
+3. **Evolve**: compare desired intent with provenance/current source and produce forward migrations plus compatibility changes.
+
+Do not broadly rewrite arbitrary Java text. Prefer, in order:
+
+1. regenerate untouched owned mechanical artifacts;
+2. add a new owned file implementing a stable user-owned interface;
+3. patch a recorded structural anchor with an expected hash;
+4. ask jdtls/OpenRewrite for a semantic edit where their contract is available;
+5. stop with a conflict and an exact manual migration guide.
+
+Examples:
+
+- adding a nullable field updates the domain record, request/response mapping, named JDBC bindings, fixture, factory, tests, and creates a new migration;
+- changing a field to required first plans nullable expansion, backfill seam, validation switch, then later contraction—never a one-step destructive migration;
+- adding a use case creates a new service method or dedicated handler without regenerating hand-written service logic;
+- changing a route reports client/example compatibility impact before applying;
+- destroying an intent removes only unchanged owned artifacts and refuses to strand imports, registrations, migrations, or capability users.
+
+### One field model, many consistent outputs
+
+Promote the existing field parser into a versioned semantic model used everywhere:
+
+```rust
+struct FieldModel {
+    id: StableId,
+    name: JavaName,
+    java_type: JavaType,
+    sql_type: Option<SqlType>,
+    nullability: Nullability,
+    constraints: Vec<Constraint>,
+    relation: Option<Relation>,
+    exposure: Exposure,
+    example: ExampleValue,
+}
+```
+
+The domain record, validation, request/response type, SQL DDL, query binding, row mapping, OpenAPI metadata if selected, fixture, factory, and tests must derive from this one model. Cross-output invariants should make drift structurally impossible—for example, every selected SQL column has exactly one named write binding and one row mapping, and every required request field has both validation and a negative test.
+
+Stable field IDs matter for evolution: a rename preserves identity and becomes a rename migration; a removed ID is a deletion requiring an explicit destructive workflow. Names alone cannot distinguish those cases.
+
+### Generator conformance suite
+
+Every high-level intent needs more than golden text snapshots:
+
+- golden tree and second-run no-diff test;
+- clean compile under every supported Boot/JDK pair;
+- context matrix: with/without DB, security, Modulith, broker, and production profile as applicable;
+- collision tests for routes, beans, types, tables, configuration keys, and migration versions;
+- property-based field combinations covering nullability, constraints, composite keys, enums, values, and references;
+- create/extend/evolve/destroy lifecycle tests with user edits and old Jails provenance;
+- real PostgreSQL integration test for generated SQL;
+- generated test mutation check: deliberately break one generated invariant and prove its test fails;
+- filesystem fault-injection through the common `ChangeSet` journal;
+- boilerplate budget: count manual edits required to reach the documented example and reject regressions.
+
+### Acceptance criteria
+
+- A conventional resource command needs only a name and field declarations; it compiles, migrates, starts, and has meaningful tests without hand wiring.
+- Generator output changes correctly with effective Boot version, active capabilities, module, feature layout, and production profile.
+- Adding a field or use case updates every mechanical consumer from one semantic model and preserves user-owned logic.
+- All inferred decisions are visible and machine-readable; ambiguous destructive decisions are never guessed.
+- A generated slice contains no dead placeholder, unused dependency, unregistered adapter, disabled test, or unexplained TODO.
+- Low-level artifact kinds and high-level intents share renderers and `ChangeSet` operations rather than becoming two generator implementations.
+- Crawler, inbox, and the reference service use the same intent vocabulary and generator engine.
+
+---
+
 ## Bet 3: a stable CLI/editor/agent protocol
 
 ### Generate command knowledge from the CLI
@@ -692,6 +898,21 @@ Application
 
 Crawler concepts such as selectors and scope rules lower into this graph. Inbox concepts such as conversations and assignment lower into it. Neither belongs in the core `ChangeSet` or profile engine. If a third, unrelated reference application cannot use the same IR without new domain words in core, the abstraction is not yet generic.
 
+### Genericity is a release gate
+
+Every proposed core change must pass this test before implementation:
+
+1. Can it be named without mentioning a showcase domain?
+2. Is it useful to at least three materially different Spring applications?
+3. Does it represent a Spring/build/application concern rather than business behavior?
+4. Can a project decline it without weakening unrelated capabilities?
+5. Does it lower through the same intent, capability, `ChangeSet`, provenance, and verification path?
+6. Does the generated application remain understandable and operable without Jails installed?
+
+If the answer to 1–3 is no, it belongs in a blueprint or application-owned code. If the answer to 4–6 is no, the design is too coupled for core.
+
+Concretely, Jails core may understand `Feature`, `Route`, `Client`, `Resource`, `Query`, `Event`, `Job`, `Policy`, and `Verification`. It must not acquire core enums or special mutation paths named `Crawler`, `Inbox`, `Conversation`, `Book`, `KafkaUi`, or any future showcase product. Blueprints are declarative compositions of generic primitives and may ship separately from the core release cadence once the pack format is safe.
+
 ### Acceptance criteria
 
 - `profile plan` lowers through exactly the same capability and `ChangeSet` machinery as manual commands.
@@ -700,6 +921,7 @@ Crawler concepts such as selectors and scope rules lower into this graph. Inbox 
 - Removing or overriding a profile capability reports which guarantees become `not-selected` or `user-owned`.
 - Profile versions are immutable; changed policy ships as a new version with an explicit upgrade plan.
 - No profile introduces a Jails runtime library or makes the generated application require Jails in production.
+- No profile or core IR type contains showcase-domain concepts; a repository-level architecture test pins this boundary.
 
 ---
 
@@ -2180,6 +2402,13 @@ Gate:
 - forbidden module dependency fails a generated verification test;
 - the feature can be navigated and tested from Neovim without browsing global layers.
 
+Current dogfood baseline: the two declarative manifests already compose DB,
+security, observability, schedules, scaffolds, and typed Kafka events without
+manual Java edits, and both pass real PostgreSQL/Kafka verification. This is a
+production-shaped generation test, not a production-ready crawler or inbox:
+their user-owned traversal, assignment, tenancy, idempotency, and durable-work
+semantics remain the Phase 5/6 work.
+
 ### Phase 5: crawler proof — roughly 3–4 weeks for Slice 1, then measure
 
 Build only the embedded static path, spec, fixture workbench, event stream, explainable scope, and safe limits first. Do not start the browser sidecar until the static slice meets its five-minute/20-line goals.
@@ -2265,6 +2494,7 @@ These are deliberately small enough to sequence and review:
 - cross-workspace inbox access succeeding: zero in application and RLS tests;
 - duplicate Jails-controlled logical effect after retry/recovery: zero in transactional idempotency fixtures; uncontrolled external delivery is measured and documented as at-least-once;
 - command/capability knowledge duplicated in editor code: zero for supported protocol versions.
+- showcase-domain types, branches, or mutation paths in Jails core: zero; crawler and inbox compile only from generic capabilities and IR nodes.
 
 ### Measure honestly
 
@@ -2277,6 +2507,7 @@ These are deliberately small enough to sequence and review:
 ## Decisions to keep saying “no” to
 
 - More isolated stub generators before the resident loop and `ChangeSet` foundation.
+- Domain-specific commands, enums, templates, or state in core merely because a showcase needs them; express the reusable primitive or keep the behavior in the blueprint/application.
 - A general plugin/runtime-hook system before versioned IR, state, and compatibility rules.
 - Arbitrary executable hooks in downloaded packs or public APIs.
 - A distributed crawler, browser on every page, or model extraction on every page.

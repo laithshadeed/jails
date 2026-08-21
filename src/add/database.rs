@@ -728,6 +728,35 @@ pub(super) fn import_annotation(class: &str) -> String {
     format!("@Import({class}.class)")
 }
 
+fn import_members(line: &str) -> Option<Vec<String>> {
+    let inner = line
+        .trim()
+        .strip_prefix("@Import(")?
+        .strip_suffix(')')?
+        .trim();
+    let inner = inner
+        .strip_prefix('{')
+        .and_then(|value| value.strip_suffix('}'))
+        .unwrap_or(inner);
+    Some(
+        inner
+            .split(',')
+            .map(str::trim)
+            .filter(|member| !member.is_empty())
+            .map(str::to_string)
+            .collect(),
+    )
+}
+
+fn render_import_annotation(line: &str, members: &[String]) -> String {
+    let indent = &line[..line.len() - line.trim_start().len()];
+    if members.len() == 1 {
+        format!("{indent}@Import({})", members[0])
+    } else {
+        format!("{indent}@Import({{{}}})", members.join(", "))
+    }
+}
+
 pub(super) fn find_spring_boot_tests(dir: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     let mut stack = vec![dir.to_path_buf()];
@@ -757,12 +786,28 @@ pub(super) fn splice_spring_boot_test_import(source: &str, class: &str, extra: &
     let annotation = import_annotation(class);
     let anchor = source.find("@SpringBootTest")?;
     let line_start = source[..anchor].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let target = format!("{class}.class");
 
-    let mut out = String::with_capacity(source.len() + annotation.len() + extra.len() + 64);
-    out.push_str(&source[..line_start]);
-    out.push_str(&annotation);
-    out.push('\n');
-    out.push_str(&source[line_start..]);
+    // `@Import` may sit before or after `@SpringBootTest`; both orders are
+    // legal and generated tests use both. It is not repeatable, so merge into
+    // the existing annotation rather than adding a second one.
+    let existing = source
+        .lines()
+        .find(|line| line.trim_start().starts_with("@Import("));
+    let mut out = if let Some(line) = existing {
+        let mut members = import_members(line)?;
+        if !members.iter().any(|member| member == &target) {
+            members.push(target);
+        }
+        source.replacen(line, &render_import_annotation(line, &members), 1)
+    } else {
+        let mut out = String::with_capacity(source.len() + annotation.len() + extra.len() + 64);
+        out.push_str(&source[..line_start]);
+        out.push_str(&annotation);
+        out.push('\n');
+        out.push_str(&source[line_start..]);
+        out
+    };
 
     let mut imports = String::new();
     if !out.contains("org.springframework.context.annotation.Import") {
@@ -782,31 +827,36 @@ pub(super) fn splice_spring_boot_test_import(source: &str, class: &str, extra: &
 }
 
 pub(super) fn unsplice_spring_boot_test_import(source: &str, class: &str, extra: &str) -> Option<String> {
-    let annotation = import_annotation(class);
-    if !source.contains(&annotation) {
+    let target = format!("{class}.class");
+    let extra = extra.trim();
+    let mut removed = false;
+    let mut lines = Vec::new();
+    for line in source.lines() {
+        if let Some(mut members) = import_members(line) {
+            let before = members.len();
+            members.retain(|member| member != &target);
+            if members.len() != before {
+                removed = true;
+                if !members.is_empty() {
+                    lines.push(render_import_annotation(line, &members));
+                }
+                continue;
+            }
+        }
+        lines.push(line.to_string());
+    }
+    if !removed {
         return None;
     }
-    let extra = extra.trim();
-    // Drop the Import import only when this was the last @Import in the file.
-    let dropping_import_stmt = source.matches("@Import").count() <= 1;
-    let lines: Vec<&str> = source
-        .lines()
-        .filter(|line| {
-            let trimmed = line.trim();
-            if trimmed == annotation {
-                return false;
-            }
-            if !extra.is_empty() && trimmed == extra {
-                return false;
-            }
-            if dropping_import_stmt
-                && trimmed == "import org.springframework.context.annotation.Import;"
-            {
-                return false;
-            }
-            true
-        })
-        .collect();
+    let dropping_import_stmt = !lines.iter().any(|line| line.trim_start().starts_with("@Import("));
+    lines.retain(|line| {
+        let trimmed = line.trim();
+        if !extra.is_empty() && trimmed == extra {
+            return false;
+        }
+        !(dropping_import_stmt
+            && trimmed == "import org.springframework.context.annotation.Import;")
+    });
     let mut out = lines.join("\n");
     if source.ends_with('\n') {
         out.push('\n');
@@ -884,4 +934,3 @@ pub(super) fn migrations_java(pkg: &str, class: &str) -> String {
 pub(super) fn database_test_java(pkg: &str, database: &str, migrations: &str) -> String {
     crate::template::render(include_str!("../../templates/add/database_test_java.java"), &[("pkg", pkg), ("database", database), ("migrations", migrations)])
 }
-

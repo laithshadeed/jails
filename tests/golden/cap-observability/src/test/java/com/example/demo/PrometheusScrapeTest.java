@@ -2,6 +2,8 @@ package com.example.demo;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -17,17 +19,32 @@ import org.springframework.test.web.servlet.assertj.MockMvcTester;
  * A missing registry is not an error, it is an endpoint that 404s; a narrowed
  * exposure list is not an error either. The symptom in all cases is a
  * dashboard that stays empty, noticed days later.
+ *
+ * <p>The probe sends test-only Basic credentials. Applications without the
+ * security capability ignore the header; secured applications exercise the
+ * real filter chain without making the scrape endpoint public.
  */
-@SpringBootTest
+@SpringBootTest(
+        properties = {
+            "spring.security.user.name=prometheus-probe",
+            "spring.security.user.password=prometheus-probe"
+        })
 @AutoConfigureMockMvc
 class PrometheusScrapeTest {
+
+    private static final String BASIC =
+            "Basic "
+                    + Base64.getEncoder()
+                            .encodeToString(
+                                    "prometheus-probe:prometheus-probe"
+                                            .getBytes(StandardCharsets.UTF_8));
 
     @Autowired
     private MockMvcTester mvc;
 
     @Test
     void theScrapeEndpointServesThisApplicationsMeters() {
-        assertThat(mvc.get().uri("/actuator/prometheus"))
+        assertThat(mvc.get().uri("/actuator/prometheus").header("Authorization", BASIC))
                 .hasStatusOk()
                 .bodyText()
                 // Micrometer renames dots to underscores for Prometheus, so

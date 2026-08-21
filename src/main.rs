@@ -1,4 +1,5 @@
 mod add;
+mod app;
 mod compose;
 mod config;
 mod console;
@@ -107,6 +108,11 @@ enum Command {
         /// Skip `git init` and the .gitignore it normally sets up
         #[arg(long)]
         no_git: bool,
+    },
+    /// Plan or apply a generic declarative application manifest
+    App {
+        #[command(subcommand)]
+        command: app::AppCommand,
     },
     /// Generate a scaffold or one small Java/SQL artifact
     ///
@@ -410,6 +416,7 @@ fn main() -> std::process::ExitCode {
             release,
             no_git,
         } => new::new_cli(&name, &release, !no_git, debug, pretend),
+        Command::App { command } => app::run(command, debug, pretend),
         Command::Generate {
             kind,
             name,

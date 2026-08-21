@@ -223,6 +223,217 @@ fn generate_scaffold_writes_a_raw_jdbc_slice() {
 }
 
 #[test]
+fn app_manifest_plan_is_domain_blind_and_writes_nothing() {
+    let root = temp_dir("app-manifest-plan");
+    write_spring_fixture(&root);
+    let manifest = root.join("crawler.toml");
+    fs::write(
+        &manifest,
+        include_str!("../examples/web-crawler/.jails/app.toml"),
+    )
+    .unwrap();
+
+    let output = jails_cmd(&root, None)
+        .args(["app", "plan", "--manifest"])
+        .arg(&manifest)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("ensure capability  db"), "{stdout}");
+    assert!(stdout.contains("pending  generate scaffold CrawlRun"), "{stdout}");
+    assert!(!root.join("jails.toml").exists());
+    assert!(!root.join(".jails/app-state-v1").exists());
+}
+
+#[test]
+fn app_manifest_builds_the_crawler_skeleton_and_is_resumable() {
+    let root = temp_dir("app-manifest-crawler");
+    write_spring_fixture(&root);
+    let manifest_dir = root.join(".jails");
+    fs::create_dir_all(&manifest_dir).unwrap();
+    fs::write(
+        manifest_dir.join("app.toml"),
+        include_str!("../examples/web-crawler/.jails/app.toml"),
+    )
+    .unwrap();
+
+    for attempt in 1..=2 {
+        let output = jails_cmd(&root, None)
+            .args(["app", "apply", "--no-start"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "attempt {attempt}: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let main = root.join("src/main/java/com/example/demo");
+    assert!(main.join("domain/CrawlStatus.java").is_file());
+    assert!(main.join("domain/CrawlRun.java").is_file());
+    assert!(main.join("domain/CrawledPage.java").is_file());
+    assert!(main.join("clients/PageFetcherClient.java").is_file());
+    assert!(main.join("messaging/PageDiscoveredEvent.java").is_file());
+    assert!(main.join("jobs/CrawlDispatcherJob.java").is_file());
+    assert!(root.join(".jails/app-state-v1").is_file());
+    assert_eq!(
+        fs::read_dir(root.join("src/main/resources/db/migration"))
+            .unwrap()
+            .count(),
+        3
+    );
+}
+
+#[test]
+fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
+    let root = temp_dir("app-manifest-inbox");
+    write_spring_fixture(&root);
+    let manifest_dir = root.join(".jails");
+    fs::create_dir_all(&manifest_dir).unwrap();
+    fs::write(
+        manifest_dir.join("app.toml"),
+        include_str!("../examples/support-inbox/.jails/app.toml"),
+    )
+    .unwrap();
+
+    let output = jails_cmd(&root, None)
+        .args(["app", "apply", "--no-start"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let main = root.join("src/main/java/com/example/demo");
+    for name in [
+        "Workspace",
+        "Contact",
+        "Conversation",
+        "Message",
+    ] {
+        assert!(main.join(format!("domain/{name}.java")).is_file(), "{name}");
+        assert!(
+            main.join(format!("web/{name}Controller.java")).is_file(),
+            "{name} controller"
+        );
+    }
+    assert!(main.join("domain/ConversationStatus.java").is_file());
+    assert!(main.join("domain/MessageDirection.java").is_file());
+    assert!(main.join("messaging/MessageReceivedEvent.java").is_file());
+    assert!(main.join("jobs/OutboundDeliveryJob.java").is_file());
+    assert_eq!(
+        fs::read_dir(root.join("src/main/resources/db/migration"))
+            .unwrap()
+            .count(),
+        5
+    );
+}
+
+#[test]
+fn app_manifests_compile_without_manual_source_edits() {
+    if !real_mvn_available() {
+        skip("mvn not found on PATH");
+        return;
+    }
+    if !real_java_available() {
+        skip("java/javac not found on PATH");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    for (name, manifest) in [
+        (
+            "web-crawler",
+            include_str!("../examples/web-crawler/.jails/app.toml"),
+        ),
+        (
+            "support-inbox",
+            include_str!("../examples/support-inbox/.jails/app.toml"),
+        ),
+    ] {
+        let root = temp_dir(&format!("app-manifest-real-{name}"));
+        write_spring_fixture(&root);
+        fs::create_dir_all(root.join(".jails")).unwrap();
+        fs::write(root.join(".jails/app.toml"), manifest).unwrap();
+
+        let output = jails_cmd_with_path(&root, &path)
+            .args(["app", "apply", "--no-start"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{name} apply: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let status = std::process::Command::new("mvn")
+            .current_dir(&root)
+            .env("PATH", &path)
+            .args(["-q", "-DskipTests", "package"])
+            .status()
+            .unwrap();
+        assert!(status.success(), "{name} did not compile");
+    }
+}
+
+#[test]
+fn app_manifests_pass_the_full_generated_verification_gate() {
+    if !real_mvn_available() {
+        skip("mvn not found on PATH");
+        return;
+    }
+    if !real_java_available() {
+        skip("java/javac not found on PATH");
+        return;
+    }
+    if !real_docker_available() {
+        skip("a running Docker-compatible container runtime is required");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    for (name, manifest) in [
+        (
+            "web-crawler",
+            include_str!("../examples/web-crawler/.jails/app.toml"),
+        ),
+        (
+            "support-inbox",
+            include_str!("../examples/support-inbox/.jails/app.toml"),
+        ),
+    ] {
+        let root = temp_dir(&format!("app-manifest-verify-{name}"));
+        write_spring_fixture(&root);
+        fs::create_dir_all(root.join(".jails")).unwrap();
+        fs::write(root.join(".jails/app.toml"), manifest).unwrap();
+
+        let output = jails_cmd_with_path(&root, &path)
+            .args(["app", "apply", "--no-start"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{name} apply: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let status = std::process::Command::new("mvn")
+            .current_dir(&root)
+            .env("PATH", &path)
+            .args(["-q", "verify"])
+            .status()
+            .unwrap();
+        assert!(status.success(), "{name} failed its generated Maven verification");
+    }
+}
+
+#[test]
 fn destroy_without_force_prompts_and_aborts_on_no() {
     let root = temp_dir("destroy-prompt");
     write_project_skeleton(&root);
@@ -3359,7 +3570,15 @@ fn add_kafka_and_generate_event_compile_against_real_spring() {
 
     assert!(
         jails_cmd_with_path(&root, &path)
-            .args(["generate", "event", "PayoutSettled"])
+            .args([
+                "generate",
+                "event",
+                "PayoutSettled",
+                "id:uuid",
+                "payoutId:uuid",
+                "amount:decimal",
+                "occurredAt:instant",
+            ])
             .status()
             .unwrap()
             .success()
@@ -3378,7 +3597,21 @@ fn add_kafka_and_generate_event_compile_against_real_spring() {
     )
     .unwrap();
     // Keyed sends: ordering is per partition, and a null key round-robins.
-    assert!(publisher.contains("kafka.send(topic, event.id(), event)"), "{publisher}");
+    assert!(
+        publisher.contains("kafka.send(topic, String.valueOf(event.id()), event)"),
+        "{publisher}"
+    );
+
+    let event = fs::read_to_string(
+        root.join("src/main/java/com/example/demo/messaging/PayoutSettledEvent.java"),
+    )
+    .unwrap();
+    assert!(
+        event.contains(
+            "record PayoutSettledEvent(UUID id, UUID payoutId, BigDecimal amount, Instant occurredAt)"
+        ),
+        "{event}"
+    );
 
     // `test` runs Surefire only, so the IT is compiled but not executed.
     let status = jails_cmd_with_path(&root, &path)

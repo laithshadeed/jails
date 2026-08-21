@@ -3,6 +3,7 @@ package com.example.demo.messaging;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.micrometer.core.instrument.MeterRegistry;
+import java.lang.reflect.Proxy;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
@@ -20,10 +21,30 @@ class KafkaConfigTest {
      */
     @SuppressWarnings("unchecked")
     private static DefaultErrorHandler handlerWithoutRegistry() {
-        KafkaOperations<Object, Object> template = org.mockito.Mockito.mock(KafkaOperations.class);
-        ObjectProvider<MeterRegistry> noRegistry = org.mockito.Mockito.mock(ObjectProvider.class);
-        org.mockito.Mockito.when(noRegistry.getIfAvailable()).thenReturn(null);
+        KafkaOperations<Object, Object> template = noCalls(KafkaOperations.class);
+        ObjectProvider<MeterRegistry> noRegistry = noCalls(ObjectProvider.class);
         return new KafkaConfig().errorHandler(template, noRegistry);
+    }
+
+    /** A JDK proxy is enough here; no Byte Buddy agent or self-attachment. */
+    @SuppressWarnings("unchecked")
+    private static <T> T noCalls(Class<T> type) {
+        return (T)
+                Proxy.newProxyInstance(
+                        type.getClassLoader(),
+                        new Class<?>[] {type},
+                        (proxy, method, arguments) -> {
+                            Class<?> result = method.getReturnType();
+                            if (result == boolean.class) return false;
+                            if (result == byte.class) return (byte) 0;
+                            if (result == short.class) return (short) 0;
+                            if (result == int.class) return 0;
+                            if (result == long.class) return 0L;
+                            if (result == float.class) return 0F;
+                            if (result == double.class) return 0D;
+                            if (result == char.class) return '\0';
+                            return null;
+                        });
     }
 
     /**

@@ -94,14 +94,21 @@ fn column(field: &Field, root: &Path, pkg: &str, receiver: &str) -> Column {
     }
 
     let inner = inner_type(&field.java_type);
-    if let Some((sql_type, read, write)) = builtin_mapping(&inner, &name, &accessor) {
+    if let Some((sql_type, read, mut write)) = builtin_mapping(&inner, &name, &accessor) {
+        if optional {
+            write = optional_write(&inner, &accessor);
+        }
         return finish(name, sql_type, not_null, optional, read, write, &inner, field.constraints);
     }
 
     // The one owned type with a knowable representation.
     if field.owned && crate::generate::is_enum_type(root, pkg, &inner) {
         let read = format!("{inner}.valueOf(rows.getString(\"{name}\"))");
-        let write = format!("{accessor}.name()");
+        let write = if optional {
+            format!("{accessor}.map({inner}::name).orElse(null)")
+        } else {
+            format!("{accessor}.name()")
+        };
         return finish(name, "text".into(), not_null, optional, read, write, &inner, field.constraints);
     }
 
@@ -148,7 +155,6 @@ fn finish(
     } else {
         format!("Optional.ofNullable({read})")
     };
-    let write = format!("{write}.orElse(null)");
     Column {
         name,
         sql_type,
@@ -157,6 +163,17 @@ fn finish(
         write: Some(write),
         java_type: inner.to_string(),
         constraints,
+    }
+}
+
+/// A nullable record component is an `Optional<T>`. Transformations must
+/// happen *inside* that Optional: `Timestamp.from(optional)` does not compile,
+/// and `optional.orElse(null).toString()` throws on the empty case.
+fn optional_write(inner: &str, accessor: &str) -> String {
+    match inner {
+        "Instant" => format!("{accessor}.map(Timestamp::from).orElse(null)"),
+        "URI" => format!("{accessor}.map(URI::toString).orElse(null)"),
+        _ => format!("{accessor}.orElse(null)"),
     }
 }
 
@@ -559,6 +576,19 @@ mod tests {
         let read = columns[0].read.as_ref().unwrap();
         assert!(read.contains("getObject(\"score\") == null"), "{read}");
         assert!(read.contains("Optional.empty()"), "{read}");
+    }
+
+    #[test]
+    fn optional_transformed_types_map_before_unwrapping() {
+        let columns = cols(&["finishedAt:instant?", "callback:uri?"]);
+        assert_eq!(
+            columns[0].write.as_deref(),
+            Some("value.finishedAt().map(Timestamp::from).orElse(null)")
+        );
+        assert_eq!(
+            columns[1].write.as_deref(),
+            Some("value.callback().map(URI::toString).orElse(null)")
+        );
     }
 
     #[test]

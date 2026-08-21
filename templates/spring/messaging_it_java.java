@@ -1,7 +1,7 @@
 package {{pkg}};
 
 import java.time.Duration;
-import java.time.Instant;
+{{event_imports}}{{disabled_import}}
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -32,7 +32,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * one run in five. Waiting on a latch with a timeout either observes the
  * message or fails saying so.
  */
-@SpringBootTest
+{{disabled}}@SpringBootTest
 @Import({{name}}MessagingIT.Containers.class)
 class {{name}}MessagingIT {
 
@@ -44,14 +44,14 @@ class {{name}}MessagingIT {
 
     @Test
     void aPublishedEventIsConsumed() throws InterruptedException {
-        {{name}}Event event = new {{name}}Event("probe-1", Instant.parse("2024-01-01T00:00:00Z"));
+        {{name}}Event event = new {{name}}Event({{event_args}});
 
         publisher.publish(event);
 
         assertThat(probe.received.await(30, TimeUnit.SECONDS))
                 .as("the event should have been consumed within 30s")
                 .isTrue();
-        assertThat(probe.last.get().id()).isEqualTo("probe-1");
+        assertThat(probe.last.get().id()).isEqualTo({{expected_id}});
     }
 
     /**

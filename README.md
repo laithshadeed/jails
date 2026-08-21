@@ -351,6 +351,53 @@ it already draws for hand-written properties inside a jails-owned block.
 `generate`, `destroy`, `add` and `remove` all take `--package <sub>` to override where
 the code lands; `--package ''` writes straight into the base package.
 
+## Declarative applications: `jails app`
+
+`.jails/app.toml` composes the same generic capabilities and generators the
+CLI exposes. It is a reproducible command sequence, not a domain-specific
+plugin or a second programming language:
+
+```toml
+schema = 1
+capabilities = ["db", "api", "actuator", "security"]
+
+[[generate]]
+kind = "enum"
+name = "TaskStatus"
+fields = ["PENDING", "RUNNING", "DONE"]
+
+[[generate]]
+kind = "scaffold"
+name = "Task"
+fields = ["id:uuid@pk", "status:TaskStatus@index", "createdAt:instant"]
+indexes = ["status, created_at desc"]
+```
+
+- `jails app plan [--manifest <path>]` validates the manifest and shows its
+  capability and generation intents without writing.
+- `jails app apply [--manifest <path>] [--no-start]` installs capabilities in
+  declaration order, then applies generation intents in declaration order.
+- global `--pretend` turns `app apply` into the same read-only plan.
+
+Progress is recorded after each successful intent in
+`.jails/app-state-v1`, so retrying after a later failure does not collide with
+completed generation. Capabilities remain independently idempotent through
+`jails.toml`. Changing an already-applied intent does not rewrite user code:
+it is a new intent, and the normal generator collision check stops for an
+explicit evolution step.
+
+The manifest is intentionally a closed schema: `schema`, `capabilities`, and
+`[[generate]]` entries with `kind`, `name`, `fields`, `indexes`, `package`,
+`strategy_on`, and `strategy_yields`. Unknown keys fail instead of being
+silently ignored. See [`examples/DOGFOOD.md`](examples/DOGFOOD.md) for the
+complete crawler and support-inbox flows and the friction ledger driving the
+next generic improvements.
+
+This first slice records resumable intent; it does not yet provide the
+planned universal atomic `ChangeSet`, safe field evolution, or production
+profile verification. Those limitations are explicit rather than hidden
+behind a “production-ready” label.
+
 ## `jails.toml`
 
 `--package` is a per-call override. For a project whose layout differs from
