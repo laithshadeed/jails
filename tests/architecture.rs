@@ -174,7 +174,14 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // states template overrides' cost as "an overridden template is
                 // not golden-tested", and names this check as the mitigation.
                 // Additive coverage again, not re-derivation.
-                ceiling: 1312,
+                //
+                // 1312 -> 1328 for the split into `doctor/environment.rs` (asks
+                // the machine) and `doctor/wiring.rs` (asks the project): two
+                // module headers and their imports. This gate sums the whole
+                // module on purpose, so a split costs a little rather than
+                // reading as a 700-line win -- which is exactly what it would
+                // have done had it kept matching one filename.
+                ceiling: 1328,
                 target: 700,
                 why: "Feature Envy at module scale: doctor re-derives by reading the project \
                       back off disk the facts `add/*` already own, and the drift between them \
@@ -211,7 +218,7 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // capability slices. The row below guards against the obvious
                 // way to cheat this one -- moving a monolith rather than
                 // decomposing it.
-                ceiling: 1258,
+                ceiling: 1262,
                 target: 2500,
                 why: "Logical cohesion: one file for everything sharing the `require_spring` \
                       precondition. abstract.md §6.2 says turning that precondition into data \
@@ -232,7 +239,7 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // relocated, and the next monolith was already the one
                 // abstract.md §3.2 calls Ousterhout's named anti-pattern
                 // verbatim: parse -> dispatch -> write -> side effects.
-                ceiling: 1813,
+                ceiling: 1262,
                 target: 700,
                 why: "The row above can be satisfied by *moving* a monolith rather than \
                       decomposing one, so this asks the question the split is actually for: \

@@ -32,7 +32,6 @@ const ALLOWED: &[AllowedConcept] = &[
             // Followed the http-workflow generator out of `spring.rs` when rung 11
             // split it; the concept is unchanged, only its address.
             "src/spring/http.rs",
-            "src/explain.rs",
             "templates/spring/http_workflow_java.java",
             "templates/spring/http_workflow_it_java.java",
         ],
@@ -44,8 +43,7 @@ const ALLOWED: &[AllowedConcept] = &[
             "src/ledger.rs",
             "src/generated_files.rs",
             "src/app.rs",
-            "src/generate.rs",
-            "src/apply/mod.rs",
+            "src/generate/remove.rs",
             "src/main.rs",
         ],
         reason: "jails' own bookkeeping file (`abstract.md` §6.3 names it), which collides \
@@ -60,6 +58,14 @@ fn core_generation_stays_free_of_showcase_vocabulary() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut failures = Vec::new();
     let mut used_allowances = vec![false; ALLOWED.len()];
+    // Per *file*, not just per concept: an allowance whose word still appears
+    // somewhere keeps the whole entry alive, so a path that has gone stale --
+    // the code moved to a sibling module -- would sit there unnoticed,
+    // permitting a word in a file that no longer says it.
+    let mut used_files: Vec<Vec<bool>> = ALLOWED
+        .iter()
+        .map(|allowed| vec![false; allowed.files.len()])
+        .collect();
     for allowed in ALLOWED {
         assert!(
             !allowed.reason.trim().is_empty(),
@@ -77,12 +83,19 @@ fn core_generation_stays_free_of_showcase_vocabulary() {
             let visible = without_comments(&source);
             for word in FORBIDDEN {
                 for offset in word_offsets(&visible, word) {
-                    let allowance = ALLOWED.iter().position(|allowed| {
-                        allowed.word == *word
-                            && allowed.files.iter().any(|file| relative == Path::new(file))
+                    let allowance = ALLOWED.iter().enumerate().find_map(|(index, allowed)| {
+                        if allowed.word != *word {
+                            return None;
+                        }
+                        allowed
+                            .files
+                            .iter()
+                            .position(|file| relative == Path::new(file))
+                            .map(|file| (index, file))
                     });
-                    if let Some(index) = allowance {
+                    if let Some((index, file)) = allowance {
                         used_allowances[index] = true;
+                        used_files[index][file] = true;
                     } else {
                         let line = visible[..offset]
                             .bytes()
@@ -95,11 +108,25 @@ fn core_generation_stays_free_of_showcase_vocabulary() {
             }
         }
     }
-    for (allowed, used) in ALLOWED.iter().zip(used_allowances) {
+    for ((allowed, used), files) in ALLOWED.iter().zip(used_allowances).zip(&used_files) {
         assert!(
             used,
             "stale genericity allowance for `{}` ({})",
             allowed.word, allowed.reason
+        );
+        let stale: Vec<&str> = allowed
+            .files
+            .iter()
+            .zip(files)
+            .filter(|(_, used)| !**used)
+            .map(|(file, _)| *file)
+            .collect();
+        assert!(
+            stale.is_empty(),
+            "genericity allowance for `{}` names {} file(s) that no longer contain it: {stale:?}. \
+             Take them out -- an allow-list nobody prunes is one that permits more than it says.",
+            allowed.word,
+            stale.len()
         );
     }
     assert!(

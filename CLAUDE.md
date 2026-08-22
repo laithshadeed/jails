@@ -32,6 +32,13 @@ to build next and why. Do not add proposals here.
   - `generate/cli.rs` — `command`, `cli`, and dispatcher registration.
   - `generate/migration.rs` — `migration` and `cases`, the two kinds whose
     NAME is not a Java class.
+  - `generate/write.rs` — **how a generated file reaches disk in the shape
+    jails guarantees**, and the reason it is a module rather than thirteen
+    loose helpers: every rule in it is one a template would otherwise have to
+    remember. Import normalisation, `package-info.java` planning,
+    `ensure_failsafe`, `ensure_assertj`, `tidy_blank_lines`.
+  - `generate/scaffold.rs` — `scaffold` and its evolution step `g field`.
+  - `generate/remove.rs` — `destroy`, and `recomputed_paths` (see below).
 
   **The test module still lives in `generate.rs`**, not beside each
   submodule, which is the one place this tree does not follow the colocated
@@ -170,7 +177,13 @@ to build next and why. Do not add proposals here.
   context: instant, and works on a project that does not start (the case
   that matters). The cost is anything decided at runtime, which the output
   states rather than hiding.
-- `src/doctor.rs` — `doctor`. Read-only by contract: it must never start,
+- `src/doctor.rs` + `src/doctor/` — `doctor`. Split by **who is being asked**:
+  `doctor/environment.rs` asks the machine (is Maven there, which JDK will run,
+  is the container engine up and is it the one Testcontainers will find),
+  `doctor/wiring.rs` asks the project whether a capability is actually wired up,
+  and `doctor.rs` keeps the report, `--json`, and `capability_drift_checks` —
+  the half that is *derived* from `add::plan_for` rather than hand-written.
+  Read-only by contract: it must never start,
   stop or write anything, so it stays safe to run mid-debug. (`jails setup` is
   a different command and does write, to `~/.testcontainers.properties`, which
   is why it goes through `apply::put_outside_project`.)
