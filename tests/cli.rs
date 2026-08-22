@@ -6104,3 +6104,42 @@ fn test_fast_runs_compiled_classes_and_falls_back_loudly_when_they_are_stale() {
         "an uncompiled project must not take the fast path: {report}"
     );
 }
+
+/// `plan.md` §13.2. Every claim in `EventHub`'s Javadoc is a behavioural one,
+/// so the only place they can be checked is against a real JUnit run --
+/// especially the concurrency test, which is the reason the registry is a
+/// `ConcurrentHashMap` of `newKeySet()` rather than the obvious `HashMap`.
+#[test]
+fn add_sse_produces_tests_that_run_and_pass() {
+    if !real_mvn_available() {
+        skip("mvn not found on PATH");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let root = temp_dir("real-sse");
+    write_spring_fixture(&root);
+
+    let status = jails_cmd_with_path(&root, &path)
+        .args(["add", "sse", "--no-start"])
+        .status()
+        .unwrap();
+    assert!(status.success(), "add sse failed");
+
+    let output = jails_cmd_with_path(&root, &path)
+        .args(["test", "EventHubTest"])
+        .output()
+        .unwrap();
+    let report = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.status.success(), "{report}");
+    // A green build that ran nothing is the failure this guards: Surefire
+    // reports success over zero tests, which is exactly what a misnamed test
+    // class produces.
+    assert!(
+        report.contains("Tests run: 4"),
+        "all four hub tests must actually run: {report}"
+    );
+}

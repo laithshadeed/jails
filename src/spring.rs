@@ -21,12 +21,14 @@ mod durable;
 mod http;
 mod query;
 mod schema;
+mod sse;
 mod transition;
 mod workflow;
 pub(crate) use durable::*;
 pub(crate) use http::*;
 pub(crate) use query::*;
 pub(crate) use schema::*;
+pub(crate) use sse::*;
 pub(crate) use transition::*;
 pub(crate) use workflow::*;
 // Production code here reaches the project through `Slice`; only the renderer

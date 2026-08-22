@@ -310,6 +310,22 @@ it already draws for hand-written properties inside a jails-owned block.
   either order both leave `prometheus` exposed. The generated test scrapes the
   live endpoint rather than the registry, since a missing registry is not an
   error — it is a 404 nobody notices for days.
+- `jails add|a sse` (alias `events`) — Server-Sent Events, and the five details
+  this design gets wrong. The emitter timeout is `-1L`, not `Long.MAX_VALUE`:
+  it reaches `AsyncContext.setTimeout`, where the Servlet spec reads zero or
+  less as "no timeout" and `Long.MAX_VALUE` is a real one a container may
+  reject. `onCompletion` alone covers the clean close, the timeout and the
+  broken pipe — but it runs on a container thread while a broadcast is in
+  flight, which is why the registry is a `ConcurrentHashMap` of `newKeySet()`
+  and why subscribe and unsubscribe both go through one `compute` on the same
+  bin lock. The heartbeat needs `spring.task.scheduling.pool.size` raised,
+  because it defaults to **1** and one heartbeat blocking on a dead client
+  stalls every other `@Scheduled` job in the application. No event `id()` is
+  emitted, because Spring implements no `Last-Event-ID` replay and an id would
+  advertise resumability that does not exist. And `unsubscribe` is public
+  because `complete()` on an emitter no request is holding fires no callbacks
+  at all — it forwards to a handler the container installs. Topic-agnostic, the
+  same line `add kafka` draws.
 - `jails add|a toxiproxy` (alias `faults`) — network failure you can switch on.
   A Toxiproxy container goes in front of a dependency and `Faults` gives the
   test three verbs: `cut()` refuses connections, `latency()` slows them, and

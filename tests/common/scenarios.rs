@@ -295,6 +295,12 @@ pub const SCENARIOS: &[Scenario] = &[
         steps: &[&["add", "cache", "security", "cors", "--no-start"]],
     },
     Scenario {
+        name: "cap-sse",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[&["add", "sse", "--no-start"]],
+    },
+    Scenario {
         name: "cap-redis",
         fixture: Fixture::Spring,
         seed: &[],

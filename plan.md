@@ -1081,7 +1081,23 @@ generated chain in the same change, the methods named explicitly rather than
 credentials — the classic "works until mark-as-read becomes a PUT"), and
 origins in a marked properties block.
 
-### 13.2 `add sse` — the four details every SSE design gets wrong
+### 13.2 `add sse` — **shipped**, and there were five
+
+All four below were confirmed in `deps/` before a line was written, and the
+generated `EventHub` states each one where the code makes the choice.
+`src/spring/sse.rs`.
+
+**The fifth turned up only because the generated test was run against real
+Maven**: `ResponseBodyEmitter.complete()` sets a flag and forwards to a handler
+the container installs when it takes the emitter, so **outside a request the
+completion callbacks never fire** and `onCompletion` removes nothing. That is
+why the hub exposes `unsubscribe` as real API — genuinely needed by any caller
+that learns the client has gone by another route — rather than leaning on
+`onCompletion` alone. Two of the four tests failed on the first run for exactly
+this, which is the case for generating tests that are behavioural rather than
+structural.
+
+The original four:
 
 `-1L` (or `0L`), not `Long.MAX_VALUE`. **`onCompletion` alone suffices** for
 removal — but it runs on a *container* thread concurrently with the
@@ -1295,7 +1311,7 @@ yet — which is a healthier list than the one it replaces.
 | ~~12~~ | ~~§12 marker widening + `jails adopt`~~ — **done.** `src/build.rs` names the build tool without reading it; `find_project_root` takes any recognised marker, nearest wins; ten Maven-inherent commands refuse through `require_maven` naming what still works; `generate` states which shape a missing pom chose and which dependencies it could not splice; `doctor` leads with the real build tool instead of reporting on an absent pom. `jails adopt` writes `[layout]` from a closed synonym table, reports what it does not recognise, refuses to pick between two candidates, and never touches `[project] capabilities` | §12 | M | — |
 | 13 | `jails testd` + `--affected` | §10.2 | L | — |
 | 14 | `jails dev` v1 | §10.3 | L | — |
-| 15 | `add sse`; `g auth`, `g webhook`, `add mail`, `g search` | §13 | M each | B C |
+| 15 | ~~`add sse`~~ **shipped** (§13.2, and the fifth detail only a real test run could find); `g auth`, `g webhook`, `add mail`, `g search` still open | §13 | M each | B C |
 | 16 | Atomic whole-manifest `ChangeSet`; `codemod.rs`. **Half done**: `src/apply/` is the single write path (`fs::write` banned elsewhere); what is left is collecting the *splice* primitives under named operations, and the atomic `ChangeSet` on top | §11 | M | A B C |
 
 Item 1 is the only one with a broken user-visible case behind it, so it is
