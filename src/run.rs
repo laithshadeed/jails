@@ -52,8 +52,11 @@ pub(crate) fn maven_binary(root: &Path) -> PathBuf {
 /// spawning and exit-status handling happen in one place -- the executor
 /// prints *and then runs*, which is the property that was violated where each
 /// site decided for itself.
-pub(crate) fn run_inherited(cmd: Command, debug: bool) -> Result<()> {
+pub(crate) fn run_inherited(mut cmd: Command, debug: bool) -> Result<()> {
     let is_maven = is_maven_program(cmd.get_program());
+    if is_maven {
+        forced_color(&mut cmd);
+    }
     let mut spec = crate::process::CommandSpec::new(cmd.get_program())
         .args(cmd.get_args())
         .output(if is_maven {
@@ -195,7 +198,8 @@ fn run_watched(mut cmd: Command, debug: bool) -> Result<()> {
 }
 
 /// Force colour back on for a piped child. Maven and Spring Boot both turn
-/// it off when stdout is not a terminal, and `run_watched` always pipes.
+/// it off when stdout is not a terminal. Both Maven's diagnostic tee and
+/// `run_watched` pipe, so every Maven entry point must pass through here.
 fn forced_color(cmd: &mut Command) {
     cmd.arg("-Dstyle.color=always")
         .arg("-Dspring-boot.run.jvmArguments=-Dspring.output.ansi.enabled=always");
@@ -1124,19 +1128,19 @@ mod filter_tests {
 
 import org.junit.jupiter.api.Test;
 
-class PayoutTest {
+class ResultTest {
 
     /** Javadoc mentioning @Test, which is not an annotation. */
     void helper() {}
 
     @Test
-    void settlesAPayment() {
-        assertThat(payout.settle()).isTrue();
+    void completesAnItem() {
+        assertThat(item.complete()).isTrue();
     }
 
     @org.junit.jupiter.api.Test
     void writtenFullyQualified() {
-        assertThat(payout.fee()).isZero();
+        assertThat(item.cost()).isZero();
     }
 
     @Nested
@@ -1144,7 +1148,7 @@ class PayoutTest {
 
         @Test
         void keepsTheOriginalAmount() {
-            assertThat(payout.amount()).isEqualTo(1L);
+        assertThat(item.amount()).isEqualTo(1L);
         }
     }
 }
@@ -1161,13 +1165,13 @@ class PayoutTest {
     #[test]
     fn a_line_inside_a_test_resolves_to_that_test() {
         assert_eq!(
-            enclosing_test_method(SOURCE, line_of("payout.settle()")),
-            Some("settlesAPayment".to_string())
+            enclosing_test_method(SOURCE, line_of("item.complete()")),
+            Some("completesAnItem".to_string())
         );
         // The declaration line itself counts as inside it.
         assert_eq!(
-            enclosing_test_method(SOURCE, line_of("void settlesAPayment")),
-            Some("settlesAPayment".to_string())
+            enclosing_test_method(SOURCE, line_of("void completesAnItem")),
+            Some("completesAnItem".to_string())
         );
     }
 
@@ -1176,7 +1180,7 @@ class PayoutTest {
         // Jails' own generated ITs carry fully qualified annotations, and
         // matching `@Test` as a prefix missed every one of them.
         assert_eq!(
-            enclosing_test_method(SOURCE, line_of("payout.fee()")),
+            enclosing_test_method(SOURCE, line_of("item.cost()")),
             Some("writtenFullyQualified".to_string())
         );
     }

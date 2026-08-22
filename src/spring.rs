@@ -238,7 +238,7 @@ pub(crate) fn actuator_slice(root: &Path, pkg: &str) -> SpringSlice {
         deps: vec![ACTUATOR_STARTER],
         files: vec![(
             test.join("ActuatorEndpointsTest.java"),
-            actuator_test_java(pkg, crate::generate::mockmvc_autoconfigure_import(root)),
+            actuator_test_java(pkg),
         )],
         // Exposed deliberately and narrowly. The default over HTTP is health
         // alone; `*` is the shape that leaks heap dumps and environment
@@ -261,10 +261,10 @@ pub(crate) fn actuator_slice(root: &Path, pkg: &str) -> SpringSlice {
     }
 }
 
-fn actuator_test_java(pkg: &str, mockmvc_import: &str) -> String {
+fn actuator_test_java(pkg: &str) -> String {
     crate::template::render(
         include_str!("../templates/spring/actuator_test_java.java"),
-        &[("pkg", pkg), ("mockmvc_import", mockmvc_import)],
+        &[("pkg", pkg)],
     )
 }
 
@@ -2581,15 +2581,15 @@ mod durable_job_tests {
     #[test]
     fn durable_job_has_leasing_bounded_retry_idempotency_and_recovery() {
         let root = fixture("contract");
-        write_record(&root, "domain", "CrawlRun", &["id:uuid", "seedUrl:uri"]);
+        write_record(&root, "domain", "WorkItem", &["id:uuid", "sourceUrl:uri"]);
         write_record(
             &root,
             "service",
-            "QueueCrawlCommand",
-            &["id:uuid", "seedUrl:uri"],
+            "EnqueueWorkCommand",
+            &["id:uuid", "sourceUrl:uri"],
         );
         let fields =
-            crate::generate::parse_fields(&["id:uuid".to_string(), "seedUrl:uri".to_string()])
+            crate::generate::parse_fields(&["id:uuid".to_string(), "sourceUrl:uri".to_string()])
                 .unwrap();
 
         let files = durable_job_files(
@@ -2600,9 +2600,9 @@ mod durable_job_tests {
             "com.example.demo.service",
             "com.example.demo.app",
             "com.example.demo.domain",
-            "CrawlDispatcher",
-            "QueueCrawl",
-            "CrawlRun",
+            "WorkDispatcher",
+            "EnqueueWork",
+            "WorkItem",
             &fields,
         )
         .unwrap();
@@ -2635,9 +2635,9 @@ mod durable_job_tests {
     #[test]
     fn durable_job_requires_a_stable_id_shared_with_the_command() {
         let root = fixture("identity");
-        write_record(&root, "domain", "CrawlRun", &["id:uuid", "seedUrl:uri"]);
-        write_record(&root, "service", "QueueCrawlCommand", &["seedUrl:uri"]);
-        let fields = crate::generate::parse_fields(&["seedUrl:uri".to_string()]).unwrap();
+        write_record(&root, "domain", "WorkItem", &["id:uuid", "sourceUrl:uri"]);
+        write_record(&root, "service", "EnqueueWorkCommand", &["sourceUrl:uri"]);
+        let fields = crate::generate::parse_fields(&["sourceUrl:uri".to_string()]).unwrap();
 
         let error = durable_job_files(
             &root,
@@ -2647,9 +2647,9 @@ mod durable_job_tests {
             "com.example.demo.service",
             "com.example.demo.app",
             "com.example.demo.domain",
-            "CrawlDispatcher",
-            "QueueCrawl",
-            "CrawlRun",
+            "WorkDispatcher",
+            "EnqueueWork",
+            "WorkItem",
             &fields,
         )
         .unwrap_err();
@@ -3808,18 +3808,18 @@ mod usecase_tests {
         )
         .unwrap();
         std::fs::write(
-            root.join("src/main/java/com/example/demo/domain/CrawlStatus.java"),
-            "package com.example.demo.domain;\npublic enum CrawlStatus { QUEUED, RUNNING }\n",
+            root.join("src/main/java/com/example/demo/domain/WorkStatus.java"),
+            "package com.example.demo.domain;\npublic enum WorkStatus { QUEUED, RUNNING }\n",
         )
         .unwrap();
         write_record(
             &root,
-            "CrawlRun",
+            "WorkItem",
             &[
                 "id:uuid",
                 "seedUrl:uri",
-                "status:CrawlStatus",
-                "pagesVisited:long",
+                "status:WorkStatus",
+                "unitsProcessed:long",
                 "startedAt:instant?",
             ],
         );
@@ -3833,8 +3833,8 @@ mod usecase_tests {
             "com.example.demo.domain",
             "com.example.demo.app",
             "com.example.demo.adapters",
-            "QueueCrawl",
-            "CrawlRun",
+            "CreateWorkItem",
+            "WorkItem",
             &fields,
         )
         .unwrap();
@@ -3853,7 +3853,7 @@ mod usecase_tests {
             "{implementation}"
         );
         assert!(
-            implementation.contains("CrawlStatus.values()[0]"),
+            implementation.contains("WorkStatus.values()[0]"),
             "{implementation}"
         );
         assert!(implementation.contains("0L"), "{implementation}");
@@ -3862,7 +3862,7 @@ mod usecase_tests {
             "{implementation}"
         );
         assert!(
-            implementation.contains("repository.save(crawlRun)"),
+            implementation.contains("repository.save(workItem)"),
             "{implementation}"
         );
         assert!(
@@ -6453,10 +6453,7 @@ pub(crate) fn observability_slice(root: &Path, pkg: &str) -> SpringSlice {
             (test.join("AppMetricsTest.java"), app_metrics_test_java(pkg)),
             (
                 test.join("PrometheusScrapeTest.java"),
-                prometheus_scrape_test_java(
-                    pkg,
-                    crate::generate::mockmvc_autoconfigure_import(root),
-                ),
+                prometheus_scrape_test_java(pkg),
             ),
         ],
         properties: vec![
@@ -6592,10 +6589,10 @@ mod observability_tests {
     }
 }
 
-fn prometheus_scrape_test_java(pkg: &str, mockmvc_import: &str) -> String {
+fn prometheus_scrape_test_java(pkg: &str) -> String {
     crate::template::render(
         include_str!("../templates/spring/prometheus_scrape_test_java.java"),
-        &[("pkg", pkg), ("mockmvc_import", mockmvc_import)],
+        &[("pkg", pkg)],
     )
 }
 

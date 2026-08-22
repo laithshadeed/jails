@@ -9,6 +9,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 /**
  * Both directions, because only one of them is usually checked.
@@ -28,14 +30,13 @@ import org.springframework.test.web.servlet.assertj.MockMvcTester;
  * repository, the context set by the test is never read back.
  */
 @WebMvcTest(
-        controllers = SecurityConfigTest.class,
+        controllers = SecurityProbeController.class,
         properties = {
             "app.security.dev.username=probe",
             "app.security.dev.password=probe"
         })
 @Import(SecurityConfig.class)
 class SecurityConfigTest {
-
     private static final String BASIC =
             "Basic "
                     + Base64.getEncoder()
@@ -46,11 +47,9 @@ class SecurityConfigTest {
 
     @Test
     void healthIsReachableWithoutCredentials() {
-        // A load balancer cannot authenticate. Needs `jails add actuator`
-        // for the endpoint to exist at all.
-        // 404 rather than 401: the request passed the security filter and this
-        // focused slice deliberately has no actuator endpoint behind it.
-        assertThat(mvc.get().uri("/management/health")).hasStatus(404);
+        // A load balancer cannot authenticate. The focused controller makes
+        // this prove permitAll(), rather than treating a 404 as success.
+        assertThat(mvc.get().uri("/management/health")).hasStatusOk();
     }
 
     @Test
@@ -60,7 +59,15 @@ class SecurityConfigTest {
 
     @Test
     void anAuthenticatedRequestGetsThrough() {
-        // Same signal: authenticated traffic passed the chain and reached MVC.
-        assertThat(mvc.get().uri("/anything").header("Authorization", BASIC)).hasStatus(404);
+        assertThat(mvc.get().uri("/anything").header("Authorization", BASIC)).hasStatusOk();
+    }
+}
+
+@RestController
+class SecurityProbeController {
+
+    @GetMapping({"/management/health", "/anything"})
+    String ok() {
+        return "ok";
     }
 }

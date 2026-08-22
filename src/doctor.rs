@@ -130,7 +130,7 @@ fn run_checks(root: &Path) -> Vec<Check> {
     checks.extend(management_checks(root, &pom_text));
     checks.extend(cors_checks(root, &pom_text));
     checks.extend(virtual_thread_checks(root));
-    checks.push(port_check(root));
+    checks.extend(port_checks(root));
     checks.push(beans_check(root));
     checks
 }
@@ -1140,34 +1140,37 @@ fn jackson_check(pom_text: &str) -> Check {
     }
 }
 
-fn port_check(root: &Path) -> Check {
+fn port_checks(root: &Path) -> Vec<Check> {
     let properties = root.join("src/main/resources/application.properties");
-    let configured = std::fs::read_to_string(&properties)
-        .ok()
-        .and_then(|text| {
-            text.lines().find_map(|l| {
-                l.trim()
-                    .strip_prefix("server.port=")?
-                    .trim()
-                    .parse::<u16>()
-                    .ok()
-            })
-        })
-        .unwrap_or(8080);
-    if tcp_reachable("localhost", configured, Duration::from_millis(250)) {
-        Check::new(
-            Status::Warn,
-            "http port",
-            format!(
-                "something is already listening on {configured} -- a second app will fail to bind"
-            ),
-        )
-        .fix(format!(
-            "stop it, or set server.port to a free port (`lsof -i :{configured}`)"
-        ))
-    } else {
-        Check::new(Status::Ok, "http port", format!("{configured} is free"))
+    let text = std::fs::read_to_string(&properties).unwrap_or_default();
+    let mut ports = vec![("http port", "server.port", 8080_u16)];
+    if let Some(port) =
+        property_value(&text, "management.server.port").and_then(|value| value.parse::<u16>().ok())
+    {
+        ports.push(("management port bind", "management.server.port", port));
     }
+    ports
+        .into_iter()
+        .map(|(label, property, default)| {
+            let configured = property_value(&text, property)
+                .and_then(|value| value.parse::<u16>().ok())
+                .unwrap_or(default);
+            if tcp_reachable("localhost", configured, Duration::from_millis(250)) {
+                Check::new(
+                    Status::Warn,
+                    label,
+                    format!(
+                        "something is already listening on {configured} -- the application will fail to bind"
+                    ),
+                )
+                .fix(format!(
+                    "stop it, or set {property} to a free port (`lsof -i :{configured}`)"
+                ))
+            } else {
+                Check::new(Status::Ok, label, format!("{configured} is free"))
+            }
+        })
+        .collect()
 }
 
 /// The static half of a "required a bean of type ... that could not be

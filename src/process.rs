@@ -266,25 +266,28 @@ pub(crate) fn run(spec: &CommandSpec, diagnostics: Diagnostics) -> Result<Done> 
 
     const DIAGNOSTIC_TAIL_BYTES: usize = 4 * 1024 * 1024;
     fn read_and_tee<R: std::io::Read, W: std::io::Write>(mut reader: R, mut writer: W) -> Vec<u8> {
-        let mut captured = Vec::new();
+        let mut captured = std::collections::VecDeque::with_capacity(DIAGNOSTIC_TAIL_BYTES);
         let mut chunk = [0_u8; 8192];
         loop {
-            let Ok(read) = reader.read(&mut chunk) else {
-                break;
+            let read = match reader.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(read) => read,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => break,
             };
-            if read == 0 {
-                break;
-            }
             let bytes = &chunk[..read];
             let _ = writer.write_all(bytes);
             let _ = writer.flush();
-            captured.extend_from_slice(bytes);
-            if captured.len() > DIAGNOSTIC_TAIL_BYTES {
-                let excess = captured.len() - DIAGNOSTIC_TAIL_BYTES;
-                captured.drain(..excess);
+            let excess = captured
+                .len()
+                .saturating_add(bytes.len())
+                .saturating_sub(DIAGNOSTIC_TAIL_BYTES);
+            for _ in 0..excess {
+                captured.pop_front();
             }
+            captured.extend(bytes);
         }
-        captured
+        captured.into_iter().collect()
     }
 
     let stdout = child

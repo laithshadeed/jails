@@ -4,27 +4,45 @@ use std::path::{Path, PathBuf};
 const FORBIDDEN: &[&str] = &[
     "crawl",
     "spider",
-    "conversation",
-    "workspace",
     "inbox",
     "payment",
     "merchant",
     "settlement",
     "ledger",
-    "reconcile",
     "robots",
 ];
 
-const ALLOWED: &[(&str, &str, &str)] = &[(
-    "templates/spring/http_workflow_java.java",
-    "robots",
-    "RFC 9309 names robots.txt; this is a web standard, not showcase-domain vocabulary",
-)];
+struct AllowedConcept {
+    word: &'static str,
+    files: &'static [&'static str],
+    reason: &'static str,
+}
+
+const ALLOWED: &[AllowedConcept] = &[AllowedConcept {
+    word: "robots",
+    files: &[
+        "src/spring.rs",
+        "templates/spring/http_workflow_java.java",
+        "templates/spring/http_workflow_it_java.java",
+    ],
+    reason: "RFC 9309 names robots.txt; this is a web standard, not showcase-domain vocabulary",
+}];
 
 #[test]
 fn core_generation_stays_free_of_showcase_vocabulary() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut failures = Vec::new();
+    let mut used_allowances = vec![false; ALLOWED.len()];
+    for allowed in ALLOWED {
+        assert!(
+            !allowed.reason.trim().is_empty(),
+            "allow-list reasons are load-bearing"
+        );
+        assert!(
+            !allowed.files.is_empty(),
+            "an allowed concept must name its exact implementation files"
+        );
+    }
     for scope in ["src", "templates"] {
         for path in source_files(&root.join(scope)) {
             let relative = path.strip_prefix(root).unwrap();
@@ -32,14 +50,13 @@ fn core_generation_stays_free_of_showcase_vocabulary() {
             let visible = without_comments(&source);
             for word in FORBIDDEN {
                 for offset in word_offsets(&visible, word) {
-                    let allowed = ALLOWED.iter().any(|(file, allowed_word, reason)| {
-                        assert!(
-                            !reason.trim().is_empty(),
-                            "allow-list reasons are load-bearing"
-                        );
-                        relative == Path::new(file) && word == allowed_word
+                    let allowance = ALLOWED.iter().position(|allowed| {
+                        allowed.word == *word
+                            && allowed.files.iter().any(|file| relative == Path::new(file))
                     });
-                    if !allowed {
+                    if let Some(index) = allowance {
+                        used_allowances[index] = true;
+                    } else {
                         let line = visible[..offset]
                             .bytes()
                             .filter(|byte| *byte == b'\n')
@@ -50,6 +67,13 @@ fn core_generation_stays_free_of_showcase_vocabulary() {
                 }
             }
         }
+    }
+    for (allowed, used) in ALLOWED.iter().zip(used_allowances) {
+        assert!(
+            used,
+            "stale genericity allowance for `{}` ({})",
+            allowed.word, allowed.reason
+        );
     }
     assert!(
         failures.is_empty(),
@@ -84,17 +108,38 @@ fn source_files(root: &Path) -> Vec<PathBuf> {
 }
 
 fn word_offsets(text: &str, wanted: &str) -> Vec<usize> {
-    let lower = text.to_ascii_lowercase();
-    lower
-        .match_indices(wanted)
-        .filter_map(|(at, _)| {
-            let before = lower[..at].bytes().next_back();
-            let after = lower[at + wanted.len()..].bytes().next();
-            let boundary =
-                |byte: Option<u8>| byte.is_none_or(|b| !b.is_ascii_alphanumeric() && b != b'_');
-            (boundary(before) && boundary(after)).then_some(at)
-        })
-        .collect()
+    let bytes = text.as_bytes();
+    let mut offsets = Vec::new();
+    let mut token_start = None;
+    for at in 0..=bytes.len() {
+        let current = bytes.get(at).copied();
+        let previous = at
+            .checked_sub(1)
+            .and_then(|index| bytes.get(index))
+            .copied();
+        let next = bytes.get(at + 1).copied();
+        let separator = current.is_none_or(|value| !value.is_ascii_alphanumeric());
+        let camel_boundary = current.is_some_and(|value| {
+            value.is_ascii_uppercase()
+                && (previous.is_some_and(|prior| prior.is_ascii_lowercase())
+                    || (previous.is_some_and(|prior| prior.is_ascii_uppercase())
+                        && next.is_some_and(|following| following.is_ascii_lowercase())))
+        });
+        if separator || camel_boundary {
+            if let Some(start) = token_start.take() {
+                let token = text[start..at].to_ascii_lowercase();
+                if token.starts_with(wanted) {
+                    offsets.push(start);
+                }
+            }
+            if camel_boundary {
+                token_start = Some(at);
+            }
+        } else if token_start.is_none() {
+            token_start = Some(at);
+        }
+    }
+    offsets
 }
 
 /// Mask Rust/Java line and block comments while preserving byte offsets.

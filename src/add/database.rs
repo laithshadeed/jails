@@ -265,7 +265,6 @@ pub(super) fn application_properties_block(connect: &compose::PostgresConnect) -
          spring.datasource.hikari.pool-name=primary\n\
          spring.datasource.hikari.maximum-pool-size=20\n\
          spring.datasource.hikari.connection-timeout=1000\n\
-         spring.datasource.hikari.max-lifetime=60000\n\
          spring.datasource.hikari.initialization-fail-timeout=1\n\
          spring.datasource.hikari.transaction-isolation=TRANSACTION_READ_COMMITTED\n\
          # Refuse a read replica now, instead of failing on the first write.\n\

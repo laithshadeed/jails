@@ -263,7 +263,7 @@ public final class {{name}}Workflow {
         }
         markFrontier(claim, "SUCCEEDED", null);
         finishIfDone(claim.runId());
-        counter(claim.kind() == Kind.POLICY ? "robots" : "page").increment();
+        counter(claim.kind() == Kind.POLICY ? "policy" : "page").increment();
     }
 
     private void fail(Claim claim, RuntimeException failure, boolean retryable) {

@@ -1008,13 +1008,13 @@ mod tests {
 
     #[test]
     fn sqlite_name_override_renames_both_classes_consistently() {
-        let db = database_java("com.example.demo", "LedgerDatabase");
-        assert!(db.contains("public record LedgerDatabase(Path file)"));
-        assert!(db.contains("public static LedgerDatabase inMemory()"));
+        let db = database_java("com.example.demo", "ArchiveDatabase");
+        assert!(db.contains("public record ArchiveDatabase(Path file)"));
+        assert!(db.contains("public static ArchiveDatabase inMemory()"));
 
-        let test = database_test_java("com.example.demo", "LedgerDatabase", "LedgerMigrations");
-        assert!(test.contains("class LedgerDatabaseTest"));
-        assert!(test.contains("LedgerMigrations.applyAll("));
+        let test = database_test_java("com.example.demo", "ArchiveDatabase", "ArchiveMigrations");
+        assert!(test.contains("class ArchiveDatabaseTest"));
+        assert!(test.contains("ArchiveMigrations.applyAll("));
     }
 
     #[test]
@@ -1310,7 +1310,6 @@ mod tests {
             "spring.datasource.hikari.pool-name=primary",
             "spring.datasource.hikari.maximum-pool-size=20",
             "spring.datasource.hikari.connection-timeout=1000",
-            "spring.datasource.hikari.max-lifetime=60000",
             "spring.datasource.hikari.initialization-fail-timeout=1",
             "spring.datasource.hikari.transaction-isolation=TRANSACTION_READ_COMMITTED",
             "spring.datasource.hikari.connection-init-sql=SELECT 1/(1-pg_is_in_recovery()::int)",

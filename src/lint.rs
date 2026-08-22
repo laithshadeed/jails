@@ -32,7 +32,7 @@ pub(crate) const RULES: &[Rule] = &[
     },
     Rule {
         needle: "@Entity",
-        replacement: "a record plus a generated repository port and JDBC adapter",
+        replacement: "a record plus a generated repository port and explicit JDBC adapter",
         reason: "jails projects use explicit SQL rather than an ORM",
     },
     Rule {

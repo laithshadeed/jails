@@ -1,10 +1,13 @@
 package {{pkg}};
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
-import {{mockmvc_import}};
-import org.springframework.test.web.servlet.assertj.MockMvcTester;
+import org.springframework.boot.test.web.server.LocalServerPort;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -17,26 +20,39 @@ import static org.assertj.core.api.Assertions.assertThat;
  * credentials included -- to anything that can reach the port. A test that
  * fails when that happens is cheaper than noticing in production.
  */
-@SpringBootTest(properties = "management.server.port=")
-@AutoConfigureMockMvc
+@SpringBootTest(
+        webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+        properties = "management.server.port=0")
 class ActuatorEndpointsTest {
 
-    @Autowired
-    private MockMvcTester mvc;
+    @LocalServerPort private int applicationPort;
+    @Value("${local.management.port}") private int managementPort;
 
-    @Test
-    void healthIsExposed() {
-        assertThat(mvc.get().uri("/management/health")).hasStatusOk();
+    private final HttpClient http = HttpClient.newHttpClient();
+
+    private int status(String path) throws Exception {
+        return http.send(
+                        HttpRequest.newBuilder(
+                                        URI.create("http://127.0.0.1:" + managementPort + path))
+                                .build(),
+                        HttpResponse.BodyHandlers.discarding())
+                .statusCode();
     }
 
     @Test
-    void everythingElseStaysUnexposed() {
+    void healthIsExposedOnASeparateManagementConnector() throws Exception {
+        assertThat(managementPort).isNotEqualTo(applicationPort);
+        assertThat(status("/management/health")).isEqualTo(200);
+    }
+
+    @Test
+    void everythingElseStaysUnexposed() throws Exception {
         // 4xx rather than 404 specifically: an unexposed endpoint is a 404,
         // but once `jails add security` is in the project it becomes a 401
         // instead. Both mean "not available"; pinning 404 would make this
         // test fail the day the application is secured, which is exactly
         // backwards.
-        assertThat(mvc.get().uri("/management/env")).hasStatus4xxClientError();
-        assertThat(mvc.get().uri("/management/heapdump")).hasStatus4xxClientError();
+        assertThat(status("/management/env")).isBetween(400, 499);
+        assertThat(status("/management/heapdump")).isBetween(400, 499);
     }
 }

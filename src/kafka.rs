@@ -407,7 +407,7 @@ mod tests {
     #[test]
     fn a_topic_constant_is_read_out_of_the_source() {
         let source = r#"
-            class LedgerConsumer {
+            class AuditConsumer {
                 public static final String TOPIC = "audit.events";
             }
         "#;

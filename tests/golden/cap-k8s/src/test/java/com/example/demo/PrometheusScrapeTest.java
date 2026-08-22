@@ -2,13 +2,15 @@ package com.example.demo;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
-import org.springframework.test.web.servlet.assertj.MockMvcTester;
 
 /**
  * Proves the scrape endpoint actually serves, which the unit tests cannot.
@@ -25,12 +27,12 @@ import org.springframework.test.web.servlet.assertj.MockMvcTester;
  * real filter chain without making the scrape endpoint public.
  */
 @SpringBootTest(
+        webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = {
-            "management.server.port=",
+            "management.server.port=0",
             "app.security.dev.username=prometheus-probe",
             "app.security.dev.password=prometheus-probe"
         })
-@AutoConfigureMockMvc
 class PrometheusScrapeTest {
 
     private static final String BASIC =
@@ -40,14 +42,23 @@ class PrometheusScrapeTest {
                                     "prometheus-probe:prometheus-probe"
                                             .getBytes(StandardCharsets.UTF_8));
 
-    @Autowired
-    private MockMvcTester mvc;
+    @Value("${local.management.port}") private int managementPort;
+
+    private final HttpClient http = HttpClient.newHttpClient();
+
+    private HttpResponse<String> get(String path) throws Exception {
+        return http.send(
+                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + managementPort + path))
+                        .header("Authorization", BASIC)
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+    }
 
     @Test
-    void theScrapeEndpointServesThisApplicationsMeters() {
-        assertThat(mvc.get().uri("/management/prometheus").header("Authorization", BASIC))
-                .hasStatusOk()
-                .bodyText()
+    void theScrapeEndpointServesThisApplicationsMeters() throws Exception {
+        var response = get("/management/prometheus");
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(response.body())
                 // Micrometer renames dots to underscores for Prometheus, so
                 // asserting the exported spelling also pins that translation.
                 .contains("app_requests_handled")
@@ -59,9 +70,9 @@ class PrometheusScrapeTest {
     }
 
     @Test
-    void theDangerousEndpointsStayUnexposed() {
+    void theDangerousEndpointsStayUnexposed() throws Exception {
         // 4xx rather than 404: `jails add security` turns these into 401s.
-        assertThat(mvc.get().uri("/management/env")).hasStatus4xxClientError();
-        assertThat(mvc.get().uri("/management/heapdump")).hasStatus4xxClientError();
+        assertThat(get("/management/env").statusCode()).isBetween(400, 499);
+        assertThat(get("/management/heapdump").statusCode()).isBetween(400, 499);
     }
 }
