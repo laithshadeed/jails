@@ -26,6 +26,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @SpringBootTest(
         properties = {
+            "management.server.port=",
             "app.security.dev.username=prometheus-probe",
             "app.security.dev.password=prometheus-probe"
         })
@@ -44,7 +45,7 @@ class PrometheusScrapeTest {
 
     @Test
     void theScrapeEndpointServesThisApplicationsMeters() {
-        assertThat(mvc.get().uri("/actuator/prometheus").header("Authorization", BASIC))
+        assertThat(mvc.get().uri("/management/prometheus").header("Authorization", BASIC))
                 .hasStatusOk()
                 .bodyText()
                 // Micrometer renames dots to underscores for Prometheus, so
@@ -60,7 +61,7 @@ class PrometheusScrapeTest {
     @Test
     void theDangerousEndpointsStayUnexposed() {
         // 4xx rather than 404: `jails add security` turns these into 401s.
-        assertThat(mvc.get().uri("/actuator/env")).hasStatus4xxClientError();
-        assertThat(mvc.get().uri("/actuator/heapdump")).hasStatus4xxClientError();
+        assertThat(mvc.get().uri("/management/env")).hasStatus4xxClientError();
+        assertThat(mvc.get().uri("/management/heapdump")).hasStatus4xxClientError();
     }
 }

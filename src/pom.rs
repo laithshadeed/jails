@@ -1013,7 +1013,11 @@ mod tests {
     #[test]
     fn a_versionless_dependency_under_a_parent_is_not_a_problem() {
         // Correct, and the normal case: the Boot parent manages it.
-        assert!(problems(SPRING_POM).is_empty(), "{:?}", problems(SPRING_POM));
+        assert!(
+            problems(SPRING_POM).is_empty(),
+            "{:?}",
+            problems(SPRING_POM)
+        );
     }
 
     #[test]

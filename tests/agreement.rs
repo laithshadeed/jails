@@ -110,7 +110,7 @@ const ALLOWED_LEFTOVER: &[(&str, &str, &str)] = &[
 ];
 
 /// Kinds whose `destroy` is a documented refusal rather than a delete.
-const FORWARD_ONLY: &[&str] = &["migration", "association"];
+const FORWARD_ONLY: &[&str] = &["migration", "association", "field"];
 
 fn explanation(kind: &str, rel: &str) -> Option<&'static str> {
     ALLOWED_LEFTOVER
@@ -194,7 +194,9 @@ fn destroy_removes_exactly_what_generate_created() {
                         );
                         continue;
                     }
-                    findings.push(format!("{where_}: destroy --pretend failed:\n    {message}"));
+                    findings.push(format!(
+                        "{where_}: destroy --pretend failed:\n    {message}"
+                    ));
                     continue;
                 }
             };

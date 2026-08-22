@@ -567,6 +567,100 @@ pub(crate) fn create_table(
     out
 }
 
+/// A forward-only migration for one newly introduced component.
+///
+/// Required columns carry a deterministic backfill default so this migration
+/// is valid on a populated table, then drop that default: application code,
+/// not the database, remains responsible for every future value.
+pub(crate) fn add_column(type_name: &str, column: &Column) -> Result<String, String> {
+    if !column.mapped() {
+        return Err(format!(
+            "field `{}` has project type `{}` and cannot be mapped to one column.\n       \
+             fix: generate an association for a project record, or use a built-in/enum field type.",
+            column.name, column.java_type
+        ));
+    }
+    if column.constraints.primary_key {
+        return Err(format!(
+            "field `{}` cannot be added as a primary key to an existing table.\n       \
+             fix: add a nullable/unique field, backfill it deliberately, then write a migration for the key change.",
+            column.name
+        ));
+    }
+
+    let table = table_name(type_name);
+    let check = column
+        .constraints
+        .check
+        .map(|check| format!(" check ({})", check.predicate(&column.name)))
+        .unwrap_or_default();
+    let unique = if column.constraints.unique {
+        " unique"
+    } else {
+        ""
+    };
+    let default = if column.not_null {
+        Some(match column.sql_type.as_str() {
+            "uuid" => "gen_random_uuid()",
+            "integer" | "bigint" | "numeric" | "double precision"
+                if column.constraints.check == Some(crate::generate::NumericCheck::Positive) =>
+            {
+                "1"
+            }
+            "integer" | "bigint" | "numeric" | "double precision" => "0",
+            "boolean" => "false",
+            "date" => "current_date",
+            "timestamp" | "timestamptz" => "current_timestamp",
+            "bytea" => r"'\x'::bytea",
+            "text" if column.constraints.unique => {
+                return Err(format!(
+                    "required unique text field `{}` has no safe automatic backfill.\n       \
+                     fix: add it as nullable first, backfill distinct values, then add not-null in a deliberate migration.",
+                    column.name
+                ));
+            }
+            "text" => "''",
+            other => {
+                return Err(format!(
+                    "field `{}` maps to `{other}`, for which jails has no safe backfill default.\n       \
+                     fix: make the field nullable, or write the data migration explicitly.",
+                    column.name
+                ));
+            }
+        })
+    } else {
+        None
+    };
+
+    let mut out = format!(
+        "-- Forward-only migration generated for a new record component.\n\
+         alter table {table}\n\
+           add column {} {}",
+        column.name, column.sql_type
+    );
+    if let Some(default) = default {
+        out.push_str(&format!(" default {default} not null"));
+    }
+    out.push_str(unique);
+    out.push_str(&check);
+    out.push_str(";\n");
+    if default.is_some() {
+        out.push_str(&format!(
+            "\n-- The default only backfilled rows that pre-date this field.\n\
+             alter table {table}\n\
+               alter column {} drop default;\n",
+            column.name
+        ));
+    }
+    if column.constraints.indexed {
+        out.push_str(&format!(
+            "\ncreate index {table}_{}_idx\n  on {table} ({});\n",
+            column.name, column.name
+        ));
+    }
+    Ok(out)
+}
+
 /// Check an `--index` spec against the table before it is written into a
 /// migration.
 ///
@@ -688,7 +782,7 @@ mod tests {
     fn table_names_pluralise_regular_suffixes_without_inventing_irregulars() {
         assert_eq!(table_name("Reward"), "rewards");
         assert_eq!(table_name("WorkItem"), "work_items");
-        assert_eq!(table_name("Inbox"), "inboxes");
+        assert_eq!(table_name("Box"), "boxes");
         assert_eq!(table_name("Address"), "addresses");
         assert_eq!(table_name("Category"), "categories");
         assert_eq!(table_name("Toy"), "toys");
@@ -715,7 +809,7 @@ mod tests {
     fn the_route_path_and_the_table_are_the_same_pluralisation() {
         // One owner. Two of these disagreed: the framework-free handler
         // served `/categorys` over a table called `categories`.
-        for name in ["Category", "Inbox", "WorkItem", "Person", "Shelf", "News"] {
+        for name in ["Category", "Box", "WorkItem", "Person", "Shelf", "News"] {
             assert_eq!(
                 crate::generate::resource_path(name),
                 format!("/{}", table_name(name).replace('_', "-")),

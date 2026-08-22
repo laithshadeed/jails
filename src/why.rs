@@ -478,13 +478,17 @@ const RULES: &[Rule] = &[
     },
 ];
 
-pub fn why(input: Option<&Path>, debug: bool) -> Result<()> {
+pub fn why(input: Option<&Path>, debug: bool, json: bool) -> Result<()> {
     let log = read_input(input, debug)?;
     if log.trim().is_empty() {
         return Err("nothing to explain -- pass a log file, pipe one in, or run `jails why` with no input to start the app and read its output".into());
     }
 
     let found = explain(&log);
+    if json {
+        println!("{}", diagnoses_json(&found));
+        return Ok(());
+    }
     if found.is_empty() {
         println!("jails does not recognise this failure.");
         println!();
@@ -504,6 +508,32 @@ pub fn why(input: Option<&Path>, debug: bool) -> Result<()> {
 
     print_report(&found);
     Ok(())
+}
+
+fn diagnoses_json(found: &[Diagnosis]) -> String {
+    let diagnoses = found
+        .iter()
+        .map(|diagnosis| {
+            let fixes = diagnosis
+                .fixes
+                .iter()
+                .map(|fix| crate::project::json_string(fix))
+                .collect::<Vec<_>>()
+                .join(",");
+            format!(
+                "{{\"headline\":{},\"because\":{},\"fixes\":[{}]}}",
+                crate::project::json_string(&diagnosis.headline),
+                crate::project::json_string(&diagnosis.because),
+                fixes
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "{{\"schema_version\":3,\"recognized\":{},\"diagnoses\":[{}]}}",
+        !found.is_empty(),
+        diagnoses
+    )
 }
 
 fn print_report(found: &[Diagnosis]) {
@@ -847,6 +877,27 @@ mod tests {
     #[test]
     fn an_unrecognised_failure_matches_nothing() {
         assert!(explain("something entirely novel went wrong").is_empty());
+    }
+
+    #[test]
+    fn json_is_versioned_and_keeps_fixes_as_an_array() {
+        let found = explain("Web server failed to start. Port 8081 was already in use.");
+        let json = diagnoses_json(&found);
+        assert!(
+            json.starts_with("{\"schema_version\":3,\"recognized\":true"),
+            "{json}"
+        );
+        assert!(json.contains("\"headline\":"), "{json}");
+        assert!(json.contains("\"fixes\":["), "{json}");
+        assert!(json.contains("8081"), "{json}");
+    }
+
+    #[test]
+    fn unknown_json_is_an_empty_machine_readable_result() {
+        assert_eq!(
+            diagnoses_json(&[]),
+            "{\"schema_version\":3,\"recognized\":false,\"diagnoses\":[]}"
+        );
     }
 
     #[test]

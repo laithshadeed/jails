@@ -193,18 +193,17 @@ fn real_path_dirs() -> impl Iterator<Item = PathBuf> {
         .into_iter()
 }
 
-/// The real PATH, minus any directory that has an `mvnd` on it. mvnd is
-/// preferred by default (see run.rs) and stays real -- nothing here is
-/// mocked -- but this machine hits a known mvnd daemon flake (native
-/// -library extraction bug against this JDK), so the "does it really
-/// compile" tests pin to plain mvn instead of depending on mvnd's daemon
-/// being healthy. `uname`/`dirname`/etc. that mvn's own launcher script
-/// shells out to need the rest of the real PATH to stay intact.
+/// The real PATH with mvnd removed for generated-project builds.
+///
+/// mvnd currently fails intermittently when this suite drives many projects
+/// concurrently. These checks are about the projects Maven receives, so keep
+/// them on the stable Maven executable and test mvnd command selection with
+/// the isolated fake-toolchain tests below.
 pub fn real_path_without_mvnd() -> String {
-    let filtered: Vec<PathBuf> = real_path_dirs()
+    let dirs = real_path_dirs()
         .filter(|dir| !dir.join("mvnd").is_file())
-        .collect();
-    std::env::join_paths(filtered)
+        .collect::<Vec<_>>();
+    std::env::join_paths(dirs)
         .unwrap()
         .to_string_lossy()
         .into_owned()
@@ -214,6 +213,22 @@ pub fn jails_cmd_with_path(cwd: &Path, path: &str) -> Command {
     let mut cmd = Command::new(bin());
     cmd.current_dir(cwd);
     cmd.env("PATH", path);
+    cmd
+}
+
+/// A real Maven process with test output tuned for a parent Rust harness.
+///
+/// Spring and Kafka otherwise emit tens of thousands of INFO lines which
+/// libtest retains until the test completes. Warnings and all Maven failures
+/// remain visible; only successful-framework chatter is suppressed.
+pub fn real_maven_cmd(cwd: &Path, path: &str) -> Command {
+    let mut cmd = Command::new("mvn");
+    cmd.current_dir(cwd);
+    cmd.env("PATH", path);
+    cmd.env(
+        "MAVEN_ARGS",
+        "-ntp -Dspring.main.banner-mode=off -Dlogging.level.root=WARN",
+    );
     cmd
 }
 

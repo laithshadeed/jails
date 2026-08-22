@@ -1,0 +1,3 @@
+src/main/java/com/example/demo/domain/Note.java
+src/main/resources/db/migration/V001__add_created_at_to_notes.sql
+src/test/java/com/example/demo/domain/NoteTest.java

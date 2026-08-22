@@ -6,8 +6,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
 
 /**
@@ -27,12 +27,13 @@ import org.springframework.test.web.servlet.assertj.MockMvcTester;
  * {@code STATELESS} chain anyway -- with no {@code SecurityContext}
  * repository, the context set by the test is never read back.
  */
-@SpringBootTest(
+@WebMvcTest(
+        controllers = SecurityConfigTest.class,
         properties = {
             "app.security.dev.username=probe",
             "app.security.dev.password=probe"
         })
-@AutoConfigureMockMvc
+@Import(SecurityConfig.class)
 class SecurityConfigTest {
 
     private static final String BASIC =
@@ -47,7 +48,9 @@ class SecurityConfigTest {
     void healthIsReachableWithoutCredentials() {
         // A load balancer cannot authenticate. Needs `jails add actuator`
         // for the endpoint to exist at all.
-        assertThat(mvc.get().uri("/actuator/health")).hasStatusOk();
+        // 404 rather than 401: the request passed the security filter and this
+        // focused slice deliberately has no actuator endpoint behind it.
+        assertThat(mvc.get().uri("/management/health")).hasStatus(404);
     }
 
     @Test
@@ -57,8 +60,7 @@ class SecurityConfigTest {
 
     @Test
     void anAuthenticatedRequestGetsThrough() {
-        // 404 rather than 401: the credentials were accepted and there is
-        // simply nothing mapped at that path yet.
+        // Same signal: authenticated traffic passed the chain and reached MVC.
         assertThat(mvc.get().uri("/anything").header("Authorization", BASIC)).hasStatus(404);
     }
 }

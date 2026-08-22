@@ -21,8 +21,12 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
  * {@code spring.datasource.*}, so the application's own settings do not need
  * to be overridden for tests.
  *
- * <p>Nothing calls {@code start()} -- a container that is a bean is started
- * and stopped with the application context.
+ * <p>Nothing calls {@code start()} -- Spring Boot starts the container bean.
+ * The same container is shared by every application context in this test JVM,
+ * because otherwise a suite with several {@code @SpringBootTest} classes pays
+ * PostgreSQL's startup cost for every distinct context. Testcontainers' Ryuk
+ * sidecar still removes it when the test JVM exits, so this is process-local
+ * reuse rather than the cross-run reuse described below.
  *
  * <h2>Reuse, and why it is not on</h2>
  *
@@ -55,9 +59,28 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 @TestConfiguration(proxyBeanMethods = false)
 public class {{TESTCONTAINERS_CONFIG}} {
 
+    private static final PostgreSQLContainer POSTGRES = new ProcessPostgres();
+
     @Bean
     @ServiceConnection
     PostgreSQLContainer postgresContainer() {
-        return new PostgreSQLContainer("{{POSTGRES_IMAGE}}");
+        return POSTGRES;
+    }
+
+    /**
+     * Spring closes container beans with each application context. A static
+     * instance alone therefore does not share anything. Keep this process-wide
+     * instance alive and let Ryuk perform the real cleanup when the JVM exits.
+     */
+    private static final class ProcessPostgres extends PostgreSQLContainer {
+
+        private ProcessPostgres() {
+            super("{{POSTGRES_IMAGE}}");
+        }
+
+        @Override
+        public void stop() {
+            // Deliberately process-scoped; Ryuk owns cleanup at JVM exit.
+        }
     }
 }

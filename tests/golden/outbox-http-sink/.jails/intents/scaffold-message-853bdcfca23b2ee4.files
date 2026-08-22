@@ -1,0 +1,14 @@
+requests/message.http
+src/main/java/com/example/demo/adapters/InMemoryMessageRepository.java
+src/main/java/com/example/demo/adapters/JdbcMessageRepository.java
+src/main/java/com/example/demo/app/MessageRepository.java
+src/main/java/com/example/demo/domain/Message.java
+src/main/java/com/example/demo/service/MessageService.java
+src/main/java/com/example/demo/web/MessageController.java
+src/main/java/com/example/demo/web/MessageRequest.java
+src/main/java/com/example/demo/web/MessageResponse.java
+src/main/resources/db/migration/V001__create_messages.sql
+src/test/java/com/example/demo/adapters/JdbcMessageRepositoryIT.java
+src/test/java/com/example/demo/domain/MessageTest.java
+src/test/java/com/example/demo/service/MessageServiceTest.java
+src/test/java/com/example/demo/web/MessageControllerTest.java

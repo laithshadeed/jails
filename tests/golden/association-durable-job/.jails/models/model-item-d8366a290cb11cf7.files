@@ -1,0 +1,4 @@
+id:uuid@pk
+ownerId:uuid@index
+name:string!
+createdAt:instant

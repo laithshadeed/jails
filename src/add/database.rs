@@ -262,6 +262,16 @@ pub(super) fn application_properties_block(connect: &compose::PostgresConnect) -
          spring.datasource.url=jdbc:postgresql://{host}:{port}/{database}\n\
          spring.datasource.username={user}\n\
          spring.datasource.password={password}\n\
+         spring.datasource.hikari.pool-name=primary\n\
+         spring.datasource.hikari.maximum-pool-size=20\n\
+         spring.datasource.hikari.connection-timeout=1000\n\
+         spring.datasource.hikari.max-lifetime=60000\n\
+         spring.datasource.hikari.initialization-fail-timeout=1\n\
+         spring.datasource.hikari.transaction-isolation=TRANSACTION_READ_COMMITTED\n\
+         # Refuse a read replica now, instead of failing on the first write.\n\
+         spring.datasource.hikari.connection-init-sql=SELECT 1/(1-pg_is_in_recovery()::int)\n\
+         server.shutdown=graceful\n\
+         spring.lifecycle.timeout-per-shutdown-phase=30s\n\
          {COMPOSE_LIFECYCLE_COMMENT}\n\
          {COMPOSE_DISABLED_PROPERTY}\n\
          # /jails:db\n"

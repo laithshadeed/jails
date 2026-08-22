@@ -1,0 +1,3 @@
+id:uuid@pk
+body:string!
+createdAt:instant

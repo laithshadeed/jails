@@ -14,7 +14,7 @@ pub struct MavenModule {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectContext {
-    pub workspace: MavenModule,
+    pub reactor: MavenModule,
     pub module: MavenModule,
     pub java_release: Option<u32>,
     pub spring_boot: bool,
@@ -41,26 +41,26 @@ impl ProjectContext {
         };
 
         let module_root = nearest_pom(&start)?;
-        let workspace_root = workspace_root(&module_root)?;
+        let reactor_root = reactor_root(&module_root)?;
         let module_pom = read_pom(&module_root)?;
-        let workspace_pom = read_pom(&workspace_root)?;
+        let reactor_pom = read_pom(&reactor_root)?;
 
         let mut modules = Vec::new();
         let mut seen = HashSet::new();
-        collect_modules(&workspace_root, &workspace_root, &mut seen, &mut modules)?;
+        collect_modules(&reactor_root, &reactor_root, &mut seen, &mut modules)?;
 
         Ok(Self {
-            workspace: MavenModule {
-                artifact_id: artifact_id(&workspace_pom),
-                root: workspace_root.clone(),
+            reactor: MavenModule {
+                artifact_id: artifact_id(&reactor_pom),
+                root: reactor_root.clone(),
             },
             module: MavenModule {
                 artifact_id: artifact_id(&module_pom),
                 root: module_root.clone(),
             },
-            java_release: inherited_java_release(&module_root, &workspace_root)?,
-            spring_boot: inherited_spring_boot(&module_root, &workspace_root)?,
-            maven_command: maven_command(&workspace_root),
+            java_release: inherited_java_release(&module_root, &reactor_root)?,
+            spring_boot: inherited_spring_boot(&module_root, &reactor_root)?,
+            maven_command: maven_command(&reactor_root),
             modules,
         })
     }
@@ -74,8 +74,8 @@ impl ProjectContext {
     }
 
     fn print_human(&self) {
-        println!("Workspace: {}", module_label(&self.workspace));
-        println!("  root: {}", self.workspace.root.display());
+        println!("Reactor: {}", module_label(&self.reactor));
+        println!("  root: {}", self.reactor.root.display());
         println!("Module: {}", module_label(&self.module));
         println!("  root: {}", self.module.root.display());
         println!(
@@ -100,7 +100,7 @@ impl ProjectContext {
             for module in &self.modules {
                 let path = module
                     .root
-                    .strip_prefix(&self.workspace.root)
+                    .strip_prefix(&self.reactor.root)
                     .unwrap_or(&module.root);
                 println!("  {}  {}", module_label(module), path.display());
             }
@@ -108,13 +108,29 @@ impl ProjectContext {
     }
 
     fn to_json(&self) -> String {
+        let config = crate::config::Config::load(&self.module.root).unwrap_or_default();
+        let base_package = crate::generate::base_package(&self.module.root).ok();
+        let layout = config
+            .layout_entries()
+            .into_iter()
+            .map(|(name, package)| format!("{}:{}", json_string(name), json_string(&package)))
+            .collect::<Vec<_>>()
+            .join(",");
+        let capabilities = config
+            .capabilities()
+            .iter()
+            .map(|capability| json_string(capability))
+            .collect::<Vec<_>>()
+            .join(",");
+        let java_root = self.module.root.join("src/main/java");
+        let test_root = self.module.root.join("src/test/java");
         let modules = self
             .modules
             .iter()
             .map(|module| {
                 let path = module
                     .root
-                    .strip_prefix(&self.workspace.root)
+                    .strip_prefix(&self.reactor.root)
                     .unwrap_or(&module.root);
                 format!(
                     "    {{\"artifact_id\": {}, \"path\": {}}}",
@@ -128,19 +144,29 @@ impl ProjectContext {
         format!(
             concat!(
                 "{{\n",
-                "  \"schema_version\": 1,\n",
-                "  \"workspace\": {{\"root\": {}, \"artifact_id\": {}}},\n",
+                "  \"schema_version\": 3,\n",
+                "  \"reactor\": {{\"root\": {}, \"artifact_id\": {}}},\n",
                 "  \"module\": {{\"root\": {}, \"artifact_id\": {}}},\n",
+                "  \"base_package\": {},\n",
+                "  \"java_root\": {},\n",
+                "  \"test_root\": {},\n",
+                "  \"layout\": {{{}}},\n",
+                "  \"capabilities\": [{}],\n",
                 "  \"java_release\": {},\n",
                 "  \"spring_boot\": {},\n",
                 "  \"maven_command\": {},\n",
                 "  \"modules\": [\n{}\n  ]\n",
                 "}}"
             ),
-            json_string(&self.workspace.root.to_string_lossy()),
-            json_optional_string(self.workspace.artifact_id.as_deref()),
+            json_string(&self.reactor.root.to_string_lossy()),
+            json_optional_string(self.reactor.artifact_id.as_deref()),
             json_string(&self.module.root.to_string_lossy()),
             json_optional_string(self.module.artifact_id.as_deref()),
+            json_optional_string(base_package.as_deref()),
+            json_string(&java_root.to_string_lossy()),
+            json_string(&test_root.to_string_lossy()),
+            layout,
+            capabilities,
             self.java_release
                 .map(|release| release.to_string())
                 .unwrap_or_else(|| "null".to_string()),
@@ -166,8 +192,8 @@ fn nearest_pom(start: &Path) -> Result<PathBuf> {
     Err("no pom.xml found in this or any parent directory".to_string())
 }
 
-fn workspace_root(module_root: &Path) -> Result<PathBuf> {
-    let mut workspace = module_root.to_path_buf();
+fn reactor_root(module_root: &Path) -> Result<PathBuf> {
+    let mut reactor = module_root.to_path_buf();
     for ancestor in module_root.ancestors().skip(1) {
         if !ancestor.join("pom.xml").is_file() {
             continue;
@@ -179,14 +205,14 @@ fn workspace_root(module_root: &Path) -> Result<PathBuf> {
                 .unwrap_or(false)
         });
         if contains_module {
-            workspace = ancestor.to_path_buf();
+            reactor = ancestor.to_path_buf();
         }
     }
-    Ok(workspace)
+    Ok(reactor)
 }
 
 fn collect_modules(
-    workspace_root: &Path,
+    reactor_root: &Path,
     aggregator_root: &Path,
     seen: &mut HashSet<PathBuf>,
     modules: &mut Vec<MavenModule>,
@@ -197,7 +223,7 @@ fn collect_modules(
             Ok(root) if root.join("pom.xml").is_file() => root,
             _ => continue,
         };
-        if root == workspace_root || !seen.insert(root.clone()) {
+        if root == reactor_root || !seen.insert(root.clone()) {
             continue;
         }
         let child_pom = read_pom(&root)?;
@@ -205,7 +231,7 @@ fn collect_modules(
             artifact_id: artifact_id(&child_pom),
             root: root.clone(),
         });
-        collect_modules(workspace_root, &root, seen, modules)?;
+        collect_modules(reactor_root, &root, seen, modules)?;
     }
     Ok(())
 }
@@ -404,9 +430,9 @@ mod tests {
 
         let context = ProjectContext::discover_from(&source).unwrap();
 
-        assert_eq!(context.workspace.root, fs::canonicalize(&root).unwrap());
+        assert_eq!(context.reactor.root, fs::canonicalize(&root).unwrap());
         assert_eq!(
-            context.workspace.artifact_id.as_deref(),
+            context.reactor.artifact_id.as_deref(),
             Some("sample-parent")
         );
         assert_eq!(context.module.artifact_id.as_deref(), Some("sample-web"));
@@ -425,10 +451,16 @@ mod tests {
             context.maven_command,
             fs::canonicalize(&root).unwrap().join("mvnw")
         );
+        let json = context.to_json();
+        assert!(json.contains("\"schema_version\": 3"), "{json}");
+        assert!(json.contains("\"reactor\":"), "{json}");
+        assert!(json.contains("\"base_package\":"), "{json}");
+        assert!(json.contains("\"layout\":"), "{json}");
+        assert!(json.contains("\"capabilities\":"), "{json}");
     }
 
     #[test]
-    fn standalone_project_is_its_own_workspace() {
+    fn standalone_project_is_its_own_reactor() {
         let root = fixture_dir("standalone");
         write_pom(
             &root,
@@ -437,7 +469,7 @@ mod tests {
 
         let context = ProjectContext::discover_from(&root).unwrap();
 
-        assert_eq!(context.workspace.root, context.module.root);
+        assert_eq!(context.reactor.root, context.module.root);
         assert_eq!(context.module.artifact_id.as_deref(), Some("sample-cli"));
         assert_eq!(context.java_release, Some(27));
         assert!(!context.spring_boot);

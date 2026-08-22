@@ -1,0 +1,2 @@
+src/main/resources/db/migration/V003__add_item_owner_association.sql
+src/test/java/com/example/demo/adapters/ItemOwnerAssociationIT.java

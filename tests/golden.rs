@@ -249,8 +249,10 @@ fn the_goldens_still_hold_the_properties_that_matter() {
 ///
 /// An exemption is only allowed to be a pointer, never a hole: the test named
 /// here must exist, and the assertion below fails if it is renamed away.
-const COVERED_ELSEWHERE: &[(&str, &str)] =
-    &[("format", "a_freshly_generated_project_passes_check_with_no_manual_formatting")];
+const COVERED_ELSEWHERE: &[(&str, &str)] = &[(
+    "format",
+    "a_freshly_generated_project_passes_check_with_no_manual_formatting",
+)];
 
 /// The header of this file claims *"every artifact kind and every capability,
 /// in the smallest invocation that exercises it."* That comment was false by
@@ -312,10 +314,8 @@ fn every_kind_and_capability_has_a_golden_scenario() {
         );
     }
 
-    let cli_tests = fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cli.rs"),
-    )
-    .unwrap();
+    let cli_tests =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cli.rs")).unwrap();
     for (name, test) in COVERED_ELSEWHERE {
         assert!(
             cli_tests.contains(test),

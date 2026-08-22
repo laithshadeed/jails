@@ -30,7 +30,10 @@ pub(crate) fn source_files(dir: &Path) -> Vec<PathBuf> {
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_dir() {
+            // DirEntry already carries the type on the common filesystems.
+            // Calling Path::is_dir here performs another metadata lookup for
+            // every source file in a project-wide inspect/rename scan.
+            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
                 stack.push(path);
             } else if path.extension().is_some_and(|e| e == "java") {
                 found.push(path);
@@ -44,85 +47,43 @@ pub(crate) fn source_files(dir: &Path) -> Vec<PathBuf> {
 /// The source with every comment and string/char literal replaced by spaces,
 /// preserving length so byte offsets into the result also index the original.
 pub(crate) fn blanked(source: &str) -> String {
+    masked(source, true)
+}
+
+/// One allocation and one scanner for both public masking modes.
+///
+/// Starting from a memcpy of the source is substantially cheaper than
+/// filling a same-sized buffer with spaces and copying ordinary source code
+/// one byte at a time. Generated Java is overwhelmingly ordinary code; only
+/// the comparatively small comment/literal ranges need rewriting.
+fn masked(source: &str, comments: bool) -> String {
     let bytes = source.as_bytes();
-    let mut out = vec![b' '; bytes.len()];
+    let mut out = bytes.to_vec();
     let mut i = 0;
     while i < bytes.len() {
         match bytes[i] {
             b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'/' => {
+                let start = i;
                 while i < bytes.len() && bytes[i] != b'\n' {
                     i += 1;
                 }
+                if comments {
+                    blank_range(&mut out, start, i);
+                }
             }
             b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'*' => {
+                let start = i;
                 i += 2;
                 while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
                     i += 1;
                 }
                 i = (i + 2).min(bytes.len());
+                if comments {
+                    blank_range(&mut out, start, i);
+                }
             }
             // Text blocks first: `"""` would otherwise read as an empty
             // string literal followed by an unterminated one.
-            b'"' if bytes[i..].starts_with(br#"""""#) => {
-                i += 3;
-                while i + 2 < bytes.len() && !bytes[i..].starts_with(br#"""""#) {
-                    i += 1;
-                }
-                i = (i + 3).min(bytes.len());
-            }
-            quote @ (b'"' | b'\'') => {
-                i += 1;
-                while i < bytes.len() && bytes[i] != quote {
-                    i += if bytes[i] == b'\\' { 2 } else { 1 };
-                }
-                i = (i + 1).min(bytes.len());
-            }
-            other => {
-                out[i] = other;
-                i += 1;
-            }
-        }
-    }
-    // Multi-byte characters outside literals are copied byte by byte by the
-    // catch-all branch, so the result is already valid UTF-8. The fallback
-    // exists only so a malformed input cannot panic, and it blanks per
-    // *byte* rather than per char -- callers slice this by offsets taken
-    // from `source`, so the length has to match whichever branch runs.
-    String::from_utf8(out.clone()).unwrap_or_else(|_| {
-        out.iter()
-            .map(|b| if b.is_ascii() { *b as char } else { ' ' })
-            .collect()
-    })
-}
-
-/// The source with string and character literals blanked, but comments left
-/// intact.
-///
-/// The mirror image of [`blanked`], and the two exist for opposite reasons.
-/// A scan for annotations must ignore comments; a scan for `TODO` markers
-/// must read only comments, and must still not be fooled by the word
-/// appearing inside a string literal. Length is preserved either way, so line
-/// and byte offsets still index the original.
-pub(crate) fn without_literals(source: &str) -> String {
-    let bytes = source.as_bytes();
-    let mut out: Vec<u8> = bytes.to_vec();
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            // Skip over comments untouched -- a quote inside one does not
-            // open a literal.
-            b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'/' => {
-                while i < bytes.len() && bytes[i] != b'\n' {
-                    i += 1;
-                }
-            }
-            b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'*' => {
-                i += 2;
-                while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
-                    i += 1;
-                }
-                i = (i + 2).min(bytes.len());
-            }
             b'"' if bytes[i..].starts_with(br#"""""#) => {
                 let start = i;
                 i += 3;
@@ -144,7 +105,33 @@ pub(crate) fn without_literals(source: &str) -> String {
             _ => i += 1,
         }
     }
-    String::from_utf8(out).unwrap_or_else(|_| source.to_string())
+    valid_mask(out)
+}
+
+/// The source with string and character literals blanked, but comments left
+/// intact.
+///
+/// The mirror image of [`blanked`], and the two exist for opposite reasons.
+/// A scan for annotations must ignore comments; a scan for `TODO` markers
+/// must read only comments, and must still not be fooled by the word
+/// appearing inside a string literal. Length is preserved either way, so line
+/// and byte offsets still index the original.
+pub(crate) fn without_literals(source: &str) -> String {
+    masked(source, false)
+}
+
+fn valid_mask(out: Vec<u8>) -> String {
+    String::from_utf8(out).unwrap_or_else(|error| {
+        // The source starts as valid UTF-8 and masking only introduces ASCII,
+        // so this is defensive. Reuse the allocation even on malformed input.
+        let mut bytes = error.into_bytes();
+        for byte in &mut bytes {
+            if !byte.is_ascii() {
+                *byte = b' ';
+            }
+        }
+        String::from_utf8(bytes).expect("replacing non-ASCII bytes makes valid UTF-8")
+    })
 }
 
 /// Blank a byte range to spaces, leaving newlines so line numbers survive a
@@ -162,6 +149,8 @@ fn blank_range(out: &mut [u8], start: usize, end: usize) {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Annotated {
     pub name: String,
+    /// One-based source line of the annotation.
+    pub line: usize,
     /// The text between the annotation's parentheses, or empty when it has
     /// none (`@Service` as opposed to `@GetMapping("/x")`).
     pub args: String,
@@ -216,6 +205,7 @@ pub(crate) fn annotations(source: &str) -> Vec<Annotated> {
         }
         found.push(Annotated {
             name,
+            line: source[..i].bytes().filter(|byte| *byte == b'\n').count() + 1,
             args,
             target: target_at(&text, after),
         });
@@ -634,6 +624,18 @@ mod tests {
         let out = blanked(src);
         assert!(!out.contains("@Service"), "{out}");
         assert!(out.contains("int i"), "{out}");
+        assert_eq!(out.lines().count(), src.lines().count());
+    }
+
+    #[test]
+    fn blanking_keeps_unicode_code_and_reuses_byte_offsets() {
+        let src = "class Café { /* naïve\ncomment */ String résumé; }";
+        let out = blanked(src);
+        assert_eq!(out.len(), src.len());
+        assert_eq!(out.lines().count(), src.lines().count());
+        assert!(out.contains("Café"), "{out}");
+        assert!(out.contains("résumé"), "{out}");
+        assert!(!out.contains("naïve"), "{out}");
     }
 
     #[test]

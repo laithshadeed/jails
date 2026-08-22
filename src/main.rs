@@ -5,9 +5,11 @@ mod config;
 mod console;
 mod doctor;
 mod generate;
+mod generated_files;
 mod inspect;
 mod java;
 mod kafka;
+mod lint;
 mod migrate;
 mod new;
 mod pom;
@@ -79,7 +81,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Describe the current Maven workspace and active module
+    /// Describe the current Maven reactor and active module
     #[command(visible_alias = "info")]
     About {
         /// Emit a stable machine-readable project description
@@ -99,6 +101,10 @@ enum Command {
         /// Skip adding spring-boot-devtools (needed for `run --watch`)
         #[arg(long)]
         no_devtools: bool,
+        /// Create from jails' vendored Spring fixture without contacting
+        /// start.spring.io
+        #[arg(long)]
+        offline: bool,
     },
     /// Create a new plain Maven CLI project
     NewCli {
@@ -151,6 +157,11 @@ enum Command {
         kind: ArtifactKind,
         name: String,
         fields: Vec<String>,
+        /// Add conventional `createdAt` and `updatedAt` instant components.
+        /// The generated create path supplies both; transitions advance
+        /// `updated_at` in the same optimistic SQL statement.
+        #[arg(long)]
+        timestamps: bool,
         /// Subpackage to place the generated code in, relative to the base
         /// package -- overrides the conventional one for the kind. Pass an
         /// empty string to write straight into the base package.
@@ -190,7 +201,7 @@ enum Command {
     ///   jails add db                 # postgres, Flyway, Testcontainers, compose
     ///   jails add api                # RFC 9457 problem responses + validation
     ///   jails add db kafka redis     # several at once
-    ///   jails add csv --name Ledger  # name the generated class
+    ///   jails add csv --name Dataset  # name the generated class
     ///   jails add security --pretend # see the plan, write nothing
     ///
     /// `jails remove <capability>` is the exact inverse.
@@ -265,6 +276,9 @@ enum Command {
         /// A file holding the failure output. Omit to read stdin, or to
         /// start the app and read what it prints.
         log: Option<PathBuf>,
+        /// Emit machine-readable diagnoses
+        #[arg(long)]
+        json: bool,
     },
     /// Count files and lines per layer, and the test-to-code ratio
     Stats,
@@ -273,6 +287,8 @@ enum Command {
         /// Only this tag (e.g. `jails notes fixme`)
         tag: Option<String>,
     },
+    /// Find stale APIs and architecture violations without compiling
+    Lint,
     /// List the HTTP routes this project's source declares
     Routes {
         /// Emit machine-readable output for editor integrations
@@ -361,7 +377,29 @@ enum Command {
         package: Option<String>,
     },
     /// Run tests; bare names become *Test and *IT names use Failsafe
-    Test { filter: Option<String> },
+    ///
+    /// FILTER accepts four shapes, in the order a reader reaches for them:
+    ///
+    ///   jails test Payout                 # PayoutTest
+    ///   jails test PayoutIT               # Failsafe, not Surefire
+    ///   jails test 'Payout#settles'       # one method
+    ///   jails test src/test/java/.../PayoutTest.java:42
+    ///
+    /// The last resolves the `@Test` enclosing that line, which is what an
+    /// editor keybinding has to hand: JUnit itself never resolves a file and
+    /// a line, so something has to.
+    Test {
+        filter: Option<String>,
+        /// Rerun only what failed last time, read from the reports on disk
+        #[arg(long)]
+        failed: bool,
+        /// Stop at the first failing test class
+        #[arg(long)]
+        fail_fast: bool,
+        /// After the run, print the slowest N tests from the reports
+        #[arg(long, value_name = "N", num_args = 0..=1, default_missing_value = "10")]
+        slowest: Option<usize>,
+    },
     /// Build the project (mvn package)
     Build,
     /// Delete Maven's `target/` directory (`mvn clean`)
@@ -429,7 +467,17 @@ fn main() -> std::process::ExitCode {
             java,
             no_git,
             no_devtools,
-        } => new::new(&name, &deps, &java, !no_git, !no_devtools, debug, pretend),
+            offline,
+        } => new::new(
+            &name,
+            &deps,
+            &java,
+            !no_git,
+            !no_devtools,
+            offline,
+            debug,
+            pretend,
+        ),
         Command::NewCli {
             name,
             release,
@@ -440,14 +488,16 @@ fn main() -> std::process::ExitCode {
             kind,
             name,
             fields,
+            timestamps,
             package,
             indexes,
             strategy_on,
             strategy_yields,
-        } => generate::generate(
+        } => generate::generate_with_timestamps(
             kind,
             &name,
             &fields,
+            timestamps,
             package.as_deref(),
             &indexes,
             strategy_on.as_deref(),
@@ -504,7 +554,7 @@ fn main() -> std::process::ExitCode {
         Command::Start { services } => compose::start(&services, debug),
         Command::Stop { services } => compose::stop_cmd(&services, debug),
         Command::Doctor => doctor::doctor(),
-        Command::Why { log } => why::why(log.as_deref(), debug),
+        Command::Why { log, json } => why::why(log.as_deref(), debug, json),
         Command::Stats => inspect::stats(),
         Command::Notes { tag } => inspect::notes(tag.as_deref()),
         Command::Routes { json } => inspect::routes(json),
@@ -522,13 +572,27 @@ fn main() -> std::process::ExitCode {
             }
         }
         Command::Kafka { command, no_start } => kafka::kafka(command, no_start, debug),
+        Command::Lint => lint::lint(),
         Command::Db {
             file,
             no_start,
             args,
         } => console::db(file.as_deref(), no_start, &args, debug),
         Command::Console { no_build, args } => console::console(no_build, &args, debug),
-        Command::Test { filter } => run::test(filter.as_deref(), debug),
+        Command::Test {
+            filter,
+            failed,
+            fail_fast,
+            slowest,
+        } => run::test(
+            filter.as_deref(),
+            run::TestOptions {
+                failed,
+                fail_fast,
+                slowest,
+            },
+            debug,
+        ),
         Command::Build => run::build(debug),
         Command::Clean => run::clean(debug),
         Command::Fmt => run::fmt(debug),

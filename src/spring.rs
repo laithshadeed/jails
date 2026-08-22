@@ -244,8 +244,19 @@ pub(crate) fn actuator_slice(root: &Path, pkg: &str) -> SpringSlice {
         // alone; `*` is the shape that leaks heap dumps and environment
         // variables to anything that can reach the port.
         properties: vec![
-            exposure_include(root, &["health", "info", "metrics"]),
+            exposure_include(root, &["health", "info", "prometheus", "threaddump"]),
+            "management.server.port=8081".to_string(),
+            "management.endpoints.web.base-path=/management".to_string(),
+            "management.endpoint.health.cache.time-to-live=5s".to_string(),
+            // A dependency outage must make a pod unready, never kill it.
+            // Liveness therefore stays process-only; readiness is widened by
+            // capabilities that own a real dependency.
+            "management.endpoint.health.group.liveness.include=ping".to_string(),
+            "management.endpoint.health.group.readiness.include=ping".to_string(),
             "management.endpoint.health.show-details=when-authorized".to_string(),
+            "info.app.name=@project.name@".to_string(),
+            "info.app.version=@project.version@".to_string(),
+            "info.app.description=@project.description@".to_string(),
         ],
     }
 }
@@ -621,7 +632,7 @@ fn http_workflow_migration(table: &str) -> String {
            run_id uuid not null references {table}_runs(id) on delete cascade,\n\
            url text not null,\n\
            depth integer not null check (depth >= -1),\n\
-           kind text not null check (kind in ('ROBOTS','PAGE')),\n\
+           kind text not null check (kind in ('POLICY','PAGE')),\n\
            state text not null check (state in ('PENDING','RUNNING','SUCCEEDED','FAILED','CANCELLED')),\n\
            attempts integer not null default 0 check (attempts >= 0),\n\
            max_attempts integer not null check (max_attempts > 0),\n\
@@ -1763,8 +1774,7 @@ pub(crate) fn outbox_files(
         {
             needs_instant = true;
             expressions.push("Instant.now()".to_string());
-        } else if event_field.name
-            == format!("{}Id", crate::generate::lower_first(target))
+        } else if event_field.name == format!("{}Id", crate::generate::lower_first(target))
             && let Some(id) = target_fields.iter().find(|f| f.name == "id")
         {
             // `<Target>Id` is the identity of the row this use case just
@@ -3891,7 +3901,7 @@ mod usecase_tests {
     #[test]
     fn usecase_rejects_input_that_the_target_cannot_store() {
         let root = scratch("unknown-input");
-        write_record(&root, "Workspace", &["id:uuid", "name:string"]);
+        write_record(&root, "Tenant", &["id:uuid", "name:string"]);
         let fields = crate::generate::parse_fields(&["slug:string".to_string()]).unwrap();
 
         let error = usecase_files(
@@ -3903,12 +3913,12 @@ mod usecase_tests {
             "com.example.demo.app",
             "com.example.demo.adapters",
             "CreateWorkspace",
-            "Workspace",
+            "Tenant",
             &fields,
         )
         .unwrap_err();
 
-        assert!(error.contains("Workspace has no component"), "{error}");
+        assert!(error.contains("Tenant has no component"), "{error}");
     }
 }
 
@@ -4119,12 +4129,17 @@ fn jdbc_transition_java(
             imports.push_str(&crate::generate::import_of(pkg, domain, &column.java_type));
         }
     }
+    let maintains_updated_at = target_columns
+        .iter()
+        .any(|column| column.name == "updated_at" && column.java_type == "Instant")
+        && !update_fields.iter().any(|field| field.name == "updatedAt");
     let assignments = update_fields
         .iter()
         .map(|field| {
             let column = crate::sql::snake_case(&field.name);
             format!("{column} = :{column}")
         })
+        .chain(maintains_updated_at.then_some("updated_at = current_timestamp".to_string()))
         .chain(std::iter::once("version = version + 1".to_string()))
         .collect::<Vec<_>>()
         .join(",\n                            ");
@@ -5697,6 +5712,36 @@ pub(crate) fn security_slice(root: &Path, pkg: &str) -> SpringSlice {
     }
 }
 
+pub(crate) fn cors_slice(root: &Path, pkg: &str) -> SpringSlice {
+    let main = crate::generate::main_dir(root, pkg);
+    let test = crate::generate::test_dir(root, pkg);
+    SpringSlice {
+        deps: Vec::new(),
+        files: vec![
+            (main.join("CorsConfig.java"), cors_config_java(pkg)),
+            (test.join("CorsConfigTest.java"), cors_config_test_java(pkg)),
+        ],
+        properties: vec![
+            "# Exact browser origins; never use `*` together with credentials.".to_string(),
+            "app.cors.allowed-origins=http://localhost:3000".to_string(),
+        ],
+    }
+}
+
+fn cors_config_java(pkg: &str) -> String {
+    crate::template::render(
+        include_str!("../templates/spring/cors_config_java.java"),
+        &[("pkg", pkg)],
+    )
+}
+
+fn cors_config_test_java(pkg: &str) -> String {
+    crate::template::render(
+        include_str!("../templates/spring/cors_config_test_java.java"),
+        &[("pkg", pkg)],
+    )
+}
+
 fn security_config_java(pkg: &str) -> String {
     crate::template::render(
         include_str!("../templates/spring/security_config_java.java"),
@@ -6418,7 +6463,49 @@ pub(crate) fn observability_slice(root: &Path, pkg: &str) -> SpringSlice {
             // `prometheus` in addition to the actuator defaults. Still named
             // individually rather than `*`, which would publish heapdump and
             // the resolved environment.
-            exposure_include(root, &["health", "info", "metrics", "prometheus"]),
+            exposure_include(root, &["health", "info", "prometheus", "threaddump"]),
+            // Observability owns the scrape endpoint, so it must also make the
+            // management connector private-by-default when actuator was not
+            // added separately. Both capabilities converge on the same
+            // values, which keeps their application order irrelevant.
+            "management.server.port=8081".to_string(),
+            "management.endpoints.web.base-path=/management".to_string(),
+            "management.endpoint.health.cache.time-to-live=5s".to_string(),
+            "management.endpoint.health.group.liveness.include=ping".to_string(),
+            "management.endpoint.health.group.readiness.include=ping".to_string(),
+            "management.endpoint.health.show-details=when-authorized".to_string(),
+            // Explicit SLOs produce a bounded, useful histogram. Enabling the
+            // default percentile histogram creates roughly seventy buckets
+            // for every endpoint/status pair.
+            "management.metrics.distribution.slo.http.server.requests=100ms,250ms,500ms,1s,2s,5s,10s"
+                .to_string(),
+            "management.metrics.distribution.percentiles-histogram.http.server.requests=false"
+                .to_string(),
+            "management.metrics.distribution.percentiles.http.server.requests=0.5,0.9,0.95,0.99"
+                .to_string(),
+            "management.metrics.distribution.minimum-expected-value.http.server.requests=1ms"
+                .to_string(),
+            "management.metrics.distribution.maximum-expected-value.http.server.requests=10s"
+                .to_string(),
+            "management.tracing.propagation.type=w3c".to_string(),
+            "management.tracing.sampling.probability=0.1".to_string(),
+            "management.tracing.baggage.correlation.fields=request-id".to_string(),
+            "management.tracing.baggage.tag-fields=request-id".to_string(),
+            // Internal correlation is useful in logs but must not leak to a
+            // third party as propagated baggage.
+            "management.tracing.baggage.local-fields=request-id".to_string(),
+            // Write access logs to the container's stdout device, with no
+            // date suffix or buffering. The management server has its own
+            // prefix default (`management_`); overriding it is essential or
+            // Tomcat tries to create /dev/management_stdout as a non-root
+            // user instead of opening /dev/stdout.
+            "server.tomcat.accesslog.enabled=true".to_string(),
+            "server.tomcat.accesslog.directory=/dev".to_string(),
+            "server.tomcat.accesslog.prefix=stdout".to_string(),
+            "server.tomcat.accesslog.suffix=".to_string(),
+            "server.tomcat.accesslog.file-date-format=".to_string(),
+            "server.tomcat.accesslog.buffered=false".to_string(),
+            "management.server.tomcat.accesslog.prefix=stdout".to_string(),
         ],
     }
 }

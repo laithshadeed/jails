@@ -26,12 +26,13 @@ public class ProductionSecurityConfig {
             throws Exception {
         return http.authorizeHttpRequests(
                         requests -> requests
-                                .requestMatchers("/actuator/health/**")
+                                .requestMatchers("/management/health/**")
                                 .permitAll()
                                 .anyRequest()
                                 .authenticated())
                 .sessionManagement(
                         session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .cors(Customizer.withDefaults())
                 .csrf(AbstractHttpConfigurer::disable)
                 .oauth2ResourceServer(resourceServer -> resourceServer.jwt(Customizer.withDefaults()))
                 .build();

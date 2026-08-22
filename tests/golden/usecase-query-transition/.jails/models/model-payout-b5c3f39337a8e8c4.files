@@ -1,0 +1,5 @@
+id:uuid@pk
+amount:long@positive
+status:PayoutStatus@index
+version:long@nonnegative
+createdAt:instant

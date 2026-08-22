@@ -5,8 +5,6 @@
 //! reflection, so `public` buys nothing and only widens what other packages
 //! can compile against.
 
-use super::*;
-
 // ---- standalone stub templates (ported from springgen.nvim) ----
 
 pub(super) fn interface_java(pkg: &str, name: &str) -> String {

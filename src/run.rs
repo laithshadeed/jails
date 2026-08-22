@@ -53,9 +53,14 @@ pub(crate) fn maven_binary(root: &Path) -> PathBuf {
 /// prints *and then runs*, which is the property that was violated where each
 /// site decided for itself.
 pub(crate) fn run_inherited(cmd: Command, debug: bool) -> Result<()> {
+    let is_maven = is_maven_program(cmd.get_program());
     let mut spec = crate::process::CommandSpec::new(cmd.get_program())
         .args(cmd.get_args())
-        .output(crate::process::OutputMode::Inherit);
+        .output(if is_maven {
+            crate::process::OutputMode::Tee
+        } else {
+            crate::process::OutputMode::Inherit
+        });
     if let Some(dir) = cmd.get_current_dir() {
         spec = spec.current_dir(dir);
     }
@@ -64,7 +69,42 @@ pub(crate) fn run_inherited(cmd: Command, debug: bool) -> Result<()> {
             spec = spec.env(key, value);
         }
     }
-    crate::process::run_checked(&spec, crate::process::Diagnostics::from_flag(debug)).map(|_| ())
+    let done = crate::process::run(&spec, crate::process::Diagnostics::from_flag(debug))?;
+    if done.status.success() {
+        return Ok(());
+    }
+    if is_maven {
+        let mut log = done.stdout_string();
+        log.push_str(&String::from_utf8_lossy(&done.stderr));
+        report_maven_failure(&log);
+    }
+    Err(format!(
+        "{} exited with {}",
+        cmd.get_program().to_string_lossy(),
+        done.status
+    ))
+}
+
+fn is_maven_program(program: &std::ffi::OsStr) -> bool {
+    Path::new(program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            matches!(
+                name.to_ascii_lowercase().as_str(),
+                "mvn" | "mvnw" | "mvnd" | "mvn.cmd" | "mvnw.cmd" | "mvnd.cmd"
+            )
+        })
+}
+
+fn report_maven_failure(log: &str) {
+    println!();
+    println!("jails: Maven failed; diagnosing the captured failure:");
+    println!();
+    if crate::why::report(log) == 0 {
+        println!("jails does not recognise this Maven failure yet.");
+        println!("Run `jails doctor`, then inspect the final `Caused by:` line above.");
+    }
 }
 
 /// Run a command, echoing its output live while keeping a copy, and treat
@@ -134,6 +174,7 @@ fn run_watched(mut cmd: Command, debug: bool) -> Result<()> {
     }
 
     if !status.success() {
+        report_maven_failure(&log);
         return Err(format!("{program} exited with {status}"));
     }
     if !crate::why::looks_fatal(&log) {
@@ -180,6 +221,12 @@ fn expand_filter(filter: &str) -> String {
         || class.ends_with("Tests")
         || class.ends_with("IT")
         || class.contains('*')
+        // `Outer$Nested` and `com.example.PayoutTest` are already fully
+        // specified. Applying the bare-name convention to them produced
+        // `PayoutTest$WhenDeclinedTest`, a class nothing declares -- which
+        // is exactly the shape `jails test <file>:<line>` resolves to.
+        || class.contains('$')
+        || class.contains('.')
     {
         class.to_string()
     } else {
@@ -191,11 +238,42 @@ fn expand_filter(filter: &str) -> String {
     }
 }
 
-pub fn test(filter: Option<&str>, debug: bool) -> Result<()> {
+/// What `jails test` was asked for beyond the filter.
+#[derive(Default, Clone, Copy)]
+pub struct TestOptions {
+    pub failed: bool,
+    pub fail_fast: bool,
+    pub slowest: Option<usize>,
+}
+
+pub fn test(filter: Option<&str>, options: TestOptions, debug: bool) -> Result<()> {
     let root = find_project_root()?;
+
+    // `--failed` is a filter jails computes rather than one the reader types,
+    // so it is resolved first and then follows exactly the same path.
+    let from_reports;
+    let filter = if options.failed {
+        let failures = crate::surefire::failed_selectors(&root);
+        if failures.is_empty() {
+            println!("no failures recorded in target/surefire-reports or target/failsafe-reports.");
+            println!("Nothing to rerun -- run `jails test` first, or drop --failed.");
+            return Ok(());
+        }
+        println!(
+            "rerunning {} failed test(s) from the last run",
+            failures.len()
+        );
+        from_reports = failures.join(",");
+        Some(from_reports.as_str())
+    } else {
+        filter
+    };
+
     let mut cmd = Command::new(maven_binary(&root));
+    let mut rerun_hint: Option<String> = None;
     if let Some(f) = filter {
-        let test_name = expand_filter(f);
+        let resolved = resolve_filter(&root, f)?;
+        let test_name = expand_filter(&resolved);
         // Decided on the *class*, not on the whole filter. `PayoutIT#settles`
         // ends in `settles`, so routing on the finished string sent an
         // integration test to Surefire, which does not run `*IT` -- Maven
@@ -214,11 +292,253 @@ pub fn test(filter: Option<&str>, debug: bool) -> Result<()> {
         // this as tribal knowledge; it belongs in the tool.
         cmd.arg("-Dsurefire.failIfNoSpecifiedTests=false");
         cmd.arg("-Dfailsafe.failIfNoSpecifiedTests=false");
+        rerun_hint = Some(test_name);
     } else {
         cmd.arg("test");
     }
+    if options.fail_fast {
+        // One failing class is enough to stop: the point of the flag is the
+        // *first* failure, and Surefire counts classes, not methods.
+        cmd.arg("-Dsurefire.skipAfterFailureCount=1");
+        cmd.arg("-Dfailsafe.skipAfterFailureCount=1");
+    }
     cmd.current_dir(&root);
-    run_inherited(cmd, debug)
+    let outcome = run_inherited(cmd, debug);
+
+    if let Some(count) = options.slowest {
+        report_slowest(&root, count);
+    }
+    if outcome.is_err() {
+        report_rerun_line(&root, rerun_hint.as_deref());
+    }
+    outcome
+}
+
+/// After a failing run, the command that reruns just what broke.
+///
+/// Copied from Rails, which prints a runnable `bin/rails test path:LINE`
+/// rather than making you assemble one. The plan credited
+/// `--only-failures` to Rails; that is RSpec's, and **the copy-pasteable
+/// line is the part worth having** (plan.md §7).
+fn report_rerun_line(root: &Path, already_filtered: Option<&str>) {
+    let failures = crate::surefire::failed_selectors(root);
+    println!();
+    match failures.len() {
+        0 => {
+            // Nothing in the reports: the build failed before any test ran,
+            // or Maven itself did. Repeating the filter is still useful and
+            // pretending to know which test failed is not.
+            if let Some(filter) = already_filtered {
+                println!("jails: rerun with  jails test '{filter}'");
+            }
+        }
+        1 => println!("jails: rerun with  jails test '{}'", failures[0]),
+        n => {
+            println!("jails: {n} test(s) failed. Rerun just those with  jails test --failed");
+            for selector in failures.iter().take(5) {
+                println!("         {selector}");
+            }
+            if n > 5 {
+                println!("         ... and {} more", n - 5);
+            }
+        }
+    }
+}
+
+/// The slowest tests of the run that just finished.
+///
+/// Read from the reports rather than timed here: Maven already measured
+/// each one, and a wall-clock number jails invented would include its own
+/// startup.
+fn report_slowest(root: &Path, count: usize) {
+    let slowest = crate::surefire::slowest(root, count);
+    if slowest.is_empty() {
+        println!();
+        println!("jails: no test reports to read -- nothing ran, or the build failed first.");
+        return;
+    }
+    println!();
+    println!("slowest {} test(s):", slowest.len());
+    for case in slowest {
+        println!("  {:>8.2}s  {}", case.seconds, case.selector());
+    }
+}
+
+/// Turn whatever the reader typed into something Surefire understands.
+///
+/// Only one shape needs work: `path/to/FooTest.java:42`, which JUnit cannot
+/// resolve itself -- Jupiter has no `FileSelector` -- so an editor
+/// keybinding has nothing to send unless jails does it.
+fn resolve_filter(root: &Path, filter: &str) -> Result<String> {
+    let Some((path, line)) = split_file_line(filter) else {
+        return Ok(filter.to_string());
+    };
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        root.join(path)
+    };
+    let source = fs::read_to_string(&absolute)
+        .map_err(|e| format!("failed to read {}: {e}", absolute.display()))?;
+    let class = enclosing_class(&source, &absolute);
+    match enclosing_test_method(&source, line) {
+        Some(method) => Ok(format!("{class}#{method}")),
+        // A line between methods, or on the class declaration, is a
+        // reasonable thing to have the cursor on. Running the class is what
+        // the reader meant, and saying so beats refusing.
+        None => {
+            println!(
+                "jails: no @Test encloses {}:{line} -- running {class}",
+                path.display()
+            );
+            Ok(class)
+        }
+    }
+}
+
+/// `src/test/java/com/example/PayoutTest.java:42` -> the two halves.
+///
+/// Split from the right, because a Windows path starts `C:\`.
+fn split_file_line(filter: &str) -> Option<(&Path, usize)> {
+    let (path, line) = filter.rsplit_once(':')?;
+    let line = line.parse().ok()?;
+    let path = Path::new(path);
+    path.extension()
+        .is_some_and(|e| e == "java")
+        .then_some((path, line))
+}
+
+/// The class a `-Dtest` filter should name for this file.
+///
+/// The file stem, unless the line sits inside a `@Nested` class, which
+/// JUnit addresses as `Outer$Nested`.
+fn enclosing_class(source: &str, path: &Path) -> String {
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_string();
+    let text = crate::java::blanked(source);
+    let mut nested: Option<String> = None;
+    for line in text.lines() {
+        if let Some(name) = declared_type_name(line) {
+            if name != stem {
+                nested = Some(name);
+            }
+        }
+    }
+    match nested {
+        Some(inner) => format!("{stem}${inner}"),
+        None => stem,
+    }
+}
+
+/// `    static class Deletes {` -> `Deletes`.
+fn declared_type_name(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    for keyword in ["class ", "record ", "interface "] {
+        if let Some(at) = trimmed.find(keyword) {
+            // Only a declaration, not `new Foo() { class ...` inside an
+            // expression: everything before the keyword has to be modifiers.
+            if trimmed[..at].split_whitespace().all(|word| {
+                matches!(
+                    word,
+                    "public"
+                        | "private"
+                        | "protected"
+                        | "static"
+                        | "final"
+                        | "abstract"
+                        | "sealed"
+                        | "non-sealed"
+                )
+            }) {
+                let rest = &trimmed[at + keyword.len()..];
+                let name: String = rest
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_')
+                    .collect();
+                if !name.is_empty() {
+                    return Some(name);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// The name of the `@Test` method containing `line` (1-based).
+///
+/// Scans upward for a method declaration and then checks that a test
+/// annotation sits above it, which is the same shape `java::annotations`
+/// reads -- but line numbers matter here and that reader does not carry
+/// them. Comments and string literals are blanked first, so a `@Test` in
+/// Javadoc cannot promote the method below it.
+fn enclosing_test_method(source: &str, line: usize) -> Option<String> {
+    let text = crate::java::blanked(source);
+    let lines: Vec<&str> = text.lines().collect();
+    let start = line.min(lines.len()).checked_sub(1)?;
+    for index in (0..=start).rev() {
+        let Some(name) = method_name(lines[index]) else {
+            continue;
+        };
+        let annotated = lines[..index]
+            .iter()
+            .rev()
+            // Annotations and modifiers may sit between; a blank line or
+            // another statement means this method has none of its own.
+            .take_while(|l| {
+                let t = l.trim();
+                t.starts_with('@') || t.is_empty() || t.starts_with("//")
+            })
+            .any(|l| is_test_annotation(l));
+        if annotated {
+            return Some(name);
+        }
+    }
+    None
+}
+
+/// Is this line a JUnit test annotation?
+///
+/// Matched on the annotation's **last segment**, because the fully qualified
+/// form is real: jails' own generated integration tests carry
+/// `@org.springframework.transaction.annotation.Transactional`, and a reader
+/// who writes `@org.junit.jupiter.api.Test` is not doing anything strange.
+/// Matching `@Test` as a prefix missed every one of them, and the symptom was
+/// `jails test <file>:<line>` quietly widening to the whole class.
+fn is_test_annotation(line: &str) -> bool {
+    let trimmed = line.trim();
+    let Some(rest) = trimmed.strip_prefix('@') else {
+        return false;
+    };
+    let name = rest
+        .split(['(', ' '])
+        .next()
+        .unwrap_or(rest)
+        .rsplit('.')
+        .next()
+        .unwrap_or(rest);
+    matches!(
+        name,
+        "Test" | "ParameterizedTest" | "RepeatedTest" | "TestFactory" | "TestTemplate"
+    )
+}
+
+/// `    void settlesAPayment() {` -> `settlesAPayment`.
+fn method_name(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    let open = trimmed.find('(')?;
+    let before = &trimmed[..open];
+    let name = before.split_whitespace().last()?;
+    // A call is not a declaration: `assertThat(x)` has no return type in
+    // front of it, and a declaration always has at least `void`.
+    if before.split_whitespace().count() < 2 {
+        return None;
+    }
+    name.chars()
+        .all(|c| c.is_alphanumeric() || c == '_')
+        .then(|| name.to_string())
 }
 
 pub fn build(debug: bool) -> Result<()> {
@@ -671,7 +991,12 @@ mod tests {
         let path = java.join("App.java");
         older.insert(
             path,
-            before.values().next().unwrap().checked_sub(std::time::Duration::from_secs(60)).unwrap(),
+            before
+                .values()
+                .next()
+                .unwrap()
+                .checked_sub(std::time::Duration::from_secs(60))
+                .unwrap(),
         );
         assert_eq!(
             changes_between(&older, &before, &root),
@@ -787,6 +1112,115 @@ mod maven_resolution_tests {
         assert_eq!(
             crate::project::maven_command_for_tests(&root),
             maven_binary(&root)
+        );
+    }
+}
+
+#[cfg(test)]
+mod filter_tests {
+    use super::*;
+
+    const SOURCE: &str = r#"package com.example.demo;
+
+import org.junit.jupiter.api.Test;
+
+class PayoutTest {
+
+    /** Javadoc mentioning @Test, which is not an annotation. */
+    void helper() {}
+
+    @Test
+    void settlesAPayment() {
+        assertThat(payout.settle()).isTrue();
+    }
+
+    @org.junit.jupiter.api.Test
+    void writtenFullyQualified() {
+        assertThat(payout.fee()).isZero();
+    }
+
+    @Nested
+    class WhenDeclined {
+
+        @Test
+        void keepsTheOriginalAmount() {
+            assertThat(payout.amount()).isEqualTo(1L);
+        }
+    }
+}
+"#;
+
+    fn line_of(needle: &str) -> usize {
+        SOURCE
+            .lines()
+            .position(|l| l.contains(needle))
+            .expect("needle is in the fixture")
+            + 1
+    }
+
+    #[test]
+    fn a_line_inside_a_test_resolves_to_that_test() {
+        assert_eq!(
+            enclosing_test_method(SOURCE, line_of("payout.settle()")),
+            Some("settlesAPayment".to_string())
+        );
+        // The declaration line itself counts as inside it.
+        assert_eq!(
+            enclosing_test_method(SOURCE, line_of("void settlesAPayment")),
+            Some("settlesAPayment".to_string())
+        );
+    }
+
+    #[test]
+    fn a_fully_qualified_test_annotation_counts() {
+        // Jails' own generated ITs carry fully qualified annotations, and
+        // matching `@Test` as a prefix missed every one of them.
+        assert_eq!(
+            enclosing_test_method(SOURCE, line_of("payout.fee()")),
+            Some("writtenFullyQualified".to_string())
+        );
+    }
+
+    #[test]
+    fn a_method_with_no_test_annotation_is_not_a_test() {
+        // `helper` is preceded by Javadoc containing the word @Test, which
+        // is exactly what `java::blanked` exists to stop being read as one.
+        assert_eq!(enclosing_test_method(SOURCE, line_of("void helper")), None);
+    }
+
+    #[test]
+    fn a_line_above_every_test_resolves_to_nothing_rather_than_guessing() {
+        assert_eq!(enclosing_test_method(SOURCE, 1), None);
+    }
+
+    #[test]
+    fn a_nested_class_is_addressed_the_way_junit_addresses_it() {
+        let path = Path::new("src/test/java/com/example/demo/PayoutTest.java");
+        assert_eq!(enclosing_class(SOURCE, path), "PayoutTest$WhenDeclined");
+        // A file with no nested type is just its stem.
+        let flat = "package com.example.demo;\n\nclass PayoutTest {\n}\n";
+        assert_eq!(enclosing_class(flat, path), "PayoutTest");
+    }
+
+    #[test]
+    fn only_a_path_ending_in_java_with_a_line_is_a_file_selector() {
+        assert!(split_file_line("PayoutTest.java:42").is_some());
+        assert!(split_file_line("Payout#settles").is_none());
+        assert!(split_file_line("PayoutTest").is_none());
+        // A class name with a colon but no line number is not one either.
+        assert!(split_file_line("PayoutTest.java:nope").is_none());
+    }
+
+    #[test]
+    fn the_class_suffix_is_applied_to_the_class_half_only() {
+        assert_eq!(expand_filter("Payout"), "PayoutTest");
+        assert_eq!(expand_filter("Payout#settles"), "PayoutTest#settles");
+        assert_eq!(expand_filter("PayoutTest#settles"), "PayoutTest#settles");
+        assert_eq!(expand_filter("PayoutIT#settles"), "PayoutIT#settles");
+        // A nested selector already carries its own suffix.
+        assert_eq!(
+            expand_filter("PayoutTest$WhenDeclined#keeps"),
+            "PayoutTest$WhenDeclined#keeps"
         );
     }
 }

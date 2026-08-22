@@ -6,6 +6,7 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.core.userdetails.User;
@@ -41,6 +42,7 @@ import org.springframework.security.web.SecurityFilterChain;
  * </ul>
  */
 @Configuration(proxyBeanMethods = false)
+@EnableWebSecurity
 @Profile("!prod")
 public class SecurityConfig {
 
@@ -70,7 +72,7 @@ public class SecurityConfig {
                                         // Liveness for a load balancer, which
                                         // cannot authenticate. Only `health` --
                                         // `env` and `heapdump` are not public.
-                                        .requestMatchers("/actuator/health/**")
+                                        .requestMatchers("/management/health/**")
                                         .permitAll()
                                         // Default deny: a new endpoint is
                                         // protected until someone says
@@ -80,6 +82,7 @@ public class SecurityConfig {
                                         .authenticated())
                 .sessionManagement(
                         session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .cors(Customizer.withDefaults())
                 .csrf(AbstractHttpConfigurer::disable)
                 .httpBasic(Customizer.withDefaults())
                 .build();

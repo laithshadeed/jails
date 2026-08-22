@@ -20,7 +20,7 @@ mod domain;
 pub(crate) use domain::*;
 
 mod repository;
-pub(crate) use repository::*;
+use repository::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 #[value(rename_all = "lowercase")]
@@ -38,6 +38,11 @@ pub enum ArtifactKind {
     Interface,
     /// An immutable record with compact-constructor validation, plus a test
     Record,
+    /// Add one component to an existing record and safely refresh unchanged
+    /// derived files; edited files are reported, never overwritten
+    Field,
+    /// A fluent test-data builder for an existing record
+    Factory,
     /// A record whose fields are all validated as a value object
     Value,
     /// An enum and its test -- the one type jails can build a sample of
@@ -165,89 +170,263 @@ const KIND_FILES: &[(ArtifactKind, KindFiles)] = &[
     (
         ArtifactKind::Scaffold,
         &[
-            (Tree::Main, layout::DOMAIN, Placement::Layered, "{name}.java"),
-            (Tree::Test, layout::DOMAIN, Placement::Layered, "{name}Test.java"),
-            (Tree::Main, layout::APP, Placement::Layered, "{name}Repository.java"),
-            (Tree::Main, layout::ADAPTERS, Placement::Layered, "Jdbc{name}Repository.java"),
-            (Tree::Test, layout::ADAPTERS, Placement::Layered, "Jdbc{name}RepositoryIT.java"),
-            (Tree::Main, layout::ADAPTERS, Placement::Layered, "InMemory{name}Repository.java"),
-            (Tree::Main, layout::SERVICE, Placement::Layered, "{name}Service.java"),
-            (Tree::Test, layout::SERVICE, Placement::Layered, "{name}ServiceTest.java"),
-            (Tree::Main, layout::WEB, Placement::Layered, "{name}Controller.java"),
-            (Tree::Test, layout::WEB, Placement::Layered, "{name}ControllerTest.java"),
-            (Tree::Main, layout::WEB, Placement::Layered, "{name}Request.java"),
-            (Tree::Main, layout::WEB, Placement::Layered, "{name}Response.java"),
+            (
+                Tree::Main,
+                layout::DOMAIN,
+                Placement::Layered,
+                "{name}.java",
+            ),
+            (
+                Tree::Test,
+                layout::DOMAIN,
+                Placement::Layered,
+                "{name}Test.java",
+            ),
+            (
+                Tree::Main,
+                layout::APP,
+                Placement::Layered,
+                "{name}Repository.java",
+            ),
+            (
+                Tree::Main,
+                layout::ADAPTERS,
+                Placement::Layered,
+                "Jdbc{name}Repository.java",
+            ),
+            (
+                Tree::Test,
+                layout::ADAPTERS,
+                Placement::Layered,
+                "Jdbc{name}RepositoryIT.java",
+            ),
+            (
+                Tree::Main,
+                layout::ADAPTERS,
+                Placement::Layered,
+                "InMemory{name}Repository.java",
+            ),
+            (
+                Tree::Main,
+                layout::SERVICE,
+                Placement::Layered,
+                "{name}Service.java",
+            ),
+            (
+                Tree::Test,
+                layout::SERVICE,
+                Placement::Layered,
+                "{name}ServiceTest.java",
+            ),
+            (
+                Tree::Main,
+                layout::WEB,
+                Placement::Layered,
+                "{name}Controller.java",
+            ),
+            (
+                Tree::Test,
+                layout::WEB,
+                Placement::Layered,
+                "{name}ControllerTest.java",
+            ),
+            (
+                Tree::Main,
+                layout::WEB,
+                Placement::Layered,
+                "{name}Request.java",
+            ),
+            (
+                Tree::Main,
+                layout::WEB,
+                Placement::Layered,
+                "{name}Response.java",
+            ),
         ],
     ),
     (
         ArtifactKind::Controller,
         &[
-            (Tree::Main, layout::WEB, Placement::Layered, "{name}Controller.java"),
-            (Tree::Test, layout::WEB, Placement::Layered, "{name}ControllerTest.java"),
+            (
+                Tree::Main,
+                layout::WEB,
+                Placement::Layered,
+                "{name}Controller.java",
+            ),
+            (
+                Tree::Test,
+                layout::WEB,
+                Placement::Layered,
+                "{name}ControllerTest.java",
+            ),
         ],
     ),
     (
         ArtifactKind::Service,
         &[
-            (Tree::Main, layout::SERVICE, Placement::Layered, "{name}Service.java"),
-            (Tree::Test, layout::SERVICE, Placement::Layered, "{name}ServiceTest.java"),
+            (
+                Tree::Main,
+                layout::SERVICE,
+                Placement::Layered,
+                "{name}Service.java",
+            ),
+            (
+                Tree::Test,
+                layout::SERVICE,
+                Placement::Layered,
+                "{name}ServiceTest.java",
+            ),
         ],
     ),
     (
         ArtifactKind::Record,
         &[
-            (Tree::Main, layout::DOMAIN, Placement::Layered, "{name}.java"),
-            (Tree::Test, layout::DOMAIN, Placement::Layered, "{name}Test.java"),
+            (
+                Tree::Main,
+                layout::DOMAIN,
+                Placement::Layered,
+                "{name}.java",
+            ),
+            (
+                Tree::Test,
+                layout::DOMAIN,
+                Placement::Layered,
+                "{name}Test.java",
+            ),
         ],
+    ),
+    (
+        ArtifactKind::Factory,
+        &[(
+            Tree::Test,
+            layout::TESTKIT,
+            Placement::Layered,
+            "{name}Factory.java",
+        )],
     ),
     (
         ArtifactKind::Value,
         &[
-            (Tree::Main, layout::DOMAIN, Placement::Layered, "{name}.java"),
-            (Tree::Test, layout::DOMAIN, Placement::Layered, "{name}Test.java"),
+            (
+                Tree::Main,
+                layout::DOMAIN,
+                Placement::Layered,
+                "{name}.java",
+            ),
+            (
+                Tree::Test,
+                layout::DOMAIN,
+                Placement::Layered,
+                "{name}Test.java",
+            ),
         ],
     ),
     (
         ArtifactKind::Enum,
         &[
-            (Tree::Main, layout::DOMAIN, Placement::Layered, "{name}.java"),
-            (Tree::Test, layout::DOMAIN, Placement::Layered, "{name}Test.java"),
+            (
+                Tree::Main,
+                layout::DOMAIN,
+                Placement::Layered,
+                "{name}.java",
+            ),
+            (
+                Tree::Test,
+                layout::DOMAIN,
+                Placement::Layered,
+                "{name}Test.java",
+            ),
         ],
     ),
     (
         ArtifactKind::Sealed,
         &[
-            (Tree::Main, layout::DOMAIN, Placement::Layered, "{name}.java"),
-            (Tree::Test, layout::DOMAIN, Placement::Layered, "{name}Test.java"),
+            (
+                Tree::Main,
+                layout::DOMAIN,
+                Placement::Layered,
+                "{name}.java",
+            ),
+            (
+                Tree::Test,
+                layout::DOMAIN,
+                Placement::Layered,
+                "{name}Test.java",
+            ),
         ],
     ),
     (
         ArtifactKind::Command,
         &[
-            (Tree::Main, layout::CLI, Placement::Layered, "{name}Command.java"),
-            (Tree::Test, layout::CLI, Placement::Layered, "{name}CommandTest.java"),
+            (
+                Tree::Main,
+                layout::CLI,
+                Placement::Layered,
+                "{name}Command.java",
+            ),
+            (
+                Tree::Test,
+                layout::CLI,
+                Placement::Layered,
+                "{name}CommandTest.java",
+            ),
         ],
     ),
     (
         ArtifactKind::Handler,
         &[
-            (Tree::Main, layout::API, Placement::Layered, "{name}Handler.java"),
-            (Tree::Test, layout::API, Placement::Layered, "{name}HandlerTest.java"),
+            (
+                Tree::Main,
+                layout::API,
+                Placement::Layered,
+                "{name}Handler.java",
+            ),
+            (
+                Tree::Test,
+                layout::API,
+                Placement::Layered,
+                "{name}HandlerTest.java",
+            ),
         ],
     ),
     (
         ArtifactKind::Repo,
         &[
-            (Tree::Main, layout::APP, Placement::Layered, "{name}Repository.java"),
-            (Tree::Main, layout::ADAPTERS, Placement::Layered, "Jdbc{name}Repository.java"),
-            (Tree::Test, layout::ADAPTERS, Placement::Layered, "Jdbc{name}RepositoryIT.java"),
+            (
+                Tree::Main,
+                layout::APP,
+                Placement::Layered,
+                "{name}Repository.java",
+            ),
+            (
+                Tree::Main,
+                layout::ADAPTERS,
+                Placement::Layered,
+                "Jdbc{name}Repository.java",
+            ),
+            (
+                Tree::Test,
+                layout::ADAPTERS,
+                Placement::Layered,
+                "Jdbc{name}RepositoryIT.java",
+            ),
         ],
     ),
     (
         ArtifactKind::Cli,
         &[
-            (Tree::Main, layout::CLI, Placement::Layered, "{name}Cli.java"),
-            (Tree::Test, layout::CLI, Placement::Layered, "{name}CliTest.java"),
+            (
+                Tree::Main,
+                layout::CLI,
+                Placement::Layered,
+                "{name}Cli.java",
+            ),
+            (
+                Tree::Test,
+                layout::CLI,
+                Placement::Layered,
+                "{name}CliTest.java",
+            ),
         ],
     ),
     (
@@ -275,117 +454,368 @@ const KIND_FILES: &[(ArtifactKind, KindFiles)] = &[
     (
         ArtifactKind::Client,
         &[
-            (Tree::Main, layout::CLIENTS, Placement::Layered, "{name}Client.java"),
-            (Tree::Test, layout::CLIENTS, Placement::Layered, "{name}ClientTest.java"),
+            (
+                Tree::Main,
+                layout::CLIENTS,
+                Placement::Layered,
+                "{name}Client.java",
+            ),
+            (
+                Tree::Test,
+                layout::CLIENTS,
+                Placement::Layered,
+                "{name}ClientTest.java",
+            ),
         ],
     ),
     (
         ArtifactKind::Fetcher,
         &[
-            (Tree::Main, layout::CLIENTS, Placement::Layered, "{name}Fetcher.java"),
-            (Tree::Main, layout::CLIENTS, Placement::Layered, "Safe{name}Fetcher.java"),
-            (Tree::Test, layout::CLIENTS, Placement::Layered, "Safe{name}FetcherTest.java"),
+            (
+                Tree::Main,
+                layout::CLIENTS,
+                Placement::Layered,
+                "{name}Fetcher.java",
+            ),
+            (
+                Tree::Main,
+                layout::CLIENTS,
+                Placement::Layered,
+                "Safe{name}Fetcher.java",
+            ),
+            (
+                Tree::Test,
+                layout::CLIENTS,
+                Placement::Layered,
+                "Safe{name}FetcherTest.java",
+            ),
         ],
     ),
     (
         ArtifactKind::Job,
         &[
-            (Tree::Main, layout::JOBS, Placement::Layered, "{name}Job.java"),
-            (Tree::Test, layout::JOBS, Placement::Layered, "{name}JobTest.java"),
+            (
+                Tree::Main,
+                layout::JOBS,
+                Placement::Layered,
+                "{name}Job.java",
+            ),
+            (
+                Tree::Test,
+                layout::JOBS,
+                Placement::Layered,
+                "{name}JobTest.java",
+            ),
         ],
     ),
     (
         ArtifactKind::HttpSink,
         &[
-            (Tree::Main, layout::JOBS, Placement::Layered, "{name}HttpOutboxSink.java"),
-            (Tree::Test, layout::JOBS, Placement::Layered, "{name}HttpOutboxSinkTest.java"),
+            (
+                Tree::Main,
+                layout::JOBS,
+                Placement::Layered,
+                "{name}HttpOutboxSink.java",
+            ),
+            (
+                Tree::Test,
+                layout::JOBS,
+                Placement::Layered,
+                "{name}HttpOutboxSinkTest.java",
+            ),
         ],
     ),
     (
         ArtifactKind::HttpWorkflow,
         &[
-            (Tree::Main, layout::JOBS, Placement::Layered, "{name}Workflow.java"),
-            (Tree::Main, layout::WEB, Placement::Pinned, "{name}WorkflowController.java"),
-            (Tree::Test, layout::JOBS, Placement::Layered, "{name}WorkflowIT.java"),
+            (
+                Tree::Main,
+                layout::JOBS,
+                Placement::Layered,
+                "{name}Workflow.java",
+            ),
+            (
+                Tree::Main,
+                layout::WEB,
+                Placement::Pinned,
+                "{name}WorkflowController.java",
+            ),
+            (
+                Tree::Test,
+                layout::JOBS,
+                Placement::Layered,
+                "{name}WorkflowIT.java",
+            ),
         ],
     ),
     (
         ArtifactKind::DurableJob,
         &[
-            (Tree::Main, layout::JOBS, Placement::Layered, "{name}Work.java"),
-            (Tree::Main, layout::JOBS, Placement::Layered, "{name}Queue.java"),
-            (Tree::Main, layout::JOBS, Placement::Layered, "Jdbc{name}Store.java"),
-            (Tree::Main, layout::JOBS, Placement::Layered, "{name}Worker.java"),
-            (Tree::Main, layout::WEB, Placement::Pinned, "{name}JobController.java"),
-            (Tree::Test, layout::JOBS, Placement::Layered, "{name}JobIT.java"),
+            (
+                Tree::Main,
+                layout::JOBS,
+                Placement::Layered,
+                "{name}Work.java",
+            ),
+            (
+                Tree::Main,
+                layout::JOBS,
+                Placement::Layered,
+                "{name}Queue.java",
+            ),
+            (
+                Tree::Main,
+                layout::JOBS,
+                Placement::Layered,
+                "Jdbc{name}Store.java",
+            ),
+            (
+                Tree::Main,
+                layout::JOBS,
+                Placement::Layered,
+                "{name}Worker.java",
+            ),
+            (
+                Tree::Main,
+                layout::WEB,
+                Placement::Pinned,
+                "{name}JobController.java",
+            ),
+            (
+                Tree::Test,
+                layout::JOBS,
+                Placement::Layered,
+                "{name}JobIT.java",
+            ),
         ],
     ),
     (
         ArtifactKind::Event,
         &[
-            (Tree::Main, layout::MESSAGING, Placement::Layered, "{name}Event.java"),
-            (Tree::Main, layout::MESSAGING, Placement::Layered, "{name}Publisher.java"),
-            (Tree::Main, layout::MESSAGING, Placement::Layered, "{name}Listener.java"),
-            (Tree::Test, layout::MESSAGING, Placement::Layered, "{name}MessagingIT.java"),
+            (
+                Tree::Main,
+                layout::MESSAGING,
+                Placement::Layered,
+                "{name}Event.java",
+            ),
+            (
+                Tree::Main,
+                layout::MESSAGING,
+                Placement::Layered,
+                "{name}Publisher.java",
+            ),
+            (
+                Tree::Main,
+                layout::MESSAGING,
+                Placement::Layered,
+                "{name}Listener.java",
+            ),
+            (
+                Tree::Test,
+                layout::MESSAGING,
+                Placement::Layered,
+                "{name}MessagingIT.java",
+            ),
         ],
     ),
     (
         ArtifactKind::Usecase,
         &[
-            (Tree::Main, layout::SERVICE, Placement::Layered, "{name}Command.java"),
-            (Tree::Main, layout::SERVICE, Placement::Layered, "{name}UseCase.java"),
-            (Tree::Main, layout::SERVICE, Placement::Layered, "Default{name}UseCase.java"),
-            (Tree::Test, layout::SERVICE, Placement::Layered, "{name}UseCaseTest.java"),
-            (Tree::Main, layout::WEB, Placement::Layered, "{name}Controller.java"),
-            (Tree::Test, layout::WEB, Placement::Layered, "{name}ControllerTest.java"),
+            (
+                Tree::Main,
+                layout::SERVICE,
+                Placement::Layered,
+                "{name}Command.java",
+            ),
+            (
+                Tree::Main,
+                layout::SERVICE,
+                Placement::Layered,
+                "{name}UseCase.java",
+            ),
+            (
+                Tree::Main,
+                layout::SERVICE,
+                Placement::Layered,
+                "Default{name}UseCase.java",
+            ),
+            (
+                Tree::Test,
+                layout::SERVICE,
+                Placement::Layered,
+                "{name}UseCaseTest.java",
+            ),
+            (
+                Tree::Main,
+                layout::WEB,
+                Placement::Layered,
+                "{name}Controller.java",
+            ),
+            (
+                Tree::Test,
+                layout::WEB,
+                Placement::Layered,
+                "{name}ControllerTest.java",
+            ),
             // The `--yields` half: the outbox, its sinks and its relay. Left
             // behind, the port has no implementation and the Kafka sink
             // implements a type that is gone, so the project stops compiling.
-            (Tree::Main, layout::SERVICE, Placement::Layered, "Outbox{name}UseCase.java"),
-            (Tree::Main, layout::JOBS, Placement::Layered, "Jdbc{name}Outbox.java"),
-            (Tree::Main, layout::JOBS, Placement::Layered, "{name}OutboxSink.java"),
-            (Tree::Main, layout::JOBS, Placement::Layered, "{name}KafkaOutboxSink.java"),
-            (Tree::Main, layout::JOBS, Placement::Layered, "{name}OutboxWorker.java"),
-            (Tree::Test, layout::JOBS, Placement::Layered, "{name}OutboxIT.java"),
+            (
+                Tree::Main,
+                layout::SERVICE,
+                Placement::Layered,
+                "Outbox{name}UseCase.java",
+            ),
+            (
+                Tree::Main,
+                layout::JOBS,
+                Placement::Layered,
+                "Jdbc{name}Outbox.java",
+            ),
+            (
+                Tree::Main,
+                layout::JOBS,
+                Placement::Layered,
+                "{name}OutboxSink.java",
+            ),
+            (
+                Tree::Main,
+                layout::JOBS,
+                Placement::Layered,
+                "{name}KafkaOutboxSink.java",
+            ),
+            (
+                Tree::Main,
+                layout::JOBS,
+                Placement::Layered,
+                "{name}OutboxWorker.java",
+            ),
+            (
+                Tree::Test,
+                layout::JOBS,
+                Placement::Layered,
+                "{name}OutboxIT.java",
+            ),
         ],
     ),
     (
         ArtifactKind::Query,
         &[
-            (Tree::Main, layout::SERVICE, Placement::Layered, "{name}Query.java"),
-            (Tree::Main, layout::SERVICE, Placement::Layered, "{name}QueryPort.java"),
-            (Tree::Main, layout::ADAPTERS, Placement::Layered, "Jdbc{name}Query.java"),
-            (Tree::Test, layout::ADAPTERS, Placement::Layered, "Jdbc{name}QueryIT.java"),
-            (Tree::Main, layout::WEB, Placement::Layered, "{name}QueryController.java"),
-            (Tree::Test, layout::WEB, Placement::Layered, "{name}QueryControllerTest.java"),
+            (
+                Tree::Main,
+                layout::SERVICE,
+                Placement::Layered,
+                "{name}Query.java",
+            ),
+            (
+                Tree::Main,
+                layout::SERVICE,
+                Placement::Layered,
+                "{name}QueryPort.java",
+            ),
+            (
+                Tree::Main,
+                layout::ADAPTERS,
+                Placement::Layered,
+                "Jdbc{name}Query.java",
+            ),
+            (
+                Tree::Test,
+                layout::ADAPTERS,
+                Placement::Layered,
+                "Jdbc{name}QueryIT.java",
+            ),
+            (
+                Tree::Main,
+                layout::WEB,
+                Placement::Layered,
+                "{name}QueryController.java",
+            ),
+            (
+                Tree::Test,
+                layout::WEB,
+                Placement::Layered,
+                "{name}QueryControllerTest.java",
+            ),
         ],
     ),
     (
         ArtifactKind::Transition,
         &[
-            (Tree::Main, layout::SERVICE, Placement::Layered, "{name}Command.java"),
-            (Tree::Main, layout::SERVICE, Placement::Layered, "{name}UseCase.java"),
-            (Tree::Main, layout::ADAPTERS, Placement::Layered, "Jdbc{name}Transition.java"),
-            (Tree::Test, layout::ADAPTERS, Placement::Layered, "Jdbc{name}TransitionIT.java"),
-            (Tree::Main, layout::WEB, Placement::Layered, "{name}Controller.java"),
-            (Tree::Test, layout::WEB, Placement::Layered, "{name}ControllerTest.java"),
+            (
+                Tree::Main,
+                layout::SERVICE,
+                Placement::Layered,
+                "{name}Command.java",
+            ),
+            (
+                Tree::Main,
+                layout::SERVICE,
+                Placement::Layered,
+                "{name}UseCase.java",
+            ),
+            (
+                Tree::Main,
+                layout::ADAPTERS,
+                Placement::Layered,
+                "Jdbc{name}Transition.java",
+            ),
+            (
+                Tree::Test,
+                layout::ADAPTERS,
+                Placement::Layered,
+                "Jdbc{name}TransitionIT.java",
+            ),
+            (
+                Tree::Main,
+                layout::WEB,
+                Placement::Layered,
+                "{name}Controller.java",
+            ),
+            (
+                Tree::Test,
+                layout::WEB,
+                Placement::Layered,
+                "{name}ControllerTest.java",
+            ),
         ],
     ),
     (
         ArtifactKind::Dto,
         &[
-            (Tree::Main, layout::WEB, Placement::Layered, "{name}Request.java"),
-            (Tree::Main, layout::WEB, Placement::Layered, "{name}Response.java"),
-            (Tree::Test, layout::WEB, Placement::Layered, "{name}DtoTest.java"),
+            (
+                Tree::Main,
+                layout::WEB,
+                Placement::Layered,
+                "{name}Request.java",
+            ),
+            (
+                Tree::Main,
+                layout::WEB,
+                Placement::Layered,
+                "{name}Response.java",
+            ),
+            (
+                Tree::Test,
+                layout::WEB,
+                Placement::Layered,
+                "{name}DtoTest.java",
+            ),
         ],
     ),
 ];
 
 /// The kinds whose `destroy` is not a path list at all, with why.
 ///
-/// Listed rather than left implicit so `every_kind_has_a_destroy_arm` can
-/// tell "deliberately special" from "forgotten".
+/// Listed rather than left implicit so the coverage test can tell
+/// "deliberately special" from "forgotten". Test-only: the four arms
+/// themselves are the code, and this is the record of *why* they are arms.
+#[cfg(test)]
 const NO_FILE_TABLE: &[(ArtifactKind, &str)] = &[
+    (
+        ArtifactKind::Field,
+        "an evolution operation: it updates an existing model and writes a forward-only migration",
+    ),
     (
         ArtifactKind::Strategy,
         "reads the implementations off disk, so one added by hand after the \
@@ -705,7 +1135,10 @@ struct Artifact {
 /// `package-info.java` every other package gets.
 pub(crate) fn write_new_file(root: &Path, path: &Path, contents: &str) -> Result<()> {
     if path.exists() {
-        return Err(format!("{} already exists", path.display()));
+        return Err(format!(
+            "{} already exists.\n       fix: choose a different name, destroy the generated artifact first, or use `jails g field` to evolve an existing model.",
+            path.display()
+        ));
     }
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
@@ -971,10 +1404,11 @@ pub(crate) fn normalize_imports(source: &str) -> String {
     out
 }
 
-pub fn generate(
+pub fn generate_with_timestamps(
     kind: ArtifactKind,
     name: &str,
     fields: &[String],
+    timestamps: bool,
     package: Option<&str>,
     indexes: &[String],
     strategy_on: Option<&str>,
@@ -983,6 +1417,48 @@ pub fn generate(
 ) -> Result<()> {
     let root = find_project_root()?;
     let base = base_package(&root)?;
+
+    let expanded_fields;
+    let fields = if timestamps {
+        if !matches!(kind, ArtifactKind::Scaffold) {
+            return Err(
+                "--timestamps belongs to scaffold, where the record, DDL, adapter, and HTTP contracts can evolve together.\n       \
+                 fix: use `jails g scaffold <Name> ... --timestamps`."
+                    .to_string(),
+            );
+        }
+        let parsed = parse_fields(fields)?;
+        for conventional in ["createdAt", "updatedAt"] {
+            if parsed.iter().any(|field| field.name == conventional) {
+                return Err(format!(
+                    "--timestamps would duplicate `{conventional}`.\n       \
+                     fix: remove the hand-declared timestamp or omit --timestamps."
+                ));
+            }
+        }
+        expanded_fields = fields
+            .iter()
+            .cloned()
+            .chain([
+                "createdAt:instant".to_string(),
+                "updatedAt:instant".to_string(),
+            ])
+            .collect::<Vec<_>>();
+        expanded_fields.as_slice()
+    } else {
+        fields
+    };
+
+    if matches!(kind, ArtifactKind::Field) {
+        if !indexes.is_empty() || strategy_on.is_some() || strategy_yields.is_some() {
+            return Err(
+                "field accepts one `name:type` component; --index/--on/--yields do not apply.\n       \
+                 fix: put @index on the field itself, for example `createdAt:instant@index`."
+                    .to_string(),
+            );
+        }
+        return generate_field(&root, &base, &capitalize(name), fields, package, pretend);
+    }
 
     // These kinds use NAME as a path/description rather than a Java class
     // name. Handle them before the shared capitalisation below.
@@ -1408,17 +1884,7 @@ pub fn generate(
         ArtifactKind::Dto => {
             let domain = place(layout::DOMAIN);
             let web = place(layout::WEB);
-            let parsed = parse_fields(fields)?;
-            let components = if parsed.is_empty() {
-                fields_from_record(&root, &domain, &name).ok_or_else(|| {
-                    format!(
-                        "no {name} record found under {domain}, and no field spec was given.\n       \
-                         Either `jails g record {name} <field:type ...>` first, or pass the fields here."
-                    )
-                })?
-            } else {
-                parsed
-            };
+            let (components, _) = fields_from_spec_or_record(&root, &domain, &name, fields)?;
             crate::spring::dto_files(&root, &web, &domain, &name, &components)
                 .into_iter()
                 .map(|(path, contents, kind)| Artifact {
@@ -1443,6 +1909,28 @@ pub fn generate(
                     contents: record_test(&root, &domain, &name, &parsed),
                 },
             ]
+        }
+        ArtifactKind::Field => unreachable!("handled above -- it updates an existing model"),
+        ArtifactKind::Factory => {
+            if !fields.is_empty() {
+                return Err(format!(
+                    "factory {name} reads the existing record and takes no field spec.\n       \
+                     fix: run `jails g factory {name}`."
+                ));
+            }
+            let domain = subpackage(&base, config.layer(layout::DOMAIN));
+            let testkit = place(layout::TESTKIT);
+            let components = fields_from_record(&root, &domain, &name).ok_or_else(|| {
+                format!(
+                    "no {name} record found under {domain}.\n       \
+                     fix: generate the record/scaffold first, then run `jails g factory {name}`."
+                )
+            })?;
+            vec![Artifact {
+                kind: "test factory",
+                path: test_dir(&root, &testkit).join(format!("{name}Factory.java")),
+                contents: factory_java(&root, &testkit, &domain, &name, &components),
+            }]
         }
         ArtifactKind::Value => {
             let parsed = parse_fields(fields)?;
@@ -1484,15 +1972,10 @@ pub fn generate(
             let adapters = place(layout::ADAPTERS);
             let domain = place(layout::DOMAIN);
             let mut artifacts = Vec::new();
-            // Three sources for the columns, in order of how much they know:
-            // the field spec on this command line, the record already on
-            // disk, or nothing (which yields the TODO-shaped adapter).
-            let spec = parse_fields(fields)?;
-            let record_fields = if spec.is_empty() {
-                fields_from_record(&root, &domain, &name).unwrap_or_default()
-            } else {
-                spec
-            };
+            // One source rule shared with scaffold/dto: explicit fields,
+            // otherwise the record on disk, otherwise a refusal that names
+            // the fix. A TODO-shaped adapter silently loses data.
+            let (record_fields, _) = fields_from_spec_or_record(&root, &domain, &name, fields)?;
 
             // A repository of a type that does not exist is meaningless, and
             // the port would not compile. Rather than fail, lay down the
@@ -1720,7 +2203,10 @@ pub fn generate(
                 && fs::read_to_string(&artifact.path)
                     .is_ok_and(|source| source == artifact.contents))
         {
-            return Err(format!("{} already exists", artifact.path.display()));
+            return Err(format!(
+                "{} already exists.\n       fix: choose a different name, destroy the generated artifact first, or use `jails g field` to evolve an existing model.",
+                artifact.path.display()
+            ));
         }
     }
     // `--pretend` still runs every check above, so a run that would have
@@ -1733,9 +2219,9 @@ pub fn generate(
             println!("would register {name} in the project's command dispatcher");
         }
         if let Some(dep) = match kind {
-            ArtifactKind::Dto | ArtifactKind::Scaffold => Some(crate::spring::validation_dependency(
-                crate::pom::flavor(&crate::pom::read(&root)?),
-            )),
+            ArtifactKind::Dto | ArtifactKind::Scaffold => Some(
+                crate::spring::validation_dependency(crate::pom::flavor(&crate::pom::read(&root)?)),
+            ),
             ArtifactKind::Client => Some(&crate::spring::RESTCLIENT_STARTER),
             ArtifactKind::Fetcher => Some(&crate::spring::APACHE_HTTPCLIENT),
             ArtifactKind::Event => Some(&crate::spring::TESTCONTAINERS_KAFKA),
@@ -1750,6 +2236,7 @@ pub fn generate(
         println!("--pretend: nothing was written.");
         return Ok(());
     }
+    let mut written = Vec::new();
     for artifact in &artifacts {
         if artifact.path.exists() && artifact.kind == "scheduling" {
             println!("exists scheduling {}", artifact.path.display());
@@ -1757,6 +2244,17 @@ pub fn generate(
         }
         write_new_file(&root, &artifact.path, &artifact.contents)?;
         println!("created {} {}", artifact.kind, artifact.path.display());
+        written.push(artifact.path.clone());
+    }
+
+    let kind_key = kind
+        .to_possible_value()
+        .expect("every ArtifactKind has a clap value")
+        .get_name()
+        .to_string();
+    crate::generated_files::record(&root, &kind_key, &name, package, &written)?;
+    if matches!(kind, ArtifactKind::Record | ArtifactKind::Scaffold) && !fields.is_empty() {
+        crate::generated_files::record_model(&root, &name, package, fields)?;
     }
 
     if matches!(kind, ArtifactKind::Command) {
@@ -1788,6 +2286,30 @@ pub fn generate(
     Ok(())
 }
 
+#[cfg(test)]
+fn generate(
+    kind: ArtifactKind,
+    name: &str,
+    fields: &[String],
+    package: Option<&str>,
+    indexes: &[String],
+    strategy_on: Option<&str>,
+    strategy_yields: Option<&str>,
+    pretend: bool,
+) -> Result<()> {
+    generate_with_timestamps(
+        kind,
+        name,
+        fields,
+        false,
+        package,
+        indexes,
+        strategy_on,
+        strategy_yields,
+        pretend,
+    )
+}
+
 /// An `import` line for `{from}.{class}`, or nothing at all when the two
 /// packages are the same -- importing a sibling is a compile error.
 pub(crate) fn import_of(user: &str, owner: &str, class: &str) -> String {
@@ -1809,8 +2331,254 @@ fn scaffold_artifacts(
     package: Option<&str>,
     indexes: &[String],
 ) -> Result<Vec<Artifact>> {
-    let parsed = parse_fields(fields)?;
+    let config = crate::config::Config::load(root)?;
+    let place = |default: &str| subpackage(base, package.unwrap_or(config.layer(default)));
+    let domain = place(layout::DOMAIN);
+    let (parsed, reusing_record) = fields_from_spec_or_record(root, &domain, name, fields)?;
+    scaffold_artifacts_from_fields(root, base, name, &parsed, package, indexes, !reusing_record)
+}
 
+fn prepared_artifact_contents(path: &Path, contents: &str) -> String {
+    if path
+        .extension()
+        .is_some_and(|extension| extension == "java")
+    {
+        tidy_blank_lines(&normalize_imports(contents))
+    } else {
+        contents.to_string()
+    }
+}
+
+fn field_spec(field: &Field) -> String {
+    let mut ty = field.java_type.clone();
+    if let Some(inner) = ty
+        .strip_prefix("List<")
+        .and_then(|rest| rest.strip_suffix('>'))
+    {
+        ty = format!("list<{inner}>");
+    } else if let Some(inner) = ty
+        .strip_prefix("Map<")
+        .and_then(|rest| rest.strip_suffix('>'))
+    {
+        ty = format!("map<{inner}>");
+    }
+    match field.optionality {
+        Optionality::Nullable => ty.push('?'),
+        Optionality::NonBlank => ty.push('!'),
+        Optionality::Required => {}
+    }
+    format!("{}:{ty}", field.name)
+}
+
+fn stored_primary_key(
+    root: &Path,
+    type_name: &str,
+    package: Option<&str>,
+) -> Result<Option<Field>> {
+    let spec = match crate::generated_files::model_fields(root, type_name, package)? {
+        Some(spec) => Some(spec),
+        None if package.is_some() => crate::generated_files::model_fields(root, type_name, None)?,
+        None => None,
+    };
+    let Some(spec) = spec else {
+        return Ok(None);
+    };
+    let fields = parse_fields(&spec)?;
+    let mut keys = fields
+        .into_iter()
+        .filter(|field| field.constraints.primary_key);
+    let first = keys.next();
+    Ok(if first.is_some() && keys.next().is_none() {
+        first
+    } else {
+        None
+    })
+}
+
+fn generate_field(
+    root: &Path,
+    base: &str,
+    name: &str,
+    fields: &[String],
+    package: Option<&str>,
+    pretend: bool,
+) -> Result<()> {
+    if fields.len() != 1 {
+        return Err(format!(
+            "field {name} needs exactly one `name:type` component, got {}.\n       \
+             fix: run one field evolution at a time so each change gets its own migration.",
+            fields.len()
+        ));
+    }
+
+    let config = crate::config::Config::load(root)?;
+    let domain = subpackage(base, package.unwrap_or(config.layer(layout::DOMAIN)));
+    let stored = crate::generated_files::model_fields(root, name, package)?;
+    let old_fields = if let Some(spec) = stored.as_ref() {
+        parse_fields(spec)?
+    } else {
+        fields_from_record(root, &domain, name).ok_or_else(|| {
+            format!(
+                "no {name} record found under {domain}.\n       \
+                 fix: generate the record/scaffold first, then run `jails g field {name} {}`.",
+                fields[0]
+            )
+        })?
+    };
+    let mut added = parse_fields(fields)?;
+    let field = added
+        .pop()
+        .ok_or_else(|| "field needs one non-empty field spec".to_string())?;
+    if old_fields
+        .iter()
+        .any(|existing| existing.name == field.name)
+    {
+        return Err(format!(
+            "{name} already has a `{}` component.\n       \
+             fix: choose a new component name; removing or changing a field is a data migration and is not automated.",
+            field.name
+        ));
+    }
+
+    let new_column = crate::sql::columns(
+        std::slice::from_ref(&field),
+        root,
+        &domain,
+        &lower_first(name),
+    )
+    .pop()
+    .expect("one field produces one SQL column");
+    if !new_column.mapped() {
+        return Err(format!(
+            "{}:{} is a project type that cannot be persisted as one column.\n       \
+             fix: generate an association when the type is another record, or use a built-in/enum type.",
+            field.name, field.java_type
+        ));
+    }
+
+    let mut new_fields = old_fields.clone();
+    new_fields.push(field.clone());
+    let old_artifacts =
+        scaffold_artifacts_from_fields(root, base, name, &old_fields, package, &[], true)?;
+    let new_artifacts =
+        scaffold_artifacts_from_fields(root, base, name, &new_fields, package, &[], true)?;
+
+    let mut updates: Vec<(&Path, String)> = Vec::new();
+    let mut skipped: Vec<&Path> = Vec::new();
+    for new in &new_artifacts {
+        if new.kind == "migration" || !new.path.is_file() {
+            continue;
+        }
+        let Some(old) = old_artifacts.iter().find(|old| old.path == new.path) else {
+            continue;
+        };
+        let before = prepared_artifact_contents(&old.path, &old.contents);
+        let after = prepared_artifact_contents(&new.path, &new.contents);
+        if before == after {
+            continue;
+        }
+        match fs::read_to_string(&new.path) {
+            Ok(on_disk) if on_disk == before => updates.push((&new.path, after)),
+            Ok(_) => skipped.push(&new.path),
+            Err(error) => {
+                return Err(format!("failed to read {}: {error}", new.path.display()));
+            }
+        }
+    }
+
+    let migration_dir = root.join("src/main/resources/db/migration");
+    let migration = if migration_dir.is_dir() {
+        let version = next_migration_version(&migration_dir)?;
+        let path = migration_dir.join(format!(
+            "V{version:03}__add_{}_to_{}.sql",
+            new_column.name,
+            crate::sql::table_name(name)
+        ));
+        if path.exists() {
+            return Err(format!(
+                "{} already exists.\n       fix: resolve the migration version collision and rerun the command.",
+                path.display()
+            ));
+        }
+        Some((path, crate::sql::add_column(name, &new_column)?))
+    } else {
+        None
+    };
+
+    for (path, _) in &updates {
+        println!(
+            "{} {}",
+            if pretend { "would update" } else { "updated" },
+            path.display()
+        );
+    }
+    for path in &skipped {
+        println!("skipped {} -- you have edited this file", path.display());
+        if path
+            .file_name()
+            .is_some_and(|file| file.to_string_lossy() == format!("Jdbc{name}Repository.java"))
+        {
+            println!(
+                "         add to the select/insert lists: {}",
+                new_column.name
+            );
+            println!(
+                "         bind: {}",
+                new_column.write.as_deref().unwrap_or("the new component")
+            );
+        } else {
+            println!(
+                "         add component: {} {}",
+                declared_type(&field),
+                field.name
+            );
+        }
+    }
+    if let Some((path, _)) = &migration {
+        println!(
+            "{} migration {}",
+            if pretend { "would create" } else { "created" },
+            path.display()
+        );
+    }
+
+    if pretend {
+        println!();
+        println!("--pretend: nothing was written.");
+        return Ok(());
+    }
+    for (path, contents) in &updates {
+        fs::write(path, contents)
+            .map_err(|error| format!("failed to update {}: {error}", path.display()))?;
+    }
+    let mut written = Vec::new();
+    if let Some((path, contents)) = migration {
+        write_new_file(root, &path, &contents)?;
+        written.push(path);
+    }
+
+    let mut model_spec = stored.unwrap_or_else(|| old_fields.iter().map(field_spec).collect());
+    model_spec.push(fields[0].clone());
+    crate::generated_files::record_model(root, name, package, &model_spec)?;
+    crate::generated_files::record(
+        root,
+        "field",
+        &format!("{name}.{}", field.name),
+        package,
+        &written,
+    )?;
+    Ok(())
+}
+
+fn scaffold_artifacts_from_fields(
+    root: &Path,
+    base: &str,
+    name: &str,
+    parsed: &[Field],
+    package: Option<&str>,
+    indexes: &[String],
+    include_record: bool,
+) -> Result<Vec<Artifact>> {
     let config = crate::config::Config::load(root)?;
     let place = |default: &str| subpackage(base, package.unwrap_or(config.layer(default)));
     let domain = place(layout::DOMAIN);
@@ -1819,10 +2587,52 @@ fn scaffold_artifacts(
     let service = place(layout::SERVICE);
     let web = place(layout::WEB);
 
-    crate::spring::require_scope_authorizer(root, base, "scaffold", name, &parsed)?;
+    crate::spring::require_scope_authorizer(root, base, "scaffold", name, parsed)?;
 
     let domain_in = |user: &str| import_of(user, &domain, name);
-    let columns = crate::sql::columns(&parsed, root, &domain, &lower_first(name));
+    let columns = crate::sql::columns(parsed, root, &domain, &lower_first(name));
+    for (field, column) in parsed.iter().zip(&columns) {
+        if column.mapped() {
+            continue;
+        }
+        if field.collection {
+            return Err(format!(
+                "{name}.{} is a collection, which cannot be persisted as one column.\n       \
+                 fix: generate a record for the element and model the relationship explicitly.",
+                field.name
+            ));
+        }
+        if main_dir(root, &domain)
+            .join(format!("{}.java", field.java_type))
+            .is_file()
+        {
+            if let Some(key) = stored_primary_key(root, &field.java_type, package)? {
+                return Err(format!(
+                    "{name}.{} has project record type {}, which cannot be persisted as one `{}` column.\n       \
+                     fix: replace it with `{}:{}` and run `jails g association {name}{} {}={} --on {name} --yields {}`.",
+                    field.name,
+                    field.java_type,
+                    column.sql_type,
+                    field.name,
+                    declared_type(&key),
+                    capitalize(&field.name),
+                    field.name,
+                    key.name,
+                    field.java_type
+                ));
+            }
+            return Err(format!(
+                "{name}.{} has project record type {}, but that record has no single stored @pk mapping.\n       \
+                 fix: model the foreign key as a built-in scalar field, then generate an explicit association.",
+                field.name, field.java_type
+            ));
+        }
+        return Err(format!(
+            "{name}.{} has field type {}, for which jails has no SQL/JDBC mapping.\n       \
+             fix: use a mapped built-in/enum field type, or generate a referenced record and model it with `g association`.",
+            field.name, field.java_type
+        ));
+    }
 
     // The migration is emitted only when the project has somewhere to put
     // one -- `jails add db` creates db/migration, and a .sql file in a
@@ -1832,6 +2642,14 @@ fn scaffold_artifacts(
     // `amount_minor` select), and one list cannot disagree with itself.
     let migration_dir = root.join("src/main/resources/db/migration");
     let mut artifacts = Vec::new();
+
+    artifacts.push(Artifact {
+        kind: "HTTP request collection",
+        path: root
+            .join("requests")
+            .join(format!("{}.http", crate::sql::snake_case(name))),
+        contents: scaffold_requests(root, &domain, name, parsed),
+    });
 
     // A fixture file, on the same rule as the migration: only when the
     // project already has somewhere to put one. `new`/`new-cli` seed
@@ -1862,17 +2680,22 @@ fn scaffold_artifacts(
         });
     }
 
+    if include_record {
+        artifacts.extend([
+            Artifact {
+                kind: "record",
+                path: main_dir(root, &domain).join(format!("{name}.java")),
+                contents: record_java(&domain, name, parsed),
+            },
+            Artifact {
+                kind: "record test",
+                path: test_dir(root, &domain).join(format!("{name}Test.java")),
+                contents: record_test(root, &domain, name, parsed),
+            },
+        ]);
+    }
+
     artifacts.extend(vec![
-        Artifact {
-            kind: "record",
-            path: main_dir(root, &domain).join(format!("{name}.java")),
-            contents: record_java(&domain, name, &parsed),
-        },
-        Artifact {
-            kind: "record test",
-            path: test_dir(root, &domain).join(format!("{name}Test.java")),
-            contents: record_test(root, &domain, name, &parsed),
-        },
         Artifact {
             kind: "repository port",
             path: main_dir(root, &repository).join(format!("{name}Repository.java")),
@@ -1892,7 +2715,7 @@ fn scaffold_artifacts(
                 ),
                 // The record was just written from these same fields, so the
                 // adapter and the type it maps cannot disagree.
-                &crate::sql::columns(&parsed, root, &domain, &lower_first(name)),
+                &crate::sql::columns(parsed, root, &domain, &lower_first(name)),
                 &domain,
             ),
         },
@@ -1925,7 +2748,7 @@ fn scaffold_artifacts(
             contents: crate::spring::request_java_for(
                 &web,
                 name,
-                &parsed,
+                parsed,
                 &domain_in(&web),
                 &domain,
             ),
@@ -1936,7 +2759,7 @@ fn scaffold_artifacts(
             contents: crate::spring::response_java_for(
                 &web,
                 name,
-                &parsed,
+                parsed,
                 &domain_in(&web),
                 &domain,
             ),
@@ -1976,7 +2799,7 @@ fn scaffold_artifacts(
                     import_of(&web, &service, &format!("{name}Service"))
                 ),
                 parsed.iter().any(|f| f.name == "id"),
-                &parsed,
+                parsed,
             ),
         },
         Artifact {
@@ -1987,13 +2810,59 @@ fn scaffold_artifacts(
                 &web,
                 name,
                 &import_of(&web, &service, &format!("{name}Service")),
-                &parsed,
+                parsed,
                 webmvc_test_import(root),
             ),
         },
     ]);
 
     Ok(artifacts)
+}
+
+fn scaffold_requests(root: &Path, domain: &str, name: &str, fields: &[Field]) -> String {
+    let body = fields
+        .iter()
+        .map(|field| {
+            let value = if field.optionality == Optionality::Nullable {
+                "null".to_string()
+            } else if field.collection {
+                if field.java_type.starts_with("Map") {
+                    "{}".to_string()
+                } else {
+                    "[]".to_string()
+                }
+            } else {
+                match field.java_type.as_str() {
+                    "String" => format!("\"sample-{}\"", field.name),
+                    "Integer" | "int" | "Long" | "long" | "Double" | "double" | "BigDecimal" => {
+                        "1".to_string()
+                    }
+                    "Boolean" | "boolean" => "true".to_string(),
+                    "UUID" => "\"00000000-0000-0000-0000-000000000001\"".to_string(),
+                    "LocalDate" => "\"2026-01-01\"".to_string(),
+                    "LocalDateTime" => "\"2026-01-01T00:00:00\"".to_string(),
+                    "Instant" => "\"2026-01-01T00:00:00Z\"".to_string(),
+                    other if field.owned => first_enum_constant(root, domain, other)
+                        .map(|constant| format!("\"{constant}\""))
+                        .unwrap_or_else(|| "null".to_string()),
+                    _ => "null".to_string(),
+                }
+            };
+            format!("  \"{}\": {value}", field.name)
+        })
+        .collect::<Vec<_>>()
+        .join(",\n");
+    let route = resource_path(name);
+    format!(
+        "@baseUrl = http://localhost:8080\n\n\
+         ### Create {name}\n\
+         POST {{{{baseUrl}}}}{route}\n\
+         Content-Type: application/json\n\n\
+         {{\n{body}\n}}\n\n\
+         ### List {name}\n\
+         GET {{{{baseUrl}}}}{route}\n\
+         Accept: application/json\n"
+    )
 }
 
 pub fn destroy(
@@ -2011,6 +2880,12 @@ pub fn destroy(
     // must not be run through capitalize like a class name.
     let raw_name = name.to_string();
     let name = strip_redundant_suffix(kind, &capitalize(name));
+    let kind_key = kind
+        .to_possible_value()
+        .expect("every ArtifactKind has a clap value")
+        .get_name()
+        .to_string();
+    let recorded = crate::generated_files::paths(&root, &kind_key, &name, package)?;
 
     let paths: Vec<PathBuf> = match kind {
         // The implementations are read back off disk rather than rebuilt from
@@ -2045,15 +2920,16 @@ pub fn destroy(
                     .join(format!("{}.java", cases_class_name(Path::new(&raw_name))?)),
             ]
         }
-        ArtifactKind::Migration | ArtifactKind::Association => {
+        ArtifactKind::Migration | ArtifactKind::Association | ArtifactKind::Field => {
             return Err(
-                "migrations and associations are forward-only; create a new migration instead of destroying one"
+                "migrations, associations, and field changes are forward-only; create a new migration instead of destroying one"
                     .to_string(),
             );
         }
         // Everything else is the table: one row per file, `{name}`
         // substituted, `--package` honoured wherever the generator honours
         // it.
+        _ if recorded.is_some() => recorded.unwrap_or_default(),
         _ => KIND_FILES
             .iter()
             .find(|(entry, _)| *entry == kind)
@@ -2083,6 +2959,9 @@ pub fn destroy(
         // registration most needs taking out.
         if matches!(kind, ArtifactKind::Command) && !pretend {
             unregister_command(&root, &name)?;
+        }
+        if !pretend {
+            crate::generated_files::forget(&root, &kind_key, &name, package)?;
         }
         println!("nothing to destroy");
         return Ok(());
@@ -2126,6 +3005,7 @@ pub fn destroy(
     if matches!(kind, ArtifactKind::Command) {
         unregister_command(&root, &name)?;
     }
+    crate::generated_files::forget(&root, &kind_key, &name, package)?;
     Ok(())
 }
 
@@ -2249,9 +3129,9 @@ mod tests {
             (ArtifactKind::Controller, "RewardController", "Reward"),
             (ArtifactKind::Repo, "RewardRepository", "Reward"),
             (ArtifactKind::Test, "MoneyTest", "Money"),
-            (ArtifactKind::IntegrationTest, "PaymentIT", "Payment"),
-            (ArtifactKind::Job, "ReconcileJob", "Reconcile"),
-            (ArtifactKind::Client, "LedgerClient", "Ledger"),
+            (ArtifactKind::IntegrationTest, "QueueIT", "Queue"),
+            (ArtifactKind::Job, "CleanupJob", "Cleanup"),
+            (ArtifactKind::Client, "CatalogClient", "Catalog"),
             (ArtifactKind::Cli, "AdminCli", "Admin"),
         ] {
             assert_eq!(strip_redundant_suffix(kind, given), want, "{given}");
@@ -3225,7 +4105,7 @@ mod tests {
         let result = generate(
             ArtifactKind::Repo,
             "widget",
-            &[],
+            &["id:uuid".to_string()],
             None,
             &[],
             None,

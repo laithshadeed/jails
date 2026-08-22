@@ -1,0 +1,3 @@
+src/main/java/com/example/demo/domain/Note.java
+src/test/java/com/example/demo/domain/NoteTest.java
+src/test/java/com/example/demo/testkit/NoteFactory.java

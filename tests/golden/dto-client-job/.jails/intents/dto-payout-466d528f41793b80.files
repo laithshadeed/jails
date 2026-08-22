@@ -1,0 +1,3 @@
+src/main/java/com/example/demo/web/PayoutRequest.java
+src/main/java/com/example/demo/web/PayoutResponse.java
+src/test/java/com/example/demo/web/PayoutDtoTest.java

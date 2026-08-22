@@ -55,6 +55,13 @@ pub(crate) enum OutputMode {
     Inherit,
     /// Capture both for the caller to inspect.
     Capture,
+    /// Echo both streams live and retain their tail for diagnostics.
+    ///
+    /// Maven failures need their output twice: once immediately for the
+    /// person watching the build, and once after exit for `jails why` to
+    /// explain the root cause. A bounded tail prevents a verbose build from
+    /// turning that convenience into unbounded memory use.
+    Tee,
 }
 
 /// A child process described as data, so it can be asserted on without being
@@ -220,7 +227,7 @@ pub(crate) fn run(spec: &CommandSpec, diagnostics: Diagnostics) -> Result<Done> 
         OutputMode::Inherit => {
             cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
         }
-        OutputMode::Capture => {
+        OutputMode::Capture | OutputMode::Tee => {
             cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
         }
     }
@@ -246,17 +253,64 @@ pub(crate) fn run(spec: &CommandSpec, diagnostics: Diagnostics) -> Result<Done> 
         drop(child.stdin.take());
     }
 
-    let out = child
-        .wait_with_output()
+    if spec.output != OutputMode::Tee {
+        let out = child
+            .wait_with_output()
+            .map_err(|e| format!("failed to wait for {program}: {e}"))?;
+        return Ok(Done {
+            status: out.status,
+            stdout: out.stdout,
+            stderr: out.stderr,
+        });
+    }
+
+    const DIAGNOSTIC_TAIL_BYTES: usize = 4 * 1024 * 1024;
+    fn read_and_tee<R: std::io::Read, W: std::io::Write>(mut reader: R, mut writer: W) -> Vec<u8> {
+        let mut captured = Vec::new();
+        let mut chunk = [0_u8; 8192];
+        loop {
+            let Ok(read) = reader.read(&mut chunk) else {
+                break;
+            };
+            if read == 0 {
+                break;
+            }
+            let bytes = &chunk[..read];
+            let _ = writer.write_all(bytes);
+            let _ = writer.flush();
+            captured.extend_from_slice(bytes);
+            if captured.len() > DIAGNOSTIC_TAIL_BYTES {
+                let excess = captured.len() - DIAGNOSTIC_TAIL_BYTES;
+                captured.drain(..excess);
+            }
+        }
+        captured
+    }
+
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| format!("failed to capture stdout from {program}"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| format!("failed to capture stderr from {program}"))?;
+    let stdout_thread = std::thread::spawn(move || read_and_tee(stdout, std::io::stdout()));
+    let stderr_thread = std::thread::spawn(move || read_and_tee(stderr, std::io::stderr()));
+    let status = child
+        .wait()
         .map_err(|e| format!("failed to wait for {program}: {e}"))?;
+    let stdout = stdout_thread.join().unwrap_or_default();
+    let stderr = stderr_thread.join().unwrap_or_default();
     Ok(Done {
-        status: out.status,
-        stdout: out.stdout,
-        stderr: out.stderr,
+        status,
+        stdout,
+        stderr,
     })
 }
 
 /// Run, and treat a non-zero exit as an error naming the program.
+#[cfg(test)]
 pub(crate) fn run_checked(spec: &CommandSpec, diagnostics: Diagnostics) -> Result<Done> {
     let done = run(spec, diagnostics)?;
     if !done.status.success() {
@@ -407,6 +461,17 @@ mod tests {
             .output(OutputMode::Capture);
         let done = run(&spec, Diagnostics::Normal).unwrap();
         assert_eq!(done.stdout_string(), "hello");
+    }
+
+    #[test]
+    fn tee_keeps_output_for_a_caller_after_echoing_it() {
+        let spec = CommandSpec::new("sh")
+            .args(["-c", "printf out; printf err >&2"])
+            .output(OutputMode::Tee);
+        let done = run(&spec, Diagnostics::Normal).unwrap();
+        assert!(done.status.success());
+        assert_eq!(done.stdout, b"out");
+        assert_eq!(done.stderr, b"err");
     }
 
     /// A non-zero exit is an outcome, not an error: `doctor` reads one as a

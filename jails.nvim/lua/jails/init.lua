@@ -7,6 +7,8 @@ local config = {
   terminal_height = 15,
   open_created = true,
   root_markers = { 'pom.xml' },
+  keymaps = true,
+  java_bundles = {},
 }
 
 local STREAMING = {
@@ -49,6 +51,8 @@ local KINDS = {
   'class',
   'interface',
   'record',
+  'field',
+  'factory',
   'value',
   'enum',
   'sealed',
@@ -95,14 +99,19 @@ local CAPABILITIES = {
   'fake',
   'http',
   'format',
+  'coverage',
+  'loadtest',
   'ci',
   'docker',
   'image',
+  'k8s',
+  'kubernetes',
   'api',
   'errors',
   'actuator',
   'cache',
   'security',
+  'cors',
   'redis',
   'observability',
   'metrics',
@@ -115,6 +124,7 @@ local SUBCOMMANDS = {
   'about',
   'info',
   'doctor',
+  'lint',
   'setup',
   'why',
   'routes',
@@ -186,6 +196,7 @@ local OPTIONS = {
   -- `app` takes plan/apply as its first argument; both share these flags.
   app = { 'plan', 'apply', '--manifest', '--no-start' },
   setup = { '--dry-run' },
+  test = { '--failed', '--fail-fast', '--slowest' },
 }
 
 function M.setup(opts)
@@ -329,8 +340,9 @@ function M.run_terminal(args)
   vim.bo[buffer].swapfile = false
   vim.b[buffer].jails_root = root
 
-  vim.fn.termopen(cmd, {
+  vim.fn.jobstart(cmd, {
     cwd = root,
+    term = true,
     on_exit = function(_, code)
       if code ~= 0 then
         vim.schedule(function()
@@ -340,6 +352,66 @@ function M.run_terminal(args)
     end,
   })
   vim.cmd.startinsert()
+end
+
+--- Merge the settings jdt.ls needs for generator-driven projects into an
+--- existing nvim-jdtls config. The caller still owns `cmd` and root
+--- discovery; jails only supplies settings, bundles and the heap ceiling.
+function M.extend_jdtls(base)
+  local result = vim.deepcopy(base or {})
+  result.settings = vim.tbl_deep_extend('force', result.settings or {}, {
+    java = {
+      configuration = { updateBuildConfiguration = 'automatic' },
+      autobuild = { enabled = true },
+      maven = { downloadSources = true },
+      eclipse = { downloadSources = true },
+      debug = { settings = { hotCodeReplace = 'auto' } },
+    },
+  })
+  result.init_options = result.init_options or {}
+  result.init_options.bundles = vim.list_extend(
+    vim.deepcopy(result.init_options.bundles or {}),
+    vim.deepcopy(config.java_bundles or {})
+  )
+  if result.cmd and not vim.tbl_contains(result.cmd, '--jvm-arg=-Xmx2G') then
+    table.insert(result.cmd, '--jvm-arg=-Xmx2G')
+  end
+  return result
+end
+
+local function current_test_selector()
+  local file = vim.api.nvim_buf_get_name(0)
+  if file == '' then return nil end
+  return ('%s:%d'):format(file, vim.api.nvim_win_get_cursor(0)[1])
+end
+
+function M.configure_java_buffer()
+  local root = M.project_root()
+  for _, source in ipairs({ 'src/main/java', 'src/test/java' }) do
+    vim.opt_local.path:append(vim.fs.joinpath(root, source))
+  end
+  for _, source in ipairs(vim.g.ftplugin_java_source_path or {}) do
+    vim.opt_local.path:append(source)
+  end
+  vim.cmd.compiler('jails')
+
+  if not config.keymaps then return end
+  local map = function(lhs, rhs, desc)
+    vim.keymap.set('n', lhs, rhs, { buffer = true, silent = true, desc = desc })
+  end
+  map('<leader>Jt', function()
+    local selector = current_test_selector()
+    if selector then M.run_terminal({ 'test', selector }) end
+  end, 'Jails: test at cursor')
+  map('<leader>Jc', function() M.run_terminal({ 'check' }) end, 'Jails: clean verify')
+  map('<leader>Jr', function() M.run_terminal({ 'run' }) end, 'Jails: run')
+  map('<leader>Jb', function() M.run_terminal({ 'build' }) end, 'Jails: build')
+
+  local ok, dap = pcall(require, 'jdtls.dap')
+  if ok then
+    map('<leader>jt', dap.test_nearest_method, 'Java: test nearest method in jdt.ls')
+    map('<leader>jc', dap.test_class, 'Java: test class in jdt.ls')
+  end
 end
 
 function M.destroy(args)

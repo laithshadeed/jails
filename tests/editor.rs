@@ -23,16 +23,18 @@ fn plugin_source() -> String {
     .expect("the editor plugin is tracked in this repository")
 }
 
+fn editor_file(path: &str) -> String {
+    std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(path))
+        .unwrap_or_else(|error| panic!("could not read {path}: {error}"))
+}
+
 /// The quoted strings of `local <name> = { ... }`.
 fn lua_table(source: &str, name: &str) -> Vec<String> {
     let start = source
         .find(&format!("local {name} = {{"))
         .unwrap_or_else(|| panic!("no `local {name}` table in the plugin"));
     let body_start = start + source[start..].find('{').unwrap();
-    let end = body_start
-        + source[body_start..]
-            .find('}')
-            .expect("unterminated table");
+    let end = body_start + source[body_start..].find('}').expect("unterminated table");
     let body = &source[body_start..end];
     let mut found = Vec::new();
     let mut rest = body;
@@ -92,7 +94,9 @@ fn the_editor_plugin_completes_every_value_the_cli_accepts() {
     for (table, wanted) in [
         (
             "KINDS",
-            common::scenarios::cli_kinds().into_iter().collect::<Vec<_>>(),
+            common::scenarios::cli_kinds()
+                .into_iter()
+                .collect::<Vec<_>>(),
         ),
         (
             "CAPABILITIES",
@@ -119,4 +123,57 @@ fn the_editor_plugin_completes_every_value_the_cli_accepts() {
         missing.len(),
         missing.join("\n  ")
     );
+}
+
+#[test]
+fn the_editor_plugin_uses_current_terminal_and_jdtls_apis() {
+    let source = plugin_source();
+
+    for required in [
+        "vim.fn.jobstart(cmd",
+        "term = true",
+        "updateBuildConfiguration = 'automatic'",
+        "autobuild = { enabled = true }",
+        "downloadSources = true",
+        "hotCodeReplace = 'auto'",
+        "--jvm-arg=-Xmx2G",
+        "config.java_bundles",
+    ] {
+        assert!(source.contains(required), "editor plugin lost `{required}`");
+    }
+    assert!(
+        !source.contains("termopen("),
+        "termopen is deprecated on current Neovim; use jobstart(term=true)"
+    );
+}
+
+#[test]
+fn java_buffers_load_project_navigation_and_compiler_support() {
+    let source = plugin_source();
+    let ftplugin = editor_file("jails.nvim/after/ftplugin/java.lua");
+    let compiler = editor_file("jails.nvim/compiler/jails.vim");
+
+    assert!(ftplugin.contains("configure_java_buffer()"), "{ftplugin}");
+    for required in [
+        "src/main/java",
+        "src/test/java",
+        "ftplugin_java_source_path",
+        "vim.cmd.compiler('jails')",
+        "<leader>Jt",
+        "<leader>Jc",
+        "<leader>Jr",
+        "<leader>Jb",
+        "<leader>jt",
+        "<leader>jc",
+    ] {
+        assert!(
+            source.contains(required),
+            "Java editor setup lost `{required}`"
+        );
+    }
+    assert!(
+        compiler.contains("CompilerSet makeprg=jails\\ check"),
+        "{compiler}"
+    );
+    assert!(compiler.contains("errorformat"), "{compiler}");
 }

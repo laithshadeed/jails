@@ -20,7 +20,7 @@ create table site_walk_frontier (
 run_id uuid not null references site_walk_runs(id) on delete cascade,
 url text not null,
 depth integer not null check (depth >= -1),
-kind text not null check (kind in ('ROBOTS','PAGE')),
+kind text not null check (kind in ('POLICY','PAGE')),
 state text not null check (state in ('PENDING','RUNNING','SUCCEEDED','FAILED','CANCELLED')),
 attempts integer not null default 0 check (attempts >= 0),
 max_attempts integer not null check (max_attempts > 0),

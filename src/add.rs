@@ -29,19 +29,19 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 mod messaging;
-pub(crate) use messaging::*;
+use messaging::*;
 
 mod data;
-pub(crate) use data::*;
+use data::*;
 
 mod testing;
-pub(crate) use testing::*;
+use testing::*;
 
 mod tooling;
-pub(crate) use tooling::*;
+use tooling::*;
 
 mod database;
-pub(crate) use database::*;
+use database::*;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Capability {
@@ -64,11 +64,18 @@ pub enum Capability {
     Http,
     /// Automatic formatting on `mvn verify` (Spotless + palantir-java-format)
     Format,
+    /// JaCoCo line coverage with an explicit minimum enforced during `mvn verify`
+    Coverage,
+    /// Route-derived k6 load tests, payload helpers, and repeatable commands
+    Loadtest,
     /// Least-privilege GitHub Actions verification with immutable action pins
     Ci,
     /// Multi-stage, non-root OCI image using the project's configured Java release
     #[value(alias = "image")]
     Docker,
+    /// Helm deployment with isolated management probes and SLO burn-rate alerts
+    #[value(name = "k8s", alias = "kubernetes")]
+    K8s,
     /// RFC 9457 problem responses and bean validation, handled in one place
     #[value(alias = "errors")]
     Api,
@@ -78,6 +85,8 @@ pub enum Capability {
     Cache,
     /// An explicit Spring Security filter chain, shaped for an API
     Security,
+    /// Credentialed browser access with explicit origins and all API methods
+    Cors,
     /// Redis: a TTL-enforcing key/value wrapper, a compose service, and a
     /// real-container integration test
     Redis,
@@ -103,12 +112,16 @@ impl Capability {
             Capability::Fake => "fake",
             Capability::Http => "http",
             Capability::Format => "format",
+            Capability::Coverage => "coverage",
+            Capability::Loadtest => "loadtest",
             Capability::Ci => "ci",
             Capability::Docker => "docker",
+            Capability::K8s => "k8s",
             Capability::Api => "api",
             Capability::Actuator => "actuator",
             Capability::Cache => "cache",
             Capability::Security => "security",
+            Capability::Cors => "cors",
             Capability::Redis => "redis",
             Capability::Observability => "observability",
             Capability::Toxiproxy => "toxiproxy",
@@ -841,9 +854,12 @@ fn build_plan(
         Capability::Testkit => testkit_plan(root, &place(layout::TESTKIT)),
         Capability::Fake => fake_plan(root, &place(layout::TESTKIT)),
         Capability::Http => http_plan(root, &place(layout::API), name),
-        Capability::Format => format_plan(),
+        Capability::Format => format_plan(root),
+        Capability::Coverage => coverage_plan(),
+        Capability::Loadtest => loadtest_plan(root),
         Capability::Ci => ci_plan(root),
         Capability::Docker => docker_plan(root),
+        Capability::K8s => k8s_plan(root, flavor),
         Capability::Api => spring_slice_plan(
             crate::spring::api_slice(root, &place(layout::API)),
             flavor,
@@ -864,6 +880,9 @@ fn build_plan(
             flavor,
             "security",
         ),
+        Capability::Cors => {
+            spring_slice_plan(crate::spring::cors_slice(root, &place("")), flavor, "cors")
+        }
         Capability::Observability => spring_slice_plan(
             crate::spring::observability_slice(root, &place("")),
             flavor,
@@ -1287,6 +1306,19 @@ mod tests {
         );
         assert!(block.contains("spring.datasource.username=app"), "{block}");
         assert!(block.contains("spring.datasource.password=app"), "{block}");
+        for expected in [
+            "spring.datasource.hikari.pool-name=primary",
+            "spring.datasource.hikari.maximum-pool-size=20",
+            "spring.datasource.hikari.connection-timeout=1000",
+            "spring.datasource.hikari.max-lifetime=60000",
+            "spring.datasource.hikari.initialization-fail-timeout=1",
+            "spring.datasource.hikari.transaction-isolation=TRANSACTION_READ_COMMITTED",
+            "spring.datasource.hikari.connection-init-sql=SELECT 1/(1-pg_is_in_recovery()::int)",
+            "server.shutdown=graceful",
+            "spring.lifecycle.timeout-per-shutdown-phase=30s",
+        ] {
+            assert!(block.contains(expected), "missing {expected}: {block}");
+        }
         // Spring's compose module duplicates what `jails run`/`jails start`
         // already do, and cannot drive every compose provider.
         assert!(block.contains(COMPOSE_DISABLED_PROPERTY), "{block}");

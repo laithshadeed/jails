@@ -1,0 +1,4 @@
+src/main/java/com/example/demo/messaging/TransactionEvent.java
+src/main/java/com/example/demo/messaging/TransactionListener.java
+src/main/java/com/example/demo/messaging/TransactionPublisher.java
+src/test/java/com/example/demo/messaging/TransactionMessagingIT.java

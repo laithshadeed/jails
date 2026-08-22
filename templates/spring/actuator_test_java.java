@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * credentials included -- to anything that can reach the port. A test that
  * fails when that happens is cheaper than noticing in production.
  */
-@SpringBootTest
+@SpringBootTest(properties = "management.server.port=")
 @AutoConfigureMockMvc
 class ActuatorEndpointsTest {
 
@@ -26,7 +26,7 @@ class ActuatorEndpointsTest {
 
     @Test
     void healthIsExposed() {
-        assertThat(mvc.get().uri("/actuator/health")).hasStatusOk();
+        assertThat(mvc.get().uri("/management/health")).hasStatusOk();
     }
 
     @Test
@@ -36,7 +36,7 @@ class ActuatorEndpointsTest {
         // instead. Both mean "not available"; pinning 404 would make this
         // test fail the day the application is secured, which is exactly
         // backwards.
-        assertThat(mvc.get().uri("/actuator/env")).hasStatus4xxClientError();
-        assertThat(mvc.get().uri("/actuator/heapdump")).hasStatus4xxClientError();
+        assertThat(mvc.get().uri("/management/env")).hasStatus4xxClientError();
+        assertThat(mvc.get().uri("/management/heapdump")).hasStatus4xxClientError();
     }
 }

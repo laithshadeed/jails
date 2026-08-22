@@ -18,6 +18,12 @@ const STATE_FILE: &str = ".jails/app-state-v1";
 
 #[derive(Subcommand)]
 pub(crate) enum AppCommand {
+    /// Create a documented starter manifest for this project
+    Init {
+        /// Manifest path; defaults to .jails/app.toml in the project
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+    },
     /// Show the generic capability and generation intents without writing
     Plan {
         /// Manifest path; defaults to .jails/app.toml in the project
@@ -46,6 +52,7 @@ struct GenerateIntent {
     kind: Option<ArtifactKind>,
     name: Option<String>,
     fields: Vec<String>,
+    timestamps: bool,
     indexes: Vec<String>,
     package: Option<String>,
     strategy_on: Option<String>,
@@ -81,6 +88,7 @@ impl GenerateIntent {
             kind,
             name,
             fields: self.fields,
+            timestamps: self.timestamps,
             indexes: self.indexes,
             package: self.package,
             strategy_on: self.strategy_on,
@@ -94,6 +102,7 @@ struct ResolvedIntent {
     kind: ArtifactKind,
     name: String,
     fields: Vec<String>,
+    timestamps: bool,
     indexes: Vec<String>,
     package: Option<String>,
     strategy_on: Option<String>,
@@ -103,7 +112,7 @@ struct ResolvedIntent {
 impl ResolvedIntent {
     fn key(&self) -> String {
         format!(
-            "{}|{}|{}|{}|{}|{}|{}",
+            "{}|{}|{}|{}|{}|{}|{}|{}",
             self.kind
                 .to_possible_value()
                 .expect("every ArtifactKind has a clap value")
@@ -111,6 +120,7 @@ impl ResolvedIntent {
             self.name,
             self.package.as_deref().unwrap_or(""),
             self.fields.join(","),
+            self.timestamps,
             self.indexes.join(","),
             self.strategy_on.as_deref().unwrap_or(""),
             self.strategy_yields.as_deref().unwrap_or("")
@@ -134,10 +144,11 @@ impl ResolvedIntent {
     }
 
     fn apply(&self, pretend: bool) -> Result<()> {
-        generate::generate(
+        generate::generate_with_timestamps(
             self.kind,
             &self.name,
             &self.fields,
+            self.timestamps,
             self.package.as_deref(),
             &self.indexes,
             self.strategy_on.as_deref(),
@@ -150,6 +161,7 @@ impl ResolvedIntent {
 pub(crate) fn run(command: AppCommand, debug: bool, pretend: bool) -> Result<()> {
     let root = generate::find_project_root()?;
     match command {
+        AppCommand::Init { manifest } => init(&root, manifest.as_deref(), pretend),
         AppCommand::Plan { manifest } => plan(&root, manifest.as_deref()),
         AppCommand::Apply { manifest, no_start } if pretend => {
             let _ = no_start;
@@ -159,6 +171,44 @@ pub(crate) fn run(command: AppCommand, debug: bool, pretend: bool) -> Result<()>
             apply(&root, manifest.as_deref(), no_start, debug)
         }
     }
+}
+
+fn init(root: &Path, requested: Option<&Path>, pretend: bool) -> Result<()> {
+    let path = match requested {
+        Some(path) if path.is_absolute() => path.to_path_buf(),
+        Some(path) => root.join(path),
+        None => root.join(DEFAULT_MANIFEST),
+    };
+    if path.exists() {
+        return Err(format!(
+            "application manifest already exists: {}.\n       fix: edit it, or pass --manifest with a new path.",
+            path.display()
+        ));
+    }
+    if pretend {
+        println!("would create application manifest {}", path.display());
+        println!();
+        println!("--pretend: nothing was written.");
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
+    }
+    fs::write(
+        &path,
+        "# Generic application intent. Add capabilities, then one [[generate]] table per slice.\n\
+         schema = 1\n\
+         capabilities = []\n\n\
+         # [[generate]]\n\
+         # kind = \"scaffold\"\n\
+         # name = \"Note\"\n\
+         # fields = [\"id:uuid@pk\", \"title:string!\"]\n\
+         # timestamps = true\n",
+    )
+    .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
+    println!("created application manifest {}", path.display());
+    Ok(())
 }
 
 fn plan(root: &Path, requested: Option<&Path>) -> Result<()> {
@@ -294,6 +344,17 @@ fn parse_manifest(text: &str) -> Result<(Manifest, Vec<ResolvedIntent>)> {
                 }
                 "name" => intent.name = Some(string(value, line_number, key)?.to_string()),
                 "fields" => intent.fields = string_array(value, line_number, key)?,
+                "timestamps" => {
+                    intent.timestamps = match value {
+                        "true" => true,
+                        "false" => false,
+                        _ => {
+                            return Err(format!(
+                                "line {line_number}: `timestamps` must be true or false"
+                            ));
+                        }
+                    }
+                }
                 "indexes" => intent.indexes = string_array(value, line_number, key)?,
                 "package" => intent.package = Some(string(value, line_number, key)?.to_string()),
                 "strategy_on" => {
@@ -346,9 +407,6 @@ fn parse_manifest(text: &str) -> Result<(Manifest, Vec<ResolvedIntent>)> {
             "unsupported schema {}; this Jails release supports schema 1",
             manifest.schema
         ));
-    }
-    if manifest.capabilities.is_empty() && resolved.is_empty() {
-        return Err("manifest has no capabilities or [[generate]] intents".to_string());
     }
     let mut keys = HashSet::new();
     for intent in &resolved {

@@ -1,6 +1,6 @@
 # An Intercom-shaped support inbox expressed with the same generic intents.
 schema = 1
-capabilities = ["db", "api", "actuator", "observability", "security", "json", "testkit", "kafka", "docker", "ci"]
+capabilities = ["db", "api", "actuator", "observability", "security", "cors", "json", "testkit", "kafka", "docker", "ci"]
 
 [[generate]]
 kind = "enum"
@@ -30,48 +30,56 @@ fields = ["ACTIVE", "CLEARED"]
 [[generate]]
 kind = "scaffold"
 name = "Workspace"
-fields = ["id:uuid@pk@scope", "name:string!@unique", "createdAt:instant"]
+fields = ["id:uuid@pk@scope", "name:string!@unique"]
+timestamps = true
 
 [[generate]]
 kind = "scaffold"
 name = "Member"
-fields = ["id:uuid@pk", "workspaceId:uuid@index@scope", "email:string!", "displayName:string!", "role:MemberRole@index", "createdAt:instant"]
+fields = ["id:uuid@pk", "workspaceId:uuid@index@scope", "email:string!", "displayName:string!", "role:MemberRole@index"]
+timestamps = true
 indexes = ["workspace_id, email"]
 
 [[generate]]
 kind = "scaffold"
 name = "Inbox"
-fields = ["id:uuid@pk", "workspaceId:uuid@index@scope", "name:string!", "channel:InboxChannel@index", "createdAt:instant"]
+fields = ["id:uuid@pk", "workspaceId:uuid@index@scope", "name:string!", "channel:InboxChannel@index"]
+timestamps = true
 indexes = ["workspace_id, name"]
 
 [[generate]]
 kind = "scaffold"
 name = "InboxMember"
-fields = ["id:uuid@pk", "workspaceId:uuid@index@scope", "inboxId:uuid@index", "memberId:uuid@index", "createdAt:instant"]
+fields = ["id:uuid@pk", "workspaceId:uuid@index@scope", "inboxId:uuid@index", "memberId:uuid@index"]
+timestamps = true
 indexes = ["workspace_id, inbox_id", "workspace_id, member_id"]
 
 [[generate]]
 kind = "scaffold"
 name = "Contact"
-fields = ["id:uuid@pk", "workspaceId:uuid@index@scope", "email:string!", "displayName:string?", "createdAt:instant"]
+fields = ["id:uuid@pk", "workspaceId:uuid@index@scope", "email:string!", "displayName:string?"]
+timestamps = true
 indexes = ["workspace_id, email"]
 
 [[generate]]
 kind = "scaffold"
 name = "Conversation"
 fields = ["id:uuid@pk", "workspaceId:uuid@index@scope", "contactId:uuid@index", "inboxId:uuid@index", "status:ConversationStatus@index", "lastMessageAt:instant", "version:long@nonnegative"]
+timestamps = true
 indexes = ["workspace_id, status, last_message_at desc"]
 
 [[generate]]
 kind = "scaffold"
 name = "Message"
-fields = ["id:uuid@pk", "workspaceId:uuid@index@scope", "conversationId:uuid@index", "direction:MessageDirection", "body:text!", "createdAt:instant"]
+fields = ["id:uuid@pk", "workspaceId:uuid@index@scope", "conversationId:uuid@index", "direction:MessageDirection", "body:text!"]
+timestamps = true
 indexes = ["conversation_id, created_at"]
 
 [[generate]]
 kind = "scaffold"
 name = "ConversationAssignment"
 fields = ["id:uuid@pk", "workspaceId:uuid@index@scope", "conversationId:uuid@unique@index", "memberId:uuid@index", "status:AssignmentStatus@index", "version:long@nonnegative", "assignedAt:instant"]
+timestamps = true
 indexes = ["workspace_id, member_id, status"]
 
 # Explicit persisted ownership chains. These are generic composite relational

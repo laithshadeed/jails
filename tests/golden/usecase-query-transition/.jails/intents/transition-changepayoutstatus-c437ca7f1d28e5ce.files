@@ -1,0 +1,6 @@
+src/main/java/com/example/demo/adapters/JdbcChangePayoutStatusTransition.java
+src/main/java/com/example/demo/service/ChangePayoutStatusCommand.java
+src/main/java/com/example/demo/service/ChangePayoutStatusUseCase.java
+src/main/java/com/example/demo/web/ChangePayoutStatusController.java
+src/test/java/com/example/demo/adapters/JdbcChangePayoutStatusTransitionIT.java
+src/test/java/com/example/demo/web/ChangePayoutStatusControllerTest.java

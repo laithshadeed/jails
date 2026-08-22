@@ -143,6 +143,15 @@ impl Config {
             .collect()
     }
 
+    /// Canonical layer key and its configured package, in the same stable
+    /// order the CLI and editor integrations consume.
+    pub(crate) fn layout_entries(&self) -> Vec<(&'static str, String)> {
+        LAYERS_IN_ORDER
+            .iter()
+            .map(|(name, _)| (*name, self.layer(name).to_string()))
+            .collect()
+    }
+
     /// The capabilities this project declares, in file order.
     pub(crate) fn capabilities(&self) -> &[String] {
         &self.capabilities
@@ -648,4 +657,18 @@ mod tests {
         assert_eq!(Config::load(&dir).unwrap(), Config::default());
         fs::remove_dir_all(&dir).ok();
     }
+}
+#[test]
+fn layout_entries_are_pinned_to_the_canonical_order_and_apply_renames() {
+    let config = Config::parse("[layout]\nweb = \"http\"\n").unwrap();
+    let entries = config.layout_entries();
+    assert_eq!(entries.len(), LAYERS_IN_ORDER.len());
+    assert_eq!(
+        entries.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+        LAYERS_IN_ORDER
+            .iter()
+            .map(|(name, _)| *name)
+            .collect::<Vec<_>>()
+    );
+    assert!(entries.contains(&("web", "http".to_string())));
 }

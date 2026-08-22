@@ -34,6 +34,11 @@ fn about_describes_a_synthetic_nested_maven_reactor() {
         let module_root = root.join(module);
         fs::create_dir_all(module_root.join("src/main/java/dev/example")).unwrap();
         fs::write(
+            module_root.join("src/main/java/dev/example/DemoApplication.java"),
+            "package dev.example;\n\npublic class DemoApplication {}\n",
+        )
+        .unwrap();
+        fs::write(
             module_root.join("pom.xml"),
             format!("<project><parent><groupId>dev.example</groupId><artifactId>sample-parent</artifactId></parent><artifactId>{module}</artifactId></project>"),
         )
@@ -45,7 +50,7 @@ fn about_describes_a_synthetic_nested_maven_reactor() {
     let output = jails_cmd(&cwd, None).arg("about").output().unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Workspace: sample-parent"));
+    assert!(stdout.contains("Reactor: sample-parent"));
     assert!(stdout.contains("Module: sample-web"));
     assert!(stdout.contains("Java: 26"));
     assert!(stdout.contains("Framework: Spring Boot"));
@@ -57,7 +62,13 @@ fn about_describes_a_synthetic_nested_maven_reactor() {
         .unwrap();
     assert!(output.status.success());
     let json = String::from_utf8_lossy(&output.stdout);
-    assert!(json.contains("\"schema_version\": 1"));
+    assert!(json.contains("\"schema_version\": 3"));
+    assert!(json.contains("\"reactor\":"));
+    assert!(json.contains("\"base_package\": \"dev.example\""));
+    assert!(json.contains("\"java_root\":"));
+    assert!(json.contains("\"test_root\":"));
+    assert!(json.contains("\"layout\":"));
+    assert!(json.contains("\"capabilities\":"));
     assert!(json.contains("\"artifact_id\": \"sample-parent\""));
     assert!(json.contains("\"artifact_id\": \"sample-web\""));
     assert!(json.contains("\"java_release\": 26"));
@@ -150,6 +161,67 @@ fn new_cli_creates_expected_project_layout() {
         root.join("src/test/java/com/example/demo/AppTest.java")
             .is_file()
     );
+    let agents = fs::read_to_string(root.join("AGENTS.md")).unwrap();
+    assert!(agents.contains("jails check"), "{agents}");
+    assert!(agents.contains("@MockBean"), "{agents}");
+}
+
+#[test]
+fn new_offline_creates_a_complete_spring_project_without_network() {
+    let workdir = temp_dir("new-offline");
+    let output = jails_cmd(&workdir, None)
+        .args([
+            "new",
+            "demo-app",
+            "--offline",
+            "--no-git",
+            "--no-devtools",
+            "--deps",
+            "web,actuator",
+            "--java",
+            "21",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let root = workdir.join("demo-app");
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(pom.contains("spring-boot-starter-webmvc"), "{pom}");
+    assert!(pom.contains("spring-boot-starter-actuator"), "{pom}");
+    assert!(pom.contains("<java.version>21</java.version>"), "{pom}");
+    assert!(pom.contains("maven-enforcer-plugin"), "{pom}");
+    assert!(pom.contains("<requireJavaVersion>"), "{pom}");
+    assert!(pom.contains("<requireMavenVersion>"), "{pom}");
+    assert!(
+        root.join("src/main/java/com/example/demoapp/DemoAppApplication.java")
+            .is_file()
+    );
+    assert!(
+        root.join("src/test/java/com/example/demoapp/DemoAppApplicationTests.java")
+            .is_file()
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("mise.toml")).unwrap(),
+        "[tools]\njava = \"21\"\n"
+    );
+    let agents = fs::read_to_string(root.join("AGENTS.md")).unwrap();
+    assert!(
+        agents.contains("base package is `com.example.demoapp`"),
+        "{agents}"
+    );
+    assert!(agents.contains("jails lint"), "{agents}");
+    let properties =
+        fs::read_to_string(root.join("src/main/resources/application.properties")).unwrap();
+    assert!(
+        properties.contains("server.shutdown=graceful"),
+        "{properties}"
+    );
+    assert!(!root.join(".git").exists());
 }
 
 #[test]
@@ -220,6 +292,309 @@ fn generate_scaffold_writes_a_raw_jdbc_slice() {
         root.join("src/test/java/com/example/demo/web/PostControllerTest.java")
             .is_file()
     );
+}
+
+#[test]
+fn scaffold_reuses_an_existing_record_and_destroy_preserves_it() {
+    let root = temp_dir("scaffold-model-first");
+    write_project_skeleton(&root);
+
+    let record = jails_cmd(&root, None)
+        .args(["generate", "record", "Post", "id:uuid", "title:string!"])
+        .status()
+        .unwrap();
+    assert!(record.success());
+
+    let scaffold = jails_cmd(&root, None)
+        .args(["generate", "scaffold", "Post"])
+        .status()
+        .unwrap();
+    assert!(scaffold.success());
+
+    let record_path = root.join("src/main/java/com/example/demo/domain/Post.java");
+    let source = fs::read_to_string(&record_path).unwrap();
+    assert!(source.contains("UUID id"), "{source}");
+    assert!(source.contains("String title"), "{source}");
+
+    let destroy = jails_cmd(&root, None)
+        .args(["destroy", "scaffold", "Post", "--force"])
+        .status()
+        .unwrap();
+    assert!(destroy.success());
+    assert!(
+        record_path.is_file(),
+        "destroy scaffold must not remove the record created by a prior intent"
+    );
+    assert!(
+        root.join("src/test/java/com/example/demo/domain/PostTest.java")
+            .is_file(),
+        "the record intent itself remains tracked and intact"
+    );
+    assert!(
+        !root
+            .join("src/main/java/com/example/demo/web/PostController.java")
+            .exists()
+    );
+}
+
+#[test]
+fn field_driven_generators_refuse_an_absent_model_with_a_fix() {
+    let root = temp_dir("missing-model-fix");
+    write_project_skeleton(&root);
+
+    for kind in ["scaffold", "dto", "repo"] {
+        let output = jails_cmd(&root, None)
+            .args(["generate", kind, "Missing"])
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{kind} unexpectedly succeeded");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("fix:"), "{kind}: {stderr}");
+        assert!(stderr.contains("g record Missing"), "{kind}: {stderr}");
+    }
+}
+
+#[test]
+fn generate_field_updates_unchanged_derivatives_preserves_edits_and_adds_a_migration() {
+    let root = temp_dir("generate-field");
+    write_project_skeleton(&root);
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+
+    let scaffold = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Note", "id:uuid@pk", "title:string!"])
+        .status()
+        .unwrap();
+    assert!(scaffold.success());
+
+    let request = root.join("src/main/java/com/example/demo/web/NoteRequest.java");
+    let edited = format!(
+        "{}// user-owned validation\n",
+        fs::read_to_string(&request).unwrap()
+    );
+    fs::write(&request, &edited).unwrap();
+
+    let output = jails_cmd(&root, None)
+        .args(["g", "field", "Note", "createdAt:instant"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("skipped"), "{stdout}");
+    assert!(
+        stdout.contains("add component: Instant createdAt"),
+        "{stdout}"
+    );
+
+    let record =
+        fs::read_to_string(root.join("src/main/java/com/example/demo/domain/Note.java")).unwrap();
+    assert!(record.contains("Instant createdAt"), "{record}");
+    let jdbc = fs::read_to_string(
+        root.join("src/main/java/com/example/demo/adapters/JdbcNoteRepository.java"),
+    )
+    .unwrap();
+    assert!(jdbc.contains("created_at"), "{jdbc}");
+    assert_eq!(fs::read_to_string(&request).unwrap(), edited);
+
+    let migration = fs::read_to_string(
+        root.join("src/main/resources/db/migration/V002__add_created_at_to_notes.sql"),
+    )
+    .unwrap();
+    assert!(
+        migration.contains("add column created_at timestamptz"),
+        "{migration}"
+    );
+    assert!(
+        migration.contains("default current_timestamp not null"),
+        "{migration}"
+    );
+    assert!(
+        migration.contains("alter column created_at drop default"),
+        "{migration}"
+    );
+
+    let files = fs::read_to_string(root.join(".jails/files")).unwrap();
+    assert!(
+        files.contains("src/main/resources/db/migration/V002__add_created_at_to_notes.sql"),
+        "{files}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join(".jails/version")).unwrap(),
+        format!("{}\n", env!("CARGO_PKG_VERSION"))
+    );
+
+    let duplicate = jails_cmd(&root, None)
+        .args(["g", "field", "Note", "createdAt:instant"])
+        .output()
+        .unwrap();
+    assert!(!duplicate.status.success());
+    assert!(
+        String::from_utf8_lossy(&duplicate.stderr).contains("already has a `createdAt` component")
+    );
+}
+
+#[test]
+fn scaffold_refuses_to_silently_flatten_a_project_record_component() {
+    let root = temp_dir("scaffold-project-record");
+    write_project_skeleton(&root);
+    assert!(
+        jails_cmd(&root, None)
+            .args(["g", "record", "User", "id:uuid@pk", "name:string!"])
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let output = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Post", "id:uuid@pk", "author:User"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("cannot be persisted"), "{stderr}");
+    assert!(stderr.contains("author:UUID"), "{stderr}");
+    assert!(stderr.contains("g association"), "{stderr}");
+    assert!(stderr.contains("--on Post --yields User"), "{stderr}");
+    assert!(
+        !root
+            .join("src/main/java/com/example/demo/domain/Post.java")
+            .exists(),
+        "the refusal must happen before the first write"
+    );
+}
+
+#[test]
+fn scaffold_timestamps_flow_through_ddl_create_and_optimistic_updates() {
+    let root = temp_dir("scaffold-timestamps");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+
+    let scaffold = jails_cmd(&root, None)
+        .args([
+            "g",
+            "scaffold",
+            "Note",
+            "id:uuid@pk",
+            "title:string!",
+            "version:long",
+            "--timestamps",
+        ])
+        .status()
+        .unwrap();
+    assert!(scaffold.success());
+    let record =
+        fs::read_to_string(root.join("src/main/java/com/example/demo/domain/Note.java")).unwrap();
+    assert!(record.contains("Instant createdAt"), "{record}");
+    assert!(record.contains("Instant updatedAt"), "{record}");
+    let ddl =
+        fs::read_to_string(root.join("src/main/resources/db/migration/V001__create_notes.sql"))
+            .unwrap();
+    assert!(ddl.contains("created_at"), "{ddl}");
+    assert!(ddl.contains("updated_at"), "{ddl}");
+
+    let transition = jails_cmd(&root, None)
+        .args([
+            "g",
+            "transition",
+            "RenameNote",
+            "id:uuid",
+            "title:string!",
+            "version:long",
+            "--on",
+            "Note",
+        ])
+        .status()
+        .unwrap();
+    assert!(transition.success());
+    let adapter = fs::read_to_string(
+        root.join("src/main/java/com/example/demo/adapters/JdbcRenameNoteTransition.java"),
+    )
+    .unwrap();
+    assert!(
+        adapter.contains("updated_at = current_timestamp"),
+        "{adapter}"
+    );
+}
+
+#[test]
+fn scaffold_writes_http_requests_and_factory_builds_typed_test_data() {
+    let root = temp_dir("requests-factory");
+    write_spring_fixture(&root);
+
+    assert!(
+        jails_cmd(&root, None)
+            .args([
+                "g",
+                "scaffold",
+                "Note",
+                "id:uuid@pk",
+                "title:string!",
+                "createdAt:instant",
+            ])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let requests = fs::read_to_string(root.join("requests/note.http")).unwrap();
+    assert!(requests.contains("POST {{baseUrl}}/notes"), "{requests}");
+    assert!(
+        requests.contains("\"createdAt\": \"2026-01-01T00:00:00Z\""),
+        "{requests}"
+    );
+
+    assert!(
+        jails_cmd(&root, None)
+            .args(["g", "factory", "Note"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let factory =
+        fs::read_to_string(root.join("src/test/java/com/example/demo/testkit/NoteFactory.java"))
+            .unwrap();
+    assert!(
+        factory.contains("public static NoteFactory aNote()"),
+        "{factory}"
+    );
+    assert!(factory.contains("withTitle(String value)"), "{factory}");
+    assert!(factory.contains("Instant.parse("), "{factory}");
+    assert!(factory.contains("return new Note("), "{factory}");
+}
+
+#[test]
+fn app_init_creates_a_parseable_starter_manifest() {
+    let root = temp_dir("app-init");
+    write_project_skeleton(&root);
+
+    let init = jails_cmd(&root, None)
+        .args(["app", "init"])
+        .output()
+        .unwrap();
+    assert!(
+        init.status.success(),
+        "{}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    let manifest = fs::read_to_string(root.join(".jails/app.toml")).unwrap();
+    assert!(manifest.contains("schema = 1"), "{manifest}");
+    assert!(manifest.contains("timestamps = true"), "{manifest}");
+
+    let plan = jails_cmd(&root, None)
+        .args(["app", "plan"])
+        .output()
+        .unwrap();
+    assert!(
+        plan.status.success(),
+        "{}",
+        String::from_utf8_lossy(&plan.stderr)
+    );
+    assert!(String::from_utf8_lossy(&plan.stdout).contains("plan only"));
+
+    let duplicate = jails_cmd(&root, None)
+        .args(["app", "init"])
+        .output()
+        .unwrap();
+    assert!(!duplicate.status.success());
+    assert!(String::from_utf8_lossy(&duplicate.stderr).contains("fix:"));
 }
 
 #[test]
@@ -561,9 +936,7 @@ fn generated_http_sink_delivers_typed_json_with_a_stable_idempotency_key() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let status = std::process::Command::new("mvn")
-        .current_dir(&root)
-        .env("PATH", &path)
+    let status = real_maven_cmd(&root, &path)
         .args(["-q", "-Dtest=ProviderHttpOutboxSinkTest", "test"])
         .status()
         .unwrap();
@@ -591,6 +964,77 @@ const SPRING_APP_MANIFESTS: &[(&str, &str)] = &[
     ),
 ];
 
+/// Generate and compile each proof application exactly once per `cargo test`
+/// process. Both gates below consume this immutable project tree, so the full
+/// verification gate starts from the classes the compilation gate proved.
+///
+/// This is shared setup, not reduced coverage. Every manifest is applied,
+/// every main and test source is compiled, and every Surefire/Failsafe test is
+/// executed by `verify`; the second gate then adds the OCI assertions.
+fn compiled_app_fixtures(path: &str) -> &'static Vec<(&'static str, std::path::PathBuf)> {
+    static COMPILED: std::sync::OnceLock<Vec<(&'static str, std::path::PathBuf)>> =
+        std::sync::OnceLock::new();
+    COMPILED.get_or_init(|| {
+        let mut generated = Vec::new();
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = SPRING_APP_MANIFESTS
+                .iter()
+                .map(|&(name, manifest)| {
+                    scope.spawn(move || {
+                        let root = temp_dir(&format!("app-manifest-verified-{name}"));
+                        write_spring_fixture(&root);
+                        fs::create_dir_all(root.join(".jails")).unwrap();
+                        fs::write(root.join(".jails/app.toml"), manifest).unwrap();
+
+                        let output = jails_cmd_with_path(&root, path)
+                            .args(["app", "apply", "--no-start"])
+                            .output()
+                            .unwrap();
+                        assert!(
+                            output.status.success(),
+                            "{name} apply: stdout={} stderr={}",
+                            String::from_utf8_lossy(&output.stdout),
+                            String::from_utf8_lossy(&output.stderr)
+                        );
+                        let status = real_maven_cmd(&root, path)
+                            .args(["-q", "test-compile"])
+                            .status()
+                            .unwrap();
+                        assert!(status.success(), "{name} did not compile");
+                        (name, root)
+                    })
+                })
+                .collect();
+            for handle in handles {
+                generated.push(handle.join().unwrap());
+            }
+        });
+        generated
+    })
+}
+
+fn verified_app_fixtures(path: &str) -> &'static Vec<(&'static str, std::path::PathBuf)> {
+    static VERIFIED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    let compiled = compiled_app_fixtures(path);
+    VERIFIED.get_or_init(|| {
+        std::thread::scope(|scope| {
+            for (name, root) in compiled {
+                scope.spawn(move || {
+                    let status = real_maven_cmd(root, path)
+                        .args(["-q", "verify"])
+                        .status()
+                        .unwrap();
+                    assert!(
+                        status.success(),
+                        "{name} failed its generated Maven verification"
+                    );
+                });
+            }
+        });
+    });
+    compiled
+}
+
 #[test]
 fn app_manifests_compile_without_manual_source_edits() {
     if !real_mvn_available() {
@@ -602,30 +1046,17 @@ fn app_manifests_compile_without_manual_source_edits() {
         return;
     }
     let path = real_path_without_mvnd();
-    for (name, manifest) in SPRING_APP_MANIFESTS {
-        let root = temp_dir(&format!("app-manifest-real-{name}"));
-        write_spring_fixture(&root);
-        fs::create_dir_all(root.join(".jails")).unwrap();
-        fs::write(root.join(".jails/app.toml"), manifest).unwrap();
-
-        let output = jails_cmd_with_path(&root, &path)
-            .args(["app", "apply", "--no-start"])
-            .output()
-            .unwrap();
+    let compiled = compiled_app_fixtures(&path);
+    assert_eq!(compiled.len(), SPRING_APP_MANIFESTS.len());
+    for (name, root) in compiled {
         assert!(
-            output.status.success(),
-            "{name} apply: stdout={} stderr={}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
+            root.join("target/classes").is_dir(),
+            "{name} main sources did not compile"
         );
-
-        let status = std::process::Command::new("mvn")
-            .current_dir(&root)
-            .env("PATH", &path)
-            .args(["-q", "-DskipTests", "package"])
-            .status()
-            .unwrap();
-        assert!(status.success(), "{name} did not compile");
+        assert!(
+            root.join("target/test-classes").is_dir(),
+            "{name} test sources did not compile"
+        );
     }
 }
 
@@ -644,55 +1075,171 @@ fn app_manifests_pass_the_full_generated_verification_gate() {
         return;
     }
     let path = real_path_without_mvnd();
-    for (name, manifest) in SPRING_APP_MANIFESTS {
-        let root = temp_dir(&format!("app-manifest-verify-{name}"));
-        write_spring_fixture(&root);
-        fs::create_dir_all(root.join(".jails")).unwrap();
-        fs::write(root.join(".jails/app.toml"), manifest).unwrap();
+    let fixtures = verified_app_fixtures(&path);
 
-        let output = jails_cmd_with_path(&root, &path)
-            .args(["app", "apply", "--no-start"])
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{name} apply: stdout={} stderr={}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-
-        let status = std::process::Command::new("mvn")
-            .current_dir(&root)
-            .env("PATH", &path)
-            .args(["-q", "verify"])
-            .status()
-            .unwrap();
-        assert!(
-            status.success(),
-            "{name} failed its generated Maven verification"
-        );
-
-        let image = format!("jails-dogfood-{name}:test");
-        let status = std::process::Command::new("docker")
-            .current_dir(&root)
-            .args(["build", "--pull", "--tag", &image, "."])
-            .status()
-            .unwrap();
-        assert!(
-            status.success(),
-            "{name} failed its generated OCI image build"
-        );
-        let inspect = std::process::Command::new("docker")
-            .args(["image", "inspect", &image, "--format", "{{.Config.User}}"])
-            .output()
-            .unwrap();
-        assert!(inspect.status.success(), "could not inspect {image}");
-        assert_eq!(
-            String::from_utf8_lossy(&inspect.stdout).trim(),
-            "10001:10001",
-            "{name} image did not retain the non-root runtime user"
-        );
+    // Podman does not single-flight concurrent pulls: three `docker build
+    // --pull` calls downloaded the same Maven and Temurin layers three times,
+    // consuming a gigabyte of memory without increasing coverage. Resolve
+    // every generated FROM image once, then let the still-parallel builds use
+    // the local content-addressed image store.
+    let mut base_images = std::collections::BTreeSet::new();
+    for (_, root) in fixtures {
+        let dockerfile = fs::read_to_string(root.join("Dockerfile")).unwrap();
+        for line in dockerfile.lines().filter(|line| line.starts_with("FROM ")) {
+            if let Some(image) = line.split_whitespace().nth(1) {
+                base_images.insert(image.to_string());
+            }
+        }
     }
+    for image in base_images {
+        let present = std::process::Command::new("docker")
+            .args(["image", "inspect", &image])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success());
+        if !present {
+            let status = std::process::Command::new("docker")
+                .args(["pull", &image])
+                .status()
+                .unwrap();
+            assert!(
+                status.success(),
+                "could not pull generated base image {image}"
+            );
+        }
+    }
+    std::thread::scope(|scope| {
+        for (name, root) in fixtures {
+            scope.spawn(move || {
+                let image = format!("jails-dogfood-{name}:test");
+                let status = std::process::Command::new("docker")
+                    .current_dir(root)
+                    .args(["build", "--tag", &image, "."])
+                    .status()
+                    .unwrap();
+                assert!(
+                    status.success(),
+                    "{name} failed its generated OCI image build"
+                );
+                let inspect = std::process::Command::new("docker")
+                    .args(["image", "inspect", &image, "--format", "{{.Config.User}}"])
+                    .output()
+                    .unwrap();
+                assert!(inspect.status.success(), "could not inspect {image}");
+                assert_eq!(
+                    String::from_utf8_lossy(&inspect.stdout).trim(),
+                    "10001:10001",
+                    "{name} image did not retain the non-root runtime user"
+                );
+            });
+        }
+    });
+}
+
+/// The four things `jails test` can do that `mvn test` cannot without you
+/// assembling the arguments: rerun the failures, stop at the first one, name
+/// what took the time, and resolve a file and a line.
+///
+/// Driven against a fake `mvn` and hand-written reports, because what is
+/// under test is the *argument construction and the report reading*, not
+/// Maven. The real-toolchain half is covered by the projects that actually
+/// run tests.
+#[test]
+fn test_flags_rerun_failures_stop_early_and_name_the_slowest() {
+    let root = temp_dir("test-flags");
+    write_project_skeleton(&root);
+    let fake_dir = temp_dir("test-flags-bin");
+    let log = fake_dir.join("log.txt");
+    write_fake_maven(&fake_dir, &["mvn"], &log);
+
+    // What Surefire would have left behind: one pass, one failure, one
+    // error, one skip.
+    let reports = root.join("target/surefire-reports");
+    fs::create_dir_all(&reports).unwrap();
+    fs::write(
+        reports.join("TEST-com.example.demo.PayoutTest.xml"),
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.example.demo.PayoutTest">
+  <testcase name="settles" classname="com.example.demo.PayoutTest" time="2.50"/>
+  <testcase name="rejectsNull" classname="com.example.demo.PayoutTest" time="0.10">
+    <failure message="boom">stack</failure>
+  </testcase>
+  <testcase name="todo" classname="com.example.demo.PayoutTest" time="0">
+    <skipped/>
+  </testcase>
+</testsuite>
+"#,
+    )
+    .unwrap();
+
+    let output = jails_cmd(&root, Some(&fake_dir))
+        .args(["test", "--failed"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("rerunning 1 failed test"),
+        "--failed should say what it is about to do: {stdout}"
+    );
+    let invocation = read_log(&log);
+    assert!(
+        invocation.contains("-Dtest=PayoutTest#rejectsNull"),
+        "--failed reruns exactly the failure, not the class: {invocation}"
+    );
+    assert!(
+        !invocation.contains("todo"),
+        "a skipped test is not a failure: {invocation}"
+    );
+
+    let output = jails_cmd(&root, Some(&fake_dir))
+        .args(["test", "--slowest", "2"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("slowest 2 test(s)"), "{stdout}");
+    assert!(stdout.contains("2.50s  PayoutTest#settles"), "{stdout}");
+
+    let _ = jails_cmd(&root, Some(&fake_dir))
+        .args(["test", "--fail-fast"])
+        .status()
+        .unwrap();
+    let invocation = read_log(&log);
+    assert!(
+        invocation.contains("-Dsurefire.skipAfterFailureCount=1"),
+        "{invocation}"
+    );
+
+    // A file and a line: JUnit has no FileSelector, so jails resolves the
+    // enclosing @Test itself. This is what an editor keybinding sends.
+    let test_file = root.join("src/test/java/com/example/demo/PayoutTest.java");
+    fs::create_dir_all(test_file.parent().unwrap()).unwrap();
+    fs::write(
+        &test_file,
+        "package com.example.demo;
+
+import org.junit.jupiter.api.Test;
+
+class PayoutTest {
+
+    @Test
+    void settles() {
+        assertThat(true).isTrue();
+    }
+}
+",
+    )
+    .unwrap();
+    let _ = jails_cmd(&root, Some(&fake_dir))
+        .args(["test", "src/test/java/com/example/demo/PayoutTest.java:9"])
+        .status()
+        .unwrap();
+    let invocation = read_log(&log);
+    assert!(
+        invocation.contains("-Dtest=PayoutTest#settles"),
+        "a line inside a test runs that test: {invocation}"
+    );
 }
 
 /// Can Maven *read* what jails wrote? (`plan.md` §8.8.)
@@ -718,7 +1265,10 @@ fn every_generated_pom_is_one_maven_can_read() {
     // Kinds that splice something into the pom, which is where the defect
     // lives: a dependency, a plugin, or a test that needs AssertJ.
     let cells: &[(&str, &[&str])] = &[
-        ("scaffold", &["g", "scaffold", "Note", "id:uuid@pk", "title:string!"]),
+        (
+            "scaffold",
+            &["g", "scaffold", "Note", "id:uuid@pk", "title:string!"],
+        ),
         ("record", &["g", "record", "Note", "title:string!"]),
         ("integration-test", &["g", "integration-test", "Checkout"]),
         ("cli", &["g", "cli", "Admin"]),
@@ -734,7 +1284,10 @@ fn every_generated_pom_is_one_maven_can_read() {
             } else {
                 write_plain_fixture(&root);
             }
-            let output = jails_cmd_with_path(&root, &path).args(*args).output().unwrap();
+            let output = jails_cmd_with_path(&root, &path)
+                .args(*args)
+                .output()
+                .unwrap();
             assert!(
                 output.status.success(),
                 "{label} failed: {}{}",
@@ -742,9 +1295,7 @@ fn every_generated_pom_is_one_maven_can_read() {
                 String::from_utf8_lossy(&output.stderr)
             );
 
-            let output = std::process::Command::new("mvn")
-                .current_dir(&root)
-                .env("PATH", &path)
+            let output = real_maven_cmd(&root, &path)
                 .args(["-o", "-q", "validate"])
                 .output()
                 .unwrap();
@@ -814,9 +1365,7 @@ fn ledger_cli_manifest_builds_without_spring() {
     // Not `-DskipTests`: `verify` includes the formatter the manifest asked
     // for, and "does jails' own output satisfy the formatter jails installs"
     // is exactly what this application found broken.
-    let status = std::process::Command::new("mvn")
-        .current_dir(&root)
-        .env("PATH", &path)
+    let status = real_maven_cmd(&root, &path)
         .args(["-q", "verify"])
         .status()
         .unwrap();
@@ -893,6 +1442,27 @@ fn generate_errors_outside_a_project() {
 }
 
 #[test]
+fn lint_reports_closed_set_stale_apis_as_file_and_line() {
+    let root = temp_dir("lint-stale-api");
+    write_project_skeleton(&root);
+    let source = root.join("src/main/java/com/example/demo/Legacy.java");
+    fs::write(
+        &source,
+        "package com.example.demo;\n\n@Entity\nclass Legacy {}\n",
+    )
+    .unwrap();
+
+    let output = jails_cmd(&root, None).arg("lint").output().unwrap();
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("src/main/java/com/example/demo/Legacy.java:3"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("explicit JDBC adapter"), "{stdout}");
+}
+
+#[test]
 fn short_generators_cover_raw_sql_and_test_seams() {
     let root = temp_dir("simple-generators");
     write_project_skeleton(&root);
@@ -902,7 +1472,7 @@ fn short_generators_cover_raw_sql_and_test_seams() {
         vec!["g", "integration-test", "DatabaseSmoke"],
         vec!["g", "migration", "createRewardCore"],
         vec!["g", "mig", "add_outbox"],
-        vec!["g", "repository", "Reward"],
+        vec!["g", "repository", "Reward", "id:uuid"],
     ] {
         let output = jails_cmd(&root, None).args(&args).output().unwrap();
         assert!(
@@ -2822,7 +3392,13 @@ fn generators_compose_through_user_owned_field_types() {
         .unwrap();
     assert!(status.success(), "generate sealed failed");
     let status = jails_cmd_with_path(&root, &path)
-        .args(["generate", "value", "stamped", "at:string!", "result:Outcome"])
+        .args([
+            "generate",
+            "value",
+            "stamped",
+            "at:string!",
+            "result:Outcome",
+        ])
         .status()
         .unwrap();
     assert!(status.success(), "generate value with a sealed type failed");
@@ -3093,8 +3669,30 @@ fn routes_json_is_machine_readable() {
         .unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.starts_with(r#"{"version":1,"routes":["#), "{stdout}");
+    assert!(
+        stdout.starts_with(r#"{"schema_version":3,"routes":["#),
+        "{stdout}"
+    );
     assert!(stdout.contains(r#""verb":"GET""#), "{stdout}");
+    assert!(stdout.contains(r#""line":"#), "{stdout}");
+}
+
+#[test]
+fn beans_json_is_versioned_and_reports_source_lines() {
+    let root = temp_dir("beans-json");
+    write_inspectable_project(&root);
+
+    let output = jails_cmd(&root, None)
+        .args(["beans", "--json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.starts_with(r#"{"schema_version":3,"beans":["#),
+        "{stdout}"
+    );
+    assert!(stdout.contains(r#""line":"#), "{stdout}");
 }
 
 #[test]
@@ -3727,7 +4325,15 @@ fn add_actuator_exposes_health_and_nothing_dangerous() {
 
     let properties =
         fs::read_to_string(root.join("src/main/resources/application.properties")).unwrap();
-    assert!(properties.contains("management.endpoints.web.exposure.include=health,info,metrics"));
+    assert!(
+        properties.contains(
+            "management.endpoints.web.exposure.include=health,info,prometheus,threaddump"
+        )
+    );
+    assert!(properties.contains("management.server.port=8081"));
+    assert!(properties.contains("management.endpoints.web.base-path=/management"));
+    assert!(properties.contains("management.endpoint.health.cache.time-to-live=5s"));
+    assert!(properties.contains("info.app.name=@project.name@"));
     // `*` publishes heapdump and the resolved environment; never generate it.
     assert!(!properties.contains("include=*"), "{properties}");
 
@@ -3761,7 +4367,15 @@ fn add_observability_serves_a_prometheus_scrape() {
 
     let properties =
         fs::read_to_string(root.join("src/main/resources/application.properties")).unwrap();
-    assert!(properties.contains("exposure.include=health,info,metrics,prometheus"));
+    assert!(properties.contains("exposure.include=health,info,prometheus,threaddump"));
+    assert!(properties.contains("management.server.port=8081"));
+    assert!(properties.contains("management.endpoints.web.base-path=/management"));
+    assert!(properties.contains(
+        "management.metrics.distribution.slo.http.server.requests=100ms,250ms,500ms,1s,2s,5s,10s"
+    ));
+    assert!(properties.contains("management.tracing.propagation.type=w3c"));
+    assert!(properties.contains("server.tomcat.accesslog.directory=/dev"));
+    assert!(properties.contains("management.server.tomcat.accesslog.prefix=stdout"));
     assert!(!properties.contains("include=*"), "{properties}");
 
     let status = jails_cmd_with_path(&root, &path)
@@ -4154,7 +4768,7 @@ fn add_security_writes_an_explicit_chain_that_denies_by_default() {
     let root = temp_dir("real-add-security");
     write_spring_fixture(&root);
 
-    // Actuator first: the chain permits `/actuator/health` and the test
+    // Actuator first: the chain permits `/management/health` and the test
     // asserts it, so the endpoint has to exist.
     for capability in ["actuator", "security"] {
         assert!(
@@ -4183,8 +4797,8 @@ fn add_security_writes_an_explicit_chain_that_denies_by_default() {
         "{config}"
     );
     // Only health is public. `env` and `heapdump` must not be.
-    assert!(config.contains("/actuator/health/**"), "{config}");
-    assert!(!config.contains("/actuator/**"), "{config}");
+    assert!(config.contains("/management/health/**"), "{config}");
+    assert!(!config.contains("/management/**"), "{config}");
 
     let status = jails_cmd_with_path(&root, &path)
         .arg("test")

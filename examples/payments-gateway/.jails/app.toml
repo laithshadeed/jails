@@ -4,7 +4,7 @@
 # currency string, idempotency is a unique column, and settlement is a durable
 # job over an outbox.
 schema = 1
-capabilities = ["db", "api", "actuator", "observability", "security", "json", "testkit", "kafka", "docker", "ci"]
+capabilities = ["db", "api", "actuator", "observability", "security", "cors", "json", "testkit", "kafka", "docker", "ci"]
 
 [[generate]]
 kind = "enum"
@@ -19,18 +19,21 @@ fields = ["CARD", "BANK_TRANSFER", "WALLET"]
 [[generate]]
 kind = "scaffold"
 name = "Merchant"
-fields = ["id:uuid@pk@scope", "reference:string!@unique", "displayName:string!", "createdAt:instant"]
+fields = ["id:uuid@pk@scope", "reference:string!@unique", "displayName:string!"]
+timestamps = true
 
 [[generate]]
 kind = "scaffold"
 name = "Payment"
-fields = ["id:uuid@pk", "merchantId:uuid@index@scope", "idempotencyKey:string!@unique", "amountMinor:long@positive", "currency:string!", "method:PaymentMethod", "status:PaymentStatus@index", "version:long@nonnegative", "authorisedAt:instant?", "capturedAt:instant?", "createdAt:instant"]
+fields = ["id:uuid@pk", "merchantId:uuid@index@scope", "idempotencyKey:string!@unique", "amountMinor:long@positive", "currency:string!", "method:PaymentMethod", "status:PaymentStatus@index", "version:long@nonnegative", "authorisedAt:instant?", "capturedAt:instant?"]
+timestamps = true
 indexes = ["merchant_id, created_at desc", "status, created_at"]
 
 [[generate]]
 kind = "scaffold"
 name = "Refund"
-fields = ["id:uuid@pk", "merchantId:uuid@index@scope", "paymentId:uuid@index", "amountMinor:long@positive", "reason:string?", "createdAt:instant"]
+fields = ["id:uuid@pk", "merchantId:uuid@index@scope", "paymentId:uuid@index", "amountMinor:long@positive", "reason:string?"]
+timestamps = true
 indexes = ["payment_id, created_at"]
 
 # Ownership that the HTTP scope check cannot prove: a payment's merchant, and

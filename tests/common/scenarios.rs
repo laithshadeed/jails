@@ -57,6 +57,31 @@ pub const SCENARIOS: &[Scenario] = &[
         ]],
     },
     Scenario {
+        name: "field",
+        fixture: Fixture::Plain,
+        seed: &[("src/main/resources/db/migration/.gitkeep", "")],
+        steps: &[
+            &["g", "record", "Note", "id:uuid", "title:string!"],
+            &["g", "field", "Note", "createdAt:instant"],
+        ],
+    },
+    Scenario {
+        name: "factory",
+        fixture: Fixture::Plain,
+        seed: &[],
+        steps: &[
+            &[
+                "g",
+                "record",
+                "Note",
+                "id:uuid",
+                "title:string!",
+                "createdAt:instant",
+            ],
+            &["g", "factory", "Note"],
+        ],
+    },
+    Scenario {
         name: "value",
         fixture: Fixture::Plain,
         seed: &[],
@@ -215,6 +240,30 @@ pub const SCENARIOS: &[Scenario] = &[
             &["g", "handler", "WorkItem"],
         ],
     },
+    Scenario {
+        name: "cap-coverage",
+        fixture: Fixture::Plain,
+        seed: &[],
+        steps: &[&["add", "coverage", "--no-start"]],
+    },
+    Scenario {
+        name: "cap-loadtest",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[
+            &["g", "controller", "Health"],
+            &["add", "loadtest", "--no-start"],
+        ],
+    },
+    Scenario {
+        name: "cap-k8s",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[
+            &["add", "actuator", "observability", "docker", "--no-start"],
+            &["add", "k8s", "--no-start"],
+        ],
+    },
     // `add format` is deliberately absent: it shells out to spotless:apply
     // as a best-effort last step, and whether that succeeds depends on the
     // JDK this machine has. A golden target has to be hermetic, and a
@@ -243,7 +292,7 @@ pub const SCENARIOS: &[Scenario] = &[
         name: "cap-cache-security",
         fixture: Fixture::Spring,
         seed: &[],
-        steps: &[&["add", "cache", "security", "--no-start"]],
+        steps: &[&["add", "cache", "security", "cors", "--no-start"]],
     },
     Scenario {
         name: "cap-redis",
@@ -317,7 +366,14 @@ pub const SCENARIOS: &[Scenario] = &[
         seed: &[],
         steps: &[
             &["add", "db", "--no-start"],
-            &["g", "scaffold", "Owner", "id:uuid@pk", "name:string!", "createdAt:instant"],
+            &[
+                "g",
+                "scaffold",
+                "Owner",
+                "id:uuid@pk",
+                "name:string!",
+                "createdAt:instant",
+            ],
             &[
                 "g",
                 "scaffold",
@@ -378,8 +434,21 @@ pub const SCENARIOS: &[Scenario] = &[
         steps: &[
             &["add", "db", "--no-start"],
             &["add", "json", "--no-start"],
-            &["g", "scaffold", "Message", "id:uuid@pk", "body:string!", "createdAt:instant"],
-            &["g", "event", "MessageReceived", "id:uuid", "occurredAt:instant"],
+            &[
+                "g",
+                "scaffold",
+                "Message",
+                "id:uuid@pk",
+                "body:string!",
+                "createdAt:instant",
+            ],
+            &[
+                "g",
+                "event",
+                "MessageReceived",
+                "id:uuid",
+                "occurredAt:instant",
+            ],
             &[
                 "g",
                 "usecase",
@@ -495,7 +564,10 @@ fn walk(root: &Path, dir: &Path, out: &mut BTreeSet<String>) {
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            if path.file_name().is_some_and(|n| n == "target") {
+            if path
+                .file_name()
+                .is_some_and(|n| n == "target" || n == ".jails")
+            {
                 continue;
             }
             walk(root, &path, out);
@@ -567,7 +639,10 @@ fn possible_values(subcommand: &str) -> BTreeSet<String> {
         .args([subcommand, "--help"])
         .output()
         .unwrap();
-    assert!(output.status.success(), "`jails {subcommand} --help` failed");
+    assert!(
+        output.status.success(),
+        "`jails {subcommand} --help` failed"
+    );
     let help = String::from_utf8_lossy(&output.stdout);
     let mut values = BTreeSet::new();
     for line in help.lines() {
@@ -584,7 +659,11 @@ fn possible_values(subcommand: &str) -> BTreeSet<String> {
         let Some((value, _)) = rest.split_once(':') else {
             continue;
         };
-        if !value.is_empty() && value.chars().all(|c| c.is_ascii_lowercase() || c == '-') {
+        if !value.is_empty()
+            && value
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        {
             values.insert(value.to_string());
         }
     }

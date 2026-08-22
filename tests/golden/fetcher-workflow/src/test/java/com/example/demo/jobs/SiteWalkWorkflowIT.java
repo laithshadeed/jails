@@ -72,7 +72,7 @@ class SiteWalkWorkflowIT {
         workflow.start(new SiteWalkWorkflow.StartRequest(
                 id, URI.create("http://example.test/flaky"), 1, 0));
 
-        workflow.runOnce(); // robots
+        workflow.runOnce(); // origin policy
         workflow.runOnce(); // first page attempt fails
         assertThat(workflow.status(id)).get().extracting(SiteWalkWorkflow.RunStatus::state)
                 .isEqualTo(SiteWalkWorkflow.RunState.RUNNING);
@@ -106,7 +106,7 @@ class SiteWalkWorkflowIT {
         PageFetcher workflowFetcher() {
             return uri -> {
                 String path = uri.getPath();
-                if (path.equals("/robots.txt")) {
+                if (path.equals(SiteWalkWorkflow.ROBOTS_PATH)) {
                     return response(uri, "User-agent: *\nDisallow: /private\n");
                 }
                 if (path.equals("/flaky") && CALLS.merge(uri.toString(), 1, Integer::sum) == 1) {

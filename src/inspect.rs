@@ -29,6 +29,7 @@ pub(crate) struct Route {
     pub verb: String,
     pub handler: String,
     pub source: String,
+    pub line: usize,
 }
 
 /// Spring's mapping annotations and the verb each implies. `RequestMapping`
@@ -113,6 +114,7 @@ fn file_routes(source: &str, label: &str) -> Vec<Route> {
                     verb: verb.to_string(),
                     handler: format!("{type_name}#handle"),
                     source: label.to_string(),
+                    line: line_of(source, "handle("),
                 })
                 .collect();
         }
@@ -164,6 +166,7 @@ fn file_routes(source: &str, label: &str) -> Vec<Route> {
             verb,
             handler: format!("{type_name}#{method}"),
             source: label.to_string(),
+            line: annotation.line,
         });
     }
     found
@@ -221,15 +224,16 @@ fn routes_json(routes: &[Route]) -> String {
         .iter()
         .map(|r| {
             format!(
-                r#"{{"verb":{},"path":{},"handler":{},"source":{}}}"#,
+                r#"{{"verb":{},"path":{},"handler":{},"source":{},"line":{}}}"#,
                 json_string(&r.verb),
                 json_string(&r.path),
                 json_string(&r.handler),
-                json_string(&r.source)
+                json_string(&r.source),
+                r.line
             )
         })
         .collect();
-    format!(r#"{{"version":1,"routes":[{}]}}"#, items.join(","))
+    format!(r#"{{"schema_version":3,"routes":[{}]}}"#, items.join(","))
 }
 
 /// One registered component and what its constructor asks for.
@@ -238,6 +242,7 @@ pub(crate) struct Bean {
     pub stereotype: String,
     pub type_name: String,
     pub source: String,
+    pub line: usize,
     /// Types this bean's constructor needs, in declaration order.
     pub needs: Vec<String>,
     /// Interfaces and superclasses it can be injected as.
@@ -436,6 +441,7 @@ fn file_beans(source: &str, label: &str) -> Vec<Bean> {
             stereotype: stereotype.name.clone(),
             type_name: info.name.clone(),
             source: label.to_string(),
+            line: stereotype.line,
             needs: info
                 .constructor_params
                 .iter()
@@ -464,6 +470,7 @@ fn file_beans(source: &str, label: &str) -> Vec<Bean> {
             stereotype: "Bean".to_string(),
             type_name: returns,
             source: format!("{label} ({}#{name})", info.name),
+            line: annotation.line,
             needs: Vec::new(),
             provides: Vec::new(),
             primary: matches!(&annotation.target, Target::Method { name: m, .. }
@@ -486,16 +493,24 @@ fn beans_json(beans: &[&Bean]) -> String {
                     .join(",")
             };
             format!(
-                r#"{{"stereotype":{},"type":{},"source":{},"needs":[{}],"provides":[{}]}}"#,
+                r#"{{"stereotype":{},"type":{},"source":{},"line":{},"needs":[{}],"provides":[{}]}}"#,
                 json_string(&b.stereotype),
                 json_string(&b.type_name),
                 json_string(&b.source),
+                b.line,
                 list(&b.needs),
                 list(&b.provides)
             )
         })
         .collect();
-    format!(r#"{{"version":1,"beans":[{}]}}"#, items.join(","))
+    format!(r#"{{"schema_version":3,"beans":[{}]}}"#, items.join(","))
+}
+
+fn line_of(source: &str, needle: &str) -> usize {
+    source
+        .find(needle)
+        .map(|at| source[..at].bytes().filter(|byte| *byte == b'\n').count() + 1)
+        .unwrap_or(1)
 }
 
 /// A path relative to the project root when possible -- absolute paths make

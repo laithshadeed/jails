@@ -408,10 +408,10 @@ mod tests {
     fn a_topic_constant_is_read_out_of_the_source() {
         let source = r#"
             class LedgerConsumer {
-                public static final String TOPIC = "ledger.transactions";
+                public static final String TOPIC = "audit.events";
             }
         "#;
-        assert_eq!(topics_in(source), vec!["ledger.transactions"]);
+        assert_eq!(topics_in(source), vec!["audit.events"]);
     }
 
     /// The DLT is derived from the source topic, so `jails kafka tail` with no

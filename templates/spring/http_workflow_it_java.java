@@ -72,7 +72,7 @@ class {{name}}WorkflowIT {
         workflow.start(new {{name}}Workflow.StartRequest(
                 id, URI.create("http://example.test/flaky"), 1, 0));
 
-        workflow.runOnce(); // robots
+        workflow.runOnce(); // origin policy
         workflow.runOnce(); // first page attempt fails
         assertThat(workflow.status(id)).get().extracting({{name}}Workflow.RunStatus::state)
                 .isEqualTo({{name}}Workflow.RunState.RUNNING);
@@ -106,7 +106,7 @@ class {{name}}WorkflowIT {
         {{fetcher}}Fetcher workflowFetcher() {
             return uri -> {
                 String path = uri.getPath();
-                if (path.equals("/robots.txt")) {
+                if (path.equals({{name}}Workflow.ROBOTS_PATH)) {
                     return response(uri, "User-agent: *\nDisallow: /private\n");
                 }
                 if (path.equals("/flaky") && CALLS.merge(uri.toString(), 1, Integer::sum) == 1) {

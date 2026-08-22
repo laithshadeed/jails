@@ -32,7 +32,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * one run in five. Waiting on a latch with a timeout either observes the
  * message or fails saying so.
  */
-{{disabled}}@SpringBootTest
+{{disabled}}@SpringBootTest(properties = "spring.kafka.consumer.properties.group.protocol=classic")
 @Import({{name}}MessagingIT.Containers.class)
 class {{name}}MessagingIT {
 

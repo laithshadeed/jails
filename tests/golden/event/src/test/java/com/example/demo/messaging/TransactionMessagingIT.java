@@ -32,7 +32,7 @@ import org.testcontainers.kafka.KafkaContainer;
  * one run in five. Waiting on a latch with a timeout either observes the
  * message or fails saying so.
  */
-@SpringBootTest
+@SpringBootTest(properties = "spring.kafka.consumer.properties.group.protocol=classic")
 @Import(TransactionMessagingIT.Containers.class)
 class TransactionMessagingIT {
 

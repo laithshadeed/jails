@@ -12,6 +12,7 @@ pub fn new(
     java: &str,
     git: bool,
     devtools: bool,
+    offline: bool,
     debug: bool,
     pretend: bool,
 ) -> Result<()> {
@@ -24,7 +25,7 @@ pub fn new(
     // the zip -- and a `--pretend` that hits the network to tell you what it
     // would have done is not a preview. `new-cli` writes a file set jails
     // knows, so that one previews for real.
-    if pretend {
+    if pretend && !offline {
         return Err(
             "`--pretend` is not supported for `new`: the project comes from start.spring.io, \
              so jails cannot say what is in it without downloading it.\n\n\
@@ -36,6 +37,10 @@ pub fn new(
 
     let deps = effective_deps(deps, devtools);
     let deps = deps.as_str();
+
+    if offline {
+        return new_offline(name, deps, java, git, debug, pretend);
+    }
 
     let tmp = std::env::temp_dir().join(format!("jails-new-{}-{}", name, std::process::id()));
     fs::create_dir_all(&tmp).map_err(|e| format!("failed to create temp dir: {e}"))?;
@@ -69,7 +74,10 @@ pub fn new(
 
     if !status.success() {
         let _ = fs::remove_dir_all(&tmp);
-        return Err("starter.zip request failed".to_string());
+        return Err(
+            "starter.zip request failed.\n       fix: retry when start.spring.io is reachable, or run the same command with `--offline`."
+                .to_string(),
+        );
     }
 
     let mut unzip = Command::new("unzip");
@@ -92,6 +100,9 @@ pub fn new(
     }
     write_fixtures_dir(Path::new(name))?;
     finish_spring_project(Path::new(name), deps)?;
+    ensure_enforcer(Path::new(name), java)?;
+    write_mise(Path::new(name), java)?;
+    write_agents(Path::new(name), java)?;
 
     // start.spring.io's zip already ships a .gitignore, so just init.
     if git {
@@ -100,6 +111,149 @@ pub fn new(
 
     println!("Created ./{name} (deps: {deps}, Java {java})");
     Ok(())
+}
+
+fn new_offline(
+    name: &str,
+    deps: &str,
+    java: &str,
+    git: bool,
+    debug: bool,
+    pretend: bool,
+) -> Result<()> {
+    let release = java
+        .parse::<u32>()
+        .map_err(|_| format!("--java must be a release number, got `{java}`"))?;
+    if release < crate::pom::MIN_RELEASE {
+        return Err(format!(
+            "--java {java} is below Java {}, which jails' generated code needs",
+            crate::pom::MIN_RELEASE
+        ));
+    }
+    let root = Path::new(name);
+    let package = sanitize_package(name);
+    let class = application_class(name);
+    let source = root.join("src/main/java").join(package.replace('.', "/"));
+    let tests = root.join("src/test/java").join(package.replace('.', "/"));
+    let paths = [
+        root.join("pom.xml"),
+        source.join(format!("{class}Application.java")),
+        tests.join(format!("{class}ApplicationTests.java")),
+        root.join("src/main/resources/application.properties"),
+        root.join("mise.toml"),
+        root.join("AGENTS.md"),
+    ];
+    if pretend {
+        for path in paths {
+            println!("would create {}", path.display());
+        }
+        if git {
+            println!("would run git init in ./{name}");
+        }
+        println!();
+        println!("--pretend: nothing was written. (offline fixture, Java {java})");
+        return Ok(());
+    }
+
+    fs::create_dir_all(&source)
+        .map_err(|error| format!("failed to create {}: {error}", source.display()))?;
+    fs::create_dir_all(&tests)
+        .map_err(|error| format!("failed to create {}: {error}", tests.display()))?;
+    let dependencies = offline_dependencies(deps)?;
+    fs::write(
+        root.join("pom.xml"),
+        crate::template::render(
+            include_str!("../templates/new/offline_pom.xml"),
+            &[
+                ("artifact", name),
+                ("java", java),
+                ("dependencies", &dependencies),
+            ],
+        ),
+    )
+    .map_err(|error| format!("failed to write {}/pom.xml: {error}", root.display()))?;
+    crate::generate::write_new_file(
+        root,
+        &source.join(format!("{class}Application.java")),
+        &crate::template::render(
+            include_str!("../templates/new/offline_application.java"),
+            &[("package", &package), ("class", &class)],
+        ),
+    )?;
+    crate::generate::write_new_file(
+        root,
+        &tests.join(format!("{class}ApplicationTests.java")),
+        &crate::template::render(
+            include_str!("../templates/new/offline_application_test.java"),
+            &[("package", &package), ("class", &class)],
+        ),
+    )?;
+    write_fixtures_dir(root)?;
+    finish_spring_project(root, deps)?;
+    ensure_enforcer(root, java)?;
+    write_mise(root, java)?;
+    write_agents(root, java)?;
+    if git {
+        fs::write(root.join(".gitignore"), GITIGNORE)
+            .map_err(|error| format!("failed to write .gitignore: {error}"))?;
+        git_init(root, debug);
+    }
+    println!("Created ./{name} offline (deps: {deps}, Java {java})");
+    Ok(())
+}
+
+fn application_class(name: &str) -> String {
+    let mut out = String::new();
+    let mut uppercase = true;
+    for character in name.chars() {
+        if !character.is_ascii_alphanumeric() {
+            uppercase = true;
+            continue;
+        }
+        if uppercase {
+            out.extend(character.to_uppercase());
+            uppercase = false;
+        } else {
+            out.push(character);
+        }
+    }
+    if out.is_empty() {
+        "Application".to_string()
+    } else {
+        out
+    }
+}
+
+fn offline_dependencies(deps: &str) -> Result<String> {
+    let mut out = String::new();
+    for id in deps.split(',').map(str::trim).filter(|id| !id.is_empty()) {
+        let artifact = match id {
+            "web" => "spring-boot-starter-webmvc",
+            "validation" => "spring-boot-starter-validation",
+            "jdbc" => "spring-boot-starter-jdbc",
+            "actuator" => "spring-boot-starter-actuator",
+            "security" => "spring-boot-starter-security",
+            "data-jpa" => "spring-boot-starter-data-jpa",
+            "devtools" => "spring-boot-devtools",
+            other => {
+                return Err(format!(
+                    "offline fixture does not know Initializr dependency `{other}`.\n       \
+                     fix: use one of web, validation, jdbc, actuator, security, data-jpa, devtools; or create online."
+                ));
+            }
+        };
+        out.push_str("        <dependency>\n");
+        out.push_str("            <groupId>org.springframework.boot</groupId>\n");
+        out.push_str(&format!(
+            "            <artifactId>{artifact}</artifactId>\n"
+        ));
+        if id == "devtools" {
+            out.push_str("            <scope>runtime</scope>\n");
+            out.push_str("            <optional>true</optional>\n");
+        }
+        out.push_str("        </dependency>\n");
+    }
+    Ok(out)
 }
 
 /// The three things a freshly bootstrapped Spring project needs and
@@ -148,7 +302,8 @@ fn write_devtools_defaults(root: &Path) -> Result<()> {
         .map_err(|e| format!("failed to write {}: {e}", path.display()))
 }
 
-const DEVTOOLS_DEFAULTS: &str = "# Applied only when spring-boot-devtools is on the classpath and the
+const DEVTOOLS_DEFAULTS: &str =
+    "# Applied only when spring-boot-devtools is on the classpath and the
 # application is running locally -- never in a packaged jar, never in tests.
 # These are `defaults.`, so they are added as the last property source and
 # anything you set yourself still wins.
@@ -216,23 +371,33 @@ fn add_jspecify(root: &Path) -> Result<()> {
 /// Two settings both persona files call the default posture, and which an
 /// empty `application.properties` leaves off.
 ///
-/// Neither is discoverable from a failure: virtual threads absent just means
-/// the service is quietly less concurrent than it should be, and
-/// problemdetails absent means error bodies are Boot's ad-hoc map instead of
-/// RFC 9457 -- which nobody notices until a client has already parsed the
-/// wrong shape.
+/// None is discoverable from a failure: an unbounded execution model can
+/// quietly overload a downstream pool, abrupt shutdown drops in-flight work,
+/// and problem-details absent means clients learn Boot's ad-hoc error map.
 fn write_default_properties(root: &Path) -> Result<()> {
     let path = root.join("src/main/resources/application.properties");
     let existing = fs::read_to_string(&path).unwrap_or_default();
     let defaults = [
         (
-            "# Blocking JDBC and blocking HTTP on a virtual thread is the intended\n\
-             # shape on JDK 21+, and is not the default.",
-            "spring.threads.virtual.enabled=true",
+            "# Explicit by design: virtual threads move the concurrency bound to every\n\
+             # downstream dependency. Enable them only with measured pool and rate limits.",
+            "spring.threads.virtual.enabled=false",
         ),
         (
             "# RFC 9457 problem+json error bodies instead of Boot's default error map.",
             "spring.mvc.problemdetails.enabled=true",
+        ),
+        (
+            "# Large signed tokens and tracing baggage can exceed the older 8KB default.",
+            "server.max-http-request-header-size=16KB",
+        ),
+        (
+            "# Stop accepting work, then give in-flight requests and transactions time to finish.",
+            "server.shutdown=graceful",
+        ),
+        (
+            "# Bound graceful shutdown so an unhealthy instance cannot stall a rollout forever.",
+            "spring.lifecycle.timeout-per-shutdown-phase=30s",
         ),
     ];
     let mut addition = String::new();
@@ -321,6 +486,8 @@ pub fn new_cli(name: &str, java: &str, git: bool, debug: bool, pretend: bool) ->
             src_dir.join("App.java"),
             test_dir.join("AppTest.java"),
             root.join("src/test/resources/fixtures/.gitkeep"),
+            root.join("mise.toml"),
+            root.join("AGENTS.md"),
         ];
         if git {
             planned.push(root.join(".gitignore"));
@@ -368,6 +535,8 @@ pub fn new_cli(name: &str, java: &str, git: bool, debug: bool, pretend: bool) ->
     )?;
 
     write_fixtures_dir(root)?;
+    write_mise(root, java)?;
+    write_agents(root, java)?;
 
     if git {
         fs::write(root.join(".gitignore"), GITIGNORE)
@@ -387,6 +556,84 @@ fn write_fixtures_dir(root: &Path) -> Result<()> {
     fs::create_dir_all(&dir).map_err(|e| format!("failed to create {}: {e}", dir.display()))?;
     fs::write(dir.join(".gitkeep"), "")
         .map_err(|e| format!("failed to write {}/.gitkeep: {e}", dir.display()))?;
+    Ok(())
+}
+
+fn write_mise(root: &Path, java: &str) -> Result<()> {
+    let path = root.join("mise.toml");
+    fs::write(&path, format!("[tools]\njava = \"{java}\"\n"))
+        .map_err(|error| format!("failed to write {}: {error}", path.display()))
+}
+
+fn write_agents(root: &Path, java: &str) -> Result<()> {
+    let path = root.join("AGENTS.md");
+    if path.exists() {
+        return Ok(());
+    }
+    let package = crate::generate::base_package(root)
+        .unwrap_or_else(|_| "the package declared by the application entry point".to_string());
+    let rules = crate::lint::agents_rules();
+    let body = format!(
+        r#"# Working on this project
+
+This project targets Java {java}. Its base package is `{package}`.
+
+## Commands
+
+- Run one test with `jails test <Name>` or place the cursor in it and pass `path:line`.
+- Run `jails check` before handing work off. It performs a clean Maven verify so stale class files cannot hide a regression.
+- Run `jails doctor` before debugging the machine, container runtime, ports, or dependency injection.
+- Use `jails g <kind> --pretend` and `jails add <capability> --pretend` to inspect changes.
+
+## Design
+
+- Domain values are immutable records. Use no ORM and no Lombok.
+- Persistence is a repository port plus an explicit JDBC adapter and forward-only SQL migrations.
+- Field specs use `name:type`, `name:type!` for non-blank text, `name:type?` for nullable values, and `@pk`, `@unique`, `@index`, or numeric constraints where applicable.
+- Keep domain, application, service, adapter, web/API, messaging, job, and testkit packages separate. `jails about --json` reports the configured names.
+- Generated applications must remain operable without jails installed.
+
+## Checked stale APIs
+
+`jails lint` enforces this exact list:
+
+{rules}
+"#
+    );
+    fs::write(&path, body).map_err(|error| format!("failed to write {}: {error}", path.display()))
+}
+
+fn ensure_enforcer(root: &Path, java: &str) -> Result<()> {
+    let pom = crate::pom::read(root)?;
+    let plugin = format!(
+        r#"<plugin>
+    <groupId>org.apache.maven.plugins</groupId>
+    <artifactId>maven-enforcer-plugin</artifactId>
+    <version>3.6.3</version>
+    <executions>
+        <execution>
+            <id>jails-toolchain</id>
+            <goals><goal>enforce</goal></goals>
+            <configuration>
+                <rules>
+                    <requireJavaVersion>
+                        <version>[{java},)</version>
+                        <message>This project requires Java {java}+; select it with mise use java@{java}.</message>
+                    </requireJavaVersion>
+                    <requireMavenVersion>
+                        <version>[3.9,)</version>
+                        <message>This project requires Maven 3.9+; use the project wrapper or upgrade Maven.</message>
+                    </requireMavenVersion>
+                </rules>
+            </configuration>
+        </execution>
+    </executions>
+</plugin>"#
+    );
+    if let Some(updated) = crate::pom::add_plugin(&pom, "maven-enforcer-plugin", &plugin)? {
+        fs::write(root.join("pom.xml"), updated)
+            .map_err(|error| format!("failed to write pom.xml: {error}"))?;
+    }
     Ok(())
 }
 

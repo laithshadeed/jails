@@ -41,6 +41,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Component
 public final class SiteWalkWorkflow {
 
+    static final String ROBOTS_PATH = "/robots.txt";
+
     private final JdbcClient db;
     private final TransactionTemplate transactions;
     private final PageFetcher fetcher;
@@ -103,11 +105,11 @@ public final class SiteWalkWorkflow {
                 }
                 return existing;
             }
-            URI robots = origin(seed).resolve("/robots.txt");
+            URI robots = origin(seed).resolve(ROBOTS_PATH);
             db.sql("""
                             insert into site_walk_frontier
                                 (run_id, url, depth, kind, state, attempts, max_attempts, next_attempt_at)
-                            values (:id, :url, -1, 'ROBOTS', 'PENDING', 0, :maxAttempts, now())
+                            values (:id, :url, -1, 'POLICY', 'PENDING', 0, :maxAttempts, now())
                             """)
                     .param("id", request.id()).param("url", robots.toString())
                     .param("maxAttempts", maxAttempts).update();
@@ -170,10 +172,10 @@ public final class SiteWalkWorkflow {
         Claim claim = transactions.execute(status -> claim());
         if (claim == null) return;
         try {
-            FetchedResource resource = claim.kind() == Kind.ROBOTS
+            FetchedResource resource = claim.kind() == Kind.POLICY
                     ? fetcher.fetch(claim.url(), Set.of(404, 410))
                     : fetcher.fetch(claim.url());
-            Completion completion = claim.kind() == Kind.ROBOTS
+            Completion completion = claim.kind() == Kind.POLICY
                     ? new Completion(resource, Set.of(), robotsText(resource))
                     : new Completion(resource, extractLinks(resource), null);
             transactions.executeWithoutResult(status -> complete(claim, completion));
@@ -226,7 +228,7 @@ public final class SiteWalkWorkflow {
             markFrontier(claim, "CANCELLED", null);
             return;
         }
-        if (claim.kind() == Kind.ROBOTS) {
+        if (claim.kind() == Kind.POLICY) {
             db.sql("update site_walk_runs set robots_rules = :rules where id = :id")
                     .param("rules", completion.robots()).param("id", claim.runId()).update();
             URI seed = canonical(run.seed());
@@ -261,7 +263,7 @@ public final class SiteWalkWorkflow {
         }
         markFrontier(claim, "SUCCEEDED", null);
         finishIfDone(claim.runId());
-        counter(claim.kind() == Kind.ROBOTS ? "robots" : "page").increment();
+        counter(claim.kind() == Kind.POLICY ? "robots" : "page").increment();
     }
 
     private void fail(Claim claim, RuntimeException failure, boolean retryable) {
@@ -455,7 +457,7 @@ public final class SiteWalkWorkflow {
     }
 
     public enum RunState { QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELLED }
-    private enum Kind { ROBOTS, PAGE }
+    private enum Kind { POLICY, PAGE }
     public record StartRequest(UUID id, URI seedUrl, int maxPages, int maxDepth) {
         public StartRequest {
             Objects.requireNonNull(id, "id is required");

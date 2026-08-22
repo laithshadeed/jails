@@ -1,0 +1,2 @@
+src/main/java/com/example/demo/domain/Reward.java
+src/test/java/com/example/demo/domain/RewardTest.java

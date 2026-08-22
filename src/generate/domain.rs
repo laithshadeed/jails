@@ -80,6 +80,90 @@ pub(crate) fn record_java(pkg: &str, name: &str, fields: &[Field]) -> String {
     out
 }
 
+/// A fluent test-data builder whose defaults are derived from the same type
+/// table as generated tests and fixtures. Unknown project types remain null
+/// and `build()` names them; silently guessing would produce a factory that
+/// compiles and lies.
+pub(crate) fn factory_java(
+    root: &Path,
+    pkg: &str,
+    domain: &str,
+    name: &str,
+    fields: &[Field],
+) -> String {
+    let mut imports: Vec<&str> = fields
+        .iter()
+        .flat_map(|field| field.imports.clone())
+        .collect();
+    if fields
+        .iter()
+        .any(|field| field.optionality == Optionality::Nullable)
+    {
+        imports.push("java.util.Optional");
+    }
+    imports.sort_unstable();
+    imports.dedup();
+    let domain_import = import_of(pkg, domain, name);
+    let mut out = format!("package {pkg};\n\n{domain_import}");
+    for import in imports {
+        out.push_str(&format!("import {import};\n"));
+    }
+    if !out.ends_with("\n\n") {
+        out.push('\n');
+    }
+    out.push_str(&format!(
+        "/** Mutable test-data builder for {{@link {name}}}. */\n\
+         public final class {name}Factory {{\n"
+    ));
+
+    let samples = fields
+        .iter()
+        .map(|field| sample_value(field, root, domain))
+        .collect::<Vec<_>>();
+    for (field, sample) in fields.iter().zip(&samples) {
+        out.push_str(&format!(
+            "    private {} {} = {};\n",
+            declared_type(field),
+            field.name,
+            sample.as_deref().unwrap_or("null")
+        ));
+    }
+    out.push_str(&format!(
+        "\n    public static {name}Factory a{name}() {{\n\
+             return new {name}Factory();\n\
+         }}\n"
+    ));
+    for field in fields {
+        out.push_str(&format!(
+            "\n    public {name}Factory with{}({} value) {{\n\
+                 this.{} = value;\n\
+                 return this;\n\
+             }}\n",
+            capitalize(&field.name),
+            declared_type(field),
+            field.name
+        ));
+    }
+    out.push_str(&format!("\n    public {name} build() {{\n"));
+    for (field, sample) in fields.iter().zip(&samples) {
+        if sample.is_none() {
+            out.push_str(&format!(
+                "        if ({} == null) throw new IllegalStateException(\"{}Factory needs {} ({})\");\n",
+                field.name, name, field.name, field.java_type
+            ));
+        }
+    }
+    let arguments = fields
+        .iter()
+        .map(|field| format!("                {}", field.name))
+        .collect::<Vec<_>>()
+        .join(",\n");
+    out.push_str(&format!(
+        "        return new {name}(\n{arguments});\n    }}\n}}\n"
+    ));
+    out
+}
+
 /// A companion test asserting the accessors return what was passed and that
 /// the compact constructor actually rejects a null.
 pub(super) fn record_test(root: &Path, pkg: &str, name: &str, fields: &[Field]) -> String {
@@ -355,6 +439,33 @@ pub(crate) fn fields_from_record(root: &Path, pkg: &str, name: &str) -> Option<V
         })
         .collect();
     Some(fields)
+}
+
+/// Resolve the fields for every generator that can be driven either from an
+/// explicit spec or from an existing domain record.
+///
+/// The boolean is true when the record on disk was the source. Keeping that
+/// fact lets a spanning generator such as `scaffold` reuse the model without
+/// claiming (or later destroying) a file it did not create.
+pub(crate) fn fields_from_spec_or_record(
+    root: &Path,
+    pkg: &str,
+    name: &str,
+    spec: &[String],
+) -> Result<(Vec<Field>, bool)> {
+    let parsed = parse_fields(spec)?;
+    if !parsed.is_empty() {
+        return Ok((parsed, false));
+    }
+
+    fields_from_record(root, pkg, name)
+        .map(|fields| (fields, true))
+        .ok_or_else(|| {
+            format!(
+                "no {name} record found under {pkg}, and no field spec was given.\n       \
+                 fix: run `jails g record {name} <field:type ...>` first, or pass the fields to this command."
+            )
+        })
 }
 
 /// The first constant of a project enum, for a fixture sample. Reads the

@@ -1,0 +1,3 @@
+src/main/java/com/example/demo/domain/DomesticEligibility.java
+src/main/java/com/example/demo/domain/Eligibility.java
+src/test/java/com/example/demo/domain/DomesticEligibilityTest.java

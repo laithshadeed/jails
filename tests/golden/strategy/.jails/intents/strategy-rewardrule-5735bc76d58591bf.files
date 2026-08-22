@@ -1,0 +1,5 @@
+src/main/java/com/example/demo/domain/CoffeeRewardRule.java
+src/main/java/com/example/demo/domain/LargeRewardRule.java
+src/main/java/com/example/demo/domain/RewardRule.java
+src/test/java/com/example/demo/domain/CoffeeRewardRuleTest.java
+src/test/java/com/example/demo/domain/LargeRewardRuleTest.java

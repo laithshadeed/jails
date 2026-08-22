@@ -294,7 +294,9 @@ pub(super) fn register_command(
             return Ok(());
         }
         (_, Some(wanted)) => {
-            let Some(found) = dispatchers.iter().find(|path| matches_dispatcher(path, wanted))
+            let Some(found) = dispatchers
+                .iter()
+                .find(|path| matches_dispatcher(path, wanted))
             else {
                 return Err(format!(
                     "--on {wanted} does not name a dispatcher in this project.\n       \

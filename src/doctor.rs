@@ -127,8 +127,216 @@ fn run_checks(root: &Path) -> Vec<Check> {
     checks.extend(container_reuse_check(&pom_text));
     checks.push(kafka_check(root, &pom_text));
     checks.push(jackson_check(&pom_text));
+    checks.extend(management_checks(root, &pom_text));
+    checks.extend(cors_checks(root, &pom_text));
+    checks.extend(virtual_thread_checks(root));
     checks.push(port_check(root));
     checks.push(beans_check(root));
+    checks
+}
+
+fn virtual_thread_checks(root: &Path) -> Vec<Check> {
+    let properties =
+        std::fs::read_to_string(root.join("src/main/resources/application.properties"))
+            .unwrap_or_default();
+    if property_value(&properties, "spring.threads.virtual.enabled") != Some("true") {
+        return Vec::new();
+    }
+
+    let mut scheduled = Vec::new();
+    let mut synchronised = Vec::new();
+    for path in crate::java::source_files(&root.join("src/main/java")) {
+        let Ok(source) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let label = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .display()
+            .to_string();
+        if source.contains("@Scheduled") {
+            scheduled.push(label.clone());
+        }
+        if crate::java::blanked(&source).contains("synchronized") {
+            synchronised.push(label);
+        }
+    }
+
+    let mut checks = Vec::new();
+    if !scheduled.is_empty()
+        && property_value(&properties, "spring.main.keep-alive") != Some("true")
+    {
+        checks.push(
+            Check::new(
+                Status::Warn,
+                "virtual keep-alive",
+                format!(
+                    "virtual threads plus @Scheduled can let the JVM exit cleanly when no platform thread remains ({})",
+                    scheduled.join(", ")
+                ),
+            )
+            .fix("set spring.main.keep-alive=true"),
+        );
+    }
+    if !synchronised.is_empty() {
+        checks.push(
+            Check::new(
+                Status::Warn,
+                "virtual pinning",
+                format!(
+                    "synchronized code may pin carrier threads in {}; measure the jdk.VirtualThreadPinned JFR event",
+                    synchronised.join(", ")
+                ),
+            )
+            .fix("jcmd <pid> JFR.start name=jails settings=profile duration=60s filename=target/virtual-threads.jfr"),
+        );
+    }
+    checks
+}
+
+fn cors_checks(root: &Path, pom_text: &str) -> Vec<Check> {
+    if !pom_text.contains("spring-boot-starter-webmvc") {
+        return Vec::new();
+    }
+    let mut enable_webmvc = Vec::new();
+    let mut wildcard_without_origins = Vec::new();
+    for path in crate::java::source_files(&root.join("src/main/java")) {
+        let Ok(source) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        if source.contains("@EnableWebMvc") {
+            enable_webmvc.push(path.display().to_string());
+        }
+        if source.contains("addMapping(\"/**\")")
+            && !source.contains("allowedOrigins(")
+            && !source.contains("allowedOriginPatterns(")
+            && !source.contains("setAllowedOrigins(")
+        {
+            wildcard_without_origins.push(path.display().to_string());
+        }
+    }
+    let mut checks = Vec::new();
+    if !enable_webmvc.is_empty() {
+        checks.push(
+            Check::new(
+                Status::Warn,
+                "MVC override",
+                format!(
+                    "@EnableWebMvc disables Boot MVC auto-configuration in {}",
+                    enable_webmvc.join(", ")
+                ),
+            )
+            .fix("remove @EnableWebMvc; contribute WebMvcConfigurer beans instead"),
+        );
+    }
+    if !wildcard_without_origins.is_empty() {
+        checks.push(
+            Check::new(
+                Status::Warn,
+                "CORS origins",
+                format!(
+                    "global /** mapping has no explicit origin allow-list in {}",
+                    wildcard_without_origins.join(", ")
+                ),
+            )
+            .fix("jails add cors, then set app.cors.allowed-origins"),
+        );
+    }
+    checks
+}
+
+fn property_value<'a>(properties: &'a str, key: &str) -> Option<&'a str> {
+    properties.lines().rev().find_map(|line| {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            return None;
+        }
+        let (candidate, value) = line.split_once('=')?;
+        (candidate.trim() == key).then_some(value.trim())
+    })
+}
+
+/// Static safety checks for an actuator endpoint set. These are warnings,
+/// not startup failures: the application will run with all three mistakes,
+/// which is exactly why they belong in `doctor`.
+fn management_checks(root: &Path, pom_text: &str) -> Vec<Check> {
+    if !pom::has_dependency(
+        pom_text,
+        "org.springframework.boot",
+        "spring-boot-starter-actuator",
+    ) {
+        return Vec::new();
+    }
+    let path = root.join("src/main/resources/application.properties");
+    let properties = std::fs::read_to_string(path).unwrap_or_default();
+    let application_port = property_value(&properties, "server.port").unwrap_or("8080");
+    let management_port = property_value(&properties, "management.server.port");
+    let mut checks = Vec::new();
+
+    checks.push(match management_port {
+        Some(port) if !port.is_empty() && port != application_port => Check::new(
+            Status::Ok,
+            "management port",
+            format!("isolated on {port} (application port {application_port})"),
+        ),
+        _ => Check::new(
+            Status::Warn,
+            "management port",
+            "Actuator shares the public connector and thread pool; traffic pressure can starve probes",
+        )
+        .fix("jails add actuator (idempotent -- sets management.server.port=8081)"),
+    });
+
+    let exposure = property_value(&properties, "management.endpoints.web.exposure.include")
+        .unwrap_or("health");
+    let dangerous: Vec<&str> = exposure
+        .split(',')
+        .map(str::trim)
+        .filter(|name| matches!(*name, "*" | "env" | "configprops" | "heapdump"))
+        .collect();
+    checks.push(if dangerous.is_empty() {
+        Check::new(
+            Status::Ok,
+            "management exposure",
+            format!("explicit endpoint allow-list: {exposure}"),
+        )
+    } else {
+        Check::new(
+            Status::Warn,
+            "management exposure",
+            format!(
+                "credential- or memory-bearing endpoint(s) exposed: {}",
+                dangerous.join(", ")
+            ),
+        )
+        .fix("replace exposure.include with health,info,prometheus,threaddump")
+    });
+
+    let liveness = property_value(
+        &properties,
+        "management.endpoint.health.group.liveness.include",
+    );
+    checks.push(match liveness {
+        Some(value) if value.split(',').all(|name| name.trim() == "ping") => Check::new(
+            Status::Ok,
+            "liveness group",
+            "process-only (`ping`); dependency outages cannot trigger pod restarts",
+        ),
+        Some(value) => Check::new(
+            Status::Warn,
+            "liveness group",
+            format!(
+                "contains dependency indicators ({value}); a transient outage can make Kubernetes kill healthy pods"
+            ),
+        )
+        .fix("set management.endpoint.health.group.liveness.include=ping"),
+        None => Check::new(
+            Status::Warn,
+            "liveness group",
+            "not explicit; keep liveness process-only and put dependencies in readiness",
+        )
+        .fix("jails add actuator (idempotent -- writes explicit probe groups)"),
+    });
     checks
 }
 
@@ -589,9 +797,9 @@ fn test_container_wiring(root: &Path) -> (Option<String>, Vec<String>) {
             // other test as missing an import of it.
             let annotations = crate::java::annotations(&text);
             let on_the_top_level_type = |name: &str| {
-                annotations.iter().any(|a| {
-                    a.name == name && a.target == crate::java::Target::Type(stem.clone())
-                })
+                annotations
+                    .iter()
+                    .any(|a| a.name == name && a.target == crate::java::Target::Type(stem.clone()))
             };
             if on_the_top_level_type("TestConfiguration")
                 && annotations.iter().any(|a| a.name == "ServiceConnection")
@@ -1158,6 +1366,58 @@ mod tests {
     use super::*;
 
     #[test]
+    fn cors_checks_flag_mvc_takeover_and_a_global_mapping_without_origins() {
+        let root = std::env::temp_dir().join(format!(
+            "jails-doctor-cors-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let source = root.join("src/main/java/com/example/WebConfig.java");
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        std::fs::write(
+            &source,
+            "@EnableWebMvc\nclass WebConfig { void x() { registry.addMapping(\"/**\"); } }",
+        )
+        .unwrap();
+        let checks = cors_checks(&root, "<artifactId>spring-boot-starter-webmvc</artifactId>");
+        assert_eq!(checks.len(), 2);
+        assert!(checks.iter().all(|check| check.status == Status::Warn));
+        assert!(checks.iter().all(|check| !check.fix.is_empty()));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn virtual_thread_checks_find_scheduler_exit_and_jfr_pinning_traps() {
+        let root =
+            std::env::temp_dir().join(format!("jails-doctor-virtual-{}", std::process::id()));
+        let resources = root.join("src/main/resources");
+        let source = root.join("src/main/java/com/example/Jobs.java");
+        std::fs::create_dir_all(&resources).unwrap();
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        std::fs::write(
+            resources.join("application.properties"),
+            "spring.threads.virtual.enabled=true\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &source,
+            "class Jobs { @Scheduled void run() { synchronized (this) {} } }",
+        )
+        .unwrap();
+
+        let checks = virtual_thread_checks(&root);
+        assert_eq!(checks.len(), 2);
+        assert!(checks.iter().all(|check| check.status == Status::Warn));
+        assert!(checks[0].fix.contains("spring.main.keep-alive=true"));
+        assert!(checks[1].detail.contains("jdk.VirtualThreadPinned"));
+        assert!(!checks[1].detail.contains("tracePinnedThreads"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn java_version_output_yields_a_major_number() {
         let modern = "openjdk version \"26.0.1\" 2026-01-20\nOpenJDK Runtime Environment";
         assert_eq!(parse_java_major(modern), Some(26));
@@ -1214,6 +1474,52 @@ volumes:
                    <dependency><groupId>com.fasterxml.jackson.datatype</groupId>\
                    <artifactId>jackson-datatype-jsr310</artifactId></dependency>";
         assert_eq!(jackson_check(pom).status, Status::Warn);
+    }
+
+    #[test]
+    fn management_checks_flag_public_dangerous_and_dependency_liveness_endpoints() {
+        let root =
+            std::env::temp_dir().join(format!("jails-doctor-management-{}", std::process::id()));
+        let resources = root.join("src/main/resources");
+        std::fs::create_dir_all(&resources).unwrap();
+        std::fs::write(
+            resources.join("application.properties"),
+            "management.endpoints.web.exposure.include=health,env,heapdump\n\
+             management.endpoint.health.group.liveness.include=ping,db\n",
+        )
+        .unwrap();
+        let pom = "<dependency><groupId>org.springframework.boot</groupId>\
+                   <artifactId>spring-boot-starter-actuator</artifactId></dependency>";
+        let checks = management_checks(&root, pom);
+        assert_eq!(checks.len(), 3);
+        assert!(checks.iter().all(|check| check.status == Status::Warn));
+        assert!(checks[1].detail.contains("env"), "{}", checks[1].detail);
+        assert!(
+            checks[2].detail.contains("Kubernetes"),
+            "{}",
+            checks[2].detail
+        );
+    }
+
+    #[test]
+    fn generated_management_defaults_are_all_clear() {
+        let root = std::env::temp_dir().join(format!(
+            "jails-doctor-management-clear-{}",
+            std::process::id()
+        ));
+        let resources = root.join("src/main/resources");
+        std::fs::create_dir_all(&resources).unwrap();
+        std::fs::write(
+            resources.join("application.properties"),
+            "management.server.port=8081\n\
+             management.endpoints.web.exposure.include=health,info,prometheus,threaddump\n\
+             management.endpoint.health.group.liveness.include=ping\n",
+        )
+        .unwrap();
+        let pom = "<dependency><groupId>org.springframework.boot</groupId>\
+                   <artifactId>spring-boot-starter-actuator</artifactId></dependency>";
+        let checks = management_checks(&root, pom);
+        assert!(checks.iter().all(|check| check.status == Status::Ok));
     }
 
     /// The failure that loses data without an error: a DataSource exists, but
@@ -1369,7 +1675,10 @@ pub fn setup(dry_run: bool) -> Result<()> {
         .lines()
         .map(str::trim)
         .filter(|line| !line.starts_with('#'))
-        .any(|line| line.replace(' ', "").starts_with("testcontainers.reuse.enable="))
+        .any(|line| {
+            line.replace(' ', "")
+                .starts_with("testcontainers.reuse.enable=")
+        })
     {
         // Present already -- including as `=false`, which is a decision, not
         // an omission. Flipping someone's explicit `false` would be jails

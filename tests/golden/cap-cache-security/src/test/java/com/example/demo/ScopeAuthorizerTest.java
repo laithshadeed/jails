@@ -11,7 +11,7 @@ import org.springframework.security.oauth2.jwt.Jwt;
 
 class ScopeAuthorizerTest {
 
-    private static final UUID WORKSPACE =
+    private static final UUID TENANT =
             UUID.fromString("00000000-0000-0000-0000-000000000001");
 
     @Test
@@ -24,12 +24,12 @@ class ScopeAuthorizerTest {
                 null,
                 null,
                 Map.of("alg", "none"),
-                Map.of("workspaceId", WORKSPACE.toString()));
+                Map.of("tenantId", TENANT.toString()));
         var authentication = new TestingAuthenticationToken(jwt, null);
 
-        guard.require(authentication, "workspaceId", WORKSPACE);
+        guard.require(authentication, "tenantId", TENANT);
 
-        assertThatThrownBy(() -> guard.require(authentication, "workspaceId", UUID.randomUUID()))
+        assertThatThrownBy(() -> guard.require(authentication, "tenantId", UUID.randomUUID()))
                 .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
                 .hasMessageContaining("404");
     }
@@ -42,19 +42,19 @@ class ScopeAuthorizerTest {
 
         assertThatThrownBy(() -> guard.require(
                         new TestingAuthenticationToken("local-user", null),
-                        "workspaceId",
-                        WORKSPACE))
+                        "tenantId",
+                        TENANT))
                 .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
     }
 
     @Test
     void developmentCanPinAClaimForLocalTesting() {
         var environment = new MockEnvironment()
-                .withProperty("app.security.dev.scopes.workspaceId", WORKSPACE.toString());
+                .withProperty("app.security.dev.scopes.tenantId", TENANT.toString());
         var guard = new ScopeAuthorizer(environment);
 
-        guard.require(null, "workspaceId", WORKSPACE);
-        assertThatThrownBy(() -> guard.require(null, "workspaceId", UUID.randomUUID()))
+        guard.require(null, "tenantId", TENANT);
+        assertThatThrownBy(() -> guard.require(null, "tenantId", UUID.randomUUID()))
                 .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
     }
 }

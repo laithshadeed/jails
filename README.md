@@ -407,8 +407,23 @@ it already draws for hand-written properties inside a jails-owned block.
   types. `--no-build` skips `mvn compile`.
 - `jails destroy|d <type> <Name> [--force]` — deletes exactly what the
   matching `generate` call would have created.
-- `jails test [name]` — uses `./mvnw` when present. A bare `Money` becomes
-  `MoneyTest`; a name ending in `IT` runs through Failsafe and `verify`.
+- `jails test [filter] [--failed] [--fail-fast] [--slowest N]` — uses `./mvnw`
+  when present. The filter takes four shapes: a bare `Money` becomes
+  `MoneyTest`; a name ending in `IT` runs through Failsafe and `verify`;
+  `Money#converts` runs one method (the suffix is applied to the class half
+  only, and the Surefire/Failsafe choice is made on the class, so
+  `PayoutIT#settles` is still Failsafe's); and
+  `src/test/java/.../PayoutTest.java:42` resolves the `@Test` enclosing that
+  line — JUnit has no file-and-line selector, so jails does it, which is what
+  an editor keybinding needs. A nested class is addressed the way JUnit
+  addresses it, `Outer$Nested#method`.
+  **`--failed`** rereads `target/{surefire,failsafe}-reports` and reruns
+  exactly what failed — a skipped test is not a failure, so it will not drag
+  every `@Disabled` test back in. **`--fail-fast`** stops at the first failing
+  class. **`--slowest N`** prints the slowest N from the same reports (Maven
+  already timed them; a number jails measured would include its own startup).
+  On a failure it prints the line that reruns just what broke.
+  A filter matching nothing is "no tests ran", not a stack trace.
   Any command that writes an `*IT` also splices the Failsafe plugin, because
   it is *not* part of the Spring Boot parent's default build — without it
   `mvn verify` completes, reports success, and runs none of them.

@@ -1,0 +1,14 @@
+requests/owner.http
+src/main/java/com/example/demo/adapters/InMemoryOwnerRepository.java
+src/main/java/com/example/demo/adapters/JdbcOwnerRepository.java
+src/main/java/com/example/demo/app/OwnerRepository.java
+src/main/java/com/example/demo/domain/Owner.java
+src/main/java/com/example/demo/service/OwnerService.java
+src/main/java/com/example/demo/web/OwnerController.java
+src/main/java/com/example/demo/web/OwnerRequest.java
+src/main/java/com/example/demo/web/OwnerResponse.java
+src/main/resources/db/migration/V001__create_owners.sql
+src/test/java/com/example/demo/adapters/JdbcOwnerRepositoryIT.java
+src/test/java/com/example/demo/domain/OwnerTest.java
+src/test/java/com/example/demo/service/OwnerServiceTest.java
+src/test/java/com/example/demo/web/OwnerControllerTest.java
