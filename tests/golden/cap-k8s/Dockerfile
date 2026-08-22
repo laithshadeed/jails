@@ -2,9 +2,9 @@
 FROM maven:3.9.16-eclipse-temurin-25 AS build
 WORKDIR /build
 COPY pom.xml ./
-RUN mvn -B -ntp -DskipTests dependency:go-offline
 COPY src/ src/
-RUN mvn -B -ntp -DskipTests package \
+RUN --mount=type=cache,id=jails-maven-repository,target=/root/.m2 \
+    mvn -B -ntp -DskipTests package \
     && cp "$(find target -maxdepth 1 -type f -name '*.jar' ! -name '*.original' -print -quit)" /build/application.jar
 
 

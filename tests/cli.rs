@@ -629,6 +629,43 @@ fn app_manifest_plan_is_domain_blind_and_writes_nothing() {
 }
 
 #[test]
+fn app_manifest_formats_the_complete_generated_tree_once() {
+    let root = temp_dir("app-format-once");
+    write_plain_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/app.toml"),
+        "schema = 1\ncapabilities = [\"format\"]\n\n[[generate]]\nkind = \"record\"\nname = \"Note\"\nfields = [\"title:string!\"]\n",
+    )
+    .unwrap();
+    let fake = temp_dir("app-format-once-bin");
+    let log = fake.join("maven.log");
+    write_fake_maven(&fake, &["mvn"], &log);
+
+    let output = jails_cmd(&root, Some(&fake))
+        .args(["app", "apply", "--no-start"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let invocations = read_log(&log);
+    assert_eq!(
+        invocations.lines().count(),
+        1,
+        "format should run after generation, once: {invocations}"
+    );
+    assert!(invocations.contains("spotless:apply"), "{invocations}");
+    assert!(
+        root.join("src/main/java/com/example/demo/domain/Note.java")
+            .is_file()
+    );
+}
+
+#[test]
 fn app_manifest_builds_the_crawler_skeleton_and_is_resumable() {
     let root = temp_dir("app-manifest-crawler");
     write_spring_fixture(&root);
@@ -964,17 +1001,137 @@ const SPRING_APP_MANIFESTS: &[(&str, &str)] = &[
     ),
 ];
 
-/// Generate and compile each proof application exactly once per `cargo test`
-/// process. Both gates below consume this immutable project tree, so the full
-/// verification gate starts from the classes the compilation gate proved.
-///
-/// This is shared setup, not reduced coverage. Every manifest is applied,
-/// every main and test source is compiled, and every Surefire/Failsafe test is
-/// executed by `verify`; the second gate then adds the OCI assertions.
-fn compiled_app_fixtures(path: &str) -> &'static Vec<(&'static str, std::path::PathBuf)> {
-    static COMPILED: std::sync::OnceLock<Vec<(&'static str, std::path::PathBuf)>> =
+/// One real plain-Maven verification for every plain capability and generator
+/// branch exercised below. The focused Rust tests still generate their own
+/// projects and assert their exact semantics; sharing only this compile/test
+/// gate removes repeated Maven/JUnit startup without dropping a source or a
+/// generated test from toolchain coverage.
+fn verified_plain_toolbox(path: &str) -> &'static std::path::PathBuf {
+    static VERIFIED: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    VERIFIED.get_or_init(|| {
+        let workdir = temp_dir("plain-toolbox-verified");
+        let status = jails_cmd_with_path(&workdir, path)
+            .args(["new-cli", "demo"])
+            .status()
+            .unwrap();
+        assert!(status.success(), "new-cli failed for the plain toolbox");
+        let root = workdir.join("demo");
+        for capability in ["fake", "http"] {
+            let status = jails_cmd_with_path(&root, path)
+                .args(["add", capability])
+                .status()
+                .unwrap();
+            assert!(status.success(), "add {capability} failed in plain toolbox");
+        }
+        for args in [
+            &["g", "class", "MoneyMoved"][..],
+            &["g", "record", "Tally", "hits:int", "total:long"][..],
+            &["g", "enum", "Currency", "GBP", "EUR"][..],
+            &[
+                "g",
+                "record",
+                "SourceRef",
+                "system:string",
+                "externalId:string",
+            ][..],
+            &[
+                "g",
+                "value",
+                "CanonicalTransaction",
+                "id:string!",
+                "date:date",
+                "amountMinor:long",
+                "currency:Currency",
+                "source:SourceRef",
+                "note:string?",
+            ][..],
+            &["g", "sealed", "Outcome", "Accepted", "Rejected"][..],
+            &[
+                "g",
+                "value",
+                "Stamped",
+                "at:string!",
+                "result:Outcome",
+            ][..],
+            &["g", "record", "Transaction", "id:uuid", "amount:long"][..],
+            &["g", "record", "Reward", "id:uuid", "amount:long"][..],
+            &[
+                "g",
+                "strategy",
+                "Eligibility",
+                "Domestic",
+                "--on",
+                "Transaction",
+            ][..],
+            &["g", "integration-test", "Checkout"][..],
+        ] {
+            let status = jails_cmd_with_path(&root, path)
+                .args(args)
+                .status()
+                .unwrap();
+            assert!(status.success(), "{args:?} failed in plain toolbox");
+        }
+        fs::write(
+            root.join("brief.md"),
+            "# Brief\n\n## Acceptance criteria\n\n- parses a `quoted` value\n- rejects **blank** ids\n",
+        )
+        .unwrap();
+        let status = jails_cmd_with_path(&root, path)
+            .args(["g", "cases", "brief.md"])
+            .status()
+            .unwrap();
+        assert!(status.success(), "generate cases failed in plain toolbox");
+
+        // Apply the exact control manifest last. Its deferred `format`
+        // capability formats both the manifest output and the toolbox files
+        // above in one invocation, after every source exists.
+        fs::create_dir_all(root.join(".jails")).unwrap();
+        fs::write(
+            root.join(".jails/app.toml"),
+            include_str!("../examples/ledger-cli/.jails/app.toml"),
+        )
+        .unwrap();
+        let output = jails_cmd_with_path(&root, path)
+            .args(["app", "apply", "--no-start"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "plain toolbox manifest: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        // The ledger manifest makes LedgerCli the executable dispatcher.
+        // Generate this command afterwards and target that dispatcher so the
+        // shared runtime gate proves the final application registration.
+        let status = jails_cmd_with_path(&root, path)
+            .args(["g", "command", "Greet", "--on", "LedgerCli"])
+            .status()
+            .unwrap();
+        assert!(status.success(), "generate Greet failed in plain toolbox");
+
+        let status = jails_cmd_with_path(&root, path)
+            .arg("check")
+            .status()
+            .unwrap();
+        assert!(
+            status.success(),
+            "the shared plain toolbox failed clean verify"
+        );
+        root
+    })
+}
+
+/// Generate each proof application exactly once per `cargo test` process.
+/// Compilation and execution happen in `verified_app_fixtures`: Maven's
+/// `verify` lifecycle already includes compile and test-compile, so running a
+/// separate `test-compile` lifecycle first repeated three Maven startups while
+/// proving a strict subset of the same result.
+fn generated_app_fixtures(path: &str) -> &'static Vec<(&'static str, std::path::PathBuf)> {
+    static GENERATED: std::sync::OnceLock<Vec<(&'static str, std::path::PathBuf)>> =
         std::sync::OnceLock::new();
-    COMPILED.get_or_init(|| {
+    GENERATED.get_or_init(|| {
         let mut generated = Vec::new();
         std::thread::scope(|scope| {
             let handles: Vec<_> = SPRING_APP_MANIFESTS
@@ -996,11 +1153,6 @@ fn compiled_app_fixtures(path: &str) -> &'static Vec<(&'static str, std::path::P
                             String::from_utf8_lossy(&output.stdout),
                             String::from_utf8_lossy(&output.stderr)
                         );
-                        let status = real_maven_cmd(&root, path)
-                            .args(["-q", "test-compile"])
-                            .status()
-                            .unwrap();
-                        assert!(status.success(), "{name} did not compile");
                         (name, root)
                     })
                 })
@@ -1015,10 +1167,10 @@ fn compiled_app_fixtures(path: &str) -> &'static Vec<(&'static str, std::path::P
 
 fn verified_app_fixtures(path: &str) -> &'static Vec<(&'static str, std::path::PathBuf)> {
     static VERIFIED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
-    let compiled = compiled_app_fixtures(path);
+    let generated = generated_app_fixtures(path);
     VERIFIED.get_or_init(|| {
         std::thread::scope(|scope| {
-            for (name, root) in compiled {
+            for (name, root) in generated {
                 scope.spawn(move || {
                     let status = real_maven_cmd(root, path)
                         .args(["-q", "verify"])
@@ -1032,7 +1184,7 @@ fn verified_app_fixtures(path: &str) -> &'static Vec<(&'static str, std::path::P
             }
         });
     });
-    compiled
+    generated
 }
 
 #[test]
@@ -1046,9 +1198,12 @@ fn app_manifests_compile_without_manual_source_edits() {
         return;
     }
     let path = real_path_without_mvnd();
-    let compiled = compiled_app_fixtures(&path);
-    assert_eq!(compiled.len(), SPRING_APP_MANIFESTS.len());
-    for (name, root) in compiled {
+    // `verify` contains compile and test-compile and is therefore stronger
+    // than the old preliminary lifecycle. Both Rust tests share this exact
+    // execution through the OnceLock above; no generated test is omitted.
+    let verified = verified_app_fixtures(&path);
+    assert_eq!(verified.len(), SPRING_APP_MANIFESTS.len());
+    for (name, root) in verified {
         assert!(
             root.join("target/classes").is_dir(),
             "{name} main sources did not compile"
@@ -1262,6 +1417,7 @@ fn every_generated_pom_is_one_maven_can_read() {
         return;
     }
     let path = real_path_without_mvnd();
+    let matrix = temp_dir("pom-readable-matrix");
     // Kinds that splice something into the pom, which is where the defect
     // lives: a dependency, a plugin, or a test that needs AssertJ.
     let cells: &[(&str, &[&str])] = &[
@@ -1273,12 +1429,13 @@ fn every_generated_pom_is_one_maven_can_read() {
         ("integration-test", &["g", "integration-test", "Checkout"]),
         ("cli", &["g", "cli", "Admin"]),
     ];
+    let mut modules = Vec::new();
+    let mut generated = Vec::new();
     for spring in [false, true] {
         for (label, args) in cells {
-            let root = temp_dir(&format!(
-                "pom-readable-{}-{label}",
-                if spring { "spring" } else { "plain" }
-            ));
+            let flavor = if spring { "spring" } else { "plain" };
+            let module = format!("{flavor}-{label}");
+            let root = matrix.join(&module);
             if spring {
                 write_spring_fixture(&root);
             } else {
@@ -1295,20 +1452,42 @@ fn every_generated_pom_is_one_maven_can_read() {
                 String::from_utf8_lossy(&output.stderr)
             );
 
-            let output = real_maven_cmd(&root, &path)
-                .args(["-o", "-q", "validate"])
-                .output()
-                .unwrap();
-            assert!(
-                output.status.success(),
-                "after `jails {}` on a {} project, Maven cannot read the pom:\n{}{}",
-                args.join(" "),
-                if spring { "Spring Boot" } else { "plain Maven" },
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
+            // Reactor coordinates must be unique even though every fixture
+            // deliberately starts as `com.example:demo`.
+            let pom_path = root.join("pom.xml");
+            let pom = fs::read_to_string(&pom_path).unwrap().replace(
+                "<artifactId>demo</artifactId>",
+                &format!("<artifactId>{module}</artifactId>"),
             );
+            fs::write(pom_path, pom).unwrap();
+            modules.push(module);
+            generated.push((flavor, *label, args.join(" ")));
         }
     }
+
+    let module_xml = modules
+        .iter()
+        .map(|module| format!("        <module>{module}</module>"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(
+        matrix.join("pom.xml"),
+        format!(
+            "<project xmlns=\"http://maven.apache.org/POM/4.0.0\">\n    <modelVersion>4.0.0</modelVersion>\n    <groupId>com.example</groupId>\n    <artifactId>jails-pom-matrix</artifactId>\n    <version>1</version>\n    <packaging>pom</packaging>\n    <modules>\n{module_xml}\n    </modules>\n</project>\n"
+        ),
+    )
+    .unwrap();
+
+    let output = real_maven_cmd(&matrix, &path)
+        .args(["-o", "-q", "validate"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "Maven could not read the generated POM matrix {generated:?}:\n{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 /// The control application: `plan.md` §4.4's whole point is that the crawler,
@@ -1333,25 +1512,7 @@ fn ledger_cli_manifest_builds_without_spring() {
         return;
     }
     let path = real_path_without_mvnd();
-    let root = temp_dir("app-manifest-ledger-cli");
-    write_plain_fixture(&root);
-    fs::create_dir_all(root.join(".jails")).unwrap();
-    fs::write(
-        root.join(".jails/app.toml"),
-        include_str!("../examples/ledger-cli/.jails/app.toml"),
-    )
-    .unwrap();
-
-    let output = jails_cmd_with_path(&root, &path)
-        .args(["app", "apply", "--no-start"])
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "ledger-cli apply: stdout={} stderr={}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let root = verified_plain_toolbox(&path);
 
     // The manifest names the dispatcher its command belongs to, so the
     // registration is part of what this gate proves rather than a note.
@@ -1362,17 +1523,7 @@ fn ledger_cli_manifest_builds_without_spring() {
         "the manifest named its dispatcher, so the command must be registered in it: {dispatcher}"
     );
 
-    // Not `-DskipTests`: `verify` includes the formatter the manifest asked
-    // for, and "does jails' own output satisfy the formatter jails installs"
-    // is exactly what this application found broken.
-    let status = real_maven_cmd(&root, &path)
-        .args(["-q", "verify"])
-        .status()
-        .unwrap();
-    assert!(
-        status.success(),
-        "the ledger CLI failed its generated Maven verification"
-    );
+    assert!(root.join("target/classes").is_dir());
 }
 
 #[test]
@@ -2202,20 +2353,10 @@ fn new_cli_project_passes_real_mvn_test() {
         return;
     }
     let path = real_path_without_mvnd();
-    let workdir = temp_dir("real-new-cli-test");
-    jails_cmd_with_path(&workdir, &path)
-        .args(["new-cli", "demo"])
-        .status()
-        .unwrap();
-    let root = workdir.join("demo");
-
-    let status = jails_cmd_with_path(&root, &path)
-        .arg("test")
-        .status()
-        .unwrap();
+    let root = verified_plain_toolbox(&path);
     assert!(
-        status.success(),
-        "mvn test failed for a freshly generated new-cli project"
+        root.join("target/classes/com/example/demo/App.class")
+            .is_file()
     );
 }
 
@@ -2346,14 +2487,15 @@ fn record_and_command_compile_and_pass_in_a_plain_cli_project() {
             .exists()
     );
 
-    let status = jails_cmd_with_path(&root, &path)
-        .arg("test")
-        .status()
-        .unwrap();
-    assert!(
-        status.success(),
-        "mvn test failed for a generated record + command + class"
-    );
+    let verified = verified_plain_toolbox(&path);
+    for class in ["MoneyMoved", "cli/GreetCommand", "domain/Tally"] {
+        assert!(
+            verified
+                .join(format!("target/classes/com/example/demo/{class}.class"))
+                .is_file(),
+            "shared toolchain matrix did not compile {class}"
+        );
+    }
 }
 
 // ---- add ----
@@ -2592,11 +2734,12 @@ fn add_csv_produces_a_project_that_compiles_and_passes_tests() {
         .unwrap();
     assert!(status.success());
 
-    let status = jails_cmd_with_path(&root, &path)
-        .arg("test")
-        .status()
-        .unwrap();
-    assert!(status.success(), "mvn test failed after `jails add csv`");
+    let verified = verified_plain_toolbox(&path);
+    assert!(
+        verified
+            .join("target/classes/com/example/demo/adapters/CsvReader.class")
+            .is_file()
+    );
 }
 
 /// tests/common/mod.rs cannot import `pom::TARGET_RELEASE` (integration tests
@@ -3177,29 +3320,16 @@ fn every_capability_together_produces_a_project_that_compiles_and_passes_tests()
         return;
     }
     let path = real_path_without_mvnd();
-    let workdir = temp_dir("real-add-all");
-    jails_cmd_with_path(&workdir, &path)
-        .args(["new-cli", "demo"])
-        .status()
-        .unwrap();
-    let root = workdir.join("demo");
-
-    for capability in ["csv", "sqlite", "json"] {
-        let status = jails_cmd_with_path(&root, &path)
-            .args(["add", capability])
-            .status()
-            .unwrap();
-        assert!(status.success(), "add {capability} failed");
+    let root = verified_plain_toolbox(&path);
+    for class in ["CsvReader", "Database", "Json"] {
+        assert!(
+            root.join(format!(
+                "target/classes/com/example/demo/adapters/{class}.class"
+            ))
+            .is_file(),
+            "{class} was not compiled in the stacked capability matrix"
+        );
     }
-
-    let status = jails_cmd_with_path(&root, &path)
-        .arg("test")
-        .status()
-        .unwrap();
-    assert!(
-        status.success(),
-        "mvn test failed after adding csv + sqlite + json"
-    );
 }
 
 /// The whole toolbox at once: every capability and every generator in one
@@ -3220,61 +3350,15 @@ fn every_generator_and_capability_together_compiles_and_passes_tests() {
         return;
     }
     let path = real_path_without_mvnd();
-    let workdir = temp_dir("real-everything");
-    jails_cmd_with_path(&workdir, &path)
-        .args(["new-cli", "tool"])
-        .status()
-        .unwrap();
-    let root = workdir.join("tool");
-
-    for capability in ["csv", "sqlite", "json", "testkit", "fake", "http"] {
-        let status = jails_cmd_with_path(&root, &path)
-            .args(["add", capability])
-            .status()
-            .unwrap();
-        assert!(status.success(), "add {capability} failed");
-    }
-
-    for args in [
-        vec!["generate", "command", "import"],
-        vec![
-            "generate",
-            "value",
-            "money",
-            "amount:long",
-            "currency:string",
-        ],
-        vec!["generate", "record", "txn", "id:string", "on:date"],
-        // Every component primitive: the compact constructor and its import
-        // must both be omitted, or this does not compile.
-        vec!["generate", "record", "tally", "hits:int", "total:long"],
+    let root = verified_plain_toolbox(&path);
+    for path in [
+        "target/classes/com/example/demo/cli/GreetCommand.class",
+        "target/classes/com/example/demo/domain/Money.class",
+        "target/classes/com/example/demo/domain/Tally.class",
+        "target/test-classes/com/example/demo/BriefTest.class",
     ] {
-        let status = jails_cmd_with_path(&root, &path)
-            .args(&args)
-            .status()
-            .unwrap();
-        assert!(status.success(), "{args:?} failed");
+        assert!(root.join(path).is_file(), "matrix did not compile {path}");
     }
-
-    fs::write(
-        root.join("brief.md"),
-        "# Brief\n\n## Acceptance criteria\n\n- parses a `quoted` value\n- rejects **blank** ids\n",
-    )
-    .unwrap();
-    let status = jails_cmd_with_path(&root, &path)
-        .args(["generate", "cases", "brief.md"])
-        .status()
-        .unwrap();
-    assert!(status.success(), "generate cases failed");
-
-    let status = jails_cmd_with_path(&root, &path)
-        .arg("test")
-        .status()
-        .unwrap();
-    assert!(
-        status.success(),
-        "the generated project failed its own tests"
-    );
 }
 
 /// The generators composing: an enum and a record, then a value type that
@@ -3410,14 +3494,17 @@ fn generators_compose_through_user_owned_field_types() {
         "an unfabricable component must disable the test and name itself: {stamped}"
     );
 
-    let status = jails_cmd_with_path(&root, &path)
-        .arg("test")
-        .status()
-        .unwrap();
-    assert!(
-        status.success(),
-        "the composed project failed to compile or test"
-    );
+    let verified = verified_plain_toolbox(&path);
+    for class in ["Currency", "SourceRef", "CanonicalTransaction", "Stamped"] {
+        assert!(
+            verified
+                .join(format!(
+                    "target/classes/com/example/demo/domain/{class}.class"
+                ))
+                .is_file(),
+            "shared toolchain matrix did not compile {class}"
+        );
+    }
 }
 
 /// The end-to-end path the tool exists for: generate a command, and have it
@@ -3437,21 +3524,10 @@ fn a_generated_command_is_reachable_by_name_through_jails_run() {
         return;
     }
     let path = real_path_without_mvnd();
-    let workdir = temp_dir("real-run-args");
-    jails_cmd_with_path(&workdir, &path)
-        .args(["new-cli", "tool"])
-        .status()
-        .unwrap();
-    let root = workdir.join("tool");
-
-    let status = jails_cmd_with_path(&root, &path)
-        .args(["generate", "command", "greet"])
-        .status()
-        .unwrap();
-    assert!(status.success());
+    let root = verified_plain_toolbox(&path);
 
     let output = jails_cmd_with_path(&root, &path)
-        .args(["run", "--", "greet", "world"])
+        .args(["run", "--no-build", "--", "greet", "world"])
         .output()
         .unwrap();
     assert!(
@@ -3468,7 +3544,7 @@ fn a_generated_command_is_reachable_by_name_through_jails_run() {
     // And with no arguments at all, the dispatcher lists what it knows rather
     // than failing -- `new-cli`'s App.java is a dispatcher, not a stub.
     let output = jails_cmd_with_path(&root, &path)
-        .arg("run")
+        .args(["run", "--no-build"])
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -3495,48 +3571,9 @@ fn a_freshly_generated_project_passes_check_with_no_manual_formatting() {
         return;
     }
     let path = real_path_without_mvnd();
-    let workdir = temp_dir("real-check-clean");
-    jails_cmd_with_path(&workdir, &path)
-        .args(["new-cli", "tool"])
-        .status()
-        .unwrap();
-    let root = workdir.join("tool");
-
-    for args in [
-        vec!["generate", "command", "import"],
-        vec![
-            "generate",
-            "value",
-            "money",
-            "amount:long",
-            "currency:string",
-        ],
-        vec!["add", "testkit"],
-    ] {
-        let status = jails_cmd_with_path(&root, &path)
-            .args(&args)
-            .status()
-            .unwrap();
-        assert!(status.success(), "{args:?} failed");
-    }
-
-    // `add format` is allowed to refuse: palantir-java-format cannot always run
-    // on the JDK that happens to be on PATH. What it is *not* allowed to do is
-    // leave a project that no longer builds -- so `check` must pass either way.
-    let formatted = jails_cmd_with_path(&root, &path)
-        .args(["add", "format"])
-        .status()
-        .unwrap()
-        .success();
-
-    let status = jails_cmd_with_path(&root, &path)
-        .arg("check")
-        .status()
-        .unwrap();
-    assert!(
-        status.success(),
-        "`jails check` failed on a freshly generated project (formatter installed: {formatted})"
-    );
+    let root = verified_plain_toolbox(&path);
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(pom.contains("spotless-maven-plugin"), "{pom}");
 }
 
 /// The Spring flavor branch: `add json` must *omit* the version so Spring
@@ -5062,14 +5099,17 @@ fn generate_strategy_produces_a_project_that_compiles_and_passes_tests() {
             .success()
     );
 
-    let status = jails_cmd_with_path(&root, &path)
-        .arg("test")
-        .status()
-        .unwrap();
-    assert!(
-        status.success(),
-        "mvn test failed for a project with a generated strategy"
-    );
+    let verified = verified_plain_toolbox(&path);
+    for class in ["Eligibility", "DomesticEligibility"] {
+        assert!(
+            verified
+                .join(format!(
+                    "target/classes/com/example/demo/domain/{class}.class"
+                ))
+                .is_file(),
+            "shared toolchain matrix did not compile {class}"
+        );
+    }
 }
 
 /// `destroy strategy` reads the implementations back off disk rather than

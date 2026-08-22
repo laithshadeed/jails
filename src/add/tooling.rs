@@ -596,9 +596,9 @@ fn dockerfile(release: u32, wrapper: bool) -> String {
 WORKDIR /build
 COPY .mvn/ .mvn/
 COPY mvnw pom.xml ./
-RUN ./mvnw -B -ntp -DskipTests dependency:go-offline
 COPY src/ src/
-RUN ./mvnw -B -ntp -DskipTests package \
+RUN --mount=type=cache,id=jails-maven-repository,target=/root/.m2 \
+    ./mvnw -B -ntp -DskipTests package \
     && cp "$(find target -maxdepth 1 -type f -name '*.jar' ! -name '*.original' -print -quit)" /build/application.jar
 "#
         )
@@ -607,9 +607,9 @@ RUN ./mvnw -B -ntp -DskipTests package \
             r#"FROM maven:3.9.16-eclipse-temurin-{release} AS build
 WORKDIR /build
 COPY pom.xml ./
-RUN mvn -B -ntp -DskipTests dependency:go-offline
 COPY src/ src/
-RUN mvn -B -ntp -DskipTests package \
+RUN --mount=type=cache,id=jails-maven-repository,target=/root/.m2 \
+    mvn -B -ntp -DskipTests package \
     && cp "$(find target -maxdepth 1 -type f -name '*.jar' ! -name '*.original' -print -quit)" /build/application.jar
 "#
         )
@@ -696,6 +696,9 @@ mod delivery_tests {
         assert!(source.contains("FROM eclipse-temurin:25-jdk-noble AS build"));
         assert!(source.contains("FROM eclipse-temurin:25-jre-noble"));
         assert!(source.contains("USER 10001:10001"));
+        assert_eq!(source.matches("./mvnw -B -ntp").count(), 1, "{source}");
+        assert!(source.contains("id=jails-maven-repository"), "{source}");
+        assert!(!source.contains("dependency:go-offline"), "{source}");
         assert!(!source.contains("mvn "), "wrapper only: {source}");
     }
 
@@ -706,7 +709,10 @@ mod delivery_tests {
             source.contains("FROM maven:3.9.16-eclipse-temurin-25 AS build"),
             "{source}"
         );
-        assert!(source.contains("RUN mvn -B -ntp"), "{source}");
+        assert!(source.contains("    mvn -B -ntp"), "{source}");
+        assert_eq!(source.matches("mvn -B -ntp").count(), 1, "{source}");
+        assert!(source.contains("id=jails-maven-repository"), "{source}");
+        assert!(!source.contains("dependency:go-offline"), "{source}");
         assert!(ci_workflow(25, false).contains("run: mvn -B -ntp clean verify"));
     }
 }

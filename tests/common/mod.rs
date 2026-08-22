@@ -2,9 +2,12 @@
 
 pub mod scenarios;
 
+use std::ffi::OsStr;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, ExitStatus, Output, Stdio};
+use std::sync::{Condvar, Mutex};
 
 pub fn bin() -> &'static str {
     env!("CARGO_BIN_EXE_jails")
@@ -209,11 +212,11 @@ pub fn real_path_without_mvnd() -> String {
         .into_owned()
 }
 
-pub fn jails_cmd_with_path(cwd: &Path, path: &str) -> Command {
+pub fn jails_cmd_with_path(cwd: &Path, path: &str) -> ToolchainCommand {
     let mut cmd = Command::new(bin());
     cmd.current_dir(cwd);
     cmd.env("PATH", path);
-    cmd
+    ToolchainCommand::new(cmd)
 }
 
 /// A real Maven process with test output tuned for a parent Rust harness.
@@ -221,7 +224,7 @@ pub fn jails_cmd_with_path(cwd: &Path, path: &str) -> Command {
 /// Spring and Kafka otherwise emit tens of thousands of INFO lines which
 /// libtest retains until the test completes. Warnings and all Maven failures
 /// remain visible; only successful-framework chatter is suppressed.
-pub fn real_maven_cmd(cwd: &Path, path: &str) -> Command {
+pub fn real_maven_cmd(cwd: &Path, path: &str) -> ToolchainCommand {
     let mut cmd = Command::new("mvn");
     cmd.current_dir(cwd);
     cmd.env("PATH", path);
@@ -229,7 +232,82 @@ pub fn real_maven_cmd(cwd: &Path, path: &str) -> Command {
         "MAVEN_ARGS",
         "-ntp -Dspring.main.banner-mode=off -Dlogging.level.root=WARN",
     );
-    cmd
+    ToolchainCommand::new(cmd)
+}
+
+/// A process which may enter Maven, javac, Surefire or Testcontainers.
+///
+/// Libtest defaults to one worker per CPU. A generated-project test then
+/// starts Maven, which starts javac and another JVM, and some of those JVMs
+/// start containers. Letting sixteen such trees run at once made each
+/// otherwise seven-second build take 40--75 seconds and eventually made a
+/// Kafka container exit during startup. Four process trees keep this machine
+/// busy without turning parallelism into contention. Pure Rust tests and
+/// fake-toolchain commands do not use this wrapper and remain fully parallel.
+pub struct ToolchainCommand {
+    inner: Command,
+}
+
+impl ToolchainCommand {
+    fn new(inner: Command) -> Self {
+        Self { inner }
+    }
+
+    pub fn arg<S: AsRef<OsStr>>(&mut self, arg: S) -> &mut Self {
+        self.inner.arg(arg);
+        self
+    }
+
+    pub fn args<I, S>(&mut self, args: I) -> &mut Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        self.inner.args(args);
+        self
+    }
+
+    pub fn status(&mut self) -> io::Result<ExitStatus> {
+        let _permit = ToolchainPermit::acquire();
+        self.inner.status()
+    }
+
+    pub fn output(&mut self) -> io::Result<Output> {
+        let _permit = ToolchainPermit::acquire();
+        self.inner.output()
+    }
+}
+
+const MAX_TOOLCHAIN_PROCESSES: usize = 4;
+static TOOLCHAIN_PROCESSES: (Mutex<usize>, Condvar) = (Mutex::new(0), Condvar::new());
+
+struct ToolchainPermit;
+
+impl ToolchainPermit {
+    fn acquire() -> Self {
+        let (active, available) = &TOOLCHAIN_PROCESSES;
+        let mut count = active
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        while *count >= MAX_TOOLCHAIN_PROCESSES {
+            count = available
+                .wait(count)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+        }
+        *count += 1;
+        Self
+    }
+}
+
+impl Drop for ToolchainPermit {
+    fn drop(&mut self) {
+        let (active, available) = &TOOLCHAIN_PROCESSES;
+        let mut count = active
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *count -= 1;
+        available.notify_one();
+    }
 }
 
 /// A super-simple, hand-written Spring Boot project (pinned versions, JDK

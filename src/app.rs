@@ -242,6 +242,14 @@ fn apply(root: &Path, requested: Option<&Path>, no_start: bool, debug: bool) -> 
 
     println!("applying application manifest {}", path.display());
     for &capability in &manifest.capabilities {
+        // Formatting only has useful work after generation. Installing it
+        // here used to run Spotless once over the starter project and then a
+        // second time during reconciliation over the generated sources. The
+        // latter is the actual invariant; defer installation so one Maven
+        // lifecycle formats the complete final tree.
+        if matches!(capability, Capability::Format) {
+            continue;
+        }
         crate::add::add(capability, None, false, None, debug, no_start)?;
     }
 
@@ -262,7 +270,8 @@ fn apply(root: &Path, requested: Option<&Path>, no_start: bool, debug: bool) -> 
     // wires every existing @SpringBootTest to Testcontainers, then a later
     // generator creates more @SpringBootTest classes. A second idempotent
     // reconciliation makes capability invariants describe the final tree,
-    // not only the tree that happened to exist at installation time.
+    // not only the tree that happened to exist at installation time. Format
+    // is deliberately installed here for the first time (see above).
     if !manifest.capabilities.is_empty() {
         println!("reconciling capabilities against generated artifacts");
     }
