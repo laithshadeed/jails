@@ -42,7 +42,7 @@ pub(crate) fn writes_an_it(artifacts: &[Artifact]) -> bool {
 /// is pinned, since a versionless dependency is a pom Maven refuses to read
 /// (plan.md §8.1).
 pub(crate) fn ensure_assertj(project: &Project, writes_a_test: bool) -> Result<()> {
-    if !writes_a_test {
+    if !writes_a_test || project.build() != crate::build::Build::Maven {
         return Ok(());
     }
     let pom = project.pom().to_string();
@@ -71,6 +71,12 @@ pub(crate) fn writes_a_test(artifacts: &[Artifact]) -> bool {
 /// belongs to the reader, and a generator that reformats it has taken more
 /// than it was asked for.
 pub(crate) fn ensure_dependency(root: &Path, dep: &crate::pom::Dependency) -> Result<()> {
+    // Nothing to splice into, and jails will not write a foreign build file.
+    // `generate::report_degraded_shape` has already named this dependency for
+    // the reader to add, which is the honest half of the trade.
+    if crate::build::detect(root) != crate::build::Build::Maven {
+        return Ok(());
+    }
     let pom = crate::pom::read(root)?;
     match crate::pom::add_dependency(&pom, dep)? {
         Some(updated) => {
@@ -84,6 +90,9 @@ pub(crate) fn ensure_dependency(root: &Path, dep: &crate::pom::Dependency) -> Re
 
 /// Apply the POM portion of a planned change in memory and write it once.
 pub(crate) fn apply_build_change(root: &Path, pom: &str, change: &Change) -> Result<()> {
+    if crate::build::detect(root) != crate::build::Build::Maven {
+        return Ok(());
+    }
     let mut updated = pom.to_string();
     let mut changed = false;
 

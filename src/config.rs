@@ -86,6 +86,8 @@ fn layer_names() -> Vec<&'static str> {
     LAYERS_IN_ORDER.iter().map(|(name, _)| *name).collect()
 }
 
+/// The table naming where each layer lives.
+const LAYOUT_TABLE: &str = "layout";
 /// The table naming the capabilities the project is meant to have.
 const PROJECT_TABLE: &str = "project";
 /// The one key in it.
@@ -205,7 +207,7 @@ impl Config {
                 continue;
             }
 
-            if table != "layout" {
+            if table != LAYOUT_TABLE {
                 continue;
             }
             let (key, value) = line.split_once('=').ok_or_else(|| {
@@ -347,6 +349,96 @@ fn append_project_table(text: &str, rendered: &str) -> String {
         out.push('\n');
     }
     out.push_str(&format!("[{PROJECT_TABLE}]\n{rendered}\n"));
+    out
+}
+
+/// Add or replace one `[layout]` entry, creating `jails.toml` if there is none.
+///
+/// The same surgical rule as `record_capability`: this is a file people edit,
+/// so everything else in it -- comments, key order, `[project]` -- is left
+/// byte-for-byte alone. `jails adopt` is the only caller, and it deliberately
+/// cannot reach `[project] capabilities` from here.
+pub(crate) fn record_layout(root: &Path, layer: &str, directory: &str) -> Result<(), String> {
+    let path = root.join(FILE);
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(format!("failed to read {}: {e}", path.display())),
+    };
+    if !is_layer(layer) {
+        return Err(format!(
+            "`{layer}` is not a layer. Known layers: {}",
+            layer_names().join(", ")
+        ));
+    }
+
+    let rendered = format!("{layer} = \"{directory}\"");
+    let updated = match replace_layout_line(&text, layer, &rendered) {
+        Some(updated) => updated,
+        None => insert_into_layout_table(&text, &rendered),
+    };
+    crate::apply::put(&path, updated)
+}
+
+/// Swap an existing `<layer> = "..."` inside `[layout]`, keeping its position.
+fn replace_layout_line(text: &str, layer: &str, rendered: &str) -> Option<String> {
+    let mut in_layout = false;
+    let mut out = Vec::new();
+    let mut replaced = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_layout = trimmed == format!("[{LAYOUT_TABLE}]");
+        } else if in_layout && !replaced {
+            let key = trimmed.split('=').next().unwrap_or("").trim();
+            if key == layer {
+                out.push(rendered.to_string());
+                replaced = true;
+                continue;
+            }
+        }
+        out.push(line.to_string());
+    }
+    replaced.then(|| {
+        let mut joined = out.join("\n");
+        joined.push('\n');
+        joined
+    })
+}
+
+/// Append the entry to `[layout]`, adding the table if the file has none.
+fn insert_into_layout_table(text: &str, rendered: &str) -> String {
+    let header = format!("[{LAYOUT_TABLE}]");
+    if let Some(at) = text.lines().position(|line| line.trim() == header) {
+        let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+        // After the header and any entries already under it, before the blank
+        // line or next table -- so entries stay together.
+        let mut insert = at + 1;
+        while insert < lines.len() && !lines[insert].trim_start().starts_with('[') {
+            insert += 1;
+        }
+        while insert > at + 1 && lines[insert - 1].trim().is_empty() {
+            insert -= 1;
+        }
+        lines.insert(insert, rendered.to_string());
+        let mut joined = lines.join("\n");
+        joined.push('\n');
+        return joined;
+    }
+    let mut out = String::new();
+    if text.trim().is_empty() {
+        out.push_str(
+            "# Where this project keeps each layer. Written by `jails adopt`;\n\
+             # every jails command that reports or writes per layer reads it.\n",
+        );
+    } else {
+        out.push_str(text);
+        if !text.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push('\n');
+    }
+    out.push_str(&format!("{header}\n{rendered}\n"));
     out
 }
 

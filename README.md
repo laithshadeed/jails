@@ -797,6 +797,46 @@ require('jails').setup({ terminal_height = 12 })
 The plugin shells out to the real `jails` on PATH and deliberately
 reimplements none of its project-generation logic.
 
+## A codebase jails did not create
+
+Most of jails never touches Maven — `routes`, `beans`, `stats`, `notes`,
+`why`, `explain`, `rename`, `doctor` and most of `generate` read source and
+write source. They used to be refused anyway, because the door looked only for
+`pom.xml`. It now looks for any build marker it recognises (`pom.xml`,
+`build.gradle`, `build.gradle.kts`, `settings.gradle`, `build.xml`,
+`BUILD.bazel`), nearest wins, and the commands that genuinely need Maven —
+`test`, `build`, `clean`, `check`, `fmt`, `mvn`, `run`, `watch`, `console`,
+`add` — refuse with a message naming what still works.
+
+**jails never reads, writes, parses or invokes `build.gradle`.** That is
+strictly less than Gradle support, and it is deliberate: recognising a filename
+is not understanding a build, and a tool that half-understands one reports a
+dependency the build does not have. The cost is stated where you meet it —
+generated code is shaped by what the pom says, so with no pom the repository
+adapter is plain JDBC rather than a Spring `JdbcClient` bean and no
+`package-info.java` is annotated. `generate` prints which shape it chose and
+names the dependencies you will have to add yourself; `doctor` leads with the
+real build tool rather than reporting on a pom that is not there.
+
+### `jails adopt`
+
+For a project that keeps its controllers in `controllers` and its repositories
+in `persistence`. `adopt` reads the directories under your base package, maps
+the ones it recognises onto jails' eleven layers, and writes a `[layout]` table
+— which is all it does. Every command that reports or writes per layer already
+reads that table.
+
+A directory it does not recognise is **reported, not guessed**: a wrong
+`[layout]` entry is worse than a missing one, because jails would then write
+confidently into the wrong package. If two directories both look like the same
+layer, neither is written and both are named — a `[layout]` table can only say
+one thing.
+
+It never writes `[project] capabilities`. That list is what `jails sync`
+applies, and inferring it would have `sync` install things nobody asked for.
+
+Run `jails adopt --pretend` first.
+
 ## Shaping the generated code
 
 Drop a file at `.jails/templates/<name>` to replace the built-in template of

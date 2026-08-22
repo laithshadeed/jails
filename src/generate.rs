@@ -142,15 +142,49 @@ pub enum ArtifactKind {
     IntegrationTest,
 }
 
-/// Walk up from the current directory looking for pom.xml.
+/// Say what a foreign build cost this generation, before printing the files.
+///
+/// Not a warning about the project: a statement about *this output*, naming
+/// the two shapes that changed and the dependencies jails would have added and
+/// cannot. Silence here is the failure `plan.md` §12 calls out -- a tool that
+/// half-understands a build reports a dependency the build does not have.
+fn report_degraded_shape(project: &Project, change: &Change) {
+    let crate::build::Build::Foreign(tool) = project.build() else {
+        return;
+    };
+    println!("note: this is a {tool} project, and jails does not read {tool} build files.");
+    println!("      Generated code therefore assumes plain JDBC (no Spring `JdbcClient`)");
+    println!("      and no JSpecify, because those are read off a pom.xml that is not here.");
+    for dep in &change.deps {
+        println!("      Add yourself: {}:{}", dep.group_id, dep.artifact_id);
+    }
+    for (artifact_id, _) in &change.plugins {
+        println!("      Add yourself: the {artifact_id} plugin.");
+    }
+}
+
+/// Walk up from the current directory looking for a project root.
+///
+/// **Any** build marker, not only `pom.xml` -- `plan.md` §12. Most of jails
+/// never touches Maven (`inspect.rs` and `rename.rs` contain zero occurrences
+/// of `pom`), so refusing at the door was refusing commands that would have
+/// worked. The commands that do need Maven refuse themselves, through
+/// `build::require_maven`, which is a refusal that can say what still works.
+///
+/// Nearest wins, so a Gradle sub-module inside a Maven reactor resolves to the
+/// sub-module -- the same rule as before, applied to more markers.
 pub(crate) fn find_project_root() -> Result<PathBuf> {
     let mut dir = std::env::current_dir().map_err(|e| format!("failed to get cwd: {e}"))?;
     loop {
-        if dir.join("pom.xml").is_file() {
+        if crate::build::detect(&dir) != crate::build::Build::Bare {
             return Ok(dir);
         }
         if !dir.pop() {
-            return Err("no pom.xml found in this or any parent directory".to_string());
+            return Err(
+                "no pom.xml (or build.gradle, settings.gradle, build.xml, BUILD.bazel) \
+                 in this or any parent directory"
+                    .to_string(),
+            );
         }
     }
 }
@@ -510,6 +544,13 @@ pub(crate) fn generate_in_project(
             ));
         }
     }
+    // Degraded mode has to *say* which shape it chose (`plan.md` §12). Every
+    // structural decision in the templates is read off the pom -- whether a
+    // repository adapter is a `JdbcClient` bean, whether `package-info.java`
+    // can be annotated -- and with no pom they all take their default. Leaving
+    // that unsaid would hand the reader Java shaped by a fact they never saw.
+    report_degraded_shape(project, &change);
+
     // `--pretend` still runs every check above, so a run that would have
     // collided reports the collision rather than a clean-looking plan.
     if pretend {

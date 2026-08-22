@@ -253,6 +253,7 @@ pub(crate) struct Project {
     layers: Layers,
     pom: String,
     installed: Vec<String>,
+    build: crate::build::Build,
 }
 
 impl Project {
@@ -262,7 +263,16 @@ impl Project {
         // one place template overrides have to be pointed at a root -- and no
         // generator has to remember to do it.
         crate::template::install(root);
-        let pom = pom::read(root)?;
+        let build = crate::build::detect(root);
+        // A foreign build has no pom to read and jails will not read its own
+        // build file (`build.rs` says why), so every fact the pom carries takes
+        // its default. That is not silent: `Project::build` is what
+        // `generate` reports and `doctor` names, and `require_maven` is what
+        // stops a command that needs the real answer from running on a guess.
+        let pom = match build {
+            crate::build::Build::Maven => pom::read(root)?,
+            _ => String::new(),
+        };
         let config = Config::load(root)?;
         Ok(Self {
             root: root.to_path_buf(),
@@ -271,6 +281,7 @@ impl Project {
             java_release: pom::release_level(&pom),
             layers: Layers::from_config(&config),
             installed: config.capabilities().to_vec(),
+            build,
             pom,
         })
     }
@@ -299,6 +310,7 @@ impl Project {
             java_release: pom::release_level(&pom),
             layers: Layers::from_config(&config),
             installed: config.capabilities().to_vec(),
+            build: crate::build::detect(root),
             pom,
         })
     }
@@ -310,6 +322,16 @@ impl Project {
 
     pub(crate) fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// What builds this project. `plan.md` §12.
+    pub(crate) fn build(&self) -> crate::build::Build {
+        self.build
+    }
+
+    /// Refuse a command that cannot work without Maven, naming what still can.
+    pub(crate) fn require_maven(&self, command: &str) -> Result<()> {
+        crate::build::require_maven(self.build, command)
     }
 
     pub(crate) fn base(&self) -> &str {

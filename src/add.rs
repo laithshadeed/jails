@@ -227,6 +227,12 @@ pub(crate) fn add_in(
     debug: bool,
     no_start: bool,
 ) -> Result<()> {
+    // Not exempted, on purpose (`plan.md` §12): a capability is a dependency
+    // plus code plus a test, and jails will not edit a build file it refuses to
+    // read. A capability that installs the code and silently skips the
+    // dependency is worse than one that refuses -- the reader gets a compile
+    // error for a file they did not write.
+    project.require_maven(capability.label())?;
     let root = project.root().to_path_buf();
     let pom_text = project.pom().to_string();
     let flavor = project.flavor();

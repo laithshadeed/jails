@@ -1028,7 +1028,14 @@ what to do when it has changed underneath you, and it is still open.
 
 ---
 
-## 12. Tier 4 — reach: the codebase you did not create
+## 12. Tier 4 — reach: the codebase you did not create — **shipped**
+
+Both halves landed. `src/build.rs` is the marker widening (and the refusals);
+`src/adopt.rs` is `jails adopt`. Two things the sketch below did not have:
+`generate` states which shape a missing pom chose *and* names the dependencies
+it could not splice, and `doctor` **stops** after naming the build tool rather
+than running fifteen checks against a pom that is not there — the same failure
+§8.9 names, in a new disguise. What follows is the original argument.
 
 In `ideas/minicom-public/spring`, **zero of ~30 commands work** — the gate is
 `generate::find_project_root`, 11 lines looking for `pom.xml` and nothing else,
@@ -1284,7 +1291,7 @@ yet — which is a healthier list than the one it replaces.
 | ~~9~~ | ~~**§6.6 Tier 2** — template overrides~~ — **done.** `.jails/templates/<name>` beats `~/.config/jails/templates/<name>` beats the `include_str!` default; all 107 template sites go through one `template!` macro so no generator has to opt in. `doctor` reports every active override by name with the reason (not golden-tested). An override is held to the built-in's **placeholder set** — a mismatch is an error naming the reader's file, not a panic naming jails' | §6.6 | S | — |
 | ~~10~~ | ~~`jails new <name> --app <manifest>`~~ — **done.** `new` and `new-cli` both take `--app`, seeding `.jails/app.toml` and applying it against the project just created. Verified on App D: one command from an empty directory to `mvn clean verify` green. Needed `add::add_in`, `add::preflight_in` and `ResolvedIntent::apply_to` so nothing in the apply path reads the process CWD | §11 | S | A B C D |
 | 11 | **§6.2 F** — one descriptor per kind; `[golden]` a required key | §6 | L | — |
-| 12 | §12 marker widening + `jails adopt` | §12 | M | — |
+| ~~12~~ | ~~§12 marker widening + `jails adopt`~~ — **done.** `src/build.rs` names the build tool without reading it; `find_project_root` takes any recognised marker, nearest wins; ten Maven-inherent commands refuse through `require_maven` naming what still works; `generate` states which shape a missing pom chose and which dependencies it could not splice; `doctor` leads with the real build tool instead of reporting on an absent pom. `jails adopt` writes `[layout]` from a closed synonym table, reports what it does not recognise, refuses to pick between two candidates, and never touches `[project] capabilities` | §12 | M | — |
 | 13 | `jails testd` + `--affected` | §10.2 | L | — |
 | 14 | `jails dev` v1 | §10.3 | L | — |
 | 15 | `add sse`; `g auth`, `g webhook`, `add mail`, `g search` | §13 | M each | B C |

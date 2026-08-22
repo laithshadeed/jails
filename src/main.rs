@@ -1,6 +1,8 @@
 mod add;
+mod adopt;
 mod app;
 mod apply;
+mod build;
 mod commands;
 mod compose;
 mod config;
@@ -287,6 +289,13 @@ enum Command {
         #[arg(num_args = 0..)]
         services: Vec<Runtime>,
     },
+    /// Write a [layout] table matching where this project already keeps things
+    ///
+    /// For a codebase jails did not create. Reads the directories under the
+    /// base package, maps the ones it recognises onto jails' layers, and
+    /// reports the ones it does not rather than guessing. Never touches
+    /// [project] capabilities -- `jails sync` acts on that list.
+    Adopt,
     /// Check everything that has to be true before the app can start
     Doctor {
         /// Emit the checks as JSON: {version, failures, warnings, checks[]}
@@ -613,6 +622,7 @@ fn main() -> std::process::ExitCode {
         } => generate::destroy(kind, &name, force, package.as_deref(), pretend),
         Command::Start { services } => compose::start(&services, debug),
         Command::Stop { services } => compose::stop_cmd(&services, debug),
+        Command::Adopt => adopt::adopt(pretend),
         Command::Doctor { json } => doctor::doctor(json),
         Command::Why { log, json } => why::why(log.as_deref(), debug, json),
         Command::Stats { json } => inspect::stats(json),

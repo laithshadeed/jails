@@ -5960,3 +5960,126 @@ fn a_template_override_missing_a_placeholder_is_refused_by_name() {
         "nothing is written when the override is refused"
     );
 }
+
+/// `plan.md` §12. Before this, **zero** of jails' ~30 commands worked on a
+/// project it did not create -- and the whole gate was eleven lines looking for
+/// `pom.xml`, not anything the commands actually do.
+#[test]
+fn a_gradle_project_gets_the_commands_that_do_not_need_maven() {
+    let root = temp_dir("foreign-build");
+    let main = root.join("src/main/java/com/acme/shop");
+    fs::create_dir_all(&main).unwrap();
+    // A multi-module Gradle build: only `settings.gradle` at the top.
+    fs::write(root.join("settings.gradle"), "rootProject.name = 'shop'\n").unwrap();
+    fs::write(
+        main.join("ShopApplication.java"),
+        "package com.acme.shop;\n\npublic class ShopApplication {}\n",
+    )
+    .unwrap();
+
+    // Reading commands work.
+    let stats = jails_cmd(&root, None).arg("stats").output().unwrap();
+    assert!(
+        stats.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&stats.stdout),
+        String::from_utf8_lossy(&stats.stderr)
+    );
+
+    // Generating works, and says what the missing pom cost this output.
+    let generated = jails_cmd(&root, None)
+        .args(["generate", "record", "Order", "id:uuid@pk", "total:long"])
+        .output()
+        .unwrap();
+    let report = String::from_utf8_lossy(&generated.stdout);
+    assert!(
+        generated.status.success(),
+        "{report}{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+    assert!(
+        root.join("src/main/java/com/acme/shop/domain/Order.java")
+            .is_file()
+    );
+    assert!(report.contains("Gradle project"), "{report}");
+    assert!(report.contains("plain JDBC"), "{report}");
+
+    // The Maven-inherent ones refuse, and the refusal names a way forward.
+    for command in ["test", "build", "check", "clean"] {
+        let refused = jails_cmd(&root, None).arg(command).output().unwrap();
+        let stderr = String::from_utf8_lossy(&refused.stderr);
+        assert!(!refused.status.success(), "`{command}` should refuse");
+        assert!(stderr.contains("built by Gradle"), "{command}: {stderr}");
+        assert!(stderr.contains("routes"), "{command}: {stderr}");
+    }
+    let refused = jails_cmd(&root, None).args(["add", "db"]).output().unwrap();
+    assert!(!refused.status.success(), "add must not half-install");
+
+    // doctor says so first, and does not report on a pom that is not there.
+    let doctor = jails_cmd(&root, None).arg("doctor").output().unwrap();
+    let report = String::from_utf8_lossy(&doctor.stdout);
+    assert!(report.contains("built by Gradle"), "{report}");
+    assert!(
+        !report.contains("pom.xml is missing"),
+        "a confident wrong report is worse than a refusal: {report}"
+    );
+}
+
+/// `plan.md` §12: `jails adopt` writes a `[layout]` table, not new machinery.
+/// The proof is that a *reporting* command's answer changes with no code path
+/// of its own — `stats` counted a renamed web package as "Other".
+#[test]
+fn adopt_teaches_jails_where_an_existing_project_keeps_things() {
+    let root = temp_dir("adopt");
+    write_plain_fixture(&root);
+    let base = root.join("src/main/java/com/example/demo");
+    for (dir, class) in [
+        ("controllers", "OrderController"),
+        ("persistence", "JdbcOrderRepository"),
+        ("util", "Strings"),
+    ] {
+        fs::create_dir_all(base.join(dir)).unwrap();
+        fs::write(
+            base.join(dir).join(format!("{class}.java")),
+            format!("package com.example.demo.{dir};\n\npublic class {class} {{}}\n"),
+        )
+        .unwrap();
+    }
+
+    let before = jails_cmd(&root, None).arg("stats").output().unwrap();
+    let before = String::from_utf8_lossy(&before.stdout).to_string();
+    assert!(before.contains("Other"), "{before}");
+
+    let preview = jails_cmd(&root, None)
+        .args(["adopt", "--pretend"])
+        .output()
+        .unwrap();
+    let preview = String::from_utf8_lossy(&preview.stdout).to_string();
+    assert!(preview.contains("nothing was written"), "{preview}");
+    assert!(!root.join("jails.toml").exists());
+
+    let output = jails_cmd(&root, None).arg("adopt").output().unwrap();
+    let report = String::from_utf8_lossy(&output.stdout).to_string();
+    assert!(
+        output.status.success(),
+        "{report}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(report.contains("web"), "{report}");
+    assert!(report.contains("controllers"), "{report}");
+    // Reported, never guessed at.
+    assert!(report.contains("util"), "{report}");
+
+    let toml = fs::read_to_string(root.join("jails.toml")).unwrap();
+    assert!(toml.contains("web = \"controllers\""), "{toml}");
+    assert!(toml.contains("adapters = \"persistence\""), "{toml}");
+    assert!(
+        !toml.contains("capabilities"),
+        "adopt must never write the list `sync` acts on: {toml}"
+    );
+
+    let after = jails_cmd(&root, None).arg("stats").output().unwrap();
+    let after = String::from_utf8_lossy(&after.stdout).to_string();
+    assert!(after.contains("Web"), "{after}");
+    assert!(after.contains("Adapters"), "{after}");
+}

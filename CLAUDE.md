@@ -134,6 +134,27 @@ to build next and why. Do not add proposals here.
   listed twice under two spellings. Writing back is a targeted one-line splice
   that leaves comments and `[layout]` byte-for-byte alone — this is a file
   people edit, same rule as `pom.rs`.
+- `src/build.rs` — **which build tool a directory uses, and nothing more.**
+  `find_project_root` used to look for `pom.xml` alone, which refused ~30
+  commands on a foreign project when only about ten of them need Maven at all
+  (`inspect.rs` and `rename.rs` contain zero occurrences of `pom`). The door
+  is any recognised marker now, nearest wins, and the Maven-inherent commands
+  refuse themselves through `require_maven` — a refusal that can say what
+  still works. **jails never reads, writes, parses or invokes a foreign build
+  file**; recognising a filename is not understanding a build. Because the
+  templates are shaped by what the pom says, a missing pom silently changes
+  the Java jails emits (`repository_wiring` → `PlainJdbc`,
+  `jspecify_available` → false), so `generate::report_degraded_shape` says
+  which shape it chose and names the dependencies it could not splice. `add`
+  is **not** exempted: a capability that installs the code and skips the
+  dependency is worse than one that refuses.
+- `src/adopt.rs` — `jails adopt`: a closed synonym table mapping directory
+  names onto `LAYERS_IN_ORDER`, written out as `[layout]` through
+  `config::record_layout`. **Configuration, not machinery** — everything
+  downstream already reads `Config::layers()`. Three rules, each load-bearing:
+  an unrecognised directory is reported not guessed; two candidates for one
+  layer writes neither; and it never touches `[project] capabilities`, because
+  that is the list `sync` acts on.
 - `src/config.rs` — `jails.toml`, the per-project layout override. Hand-parsed
   (jails' only dependencies are clap), understands one `[layout]` table of
   `key = "value"` pairs, and the keys are a **closed set** matching

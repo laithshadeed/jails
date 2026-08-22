@@ -58,7 +58,15 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // target of 40 rather than 0 leaves room for. The disease is
                 // a `root` threaded through a call graph so each level can
                 // re-derive facts; these hand one to `Project::load` and stop.
-                ceiling: 139,
+                // 139 -> 143 for plan.md §12's reach work: `build::detect`,
+                // `build::require_maven_at`, `config::record_layout` and
+                // `adopt::report`. All four ask "what is at this path" before
+                // any `Project` exists -- `detect` is what `Project::load`
+                // itself calls first -- so a `Project` parameter is not
+                // available to them, and this is the containment boundary
+                // rather than the disease. `run.rs`'s eight call sites fold
+                // into one `maven_root`, which is why it is four and not five.
+                ceiling: 143,
                 target: 40,
                 why: "Every one is a fact re-derived from a primitive instead of read off \
                       the resolved `Project`. This is the count abstract.md §8.1 watched \
@@ -181,7 +189,12 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // module on purpose, so a split costs a little rather than
                 // reading as a 700-line win -- which is exactly what it would
                 // have done had it kept matching one filename.
-                ceiling: 1328,
+                //
+                // 1328 -> 1340 for plan.md §12: `doctor` names the real build
+                // tool and stops reporting on a pom that is not there. Not
+                // optional -- fifteen greens over a build jails cannot see is
+                // §8.9's failure in a new disguise.
+                ceiling: 1340,
                 target: 700,
                 why: "Feature Envy at module scale: doctor re-derives by reading the project \
                       back off disk the facts `add/*` already own, and the drift between them \

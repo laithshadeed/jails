@@ -180,6 +180,13 @@ fn run_checks(project: &Project) -> Vec<Check> {
     let mut checks = Vec::new();
 
     checks.push(project_check(project));
+    // Nothing below reads a pom that is not there, and the first check has
+    // already said why. Fifteen greens over a build jails cannot see is the
+    // failure `plan.md` §8.9 names, in a new disguise.
+    if matches!(project.build(), crate::build::Build::Foreign(_)) {
+        checks.extend(template_override_checks());
+        return checks;
+    }
     checks.push(maven_check(root));
     checks.push(jdk_check(pom_text));
     checks.extend(compose_checks(project));
@@ -381,6 +388,22 @@ fn capability_drift_checks(project: &Project) -> Vec<Check> {
 fn project_check(project: &Project) -> Check {
     let root: &Path = project.root();
     let pom_text: &str = project.pom();
+    // Not optional (`plan.md` §12): a confident wrong report is worse than a
+    // refusal, so the first thing doctor says about a foreign project is that
+    // it is one -- and what that costs, since every check below reads a pom
+    // that does not exist and would otherwise report cheerful nonsense.
+    if let crate::build::Build::Foreign(tool) = project.build() {
+        return Check::new(
+            Status::Warn,
+            "project",
+            format!(
+                "built by {tool}. jails never reads, writes, parses or invokes a {tool} \
+                 build file, so it cannot see your dependencies: no check below would be \
+                 telling you anything. `routes`, `beans`, `stats`, `notes`, `rename` and \
+                 most of `generate` work here; `test`, `build`, `check` and `add` refuse."
+            ),
+        );
+    }
     if pom_text.is_empty() {
         return Check::new(Status::Fail, "project", "pom.xml is missing or unreadable")
             .fix("jails new <name>");

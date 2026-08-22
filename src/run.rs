@@ -9,6 +9,17 @@ use std::process::Command;
 /// One PATH lookup, in `process`. `run.rs`, `compose.rs` and `project.rs`
 /// each had their own copy, which is how the mvnd naming drifted between
 /// them.
+/// The project root, refusing early if Maven is not what builds it.
+///
+/// Every command in this module shells out to `mvn`, so the check and the
+/// lookup are one step: eight call sites each doing `find_project_root` then
+/// `require_maven_at` is eight chances to add a ninth that forgets.
+fn maven_root(command: &str) -> Result<PathBuf> {
+    let root = find_project_root()?;
+    crate::build::require_maven_at(&root, command)?;
+    Ok(root)
+}
+
 pub(crate) fn find_on_path(bin: &str) -> bool {
     crate::process::on_path(bin)
 }
@@ -253,7 +264,7 @@ pub struct TestOptions {
 }
 
 pub fn test(filter: Option<&str>, options: TestOptions, debug: bool) -> Result<()> {
-    let root = find_project_root()?;
+    let root = maven_root("test")?;
 
     // `--failed` is a filter jails computes rather than one the reader types,
     // so it is resolved first and then follows exactly the same path.
@@ -597,14 +608,14 @@ fn method_name(line: &str) -> Option<String> {
 }
 
 pub fn build(debug: bool) -> Result<()> {
-    let root = find_project_root()?;
+    let root = maven_root("build")?;
     let mut cmd = Command::new(maven_binary(&root));
     cmd.arg("package").current_dir(&root);
     run_inherited(cmd, debug)
 }
 
 pub fn clean(debug: bool) -> Result<()> {
-    let root = find_project_root()?;
+    let root = maven_root("clean")?;
     let mut cmd = Command::new(maven_binary(&root));
     cmd.arg("clean").current_dir(&root);
     run_inherited(cmd, debug)
@@ -614,7 +625,7 @@ pub fn clean(debug: bool) -> Result<()> {
 /// unconfigured project fails with a Maven stack trace about an unknown
 /// prefix -- checking first turns that into one actionable line.
 pub fn fmt(debug: bool) -> Result<()> {
-    let root = find_project_root()?;
+    let root = maven_root("fmt")?;
     require_spotless(&root)?;
     let mut cmd = Command::new(maven_binary(&root));
     cmd.args(["spotless:apply"]).current_dir(&root);
@@ -643,7 +654,7 @@ pub fn fmt_quietly(root: &Path) -> bool {
 /// files, so a removed test (or a renamed record) would still run from
 /// `target/` and fail the check for a file that is no longer in the tree.
 pub fn check(debug: bool) -> Result<()> {
-    let root = find_project_root()?;
+    let root = maven_root("check")?;
     let mut cmd = Command::new(maven_binary(&root));
     cmd.args(["clean", "verify"]).current_dir(&root);
     run_inherited(cmd, debug)
@@ -652,7 +663,7 @@ pub fn check(debug: bool) -> Result<()> {
 /// Escape hatch for Maven features jails should not duplicate. Arguments are
 /// forwarded exactly; the project wrapper is still preferred.
 pub fn mvn(args: &[String], debug: bool) -> Result<()> {
-    let root = find_project_root()?;
+    let root = maven_root("mvn")?;
     let mut cmd = Command::new(maven_binary(&root));
     cmd.args(args).current_dir(&root);
     run_inherited(cmd, debug)
@@ -674,7 +685,7 @@ fn require_spotless(root: &Path) -> Result<()> {
 /// target/classes fresh. Without devtools this recompiles for nothing, so
 /// that's checked upfront.
 pub fn watch(debug: bool) -> Result<()> {
-    let root = find_project_root()?;
+    let root = maven_root("watch")?;
     compose::up(&root, &[], debug);
     let pom = fs::read_to_string(root.join("pom.xml"))
         .map_err(|e| format!("failed to read pom.xml: {e}"))?;
@@ -829,7 +840,7 @@ fn changes_between(
 /// that scaffolds CLI projects has to be able to *run* one with arguments, or
 /// the edit loop drops out to raw `mvn` the moment the program takes input.
 pub fn run(no_build: bool, args: &[String], debug: bool) -> Result<()> {
-    let root = find_project_root()?;
+    let root = maven_root("run")?;
     compose::up(&root, &[], debug);
     let pom = fs::read_to_string(root.join("pom.xml"))
         .map_err(|e| format!("failed to read pom.xml: {e}"))?;

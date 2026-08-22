@@ -76,6 +76,9 @@ fn db_client(name: &str) -> Result<PathBuf> {
 /// `jshell` with compiled classes and Maven dependencies on the classpath.
 pub fn console(no_build: bool, args: &[String], debug: bool) -> Result<()> {
     let root = find_project_root()?;
+    // The classpath comes from `mvn dependency:build-classpath`; without it
+    // jshell starts with nothing of the project on it.
+    crate::build::require_maven_at(&root, "console")?;
     let jshell = find_jshell().ok_or_else(|| {
         "jshell not on PATH -- it ships with the JDK (`JAVA_HOME/bin/jshell`)".to_string()
     })?;
