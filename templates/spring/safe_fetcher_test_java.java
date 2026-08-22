@@ -8,6 +8,7 @@ import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Set;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -24,6 +25,7 @@ class Safe{{name}}FetcherTest {
         server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
         server.createContext("/ok", exchange -> respond(exchange, 200, "text/html; charset=utf-8", "<p>ok</p>"));
         server.createContext("/large", exchange -> respond(exchange, 200, "text/html", "x".repeat(129)));
+        server.createContext("/missing", exchange -> respond(exchange, 404, "text/html", "missing"));
         server.createContext("/other-host", exchange -> {
             exchange.getResponseHeaders().add(
                     "Location", "http://localhost:" + server.getAddress().getPort() + "/ok");
@@ -77,6 +79,16 @@ class Safe{{name}}FetcherTest {
         assertThatThrownBy(() -> localFetcher(1024).fetch(uri("/other-host")))
                 .isInstanceOf({{name}}Fetcher.FetchException.class)
                 .hasMessageContaining("original host");
+    }
+
+    @Test
+    void selectedProtocolStatusesCanBeObservedWithoutWeakeningTheDefault() {
+        var fetcher = localFetcher(1024);
+
+        assertThatThrownBy(() -> fetcher.fetch(uri("/missing")))
+                .isInstanceOf({{name}}Fetcher.FetchException.class)
+                .hasMessageContaining("HTTP 404");
+        assertThat(fetcher.fetch(uri("/missing"), Set.of(404)).statusCode()).isEqualTo(404);
     }
 
     private static Safe{{name}}Fetcher localFetcher(int maxBytes) {

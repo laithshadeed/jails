@@ -64,7 +64,7 @@ public final class Safe{{name}}Fetcher implements {{name}}Fetcher {
             @Value("${jails.fetchers.{{property}}.max-response-size:2MB}") DataSize maxResponseSize,
             @Value("${jails.fetchers.{{property}}.max-redirects:3}") int maxRedirects,
             @Value("${jails.fetchers.{{property}}.user-agent:jails-{{property}}-fetcher/1.0}") String userAgent,
-            @Value("${jails.fetchers.{{property}}.allowed-content-types:text/html,application/xhtml+xml}")
+            @Value("${jails.fetchers.{{property}}.allowed-content-types:text/html,application/xhtml+xml,text/plain}")
                     String allowedContentTypes,
             MeterRegistry meters) {
         this(
@@ -111,6 +111,12 @@ public final class Safe{{name}}Fetcher implements {{name}}Fetcher {
 
     @Override
     public FetchedResource fetch(URI requested) {
+        return fetch(requested, Set.of());
+    }
+
+    @Override
+    public FetchedResource fetch(URI requested, Set<Integer> acceptedStatuses) {
+        Objects.requireNonNull(acceptedStatuses, "accepted statuses are required");
         URI current = normalize(requested);
         String originalHost = current.getHost();
         String originalScheme = current.getScheme();
@@ -128,7 +134,8 @@ public final class Safe{{name}}Fetcher implements {{name}}Fetcher {
                 current = normalize(current.resolve(response.location()));
                 continue;
             }
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            if ((response.statusCode() < 200 || response.statusCode() >= 300)
+                    && !acceptedStatuses.contains(response.statusCode())) {
                 boolean retryable = response.statusCode() == 429 || response.statusCode() >= 500;
                 throw failure("upstream returned HTTP " + response.statusCode(), retryable);
             }

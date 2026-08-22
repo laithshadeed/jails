@@ -407,6 +407,8 @@ pub(super) fn kind_suffix(kind: ArtifactKind) -> Option<&'static str> {
         ArtifactKind::Cli => Some("Cli"),
         ArtifactKind::Job => Some("Job"),
         ArtifactKind::DurableJob => Some("Job"),
+        ArtifactKind::HttpWorkflow => Some("Workflow"),
+        ArtifactKind::HttpSink => None,
         ArtifactKind::Client => Some("Client"),
         ArtifactKind::Fetcher => Some("Fetcher"),
         ArtifactKind::Usecase => Some("UseCase"),

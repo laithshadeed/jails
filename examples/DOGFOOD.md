@@ -64,11 +64,16 @@ cargo test app::tests --no-fail-fast
 cargo test app_manifest --no-fail-fast
 cargo test app_manifest --no-fail-fast -- --nocapture
 cargo test app_manifests_compile_without_manual_source_edits -- --nocapture
+mvn -q -Dtest='*AssociationIT' test
 cargo test app_manifests_compile_without_manual_source_edits -- --nocapture
 cargo test app_manifests_compile_without_manual_source_edits -- --nocapture
 docker info --format '{{json .}}'
 docker info
 cargo test app_manifests_pass_the_full_generated_verification_gate -- --nocapture
+cargo test app_manifests_pass_the_full_generated_verification_gate -- --nocapture
+cargo fmt --all && cargo test app_manifest_builds_the_support_inbox_from_the_same_generic_intents -- --nocapture
+cargo test generated_http_sink_delivers_typed_json_with_a_stable_idempotency_key -- --nocapture
+cargo test app_manifests_compile_without_manual_source_edits -- --nocapture
 cargo test app_manifests_pass_the_full_generated_verification_gate -- --nocapture
 cargo fmt -- --check
 cargo test app_manifest --no-fail-fast
@@ -149,6 +154,8 @@ cargo fmt --all && cargo check
 cargo fmt --all && cargo test app_manifest_builds_the_support_inbox_from_the_same_generic_intents -- --nocapture
 cargo test app_manifests_compile_without_manual_source_edits -- --nocapture
 cargo fmt --all && cargo test app_manifests_pass_the_full_generated_verification_gate -- --nocapture
+df -h /tmp && find /tmp -maxdepth 1 -type d -name 'jails-e2e-*' -printf '%p\\n' | wc -l && du -ch /tmp/jails-e2e-* 2>/dev/null | tail -n 1 && docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}' | rg '^jails-dogfood-'
+find /tmp -maxdepth 1 -type d -name 'jails-e2e-*' -exec rm -rf -- {} +
 cargo fmt --all && cargo test app_manifest_builds_the_support_inbox_from_the_same_generic_intents -- --nocapture
 cargo test app_manifests_compile_without_manual_source_edits -- --nocapture
 cargo fmt --all && cargo test app_manifests_pass_the_full_generated_verification_gate -- --nocapture
@@ -170,6 +177,35 @@ cargo test --test cli a_scaffold_with_database_types_compiles_including_its_deri
 cargo test --test cli generate_dto_client_and_job_compile_and_pass_against_real_spring -- --exact --nocapture
 cargo test --test cli every_generator_and_capability_together_compiles_and_passes_tests -- --exact --nocapture
 cargo fmt -- --check && cargo test --test golden -q && git diff --check
+cargo fmt --all && cargo test delivery_tests spring:: --no-fail-fast -q && cargo test app_manifests_compile_without_manual_source_edits -q
+cargo test --bin jails -q && cargo test app_manifests_compile_without_manual_source_edits -q
+cargo fmt --all && cargo test app_manifest_builds_the_crawler_skeleton_and_is_resumable -q && git diff --check
+mvn -q -Dtest=SafePageFetcherTest test
+cargo fmt --all && cargo test app_manifest_builds_ --no-fail-fast -- --nocapture
+cargo test app_manifests_compile_without_manual_source_edits -- --nocapture
+cargo fmt --all && cargo test app_manifest_builds_the_crawler_skeleton_and_is_resumable -- --nocapture
+cargo test app_manifests_compile_without_manual_source_edits -- --nocapture
+cargo test app_manifests_pass_the_full_generated_verification_gate -- --nocapture
+cargo fmt --all && cargo test --bin jails
+cargo test --test cli
+cargo test --test golden
+cargo fmt --all && cargo test association_and_http_sink_tests --bin jails && cargo test app_manifests_compile_without_manual_source_edits -- --nocapture
+cargo fmt --all && cargo test --bin jails && cargo test --test golden && cargo check
+cargo test app_manifest_builds_the_support_inbox_from_the_same_generic_intents -- --nocapture
+cargo fmt --all && cargo test app_manifest_builds_the_support_inbox_from_the_same_generic_intents -- --nocapture
+cargo fmt --all && cargo test app_manifest_builds_the_support_inbox_from_the_same_generic_intents -- --nocapture && cargo test app_manifests_compile_without_manual_source_edits -- --nocapture
+cargo test app_manifests_pass_the_full_generated_verification_gate -- --nocapture
+cargo fmt --all && cargo test spring::query_tests --bin jails && cargo test app_manifests_compile_without_manual_source_edits -- --nocapture
+cargo fmt --all && cargo test association_and_http_sink_tests spring::query_tests --bin jails --no-fail-fast
+cargo test --bin jails
+cargo fmt --all && cargo test --bin jails
+cargo test app_manifest_builds_the_support_inbox_from_the_same_generic_intents -- --nocapture && cargo test app_manifests_compile_without_manual_source_edits -- --nocapture
+cargo test --test cli
+cargo test --test golden
+cargo fmt --all && cargo test --bin jails && cargo check
+git diff --check && rg -n 'web-crawler|support-inbox|Intercom|SiteTraversal|ContactWorkspace|ProviderHttp|ConversationAssignment' src templates || true && rg -n '291 generator|285\.00|members, inboxes.*remain|inboxs|unbounded equality' README.md ideas-sol.md examples/DOGFOOD.md examples/ACCEPTANCE.md || true && git status --short && git diff --stat
+rg -n 'Crawler|Inbox|Conversation|Workspace|Contact|Provider|Crawl' src templates || true
+cargo fmt --all && cargo test --bin jails && cargo check && git diff --check
 ```
 
 Results:
@@ -181,19 +217,30 @@ Results:
   gate with scoped authorization, the adversarial safe fetcher suite, and real
   OCI builds took 297.04 seconds. The final gate including optimistic
   transitions and the acknowledged transactional outbox took 225.29 seconds.
-- The crawler generated 3 Flyway migrations and the support inbox generated 6;
-  both complete generated test suites passed.
+  The gate with durable traversal, the first three tenant associations,
+  provider delivery, and both OCI builds took 206.38 seconds. The final
+  expanded inbox gate—including members, inbox membership, assignment, ten
+  tenant relationships, and reassignment—took 341.08 seconds.
+- The crawler generated 4 Flyway migrations and the support inbox generated
+  19; both complete generated test suites passed from fresh manifests.
+- The latest kernel verification pass ran all 292 generator unit tests. The
+  latest complete sweep ran all 123 CLI/integration tests in 293.35 seconds
+  with no failures; it includes the expanded fresh-manifest
+  PostgreSQL/Kafka/socket/image gate. Both golden tests and `cargo check`
+  passed separately.
 - The crawler's typed `PageDiscovered(UUID id, UUID crawlRunId, URI url,
   Instant occurredAt)` event and the inbox's typed
   `MessageReceived(UUID id, UUID workspaceId, UUID conversationId,
   Instant occurredAt)` event both made a real broker round trip. Their
   publishers use the event id as the Kafka key.
 - The crawler now has generated `QueueCrawl` and `RecordCrawledPage` create
-  workflows plus typed database queries by status/run. The inbox has four
-  generated create workflows and tenant-key-shaped queries for contacts,
-  conversations, and messages. Their controllers, application ports,
-  implementations, JDBC adapters, and mock-free focused tests are generated
-  from the same field model.
+  workflows plus typed database queries by status/run. The inbox has members,
+  inboxes, inbox membership, contacts, conversations, messages, and a unique
+  conversation-assignment record. Eight generated create workflows, seven
+  tenant-key-shaped queries, and two optimistic transitions cover creation,
+  listing, status change, assignment, reassignment, and clearing. Their
+  controllers, application ports, implementations, JDBC adapters, and
+  mock-free focused tests come from the same field model.
 - Both applications now select generic `docker` and `ci` capabilities. Their
   generated workflows pin checkout/setup-java by full commit SHA, and their
   multi-stage images derive Java from the POM and run as `10001:10001`. The
@@ -210,9 +257,28 @@ Results:
   absence from a stale version.
 - `ReceiveMessage` now uses ordinary `strategy_yields = "MessageReceived"`.
   Jails turns that generic linkage into a same-transaction outbox write and a
-  leased relay that waits for Kafka acknowledgement. Its real PostgreSQL/Kafka
+  leased relay that waits for every configured sink. Its real PostgreSQL/Kafka
   test covers the happy path, stable event identity, bounded retries, and an
-  inspectable terminal failure.
+  inspectable terminal failure; the provider socket test covers the optional
+  HTTP sink.
+- `SiteTraversal` is an ordinary `http-workflow` over `PageFetcher`: its real
+  PostgreSQL test proves robots handling, exact-origin canonical traversal,
+  duplicate/cycle suppression, retry leases, hard page/depth limits, status
+  APIs, and persistent cancellation.
+- Ten ordinary `association` intents make workspace ownership a persisted
+  database invariant across contacts, members, inboxes, membership,
+  conversations, messages, and assignments. Their tests prove exact ordered
+  foreign-key shape and that impossible cross-boundary historical data cannot
+  validate. Migration generation recognizes earlier Jails primary and unique
+  key declarations and only adds a target unique index when the required
+  ordered key is not already declared.
+- Generated equality queries have deterministic key ordering and an explicit
+  100-row ceiling. Jails does not guess nullable/list filters, arbitrary sort,
+  projections, or keyset cursor semantics.
+- `Provider` is an ordinary `http-sink` on the `ReceiveMessage` outbox. Its
+  socket contract proves typed JSON, 2xx-only acknowledgement, 503 rejection,
+  and the same stable `Idempotency-Key` on retries. Kafka and HTTP share one
+  generic ordered sink chain and terminal outbox state.
 - The targeted `rustfmt --edition 2021` probe was invalid for this Rust 2024
   crate and also reported the same pre-existing whole-file drift. The manifest
   confirms the actual edition; the independent `git diff --check` whitespace
@@ -259,6 +325,23 @@ is evidence for the next generic generator improvement.
 | compile | the first outbox decorator returned the target domain record from the service package without importing it | outbox composition now derives and emits the target import from the same configured package model as ordinary use cases |
 | verify | committed query integration fixtures reused the generator-wide sample UUID and collided with later transition tests | generated database query tests are transactional and roll back their fixtures, making the shared Testcontainers database deterministic |
 | verify | an outbox test compared a freshly created `Instant` with PostgreSQL's microsecond-precision round trip | the generated assertion proves the persisted business effect by stable identity and leaves temporal precision to repository mapping tests |
+| test command | Cargo accepts one name filter, so the first combined `delivery_tests spring::` probe was invalid | reran the complete 289-test generator unit suite and the fresh-manifest compilation gate |
+| runtime permission | the focused generated fetcher test needed an ephemeral loopback socket and the escalation reviewer was busy, so the command was rejected before Maven started | keep the source/compile regression green now and run the adversarial socket test in the next authorized full-manifest gate |
+| source audit | generated durable workers and outbox relays carried `@Scheduled`, but no generated configuration enabled scheduling | all scheduling generators now share one idempotent `SchedulingConfig`, and both fresh manifests assert that it exists |
+| crawler | a bounded traversal was still hand-written application work despite the safe fetch boundary | generic `http-workflow --on <Fetcher>` now composes a PostgreSQL frontier, robots policy, canonical exact-origin link traversal, hard page/depth bounds, retry leases, cancellation, APIs, metrics, migration, and integration tests |
+| verify | the accepted-status fetcher test returned `text/plain` while its deliberately narrowed test policy allowed only HTML, so media-type enforcement correctly rejected it | keep accepted statuses subject to every safety policy and make the fixture isolate status handling with an allowed media type; production defaults separately permit `text/plain` robots files |
+| tenancy | matching a JWT `workspaceId` at the HTTP boundary did not prove that a supplied `contactId` or `conversationId` belonged to that workspace | generic `association --on <Child> --yields <Parent>` validates explicit field mappings, emits ordered composite PostgreSQL foreign keys and target uniqueness, and generates real constraint-shape plus invalid-data tests; checks are deferred to commit so an atomic unit of work can write related rows in either order |
+| generate | the first HTTP-outbox template placed a Jails placeholder directly inside Spring's `${...}` syntax, then its test render supplied one obsolete value; the strict renderer rejected both mistakes before Java compilation | construct complete Spring property expressions in the generator, substitute them as ordinary values, and keep each template's inputs exact |
+| runtime permission | the focused provider contract could not bind its loopback HTTP server inside the filesystem sandbox | reran the identical documented command with local-runtime permission; the typed JSON, rejection, and stable `Idempotency-Key` contract passed |
+| test infrastructure | 15,288 retained `jails-e2e-*` fixtures consumed 5.5 GB of `/tmp`, so Maven reached `repackage` after real crawler tests and failed with `Disk quota exceeded` | audited the exact task-owned prefix, removed only those disposable fixtures, and reran from fresh manifests; fixture lifecycle cleanup remains a harness improvement |
+| generate | an `association` with no field mappings could reach rendering and emit empty-column SQL | reject the intent before reading the project unless it has at least one explicit `childField=parentField` mapping |
+| compile | an HTTP-sink event containing a project-owned value type Jails could not fabricate disabled its generated test but also dropped every constructor argument, so the disabled Java source still could not compile | preserve constructor arity with an explicit `null` only for unknown samples, mark the contract disabled and visible, and pin the fallback with a generator test |
+| generate | the first expanded assignment relationship produced a PostgreSQL constraint name longer than 63 bytes | the existing generic length preflight stopped before writing invalid SQL and named the exact identifier; the manifest selected a shorter semantic relationship name without any core branch |
+| schema | the naive append-`s` convention generated `inboxs` | the shared table/path pluralizer now handles deterministic `-x/-z/-ch/-sh/-ss -> -es` and consonant-`y -> -ies` rules while still refusing to guess irregular nouns |
+| query | generated equality reads had stable ordering but no hard result bound | every generic equality query now emits `limit :max_results`, binds the generator-owned value, and caps the first deliberately narrow query contract at 100 rows |
+| schema | each association emitted a target unique index even when an earlier Jails migration already declared the same ordered primary/unique key | inspect only recognized Jails Flyway statement shapes and reuse an exact prior key; keep emitting an index when evidence is absent instead of guessing from arbitrary SQL |
+| compile | a migration scan used `Result::ok`, which resolved to Jails' one-parameter result alias instead of `std::io::Result` | use an explicit `entry.ok()` closure so inference remains local and the full 292-test generator suite compiles |
+| source audit | generic validation paths still illustrated missing inputs with crawler/inbox nouns | replace production help examples with neutral task terminology; keep showcase vocabulary confined to manifests, documentation, and regression fixtures |
 
 ## Friction ledger
 
@@ -268,7 +351,7 @@ is evidence for the next generic generator improvement.
 | Both | manifest setup | user copies `.jails/app.toml` manually | `jails app init --manifest <path>` or `new --app <path>` |
 | Both | apply | application planning currently describes logical intents but does not yet produce one atomic `ChangeSet` | lower the whole manifest through the universal planner |
 | Both | resume | `.jails/app-state-v1` records completed intent keys but does not yet notice a generated file deleted afterward | store output fingerprints and reconcile drift instead of blindly skipping |
-| Both | domain behavior | executable creates, typed equality queries, optimistic transitions, durable work, and transactional publication remove the first behavior boilerplate; crawler traversal, conversation assignment, provider delivery, and richer query semantics remain | pagination/sort and policy-bearing workflow intents built from the same generic composition model |
+| Both | domain behavior | executable creates, equality queries, optimistic transitions, durable work, transactional publication, bounded HTTP workflows, persisted associations, HTTP delivery, inbox membership, and conversation assignment now remove most walking-skeleton boilerplate; richer query/channel semantics remain | pagination/sort plus generic inbound-signature, realtime/replay, audit, and command/workflow policies, without showcase-specific artifacts |
 | Both | architecture | current scaffold is layer-first unless `--package` flattens the slice | feature-first placement with verified Modulith boundaries |
 | Both | security | production JWT identity and explicit `@scope` enforcement now exist; role/permission policy and audit are not generated yet | closed authorization-policy inputs plus generated allowed/denied HTTP integration tests |
 | Both | tests | scheduled jobs and Kafka listeners start in broad `@SpringBootTest` contexts; differing contexts start several PostgreSQL containers and unrelated tests produce large broker logs | generated test profile, selective listener startup, and shared container/context conventions |
@@ -280,5 +363,6 @@ is to turn repeated friction into evidence-backed improvements to generic
 Jails commands.
 
 The precise done/not-done boundary is maintained in
-[`ACCEPTANCE.md`](ACCEPTANCE.md); passing the current gate does not waive its
-remaining crawler-safety, tenant, durability, delivery, image, or CI checks.
+[`ACCEPTANCE.md`](ACCEPTANCE.md); the local crawler-safety, tenant, durability,
+delivery, and image checks now pass, while hosted CI execution remains an
+external repository gate rather than a locally proven claim.

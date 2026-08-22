@@ -72,6 +72,24 @@ pub enum ArtifactKind {
     /// Scheduled work: a `@Scheduled` component that cannot cancel its own
     /// schedule by throwing (Spring only)
     Job,
+    /// A durable, bounded HTTP graph walk composed with an existing safe
+    /// fetcher. Generates a PostgreSQL frontier, robots policy, canonical
+    /// exact-origin traversal, status/pages/cancel API, and adversarial IT.
+    /// `--on` names the fetcher; limits are request/configuration data.
+    #[value(name = "http-workflow", alias = "hflow")]
+    HttpWorkflow,
+    /// A validated relational invariant between two existing scaffolds.
+    /// `--on` names the child, `--yields` the parent, and each field is an
+    /// explicit `childField=parentField` mapping. Composite mappings enforce
+    /// tenant-safe ownership in PostgreSQL instead of trusting HTTP checks.
+    #[value(alias = "fk")]
+    Association,
+    /// An HTTP delivery sink attached to an existing transactional outbox.
+    /// `--on` names the use case and `--yields` its typed event. Delivery uses
+    /// the event id as an idempotency key and inherits the outbox's leases,
+    /// bounded retries, and terminal diagnostics.
+    #[value(name = "http-sink", alias = "webhook")]
+    HttpSink,
     /// PostgreSQL-backed, leased, bounded-retry work that invokes an existing
     /// generated create use case. `--on` names the use case and `--yields`
     /// names its resource; fields include the stable resource `id`.
@@ -730,16 +748,122 @@ pub fn generate(
                 })
                 .collect()
         }
+        ArtifactKind::HttpWorkflow => {
+            require_spring_project(&root, "http-workflow")?;
+            if !fields.is_empty() || strategy_yields.is_some() {
+                return Err(
+                    "http-workflow takes a name and `--on <Fetcher>`; bounds are request/configuration data"
+                        .to_string(),
+                );
+            }
+            let fetcher = strategy_on.ok_or_else(|| {
+                format!(
+                    "http-workflow {name} needs the safe fetcher it composes.\n       fix: pass `--on <Fetcher>`, for example `--on Page`."
+                )
+            })?;
+            let jobs = place(layout::JOBS);
+            let clients = subpackage(&base, config.layer(layout::CLIENTS));
+            let web = subpackage(&base, config.layer(layout::WEB));
+            crate::spring::http_workflow_files(
+                &root,
+                &jobs,
+                &clients,
+                &web,
+                &name,
+                &strip_redundant_suffix(ArtifactKind::Fetcher, &capitalize(fetcher)),
+            )?
+            .into_iter()
+            .map(|(path, contents, kind)| Artifact {
+                kind,
+                path,
+                contents,
+            })
+            .collect()
+        }
+        ArtifactKind::Association => {
+            require_spring_project(&root, "association")?;
+            if fields.is_empty() {
+                return Err(format!(
+                    "association {name} needs at least one `childField=parentField` mapping"
+                ));
+            }
+            let child = strategy_on.ok_or_else(|| {
+                format!(
+                    "association {name} needs its child resource.\n       fix: pass `--on <Child>`."
+                )
+            })?;
+            let parent = strategy_yields.ok_or_else(|| {
+                format!(
+                    "association {name} needs its parent resource.\n       fix: pass `--yields <Parent>`."
+                )
+            })?;
+            let domain = subpackage(&base, config.layer(layout::DOMAIN));
+            let adapters = place(layout::ADAPTERS);
+            crate::spring::association_files(
+                &root,
+                &domain,
+                &adapters,
+                &name,
+                &capitalize(child),
+                &capitalize(parent),
+                fields,
+            )?
+            .into_iter()
+            .map(|(path, contents, kind)| Artifact {
+                kind,
+                path,
+                contents,
+            })
+            .collect()
+        }
+        ArtifactKind::HttpSink => {
+            require_spring_project(&root, "http-sink")?;
+            if !fields.is_empty() {
+                return Err(
+                    "http-sink payloads come from the typed outbox event; do not repeat fields"
+                        .to_string(),
+                );
+            }
+            let usecase = strategy_on.ok_or_else(|| {
+                format!(
+                    "http-sink {name} needs its transactional outbox use case.\n       fix: pass `--on <UseCase>`."
+                )
+            })?;
+            let event = strategy_yields.ok_or_else(|| {
+                format!(
+                    "http-sink {name} needs the typed event it delivers.\n       fix: pass `--yields <Event>`."
+                )
+            })?;
+            let jobs = place(layout::JOBS);
+            let messaging = subpackage(&base, config.layer(layout::MESSAGING));
+            let adapters = subpackage(&base, config.layer(layout::ADAPTERS));
+            crate::spring::http_sink_files(
+                &root,
+                &jobs,
+                &messaging,
+                &adapters,
+                &name,
+                &capitalize(usecase),
+                &capitalize(event),
+            )?
+            .into_iter()
+            .map(|(path, contents, kind)| Artifact {
+                kind,
+                path,
+                contents,
+            })
+            .collect()
+        }
         ArtifactKind::DurableJob => {
             require_spring_project(&root, "durable-job")?;
             let usecase = strategy_on.ok_or_else(|| {
                 format!(
-                    "durable-job {name} needs the create use case it invokes.\n       fix: pass `--on <UseCase>`, for example `--on QueueCrawl`."
+                    "durable-job {name} needs the create use case it invokes.\n       fix: pass `--on <UseCase>`, for example `--on ProcessTask`."
                 )
             })?;
             let target = strategy_yields.ok_or_else(|| {
                 format!(
-                    "durable-job {name} needs the resource that proves completion.\n       fix: pass `--yields <Resource>`, for example `--yields CrawlRun`."
+                    "durable-job {name} needs the resource that proves completion.\n       fix: pass `--yields <Resource>`, for example `--yields Task`."
                 )
             })?;
             let jobs = place(layout::JOBS);
@@ -773,7 +897,7 @@ pub fn generate(
             require_spring_project(&root, "usecase")?;
             let target = strategy_on.ok_or_else(|| {
                 format!(
-                    "usecase {name} needs the resource it creates.\n       fix: pass `--on <Resource>`, for example `jails g usecase {name} seedUrl:uri --on CrawlRun`."
+                    "usecase {name} needs the resource it creates.\n       fix: pass `--on <Resource>`, for example `jails g usecase {name} title:string --on Task`."
                 )
             })?;
             let service = place(layout::SERVICE);
@@ -828,7 +952,7 @@ pub fn generate(
             require_spring_project(&root, "query")?;
             let target = strategy_on.ok_or_else(|| {
                 format!(
-                    "query {name} needs the resource it reads.\n       fix: pass `--on <Resource>`, for example `jails g query {name} status:CrawlStatus --on CrawlRun`."
+                    "query {name} needs the resource it reads.\n       fix: pass `--on <Resource>`, for example `jails g query {name} status:TaskStatus --on Task`."
                 )
             })?;
             if strategy_yields.is_some() {
@@ -867,7 +991,7 @@ pub fn generate(
             require_spring_project(&root, "transition")?;
             let target = strategy_on.ok_or_else(|| {
                 format!(
-                    "transition {name} needs the resource it updates.\n       fix: pass `--on <Resource>`, for example `jails g transition {name} id:uuid workspaceId:uuid@scope status:Status version:long --on Conversation`."
+                    "transition {name} needs the resource it updates.\n       fix: pass `--on <Resource>`, for example `jails g transition {name} id:uuid tenantId:uuid@scope status:TaskStatus version:long --on Task`."
                 )
             })?;
             if strategy_yields.is_some() {
@@ -1226,7 +1350,11 @@ pub fn generate(
     }
 
     for artifact in &artifacts {
-        if artifact.path.exists() {
+        if artifact.path.exists()
+            && !(artifact.kind == "scheduling"
+                && fs::read_to_string(&artifact.path)
+                    .is_ok_and(|source| source == artifact.contents))
+        {
             return Err(format!("{} already exists", artifact.path.display()));
         }
     }
@@ -1256,6 +1384,10 @@ pub fn generate(
         return Ok(());
     }
     for artifact in &artifacts {
+        if artifact.path.exists() && artifact.kind == "scheduling" {
+            println!("exists scheduling {}", artifact.path.display());
+            continue;
+        }
         write_new_file(&root, &artifact.path, &artifact.contents)?;
         println!("created {} {}", artifact.kind, artifact.path.display());
     }
@@ -1590,9 +1722,9 @@ pub fn destroy(
                     .join(format!("{}.java", cases_class_name(Path::new(&raw_name))?)),
             ]
         }
-        ArtifactKind::Migration => {
+        ArtifactKind::Migration | ArtifactKind::Association => {
             return Err(
-                "migrations are forward-only; create a new migration instead of destroying one"
+                "migrations and associations are forward-only; create a new migration instead of destroying one"
                     .to_string(),
             );
         }
@@ -1625,6 +1757,22 @@ pub fn destroy(
             vec![
                 main_dir(&root, &pkg).join(format!("{name}Job.java")),
                 test_dir(&root, &pkg).join(format!("{name}JobTest.java")),
+            ]
+        }
+        ArtifactKind::HttpSink => {
+            let pkg = place(layout::JOBS);
+            vec![
+                main_dir(&root, &pkg).join(format!("{name}HttpOutboxSink.java")),
+                test_dir(&root, &pkg).join(format!("{name}HttpOutboxSinkTest.java")),
+            ]
+        }
+        ArtifactKind::HttpWorkflow => {
+            let jobs = place(layout::JOBS);
+            let web = subpackage(&base, config.layer(layout::WEB));
+            vec![
+                main_dir(&root, &jobs).join(format!("{name}Workflow.java")),
+                main_dir(&root, &web).join(format!("{name}WorkflowController.java")),
+                test_dir(&root, &jobs).join(format!("{name}WorkflowIT.java")),
             ]
         }
         ArtifactKind::DurableJob => {

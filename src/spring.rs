@@ -485,6 +485,363 @@ pub(crate) fn fetcher_files(
 }
 
 // ---------------------------------------------------------------------------
+// `generate http-workflow` -- durable bounded traversal over a safe fetcher.
+// ---------------------------------------------------------------------------
+
+pub(crate) fn http_workflow_files(
+    root: &Path,
+    jobs: &str,
+    clients: &str,
+    web: &str,
+    name: &str,
+    fetcher: &str,
+) -> crate::Result<Vec<(std::path::PathBuf, String, &'static str)>> {
+    let pom = std::fs::read_to_string(root.join("pom.xml"))
+        .map_err(|e| format!("failed to read pom.xml: {e}"))?;
+    if !crate::pom::has_dependency(&pom, "org.springframework.boot", "spring-boot-starter-jdbc") {
+        return Err(format!(
+            "http-workflow {name} needs PostgreSQL/JDBC for its durable frontier.\n       fix: run `jails add db` first."
+        ));
+    }
+    let fetcher_port =
+        crate::generate::main_dir(root, clients).join(format!("{fetcher}Fetcher.java"));
+    if !fetcher_port.is_file() {
+        return Err(format!(
+            "http-workflow {name} cannot find {fetcher}Fetcher.java.\n       fix: generate fetcher {fetcher} first."
+        ));
+    }
+    let table = crate::sql::snake_case(name);
+    let property = table.replace('_', "-");
+    let migration_dir = root.join("src/main/resources/db/migration");
+    let version = crate::generate::next_migration_version(&migration_dir)?;
+    let main_jobs = crate::generate::main_dir(root, jobs);
+    let main_web = crate::generate::main_dir(root, web);
+    let test_jobs = crate::generate::test_dir(root, jobs);
+    Ok(vec![
+        (
+            main_jobs.join("SchedulingConfig.java"),
+            scheduling_config_java(jobs),
+            "scheduling",
+        ),
+        (
+            main_jobs.join(format!("{name}Workflow.java")),
+            crate::template::render(
+                include_str!("../templates/spring/http_workflow_java.java"),
+                &[
+                    ("pkg", jobs),
+                    ("clients", clients),
+                    ("name", name),
+                    ("fetcher", fetcher),
+                    ("table", table.as_str()),
+                    ("property", property.as_str()),
+                ],
+            ),
+            "bounded HTTP workflow",
+        ),
+        (
+            main_web.join(format!("{name}WorkflowController.java")),
+            crate::template::render(
+                include_str!("../templates/spring/http_workflow_controller_java.java"),
+                &[
+                    ("web", web),
+                    ("pkg", jobs),
+                    ("name", name),
+                    ("property", property.as_str()),
+                ],
+            ),
+            "bounded HTTP workflow controller",
+        ),
+        (
+            test_jobs.join(format!("{name}WorkflowIT.java")),
+            crate::template::render(
+                include_str!("../templates/spring/http_workflow_it_java.java"),
+                &[
+                    ("pkg", jobs),
+                    ("clients", clients),
+                    ("name", name),
+                    ("fetcher", fetcher),
+                    ("table", table.as_str()),
+                    ("property", property.as_str()),
+                ],
+            ),
+            "bounded HTTP workflow integration test",
+        ),
+        (
+            migration_dir.join(format!("V{version:03}__create_{table}_workflow.sql")),
+            http_workflow_migration(&table),
+            "bounded HTTP workflow migration",
+        ),
+    ])
+}
+
+fn http_workflow_migration(table: &str) -> String {
+    format!(
+        "create table {table}_runs (\n\
+           id uuid primary key,\n\
+           seed_url text not null,\n\
+           origin_scheme text not null,\n\
+           origin_host text not null,\n\
+           origin_port integer not null,\n\
+           status text not null check (status in ('QUEUED','RUNNING','SUCCEEDED','FAILED','CANCELLED')),\n\
+           max_pages integer not null check (max_pages > 0),\n\
+           max_depth integer not null check (max_depth >= 0),\n\
+           pages_visited integer not null default 0 check (pages_visited >= 0),\n\
+           robots_rules text,\n\
+           cancel_requested boolean not null default false,\n\
+           last_error text,\n\
+           created_at timestamptz not null,\n\
+           started_at timestamptz,\n\
+           finished_at timestamptz\n\
+         );\n\n\
+         create table {table}_frontier (\n\
+           run_id uuid not null references {table}_runs(id) on delete cascade,\n\
+           url text not null,\n\
+           depth integer not null check (depth >= -1),\n\
+           kind text not null check (kind in ('ROBOTS','PAGE')),\n\
+           state text not null check (state in ('PENDING','RUNNING','SUCCEEDED','FAILED','CANCELLED')),\n\
+           attempts integer not null default 0 check (attempts >= 0),\n\
+           max_attempts integer not null check (max_attempts > 0),\n\
+           next_attempt_at timestamptz not null,\n\
+           lease_until timestamptz,\n\
+           last_error text,\n\
+           primary key (run_id, url)\n\
+         );\n\n\
+         create index {table}_frontier_runnable_idx\n\
+           on {table}_frontier (state, next_attempt_at)\n\
+           where state in ('PENDING','RUNNING');\n\n\
+         create table {table}_pages (\n\
+           run_id uuid not null references {table}_runs(id) on delete cascade,\n\
+           url text not null,\n\
+           depth integer not null check (depth >= 0),\n\
+           status_code integer not null,\n\
+           content_type text not null,\n\
+           discovered_at timestamptz not null,\n\
+           primary key (run_id, url)\n\
+         );\n"
+    )
+}
+
+// ---------------------------------------------------------------------------
+// `generate association` -- explicit, composite relational invariants.
+// ---------------------------------------------------------------------------
+
+pub(crate) fn association_files(
+    root: &Path,
+    domain: &str,
+    adapters: &str,
+    name: &str,
+    child: &str,
+    parent: &str,
+    mappings: &[String],
+) -> crate::Result<Vec<(std::path::PathBuf, String, &'static str)>> {
+    if mappings.is_empty() {
+        return Err(format!(
+            "association {name} needs at least one childField=parentField mapping"
+        ));
+    }
+    let pom = std::fs::read_to_string(root.join("pom.xml"))
+        .map_err(|e| format!("failed to read pom.xml: {e}"))?;
+    if !crate::pom::has_dependency(&pom, "org.springframework.boot", "spring-boot-starter-jdbc") {
+        return Err(format!(
+            "association {name} needs PostgreSQL/JDBC.\n       fix: run `jails add db` first."
+        ));
+    }
+    let child_fields = crate::generate::fields_from_record(root, domain, child)
+        .ok_or_else(|| format!("association {name} cannot read child scaffold {child}.java"))?;
+    let parent_fields = crate::generate::fields_from_record(root, domain, parent)
+        .ok_or_else(|| format!("association {name} cannot read parent scaffold {parent}.java"))?;
+
+    let mut pairs = Vec::new();
+    for mapping in mappings {
+        let (local_name, parent_name) = mapping.split_once('=').ok_or_else(|| {
+            format!("association {name}: mapping `{mapping}` must be childField=parentField")
+        })?;
+        let local_name = local_name.trim();
+        let parent_name = parent_name.trim();
+        if local_name.is_empty() || parent_name.is_empty() || parent_name.contains('=') {
+            return Err(format!(
+                "association {name}: mapping `{mapping}` must contain exactly two field names"
+            ));
+        }
+        let local = child_fields
+            .iter()
+            .find(|field| field.name == local_name)
+            .ok_or_else(|| format!("association {name}: {child} has no field `{local_name}`"))?;
+        let remote = parent_fields
+            .iter()
+            .find(|field| field.name == parent_name)
+            .ok_or_else(|| format!("association {name}: {parent} has no field `{parent_name}`"))?;
+        if usecase_normalized_type(&local.java_type) != usecase_normalized_type(&remote.java_type) {
+            return Err(format!(
+                "association {name}: {child}.{local_name} is {}, but {parent}.{parent_name} is {}",
+                local.java_type, remote.java_type
+            ));
+        }
+        if pairs.iter().any(
+            |(existing, _): &(&crate::generate::Field, &crate::generate::Field)| {
+                existing.name == local.name
+            },
+        ) {
+            return Err(format!(
+                "association {name}: child field `{local_name}` is mapped more than once"
+            ));
+        }
+        pairs.push((local, remote));
+    }
+
+    let child_table = crate::sql::table_name(child);
+    let parent_table = crate::sql::table_name(parent);
+    let local_columns = pairs
+        .iter()
+        .map(|(field, _)| crate::sql::snake_case(&field.name))
+        .collect::<Vec<_>>();
+    let parent_columns = pairs
+        .iter()
+        .map(|(_, field)| crate::sql::snake_case(&field.name))
+        .collect::<Vec<_>>();
+    let constraint = format!("{}_{}_fk", child_table, crate::sql::snake_case(name));
+    let unique_index = format!(
+        "{}_{}_association_key",
+        parent_table,
+        parent_columns.join("_")
+    );
+    let migration_dir = root.join("src/main/resources/db/migration");
+    let needs_unique_index =
+        !migrations_declare_unique_key(&migration_dir, &parent_table, &parent_columns);
+    for identifier in
+        std::iter::once(&constraint).chain(needs_unique_index.then_some(&unique_index))
+    {
+        if identifier.len() > 63 {
+            return Err(format!(
+                "association {name} produces PostgreSQL identifier `{identifier}` longer than 63 bytes; use a shorter association name"
+            ));
+        }
+    }
+
+    let version = crate::generate::next_migration_version(&migration_dir)?;
+    let unique_index_ddl = if needs_unique_index {
+        format!(
+            "create unique index if not exists {unique_index}\n  on {parent_table} ({});\n\n",
+            parent_columns.join(", ")
+        )
+    } else {
+        String::new()
+    };
+    let migration = format!(
+        "{unique_index_ddl}alter table {child_table}\n  add constraint {constraint}\n  foreign key ({}) references {parent_table} ({})\n  on update no action on delete no action\n  deferrable initially deferred;\n",
+        local_columns.join(", "),
+        parent_columns.join(", ")
+    );
+
+    let child_columns = crate::sql::columns(&child_fields, root, domain, "value");
+    let insert_columns = child_columns
+        .iter()
+        .map(|column| column.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let insert_values = child_columns
+        .iter()
+        .map(association_sql_literal)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let expected_mapping = local_columns
+        .iter()
+        .zip(&parent_columns)
+        .map(|(local, remote)| format!("{local}={remote}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let test = crate::template::render(
+        include_str!("../templates/spring/association_it_java.java"),
+        &[
+            ("pkg", adapters),
+            ("name", name),
+            ("child_table", child_table.as_str()),
+            ("parent_table", parent_table.as_str()),
+            ("constraint", constraint.as_str()),
+            ("local_columns", local_columns.join(", ").as_str()),
+            ("parent_columns", parent_columns.join(", ").as_str()),
+            ("expected_mapping", expected_mapping.as_str()),
+            ("insert_columns", insert_columns.as_str()),
+            ("insert_values", insert_values.as_str()),
+        ],
+    );
+
+    Ok(vec![
+        (
+            migration_dir.join(format!(
+                "V{version:03}__add_{}_association.sql",
+                crate::sql::snake_case(name)
+            )),
+            migration,
+            "association migration",
+        ),
+        (
+            crate::generate::test_dir(root, adapters).join(format!("{name}AssociationIT.java")),
+            test,
+            "association integration test",
+        ),
+    ])
+}
+
+/// Reuse a key already proven by earlier Flyway migrations. This recognizes
+/// only SQL shapes Jails itself emits; unfamiliar/user-authored SQL falls back
+/// to creating a named unique index rather than making a risky inference.
+fn migrations_declare_unique_key(dir: &Path, table: &str, columns: &[String]) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    let columns = columns.join(", ");
+    let primary_key = format!("constraint {table}_pk\n    primary key ({columns})");
+    let unique_index_target = format!("on {table} ({columns})");
+    let create_table = format!("create table {table} (");
+
+    entries.filter_map(|entry| entry.ok()).any(|entry| {
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("sql") {
+            return false;
+        }
+        let Ok(sql) = std::fs::read_to_string(path) else {
+            return false;
+        };
+        if sql.contains(&primary_key)
+            || sql.split(';').any(|statement| {
+                statement.contains("create unique index")
+                    && statement.contains(&unique_index_target)
+            })
+        {
+            return true;
+        }
+        if !columns.contains(',')
+            && let Some(body) = sql
+                .split_once(&create_table)
+                .and_then(|(_, rest)| rest.split_once("\n);").map(|(body, _)| body))
+        {
+            return body.lines().any(|line| {
+                line.split_whitespace().next() == Some(columns.as_str())
+                    && line
+                        .split_whitespace()
+                        .any(|token| token.trim_end_matches(',') == "unique")
+            });
+        }
+        false
+    })
+}
+
+fn association_sql_literal(column: &crate::sql::Column) -> &'static str {
+    match column.sql_type.as_str() {
+        "uuid" => "'90000000-0000-0000-0000-000000000009'::uuid",
+        "integer" | "bigint" | "double precision" | "numeric" => "1",
+        "boolean" => "false",
+        "date" => "date '2026-01-01'",
+        "timestamp" => "timestamp '2026-01-01 00:00:00'",
+        "timestamptz" => "timestamptz '2026-01-01 00:00:00+00'",
+        "bytea" => "'\\x00'::bytea",
+        "jsonb" => "'{}'::jsonb",
+        _ => "'association-probe'",
+    }
+}
+
+// ---------------------------------------------------------------------------
 // `generate job` -- scheduled work.
 // ---------------------------------------------------------------------------
 
@@ -688,6 +1045,11 @@ pub(crate) fn durable_job_files(
     let test_jobs = crate::generate::test_dir(root, jobs);
     let main_web = crate::generate::main_dir(root, web);
     Ok(vec![
+        (
+            main_jobs.join("SchedulingConfig.java"),
+            scheduling_config_java(jobs),
+            "scheduling",
+        ),
         (
             main_jobs.join(format!("{name}Work.java")),
             durable_work_java(jobs, domain, name, fields),
@@ -1393,6 +1755,11 @@ pub(crate) fn outbox_files(
     let test_jobs = crate::generate::test_dir(root, jobs);
     Ok(vec![
         (
+            main_jobs.join("SchedulingConfig.java"),
+            scheduling_config_java(jobs),
+            "scheduling",
+        ),
+        (
             main_service.join(format!("Outbox{usecase}UseCase.java")),
             outbox_usecase_java(
                 service,
@@ -1413,8 +1780,18 @@ pub(crate) fn outbox_files(
             "transactional outbox store",
         ),
         (
+            main_jobs.join(format!("{usecase}OutboxSink.java")),
+            outbox_sink_java(jobs, messaging, usecase, event),
+            "transactional outbox sink port",
+        ),
+        (
+            main_jobs.join(format!("{usecase}KafkaOutboxSink.java")),
+            outbox_kafka_sink_java(jobs, messaging, usecase, event),
+            "Kafka outbox sink",
+        ),
+        (
             main_jobs.join(format!("{usecase}OutboxWorker.java")),
-            outbox_worker_java(jobs, messaging, usecase, event, &property),
+            outbox_worker_java(jobs, usecase, &property),
             "transactional outbox worker",
         ),
         (
@@ -1653,34 +2030,69 @@ public class Jdbc{usecase}Outbox {{
     )
 }
 
-fn outbox_worker_java(
-    pkg: &str,
-    messaging: &str,
-    usecase: &str,
-    event: &str,
-    property: &str,
-) -> String {
+fn outbox_sink_java(pkg: &str, messaging: &str, usecase: &str, event: &str) -> String {
+    let event_import = crate::generate::import_of(pkg, messaging, &format!("{event}Event"));
+    format!(
+        r#"package {pkg};
+
+{event_import}/** One independently configurable destination for a staged event. */
+public interface {usecase}OutboxSink {{
+    String name();
+    void deliver({event}Event event);
+}}
+"#
+    )
+}
+
+fn outbox_kafka_sink_java(pkg: &str, messaging: &str, usecase: &str, event: &str) -> String {
+    let event_import = crate::generate::import_of(pkg, messaging, &format!("{event}Event"));
     let publisher_import = crate::generate::import_of(pkg, messaging, &format!("{event}Publisher"));
     format!(
         r#"package {pkg};
 
-{publisher_import}import java.util.concurrent.CompletionException;
+{event_import}{publisher_import}import org.springframework.core.annotation.Order;
+import org.springframework.stereotype.Component;
+
+/** Kafka destination in the same generic sink chain as provider delivery. */
+@Component
+@Order(0)
+public final class {usecase}KafkaOutboxSink implements {usecase}OutboxSink {{
+    private final {event}Publisher publisher;
+
+    public {usecase}KafkaOutboxSink({event}Publisher publisher) {{
+        this.publisher = publisher;
+    }}
+
+    @Override public String name() {{ return "kafka"; }}
+    @Override public void deliver({event}Event event) {{ publisher.publish(event).join(); }}
+}}
+"#
+    )
+}
+
+fn outbox_worker_java(pkg: &str, usecase: &str, property: &str) -> String {
+    format!(
+        r#"package {pkg};
+
+import java.util.List;
+import java.util.concurrent.CompletionException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-/** Leased outbox relay; success means Kafka acknowledged the record, not merely accepted a future. */
+/** Leased outbox relay; success means every configured sink acknowledged the event. */
 @Component
 public final class {usecase}OutboxWorker {{
 
     private static final Logger log = LoggerFactory.getLogger({usecase}OutboxWorker.class);
     private final Jdbc{usecase}Outbox outbox;
-    private final {event}Publisher publisher;
+    private final List<{usecase}OutboxSink> sinks;
 
-    public {usecase}OutboxWorker(Jdbc{usecase}Outbox outbox, {event}Publisher publisher) {{
+    public {usecase}OutboxWorker(Jdbc{usecase}Outbox outbox, List<{usecase}OutboxSink> sinks) {{
         this.outbox = outbox;
-        this.publisher = publisher;
+        this.sinks = List.copyOf(sinks);
+        if (sinks.isEmpty()) throw new IllegalStateException("outbox needs at least one sink");
     }}
 
     @Scheduled(
@@ -1697,7 +2109,7 @@ public final class {usecase}OutboxWorker {{
 
     private void publish(Jdbc{usecase}Outbox.Claimed claimed) {{
         try {{
-            publisher.publish(claimed.event()).join();
+            for (var sink : sinks) sink.deliver(claimed.event());
             outbox.succeed(claimed.id());
         }} catch (CompletionException failure) {{
             var cause = failure.getCause();
@@ -1772,7 +2184,7 @@ class {usecase}OutboxIT {{
     @Autowired private org.springframework.jdbc.core.simple.JdbcClient db;
 
     @Test
-    void businessEffectAndEventAreStagedTogetherThenKafkaAcknowledgementCompletesDelivery() {{
+    void businessEffectAndEventAreStagedTogetherThenAllConfiguredSinksCompleteDelivery() {{
         var command = new {usecase}Command(
                 {args});
 
@@ -1834,6 +2246,238 @@ fn outbox_migration(table: &str) -> String {
          create index {table}_runnable_idx on {table} (state, next_attempt_at)\n\
            where state in ('PENDING', 'RUNNING');\n"
     )
+}
+
+/// Attach a production HTTP destination to an existing typed transactional
+/// outbox. The outbox owns persistence/retry; this generator owns only the
+/// destination adapter, so the same mechanism remains useful for arbitrary
+/// provider APIs rather than one inbox vendor.
+pub(crate) fn http_sink_files(
+    root: &Path,
+    jobs: &str,
+    messaging: &str,
+    adapters: &str,
+    name: &str,
+    usecase: &str,
+    event: &str,
+) -> crate::Result<Vec<(std::path::PathBuf, String, &'static str)>> {
+    let sink_port = crate::generate::main_dir(root, jobs).join(format!("{usecase}OutboxSink.java"));
+    if !sink_port.is_file() {
+        return Err(format!(
+            "http-sink {name} cannot find {usecase}OutboxSink.java.\n       fix: generate usecase {usecase} with `--yields {event}` first."
+        ));
+    }
+    let event_class = format!("{event}Event");
+    let fields = crate::generate::fields_from_record(root, messaging, &event_class)
+        .ok_or_else(|| format!("http-sink {name} cannot read {event_class}.java"))?;
+    let id = fields
+        .iter()
+        .find(|field| field.name == "id")
+        .ok_or_else(|| format!("http-sink {name} needs {event_class}.id for idempotency"))?;
+    if id.optionality == crate::generate::Optionality::Nullable {
+        return Err(format!(
+            "http-sink {name} needs a required {event_class}.id for idempotency"
+        ));
+    }
+    let json = crate::generate::main_dir(root, adapters).join("Json.java");
+    if !json.is_file() {
+        return Err(format!(
+            "http-sink {name} needs the generic JSON capability.\n       fix: run `jails add json` first."
+        ));
+    }
+
+    let usecase_property = crate::sql::snake_case(usecase).replace('_', "-");
+    let sink_property = crate::sql::snake_case(name).replace('_', "-");
+    let property = format!("outbox.{usecase_property}.http.{sink_property}");
+    let url_value = format!("${{{}.url}}", property);
+    let bearer_token_value = format!("${{{}.bearer-token:}}", property);
+    let connect_timeout_value = format!("${{{}.connect-timeout-ms:2000}}", property);
+    let request_timeout_value = format!("${{{}.request-timeout-ms:5000}}", property);
+    let main = crate::template::render(
+        include_str!("../templates/spring/http_outbox_sink_java.java"),
+        &[
+            ("pkg", jobs),
+            ("messaging", messaging),
+            ("adapters", adapters),
+            ("name", name),
+            ("usecase", usecase),
+            ("event", event),
+            ("property", property.as_str()),
+            ("url_value", url_value.as_str()),
+            ("bearer_token_value", bearer_token_value.as_str()),
+            ("connect_timeout_value", connect_timeout_value.as_str()),
+            ("request_timeout_value", request_timeout_value.as_str()),
+        ],
+    );
+
+    let samples = fields
+        .iter()
+        .map(|field| crate::generate::sample_value(field, root, messaging))
+        .collect::<Vec<_>>();
+    let disabled = samples.iter().any(Option::is_none);
+    // A disabled test must still compile. Preserve the constructor arity and
+    // use null only for project-owned value types whose construction Jails
+    // cannot honestly infer yet; the annotation makes that missing oracle
+    // visible instead of silently pretending the contract ran.
+    let args = samples
+        .into_iter()
+        .map(|sample| sample.unwrap_or_else(|| "null".to_string()))
+        .collect::<Vec<_>>()
+        .join(",\n                ");
+    let imports = java_literal_imports(&fields, messaging)
+        .into_iter()
+        .map(|import| format!("import {import};\n"))
+        .collect::<String>();
+    let disabled_import = if disabled {
+        "import org.junit.jupiter.api.Disabled;\n"
+    } else {
+        ""
+    };
+    let annotation = if disabled {
+        "@Disabled(\"todo: supply an HTTP sink event sample Jails cannot fabricate\")\n"
+    } else {
+        ""
+    };
+    let test = crate::template::render(
+        include_str!("../templates/spring/http_outbox_sink_test_java.java"),
+        &[
+            ("pkg", jobs),
+            ("messaging", messaging),
+            ("name", name),
+            ("event", event),
+            ("imports", imports.as_str()),
+            ("disabled_import", disabled_import),
+            ("annotation", annotation),
+            ("args", args.as_str()),
+        ],
+    );
+    Ok(vec![
+        (
+            crate::generate::main_dir(root, jobs).join(format!("{name}HttpOutboxSink.java")),
+            main,
+            "HTTP outbox sink",
+        ),
+        (
+            crate::generate::test_dir(root, jobs).join(format!("{name}HttpOutboxSinkTest.java")),
+            test,
+            "HTTP outbox sink test",
+        ),
+    ])
+}
+
+#[cfg(test)]
+mod association_and_http_sink_tests {
+    use super::*;
+
+    #[test]
+    fn association_refuses_an_empty_mapping_before_writing_invalid_sql() {
+        let error = association_files(
+            Path::new("/does/not/need/to/exist"),
+            "com.example.demo.domain",
+            "com.example.demo.adapters",
+            "ChildParent",
+            "Child",
+            "Parent",
+            &[],
+        )
+        .unwrap_err();
+
+        assert!(error.contains("at least one childField=parentField mapping"));
+    }
+
+    #[test]
+    fn association_reuses_primary_and_prior_composite_unique_keys() {
+        let root = std::env::temp_dir().join(format!(
+            "jails-association-existing-keys-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let migrations = root.join("src/main/resources/db/migration");
+        std::fs::create_dir_all(&migrations).unwrap();
+        std::fs::write(
+            migrations.join("V001__parents.sql"),
+            "create table parents (\n  id uuid not null,\n  workspace_id uuid not null,\n  constraint parents_pk\n    primary key (id)\n);\n\ncreate unique index parents_workspace_id_id_association_key\n  on parents (workspace_id, id);\n",
+        )
+        .unwrap();
+
+        assert!(migrations_declare_unique_key(
+            &migrations,
+            "parents",
+            &["id".to_string()]
+        ));
+        assert!(migrations_declare_unique_key(
+            &migrations,
+            "parents",
+            &["workspace_id".to_string(), "id".to_string()]
+        ));
+        assert!(!migrations_declare_unique_key(
+            &migrations,
+            "parents",
+            &["workspace_id".to_string()]
+        ));
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn disabled_http_sink_contract_keeps_constructor_arity_for_unknown_values() {
+        let root = std::env::temp_dir().join(format!(
+            "jails-http-sink-unknown-sample-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        for package in ["jobs", "messaging", "adapters"] {
+            std::fs::create_dir_all(root.join(format!("src/main/java/com/example/demo/{package}")))
+                .unwrap();
+        }
+        std::fs::write(
+            root.join("src/main/java/com/example/demo/jobs/SendOutboxSink.java"),
+            "package com.example.demo.jobs; interface SendOutboxSink {}",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("src/main/java/com/example/demo/messaging/SentEvent.java"),
+            "package com.example.demo.messaging; import java.util.UUID; public record SentEvent(UUID id, CustomValue value) {}",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("src/main/java/com/example/demo/adapters/Json.java"),
+            "package com.example.demo.adapters; public final class Json {}",
+        )
+        .unwrap();
+
+        let files = http_sink_files(
+            &root,
+            "com.example.demo.jobs",
+            "com.example.demo.messaging",
+            "com.example.demo.adapters",
+            "Provider",
+            "Send",
+            "Sent",
+        )
+        .unwrap();
+        let test = &files
+            .iter()
+            .find(|(_, _, label)| *label == "HTTP outbox sink test")
+            .unwrap()
+            .1;
+
+        assert!(test.contains("@Disabled("), "{test}");
+        assert!(
+            test.contains(
+                "UUID.fromString(\"00000000-0000-0000-0000-000000000001\"),\n                null"
+            ),
+            "{test}"
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
 
 #[cfg(test)]
@@ -4090,6 +4734,9 @@ import org.springframework.stereotype.Component;
 @Component
 public final class Jdbc{name}Query implements {name}QueryPort {{
 
+    /** Equality queries are deliberately bounded; use a keyset query for navigation. */
+    private static final int MAX_RESULTS = 100;
+
     private static final String COLUMNS =
             """
 {select}
@@ -4109,8 +4756,10 @@ public final class Jdbc{name}Query implements {name}QueryPort {{
                         from {table}
                         where {predicates}
                         order by {order}
+                        limit :max_results
                         """.formatted(COLUMNS))
 {bindings}
+                .param("max_results", MAX_RESULTS)
                 .query(Jdbc{name}Query::map)
                 .list();
     }}
@@ -4437,6 +5086,8 @@ mod query_tests {
         );
         assert!(adapter.contains(".param(\"conversation_id\""), "{adapter}");
         assert!(adapter.contains("order by id"), "{adapter}");
+        assert!(adapter.contains("limit :max_results"), "{adapter}");
+        assert!(adapter.contains("MAX_RESULTS = 100"), "{adapter}");
         assert!(
             integration_test.contains("repository.save(stored)"),
             "{integration_test}"

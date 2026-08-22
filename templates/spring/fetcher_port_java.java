@@ -3,12 +3,26 @@ package {{pkg}};
 import java.net.URI;
 import java.util.Arrays;
 import java.util.Objects;
+import java.util.Set;
 
 /** A bounded outbound byte fetch; callers own parsing and link policy. */
 @FunctionalInterface
 public interface {{name}}Fetcher {
 
     FetchedResource fetch(URI uri);
+
+    /**
+     * Fetch while treating selected non-2xx statuses as protocol data.
+     *
+     * <p>The ordinary one-argument operation remains the functional method,
+     * so test doubles and existing callers stay source-compatible. Secure
+     * adapters override this operation without changing redirect, DNS,
+     * response-size, media-type, or timeout enforcement.
+     */
+    default FetchedResource fetch(URI uri, Set<Integer> acceptedStatuses) {
+        Objects.requireNonNull(acceptedStatuses, "accepted statuses are required");
+        return fetch(uri);
+    }
 
     record FetchedResource(URI uri, int statusCode, String contentType, byte[] body) {
 

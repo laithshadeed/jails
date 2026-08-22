@@ -48,6 +48,11 @@ kind = "fetcher"
 name = "PageFetcher"
 
 [[generate]]
+kind = "http-workflow"
+name = "SiteTraversal"
+strategy_on = "PageFetcher"
+
+[[generate]]
 kind = "event"
 name = "PageDiscovered"
 fields = ["id:uuid", "crawlRunId:uuid", "url:uri", "occurredAt:instant"]

@@ -325,13 +325,28 @@ pub(crate) fn imports(columns: &[Column]) -> Vec<&'static str> {
     found
 }
 
-/// The table a type maps to: snake_case, pluralised the naive way. jails
-/// pluralises by appending `s` and nothing more -- an irregular plural is a
-/// judgment call, and a wrong guess in a migration is expensive to undo.
+/// The table a type maps to: snake_case plus conservative regular-English
+/// pluralisation. We handle suffixes whose spelling rule is deterministic,
+/// but deliberately do not guess irregular forms such as person/people.
 pub(crate) fn table_name(type_name: &str) -> String {
     let base = snake_case(type_name);
-    if base.ends_with('s') {
+    if base.ends_with("ss")
+        || base.ends_with('x')
+        || base.ends_with('z')
+        || base.ends_with("ch")
+        || base.ends_with("sh")
+    {
+        format!("{base}es")
+    } else if base.ends_with('s') {
         base
+    } else if base.ends_with('y')
+        && base
+            .chars()
+            .rev()
+            .nth(1)
+            .is_some_and(|before| !matches!(before, 'a' | 'e' | 'i' | 'o' | 'u'))
+    {
+        format!("{}ies", &base[..base.len() - 1])
     } else {
         format!("{base}s")
     }
@@ -607,9 +622,13 @@ mod tests {
     }
 
     #[test]
-    fn table_names_pluralise_without_inventing_irregulars() {
+    fn table_names_pluralise_regular_suffixes_without_inventing_irregulars() {
         assert_eq!(table_name("Reward"), "rewards");
         assert_eq!(table_name("WorkItem"), "work_items");
+        assert_eq!(table_name("Inbox"), "inboxes");
+        assert_eq!(table_name("Address"), "addresses");
+        assert_eq!(table_name("Category"), "categories");
+        assert_eq!(table_name("Toy"), "toys");
         // Already plural: appending a second `s` would be worse than nothing.
         assert_eq!(table_name("News"), "news");
     }

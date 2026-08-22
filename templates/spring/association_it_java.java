@@ -1,0 +1,79 @@
+package {{pkg}};
+
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.dao.DataAccessException;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.transaction.annotation.Transactional;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+/** Executable proof that this ownership relationship is a database invariant. */
+@SpringBootTest
+@Transactional
+class {{name}}AssociationIT {
+
+    @Autowired private JdbcClient db;
+
+    @Test
+    void schemaCarriesTheExactOrderedCompositeRelationship() {
+        String mapping = db.sql("""
+                        select string_agg(child_column.attname || '=' || parent_column.attname,
+                                         ',' order by pair.ordinality)
+                        from pg_constraint relation
+                        cross join lateral unnest(relation.conkey, relation.confkey)
+                            with ordinality as pair(child_number, parent_number, ordinality)
+                        join pg_attribute child_column
+                          on child_column.attrelid = relation.conrelid
+                         and child_column.attnum = pair.child_number
+                        join pg_attribute parent_column
+                          on parent_column.attrelid = relation.confrelid
+                         and parent_column.attnum = pair.parent_number
+                        where relation.contype = 'f' and relation.conname = :constraint
+                        """)
+                .param("constraint", "{{constraint}}")
+                .query(String.class)
+                .single();
+
+        assertThat(mapping).isEqualTo("{{expected_mapping}}");
+
+        Boolean deferredUntilCommit = db.sql("""
+                        select relation.condeferrable and relation.condeferred
+                        from pg_constraint relation
+                        where relation.contype = 'f' and relation.conname = :constraint
+                        """)
+                .param("constraint", "{{constraint}}")
+                .query(Boolean.class)
+                .single();
+        assertThat(deferredUntilCommit).isTrue();
+    }
+
+    @Test
+    void existingCrossBoundaryDataCannotPassConstraintValidation() {
+        db.sql("alter table {{child_table}} drop constraint {{constraint}}").update();
+        db.sql("""
+                        alter table {{child_table}}
+                        add constraint {{constraint}}
+                        foreign key ({{local_columns}})
+                        references {{parent_table}} ({{parent_columns}})
+                        on update no action on delete no action
+                        deferrable initially deferred
+                        not valid
+                        """).update();
+
+        // Build the impossible historical row with referential triggers off,
+        // then ask PostgreSQL itself to validate this exact named invariant.
+        db.sql("set local session_replication_role = replica").update();
+        db.sql("insert into {{child_table}} ({{insert_columns}}) values ({{insert_values}})").update();
+        db.sql("set local session_replication_role = origin").update();
+
+        assertThatThrownBy(() -> db.sql(
+                        "alter table {{child_table}} validate constraint {{constraint}}")
+                .update())
+                .isInstanceOf(DataAccessException.class)
+                .rootCause()
+                .hasMessageContaining("{{constraint}}");
+    }
+}

@@ -62,7 +62,7 @@ The goal is not “Rails syntax in Java.” Borrow Rails’ conventions, coheren
 
 ## What the repository says today
 
-This proposal is based on the live Jails source, the projects under `ideas/`, the source checkouts catalogued in `deps/deps.tsv`, and primary project documentation linked at the end.
+This proposal is based on the live Jails source, the projects under `ideas/`, the exact source checkouts under `deps/`, and primary project documentation linked at the end. The local `deps/` tree currently includes the JDK, Spring Boot, Spring Framework, Spring Security, Spring Kafka, Spring Modulith, Micrometer, PostgreSQL, Testcontainers, and their surrounding libraries; it is more useful than a version-name list because generator decisions can be checked against the APIs and tests that actually implement them.
 
 ### Strong foundations to preserve
 
@@ -71,7 +71,7 @@ This proposal is based on the live Jails source, the projects under `ideas/`, th
 - [`tests/golden.rs`](tests/golden.rs) exercises complete generated trees byte-for-byte. This is exactly the right place to test blueprints and packs.
 - [`src/why.rs`](src/why.rs), [`src/doctor.rs`](src/doctor.rs), and [`src/inspect.rs`](src/inspect.rs) establish an excellent principle: explain the system instead of making the developer reverse-engineer it.
 - [`spring.md`](spring.md) already recommends moving from global layers to package-by-feature and Spring Modulith boundaries when an application gains a second domain. The generators should embody that advice.
-- [`deps/deps.tsv`](deps/deps.tsv) is a valuable offline source corpus. It can become version-aware dependency source intelligence instead of remaining a maintenance script alone.
+- [`deps/`](deps/) is a valuable offline source corpus. It can become version-aware dependency source intelligence instead of remaining a collection only a human searches manually.
 
 ### Friction and correctness gaps worth fixing first
 
@@ -111,6 +111,15 @@ Four local repositories sharpen the target. None should be copied wholesale; tog
 | `ideas/kafka-ui` | version catalogs, reactive remote integration, OAuth/LDAP/RBAC, audit and masking, Prometheus, Testcontainers, CVE/CodeQL/E2E pipelines, documented dependency conflict resolution | WebFlux for applications that do not need it, or Boot 3.5 APIs without checking Boot 4 equivalents |
 | `ideas/spring-petclinic` | the smallest canonical Boot 4.1 baseline, focused test starters, real MySQL/PostgreSQL integration tests, reproducible builds, Compose development services, understandable feature packages | its deliberately simplified security, operations, API, and deployment story |
 | `ideas/mateclaw` | large-module organization, BOM management, ArchUnit, Flyway, ShedLock, feature flags, approval/audit workflows, plugin boundaries, security regression tests | its domain breadth, integration density, MyBatis/JPA-style choices, or lack of a complete checked-in delivery pipeline |
+
+Use them as a study set, not a winner-takes-all template:
+
+1. Start with [`ideas/grimmory/backend`](ideas/grimmory/backend) for the closest **2026 full-application reference**: Spring Boot 4.1.0, a Java 25 toolchain, typed build policy, security, Flyway, Actuator, container/deployment assets, migration checks, and release workflows. It is the best single answer to “what does a modern Boot application look like?”, but its JPA and preview-language choices are not Jails defaults.
+2. Use [`ideas/kafka-ui/api`](ideas/kafka-ui/api) for **operational depth and integration pressure**: Spring Boot 3.5.14 on Java 25, real remote systems, OAuth/LDAP/RBAC, audit/masking, metrics, Testcontainers, image publishing, CVE/CodeQL, and E2E workflows. It is a mature-system reference, not the cleanest starter architecture.
+3. Use [`ideas/mateclaw/mateclaw-server`](ideas/mateclaw/mateclaw-server) for **modular product structure and governance**: Spring Boot 3.5.16/Java 21, a parent BOM, explicit modules/plugins, ArchUnit, migrations, scheduled-work coordination, flags, audit/approval, and security regressions.
+4. Use [`ideas/spring-petclinic`](ideas/spring-petclinic) for the **small comprehensible baseline**: Spring Boot 4.1.0, both Maven and Gradle, focused Boot 4 test starters, Compose, and real database profiles. It teaches conventions clearly precisely because it is not a complete production platform.
+
+`ideas/monzo-crawler` is a useful small Boot 3/Java 21 take-home and the crawler repositories (`crawler4j`, Heritrix, StormCrawler, WebMagic, Nutch, Katana, Webclaw, and the browser projects) are valuable for individual crawl mechanics. None of those should be presented as the general 2026 production Spring application exemplar. Jails should deliberately combine the four application references above with the crawler safety/queue lessons, then generate a smaller coherent result.
 
 The combined lesson is not “support every starter.” It is that a production accelerator needs a coherent answer for eight cross-cutting concerns:
 
@@ -475,7 +484,9 @@ The current `add::Plan` can be adapted rather than discarded.
 
 Jails already has an unusually strong `scaffold`: one field model drives the record, repository port, JDBC and in-memory adapters, request/response types, service, controller, migration, fixture, and tests. That shared source of truth is the right idea. The next step is not dozens of unrelated artifact kinds; it is a generator engine that understands project context, composes complete artifact graphs, and evolves them safely.
 
-The dogfood increment now proves this direction beyond CRUD: both manifests declare ordinary typed Kafka events, executable create use cases, typed equality queries, leased durable work, production/local security profiles, scope-bearing request boundaries, CI, and images. The crawler also selects a generic bounded fetch port. Jails derives Java records/imports, application ports, transactional implementations, MVC adapters, visible named-parameter PostgreSQL adapters, realistic examples, and focused plus real-container tests from one field model. Running both full manifests exposed generic composition/runtime bugs that shallow golden tests missed: Spring `@Import` values must merge, test examples and assertions must share one value model, transactional components must be proxyable, nullable JDBC transforms must wrap the raw value before dereferencing, PostgreSQL `UPDATE ... FROM` return columns must be qualified, and a validated hostname must be DNS-pinned through connection. This is useful evidence, not a reason to add crawler or inbox concepts to core. The next leverage is a generic workflow/composition IR, transactional outbox semantics, output provenance, and drift repair.
+The dogfood increment now proves this direction well beyond CRUD. Both manifests declare ordinary typed Kafka events, executable create use cases, typed equality queries, leased durable work, production/local security profiles, scope-bearing request boundaries, CI, and images. The crawler composes a bounded fetch port with a generic durable `http-workflow`; the inbox composes ten persisted composite `association` constraints, two optimistic `transition` slices, a transactional multi-sink outbox, and a conditional `http-sink`. Jails derives Java records/imports, ports, transactional implementations, MVC adapters, named-parameter PostgreSQL, migrations, realistic samples, and focused plus real-infrastructure tests from shared models. The latest complete 123-test CLI/integration sweep ran every generated test against PostgreSQL/Kafka, exercised the provider over a real socket, applied 19 inbox migrations, and built/inspected both non-root images in 293.35 seconds without hand-editing Java or SQL.
+
+That run also shows why “smart generator” means a compiler with executable invariants. Shallow snapshots missed merged Spring `@Import` values, scheduling enablement, proxyability, nullable JDBC transform order, qualified PostgreSQL return columns, DNS pinning, composite tenant ownership, and collisions between Spring `${...}` expressions and Jails placeholders. Each defect became a generic generator fix and regression. No crawler-, workspace-, contact-, conversation-, or provider-specific branch was added to core. The next leverage is not another showcase command; it is lowering every intent through a typed composition IR and universal `ChangeSet`, recording output provenance/fingerprints, repairing drift, adding policy-bearing pagination/authorization/idempotency inputs, and making the real test loop dramatically cheaper.
 
 ### From template selection to intent compilation
 
@@ -1276,7 +1287,8 @@ Resolution order:
 1. Resolve the actual effective Maven coordinate and version.
 2. Prefer the matching `-sources.jar` in the local Maven repository.
 3. Optionally download that exact source artifact when network use is allowed.
-4. Fall back to a matching tag/commit in a `deps.tsv` checkout.
+4. Fall back to a matching tag/commit in the corresponding `deps/<project>`
+   checkout.
 5. Fall back to current upstream source only with a prominent `upstream-head, version mismatch possible` label.
 
 Every result should include provenance:
@@ -1397,6 +1409,17 @@ Jails should own the developer contract:
 Jails should **not** initially own Chromium, anti-bot behavior, or a distributed crawl frontier. Use a cheap in-process HTTP + jsoup path for static pages and hermetic tests. Escalate `render: auto` to a replaceable CDP or Firecrawl-compatible sidecar only when policy permits and required content is absent. Lightpanda or Chrome can sit behind that boundary.
 
 This preserves the quick Java 21+ edit loop and lets the fetch engine evolve without changing application records, events, specs, or sinks.
+
+**Verified lower-level slice today.** The crawler dogfood manifest already
+builds its working application from generic `scaffold`, `usecase`, `query`,
+`fetcher`, `http-workflow`, `event`, and `durable-job` intents. The generated
+workflow owns a PostgreSQL frontier/run/page ledger, leases and expired-claim
+recovery, robots policy, exact-origin canonical HTML traversal, duplicate and
+cycle suppression, retry classification, hard page/depth limits, persistent
+cancellation, status/pages APIs, and metrics. Its safe fetcher pins validated
+DNS addresses and revalidates redirects. This is deliberately not a
+`generate crawler` branch: it is the reusable durable-HTTP foundation on which
+the typed extraction/spec/fixture UX below can be compiled later.
 
 ### Command surface
 
@@ -1801,6 +1824,22 @@ The purpose is to prove that Jails can compress a real product architecture into
 Start as a modular monolith with PostgreSQL. Do not require Redis, Kafka, Elasticsearch/OpenSearch, object storage, or a separate worker deployment until a feature or measured threshold needs them.
 
 Chatwoot is valuable evidence for the eventual concerns—web processes, background workers, PostgreSQL, Redis, email, and object storage—but copying its complete deployment on day one would erase Jails’ productivity win. See [Chatwoot](https://github.com/chatwoot/chatwoot) and its [deployment architecture](https://developers.chatwoot.com/self-hosted/deployment/architecture). [Chaskiq](https://github.com/chaskiq/chaskiq) is another Rails-based product reference. Use these to discover domain concerns, not as line-by-line templates.
+
+**Verified lower-level slice today.** The support-inbox dogfood manifest uses
+only generic `scaffold`, `association`, `usecase`, `query`, `event`,
+`transition`, and `http-sink` intents. It generates workspace-scoped request
+checks, composite contact/conversation/message ownership in PostgreSQL,
+scope-aware optimistic state change, atomic business-write plus event staging,
+Kafka acknowledgement, conditional HTTP provider delivery with a stable
+`Idempotency-Key`, bounded retry, and inspectable terminal failure. Real
+PostgreSQL/Kafka/socket tests and the non-root image gate pass from a fresh
+manifest with no hand-edited Java or SQL. The current complete CLI/integration
+sweep passes all 123 tests in 293.35 seconds. That is a production-shaped core
+testing ground, not the full product described below. Members, inboxes, inbox
+membership, conversation assignment/reassignment, and their tenant invariants
+are now generated too; keyset pagination, inbound-channel signatures,
+collaboration/SSE replay, audit, and hosted CI execution remain explicit
+generic-policy work.
 
 ### Command surface
 
@@ -2407,12 +2446,22 @@ security, observability, schedules, scaffolds, typed Kafka events, executable
 create use cases, typed PostgreSQL queries, PostgreSQL-leased/idempotent work,
 JWT production authentication, generic `@scope` request checks, a bounded
 SSRF-resistant HTTP fetcher, scope-aware optimistic transitions, a
-transactional Kafka outbox with acknowledged delivery and bounded retries,
-pinned CI, and non-root images without manual Java edits. Both pass real
-PostgreSQL/Kafka verification. This remains a
-production-shaped generation test, not yet a production-ready crawler or
-inbox: finite traversal/robots/cancellation, end-to-end association tenancy,
-provider-specific delivery, and hosted CI execution remain Phase 5/6 work. The
+transactional multi-sink outbox with acknowledged delivery and bounded
+retries, a conditional typed HTTP sink, composite persisted associations,
+pinned CI, and non-root images without manual Java or SQL edits. The crawler's
+generic `http-workflow` adds durable bounded traversal, robots, exact-origin
+canonical discovery, duplicate/cycle control, cancellation, and APIs. Both
+pass real PostgreSQL/Kafka/socket verification; the latest complete 123-test
+CLI/integration sweep finished in 293.35 seconds, including all 19 inbox
+migrations and both built/inspected images.
+
+This is now a locally verified production-shaped application baseline, not a
+claim that every product feature or deployment environment is complete. The
+crawler still needs its higher-level typed extraction/spec/capture experience;
+the inbox still needs pagination, inbound-provider verification,
+collaboration/replay, and audit. Whole-manifest atomic
+apply, provenance/drift repair, offline creation, cheaper test contexts, and
+execution of the generated hosted CI in a real repository also remain. The
 executable boundary is checked in at `examples/ACCEPTANCE.md`; prose claims
 must not outrun that gate.
 
@@ -2439,32 +2488,61 @@ Only after the first two blueprints prove their seams:
 - extra crawler sinks/inbox channels;
 - worker/distributed deployments based on measured thresholds.
 
-## First implementation tickets
+## Implementation checkpoint and next tickets
 
-These are deliberately small enough to sequence and review:
+The original first-ticket list has been overtaken by dogfooding. Java now
+defaults to the supported Java 25 LTS; `.jails/app.toml` composes real
+capabilities and generators; typed use cases, queries, events, transitions,
+leased jobs, safe fetchers, durable HTTP workflows, composite associations,
+transactional multi-sink outboxes, HTTP delivery, production JWT security,
+CI, and non-root images all have generated regression evidence. Keep those
+primitives small and generic; do not replace them with `crawler` or `inbox`
+branches.
 
-1. Replace the hard-coded future Java default with a tested Boot/JDK resolver; add explicit EA syntax and diagnostics.
-2. Add `--output human|json|jsonl` plumbing and a versioned result/error envelope to one read-only command.
-3. Add `jails schema --json` derived from Clap and capability/artifact metadata.
-4. Teach Neovim to cache that schema by binary/version while retaining a tested old-binary fallback.
-5. Add exact line numbers to route/bean inspection and exercise them in JSON fixtures.
-6. Extract process-group supervision and lifecycle events from the current run/watch implementation.
-7. Replace the 750 ms Java-only scan with classified native file events plus debounce/poll fallback.
-8. Make the dev build-engine decision explicit and benchmark wrapper versus `mvnd` on the golden scaffold.
-9. Implement `test file:line` and `test --failed`, then wire Neovim nearest test.
-10. Resolve one imported dependency symbol to an exact-version local sources JAR and open it read-only from Neovim.
-11. Prototype `ChangeSet` on a single record generator with pretend/apply parity and injected failures.
-12. Add `.jails/state-v1.*`, ownership statuses, and provenance-aware destroy for that prototype.
-13. Port capability add/remove planning to the common engine without changing generated bytes.
-14. Define the internal capability lifecycle contract and migrate one existing capability without changing its generated bytes.
-15. Write `production-api` contract v1 as guarantees paired with executable checks; delete any guarantee that cannot yet be proved.
-16. Generate the minimal reference service and make it pass configuration, PostgreSQL, security, observability, image, and clean-build checks.
-17. Implement `profile show|plan|verify|diff` through the common schema/event/`ChangeSet` path.
-18. Add `.env.example`, origin-based masking, and Maven-failure `why` integration as generic profile contributions.
-19. Add one feature-first scaffold and one Spring Modulith boundary failure fixture.
-20. Implement `generate field` plus a forward migration and `generate factory` through provenance-aware changes.
-21. Compile the smallest `.jails/app.toml`—one resource and one use case—through `ChangeSet`.
-22. Start crawler Slice 1 only after the feedback, mutation, and production-contract gates pass.
+The next reviewable sequence is:
+
+1. Lower one existing generator through a typed `ChangeSet` with exact
+   pretend/apply parity and write-boundary fault injection.
+2. Add output fingerprints, generator/version provenance, ownership statuses,
+   drift detection, and provenance-aware destroy; then port the remaining
+   generators and capability mutations without changing generated bytes.
+3. Lower the whole app manifest to one preflighted, journaled plan so a failed
+   late intent cannot leave an unexplained partial application.
+4. Make the test harness own temporary-fixture cleanup and share compatible
+   Spring/Testcontainers contexts. The 15,288 retained fixtures/5.5 GB quota
+   incident and repeated container startup are measurable generator-DX debt.
+5. Add `--output human|json|jsonl`, a versioned event/diagnostic envelope, and
+   `jails schema --json` derived from Clap plus live capability/artifact
+   metadata; remove copied editor command lists.
+6. Build the resident `jails dev` supervisor, classified watcher, health
+   handshake, focused-test selection, line-accurate diagnostics, and measured
+   save-to-confidence budget.
+7. Resolve exact imported dependency source through the local `deps/` corpus
+   and effective build coordinates, then expose the same stable location
+   contract to terminals, Neovim, and agents.
+8. Add the versioned `production-api` profile and `profile
+   show|plan|verify|diff`; map every guarantee to current executable evidence
+   and label hosted/external evidence honestly.
+9. Implement feature-first placement plus Spring Modulith verification, then
+   migrate the two manifests without introducing feature names in core.
+10. Promote fields/constraints/relations to stable semantic IDs and implement
+    forward-only `generate field` plus `generate factory` through provenance.
+11. Extend generic queries with keyset pagination, explicit sort, projections,
+    and authorization policy; add generic command policies for idempotency,
+    optimistic assignment, and auditable effects.
+12. Add an offline project baseline and `new --app <manifest>` so the complete
+    dogfood flow becomes one Jails invocation without copying files or calling
+    Initializr.
+13. Put the generated CI in a real repository and require its execution; keep
+    local Maven/PostgreSQL/Kafka/socket/image verification as the fast
+    reproducible gate.
+14. Build the crawler extraction/spec/capture workbench by composing the
+    existing fetch/workflow primitives, with fixture-first tests and no new
+    domain branch in the compiler kernel.
+15. Grow the support product through generic assignment/idempotency policies,
+    keyset queries, inbound-signature
+    adapters, SSE replay, and audit—each independently useful outside an
+    Intercom-shaped application.
 
 ## Success scorecard
 
