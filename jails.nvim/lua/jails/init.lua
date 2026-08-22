@@ -36,6 +36,12 @@ local STREAMING = {
   c = true,
 }
 
+-- Pinned to `jails generate --help` by
+-- `the_editor_plugin_completes_every_value_the_cli_accepts` in
+-- tests/editor.rs: this list once fell eight kinds behind the CLI, which is
+-- the worst kind of stale because a completion menu looks complete.
+-- Aliases are here because a reader types them; the test only requires the
+-- canonical names.
 local KINDS = {
   'scaffold',
   'controller',
@@ -49,21 +55,38 @@ local KINDS = {
   'strategy',
   'rule',
   'repo',
+  'repository',
   'migration',
+  'mig',
   'handler',
   'command',
   'cli',
   'cases',
   'client',
+  'fetcher',
   'job',
+  'http-workflow',
+  'hflow',
+  'association',
+  'fk',
+  'http-sink',
+  'webhook',
+  'durable-job',
+  'djob',
   'dto',
+  'usecase',
+  'uc',
+  'query',
+  'transition',
   'event',
   'test',
   'integration-test',
+  'it',
 }
 
 local CAPABILITIES = {
   'db',
+  'postgres',
   'kafka',
   'csv',
   'sqlite',
@@ -72,12 +95,19 @@ local CAPABILITIES = {
   'fake',
   'http',
   'format',
+  'ci',
+  'docker',
+  'image',
   'api',
+  'errors',
   'actuator',
   'cache',
   'security',
   'redis',
   'observability',
+  'metrics',
+  'toxiproxy',
+  'faults',
 }
 local RUNTIMES = { 'db', 'kafka', 'redis' }
 
@@ -85,6 +115,7 @@ local SUBCOMMANDS = {
   'about',
   'info',
   'doctor',
+  'setup',
   'why',
   'routes',
   'beans',
@@ -93,6 +124,7 @@ local SUBCOMMANDS = {
   'notes',
   'new',
   'new-cli',
+  'app',
   'generate',
   'g',
   'add',
@@ -151,6 +183,9 @@ local OPTIONS = {
   notes = {},
   beans = { '--json' },
   rename = { '--dry-run', '--force' },
+  -- `app` takes plan/apply as its first argument; both share these flags.
+  app = { 'plan', 'apply', '--manifest', '--no-start' },
+  setup = { '--dry-run' },
 }
 
 function M.setup(opts)

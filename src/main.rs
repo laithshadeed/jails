@@ -17,6 +17,7 @@ mod rename;
 mod run;
 mod spring;
 mod sql;
+mod surefire;
 mod template;
 mod why;
 

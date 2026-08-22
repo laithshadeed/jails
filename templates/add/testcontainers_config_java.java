@@ -23,6 +23,34 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
  *
  * <p>Nothing calls {@code start()} -- a container that is a bean is started
  * and stopped with the application context.
+ *
+ * <h2>Reuse, and why it is not on</h2>
+ *
+ * <p>Adding {@code .withReuse(true)} keeps the container alive between runs
+ * and is the largest single saving available to a suite that starts
+ * PostgreSQL. It is <em>not</em> generated, because it is only safe when this
+ * is the only project on the machine using this image:
+ *
+ * <ul>
+ *   <li><b>The reuse key is a hash of the container's configuration</b>, and
+ *       nothing in that configuration identifies the project. Two applications
+ *       on the same PostgreSQL image therefore reuse the <em>same database</em>
+ *       -- and since both number their migrations from {@code V001}, Flyway
+ *       refuses to start with a checksum mismatch against the other one's
+ *       history. Jails' own verification gate hit exactly this.
+ *   <li>A reused container is deliberately not registered with Ryuk, so
+ *       nothing reaps it; they accumulate until something removes them.
+ *   <li>The database keeps its state. Every database test Jails generates is
+ *       transactional and rolls back, so that part is safe -- but a test you
+ *       add that assumes an empty table will pass once and fail on the second
+ *       run.
+ * </ul>
+ *
+ * <p>If this is your only such project and you want the saving: add
+ * {@code .withReuse(true)} below, and run {@code jails setup}, which writes
+ * the {@code testcontainers.reuse.enable=true} that the machine -- not the
+ * classpath -- has to carry. {@code jails doctor} reports whether it is on
+ * and counts what has been left running.
  */
 @TestConfiguration(proxyBeanMethods = false)
 public class {{TESTCONTAINERS_CONFIG}} {
