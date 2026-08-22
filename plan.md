@@ -1282,7 +1282,8 @@ yet — which is a healthier list than the one it replaces.
 | — | **§4.4 / `abstract.md` rung 7, schema half** — **done.** `on`/`yields` are the manifest keys, `strategy_on`/`strategy_yields` are deprecated aliases, both spellings under one reference is an error, and all four proof-app manifests are migrated (64 keys) with every `app_manifest*` test green | §4.4 | S | A B C D |
 | ~~3~~ | ~~**§6.2 B + D** — the artifact builder~~ — **done.** `generate::artifacts_for` is the query (`abstract.md` rung 4) and `destroy` recomputes through it (rung 5), so `KIND_FILES` and `NO_FILE_TABLE` are gone: −1,017 lines from `generate.rs`, which took the largest module from 2,379 production lines to 1,813. The record still wins where there is one (§11.2 unchanged); recomputation is the answer for a project that predates `.jails/`, and the six kinds it cannot answer for are declared in `tests/agreement.rs` with the argument no generic shape can guess | §6.2 | 1 day | A B C D |
 | ~~4~~ | ~~Scaffold **refuses** an unmapped project-typed component~~ — **done.** The teaching refusal (read the referenced record's stored `@pk`, name the two commands that do the job) was already written but shadowed by a generic refusal raised earlier in `scaffold_artifacts`; the generic one is gone and all four persistence refusals now name the offending component as `name:Type` and carry a `fix:` line | §9.2 | S | B C |
-| 5 | `jails test --fast` + `jails bench` | §10.2 | M | D first |
+| ~~5a~~ | ~~`jails test --fast`~~ — **shipped, and measured before being claimed.** Console launcher over the compiled classes, with the JUnit version derived from the project's own (a guessed pin resolved fine and died with `NoSuchMethodError` — `junit-bom` constrains every artifact to one version, confirmed in `deps/junit-framework`). Falls back loudly whenever a source is newer than the classes, nothing is compiled, or the run needs Surefire's XML. **§19.1's measurement says it does not beat `mvnd`**, so it is documented as the no-mvnd path and as step 2's substrate, not as a win | §10.2 | M | D first |
+| 5b | `jails bench` — §19.6's p99 for App C under the §5.5 k6 profile. `add loadtest` already writes the script; this runs it and reports | §5.4–5.6 | S | C |
 | ~~6~~ | ~~`g idempotency` — the retained-result receipt.~~ **done.** Receipt record, store port, PostgreSQL adapter, guard, unit test and migration. The claim is one `insert … on conflict do nothing returning`, because select-then-insert leaves the race the mechanism exists to close. Five generated tests run and pass against real Maven | §13.3 | M | C |
 | 7 | Editor: jdt.ls settings + bundles + HCR, pickers, projectionist, `jails src`, keymap split. `after/ftplugin/java.lua` and `compiler/jails.vim` landed; the rest is in the dotfiles repo | §14 | S–M, no Rust | — |
 | — | **`abstract.md` rung 6 + §4.2's deriving half** — **done.** `src/apply/` is the only module that writes (`fs::write` banned elsewhere by `tests/architecture.rs`), and `doctor::capability_drift_checks` re-plans every recorded capability through `add::plan_for`, closing a drift class that had no test | §11, §4.2 | M | A B C D |
@@ -1374,8 +1375,38 @@ read-only and instant, so folding them would cost the property that makes
 
 ## 19. Measure before promising
 
-1. Console-launcher wall time here (est. 0.35–0.6 s) and the resident-JVM band
-   (est. 50–150 ms).
+1. ~~Console-launcher wall time here (est. 0.35–0.6 s)~~ — **measured, and the
+   estimate was right about the launcher and wrong about what it beats.**
+
+   One test method, `jails new-cli` project, three runs each:
+
+   | path | wall clock |
+   |---|---|
+   | `mvn -q test -Dtest=NoteTest` | 2.14 / 2.19 / 2.31 s |
+   | `jails test NoteTest` (mvnd, the default) | 0.62 / 0.62 / 0.59 s |
+   | `jails test --fast NoteTest` (console launcher) | 0.60 / 0.59 / 0.61 s |
+
+   The whole suite is the same story (0.62–0.72 s mvnd, 0.67–0.77 s `--fast`).
+
+   **So `--fast` does not beat the default here, and the plan's 2.57 s baseline
+   was `mvn`, which is not what jails runs.** `run.rs` prefers `mvnd`, and the
+   daemon has already removed the JVM-start and dependency-resolution cost that
+   the launcher was going to remove. What is left in both is ~0.6 s of *cold
+   `java` process*, which is exactly the floor step 1 cannot go below.
+
+   Two things follow, and both are the opposite of "ship it and claim a win":
+
+   - `--fast` earns its place where mvnd does not run — and `CLAUDE.md` records
+     that this machine's mvnd is flaky under JDK 26, which is a real case. It
+     is 2.2 s → 0.6 s there, a 3.6× win. It is not a default and must not be
+     described as faster than one.
+   - **The latency item that matters is step 2, `jails testd`** (§17 item 13),
+     because a resident JVM is the only thing that removes the 0.6 s floor.
+     Step 1 is now its substrate — the selector translation, the cached test
+     classpath and the staleness gate are all reusable — rather than a win in
+     itself.
+
+   The resident-JVM band (est. 50–150 ms) is still unmeasured.
 2. The cost of a fresh `URLClassLoader` per `testd` run.
 3. How many distinct Spring contexts the proof apps build (`missCount` under
    `org.springframework.test.context.cache=DEBUG`). At 293 s and 123 tests

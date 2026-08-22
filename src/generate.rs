@@ -493,7 +493,7 @@ pub(crate) fn generate_in_project(
     // effect of writing a class, so `--pretend` named two files and the real
     // run wrote three.
     let mut artifacts = artifacts;
-    let mut planned = planned_package_infos(&root, &artifacts);
+    let mut planned = planned_package_infos(&root, project.pom(), &artifacts);
     if !planned.is_empty() {
         planned.append(&mut artifacts);
         artifacts = planned;

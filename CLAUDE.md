@@ -182,6 +182,18 @@ to build next and why. Do not add proposals here.
   Marked service blocks so `add db` and `add kafka` stack, and `remove` can
   take one service out without touching the other. Also `start`/`stop`
   (`docker compose up/stop`) and the auto-start `run` shells out to.
+- `src/launcher.rs` — `jails test --fast`: JUnit's console launcher over the
+  already-compiled classes, no Maven. Three things worth knowing before
+  touching it. **The console artifact's version must equal the project's own
+  JUnit version** — a mismatch resolves fine and dies at run time with
+  `NoSuchMethodError` wrapped in "versions not properly aligned"; `junit-bom`
+  constrains every artifact to one number from JUnit 6 (confirmed in
+  `deps/junit-framework/junit-bom`), while JUnit 5 paired jupiter `5.y.z` with
+  platform `1.y.z`. **`staleness()` must never read "no class files" as
+  "nothing is stale"** — that would run an empty classpath and report success.
+  And **`--fast` does not beat `mvnd`**: `plan.md` §19.1 has the numbers, it is
+  the no-mvnd path and the substrate for `jails testd`, and it must not be
+  described as faster than the default.
 - `src/run.rs` — `test`/`build`/`clean`/`run`, shells to `mvn`/`mvnd`. `run`/`watch`
   start compose services first when `compose.yaml` is present.
 - `src/console.rs` — `db`/`dbconsole` (`psql` or `sqlite3`) and `console`/`c`

@@ -713,6 +713,31 @@ confidence than the five before it. Three answers, in descending strength:
 Metz's rule is about *speculative* abstraction. Where a gate is missed, her rule
 wins and the rung goes back.
 
+### 8.0 What the rung-1 gate was measuring, and what it measures now
+
+The `root: &Path` count is a proxy, and by now a leaky one: `build.rs` asks
+what builds a directory, `ledger.rs` and `launcher.rs` read files under one,
+`apply/` writes them. Their subject *is* a path, so every honest new module
+pushed the number up and made a target of 40 read as a demand to stop writing
+modules. Two corrections, both from looking at the code rather than the number:
+
+- **`module_root: &Path` and `workspace_root: &Path` were being counted**, so
+  `project.rs` — which walks a Maven reactor and *must* read each pom on the
+  way — looked like the disease. Fixing the word boundary took the raw count
+  from 149 to 141. That is the third measurement bug this gate has had, after
+  the trailing comma and the `let` binding, and the pattern is worth stating:
+  **a substring is not a token.**
+- **A second gate now measures the disease itself**: a function handed
+  `root: &Path` that goes back to disk for a fact the resolved `Project` is
+  already holding. Six, when it was first measured; five now (`project_release`
+  and `planned_package_infos` ask the `Project`), against a target of nought.
+  Exempted are the functions that exist *to* derive — the constructors,
+  `base_package`, and all of `new`, which runs before there is a project to
+  resolve.
+
+The raw count stays as a ratchet, because a module that hoards paths is still
+worth noticing. It is the second gate that says whether rung 1 is done.
+
 ### 8.1 Rung 1 is in flight, and its gate is moving the wrong way
 
 Recorded 2026-08-22, after `7e92586` ("Unify project and change planning")

@@ -229,7 +229,12 @@ pub(crate) fn ensure_package_info(root: &Path, class_path: &Path) -> Result<()> 
     if class_path == info || info.exists() {
         return Ok(());
     }
-    if !jspecify_available(root) {
+    // Read here rather than threaded in: `write_new_file`'s nine callers
+    // include `new`, which is creating the pom this would be read from. The
+    // pure `jspecify_available` above is the half that matters -- this is the
+    // belt to `planned_package_infos`' braces, and it runs only for a path
+    // that has no `package-info.java` yet.
+    if !jspecify_available(&crate::pom::read(root).unwrap_or_default()) {
         return Ok(());
     }
     let Some(pkg) = package_of_dir(root, dir) else {
@@ -271,8 +276,12 @@ import org.jspecify.annotations.NullMarked;
 /// do is exactly the drift this costs elsewhere. They are prepended to the
 /// plan so each lands before the class that needed it, at which point
 /// `ensure_package_info` finds the file present and does nothing.
-pub(crate) fn planned_package_infos(root: &Path, artifacts: &[Artifact]) -> Vec<Artifact> {
-    if !jspecify_available(root) {
+pub(crate) fn planned_package_infos(
+    root: &Path,
+    pom: &str,
+    artifacts: &[Artifact],
+) -> Vec<Artifact> {
+    if !jspecify_available(pom) {
         return Vec::new();
     }
     let mut planned = Vec::new();
@@ -310,10 +319,8 @@ pub(crate) fn planned_package_infos(root: &Path, artifacts: &[Artifact]) -> Vec<
 /// Annotating a package that cannot resolve `@NullMarked` would hand the
 /// reader a compile error for a file they did not ask for, which is the exact
 /// opposite of what a scaffold is for.
-pub(crate) fn jspecify_available(root: &Path) -> bool {
-    crate::pom::read(root)
-        .map(|pom| crate::pom::has_dependency(&pom, "org.jspecify", "jspecify"))
-        .unwrap_or(false)
+pub(crate) fn jspecify_available(pom: &str) -> bool {
+    crate::pom::has_dependency(pom, "org.jspecify", "jspecify")
 }
 
 /// The package name for a directory under `src/main/java`.

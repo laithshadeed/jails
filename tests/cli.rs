@@ -6083,3 +6083,24 @@ fn adopt_teaches_jails_where_an_existing_project_keeps_things() {
     assert!(after.contains("Web"), "{after}");
     assert!(after.contains("Adapters"), "{after}");
 }
+
+/// `plan.md` §10.2. The measured finding is recorded in §19.1: `--fast` does
+/// not beat `mvnd`, so what this test pins is not speed but the two properties
+/// that make the path safe to offer at all.
+#[test]
+fn test_fast_runs_compiled_classes_and_falls_back_loudly_when_they_are_stale() {
+    let root = temp_dir("test-fast");
+    write_plain_fixture(&root);
+
+    // Nothing compiled: refused rather than reporting a green run over an
+    // empty classpath.
+    let cold = jails_cmd(&root, None)
+        .args(["test", "--fast"])
+        .output()
+        .unwrap();
+    let report = String::from_utf8_lossy(&cold.stdout);
+    assert!(
+        report.contains("--fast not taken"),
+        "an uncompiled project must not take the fast path: {report}"
+    );
+}

@@ -66,13 +66,39 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // available to them, and this is the containment boundary
                 // rather than the disease. `run.rs`'s eight call sites fold
                 // into one `maven_root`, which is why it is four and not five.
-                ceiling: 143,
+                ceiling: 139,
                 target: 40,
                 why: "Every one is a fact re-derived from a primitive instead of read off \
                       the resolved `Project`. This is the count abstract.md §8.1 watched \
                       rise from 161 to 195 with nothing to say so.",
             },
             root_path_parameters(&src),
+        ),
+        (
+            Ratchet {
+                name: "root-taking functions that re-derive a project fact",
+                rung: "1 — Introduce Parameter Object (`Project`)",
+                // The row above counts every `root: &Path`, and by now that
+                // includes modules whose whole subject *is* a path --
+                // `build.rs` asks what builds a directory, `ledger.rs` and
+                // `launcher.rs` read files under one. Those are the
+                // containment, not the disease, and the raw count rises every
+                // time one is added, which makes its target of 40 read as a
+                // demand to stop writing modules.
+                //
+                // This is the disease itself, in abstract.md §2's own words:
+                // a function handed a primitive that then goes back to disk
+                // for a fact the resolved `Project` is already holding.
+                // Exempted below are the functions that exist *to* do that --
+                // the constructors, `base_package` itself, and `new`, which
+                // runs before any project exists to resolve.
+                ceiling: 5,
+                target: 0,
+                why: "Feature Envy on `Project`: a second read of the pom for a fact the \
+                      caller already resolved, which is how two answers to one question \
+                      appear in one run.",
+            },
+            rederivers(&src).len(),
         ),
         (
             Ratchet {
@@ -552,9 +578,89 @@ fn root_path_parameters(src: &[Source]) -> usize {
                 .iter()
                 .flat_map(|spelling| file.production.match_indices(spelling))
                 .filter(|(at, _)| !file.production[..*at].trim_end().ends_with("let"))
+                // `module_root: &Path` and `workspace_root: &Path` are not
+                // this parameter. Counting them inflated the number by six and
+                // made `project.rs` -- which walks a reactor and *must* read
+                // each pom along the way -- look like the disease.
+                .filter(|(at, _)| {
+                    file.production[..*at]
+                        .chars()
+                        .next_back()
+                        .is_none_or(|before| !before.is_alphanumeric() && before != '_')
+                })
                 .count()
         })
         .sum()
+}
+
+/// Functions that exist *to* turn a path into project facts, so re-deriving is
+/// their whole job rather than envy of someone else's.
+///
+/// `new` is here in full: it runs before a project exists to resolve, which is
+/// the one situation where there is no `Project` to have been passed.
+const DERIVATION_IS_THE_JOB: &[&str] = &[
+    "load",
+    "inspect",
+    "base_package",
+    "project_with_pom",
+    "verify_requested_deps",
+    "add_jspecify",
+    "write_agents",
+    "ensure_enforcer",
+];
+
+/// `(file, function)` for every `root: &Path` function that goes back to disk
+/// for something a resolved `Project` already holds.
+fn rederivers(src: &[Source]) -> Vec<(String, String)> {
+    const FACTS: &[&str] = &[
+        "pom::read",
+        "base_package(",
+        "Project::load",
+        "Project::inspect",
+        "Config::load",
+        "pom::flavor",
+        "release_level",
+    ];
+    let mut found = Vec::new();
+    for file in src {
+        let lines: Vec<&str> = file.production.lines().collect();
+        let mut index = 0;
+        while index < lines.len() {
+            let trimmed = lines[index].trim_start();
+            if !trimmed.contains("fn ") {
+                index += 1;
+                continue;
+            }
+            let indent = lines[index].len() - trimmed.len();
+            let close = format!("{}}}", " ".repeat(indent));
+            let Some(end) = (index..lines.len()).find(|at| lines[*at] == close) else {
+                index += 1;
+                continue;
+            };
+            let body = lines[index..=end].join("\n");
+            let signature = body.split('{').next().unwrap_or_default();
+            let name = signature
+                .split("fn ")
+                .nth(1)
+                .and_then(|rest| rest.split(['(', '<']).next())
+                .unwrap_or_default()
+                .to_string();
+            let takes_root = signature.match_indices("root: &Path").any(|(at, _)| {
+                signature[..at]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|before| !before.is_alphanumeric() && before != '_')
+            });
+            if takes_root
+                && FACTS.iter().any(|fact| body.contains(fact))
+                && !DERIVATION_IS_THE_JOB.contains(&name.as_str())
+            {
+                found.push((file.path.display().to_string(), name));
+            }
+            index = end + 1;
+        }
+    }
+    found
 }
 
 /// Lines of a file that are neither blank nor inside a `#[cfg(test)]` module.

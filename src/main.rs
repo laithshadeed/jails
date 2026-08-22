@@ -15,6 +15,7 @@ mod inspect;
 mod java;
 mod json;
 mod kafka;
+mod launcher;
 mod ledger;
 mod lint;
 mod migrate;
@@ -437,6 +438,11 @@ enum Command {
         /// Emit the run as JSON instead of Maven's output, read from the reports
         #[arg(long)]
         json: bool,
+        /// Skip Maven and run the already-compiled classes through JUnit's
+        /// console launcher. Falls back to the full path, loudly, whenever a
+        /// source file is newer than the classes.
+        #[arg(long)]
+        fast: bool,
     },
     /// Build the project (mvn package)
     Build,
@@ -655,6 +661,7 @@ fn main() -> std::process::ExitCode {
             fail_fast,
             slowest,
             json,
+            fast,
         } => run::test(
             filter.as_deref(),
             run::TestOptions {
@@ -662,6 +669,7 @@ fn main() -> std::process::ExitCode {
                 fail_fast,
                 slowest,
                 json,
+                fast,
             },
             debug,
         ),

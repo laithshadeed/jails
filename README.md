@@ -450,6 +450,17 @@ it already draws for hand-written properties inside a jails-owned block.
   already timed them; a number jails measured would include its own startup).
   On a failure it prints the line that reruns just what broke.
   A filter matching nothing is "no tests ran", not a stack trace.
+
+  **`--fast`** skips Maven entirely and runs the already-compiled classes
+  through JUnit's console launcher. Measured here: 2.2 s → 0.6 s against plain
+  `mvn`, and **no faster than the `mvnd` daemon jails already prefers**, whose
+  0.6 s it merely matches. Use it when mvnd is not available or not working; do
+  not expect it to beat the default. Whenever a source file is newer than the
+  compiled classes — or nothing is compiled, or you asked for `--json`,
+  `--slowest` or `--fail-fast`, which read Surefire's XML — it says why and runs
+  the full Maven path instead. Running stale classes silently would be green
+  over code that no longer exists, which is the one outcome worse than being
+  slow. `jails check` is always `mvn clean verify` and is not affected.
   Any command that writes an `*IT` also splices the Failsafe plugin, because
   it is *not* part of the Spring Boot parent's default build — without it
   `mvn verify` completes, reports success, and runs none of them.

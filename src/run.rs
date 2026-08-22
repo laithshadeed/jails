@@ -261,6 +261,8 @@ pub struct TestOptions {
     pub slowest: Option<usize>,
     /// Report the run as JSON instead of Maven's own output.
     pub json: bool,
+    /// Skip Maven entirely and run the compiled classes (`plan.md` §10.2).
+    pub fast: bool,
 }
 
 pub fn test(filter: Option<&str>, options: TestOptions, debug: bool) -> Result<()> {
@@ -285,6 +287,39 @@ pub fn test(filter: Option<&str>, options: TestOptions, debug: bool) -> Result<(
     } else {
         filter
     };
+
+    // The fast path, and every way out of it. `plan.md` §10.2's rule is that a
+    // fast path falls back *loudly*: the failure this prevents is a green run
+    // over classes that no longer match the source, which is worse than any
+    // slowness.
+    if options.fast {
+        // One Maven run, the first time: the launcher class has to be on the
+        // test classpath, and jails supplies what it needs to run rather than
+        // handing the reader a `ClassNotFoundException` for a line they did
+        // not write. Idempotent, so every later `--fast` skips it.
+        ensure_console_launcher(&root, debug)?;
+        match fast_path_refusal(&root, &options) {
+            Some(reason) => {
+                println!("--fast not taken: {reason}");
+                println!("Running the full Maven path instead.");
+            }
+            None => {
+                let resolved = filter
+                    .map(|f| resolve_filter(&root, f))
+                    .transpose()?
+                    .and_then(|f| crate::launcher::fully_qualified(&root, &f));
+                if filter.is_some() && resolved.is_none() {
+                    println!(
+                        "--fast not taken: could not resolve `{}` to a fully qualified name.",
+                        filter.unwrap_or_default()
+                    );
+                    println!("Running the full Maven path instead.");
+                } else {
+                    return crate::launcher::run_fast(&root, resolved.as_deref(), debug);
+                }
+            }
+        }
+    }
 
     let mut cmd = Command::new(maven_binary(&root));
     let mut rerun_hint: Option<String> = None;
@@ -435,6 +470,72 @@ fn report_slowest(root: &Path, count: usize) {
 /// Only one shape needs work: `path/to/FooTest.java:42`, which JUnit cannot
 /// resolve itself -- Jupiter has no `FileSelector` -- so an editor
 /// keybinding has nothing to send unless jails does it.
+/// Put JUnit's console launcher on the test classpath, once.
+fn ensure_console_launcher(root: &Path, debug: bool) -> Result<()> {
+    let pom = crate::pom::read(root)?;
+    if pom.contains("junit-platform-console") {
+        return Ok(());
+    }
+    let version = match crate::launcher::console_version(&pom) {
+        crate::launcher::ConsoleVersion::Managed => None,
+        // Leaked deliberately: `pom::Dependency` is a compile-time constant
+        // everywhere else, this one string is derived once per process, and it
+        // has to outlive the splice. Threading a lifetime through forty const
+        // declarations to avoid one CLI-lifetime allocation is the worse trade.
+        crate::launcher::ConsoleVersion::Pinned(version) => Some(&*version.leak()),
+        crate::launcher::ConsoleVersion::Unknown => {
+            return Err(
+                "this project declares no JUnit version, so jails cannot align the console \
+                 launcher with it.\n       \
+                 A mismatched launcher resolves fine and then dies with NoSuchMethodError.\n       \
+                 fix: declare org.junit.jupiter:junit-jupiter (or import junit-bom), then \
+                 retry --fast."
+                    .to_string(),
+            );
+        }
+    };
+    let dependency = crate::pom::Dependency {
+        group_id: "org.junit.platform",
+        artifact_id: "junit-platform-console",
+        version,
+        scope: Some("test"),
+        optional: false,
+    };
+    let Some(updated) = crate::pom::add_dependency(&pom, &dependency)? else {
+        return Ok(());
+    };
+    crate::apply::put_named(root.join("pom.xml"), updated, "pom.xml")?;
+    println!(
+        "added {}:{} (test scope) -- `--fast` runs JUnit's console launcher directly",
+        dependency.group_id, dependency.artifact_id
+    );
+    let _ = debug;
+    Ok(())
+}
+
+/// Why `--fast` cannot be used for this run, if it cannot.
+///
+/// `--json` and `--slowest` read Surefire's XML, which the console launcher
+/// does not write. Producing an empty report would be worse than declining:
+/// the three ways jails reports a run all read one source, and that is what
+/// stops them disagreeing about what ran.
+fn fast_path_refusal(root: &Path, options: &TestOptions) -> Option<String> {
+    if options.json {
+        return Some(
+            "--json reads Surefire's XML, which the console launcher does not write".into(),
+        );
+    }
+    if options.slowest.is_some() {
+        return Some(
+            "--slowest reads Surefire's XML, which the console launcher does not write".into(),
+        );
+    }
+    if options.fail_fast {
+        return Some("--fail-fast is a Surefire setting".into());
+    }
+    crate::launcher::staleness(root).map(|stale| stale.explain())
+}
+
 fn resolve_filter(root: &Path, filter: &str) -> Result<String> {
     let Some((path, line)) = split_file_line(filter) else {
         return Ok(filter.to_string());

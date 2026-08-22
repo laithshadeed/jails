@@ -332,7 +332,7 @@ const SETUP_JAVA_SHA: &str = "03ad4de0992f5dab5e18fcb136590ce7c4a0ac95"; // v5.6
 
 pub(super) fn ci_plan(slice: &Slice) -> Result<Change> {
     let root: &Path = slice.root();
-    let release = project_release(root)?;
+    let release = project_release(slice.project())?;
     Ok(Change {
         files: vec![Artifact {
             kind: "capability file",
@@ -345,7 +345,7 @@ pub(super) fn ci_plan(slice: &Slice) -> Result<Change> {
 
 pub(super) fn docker_plan(slice: &Slice) -> Result<Change> {
     let root: &Path = slice.root();
-    let release = project_release(root)?;
+    let release = project_release(slice.project())?;
     Ok(Change {
         files: vec![
             Artifact {
@@ -570,9 +570,13 @@ spec:
     )
 }
 
-fn project_release(root: &Path) -> Result<u32> {
-    let text = crate::pom::read(root)?;
-    crate::pom::release_level(&text).ok_or_else(|| {
+/// The Java release, from the `Project` the caller already resolved.
+///
+/// It used to read the pom again. That is `abstract.md` §2's Feature Envy in
+/// its smallest form: two answers to one question in one run, and the second
+/// one arrives after `add` may have spliced the pom.
+fn project_release(project: &crate::model::Project) -> Result<u32> {
+    project.java_release().ok_or_else(|| {
         "pom.xml has no Java release; Jails cannot choose a compatible CI or container toolchain"
             .to_string()
     })
