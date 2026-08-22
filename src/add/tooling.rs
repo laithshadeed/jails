@@ -15,37 +15,39 @@ use super::*;
 /// shipped in the JDK since 6 and is a supported API, and `java.net.http`
 /// gives the test its client. A framework here would be the biggest dependency
 /// in the project and buy nothing a route map does not.
-pub(super) fn http_plan(root: &std::path::Path, pkg: &str, name: Option<&str>) -> Result<Plan> {
+pub(super) fn http_plan(slice: &Slice, name: Option<&str>) -> Result<Change> {
+    let root: &Path = slice.root();
+    let pkg: &str = &slice.placed(Layer::Api);
     let base = name.map(capitalize).unwrap_or_default();
     let class = format!("{base}Server");
 
-    Ok(Plan {
+    Ok(Change {
         files: vec![
-            NewFile {
+            Artifact {
                 kind: "capability file",
                 path: main_dir(root, pkg).join(format!("{class}.java")),
                 contents: http_server_java(pkg, &class),
             },
-            NewFile {
+            Artifact {
                 kind: "capability file",
                 path: test_dir(root, pkg).join(format!("{class}Test.java")),
                 contents: http_server_test_java(pkg, &class),
             },
         ],
-        ..Plan::default()
+        ..Change::default()
     })
 }
 
 pub(super) fn http_server_java(pkg: &str, class: &str) -> String {
     crate::template::render(
-        include_str!("../../templates/add/http_server_java.java"),
+        crate::template::template!("add/http_server_java.java"),
         &[("pkg", pkg), ("class", class)],
     )
 }
 
 pub(super) fn http_server_test_java(pkg: &str, class: &str) -> String {
     crate::template::render(
-        include_str!("../../templates/add/http_server_test_java.java"),
+        crate::template::template!("add/http_server_test_java.java"),
         &[("pkg", pkg), ("class", class)],
     )
 }
@@ -58,15 +60,16 @@ pub(super) fn http_server_test_java(pkg: &str, class: &str) -> String {
 /// apply. Formatting nobody has to think about is the only kind that survives.
 pub(super) const SPOTLESS_ARTIFACT: &str = "spotless-maven-plugin";
 
-pub(super) fn format_plan(root: &Path) -> Result<Plan> {
-    Ok(Plan {
+pub(super) fn format_plan(slice: &Slice) -> Result<Change> {
+    let root: &Path = slice.root();
+    Ok(Change {
         plugins: vec![(SPOTLESS_ARTIFACT, SPOTLESS_PLUGIN.to_string())],
-        files: vec![NewFile {
+        files: vec![Artifact {
             kind: "capability file",
             path: root.join(".editorconfig"),
             contents: EDITORCONFIG.to_string(),
         }],
-        ..Plan::default()
+        ..Change::default()
     })
 }
 
@@ -126,10 +129,10 @@ pub(super) const JACOCO_ARTIFACT: &str = "jacoco-maven-plugin";
 /// Coverage is a gate, not just a report someone may remember to inspect.
 /// The threshold is intentionally explicit and can be raised in the POM as
 /// the project matures; generated projects start with a useful 80% line bar.
-pub(super) fn coverage_plan() -> Result<Plan> {
-    Ok(Plan {
+pub(super) fn coverage_plan() -> Result<Change> {
+    Ok(Change {
         plugins: vec![(JACOCO_ARTIFACT, JACOCO_PLUGIN.to_string())],
-        ..Plan::default()
+        ..Change::default()
     })
 }
 
@@ -173,7 +176,8 @@ pub(super) const JACOCO_PLUGIN: &str = r#"<plugin>
 // loadtest
 // ---------------------------------------------------------------------------
 
-pub(super) fn loadtest_plan(root: &Path) -> Result<Plan> {
+pub(super) fn loadtest_plan(slice: &Slice) -> Result<Change> {
+    let root: &Path = slice.root();
     let routes = crate::inspect::collect_routes(root);
     if routes.is_empty() {
         return Err("no HTTP routes were found under src/main/java.\n       \
@@ -181,40 +185,40 @@ pub(super) fn loadtest_plan(root: &Path) -> Result<Plan> {
             .to_string());
     }
     let dir = root.join("load-tests");
-    Ok(Plan {
+    Ok(Change {
         files: vec![
-            NewFile {
+            Artifact {
                 kind: "capability file",
                 path: dir.join("load-test.js"),
                 contents: load_test_js(),
             },
-            NewFile {
+            Artifact {
                 kind: "capability file",
                 path: dir.join("api.js"),
                 contents: load_api_js(&routes),
             },
-            NewFile {
+            Artifact {
                 kind: "capability file",
                 path: dir.join("payload-builder.js"),
                 contents: payload_builder_js(),
             },
-            NewFile {
+            Artifact {
                 kind: "capability file",
                 path: dir.join("token-cache.js"),
                 contents: token_cache_js(),
             },
-            NewFile {
+            Artifact {
                 kind: "capability file",
                 path: dir.join("Makefile"),
                 contents: loadtest_makefile(),
             },
-            NewFile {
+            Artifact {
                 kind: "capability file",
                 path: dir.join("README.md"),
                 contents: loadtest_readme(),
             },
         ],
-        ..Plan::default()
+        ..Change::default()
     })
 }
 
@@ -247,9 +251,9 @@ fn load_api_js(routes: &[crate::inspect::Route]) -> String {
         .map(|route| {
             format!(
                 "  {{ method: {}, path: {}, handler: {} }}",
-                crate::project::json_string(&route.verb),
-                crate::project::json_string(&load_path(&route.path)),
-                crate::project::json_string(&route.handler),
+                crate::json::string(&route.verb),
+                crate::json::string(&load_path(&route.path)),
+                crate::json::string(&route.handler),
             )
         })
         .collect::<Vec<_>>()
@@ -326,43 +330,47 @@ changing routes, after reviewing any local edits reported by `remove`.
 const CHECKOUT_SHA: &str = "de0fac2e4500dabe0009e67214ff5f5447ce83dd"; // v6.0.2
 const SETUP_JAVA_SHA: &str = "03ad4de0992f5dab5e18fcb136590ce7c4a0ac95"; // v5.6.0
 
-pub(super) fn ci_plan(root: &Path) -> Result<Plan> {
+pub(super) fn ci_plan(slice: &Slice) -> Result<Change> {
+    let root: &Path = slice.root();
     let release = project_release(root)?;
-    Ok(Plan {
-        files: vec![NewFile {
+    Ok(Change {
+        files: vec![Artifact {
             kind: "capability file",
             path: root.join(".github/workflows/ci.yml"),
             contents: ci_workflow(release, root.join("mvnw").is_file()),
         }],
-        ..Plan::default()
+        ..Change::default()
     })
 }
 
-pub(super) fn docker_plan(root: &Path) -> Result<Plan> {
+pub(super) fn docker_plan(slice: &Slice) -> Result<Change> {
+    let root: &Path = slice.root();
     let release = project_release(root)?;
-    Ok(Plan {
+    Ok(Change {
         files: vec![
-            NewFile {
+            Artifact {
                 kind: "capability file",
                 path: root.join("Dockerfile"),
                 contents: dockerfile(release, root.join("mvnw").is_file()),
             },
-            NewFile {
+            Artifact {
                 kind: "capability file",
                 path: root.join(".dockerignore"),
                 contents: dockerignore().to_string(),
             },
-            NewFile {
+            Artifact {
                 kind: "capability file",
                 path: root.join(".github/workflows/image.yml"),
                 contents: image_workflow(),
             },
         ],
-        ..Plan::default()
+        ..Change::default()
     })
 }
 
-pub(super) fn k8s_plan(root: &Path, flavor: Flavor) -> Result<Plan> {
+pub(super) fn k8s_plan(slice: &Slice) -> Result<Change> {
+    let root: &Path = slice.root();
+    let flavor: Flavor = slice.flavor();
     crate::spring::require_spring(flavor, "k8s")?;
     let pom = crate::pom::read(root)?;
     for (needle, fix) in [
@@ -391,34 +399,34 @@ pub(super) fn k8s_plan(root: &Path, flavor: Flavor) -> Result<Plan> {
         .unwrap_or_else(|| "application".to_string());
     let name = helm_name(&raw_name);
     let chart = root.join("deploy/chart");
-    Ok(Plan {
+    Ok(Change {
         files: vec![
-            NewFile {
+            Artifact {
                 kind: "capability file",
                 path: chart.join("Chart.yaml"),
                 contents: chart_yaml(&name),
             },
-            NewFile {
+            Artifact {
                 kind: "capability file",
                 path: chart.join("values.yaml"),
                 contents: values_yaml(&name),
             },
-            NewFile {
+            Artifact {
                 kind: "capability file",
                 path: chart.join("templates/deployment.yaml"),
                 contents: deployment_yaml(&name),
             },
-            NewFile {
+            Artifact {
                 kind: "capability file",
                 path: chart.join("templates/service.yaml"),
                 contents: service_yaml(&name),
             },
-            NewFile {
+            Artifact {
                 kind: "capability file",
                 path: chart.join("templates/configmap.yaml"),
                 contents: configmap_yaml(&name),
             },
-            NewFile {
+            Artifact {
                 kind: "capability file",
                 path: chart.join("templates/prometheus-rule.yaml"),
                 contents: prometheus_rule_yaml(&name),
@@ -429,7 +437,7 @@ pub(super) fn k8s_plan(root: &Path, flavor: Flavor) -> Result<Plan> {
                 .to_string(),
             "management.metrics.tags.pod.name=${POD_NAME:unknown}".to_string(),
         ],
-        ..Plan::default()
+        ..Change::default()
     })
 }
 

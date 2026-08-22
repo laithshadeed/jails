@@ -20,6 +20,18 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
   presence, Maven wrapper/command, and recursively declared modules. It works
   from any directory below a module. `--json` emits the versioned contract
   used by editor integrations and other tools.
+`--json` is available on `about`, `routes`, `beans`, `why`, `commands`,
+`doctor`, `stats`, `notes` and `test`. `doctor --json` and `test --json` keep
+their exit codes, so `jails doctor --json && deploy` behaves like
+`jails doctor && deploy`.
+
+- `jails explain <kind>` — what a generator kind is for and the trap it
+  invites. The generated Javadoc carries the same reasoning for whoever reads
+  the file; this is for whoever is deciding whether to generate it.
+- `jails commands [--json]` — every subcommand, generator kind, capability and
+  flag jails accepts, derived from the same definition that parses the
+  arguments, so it cannot drift from the binary. `--json` is what the Neovim
+  plugin reads instead of keeping its own completion tables.
 - `jails new <name> [--deps web,jdbc] [--java 25] [--no-git] [--no-devtools]`
   — new Spring Boot project via start.spring.io. `git init` + `.gitignore`
   and `spring-boot-devtools` (needed for `run --watch`) are on by default.
@@ -229,6 +241,20 @@ it already draws for hand-written properties inside a jails-owned block.
   `.bearer-token`, `.connect-timeout-ms`, and `.request-timeout-ms`. Every sink
   is at-least-once: if a later sink fails, earlier sinks may see the same stable
   event id again and must deduplicate it.
+- `jails generate|g idempotency <Name>` (alias `idempotent`) — at-most-once
+  execution with a **retained result**: a scoped receipt record, a store port,
+  a PostgreSQL adapter, a guard and its tests, plus the migration. Needs
+  `jails add db`.
+
+  A `@unique` column on the key already gives one row per key. What it does not
+  give is the retained result, so a retry finds the row, fails the insert, and
+  is answered 409 Conflict — telling a caller that never saw the first response
+  that the work happened while still withholding what happened. The guard has
+  four outcomes instead: run it, replay the stored response to a matching
+  retry, refuse the same key carrying a *different* request, and tell a retry
+  that arrives while the first attempt is in flight to come back. The claim is
+  a single `insert … on conflict do nothing returning`, because select-then-
+  insert leaves the race the whole mechanism exists to close.
 - `jails generate|g usecase <Name> <field:type...> --on <Resource>
   [--yields <Event>]` (alias `uc`) — an executable create operation over an
   existing scaffold: a typed command, an application port, a transactional
@@ -474,13 +500,13 @@ indexes = ["status, created_at desc"]
 kind = "usecase"
 name = "CreateTask"
 fields = []
-strategy_on = "Task"
+on = "Task"
 
 [[generate]]
 kind = "query"
 name = "TasksByStatus"
 fields = ["status:TaskStatus"]
-strategy_on = "Task"
+on = "Task"
 ```
 
 `usecase` generates a typed command, application port, transactional
@@ -510,18 +536,35 @@ one statement.
 - `jails app apply [--manifest <path>] [--no-start]` installs capabilities in
   declaration order, then applies generation intents in declaration order.
 - global `--pretend` turns `app apply` into the same read-only plan.
+- `jails new <name> --app <manifest>` and `jails new-cli <name> --app
+  <manifest>` create the project, seed the manifest into `.jails/app.toml`, and
+  apply it — one command from an empty directory to a project that passes
+  `mvn clean verify`. The manifest path is read relative to where you are
+  standing, not to the project being created.
 
-Progress is recorded after each successful intent in
-`.jails/app-state-v1`, so retrying after a later failure does not collide with
-completed generation. Capabilities remain independently idempotent through
-`jails.toml`. Changing an already-applied intent does not rewrite user code:
-it is a new intent, and the normal generator collision check stops for an
-explicit evolution step.
+Progress is recorded after each successful intent in `.jails/ledger.toml`, so
+retrying after a later failure does not collide with completed generation.
+Capabilities remain independently idempotent through `jails.toml`.
+
+Changing an already-applied intent is an **update to a known entity**, not a
+new one: an intent is identified by kind, name and package, and its fields are
+content. `apply` regenerates it and three-way merges the result over whatever
+you have edited by hand, reporting any conflict markers rather than
+overwriting. `.jails/` therefore holds exactly two files — `app.toml`, which is
+yours, and `ledger.toml`, which is jails'.
 
 The manifest is intentionally a closed schema: `schema`, `capabilities`, and
-`[[generate]]` entries with `kind`, `name`, `fields`, `indexes`, `package`,
-`strategy_on`, and `strategy_yields`. Unknown keys fail instead of being
-silently ignored. See [`examples/DOGFOOD.md`](examples/DOGFOOD.md) for the
+`[[generate]]` entries with `kind`, `name`, `fields`, `timestamps`, `indexes`,
+`package`, `on`, and `yields`. Unknown keys fail instead of being silently
+ignored.
+
+`on` and `yields` are the reference keys — the resource an intent acts on, and
+what it produces. `strategy_on` and `strategy_yields` still parse as deprecated
+aliases, so manifests written against the older spelling keep working; setting
+the same reference under both names is an error rather than a coin toss. The
+old names came from `g strategy`, which is where the flag was invented, and
+reading `strategy_on = "Task"` on a `usecase` was an implementation detail that
+had escaped into the file format. See [`examples/DOGFOOD.md`](examples/DOGFOOD.md) for the
 complete crawler and support-inbox flows and the friction ledger driving the
 next generic improvements. [`examples/ACCEPTANCE.md`](examples/ACCEPTANCE.md)
 is the executable done/not-done boundary for both applications.
@@ -754,6 +797,22 @@ require('jails').setup({ terminal_height = 12 })
 The plugin shells out to the real `jails` on PATH and deliberately
 reimplements none of its project-generation logic.
 
+## Shaping the generated code
+
+Drop a file at `.jails/templates/<name>` to replace the built-in template of
+the same name for that project, or at `~/.config/jails/templates/<name>` to do
+it for every project on the machine. The project's copy wins. The names are the
+paths under jails' own `templates/` directory — `generate/command_test.java`,
+`spring/idempotency_guard_java.java`, and so on.
+
+The placeholders are the contract. An override has to use exactly the ones the
+built-in uses, no more and no fewer; anything else is refused with a message
+naming your file and the difference. Everything else about the file is yours.
+
+The cost, stated plainly: **an overridden template is not covered by jails'
+snapshot tests**, so you own that file's output. `jails doctor` lists every
+override in effect for exactly that reason.
+
 ## Not yet
 
 Deferred out of v1 on purpose — this is meant to stay a small tool:
@@ -762,4 +821,6 @@ Deferred out of v1 on purpose — this is meant to stay a small tool:
 - A runtime bean/route view (booting the context and asking Spring itself).
   `routes` and `beans` read source instead, which is instant and works on a
   project that does not start — at the cost of anything decided at runtime.
-- Any kind of plugin system.
+- A plugin system with lifecycle hooks or third-party code. Overriding a
+  *template* is supported (see below); running arbitrary code inside jails is
+  not, and the difference is the point — data is extensible, logic is not.

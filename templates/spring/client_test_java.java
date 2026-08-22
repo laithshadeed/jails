@@ -1,0 +1,78 @@
+package {{pkg}};
+
+import com.sun.net.httpserver.HttpServer;
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * Drives the client against a real HTTP server on an ephemeral port.
+ *
+ * <p>The stub is the JDK's own {@link HttpServer} -- no extra dependency, and
+ * a real socket, so this exercises serialization, status handling and the
+ * configured base URL rather than a mock's idea of them.
+ *
+ * <p>{@code @DynamicPropertySource} is what makes the port work: it is
+ * resolved after the server binds but before the context starts, which no
+ * static property file can do.
+ */
+@SpringBootTest
+class {{name}}ClientTest {
+
+    private static HttpServer server;
+
+    @Autowired
+    private {{name}}Client client;
+
+    @BeforeAll
+    static void startStub() throws IOException {
+        // Port 0: the OS picks a free one, so parallel runs cannot collide.
+        server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("{{path}}", exchange -> {
+            byte[] body = body(exchange.getRequestURI().getPath()).getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            try (var out = exchange.getResponseBody()) {
+                out.write(body);
+            }
+        });
+        server.start();
+    }
+
+    @AfterAll
+    static void stopStub() {
+        server.stop(0);
+    }
+
+    @DynamicPropertySource
+    static void baseUrl(DynamicPropertyRegistry registry) {
+        registry.add(
+                "spring.http.serviceclient.{{group}}.base-url",
+                () -> "http://localhost:" + server.getAddress().getPort());
+    }
+
+    private static String body(String path) {
+        return path.equals("{{path}}")
+                ? "[{\"id\":\"1\",\"name\":\"first\"}]"
+                : "{\"id\":\"1\",\"name\":\"first\"}";
+    }
+
+    @Test
+    void findAllReadsTheCollection() {
+        assertThat(client.findAll()).containsExactly(new {{name}}Client.{{name}}Payload("1", "first"));
+    }
+
+    @Test
+    void findByIdReadsOneItem() {
+        assertThat(client.findById("1").name()).isEqualTo("first");
+    }
+}

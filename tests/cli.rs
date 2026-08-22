@@ -412,14 +412,14 @@ fn generate_field_updates_unchanged_derivatives_preserves_edits_and_adds_a_migra
         "{migration}"
     );
 
-    let files = fs::read_to_string(root.join(".jails/files")).unwrap();
+    let ledger = fs::read_to_string(root.join(".jails/ledger.toml")).unwrap();
     assert!(
-        files.contains("src/main/resources/db/migration/V002__add_created_at_to_notes.sql"),
-        "{files}"
+        ledger.contains("src/main/resources/db/migration/V002__add_created_at_to_notes.sql"),
+        "the new migration is recorded against the intent that wrote it: {ledger}"
     );
-    assert_eq!(
-        fs::read_to_string(root.join(".jails/version")).unwrap(),
-        format!("{}\n", env!("CARGO_PKG_VERSION"))
+    assert!(
+        ledger.contains(&format!("version = \"{}\"", env!("CARGO_PKG_VERSION"))),
+        "{ledger}"
     );
 
     let duplicate = jails_cmd(&root, None)
@@ -561,6 +561,127 @@ fn scaffold_writes_http_requests_and_factory_builds_typed_test_data() {
 }
 
 #[test]
+fn new_cli_with_an_app_manifest_is_one_command_from_an_empty_directory() {
+    // plan.md §18 closes by asking which two commands should have been one,
+    // and answers itself: `new` + `mkdir .jails` + `cp app.toml` + `app apply`
+    // is four steps that only ever appear together. §0.4 tracks the count as a
+    // scorecard metric with a target of 1.
+    let workspace = temp_dir("new-app-manifest");
+    fs::create_dir_all(&workspace).unwrap();
+    let manifest = workspace.join("app.toml");
+    fs::write(
+        &manifest,
+        "schema = 1
+
+[[generate]]
+kind = \"record\"
+name = \"Entry\"
+fields = [\"id:uuid\", \"label:string!\"]
+",
+    )
+    .unwrap();
+
+    let created = std::process::Command::new(env!("CARGO_BIN_EXE_jails"))
+        .current_dir(&workspace)
+        .args(["new-cli", "demo", "--no-git", "--app"])
+        .arg(&manifest)
+        .output()
+        .unwrap();
+    assert!(
+        created.status.success(),
+        "{}",
+        String::from_utf8_lossy(&created.stderr)
+    );
+
+    let root = workspace.join("demo");
+    // The manifest is seeded where `app apply` will find it next time...
+    assert!(root.join(".jails/app.toml").is_file());
+    // ...and its intents are already applied, against the project that was
+    // just created rather than whatever encloses the process CWD.
+    assert!(
+        root.join("src/main/java/com/example/demo/domain/Entry.java")
+            .is_file(),
+        "the manifest's intent should have been applied"
+    );
+    assert!(
+        root.join("src/test/java/com/example/demo/domain/EntryTest.java")
+            .is_file()
+    );
+}
+
+#[test]
+fn new_with_an_unreadable_app_manifest_says_so_with_a_fix() {
+    let workspace = temp_dir("new-app-missing");
+    fs::create_dir_all(&workspace).unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_jails"))
+        .current_dir(&workspace)
+        .args(["new-cli", "demo", "--no-git", "--app", "nope.toml"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("application manifest"), "{stderr}");
+    assert!(stderr.contains("fix:"), "{stderr}");
+}
+
+/// The generated guard has to *run*, not merely compile.
+///
+/// Every claim this generator makes is behavioural -- a retry replays rather
+/// than conflicts, a reused key is refused, an in-flight key is told to wait --
+/// and none of it is visible to a compile check. The generated unit test
+/// asserts all four outcomes, so the thing to verify here is that Surefire
+/// actually executes it: `plan.md` §18's standing warning is that a skipped
+/// tier-3 test reports as a pass.
+#[test]
+fn generate_idempotency_produces_tests_that_run_and_pass() {
+    if !real_mvn_available() {
+        skip("mvn not found on PATH");
+        return;
+    }
+    if !real_java_supports_target_release() {
+        skip("javac does not accept the target release");
+        return;
+    }
+    let root = temp_dir("idempotency-real");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+
+    assert!(
+        jails_cmd(&root, None)
+            .args(["add", "db", "--no-start"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        jails_cmd(&root, None)
+            .args(["g", "idempotency", "Request"])
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let output = std::process::Command::new("mvn")
+        .current_dir(&root)
+        .env("PATH", real_path_without_mvnd())
+        .args([
+            "-o",
+            "-q",
+            "-Dtest=RequestGuardTest",
+            "-DfailIfNoTests=true",
+            "test",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "the generated guard test must compile and pass:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn app_init_creates_a_parseable_starter_manifest() {
     let root = temp_dir("app-init");
     write_project_skeleton(&root);
@@ -666,6 +787,161 @@ fn app_manifest_formats_the_complete_generated_tree_once() {
 }
 
 #[test]
+fn app_manifest_merges_an_edited_intent_over_user_changes() {
+    let root = temp_dir("app-intent-merge");
+    write_plain_fixture(&root);
+    let git = std::process::Command::new("git")
+        .args(["init", "--quiet"])
+        .current_dir(&root)
+        .status();
+    if !git.is_ok_and(|status| status.success()) {
+        skip("git not found on PATH");
+        return;
+    }
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    let manifest = root.join(".jails/app.toml");
+    fs::write(
+        &manifest,
+        "schema = 1\ncapabilities = []\n\n[[generate]]\nkind = \"record\"\nname = \"Note\"\nfields = [\"id:uuid@pk\"]\n",
+    )
+    .unwrap();
+
+    let first = jails_cmd(&root, None)
+        .args(["app", "apply", "--no-start"])
+        .output()
+        .unwrap();
+    assert!(
+        first.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&first.stdout),
+        String::from_utf8_lossy(&first.stderr)
+    );
+    // Simulate a project written by the schema-1 state format. The migration
+    // must recover the old field spec from the recorded model (the legacy comma
+    // join was ambiguous for map<K,V>) and fold this file into the one ledger,
+    // removing it -- two registries that disagree are worse than one.
+    fs::write(
+        root.join(".jails/app-state-v1"),
+        "schema=1\nrecord|Note||id:uuid@pk|false|||\n",
+    )
+    .unwrap();
+    let record = root.join("src/main/java/com/example/demo/domain/Note.java");
+    let source = fs::read_to_string(&record).unwrap();
+    let edited = source.replacen(
+        "\n}\n",
+        "\n\n    public String userLabel() { return id.toString(); }\n}\n",
+        1,
+    );
+    assert_ne!(edited, source);
+    fs::write(&record, edited).unwrap();
+    fs::write(
+        &manifest,
+        "schema = 1\ncapabilities = []\n\n[[generate]]\nkind = \"record\"\nname = \"Note\"\nfields = [\"id:uuid@pk\", \"title:string!\"]\n",
+    )
+    .unwrap();
+
+    let plan = jails_cmd(&root, None)
+        .args(["app", "plan"])
+        .output()
+        .unwrap();
+    assert!(plan.status.success());
+    assert!(
+        String::from_utf8_lossy(&plan.stdout).contains("update   generate record Note"),
+        "{}",
+        String::from_utf8_lossy(&plan.stdout)
+    );
+    let update = jails_cmd(&root, None)
+        .args(["app", "apply", "--no-start"])
+        .output()
+        .unwrap();
+    assert!(
+        update.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&update.stdout),
+        String::from_utf8_lossy(&update.stderr)
+    );
+    let merged = fs::read_to_string(&record).unwrap();
+    assert!(merged.contains("String title"), "{merged}");
+    assert!(merged.contains("userLabel()"), "{merged}");
+    assert!(!merged.contains("<<<<<<<"), "{merged}");
+    let ledger = fs::read_to_string(root.join(".jails/ledger.toml")).unwrap();
+    assert!(
+        ledger.contains("recipe = \"record\"") && ledger.contains("name = \"Note\""),
+        "the applied intent is on the one ledger: {ledger}"
+    );
+
+    let second = jails_cmd(&root, None)
+        .args(["app", "apply", "--no-start"])
+        .output()
+        .unwrap();
+    assert!(second.status.success());
+    assert!(
+        String::from_utf8_lossy(&second.stdout).contains("applied  generate record Note"),
+        "{}",
+        String::from_utf8_lossy(&second.stdout)
+    );
+}
+
+#[test]
+fn app_manifest_refuses_an_intent_update_without_git_before_writing() {
+    let root = temp_dir("app-intent-no-git");
+    write_plain_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    let manifest = root.join(".jails/app.toml");
+    fs::write(
+        &manifest,
+        "schema = 1\ncapabilities = []\n\n[[generate]]\nkind = \"record\"\nname = \"Note\"\nfields = [\"id:uuid@pk\"]\n",
+    )
+    .unwrap();
+    assert!(
+        jails_cmd(&root, None)
+            .args(["app", "apply", "--no-start"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let record = root.join("src/main/java/com/example/demo/domain/Note.java");
+    let before = fs::read_to_string(&record).unwrap();
+    fs::write(
+        &manifest,
+        "schema = 1\ncapabilities = []\n\n[[generate]]\nkind = \"record\"\nname = \"Note\"\nfields = [\"id:uuid@pk\", \"title:string!\"]\n",
+    )
+    .unwrap();
+
+    let output = jails_cmd(&root, None)
+        .args(["app", "apply", "--no-start"])
+        .env("GIT_CEILING_DIRECTORIES", "/tmp")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("not in a git repository"), "{stderr}");
+    assert!(stderr.contains("fix:"), "{stderr}");
+    assert_eq!(fs::read_to_string(record).unwrap(), before);
+}
+
+#[test]
+fn scaffold_refuses_an_unmapped_project_type_before_writing() {
+    let root = temp_dir("scaffold-unmapped-type");
+    write_spring_fixture(&root);
+    let output = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Book", "id:uuid@pk", "author:Author"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("author:Author"), "{stderr}");
+    assert!(stderr.contains("cannot persist"), "{stderr}");
+    assert!(stderr.contains("fix:"), "{stderr}");
+    assert!(
+        !root
+            .join("src/main/java/com/example/demo/domain/Book.java")
+            .exists()
+    );
+    assert!(!root.join("src/main/resources/db/migration").exists());
+}
+
+#[test]
 fn app_manifest_builds_the_crawler_skeleton_and_is_resumable() {
     let root = temp_dir("app-manifest-crawler");
     write_spring_fixture(&root);
@@ -741,7 +1017,18 @@ fn app_manifest_builds_the_crawler_skeleton_and_is_resumable() {
     assert!(main.join("jobs/JdbcCrawlDispatcherStore.java").is_file());
     assert!(main.join("jobs/CrawlDispatcherWorker.java").is_file());
     assert!(main.join("web/CrawlDispatcherJobController.java").is_file());
-    assert!(root.join(".jails/app-state-v1").is_file());
+    assert!(root.join(".jails/ledger.toml").is_file());
+    // One ledger, not four registries: `abstract.md` rung 8's gate is that
+    // `.jails/` holds the manifest and the bookkeeping, and nothing else.
+    let bookkeeping = fs::read_dir(root.join(".jails"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        bookkeeping,
+        ["app.toml".to_string(), "ledger.toml".to_string()].into(),
+        "{bookkeeping:?}"
+    );
     assert!(root.join("Dockerfile").is_file());
     assert!(root.join(".github/workflows/ci.yml").is_file());
     assert!(root.join(".github/workflows/image.yml").is_file());
@@ -2283,7 +2570,7 @@ fn run_no_build_errors_clearly_when_target_is_missing() {
 #[test]
 fn run_no_build_runs_already_compiled_plain_classes_without_mvn() {
     if !real_java_available() {
-        skip(&format!("java/javac not found on PATH"));
+        skip("java/javac not found on PATH");
         return;
     }
     let root = temp_dir("no-build-plain-real");
@@ -2343,7 +2630,7 @@ fn run_no_build_runs_already_compiled_plain_classes_without_mvn() {
 #[test]
 fn new_cli_project_passes_real_mvn_test() {
     if !real_mvn_available() {
-        skip(&format!("mvn not found on PATH"));
+        skip("mvn not found on PATH");
         return;
     }
     if !real_java_supports_target_release() {
@@ -2363,7 +2650,7 @@ fn new_cli_project_passes_real_mvn_test() {
 #[test]
 fn generate_scaffold_produces_a_project_that_compiles_and_passes_tests() {
     if !real_mvn_available() {
-        skip(&format!("mvn not found on PATH"));
+        skip("mvn not found on PATH");
         return;
     }
     let path = real_path_without_mvnd();
@@ -2399,7 +2686,7 @@ fn generate_scaffold_produces_a_project_that_compiles_and_passes_tests() {
 #[test]
 fn standalone_generators_companion_tests_compile_and_pass() {
     if !real_mvn_available() {
-        skip(&format!("mvn not found on PATH"));
+        skip("mvn not found on PATH");
         return;
     }
     let path = real_path_without_mvnd();
@@ -2440,7 +2727,7 @@ fn standalone_generators_companion_tests_compile_and_pass() {
 #[test]
 fn record_and_command_compile_and_pass_in_a_plain_cli_project() {
     if !real_mvn_available() {
-        skip(&format!("mvn not found on PATH"));
+        skip("mvn not found on PATH");
         return;
     }
     if !real_java_supports_target_release() {
@@ -2711,7 +2998,7 @@ fn add_name_override_renames_the_generated_class() {
 #[test]
 fn add_csv_produces_a_project_that_compiles_and_passes_tests() {
     if !real_mvn_available() {
-        skip(&format!("mvn not found on PATH"));
+        skip("mvn not found on PATH");
         return;
     }
     if !real_java_supports_target_release() {
@@ -3051,7 +3338,7 @@ class ExtraSliceTest {
 #[test]
 fn add_db_on_spring_makes_context_loads_pass() {
     if !real_mvn_available() {
-        skip(&format!("mvn not found on PATH"));
+        skip("mvn not found on PATH");
         return;
     }
     if !real_java_supports_target_release() {
@@ -3061,7 +3348,7 @@ fn add_db_on_spring_makes_context_loads_pass() {
         return;
     }
     if !real_docker_available() {
-        skip(&format!("docker daemon not available"));
+        skip("docker daemon not available");
         return;
     }
     let path = real_path_without_mvnd();
@@ -3310,7 +3597,7 @@ fn add_accepts_multiple_capabilities_in_one_invocation() {
 #[test]
 fn every_capability_together_produces_a_project_that_compiles_and_passes_tests() {
     if !real_mvn_available() {
-        skip(&format!("mvn not found on PATH"));
+        skip("mvn not found on PATH");
         return;
     }
     if !real_java_supports_target_release() {
@@ -3340,7 +3627,7 @@ fn every_capability_together_produces_a_project_that_compiles_and_passes_tests()
 #[test]
 fn every_generator_and_capability_together_compiles_and_passes_tests() {
     if !real_mvn_available() {
-        skip(&format!("mvn not found on PATH"));
+        skip("mvn not found on PATH");
         return;
     }
     if !real_java_supports_target_release() {
@@ -3368,7 +3655,7 @@ fn every_generator_and_capability_together_compiles_and_passes_tests() {
 #[test]
 fn generators_compose_through_user_owned_field_types() {
     if !real_mvn_available() {
-        skip(&format!("mvn not found on PATH"));
+        skip("mvn not found on PATH");
         return;
     }
     if !real_java_supports_target_release() {
@@ -3514,7 +3801,7 @@ fn generators_compose_through_user_owned_field_types() {
 #[test]
 fn a_generated_command_is_reachable_by_name_through_jails_run() {
     if !real_mvn_available() {
-        skip(&format!("mvn not found on PATH"));
+        skip("mvn not found on PATH");
         return;
     }
     if !real_java_supports_target_release() {
@@ -3526,7 +3813,7 @@ fn a_generated_command_is_reachable_by_name_through_jails_run() {
     let path = real_path_without_mvnd();
     let root = verified_plain_toolbox(&path);
 
-    let output = jails_cmd_with_path(&root, &path)
+    let output = jails_cmd_with_path(root, &path)
         .args(["run", "--no-build", "--", "greet", "world"])
         .output()
         .unwrap();
@@ -3543,7 +3830,7 @@ fn a_generated_command_is_reachable_by_name_through_jails_run() {
 
     // And with no arguments at all, the dispatcher lists what it knows rather
     // than failing -- `new-cli`'s App.java is a dispatcher, not a stub.
-    let output = jails_cmd_with_path(&root, &path)
+    let output = jails_cmd_with_path(root, &path)
         .args(["run", "--no-build"])
         .output()
         .unwrap();
@@ -3561,7 +3848,7 @@ fn a_generated_command_is_reachable_by_name_through_jails_run() {
 #[test]
 fn a_freshly_generated_project_passes_check_with_no_manual_formatting() {
     if !real_mvn_available() {
-        skip(&format!("mvn not found on PATH"));
+        skip("mvn not found on PATH");
         return;
     }
     if !real_java_supports_target_release() {
@@ -3584,7 +3871,7 @@ fn a_freshly_generated_project_passes_check_with_no_manual_formatting() {
 #[test]
 fn add_json_on_a_spring_project_defers_to_the_parents_version_and_compiles() {
     if !real_mvn_available() {
-        skip(&format!("mvn not found on PATH"));
+        skip("mvn not found on PATH");
         return;
     }
     if !real_java_supports_target_release() {
@@ -3940,7 +4227,7 @@ fn a_scaffold_with_database_types_compiles_including_its_derived_jdbc_adapter() 
     // `x.Timestamp.from(createdAt())` -- which reads fine and does not
     // compile. Only javac finds that.
     if !real_mvn_available() {
-        skip(&format!("mvn not found on PATH"));
+        skip("mvn not found on PATH");
         return;
     }
     let path = real_path_without_mvnd();
@@ -4269,7 +4556,7 @@ fn add_db_upgrades_an_out_of_date_properties_block() {
 #[test]
 fn add_api_generates_problem_detail_handling_that_compiles_and_passes() {
     if !real_mvn_available() {
-        skip(&format!("mvn not found on PATH"));
+        skip("mvn not found on PATH");
         return;
     }
     let path = real_path_without_mvnd();
@@ -4314,7 +4601,7 @@ fn add_api_generates_problem_detail_handling_that_compiles_and_passes() {
 #[test]
 fn add_cache_switches_caching_on_and_proves_it() {
     if !real_mvn_available() {
-        skip(&format!("mvn not found on PATH"));
+        skip("mvn not found on PATH");
         return;
     }
     let path = real_path_without_mvnd();
@@ -4345,7 +4632,7 @@ fn add_cache_switches_caching_on_and_proves_it() {
 #[test]
 fn add_actuator_exposes_health_and_nothing_dangerous() {
     if !real_mvn_available() {
-        skip(&format!("mvn not found on PATH"));
+        skip("mvn not found on PATH");
         return;
     }
     let path = real_path_without_mvnd();
@@ -4387,7 +4674,7 @@ fn add_actuator_exposes_health_and_nothing_dangerous() {
 #[test]
 fn add_observability_serves_a_prometheus_scrape() {
     if !real_mvn_available() {
-        skip(&format!("mvn not found on PATH"));
+        skip("mvn not found on PATH");
         return;
     }
     let path = real_path_without_mvnd();
@@ -4535,7 +4822,7 @@ fn generate_dto_client_and_job_compile_and_pass_against_real_spring() {
     // the template text proves nothing worth knowing. javac and the real
     // context are the check.
     if !real_mvn_available() {
-        skip(&format!("mvn not found on PATH"));
+        skip("mvn not found on PATH");
         return;
     }
     let path = real_path_without_mvnd();
@@ -4696,7 +4983,7 @@ fn add_kafka_and_generate_event_compile_against_real_spring() {
     // Kafka API -- including the Jackson-prefixed serializers, since the
     // older pair is deprecated for removal.
     if !real_mvn_available() {
-        skip(&format!("mvn not found on PATH"));
+        skip("mvn not found on PATH");
         return;
     }
     let path = real_path_without_mvnd();
@@ -4798,7 +5085,7 @@ fn add_kafka_and_generate_event_compile_against_real_spring() {
 #[test]
 fn add_security_writes_an_explicit_chain_that_denies_by_default() {
     if !real_mvn_available() {
-        skip(&format!("mvn not found on PATH"));
+        skip("mvn not found on PATH");
         return;
     }
     let path = real_path_without_mvnd();
@@ -4850,7 +5137,7 @@ fn add_security_writes_an_explicit_chain_that_denies_by_default() {
 #[test]
 fn add_redis_wires_a_ttl_enforcing_store_and_a_compose_service() {
     if !real_mvn_available() {
-        skip(&format!("mvn not found on PATH"));
+        skip("mvn not found on PATH");
         return;
     }
     let path = real_path_without_mvnd();
@@ -5037,7 +5324,7 @@ fn add_preflight_holds_when_the_refused_capability_is_named_first() {
 #[test]
 fn generate_strategy_produces_a_project_that_compiles_and_passes_tests() {
     if !real_mvn_available() {
-        skip(&format!("mvn not found on PATH"));
+        skip("mvn not found on PATH");
         return;
     }
     if !real_java_supports_target_release() {
@@ -5586,5 +5873,90 @@ fn new_cli_inside_another_project_uses_the_new_projects_root() {
         !outer
             .join("src/main/java/com/outer/package-info.java")
             .exists()
+    );
+}
+
+/// `plan.md` §6.6 tier 2. The want is "change what the generated code *looks
+/// like*" -- not a new generator, just this class shaped differently.
+#[test]
+fn a_project_template_override_replaces_the_built_in_and_doctor_names_it() {
+    let root = temp_dir("template-override");
+    write_plain_fixture(&root);
+
+    let overrides = root.join(".jails/templates/generate");
+    fs::create_dir_all(&overrides).unwrap();
+    let built_in = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("templates/generate/command_test.java"),
+    )
+    .unwrap();
+    // Same placeholders, different shape: the contract is the placeholder set,
+    // not the text.
+    fs::write(
+        overrides.join("command_test.java"),
+        format!("// generated by an overridden template\n{built_in}"),
+    )
+    .unwrap();
+
+    let output = jails_cmd(&root, None)
+        .args(["generate", "command", "Sync"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let generated =
+        fs::read_to_string(root.join("src/test/java/com/example/demo/cli/SyncCommandTest.java"))
+            .unwrap();
+    assert!(
+        generated.starts_with("// generated by an overridden template"),
+        "{generated}"
+    );
+    assert!(generated.contains("class SyncCommandTest"), "{generated}");
+
+    // The honesty half: an overridden template is not golden-tested, so
+    // `doctor` names it rather than letting the reader find out from a build.
+    let doctor = jails_cmd(&root, None).arg("doctor").output().unwrap();
+    let report = String::from_utf8_lossy(&doctor.stdout);
+    assert!(
+        report.contains("generate/command_test.java"),
+        "doctor must name the override: {report}"
+    );
+    assert!(
+        report.contains("not covered by jails' snapshot tests"),
+        "{report}"
+    );
+}
+
+/// The placeholder set is the contract, and breaking it is the reader's typo --
+/// so it is an error naming their file, not a panic naming jails'.
+#[test]
+fn a_template_override_missing_a_placeholder_is_refused_by_name() {
+    let root = temp_dir("template-override-bad");
+    write_plain_fixture(&root);
+
+    let overrides = root.join(".jails/templates/generate");
+    fs::create_dir_all(&overrides).unwrap();
+    fs::write(
+        overrides.join("command_test.java"),
+        "package {{pkg}};\n\nclass Whatever {}\n",
+    )
+    .unwrap();
+
+    let output = jails_cmd(&root, None)
+        .args(["generate", "command", "Sync"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("command_test.java"), "{stderr}");
+    assert!(stderr.contains("missing:"), "{stderr}");
+    assert!(
+        !root
+            .join("src/test/java/com/example/demo/cli/SyncCommandTest.java")
+            .exists(),
+        "nothing is written when the override is refused"
     );
 }

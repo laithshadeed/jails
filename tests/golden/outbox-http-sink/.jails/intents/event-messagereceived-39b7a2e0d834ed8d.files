@@ -1,4 +1,0 @@
-src/main/java/com/example/demo/messaging/MessageReceivedEvent.java
-src/main/java/com/example/demo/messaging/MessageReceivedListener.java
-src/main/java/com/example/demo/messaging/MessageReceivedPublisher.java
-src/test/java/com/example/demo/messaging/MessageReceivedMessagingIT.java

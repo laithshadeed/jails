@@ -188,6 +188,35 @@ fn the_goldens_still_hold_the_properties_that_matter() {
         .collect();
     assert!(!all.is_empty(), "no goldens recorded yet");
 
+    // `abstract.md` rung 8: one ledger, not four registries. The gate is a
+    // property of the output, so it is checked here rather than as a source
+    // measurement -- `.jails/files`, `.jails/version`, `.jails/intents/*` and
+    // `.jails/models/*` were four layouts recording one fact, and two of them
+    // were intent registries keyed differently.
+    let mut bookkeeping: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (path, _) in &all {
+        if let Some((scenario, rest)) = path.split_once("/.jails/") {
+            bookkeeping
+                .entry(scenario.to_string())
+                .or_default()
+                .push(rest.to_string());
+        }
+    }
+    assert!(!bookkeeping.is_empty(), "no scenario recorded a .jails/");
+    for (scenario, entries) in &bookkeeping {
+        assert!(
+            entries.iter().all(|entry| !entry.contains('/')),
+            "{scenario}: `.jails/` is flat -- a subdirectory is a second \
+             registry growing back: {entries:?}"
+        );
+        assert!(
+            entries.len() <= 2,
+            "{scenario}: `.jails/` holds {} files, and rung 8's gate is 2 \
+             (`app.toml` when there is a manifest, `ledger.toml` always): {entries:?}",
+            entries.len()
+        );
+    }
+
     for (path, text) in &all {
         if !path.ends_with(".java") {
             continue;

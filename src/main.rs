@@ -1,14 +1,19 @@
 mod add;
 mod app;
+mod apply;
+mod commands;
 mod compose;
 mod config;
 mod console;
 mod doctor;
+mod explain;
 mod generate;
 mod generated_files;
 mod inspect;
 mod java;
+mod json;
 mod kafka;
+mod ledger;
 mod lint;
 mod migrate;
 mod model;
@@ -62,7 +67,7 @@ pub(crate) static CWD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     version,
     about = "A rails-CLI-inspired tool for Spring Boot / plain Maven projects"
 )]
-struct Cli {
+pub(crate) struct Cli {
     #[command(subcommand)]
     command: Command,
 
@@ -70,13 +75,20 @@ struct Cli {
     #[arg(long, global = true)]
     debug: bool,
 
+    // `--dry-run` is an alias, not a second flag. It used to be a per-command
+    // `bool` that dispatch OR'd with this one -- `dry_run || pretend` at five
+    // call sites, two names for one boolean reaching two different
+    // implementations. abstract.md §4.2 calls that connascence of meaning
+    // crossing a module boundary, and it is why `--pretend` and apply were
+    // able to disagree about what would be written. One flag, one value,
+    // every command -- and `--dry-run` now works on all of them rather than
+    // on the three that happened to declare it.
     /// Run, but write nothing -- print what would change and stop.
     ///
     /// Global on purpose: Rails puts `--pretend` on every generator rather
     /// than on the few that seemed risky, and the value is that you never
-    /// have to remember which commands support it. `add`, `remove` and
-    /// `rename` also accept `--dry-run`, which means the same thing.
-    #[arg(long, short = 'p', global = true)]
+    /// have to remember which commands support it.
+    #[arg(long, short = 'p', global = true, visible_alias = "dry-run")]
     pretend: bool,
 }
 
@@ -106,6 +118,13 @@ enum Command {
         /// start.spring.io
         #[arg(long)]
         offline: bool,
+        /// Apply this application manifest to the new project immediately
+        ///
+        /// Equivalent to `new`, then `mkdir .jails`, then copying the manifest
+        /// in, then `jails app apply` -- four steps that only ever appear
+        /// together. The path is read relative to where you are standing.
+        #[arg(long, value_name = "MANIFEST")]
+        app: Option<std::path::PathBuf>,
     },
     /// Create a new plain Maven CLI project
     NewCli {
@@ -116,6 +135,13 @@ enum Command {
         /// Skip `git init` and the .gitignore it normally sets up
         #[arg(long)]
         no_git: bool,
+        /// Apply this application manifest to the new project immediately
+        ///
+        /// Equivalent to `new`, then `mkdir .jails`, then copying the manifest
+        /// in, then `jails app apply` -- four steps that only ever appear
+        /// together. The path is read relative to where you are standing.
+        #[arg(long, value_name = "MANIFEST")]
+        app: Option<std::path::PathBuf>,
     },
     /// Plan or apply a generic declarative application manifest
     App {
@@ -213,9 +239,6 @@ enum Command {
         /// Base name for the generated class (default: the capability's own)
         #[arg(long)]
         name: Option<String>,
-        /// Print what would change without touching the project
-        #[arg(long)]
-        dry_run: bool,
         /// Write compose.yaml but do not run `docker compose up`
         #[arg(long)]
         no_start: bool,
@@ -234,9 +257,6 @@ enum Command {
     /// Every capability is idempotent, so a sync over a correct project
     /// changes nothing and says so. `--pretend` answers "what is missing?".
     Sync {
-        /// Print what would change without touching the project
-        #[arg(long)]
-        dry_run: bool,
         /// Write compose.yaml but do not run `docker compose up`
         #[arg(long)]
         no_start: bool,
@@ -249,9 +269,6 @@ enum Command {
         /// Base name for the generated class (default: the capability's own)
         #[arg(long)]
         name: Option<String>,
-        /// Print what would change without touching the project
-        #[arg(long)]
-        dry_run: bool,
         /// Skip the confirmation prompt
         #[arg(long)]
         force: bool,
@@ -271,7 +288,11 @@ enum Command {
         services: Vec<Runtime>,
     },
     /// Check everything that has to be true before the app can start
-    Doctor,
+    Doctor {
+        /// Emit the checks as JSON: {version, failures, warnings, checks[]}
+        #[arg(long)]
+        json: bool,
+    },
     /// Explain a failure: pass a log file, pipe one in, or run it bare to start the app
     Why {
         /// A file holding the failure output. Omit to read stdin, or to
@@ -282,11 +303,18 @@ enum Command {
         json: bool,
     },
     /// Count files and lines per layer, and the test-to-code ratio
-    Stats,
+    Stats {
+        /// Emit the per-layer counts as JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// List TODO/FIXME/HACK/XXX comments across the project
     Notes {
         /// Only this tag (e.g. `jails notes fixme`)
         tag: Option<String>,
+        /// Emit the notes as JSON: file/line/tag/text, ready for a quickfix list
+        #[arg(long)]
+        json: bool,
     },
     /// Find stale APIs and architecture violations without compiling
     Lint,
@@ -357,9 +385,6 @@ enum Command {
         old: String,
         /// The name to give it
         new: String,
-        /// Print the plan without touching anything
-        #[arg(long)]
-        dry_run: bool,
         /// Skip the confirmation prompt
         #[arg(long)]
         force: bool,
@@ -400,6 +425,9 @@ enum Command {
         /// After the run, print the slowest N tests from the reports
         #[arg(long, value_name = "N", num_args = 0..=1, default_missing_value = "10")]
         slowest: Option<usize>,
+        /// Emit the run as JSON instead of Maven's output, read from the reports
+        #[arg(long)]
+        json: bool,
     },
     /// Build the project (mvn package)
     Build,
@@ -439,13 +467,28 @@ enum Command {
     /// classpath does nothing at all -- so a generated `withReuse(true)` is
     /// ignored until this has run, and every test run pays for a fresh
     /// PostgreSQL.
-    Setup {
-        /// Describe what would change and write nothing
-        #[arg(long)]
-        dry_run: bool,
-    },
+    Setup {},
     /// Print a shell-completion script: source <(jails completion bash)
-    Completion { shell: Shell },
+    /// Explain what a generator kind is for, and the trap it invites
+    ///
+    /// The generated Javadoc carries this reasoning for whoever reads the file.
+    /// This is for whoever is deciding whether to generate it -- and for an
+    /// agent, which otherwise "fixes" the deliberate asymmetries.
+    Explain {
+        kind: generate::ArtifactKind,
+    },
+    /// Print every subcommand, generator kind, capability and flag jails accepts
+    ///
+    /// Derived from the same clap definition that parses the arguments, so it
+    /// cannot drift from what the binary actually takes. `--json` is what the
+    /// editor plugin reads instead of keeping its own tables.
+    Commands {
+        #[arg(long)]
+        json: bool,
+    },
+    Completion {
+        shell: Shell,
+    },
 }
 
 /// Returns [`ExitCode`] rather than calling [`std::process::exit`].
@@ -455,6 +498,25 @@ enum Command {
 /// flight -- `migrate` creates a scratch database it is responsible for
 /// dropping -- and anything staging a file beside its destination would be in
 /// the same position. Returning lets the stack unwind normally first.
+/// Apply `--app <manifest>` to a project `new`/`new-cli` has just created.
+///
+/// Nothing to do without the flag, and nothing to do under `--pretend`: that
+/// created no project to apply anything to, and saying so beats failing to
+/// find a `pom.xml` that was never written.
+fn seed(name: &str, manifest: Option<&std::path::Path>, debug: bool, pretend: bool) -> Result<()> {
+    let Some(manifest) = manifest else {
+        return Ok(());
+    };
+    if pretend {
+        println!(
+            "--pretend: no project was created, so {} was not applied.",
+            manifest.display()
+        );
+        return Ok(());
+    }
+    new::seed_manifest(std::path::Path::new(name), manifest, debug)
+}
+
 fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
     let debug = cli.debug;
@@ -469,6 +531,7 @@ fn main() -> std::process::ExitCode {
             no_git,
             no_devtools,
             offline,
+            app,
         } => new::new(
             &name,
             &deps,
@@ -478,12 +541,15 @@ fn main() -> std::process::ExitCode {
             offline,
             debug,
             pretend,
-        ),
+        )
+        .and_then(|()| seed(&name, app.as_deref(), debug, pretend)),
         Command::NewCli {
             name,
             release,
             no_git,
-        } => new::new_cli(&name, &release, !no_git, debug, pretend),
+            app,
+        } => new::new_cli(&name, &release, !no_git, debug, pretend)
+            .and_then(|()| seed(&name, app.as_deref(), debug, pretend)),
         Command::App { command } => app::run(command, debug, pretend),
         Command::Generate {
             kind,
@@ -508,7 +574,6 @@ fn main() -> std::process::ExitCode {
         Command::Add {
             capabilities,
             name,
-            dry_run,
             no_start,
             package,
         } => add::preflight(&capabilities, name.as_deref(), package.as_deref()).and_then(|()| {
@@ -516,36 +581,30 @@ fn main() -> std::process::ExitCode {
                 add::add(
                     capability,
                     name.as_deref(),
-                    dry_run || pretend,
+                    pretend,
                     package.as_deref(),
                     debug,
                     no_start,
                 )
             })
         }),
-        Command::Sync { dry_run, no_start } => add::sync(dry_run || pretend, debug, no_start),
+        Command::Sync { no_start } => add::sync(pretend, debug, no_start),
         Command::Remove {
             capabilities,
             name,
-            dry_run,
             force,
             package,
         } => capabilities.into_iter().try_for_each(|capability| {
             add::remove(
                 capability,
                 name.as_deref(),
-                dry_run || pretend,
+                pretend,
                 force,
                 package.as_deref(),
                 debug,
             )
         }),
-        Command::Rename {
-            old,
-            new,
-            dry_run,
-            force,
-        } => rename::rename(&old, &new, dry_run || pretend, force),
+        Command::Rename { old, new, force } => rename::rename(&old, &new, pretend, force),
         Command::Destroy {
             kind,
             name,
@@ -554,10 +613,10 @@ fn main() -> std::process::ExitCode {
         } => generate::destroy(kind, &name, force, package.as_deref(), pretend),
         Command::Start { services } => compose::start(&services, debug),
         Command::Stop { services } => compose::stop_cmd(&services, debug),
-        Command::Doctor => doctor::doctor(),
+        Command::Doctor { json } => doctor::doctor(json),
         Command::Why { log, json } => why::why(log.as_deref(), debug, json),
-        Command::Stats => inspect::stats(),
-        Command::Notes { tag } => inspect::notes(tag.as_deref()),
+        Command::Stats { json } => inspect::stats(json),
+        Command::Notes { tag, json } => inspect::notes(tag.as_deref(), json),
         Command::Routes { json } => inspect::routes(json),
         Command::Beans { pattern, json } => inspect::beans(pattern.as_deref(), json),
         Command::Migrate { check, no_start } => {
@@ -585,12 +644,14 @@ fn main() -> std::process::ExitCode {
             failed,
             fail_fast,
             slowest,
+            json,
         } => run::test(
             filter.as_deref(),
             run::TestOptions {
                 failed,
                 fail_fast,
                 slowest,
+                json,
             },
             debug,
         ),
@@ -610,7 +671,9 @@ fn main() -> std::process::ExitCode {
                 run::run(no_build, &args, debug)
             }
         }
-        Command::Setup { dry_run } => doctor::setup(dry_run || pretend),
+        Command::Setup {} => doctor::setup(pretend),
+        Command::Explain { kind } => explain::explain(kind),
+        Command::Commands { json } => commands::commands(json),
         Command::Completion { shell } => {
             clap_complete::generate(shell, &mut Cli::command(), "jails", &mut std::io::stdout());
             Ok(())

@@ -71,6 +71,27 @@ to build next and why. Do not add proposals here.
   `@Component` versus its absence, a body repeated per field) stays in Rust
   and is passed in rendered. A template under ~15 lines stays inline, since a
   file for four lines is indirection with nothing to show for it.
+- `src/apply/` — **the only module that writes.** `fs::write` appears nowhere
+  else, and `tests/architecture.rs` fails when it does. Four verbs, and the
+  distinction between them is *what the caller believes is already there*:
+  `create` (must not exist — the refusal `g scaffold` and `g record` are built
+  on), `replace` (jails owns this file and is rewriting its own output),
+  `put` (the new content already accounts for whatever was there — every
+  splice into `pom.xml`, `compose.yaml`, `application.properties` and
+  `jails.toml` lands here, with the byte-preserving merge done *before* the
+  call by the module that owns the format), and `put_outside_project`
+  (deliberately long: `jails setup` writes `~/.testcontainers.properties` and
+  nothing that edits a project should reach it by accident). Plus `atomically`
+  for `.jails/` bookkeeping and `put_bytes` for the 3-way merge result.
+
+  This exists because `write_new_file` *looked* like the single choke point and
+  was not: `add.rs` wrote capability files with a bare `fs::write` straight
+  past the collision check, which is the hole plan.md §11 predicted a ledger
+  would have. Giving `create` real meaning immediately surfaced a latent
+  double-write — `ensure_package_info` writes `package-info.java`, and when the
+  artifact being written *is* `package-info.java` the caller then wrote it
+  again. Harmless while the second write was a silent overwrite; an "already
+  exists" refusal the moment the write path started refusing to clobber.
 - `src/process.rs` — `CommandSpec` + one synchronous executor, and the one
   place a tool is resolved on PATH. Extracted because two copies of "which
   tool is this" had already drifted: `run.rs` vs `project.rs` on whether mvnd
@@ -150,7 +171,18 @@ to build next and why. Do not add proposals here.
   that matters). The cost is anything decided at runtime, which the output
   states rather than hiding.
 - `src/doctor.rs` — `doctor`. Read-only by contract: it must never start,
-  stop or write anything, so it stays safe to run mid-debug. Every `FAIL`
+  stop or write anything, so it stays safe to run mid-debug. (`jails setup` is
+  a different command and does write, to `~/.testcontainers.properties`, which
+  is why it goes through `apply::put_outside_project`.)
+  **`capability_drift_checks` re-plans rather than re-derives**: for every
+  capability `jails.toml` records it calls `add::plan_for` — planning is pure,
+  no writes, no subprocesses — and reports any dependency, file, property or
+  compose service the plan wants and the project lacks, with `fix: jails sync`.
+  Before it, `add` knew what a capability installs and `doctor` could not ask,
+  so a project whose generated file had been deleted reported nothing. The
+  hand-written checks stay: they cover projects with **no** recorded capability
+  list, where there is nothing to derive from, and they carry failure modes no
+  plan can express (two Jackson majors, podman's socket). Every `FAIL`
   carries a `fix:` line (an integration test asserts this), and a failure
   exits non-zero via an *empty* `Err` so `main` prints no redundant
   `jails: ` line.
@@ -186,32 +218,93 @@ to build next and why. Do not add proposals here.
   because they share one precondition — a Spring Boot parent, checked once in
   `require_spring`.
 
-  **This file is now 6,459 lines and that is a known problem.** The original
-  reason for the split said `add.rs` "was already the biggest file here";
-  that is now inverted — `spring.rs` is nearly twice `generate.rs` (3,361)
-  and 4.5× `add.rs` (1,444). It also still holds ~42 whole Java files as
-  inline `format!` strings with doubled braces, which is exactly the tax
-  `template.rs` exists to remove. `plan.md` §6 has the ranked options and the
-  proposed split; do not start a big-bang refactor, extract as you touch.
+  **Every Java body is now a template file.** The 39 remaining inline
+  `format!` strings with doubled braces were extracted to
+  `templates/spring/*.java` in one mechanical pass, verified byte-for-byte by
+  the golden suite: the file went 6,624 → 5,517 lines and 4,596 lines became
+  real Java an editor can check. `tests/architecture.rs` holds that at zero.
+
+  **It is no longer the biggest file here.** `plan.md` §6.5's split landed:
+  `src/spring/workflow.rs` (usecase + its outbox half, transition, query),
+  `src/spring/durable.rs` (job, durable-job), `src/spring/http.rs` (client,
+  fetcher, http-workflow, http-sink) and `src/spring/schema.rs` (association,
+  idempotency). `spring.rs` itself is down from 6,624 to ~1,900 lines and holds
+  the shared precondition, the shared helpers used by more than one kind, and
+  the capability slices.
+
+  Two things the split needed and the next one will too: a child module reaches
+  its parent's **private** items through `use super::*;`, but the parent needs
+  `pub(crate)` on anything it borrows back — `scheduling_config_java` and
+  `durable_alternate_sample` are the two the outbox shares with `durable`. And
+  `include_str!` is relative to the *file*, so every template path in a moved
+  block gains a `../`.
+
+  The largest module is now `src/generate.rs`, which `abstract.md` §3.2 calls
+  Ousterhout's named anti-pattern verbatim — parse → dispatch → write → side
+  effects. `tests/architecture.rs` has a gate on the largest module precisely
+  so a split cannot be satisfied by *moving* a monolith.
+
+  **Placement is a value, not six strings: `spring::Slice`.** Every generator
+  and renderer here takes a `Slice` — a resolved `model::Project` plus the
+  `--package` override — and asks it for `placed(Layer::X)` (this slice's own
+  classes, honouring `--package`) or `owned(Layer::X)` (where an *existing*
+  resource lives, ignoring it). That distinction is load-bearing and used to
+  be restated at every call site as `place(layout::WEB)` versus
+  `subpackage(&base, config.layer(layout::DOMAIN))`. Sixteen functions took
+  eight to twelve positional parameters because of it; **no function in this
+  file now takes more than five**, and `tests/architecture.rs` fails if one
+  does. `Target`, `Defaults`, `Emission`, `Update` and `Projection` are the
+  other parameter objects that fell out — each one a group of values that is
+  computed together and consumed together.
 
   **Every template was written against `deps/`, not from memory.** The
   generated code targets APIs that moved recently, and the failure mode is
   silent: it compiles against the version you had.
+- `src/new.rs` also owns **`--app <manifest>`** on both `new` and `new-cli`:
+  create the project, seed `.jails/app.toml`, apply it. One command from an
+  empty directory to a project that passes `mvn clean verify`. Making it work
+  meant removing every `Project::discover()` from the apply path —
+  `add::add_in`, `add::preflight_in` and `ResolvedIntent::apply_to` take an
+  explicit project — because `discover` reads the **process CWD**, which is the
+  parent directory, not the project just created.
 - `src/app.rs` — `jails app plan|apply`: a declarative manifest at
   `.jails/app.toml` (`schema`, `capabilities`, and a closed `[[generate]]`
-  schema of `kind`/`name`/`fields`/`indexes`/`package`/`strategy_on`/
-  `strategy_yields`). **Deliberately domain-blind** — the module docs say it,
+  schema of `kind`/`name`/`fields`/`timestamps`/`indexes`/`package`/`on`/
+  `yields`, with `strategy_on`/`strategy_yields` kept as deprecated aliases
+  because they shipped in a user-facing file format — setting one reference
+  under both spellings is an error, not a last-one-wins). **Deliberately domain-blind** — the module docs say it,
   and it is load-bearing: a crawler, a support inbox and a payments gateway
   are three lists of the same generic intents, and none of them gets a
   command, branch, enum or template in core. `apply` installs capabilities,
-  runs each unapplied intent, **writes `.jails/app-state-v1` after every one**
-  (so an interrupted apply resumes), then **reconciles every capability a
+  runs each unapplied intent, **records it in `.jails/ledger.toml` after every
+  one** (so an interrupted apply resumes), then **reconciles every capability a
   second time** — because a generator can create a new integration point for
-  an already-installed capability. The state key is
-  `kind|name|package|fields|indexes|on|yields`, so **editing a `fields` line
-  changes the key**: the old intent stays in state and the edited one arrives
-  as pending, then `generate` refuses on the existing files. That is a known
-  gap, not a design; `plan.md` §9.7 and §11 have the fix.
+  an already-installed capability.
+- `src/ledger.rs` — `.jails/ledger.toml`, the **one** file jails keeps its own
+  bookkeeping in. It replaced five (`app-state-v1`, `intents/*`, `models/*`,
+  `files`, `version`), two of which were intent registries keyed differently —
+  which is what made an edited `fields` line arrive as a *new* intent against
+  files that already existed. **Identity is `(recipe, name, package)`;
+  everything else is content**, so an edit is an update to a known entity and
+  `app apply` three-way merges it.
+
+  Two writers reach the same row and neither owns the other's columns:
+  `generate` sets `files`, `app apply` sets the spec. Both go through
+  `ledger::entry_mut` — a whole-row replace erases the other half, and the
+  erasure is indistinguishable from a manifest whose `fields` line was
+  emptied. `Applied::has_spec()` is what tells those two apart.
+
+  The schema is **closed** (unknown key = error, same rule as `config.rs`),
+  because `destroy` acts on this file and a silently-ignored key would make it
+  delete the wrong set. Arrays are split on their *separating* commas, not on
+  every comma: `totals:map<string,double>` is a documented field type, and the
+  old format hex-encoded each element precisely to dodge that — the dodge is
+  why nobody had noticed a naive split could not hold it.
+
+  A pre-ledger `.jails/` is folded in on first read and the old files removed;
+  leaving them would leave a second registry to drift. The legacy field list
+  was comma-joined and therefore ambiguous, so the fold prefers the recorded
+  model where one exists.
 - `examples/` — the proof applications, and the reason the generic machinery
   can be trusted. `examples/web-crawler/` and `examples/support-inbox/` are
   manifests built from the same generic intents; `ACCEPTANCE.md` is the
@@ -224,11 +317,47 @@ to build next and why. Do not add proposals here.
   alone and the skipped count reported.
 - `tests/common/mod.rs` + `tests/cli.rs` — integration tests against the
   real compiled binary (`CARGO_BIN_EXE_jails`).
+- `tests/architecture.rs` — **the `abstract.md` §7 ladder, as ratchets.**
+  Eleven gates, each a number measured over *production* Rust (comments,
+  string literals and `#[cfg(test)]` modules are blanked first, the same trick
+  `java.rs` uses). It fails when a number **rises above** its recorded ceiling
+  *and* when one **falls below** it without the ceiling being lowered in the
+  same change — so an improvement that is not written down is a failure, which
+  is what makes progress stick. `cargo test --test architecture -- --nocapture
+  --test-threads=1` prints the board. Raising a ceiling is allowed exactly
+  once per rise and only with the reason recorded beside it in the file.
+  This exists because `abstract.md` §8.1 measured `root: &Path` rising 21%
+  across four commits with nothing to say so; prose did not move it.
+- **`g idempotency` is the retained-result primitive**, and the distinction it
+  turns on is easy to lose: a `@unique` column already gives one row per key.
+  What it withholds is the *result*, so a retry finds the row, fails the insert
+  and gets a 409 — telling a caller that never saw the first response that the
+  work happened, while still withholding what happened. The guard has four
+  outcomes (run / replay / refuse a reused key / tell an in-flight retry to come
+  back), and the claim is one `insert ... on conflict do nothing returning`
+  because select-then-insert reopens the race. Domain-blind by construction:
+  scope is a string the caller picks, the request is bytes the caller
+  canonicalises, and the stored result is opaque.
+- `src/explain.rs` — `jails explain <kind>`: why each artifact is shaped the
+  way it is, and the trap it invites. **A hand-written table, deliberately** —
+  a rationale is prose with nowhere to derive it from — so it is held to
+  `why.rs`'s shape: a value in a table, one edit per kind, with
+  `every_kind_has_an_explanation` failing the build when a kind is added
+  without one. That is what stops it becoming the editor lists.
+- `src/commands.rs` — `jails commands [--json]`: every subcommand, generator
+  kind, capability and flag, walked out of the same `clap::Command` that parses
+  the arguments and the same `ValueEnum`s that validate them. **There is no
+  second list**, which is the point — adding a kind is one edit and this output
+  follows.
 - `jails.nvim/` — tracked in this repo, but Lua, not Rust: a thin `:Jails`
-  wrapper that shells out to the binary on PATH. It keeps its own hand-
-  maintained `SUBCOMMANDS`/`KINDS`/`CAPABILITIES`/`OPTIONS` lists for
-  `:Jails` completion, so a new subcommand, artifact kind, capability or
-  flag has to be added there too or it silently won't complete. The
+  wrapper that shells out to the binary on PATH. **It no longer keeps its own
+  completion tables**: 160 lines of `SUBCOMMANDS`/`KINDS`/`CAPABILITIES`/
+  `OPTIONS` were deleted in favour of reading `jails commands --json` once per
+  session. They had drifted eight kinds and three capabilities behind the CLI,
+  and `tests/editor.rs` pinning them only caught it after the fact; that test
+  now asserts the tables have *not* come back. Every failure path — an older
+  binary, `jails` off PATH, a malformed payload — degrades to an empty menu
+  rather than raising, because a completer runs on every keystroke. The
   `<leader>J...` keymaps that drive it live in a *third* repo
   (`~/code/my-dotfiles/home/.config/nvim/init.lua`), which this project's
   git history does not track.
@@ -618,10 +747,15 @@ jails knows nothing about.
   process. Any test that calls `std::env::set_current_dir` MUST hold
   `crate::CWD_LOCK` (defined in `main.rs`) for the duration, or parallel
   tests race on the process-global cwd.
-- **`cargo clippy` errors with E0514 (crate compiled by incompatible
-  rustc)** in this environment — a toolchain/rustup mismatch between
-  `cargo build`'s and clippy's driver, not a real code issue. Don't chase
-  it; `cargo build`/`cargo test` are the real signal here.
+- **`cargo clippy` works here now**, and a `.githooks/pre-commit` runs
+  `cargo fmt --check` and `cargo clippy --all-targets` before every commit, so
+  a lint is a *blocked commit* rather than a warning you can ignore. It used to
+  fail with E0514 (crate compiled by incompatible rustc) on a toolchain
+  mismatch, which is why this file said to skip it; that is no longer true, and
+  running it before staging saves a rejected commit. `cargo clippy --fix
+  --allow-dirty --allow-staged --all-targets` handles the mechanical ones.
+  Note `.githooks/` is untracked, so it is a property of this checkout rather
+  than of the project.
 - **The crate is on edition `"2024"`, deliberately** — edition 2026 doesn't
   exist yet, whatever the version number suggests. Leave it alone.
 - Install target is `~/.cargo/bin/jails` via `cargo install --path .`

@@ -20,7 +20,7 @@ use std::path::Path;
 use crate::Result;
 use crate::generate::find_project_root;
 use crate::java::{self, Target};
-use crate::project::json_string;
+use crate::json;
 
 /// One HTTP route: verb, path, and the method behind it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -101,23 +101,22 @@ fn file_routes(source: &str, label: &str) -> Vec<Route> {
     if info
         .as_ref()
         .is_some_and(|i| i.supertypes.iter().any(|s| s == "HttpHandler"))
+        && let Some(base) = path_constant(source)
     {
-        if let Some(base) = path_constant(source) {
-            return ["GET", "POST"]
-                .iter()
-                .map(|verb| Route {
-                    path: if *verb == "GET" {
-                        format!("{base}[/{{id}}]")
-                    } else {
-                        base.clone()
-                    },
-                    verb: verb.to_string(),
-                    handler: format!("{type_name}#handle"),
-                    source: label.to_string(),
-                    line: line_of(source, "handle("),
-                })
-                .collect();
-        }
+        return ["GET", "POST"]
+            .iter()
+            .map(|verb| Route {
+                path: if *verb == "GET" {
+                    format!("{base}[/{{id}}]")
+                } else {
+                    base.clone()
+                },
+                verb: verb.to_string(),
+                handler: format!("{type_name}#handle"),
+                source: label.to_string(),
+                line: line_of(source, "handle("),
+            })
+            .collect();
     }
 
     let is_controller = annotations
@@ -225,10 +224,10 @@ fn routes_json(routes: &[Route]) -> String {
         .map(|r| {
             format!(
                 r#"{{"verb":{},"path":{},"handler":{},"source":{},"line":{}}}"#,
-                json_string(&r.verb),
-                json_string(&r.path),
-                json_string(&r.handler),
-                json_string(&r.source),
+                json::string(&r.verb),
+                json::string(&r.path),
+                json::string(&r.handler),
+                json::string(&r.source),
                 r.line
             )
         })
@@ -488,15 +487,15 @@ fn beans_json(beans: &[&Bean]) -> String {
             let list = |values: &[String]| {
                 values
                     .iter()
-                    .map(|v| json_string(v))
+                    .map(|v| json::string(v))
                     .collect::<Vec<_>>()
                     .join(",")
             };
             format!(
                 r#"{{"stereotype":{},"type":{},"source":{},"line":{},"needs":[{}],"provides":[{}]}}"#,
-                json_string(&b.stereotype),
-                json_string(&b.type_name),
-                json_string(&b.source),
+                json::string(&b.stereotype),
+                json::string(&b.type_name),
+                json::string(&b.source),
                 b.line,
                 list(&b.needs),
                 list(&b.provides)
@@ -677,13 +676,17 @@ struct LayerStats {
 // and `messaging` were never counted at all because the copy was missing
 // them. One list, read through the project's config.
 
-pub fn stats() -> Result<()> {
+pub fn stats(json: bool) -> Result<()> {
     let root = find_project_root()?;
     // Through the project's own config, so a renamed layer is counted under
     // the name the project actually uses.
     let layers = crate::config::Config::load(&root)?.layers();
     let main = collect_stats(&root.join("src/main/java"), &layers);
     let test = collect_stats(&root.join("src/test/java"), &layers);
+
+    if json {
+        return stats_json(&main, &test);
+    }
 
     let rows: Vec<&LayerStats> = main.iter().filter(|r| r.files > 0).collect();
     if rows.is_empty() {
@@ -723,6 +726,43 @@ pub fn stats() -> Result<()> {
             test_code as f64 / code as f64
         );
     }
+    Ok(())
+}
+
+/// The same counts, as data.
+///
+/// Every layer is emitted, including the empty ones -- the human table hides
+/// those because a screen of zeroes is noise, but a consumer diffing two runs
+/// needs a layer that went to zero to still be there. That is the one place
+/// the two renderings legitimately differ, and it is worth saying out loud.
+fn stats_json(main: &[LayerStats], test: &[LayerStats]) -> Result<()> {
+    use crate::json;
+
+    let render = |rows: &[LayerStats]| {
+        rows.iter()
+            .map(|row| {
+                format!(
+                    "      {{\"layer\": {}, \"files\": {}, \"lines\": {}, \"code\": {}}}",
+                    json::string(row.label),
+                    row.files,
+                    row.lines,
+                    row.code
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",\n")
+    };
+    let code: usize = main.iter().map(|r| r.code).sum();
+    let test_code: usize = test.iter().map(|r| r.code).sum();
+    println!(
+        "{{\n  \"version\": 1,\n  \"main\": [\n{}\n  ],\n  \"test\": [\n{}\n  ],\n  \
+         \"totals\": {{\"code\": {code}, \"test_code\": {test_code}, \"files\": {}, \
+         \"test_files\": {}}}\n}}",
+        render(main),
+        render(test),
+        main.iter().map(|r| r.files).sum::<usize>(),
+        test.iter().map(|r| r.files).sum::<usize>()
+    );
     Ok(())
 }
 
@@ -812,9 +852,33 @@ pub(crate) struct Note {
 /// everything catches nothing, because the output stops being read.
 const NOTE_TAGS: [&str; 4] = ["TODO", "FIXME", "HACK", "XXX"];
 
-pub fn notes(tag: Option<&str>) -> Result<()> {
+pub fn notes(tag: Option<&str>, json: bool) -> Result<()> {
     let root = find_project_root()?;
     let found = collect_notes(&root, tag);
+
+    if json {
+        use crate::json;
+        let rows: Vec<String> = found
+            .iter()
+            .map(|note| {
+                format!(
+                    "    {{\"tag\": {}, \"file\": {}, \"line\": {}, \"text\": {}}}",
+                    json::string(&note.tag),
+                    json::string(&note.file),
+                    note.line,
+                    json::string(&note.text)
+                )
+            })
+            .collect();
+        // `file` and `line` are the shape a quickfix list wants, which is the
+        // whole reason this has a JSON form.
+        println!(
+            "{{\n  \"version\": 1,\n  \"notes\": [\n{}\n  ]\n}}",
+            rows.join(",\n")
+        );
+        return Ok(());
+    }
+
     if found.is_empty() {
         match tag {
             Some(tag) => println!("No {tag} notes."),

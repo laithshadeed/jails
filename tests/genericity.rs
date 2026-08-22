@@ -10,6 +10,13 @@ const FORBIDDEN: &[&str] = &[
     "settlement",
     "ledger",
     "robots",
+    // App D's vocabulary, and the half that carries no `ledger`-style
+    // collision with jails' own machinery -- so these stay unallowed
+    // everywhere and are what make the `ledger` allowance below narrow rather
+    // than a hole. `transaction` is deliberately absent: `@Transactional` is
+    // Spring's, and banning it would forbid generated code jails must emit.
+    "debit",
+    "posting",
 ];
 
 struct AllowedConcept {
@@ -18,15 +25,35 @@ struct AllowedConcept {
     reason: &'static str,
 }
 
-const ALLOWED: &[AllowedConcept] = &[AllowedConcept {
-    word: "robots",
-    files: &[
-        "src/spring.rs",
-        "templates/spring/http_workflow_java.java",
-        "templates/spring/http_workflow_it_java.java",
-    ],
-    reason: "RFC 9309 names robots.txt; this is a web standard, not showcase-domain vocabulary",
-}];
+const ALLOWED: &[AllowedConcept] = &[
+    AllowedConcept {
+        word: "robots",
+        files: &[
+            // Followed the http-workflow generator out of `spring.rs` when rung 11
+            // split it; the concept is unchanged, only its address.
+            "src/spring/http.rs",
+            "src/explain.rs",
+            "templates/spring/http_workflow_java.java",
+            "templates/spring/http_workflow_it_java.java",
+        ],
+        reason: "RFC 9309 names robots.txt; this is a web standard, not showcase-domain vocabulary",
+    },
+    AllowedConcept {
+        word: "ledger",
+        files: &[
+            "src/ledger.rs",
+            "src/generated_files.rs",
+            "src/app.rs",
+            "src/generate.rs",
+            "src/apply/mod.rs",
+            "src/main.rs",
+        ],
+        reason: "jails' own bookkeeping file (`abstract.md` §6.3 names it), which collides \
+                 with App D's domain by accident -- the word is the storage's, not the \
+                 accounting concept's. `debit` and `posting` stay forbidden in these same \
+                 files, so the allowance is one word wide rather than a way in for the domain",
+    },
+];
 
 #[test]
 fn core_generation_stays_free_of_showcase_vocabulary() {

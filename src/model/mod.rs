@@ -258,11 +258,43 @@ pub(crate) struct Project {
 impl Project {
     /// Resolve project facts exactly once from a known Maven module root.
     pub(crate) fn load(root: &Path) -> Result<Self> {
+        // Every command that writes resolves a project first, so this is the
+        // one place template overrides have to be pointed at a root -- and no
+        // generator has to remember to do it.
+        crate::template::install(root);
         let pom = pom::read(root)?;
         let config = Config::load(root)?;
         Ok(Self {
             root: root.to_path_buf(),
             base: crate::generate::base_package(root)?,
+            flavor: pom::flavor(&pom),
+            java_release: pom::release_level(&pom),
+            layers: Layers::from_config(&config),
+            installed: config.capabilities().to_vec(),
+            pom,
+        })
+    }
+
+    /// Resolve what can be resolved, for the read-only commands.
+    ///
+    /// `doctor`, `routes`, `beans` and `stats` must work on a project that
+    /// does not build -- that is the case they exist for, and `inspect.rs`
+    /// says so out loud. A missing base package is therefore a *fact to
+    /// record* here rather than an error to raise: there is no `.java` file
+    /// under `src/main/java` yet, and the honest snapshot of that is an empty
+    /// base.
+    ///
+    /// Generators keep using [`Project::load`], which refuses, because writing
+    /// a file into a package jails had to guess is the failure this
+    /// distinction exists to prevent. Anything that *writes* must not reach
+    /// for this constructor.
+    pub(crate) fn inspect(root: &Path) -> Result<Self> {
+        crate::template::install(root);
+        let pom = pom::read(root).unwrap_or_default();
+        let config = Config::load(root)?;
+        Ok(Self {
+            root: root.to_path_buf(),
+            base: crate::generate::base_package(root).unwrap_or_default(),
             flavor: pom::flavor(&pom),
             java_release: pom::release_level(&pom),
             layers: Layers::from_config(&config),
@@ -317,12 +349,152 @@ impl Project {
         crate::generate::subpackage(&self.base, package.unwrap_or(self.layers.named(default)))
     }
 
+    /// Whether the resolved pom declares this dependency.
+    ///
+    /// Reads the cached pom. A renderer asking this question used to call
+    /// `pom::read` mid-render, which is what made rendering impure and so made
+    /// a path impossible to compute without a body.
+    pub(crate) fn has_dependency(&self, group_id: &str, artifact_id: &str) -> bool {
+        pom::has_dependency(&self.pom, group_id, artifact_id)
+    }
+
+    /// True once `add db` has put the JDBC starter on the classpath, which is
+    /// the fact that decides transaction boundaries and adapter shape.
+    pub(crate) fn has_jdbc(&self) -> bool {
+        self.has_dependency("org.springframework.boot", "spring-boot-starter-jdbc")
+    }
+
+    /// The Spring Boot major version, defaulting to 3 when the parent cannot
+    /// be read -- the conservative choice, since pre-4 package names still
+    /// exist as deprecated aliases while the 4 ones simply do not exist before 4.
+    pub(crate) fn boot_major(&self) -> u32 {
+        crate::generate::spring_boot_major_of(&self.pom)
+    }
+
+    /// `@WebMvcTest`'s package, which Boot 4 moved with no back-compat shim.
+    pub(crate) fn webmvc_test_import(&self) -> &'static str {
+        crate::generate::webmvc_test_import_for(self.boot_major())
+    }
+
+    /// `@AutoConfigureMockMvc`'s package, moved in the same Boot 4 change.
+    pub(crate) fn mockmvc_autoconfigure_import(&self) -> &'static str {
+        crate::generate::mockmvc_autoconfigure_import_for(self.boot_major())
+    }
+
+    /// The components of a record that already exists in this project.
+    ///
+    /// Was `fields_from_record(root, pkg, name)` at thirteen call sites that
+    /// disagreed about failure. `Project` owns the one window onto disk, so
+    /// the recipes above it stay pure. Recipes reach it through
+    /// `spring::Slice::record`, which knows which layer owns the resource.
+    pub(crate) fn record_in(&self, package: &str, ty: &str) -> Option<Vec<crate::generate::Field>> {
+        crate::generate::fields_from_record(&self.root, package, ty)
+    }
+
     pub(crate) fn main(&self, layer: Layer, package: Option<&str>) -> PathBuf {
         crate::generate::main_dir(&self.root, &self.package(layer, package))
     }
 
     pub(crate) fn test(&self, layer: Layer, package: Option<&str>) -> PathBuf {
         crate::generate::test_dir(&self.root, &self.package(layer, package))
+    }
+
+    /// Main/test source roots for a package already resolved by the caller.
+    /// Transitional, for recipes mid-move off the layer strings.
+    pub(crate) fn main_in(&self, package: &str) -> PathBuf {
+        crate::generate::main_dir(&self.root, package)
+    }
+
+    pub(crate) fn test_in(&self, package: &str) -> PathBuf {
+        crate::generate::test_dir(&self.root, package)
+    }
+}
+
+/// Where one generated slice's classes go, and the rule that decides.
+///
+/// `--package` places the **operation** being generated. The resource that
+/// operation targets already exists in the project's configured scaffold
+/// layers, so moving the operation must not make jails look for a second copy
+/// of the resource in the override package. That rule used to be re-stated at
+/// every call site as the difference between `place(layout::WEB)` and
+/// `subpackage(&base, config.layer(layout::DOMAIN))`, and the layer names then
+/// travelled into each renderer one string at a time -- the Data Clump that
+/// gave `spring.rs` sixteen functions of eight to twelve parameters.
+///
+/// One value carries the project, the override, and the rule.
+#[derive(Clone, Copy)]
+pub(crate) struct Slice<'a> {
+    project: &'a Project,
+    package: Option<&'a str>,
+}
+
+impl<'a> Slice<'a> {
+    pub(crate) fn new(project: &'a Project, package: Option<&'a str>) -> Self {
+        Self { project, package }
+    }
+
+    /// The package this slice's own classes go in, honouring `--package`.
+    pub(crate) fn placed(&self, layer: Layer) -> String {
+        self.project.package(layer, self.package)
+    }
+
+    /// The package a layer conventionally owns, ignoring `--package`.
+    ///
+    /// This is where an already-generated resource lives, and it is a
+    /// different question from where this slice's classes go.
+    pub(crate) fn owned(&self, layer: Layer) -> String {
+        self.project.package(layer, None)
+    }
+
+    /// The application's base package, which is where `add security` writes
+    /// `ScopeAuthorizer`.
+    pub(crate) fn base(&self) -> &'a str {
+        self.project.base()
+    }
+
+    pub(crate) fn project(&self) -> &'a Project {
+        self.project
+    }
+
+    /// The application's own base package, with `--package` applied.
+    ///
+    /// Capabilities that write one configuration class per application
+    /// (`actuator`, `security`, `cors`, `observability`) live here rather than
+    /// in a layer: there is one of each, and it belongs beside the app.
+    pub(crate) fn root_package(&self) -> String {
+        self.project.package_named("", self.package)
+    }
+
+    /// The `--package` override itself, for the few helpers that still key
+    /// recorded state on it rather than on a resolved package.
+    pub(crate) fn override_package(&self) -> Option<&'a str> {
+        self.package
+    }
+
+    /// The components of an already-generated record in its conventional home.
+    pub(crate) fn record(&self, layer: Layer, ty: &str) -> Option<Vec<crate::generate::Field>> {
+        self.project.record_in(&self.owned(layer), ty)
+    }
+
+    /// Source roots for this slice's own classes in a layer.
+    pub(crate) fn main(&self, layer: Layer) -> PathBuf {
+        self.project.main(layer, self.package)
+    }
+
+    pub(crate) fn test(&self, layer: Layer) -> PathBuf {
+        self.project.test(layer, self.package)
+    }
+
+    /// The project root, for the apply-side helpers that genuinely address
+    /// the filesystem rather than plan against it.
+    pub(crate) fn root(&self) -> &'a Path {
+        self.project.root()
+    }
+
+    /// The project's build flavour, which decides versioned-vs-managed
+    /// dependencies and therefore whether a spliced pom is readable at all.
+    pub(crate) fn flavor(&self) -> Flavor {
+        self.project.flavor()
     }
 }
 

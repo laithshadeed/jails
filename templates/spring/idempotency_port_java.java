@@ -1,0 +1,29 @@
+package {{app}};
+
+{{record_import}}import java.util.Optional;
+
+/**
+ * Where receipts are kept.
+ *
+ * <p>An interface so the store can be a table in production and a map in a unit
+ * test. The transaction boundary is deliberately <em>not</em> here: reserving a
+ * key and completing it are two separate calls, because the work between them
+ * is the caller's and may take as long as it takes.
+ */
+public interface {{name}}Receipts {
+
+    /**
+     * Claim this key for this request, or report what is already there.
+     *
+     * <p>Must be atomic. Two identical requests arriving together both call
+     * this, and exactly one may be told it won — otherwise both run the
+     * operation, which is the failure the whole mechanism exists to prevent.
+     *
+     * @return empty when the caller won the claim and should do the work;
+     *         otherwise the existing receipt, complete or still in flight.
+     */
+    Optional<{{name}}Receipt> claim(String scope, String key, String requestHash);
+
+    /** Record the outcome, making it replayable by any later retry. */
+    void complete(String scope, String key, int status, String responseBody);
+}

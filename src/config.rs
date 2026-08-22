@@ -294,7 +294,7 @@ fn edit_capabilities(
         Some(updated) => updated,
         None => append_project_table(&text, &rendered),
     };
-    fs::write(&path, updated).map_err(|e| format!("failed to write {}: {e}", path.display()))
+    crate::apply::put(&path, updated)
 }
 
 /// Swap the existing `capabilities = [...]` line in place, keeping its

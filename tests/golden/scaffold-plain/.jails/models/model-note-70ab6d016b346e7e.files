@@ -1,4 +1,0 @@
-id:uuid@pk
-title:string!
-amount:long@positive
-createdAt:instant

@@ -1,5 +1,0 @@
-src/main/java/com/example/demo/jobs/SchedulingConfig.java
-src/main/java/com/example/demo/jobs/SiteWalkWorkflow.java
-src/main/java/com/example/demo/web/SiteWalkWorkflowController.java
-src/main/resources/db/migration/V001__create_site_walk_workflow.sql
-src/test/java/com/example/demo/jobs/SiteWalkWorkflowIT.java

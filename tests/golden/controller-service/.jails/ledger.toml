@@ -1,0 +1,25 @@
+# jails' own bookkeeping. Written by jails, never hand-edited -- `jails.toml`
+# and `.jails/app.toml` are the files that are yours.
+#
+# Identity is (recipe, name, package). Everything else is content, which is
+# what makes an edited intent an update to a known entity rather than a new
+# one arriving against files that already exist.
+version = "0.1.0"
+
+[[applied]]
+recipe = "controller"
+name = "Health"
+package = ""
+files = [
+  "src/main/java/com/example/demo/web/HealthController.java",
+  "src/test/java/com/example/demo/web/HealthControllerTest.java",
+]
+
+[[applied]]
+recipe = "service"
+name = "Billing"
+package = ""
+files = [
+  "src/main/java/com/example/demo/service/BillingService.java",
+  "src/test/java/com/example/demo/service/BillingServiceTest.java",
+]

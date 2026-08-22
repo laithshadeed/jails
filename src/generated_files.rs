@@ -1,144 +1,134 @@
-//! Provenance for generated paths.
+//! Provenance for generated paths, over the one ledger.
 //!
-//! `.jails/files` is the portable, sorted union required by plan.md §11.2.
-//! Per-intent files preserve the extra fact `destroy` needs: which invocation
-//! created which paths. Bodies and ownership hashes deliberately do not live
-//! here; drift repair is a regeneration/merge problem, not a reason to claim
-//! user-edited bytes.
+//! This module used to *be* the storage: `.jails/files`, `.jails/version`,
+//! `.jails/intents/<hash>.files` and `.jails/models/<hash>.files` -- four
+//! layouts and a hand-rolled FNV to name the files. `src/ledger.rs` is the
+//! storage now, and what is left here is the vocabulary the generators already
+//! speak -- `record`, `paths`, `forget`, `record_model`, `model_fields` --
+//! expressed against it.
+//!
+//! Keeping the API meant the switch touched no generator, which is the point.
+//! `abstract.md` §4.5's complaint was never about these five verbs; it was that
+//! two of the four files were intent registries **keyed differently**. One
+//! entity keyed on `(recipe, name, package)` removes that, and the callers
+//! never had to know either key existed.
+//!
+//! **Old projects still read.** A `.jails/` that predates the ledger is folded
+//! into one on first write and the old files removed. Refusing to read them
+//! would strand `destroy` on exactly the projects with the most history to lose.
 
 use crate::Result;
+use crate::ledger::{self, Applied, Ledger, Model};
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
-const FILES: &str = ".jails/files";
-const VERSION: &str = ".jails/version";
-const INTENTS: &str = ".jails/intents";
-const MODELS: &str = ".jails/models";
-
-fn safe_relative(root: &Path, path: &Path) -> Result<String> {
-    let relative = path.strip_prefix(root).map_err(|_| {
-        format!(
-            "generated path {} escapes project root {}",
-            path.display(),
-            root.display()
-        )
-    })?;
-    let mut parts = Vec::new();
-    for component in relative.components() {
-        match component {
-            Component::Normal(part) => parts.push(part.to_string_lossy().into_owned()),
-            Component::CurDir => {}
-            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                return Err(format!(
-                    "generated path {} is not a confined relative path",
-                    path.display()
-                ));
-            }
-        }
+/// Read the ledger, migrating a pre-ledger `.jails/` if that is what is there.
+fn read(root: &Path) -> Result<Ledger> {
+    let mut current = ledger::load(root)?;
+    if current.applied.is_empty() && current.models.is_empty() {
+        migrate_legacy(root, &mut current)?;
     }
-    if parts.is_empty() {
-        return Err("refusing to record the project root as a generated file".to_string());
+    Ok(current)
+}
+
+/// Fold `.jails/intents/*`, `.jails/models/*`, `.jails/files` and
+/// `.jails/version` into the ledger, then take them out.
+///
+/// The old per-intent filename was `<kind>-<name>-<fnv>.files`, and the hash
+/// was over `kind\0name\0package` -- recoverable only for the first two. The
+/// name hint carries those, so recipe and name survive and the package reads
+/// back as the conventional one. That is lossy for an intent generated with
+/// `--package`, and the consequence is stated rather than hidden: such an
+/// intent migrates without its override, and a later `destroy` falls back to
+/// recomputing paths -- which is what it did before any of this existed.
+fn migrate_legacy(root: &Path, into: &mut Ledger) -> Result<()> {
+    let intents = root.join(".jails/intents");
+    let models = root.join(".jails/models");
+    if !intents.is_dir() && !models.is_dir() {
+        return Ok(());
     }
-    Ok(parts.join("/"))
-}
 
-fn path_from_relative(root: &Path, relative: &str) -> Result<PathBuf> {
-    let path = Path::new(relative);
-    if path.as_os_str().is_empty()
-        || path
-            .components()
-            .any(|part| !matches!(part, Component::Normal(_)))
-    {
-        return Err(format!(
-            "invalid generated path `{relative}` in {FILES}; expected a confined relative path"
-        ));
-    }
-    Ok(root.join(path))
-}
-
-fn identity_file(kind: &str, name: &str, package: Option<&str>) -> String {
-    // Stable FNV-1a keeps arbitrary names (including markdown paths) out of
-    // filenames without pulling a hashing dependency into the CLI.
-    let identity = format!("{kind}\0{name}\0{}", package.unwrap_or(""));
-    let hash = identity.bytes().fold(0xcbf29ce484222325_u64, |hash, byte| {
-        (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
-    });
-    let hint: String = format!("{kind}-{name}")
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' {
-                c.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .take(48)
-        .collect();
-    format!("{hint}-{hash:016x}.files")
-}
-
-fn atomic_write(path: &Path, contents: &str) -> Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("{} has no parent directory", path.display()))?;
-    fs::create_dir_all(parent)
-        .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
-    let temporary = parent.join(format!(
-        ".{}.{}.tmp",
-        path.file_name().unwrap_or_default().to_string_lossy(),
-        std::process::id()
-    ));
-    fs::write(&temporary, contents)
-        .map_err(|error| format!("failed to write {}: {error}", temporary.display()))?;
-    fs::rename(&temporary, path).map_err(|error| {
-        format!(
-            "failed to replace {} with {}: {error}",
-            path.display(),
-            temporary.display()
-        )
-    })
-}
-
-fn rebuild_union(root: &Path) -> Result<()> {
-    let intents = root.join(INTENTS);
-    let mut paths = BTreeSet::new();
-    if intents.is_dir() {
-        let entries = fs::read_dir(&intents)
-            .map_err(|error| format!("failed to read {}: {error}", intents.display()))?;
-        for entry in entries {
-            let entry = entry.map_err(|error| {
-                format!(
-                    "failed to read an entry under {}: {error}",
-                    intents.display()
-                )
-            })?;
-            if !entry.path().extension().is_some_and(|ext| ext == "files") {
+    if let Ok(entries) = fs::read_dir(&intents) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.extension().is_some_and(|ext| ext == "files") {
                 continue;
             }
-            let source = fs::read_to_string(entry.path())
-                .map_err(|error| format!("failed to read {}: {error}", entry.path().display()))?;
-            paths.extend(
-                source
-                    .lines()
-                    .filter(|line| !line.is_empty())
-                    .map(str::to_owned),
-            );
+            let Some((recipe, name)) = legacy_identity(&path) else {
+                continue;
+            };
+            let files = read_lines(&path)?;
+            into.applied.push(Applied {
+                recipe,
+                name,
+                package: String::new(),
+                fields: Vec::new(),
+                indexes: Vec::new(),
+                on: String::new(),
+                yields: String::new(),
+                timestamps: false,
+                files,
+            });
         }
     }
-    let body = paths.into_iter().collect::<Vec<_>>().join("\n");
-    let body = if body.is_empty() {
-        body
-    } else {
-        format!("{body}\n")
-    };
-    atomic_write(&root.join(FILES), &body)?;
-    atomic_write(
-        &root.join(VERSION),
-        &format!("{}\n", env!("CARGO_PKG_VERSION")),
-    )
+    if let Ok(entries) = fs::read_dir(&models) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.extension().is_some_and(|ext| ext == "files") {
+                continue;
+            }
+            let Some((_, name)) = legacy_identity(&path) else {
+                continue;
+            };
+            into.models.push(Model {
+                name,
+                package: String::new(),
+                fields: read_lines(&path)?,
+            });
+        }
+    }
+
+    for stale in [root.join(".jails/files"), root.join(".jails/version")] {
+        let _ = fs::remove_file(stale);
+    }
+    let _ = fs::remove_dir_all(&intents);
+    let _ = fs::remove_dir_all(&models);
+    Ok(())
 }
 
+/// `record-note-44c464a9777ec2f0.files` -> `("record", "Note")`.
+///
+/// The hint was lowercased when written, so the name comes back lowercase and
+/// is capitalised here -- every generated type name is capitalised, which is
+/// what makes that recoverable at all.
+fn legacy_identity(path: &Path) -> Option<(String, String)> {
+    let stem = path.file_stem()?.to_str()?;
+    let without_hash = stem.rsplit_once('-')?.0;
+    let (recipe, name) = without_hash.split_once('-')?;
+    if recipe.is_empty() || name.is_empty() {
+        return None;
+    }
+    let mut chars = name.chars();
+    let capitalised = chars.next()?.to_uppercase().collect::<String>() + chars.as_str();
+    Some((recipe.to_string(), capitalised))
+}
+
+fn read_lines(path: &Path) -> Result<Vec<String>> {
+    let source = fs::read_to_string(path)
+        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    Ok(source
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(str::to_owned)
+        .collect())
+}
+
+/// Record the paths one intent wrote, leaving every other column alone.
+///
+/// `app apply` writes the *spec* on the same row. Replacing the row here would
+/// erase it, and the erasure would look exactly like a manifest whose fields
+/// line had been emptied -- so this sets `files` and nothing else.
 pub(crate) fn record(
     root: &Path,
     kind: &str,
@@ -148,17 +138,12 @@ pub(crate) fn record(
 ) -> Result<()> {
     let mut relative = BTreeSet::new();
     for path in paths {
-        relative.insert(safe_relative(root, path)?);
+        relative.insert(ledger::relative(root, path)?);
     }
-    let body = relative.into_iter().collect::<Vec<_>>().join("\n");
-    let path = root.join(INTENTS).join(identity_file(kind, name, package));
-    let body = if body.is_empty() {
-        body
-    } else {
-        format!("{body}\n")
-    };
-    atomic_write(&path, &body)?;
-    rebuild_union(root)
+    let mut current = read(root)?;
+    current.version = env!("CARGO_PKG_VERSION").to_string();
+    ledger::entry_mut(&mut current, kind, name, package).files = relative.into_iter().collect();
+    ledger::save(root, &current)
 }
 
 pub(crate) fn paths(
@@ -167,26 +152,30 @@ pub(crate) fn paths(
     name: &str,
     package: Option<&str>,
 ) -> Result<Option<Vec<PathBuf>>> {
-    let path = root.join(INTENTS).join(identity_file(kind, name, package));
-    if !path.is_file() {
+    let current = read(root)?;
+    let Some(entry) = current
+        .applied
+        .iter()
+        .find(|entry| entry.is(kind, name, package))
+    else {
         return Ok(None);
-    }
-    let source = fs::read_to_string(&path)
-        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
-    source
-        .lines()
-        .filter(|line| !line.is_empty())
-        .map(|line| path_from_relative(root, line))
+    };
+    entry
+        .files
+        .iter()
+        .map(|relative| ledger::absolute(root, relative))
         .collect::<Result<Vec<_>>>()
         .map(Some)
 }
 
 pub(crate) fn forget(root: &Path, kind: &str, name: &str, package: Option<&str>) -> Result<()> {
-    let path = root.join(INTENTS).join(identity_file(kind, name, package));
-    if path.is_file() {
-        fs::remove_file(&path)
-            .map_err(|error| format!("failed to remove {}: {error}", path.display()))?;
-        rebuild_union(root)?;
+    let mut current = read(root)?;
+    let before = current.applied.len();
+    current
+        .applied
+        .retain(|entry| !entry.is(kind, name, package));
+    if current.applied.len() != before {
+        ledger::save(root, &current)?;
     }
     Ok(())
 }
@@ -197,15 +186,22 @@ pub(crate) fn record_model(
     package: Option<&str>,
     fields: &[String],
 ) -> Result<()> {
-    let path = root
-        .join(MODELS)
-        .join(identity_file("model", name, package));
-    let body = if fields.is_empty() {
-        String::new()
-    } else {
-        format!("{}\n", fields.join("\n"))
+    let mut current = read(root)?;
+    current.version = env!("CARGO_PKG_VERSION").to_string();
+    let entry = Model {
+        name: name.to_string(),
+        package: package.unwrap_or_default().to_string(),
+        fields: fields.to_vec(),
     };
-    atomic_write(&path, &body)
+    match current
+        .models
+        .iter_mut()
+        .find(|model| model.name == entry.name && model.package == entry.package)
+    {
+        Some(existing) => *existing = entry,
+        None => current.models.push(entry),
+    }
+    ledger::save(root, &current)
 }
 
 pub(crate) fn model_fields(
@@ -213,63 +209,175 @@ pub(crate) fn model_fields(
     name: &str,
     package: Option<&str>,
 ) -> Result<Option<Vec<String>>> {
-    let path = root
-        .join(MODELS)
-        .join(identity_file("model", name, package));
-    if !path.is_file() {
-        return Ok(None);
-    }
-    let source = fs::read_to_string(&path)
-        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
-    Ok(Some(
-        source
-            .lines()
-            .filter(|line| !line.is_empty())
-            .map(str::to_owned)
-            .collect(),
-    ))
+    let current = read(root)?;
+    Ok(current
+        .models
+        .iter()
+        .find(|model| model.name == name && model.package == package.unwrap_or_default())
+        .map(|model| model.fields.clone()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    fn scratch() -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "jails-provenance-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
 
     #[test]
     fn generated_paths_are_sorted_normalised_and_scoped_per_intent() {
-        let root = std::env::temp_dir().join(format!(
-            "jails-generated-files-{}-{}",
-            std::process::id(),
-            std::thread::current().name().unwrap_or("test")
-        ));
-        fs::create_dir_all(&root).unwrap();
+        let root = scratch();
         let first = root.join("src/test/java/A.java");
         let second = root.join("src/main/java/B.java");
 
         record(&root, "record", "A", None, &[first.clone(), second.clone()]).unwrap();
-        assert_eq!(
-            fs::read_to_string(root.join(FILES)).unwrap(),
-            "src/main/java/B.java\nsrc/test/java/A.java\n"
-        );
-        assert_eq!(
-            paths(&root, "record", "A", None).unwrap().unwrap(),
-            vec![second, first]
-        );
-        assert_eq!(
-            fs::read_to_string(root.join(VERSION)).unwrap(),
-            format!("{}\n", env!("CARGO_PKG_VERSION"))
-        );
 
-        forget(&root, "record", "A", None).unwrap();
-        assert!(paths(&root, "record", "A", None).unwrap().is_none());
-        assert_eq!(fs::read_to_string(root.join(FILES)).unwrap(), "");
-        let _ = fs::remove_dir_all(root);
+        let recorded = paths(&root, "record", "A", None).unwrap().unwrap();
+        assert_eq!(recorded, vec![second, first], "sorted, not insertion order");
+        assert!(paths(&root, "record", "B", None).unwrap().is_none());
     }
 
     #[test]
-    fn generated_paths_refuse_to_escape_the_project() {
-        let root = Path::new("/tmp/project");
-        assert!(safe_relative(root, Path::new("/tmp/elsewhere/X.java")).is_err());
-        assert!(path_from_relative(root, "../X.java").is_err());
-        assert!(path_from_relative(root, "/tmp/X.java").is_err());
+    fn recording_the_same_intent_twice_replaces_rather_than_appends() {
+        let root = scratch();
+        record(
+            &root,
+            "record",
+            "A",
+            None,
+            &[root.join("src/main/java/A.java")],
+        )
+        .unwrap();
+        record(
+            &root,
+            "record",
+            "A",
+            None,
+            &[root.join("src/main/java/B.java")],
+        )
+        .unwrap();
+
+        assert_eq!(
+            paths(&root, "record", "A", None).unwrap().unwrap(),
+            vec![root.join("src/main/java/B.java")],
+            "identity is (recipe, name, package), so this is one entity updated"
+        );
+    }
+
+    #[test]
+    fn the_package_override_is_part_of_identity() {
+        let root = scratch();
+        record(
+            &root,
+            "record",
+            "A",
+            None,
+            &[root.join("src/main/java/A.java")],
+        )
+        .unwrap();
+        record(
+            &root,
+            "record",
+            "A",
+            Some("other"),
+            &[root.join("src/main/java/other/A.java")],
+        )
+        .unwrap();
+
+        assert!(paths(&root, "record", "A", None).unwrap().is_some());
+        assert!(
+            paths(&root, "record", "A", Some("other"))
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn forgetting_an_intent_leaves_the_others() {
+        let root = scratch();
+        record(
+            &root,
+            "record",
+            "A",
+            None,
+            &[root.join("src/main/java/A.java")],
+        )
+        .unwrap();
+        record(
+            &root,
+            "record",
+            "B",
+            None,
+            &[root.join("src/main/java/B.java")],
+        )
+        .unwrap();
+
+        forget(&root, "record", "A", None).unwrap();
+
+        assert!(paths(&root, "record", "A", None).unwrap().is_none());
+        assert!(paths(&root, "record", "B", None).unwrap().is_some());
+    }
+
+    #[test]
+    fn models_round_trip_and_are_scoped_by_package() {
+        let root = scratch();
+        record_model(&root, "Note", None, &["title:string!".to_string()]).unwrap();
+
+        assert_eq!(
+            model_fields(&root, "Note", None).unwrap(),
+            Some(vec!["title:string!".to_string()])
+        );
+        assert_eq!(model_fields(&root, "Note", Some("other")).unwrap(), None);
+    }
+
+    /// A project whose `.jails/` predates the ledger must not lose its history.
+    #[test]
+    fn a_pre_ledger_project_is_migrated_rather_than_ignored() {
+        let root = scratch();
+        fs::create_dir_all(root.join(".jails/intents")).unwrap();
+        fs::create_dir_all(root.join(".jails/models")).unwrap();
+        fs::write(
+            root.join(".jails/intents/record-note-44c464a9777ec2f0.files"),
+            "src/main/java/com/example/demo/domain/Note.java\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join(".jails/models/model-note-70ab6d016b346e7e.files"),
+            "title:string!\n",
+        )
+        .unwrap();
+        fs::write(root.join(".jails/files"), "src/main/java/x\n").unwrap();
+        fs::write(root.join(".jails/version"), "0.0.1\n").unwrap();
+
+        // Any write triggers the fold.
+        record_model(&root, "Other", None, &["a:string".to_string()]).unwrap();
+
+        assert_eq!(
+            paths(&root, "record", "Note", None).unwrap(),
+            Some(vec![
+                root.join("src/main/java/com/example/demo/domain/Note.java")
+            ]),
+            "the recorded path set survived the migration"
+        );
+        assert_eq!(
+            model_fields(&root, "Note", None).unwrap(),
+            Some(vec!["title:string!".to_string()])
+        );
+        assert!(
+            !root.join(".jails/intents").exists(),
+            "the old layout is gone"
+        );
+        assert!(!root.join(".jails/files").exists());
+        assert!(root.join(".jails/ledger.toml").is_file());
     }
 }

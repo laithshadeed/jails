@@ -338,18 +338,44 @@ An implementation detail of the first case became schema. In DDD terms the
 That is what "the abstraction went in the wrong direction" looks like from
 outside the codebase.
 
-### 4.5 An anemic ledger, split seven ways
+**The schema half is fixed.** `on` and `yields` are the manifest keys;
+`strategy_on` and `strategy_yields` still parse as deprecated aliases, because
+a user-facing file format that people have already written does not get to
+break. Setting one reference under both spellings is an error rather than
+last-one-wins, and all four proof-app manifests are migrated — which also
+demonstrates the property that matters: the state key is computed from the
+*values*, so renaming the key does not make `app apply` see a new intent.
+What is still open is the typed `Ref { name, expect: Referent }` itself: the
+five referents are still one `Option<String>` interpreted differently per kind,
+so `destroy Note` still cannot warn that a use case points at it.
+
+### 4.5 An anemic ledger, split seven ways — **fixed**
 
 | File | Owner | Says |
 |---|---|---|
 | `jails.toml` `[project] capabilities` | `config.rs` | what the project *has* |
 | `.jails/app.toml` `capabilities` | `app.rs` | what it *should have* |
 | `.jails/app.toml` `[[generate]]` | `app.rs` | intents wanted |
-| `.jails/app-state-v1` | `app.rs` | intents applied, keyed by **full-argument hash** |
-| `.jails/intents/*.files` | `generated_files.rs` | paths per intent, keyed by **kind+name+package** |
-| `.jails/files` | `generated_files.rs` | union of paths |
-| `.jails/models` | `generated_files.rs` | field specs per record |
-| `.jails/version` | `generated_files.rs` | jails version |
+| ~~`.jails/app-state-v1`~~ | `app.rs` | intents applied, keyed by **full-argument hash** |
+| ~~`.jails/intents/*.files`~~ | `generated_files.rs` | paths per intent, keyed by **kind+name+package** |
+| ~~`.jails/files`~~ | `generated_files.rs` | union of paths |
+| ~~`.jails/models`~~ | `generated_files.rs` | field specs per record |
+| ~~`.jails/version`~~ | `generated_files.rs` | jails version |
+
+The five struck rows are now one `.jails/ledger.toml` (`src/ledger.rs`), and
+every golden scenario's `.jails/` holds at most two files —
+`the_goldens_still_hold_the_properties_that_matter` fails if a third appears or
+a subdirectory grows back. Identity is `(recipe, name, package)`; everything
+else is content. The two writers reach the same row and neither owns the
+other's columns: `generate` sets `files`, `app apply` sets the spec, both
+through `ledger::entry_mut`, so a whole-row replace can no longer erase half of
+it.
+
+Folding them turned up a bug that had been latent in the storage the whole
+time: the array parser split on every comma, so `totals:map<string,double>` —
+a field type jails documents — could not survive a round trip. The old format
+hex-encoded each element precisely to dodge that, and the dodge is why nobody
+had noticed the parser could not do it.
 
 Two capability lists. Two intent registries **keyed differently** — and that
 difference *is* the §9.7 bug rather than a nearby cause. `app-state-v1` keys on
@@ -466,8 +492,8 @@ deduplicates deps and detects file collisions. Three things then stop being
 features and become consequences:
 
 - `add db kafka` = fold two Changes → one preflight, one pom write.
-- `app apply` = fold N → **the atomic whole-manifest `ChangeSet` plan.md §22
-  wants**, at position 22 of the queue, for free at position 3.
+- `app apply` = fold N → **the atomic whole-manifest `ChangeSet` plan.md §11
+  wants** (last item of its §17 queue), for free at position 3 here.
 - Conflict detection = a pure function on the folded value, before any write.
 
 This is the composability half of the Composite pattern, which is the half worth
@@ -486,6 +512,17 @@ keeping.
   today's project and report the delta. The ~20 hand-written `*_check` functions
   shrink to the ones that probe the **environment** (podman socket, JDK, Docker
   reachability) — which is doctor's real value and which no plan can derive.
+
+  **The deriving half shipped.** `add::plan_for` exposes the pure plan, and
+  `doctor::capability_drift_checks` re-plans every capability `jails.toml`
+  records, reporting any missing dependency, file, property or compose service
+  with `fix: jails sync`. That closes the drift class §4.2 identified as having
+  no test at all. **The shrinking half did not, and the honest reason is that
+  it is not a line-deletion exercise**: the hand-written checks still cover
+  projects with no recorded capability list — someone else's project, which
+  §12 is entirely about — where a derived check has nothing to derive from.
+  Deleting them to reach a line count would trade real coverage for a number,
+  which is the trade §8's own gates exist to refuse.
 - **Drift detection is that same delta**, so plan.md §11.1's regenerate-and-merge
   gets its "old output" for nothing.
 - **`require_spring` becomes a precondition on `Recipe`**, checked by `plan`
@@ -493,22 +530,29 @@ keeping.
   is one 6,621-line file (logical cohesion, §3.2) — turn it into data and the
   file dissolves along real seams.
 
-### 6.3 One ledger
+### 6.3 One ledger — **shipped**
+
+`src/ledger.rs`. What it actually writes, one `[[applied]]` per entity:
 
 ```toml
-# .jails/ledger.toml — replaces app-state-v1, intents/*, files, models, version,
-# and jails.toml's capability list.
-version = "0.9.3"
+version = "0.1.0"
 
 [[applied]]
-recipe = "scaffold"; name = "CrawlRun"; package = ""
+recipe = "scaffold"
+name = "CrawlRun"
+package = ""
 fields = ["id:uuid@pk", "seedUrl:uri", "status:CrawlStatus@index"]
-files  = ["src/main/java/…/CrawlRun.java", "…"]
-
-[[applied]]
-recipe = "capability"; name = "db"
-files  = ["…"]
+files = [
+  "src/main/java/com/example/demo/domain/CrawlRun.java",
+]
 ```
+
+Two departures from the sketch above. Capabilities are **not** `[[applied]]`
+rows: `jails.toml`'s list is the one the reader edits and `sync` acts on, and
+duplicating it into machine state would recreate §4.5's two-capability-lists
+problem in a new file. And the schema is closed — an unknown key is an error,
+because `destroy` acts on this file and a key jails silently ignored would make
+it delete the wrong set.
 
 Identity `(recipe, name, package)`; `fields` is content; `files` is **recorded,
 not recomputed** (plan.md §11.2 stays correct — recompute for `--pretend` where
@@ -558,16 +602,37 @@ The golden suite (38 scenarios, 457 files, `tests/agreement.rs` both ways) is
 the oracle. **No rung may change a golden byte.** That suite is what makes this a
 mechanical exercise instead of a gamble; it should be spent, not admired.
 
+**Status, measured by `tests/architecture.rs` (`cargo test --test architecture
+-- --nocapture --test-threads=1` prints the board):** rung 1's `Layers` half is
+**closed** — no `spring.rs` function takes more than five parameters, against 27
+before; its `Project` half is in flight at 148 `root: &Path` against a target of
+40. Rung 2 is **closed** — one `Change`, one `Artifact`, zero ad-hoc
+`(path, body, label)` tuples, zero aliases. Rung 3's flag half is **closed** —
+`--dry-run` is a `visible_alias` of the one global `--pretend` rather than five
+per-command booleans OR'd at dispatch, and it consequently works on every
+command now rather than the four that declared it. Rung 10 is **closed** — all
+39 inline Java bodies are `templates/spring/*.java`, extracted in one pass with
+every one of the 457 golden files byte-identical. Rung 7's **schema half** is
+closed (§4.4); its typed-`Ref` half is not. Rung 11's file split is **closed** — `src/spring/{workflow,durable,http,schema}.rs`
+took `spring.rs` from 6,624 to ~1,900 lines, and `json_string` is rescued into
+`src/json.rs`, ending `project.rs`'s coincidental cohesion. A new gate watches
+the *largest* module, because a split that relocates a monolith satisfies the
+old one; it immediately named `generate.rs`, which §3.2 already calls the
+temporal-decomposition anti-pattern. Rung 6 is **closed** — `src/apply/`
+is the only module that writes, `fs::write` appears nowhere else, and giving
+`create` real meaning surfaced a latent double-write of `package-info.java`
+that a silent overwrite had been hiding.
+
 | # | Rung | Named refactoring | Removes | Cost |
 |---|---|---|---|---|
 | 1 | Adopt `Project` + `Layers`; thread instead of `root` | Introduce Parameter Object | 188 `root: &Path`; the 8–11-param clump; ~120 re-reads | 2–3 d, mechanical (`Project::root()` keeps old sites alive mid-move) |
 | 2 | One `Change`; delete `Artifact`/`NewFile`/`SpringSlice`/tuple | Extract Class | 4 shapes → 1 | 1 d |
-| 3 | One `apply`/`revert`/`describe`; `Change` monoid | Command with undo | `add`'s dry-run branch; `remove`'s longhand; `dry_run\|\|pretend`; **plan.md §22's ChangeSet** | 1–2 d |
+| 3 | One `apply`/`revert`/`describe`; `Change` monoid | Command with undo | `add`'s dry-run branch; `remove`'s longhand; `dry_run\|\|pretend`; **plan.md §11's ChangeSet** | 1–2 d |
 | 4 | `Body` lazy; `plan` pure | Separate Query from Modifier | the reason `KIND_FILES` exists | 1 d |
 | 5 | Derive `destroy` from `plan`; **delete `KIND_FILES`** | — | plan.md §6.1 copy 2 | 0.5 d, free after 4 |
 | 6 | `Edit` + `apply/codemod.rs` | Replace Conditional with Polymorphism | splices across 5 modules; 29 production `fs::write` sites | 1 d |
 | 7 | Typed `Refs`; `on`/`yields` in `app.toml`, `strategy_on` deprecated alias | Replace Type Code with Subclasses | §4.4 | 1 d |
-| 8 | One `.jails/ledger.toml`; identity = (recipe,name,package) | Entity vs Value Object | 7 state files → 2; **§9.7 fixed structurally** | 1–2 d |
+| 8 | ✅ One `.jails/ledger.toml`; identity = (recipe,name,package) | Entity vs Value Object | 5 machine-owned state files → 1; **§9.7 fixed structurally** | 1–2 d |
 | 9 | `doctor` derives capability checks from `plan` | Move Method | ~600 lines of re-encoded facts; a whole unchecked drift class | 2 d |
 | 10 | Templates out of `spring.rs` (39 inline bodies, 221 `{{`) | Extract Class | plan.md §6.2 C, now trivial | ongoing |
 | 11 | Split `src/` by secret (§6.4); rescue `json_string` | Move Module | coincidental cohesion in `project.rs` | 1 d, last on purpose |
@@ -576,17 +641,23 @@ Rungs 1–5 are ~6 days and remove the documented bug class. Rung 9 is where the
 compounding shows: it is cheap **only because** 1–5 happened. Rung 11 is last
 because moving files before the types are right just relocates the mess.
 
-**Where I disagree with plan.md's sequence.** The structural work sits at
-positions 1, 11, 16 and 22 of a 22-item queue, and each is priced as if the
-others had not happened — §6.2 F (descriptors) is a week partly because there is
+**Where I disagree with plan.md's sequence.** The structural work sits near the
+back of plan.md's §17 queue, and each item is priced as if the others had not
+happened — §6.2 F (descriptors) is a week partly because there is
 no `Change` for a descriptor to describe; §22 (`codemod.rs`, atomic `ChangeSet`)
 is L partly because there is no interpreter to target. Rungs 1–5 re-price 11, 16
 and 22 downward.
 
-They do **not** re-price the authorship debt (items 3–8, `g field`), which is
-orthogonal and genuinely more urgent. **If only one track can run, run that
-one** — it is the user-visible one, and this document is worth nothing next to a
-tool that makes a model change cheap.
+They do **not** re-price the authorship debt (`g field` and its neighbours),
+which is orthogonal and was genuinely more urgent. **If only one track can run,
+run that one** — it is the user-visible one, and this document is worth nothing
+next to a tool that makes a model change cheap.
+
+**That track has since run.** `g field`, `g factory`, `--timestamps` and
+`requests/*.http` shipped in `b8e9be1`..`38c3dc6`, so the argument for deferring
+this document no longer holds: the queue in front of it is now maintainability,
+latency and reach. This ladder is the live sequence, and plan.md §6.4 defers to
+it rather than competing.
 
 **On §6.2 F.** After rungs 1–8, one descriptor per kind stops being a new
 architecture and becomes a serialisation of `Recipe` + `Change`. Do it then or
@@ -619,11 +690,88 @@ confidence than the five before it. Three answers, in descending strength:
 | 3 | `add.rs` loses its `if dry_run` branch; `remove` under 60 lines; zero `dry_run \|\| pretend` |
 | 4–5 | `KIND_FILES` and `NO_FILE_TABLE` deleted; `tests/agreement.rs` still green |
 | 6 | zero `fs::write` outside `src/apply/` |
-| 8 | `.jails/` holds 2 files; an edited `fields` line round-trips without a manual `destroy` |
+| 8 | ✅ **met.** `.jails/` holds 2 files (`the_goldens_still_hold_the_properties_that_matter`); an edited `fields` line round-trips (`app_manifest_merges_an_edited_intent_over_user_changes`) |
 | 9 | `doctor.rs` under 700 lines with capability checks still passing |
 
 Metz's rule is about *speculative* abstraction. Where a gate is missed, her rule
 wins and the rung goes back.
+
+### 8.1 Rung 1 is in flight, and its gate is moving the wrong way
+
+Recorded 2026-08-22, after `7e92586` ("Unify project and change planning")
+landed `src/model/mod.rs` — `Project`, `Layers`, `Layer`, `Change`, `Artifact`,
+410 lines of exactly the right types. By the same grep this document used:
+
+| | `ae63145` | `38c3dc6` | `7e92586` | worktree | now |
+|---|---|---|---|---|---|
+| `root: &Path` | 161 | 190 | 191 | **195** | **148** |
+
+The gate is *188 → under 40*, and `spring.rs` had 27 functions over five
+parameters (see the correction below); it now has **none**. The types were added **beside** the primitive rather than instead of
+it. Mid-rung that is exactly what a two-to-three-day mechanical refactor looks
+like on day one, and `Project::root()` keeping old sites alive is the stated
+plan — **so this is not yet a missed gate.** It is a missed *measurement*: the
+number rose 21% across four commits and nothing said so.
+
+**The fix is the one this repo has already proved twice: make the gate a
+ratchet, not a table.** `tests/genericity.rs` moved the vocabulary problem after
+prose did not, and it moved it by putting a failure in the build. A
+`tests/architecture.rs` that fails when `root: &Path` rises above a recorded
+ceiling, and when any `spring.rs` function exceeds N parameters, is an
+afternoon, converts all eleven gates here into eleven ratchets, and makes a rung
+impossible to half-finish and forget. It is also §9's own rule — *"the edit
+count is the number to watch on every change"* — in the only form that gets
+watched.
+
+**That test now exists**, and it bites in *both* directions: a number rising
+above its ceiling fails, and a number falling below it also fails, demanding the
+new value be recorded in the same change. An unrecorded improvement is the thing
+that let §8.1 happen, so it is treated as a defect rather than as a bonus.
+Raising a ceiling is permitted once per rise, with the reason written beside it
+— which is how the one honest regression so far (rung 1 trading parameter-list
+lines for named bindings) is on the record instead of invisible.
+
+**Two of this document's own numbers were wrong, and the test is how that was
+found.** The parameter counts here — *"16 functions in `spring.rs` take 8–11
+parameters"*, *"38 functions over five parameters"*, *"the worst take nine"*
+(plan.md §21.1) — were all measured by counting commas and adding one, which
+overstates every wrapped signature by exactly one, because Rust permits a
+trailing comma and every multi-line signature here has one. The true starting
+count was 27, not 38. It is the worst shape of measurement error: consistent
+enough across the corpus to look right, and wrong in the same direction every
+time. `top_level_commas` counts non-empty segments now, with a unit test
+pinning both spellings.
+
+Second, the gates were being measured over test code as well as production
+code, which made a fixture writing a scratch `pom.xml` count as an `fs::write`
+to be eliminated and a test helper taking `root: &Path` count as the primitive
+being propagated. §3 already says line counts exclude `mod tests`; every gate
+means the same thing, and all of them now blank `#[cfg(test)]` bodies first.
+That correction alone moved `fs::write outside apply` from a reported 107 to a
+real 40.
+
+### 8.2 One open question — **answered: `jails.toml` stays out**
+
+§6.3 folds `app-state-v1`, `intents/*`, `files`, `models`, `version` **and
+`jails.toml`'s capability list** into a single `.jails/ledger.toml`. Seven files
+to one is right for the six that are machine-owned. The seventh is not: plan.md
+§11.2 argues, from `openapi-generator`'s `FILES`, that a sorted,
+separator-normalised, one-path-per-line list earns its place precisely because
+it is **diffable and not derived** — and `jails.toml` is a file people edit by
+hand, which `CLAUDE.md` protects with byte-preserving splices for that reason.
+Merging hand-owned configuration with machine-owned state is the one move in
+§6 that trades a property away rather than removing duplication. Either keep
+`jails.toml` out of the ledger, or say why the trade is worth it.
+
+**Resolved: `jails.toml` stays out, and so does `.jails/app.toml`.** The line
+is not machine-owned versus hand-owned *state*; it is who is allowed to write
+the file. Both of those are files people edit, and `CLAUDE.md`'s rule that an
+edit must be surgical and leave every other byte alone only holds for a file
+jails does not rewrite wholesale. `ledger.toml` is rewritten wholesale on every
+recorded intent, sorted, because that is what makes it deterministic across
+machines — which is exactly the property a hand-edited file must not have. So
+the fold is five files to one, not seven, and the ledger carries a header
+saying which two files are the reader's.
 
 ---
 

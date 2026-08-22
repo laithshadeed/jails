@@ -1,0 +1,862 @@
+//! Work that happens away from a request: `job` and `durable-job`.
+//!
+//! The two are a deliberate pair, and the difference is the whole point.
+//! `job` is a `@Scheduled` method -- fine until the process dies mid-item, at
+//! which point the work is simply gone. `durable-job` puts the queue in a
+//! table, so a lease expires instead and the item is picked up again.
+//!
+//! One trap worth carrying at the top: `spring.task.scheduling.pool.size`
+//! defaults to **1**. A single scheduled method that blocks stalls every other
+//! scheduled method in the application, which is not obvious from any one
+//! generated class.
+
+use super::*;
+
+// ---------------------------------------------------------------------------
+// `generate job` -- scheduled work.
+// ---------------------------------------------------------------------------
+
+pub(crate) fn job_files(slice: &Slice, name: &str) -> Vec<Artifact> {
+    let root: &Path = slice.project().root();
+    let pkg: &str = &slice.placed(Layer::Jobs);
+    let main = crate::generate::main_dir(root, pkg);
+    let test = crate::generate::test_dir(root, pkg);
+    vec![
+        Artifact {
+            kind: "job",
+            path: main.join(format!("{name}Job.java")),
+            contents: job_java(pkg, name),
+        },
+        Artifact {
+            kind: "scheduling",
+            path: main.join("SchedulingConfig.java"),
+            contents: scheduling_config_java(pkg),
+        },
+        Artifact {
+            kind: "job test",
+            path: test.join(format!("{name}JobTest.java")),
+            contents: job_test_java(pkg, name),
+        },
+    ]
+}
+
+fn job_java(pkg: &str, name: &str) -> String {
+    let property = crate::sql::snake_case(name).replace('_', "-");
+    crate::template::render(
+        crate::template::template!("spring/job_java.java"),
+        &[("pkg", pkg), ("property", &*property), ("name", name)],
+    )
+}
+
+pub(crate) fn scheduling_config_java(pkg: &str) -> String {
+    crate::template::render(
+        crate::template::template!("spring/scheduling_config_java.java"),
+        &[("pkg", pkg)],
+    )
+}
+
+fn job_test_java(pkg: &str, name: &str) -> String {
+    crate::template::render(
+        crate::template::template!("spring/job_test_java.java"),
+        &[("pkg", pkg), ("name", name)],
+    )
+}
+
+// ---------------------------------------------------------------------------
+// `generate durable-job` -- leased PostgreSQL work composed with a use case.
+// ---------------------------------------------------------------------------
+
+/// Generate at-least-once durable execution without teaching Jails a domain.
+///
+/// The work fields must exactly match an existing generated command and must
+/// include its stable UUID `id`. `--yields` names the resource created by the
+/// use case. That lets a reclaimed execution observe an already-committed
+/// resource and mark the work successful after a crash between the business
+/// commit and the queue acknowledgement.
+pub(crate) fn durable_job_files(
+    slice: &Slice,
+    name: &str,
+    usecase: &str,
+    target: &str,
+    fields: &[crate::generate::Field],
+) -> crate::Result<Vec<Artifact>> {
+    let root: &Path = slice.project().root();
+    let jobs: &str = &slice.placed(Layer::Jobs);
+    let web: &str = &slice.owned(Layer::Web);
+    require_scope_authorizer(slice, "durable-job", name, fields)?;
+    if !slice.project().has_jdbc() {
+        return Err(format!(
+            "durable-job {name} needs PostgreSQL/JDBC for durable leasing.\n       fix: run `jails add db` before generating it."
+        ));
+    }
+    let id = fields
+        .iter()
+        .find(|field| field.name == "id")
+        .ok_or_else(|| format!("durable-job {name} needs a stable `id:uuid` field"))?;
+    if usecase_normalized_type(&id.java_type) != "UUID"
+        || id.optionality == crate::generate::Optionality::Nullable
+    {
+        return Err(format!(
+            "durable-job {name} needs required `id:uuid`; it received id:{}",
+            id.java_type
+        ));
+    }
+    if let Some(field) = fields.iter().find(|field| {
+        field.optionality == crate::generate::Optionality::Nullable || field.collection
+    }) {
+        return Err(format!(
+            "durable-job {name} field `{}` is optional or a collection. Durable payload v1 accepts required scalar JDBC fields so storage and equality are exact.",
+            field.name
+        ));
+    }
+    let service: &str = &slice.owned(Layer::Service);
+    let domain: &str = &slice.owned(Layer::Domain);
+    let command_name = format!("{usecase}Command");
+    let command_fields = crate::generate::fields_from_record(root, service, &command_name)
+        .ok_or_else(|| {
+            format!(
+                "durable-job {name} cannot read {command_name}.java. Generate usecase {usecase} first."
+            )
+        })?;
+    if fields.len() != command_fields.len()
+        || fields.iter().zip(&command_fields).any(|(work, command)| {
+            work.name != command.name
+                || usecase_normalized_type(&work.java_type)
+                    != usecase_normalized_type(&command.java_type)
+                || (work.optionality == crate::generate::Optionality::Nullable)
+                    != (command.optionality == crate::generate::Optionality::Nullable)
+        })
+    {
+        let wanted = command_fields
+            .iter()
+            .map(|field| format!("{}:{}", field.name, usecase_field_type(field)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(format!(
+            "durable-job {name} fields must exactly match {command_name} in declaration order.\n       expected: {wanted}"
+        ));
+    }
+    let target_fields = Target::read(slice, "durable-job", name, target)?.fields;
+    let target_id = target_fields
+        .iter()
+        .find(|field| field.name == "id")
+        .ok_or_else(|| format!("durable-job {name} target {target} has no stable id"))?;
+    if usecase_normalized_type(&target_id.java_type) != "UUID" {
+        return Err(format!(
+            "durable-job {name} v1 needs {target}.id to be UUID so work and effect share one stable identity"
+        ));
+    }
+
+    let columns = crate::sql::columns(fields, slice.project(), domain, "work");
+    let unmapped = columns
+        .iter()
+        .filter(|column| !column.mapped())
+        .map(|column| column.name.as_str())
+        .collect::<Vec<_>>();
+    if !unmapped.is_empty() {
+        return Err(format!(
+            "durable-job {name} cannot map payload column(s): {}",
+            unmapped.join(", ")
+        ));
+    }
+
+    let migration_dir = root.join("src/main/resources/db/migration");
+    let version = crate::generate::next_migration_version(&migration_dir)?;
+    let table = format!("{}_jobs", crate::sql::snake_case(name));
+    let main_jobs = crate::generate::main_dir(root, jobs);
+    let test_jobs = crate::generate::test_dir(root, jobs);
+    let main_web = crate::generate::main_dir(root, web);
+    Ok(vec![
+        Artifact {
+            kind: "scheduling",
+            path: main_jobs.join("SchedulingConfig.java"),
+            contents: scheduling_config_java(jobs),
+        },
+        Artifact {
+            kind: "durable work payload",
+            path: main_jobs.join(format!("{name}Work.java")),
+            contents: durable_work_java(slice, name, fields),
+        },
+        Artifact {
+            kind: "durable work queue port",
+            path: main_jobs.join(format!("{name}Queue.java")),
+            contents: durable_queue_java(jobs, name),
+        },
+        Artifact {
+            kind: "durable PostgreSQL store",
+            path: main_jobs.join(format!("Jdbc{name}Store.java")),
+            contents: durable_store_java(slice, name, &table, &columns),
+        },
+        Artifact {
+            kind: "durable worker",
+            path: main_jobs.join(format!("{name}Worker.java")),
+            contents: durable_worker_java(slice, name, usecase, target, fields),
+        },
+        Artifact {
+            kind: "durable job controller",
+            path: main_web.join(format!("{name}JobController.java")),
+            contents: durable_job_controller_java(slice, name, fields),
+        },
+        Artifact {
+            kind: "durable job integration test",
+            path: test_jobs.join(format!("{name}JobIT.java")),
+            contents: durable_job_it_java(slice, name, target, &table, fields),
+        },
+        Artifact {
+            kind: "durable job migration",
+            path: migration_dir.join(format!("V{version:03}__create_{table}.sql")),
+            contents: durable_job_migration(&table, &columns),
+        },
+    ])
+}
+
+fn durable_work_java(slice: &Slice, name: &str, fields: &[crate::generate::Field]) -> String {
+    let pkg: &str = &slice.placed(Layer::Jobs);
+    let domain: &str = &slice.owned(Layer::Domain);
+    let class = format!("{name}Work");
+    let mut source = crate::generate::record_java(pkg, &class, fields);
+    let mut imports = fields
+        .iter()
+        .filter(|field| field.owned && domain != pkg)
+        .map(|field| format!("import {domain}.{};", field.java_type))
+        .collect::<Vec<_>>();
+    imports.sort();
+    imports.dedup();
+    if !imports.is_empty() {
+        let package = format!("package {pkg};\n");
+        source = source.replacen(&package, &format!("{package}\n{}\n", imports.join("\n")), 1);
+        source = crate::generate::normalize_imports(&source);
+    }
+    source.replace(
+        &format!(" * An immutable {class} value."),
+        &format!(" * Stable, persistable input for the {name} durable job."),
+    )
+}
+
+fn durable_queue_java(pkg: &str, name: &str) -> String {
+    crate::template::render(
+        crate::template::template!("spring/durable_queue_java.java"),
+        &[("pkg", pkg), ("name", name)],
+    )
+}
+
+fn durable_store_java(
+    slice: &Slice,
+    name: &str,
+    table: &str,
+    columns: &[crate::sql::Column],
+) -> String {
+    let pkg: &str = &slice.placed(Layer::Jobs);
+    let domain: &str = &slice.owned(Layer::Domain);
+    let property = crate::sql::snake_case(name).replace('_', "-");
+    let mut imports = crate::sql::imports(columns)
+        .into_iter()
+        .map(|import| format!("import {import};\n"))
+        .collect::<String>();
+    for column in columns {
+        if crate::generate::builtin_by_java_name(&column.java_type).is_none() {
+            imports.push_str(&crate::generate::import_of(pkg, domain, &column.java_type));
+        }
+    }
+    let names = columns
+        .iter()
+        .map(|column| column.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let placeholders = columns
+        .iter()
+        .map(|column| format!(":{}", column.name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let bindings = columns
+        .iter()
+        .map(|column| {
+            format!(
+                "                .param(\"{}\", {})",
+                column.name,
+                column.write.as_deref().expect("mapped durable column")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let select = columns
+        .iter()
+        .map(|column| column.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let returning = columns
+        .iter()
+        .map(|column| format!("jobs.{} as {}", column.name, column.name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let map_args = columns
+        .iter()
+        .map(|column| format!("                    {}", column.read.as_deref().unwrap()))
+        .collect::<Vec<_>>()
+        .join(",\n");
+    crate::template::render(
+        crate::template::template!("spring/durable_store_java.java"),
+        &[
+            ("pkg", pkg),
+            ("imports", &*imports),
+            ("name", name),
+            ("property", &*property),
+            ("table", table),
+            ("names", &*names),
+            ("placeholders", &*placeholders),
+            ("bindings", &*bindings),
+            ("returning", &*returning),
+            ("select", &*select),
+            ("map_args", &*map_args),
+        ],
+    )
+}
+
+fn durable_worker_java(
+    slice: &Slice,
+    name: &str,
+    usecase: &str,
+    target: &str,
+    fields: &[crate::generate::Field],
+) -> String {
+    let pkg: &str = &slice.placed(Layer::Jobs);
+    let service: &str = &slice.owned(Layer::Service);
+    let app: &str = &slice.owned(Layer::App);
+    let command_import = crate::generate::import_of(pkg, service, &format!("{usecase}Command"));
+    let usecase_import = crate::generate::import_of(pkg, service, &format!("{usecase}UseCase"));
+    let repo_import = crate::generate::import_of(pkg, app, &format!("{target}Repository"));
+    let args = fields
+        .iter()
+        .map(|field| format!("                    work.{}()", field.name))
+        .collect::<Vec<_>>()
+        .join(",\n");
+    let property = crate::sql::snake_case(name).replace('_', "-");
+    crate::template::render(
+        crate::template::template!("spring/durable_worker_java.java"),
+        &[
+            ("pkg", pkg),
+            ("command_import", &*command_import),
+            ("usecase_import", &*usecase_import),
+            ("repo_import", &*repo_import),
+            ("name", name),
+            ("usecase", usecase),
+            ("target", target),
+            ("property", &*property),
+            ("args", &*args),
+        ],
+    )
+}
+
+fn durable_job_controller_java(
+    slice: &Slice,
+    name: &str,
+    fields: &[crate::generate::Field],
+) -> String {
+    let security: &str = slice.base();
+    let jobs: &str = &slice.placed(Layer::Jobs);
+    let web: &str = &slice.owned(Layer::Web);
+    let queue_import = crate::generate::import_of(web, jobs, &format!("{name}Queue"));
+    let work_import = crate::generate::import_of(web, jobs, &format!("{name}Work"));
+    let (
+        scope_import,
+        scope_field,
+        scope_constructor,
+        scope_assignment,
+        scope_parameter,
+        scope_checks,
+    ) = scope_controller_parts(security, web, fields, "work");
+    let path = format!("/jobs/{}", crate::sql::snake_case(name).replace('_', "-"));
+    crate::template::render(
+        crate::template::template!("spring/durable_job_controller_java.java"),
+        &[
+            ("web", web),
+            ("queue_import", &*queue_import),
+            ("work_import", &*work_import),
+            ("scope_import", &*scope_import),
+            ("name", name),
+            ("path", &*path),
+            ("scope_field", &*scope_field),
+            ("scope_constructor", &*scope_constructor),
+            ("scope_assignment", &*scope_assignment),
+            ("scope_parameter", &*scope_parameter),
+            ("scope_checks", &*scope_checks),
+        ],
+    )
+}
+
+fn durable_job_it_java(
+    slice: &Slice,
+    name: &str,
+    target: &str,
+    table: &str,
+    fields: &[crate::generate::Field],
+) -> String {
+    let root: &Path = slice.project().root();
+    let pkg: &str = &slice.placed(Layer::Jobs);
+    let app: &str = &slice.owned(Layer::App);
+    let domain: &str = &slice.owned(Layer::Domain);
+    let property = crate::sql::snake_case(name).replace('_', "-");
+    let samples = fields
+        .iter()
+        .map(|field| crate::generate::sample_value(field, root, domain))
+        .collect::<Option<Vec<_>>>();
+    let disabled = samples.is_none();
+    let args = samples.unwrap_or_default().join(",\n                ");
+    let alternate = fields.iter().enumerate().find_map(|(index, field)| {
+        (field.name != "id")
+            .then(|| durable_alternate_sample(field))
+            .flatten()
+            .map(|value| (index, value))
+    });
+    let conflict_test = alternate.map_or_else(String::new, |(changed, alternate)| {
+        let alternate_args = fields
+            .iter()
+            .enumerate()
+            .map(|(index, field)| {
+                if index == changed {
+                    alternate.clone()
+                } else {
+                    crate::generate::sample_value(field, root, domain).unwrap()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(",\n                ");
+        format!(
+            r#"
+    @Test
+    void reusingAnIdWithDifferentPayloadIsAConflict() {{
+        var original = new {name}Work(
+                {args});
+        var conflicting = new {name}Work(
+                {alternate_args});
+
+        queue.enqueue(original);
+
+        assertThatThrownBy(() -> queue.enqueue(conflicting))
+                .isInstanceOf({name}Queue.IdempotencyConflictException.class);
+    }}
+"#
+        )
+    });
+    let imports = java_literal_imports(fields, domain)
+        .into_iter()
+        .map(|import| format!("import {import};\n"))
+        .collect::<String>();
+    let repository_import = crate::generate::import_of(pkg, app, &format!("{target}Repository"));
+    let disabled_import = if disabled {
+        "import org.junit.jupiter.api.Disabled;\n"
+    } else {
+        ""
+    };
+    let annotation = if disabled {
+        "@Disabled(\"todo: supply a durable-work sample Jails cannot fabricate\")\n"
+    } else {
+        ""
+    };
+    crate::template::render(
+        crate::template::template!("spring/durable_job_it_java.java"),
+        &[
+            ("pkg", pkg),
+            ("repository_import", &*repository_import),
+            ("imports", &*imports),
+            ("disabled_import", disabled_import),
+            ("annotation", annotation),
+            ("property", &*property),
+            ("name", name),
+            ("target", target),
+            ("args", &*args),
+            ("table", table),
+            ("conflict_test", &*conflict_test),
+        ],
+    )
+}
+
+pub(crate) fn durable_alternate_sample(field: &crate::generate::Field) -> Option<String> {
+    match usecase_normalized_type(&field.java_type) {
+        "String" => Some("\"different-payload\"".to_string()),
+        "UUID" => Some("UUID.fromString(\"00000000-0000-0000-0000-000000000002\")".to_string()),
+        "URI" => Some("URI.create(\"https://different.example.test/\")".to_string()),
+        "Integer" => Some("2".to_string()),
+        "Long" => Some("2L".to_string()),
+        "Double" => Some("2.5".to_string()),
+        "Boolean" => Some("false".to_string()),
+        _ => None,
+    }
+}
+
+fn durable_job_migration(table: &str, columns: &[crate::sql::Column]) -> String {
+    let payload = columns
+        .iter()
+        .map(|column| format!("  {} {} not null,", column.name, column.sql_type))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "-- Durable, leased, at-least-once work.\n\
+         create table {table} (\n\
+         {payload}\n\
+           state text not null check (state in ('PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED')),\n\
+           attempts integer not null check (attempts >= 0),\n\
+           max_attempts integer not null check (max_attempts > 0),\n\
+           next_attempt_at timestamptz not null,\n\
+           lease_until timestamptz,\n\
+           last_error text,\n\
+           created_at timestamptz not null,\n\
+           completed_at timestamptz,\n\
+           constraint {table}_pk primary key (id)\n\
+         );\n\n\
+         create index {table}_runnable_idx\n\
+           on {table} (state, next_attempt_at)\n\
+           where state in ('PENDING', 'RUNNING');\n"
+    )
+}
+
+/// Attach a generated use case to a typed event through a transactional
+/// PostgreSQL outbox. `usecase --yields Event` is deliberately composition,
+/// not a second domain-specific workflow language: the event's components
+/// must come from the command/result or one safe timestamp default.
+pub(crate) fn outbox_files(
+    slice: &Slice,
+    usecase: &str,
+    target: &str,
+    event: &str,
+    command_fields: &[crate::generate::Field],
+) -> crate::Result<Vec<Artifact>> {
+    let root: &Path = slice.project().root();
+    let service: &str = &slice.placed(Layer::Service);
+    let adapters: &str = &slice.owned(Layer::Adapters);
+    let messaging: &str = &slice.owned(Layer::Messaging);
+    let jobs: &str = &slice.owned(Layer::Jobs);
+    let json = crate::generate::main_dir(root, adapters).join("Json.java");
+    if !json.exists() {
+        return Err(format!(
+            "usecase {usecase} --yields {event} needs the generic JSON capability for durable payloads.\n       fix: run `jails add json` first."
+        ));
+    }
+    let event_class = format!("{event}Event");
+    let event_fields = crate::generate::fields_from_record(root, messaging, &event_class)
+        .ok_or_else(|| {
+            format!(
+                "usecase {usecase} yields {event}, but {event_class}.java does not exist or is not a record. Generate the typed event first."
+            )
+        })?;
+    let event_id = event_fields
+        .iter()
+        .find(|field| field.name == "id")
+        .ok_or_else(|| format!("outbox event {event_class} needs a stable id"))?;
+    if usecase_normalized_type(&event_id.java_type) != "UUID"
+        || event_id.optionality == crate::generate::Optionality::Nullable
+    {
+        return Err(format!(
+            "transactional outbox v1 requires {event_class}.id to be a required UUID"
+        ));
+    }
+    let target_fields = Target::read(slice, "usecase", usecase, target)?.fields;
+    let mut expressions = Vec::with_capacity(event_fields.len());
+    let mut needs_instant = false;
+    for event_field in &event_fields {
+        if let Some(field) = target_fields
+            .iter()
+            .find(|candidate| candidate.name == event_field.name)
+        {
+            ensure_outbox_type(usecase, event_field, field, target)?;
+            expressions.push(format!("result.{}()", field.name));
+        } else if let Some(field) = command_fields
+            .iter()
+            .find(|candidate| candidate.name == event_field.name)
+        {
+            ensure_outbox_type(usecase, event_field, field, "command")?;
+            expressions.push(format!("command.{}()", field.name));
+        } else if event_field.java_type == "Instant"
+            && event_field.optionality != crate::generate::Optionality::Nullable
+            && event_field.name.ends_with("At")
+        {
+            needs_instant = true;
+            expressions.push("Instant.now()".to_string());
+        } else if event_field.name == format!("{}Id", crate::generate::lower_first(target))
+            && let Some(id) = target_fields.iter().find(|f| f.name == "id")
+        {
+            // `<Target>Id` is the identity of the row this use case just
+            // created, referred to by the resource's own name rather than by
+            // the component's. It is the same convention every other generic
+            // relation already uses -- `association` maps `childField=id`,
+            // `durable-job` carries the resource id, and a scaffold declares
+            // a parent as `<parent>Id` -- so an event that names it is not
+            // asking for an inference jails does not already make.
+            //
+            // Without this an event has to spell the field `id`, which it
+            // cannot: `id` is the event's *own* identity, and the outbox
+            // requires it to be a distinct required UUID. That is what App C
+            // (`examples/payments-gateway`) refused on.
+            ensure_outbox_type(usecase, event_field, id, target)?;
+            expressions.push("result.id()".to_string());
+        } else {
+            return Err(format!(
+                "usecase {usecase} cannot derive event field `{}` for {event_class}.\n       \
+                 fix: use a component from the command/result, `{}Id` for the created \
+                 {target}'s own id, or a required Instant named `...At`.",
+                event_field.name,
+                crate::generate::lower_first(target)
+            ));
+        }
+    }
+    let table = format!("{}_outbox", crate::sql::snake_case(usecase));
+    let property = crate::sql::snake_case(usecase).replace('_', "-");
+    let migration_dir = root.join("src/main/resources/db/migration");
+    let version = crate::generate::next_migration_version(&migration_dir)?;
+    let main_service = crate::generate::main_dir(root, service);
+    let main_jobs = crate::generate::main_dir(root, jobs);
+    let test_jobs = crate::generate::test_dir(root, jobs);
+    let emission = Emission {
+        expressions,
+        needs_instant,
+    };
+    Ok(vec![
+        Artifact {
+            kind: "scheduling",
+            path: main_jobs.join("SchedulingConfig.java"),
+            contents: scheduling_config_java(jobs),
+        },
+        Artifact {
+            kind: "transactional outbox use case",
+            path: main_service.join(format!("Outbox{usecase}UseCase.java")),
+            contents: outbox_usecase_java(slice, usecase, target, event, &emission),
+        },
+        Artifact {
+            kind: "transactional outbox store",
+            path: main_jobs.join(format!("Jdbc{usecase}Outbox.java")),
+            contents: outbox_store_java(slice, usecase, event, &table, &property),
+        },
+        Artifact {
+            kind: "transactional outbox sink port",
+            path: main_jobs.join(format!("{usecase}OutboxSink.java")),
+            contents: outbox_sink_java(jobs, messaging, usecase, event),
+        },
+        Artifact {
+            kind: "Kafka outbox sink",
+            path: main_jobs.join(format!("{usecase}KafkaOutboxSink.java")),
+            contents: outbox_kafka_sink_java(jobs, messaging, usecase, event),
+        },
+        Artifact {
+            kind: "transactional outbox worker",
+            path: main_jobs.join(format!("{usecase}OutboxWorker.java")),
+            contents: outbox_worker_java(jobs, usecase, &property),
+        },
+        Artifact {
+            kind: "transactional outbox integration test",
+            path: test_jobs.join(format!("{usecase}OutboxIT.java")),
+            contents: outbox_it_java(slice, usecase, target, &property, command_fields),
+        },
+        Artifact {
+            kind: "transactional outbox migration",
+            path: migration_dir.join(format!("V{version:03}__create_{table}.sql")),
+            contents: outbox_migration(&table),
+        },
+    ])
+}
+
+/// How one outbox row's payload is built: an expression per event component,
+/// and whether that costs an `Instant` import.
+///
+/// Computed in one loop and consumed in one renderer, so they travel as one
+/// value rather than as the last two of nine positional parameters.
+struct Emission {
+    expressions: Vec<String>,
+    needs_instant: bool,
+}
+
+fn ensure_outbox_type(
+    usecase: &str,
+    event: &crate::generate::Field,
+    source: &crate::generate::Field,
+    owner: &str,
+) -> crate::Result<()> {
+    if usecase_normalized_type(&event.java_type) != usecase_normalized_type(&source.java_type)
+        || (event.optionality == crate::generate::Optionality::Nullable)
+            != (source.optionality == crate::generate::Optionality::Nullable)
+    {
+        return Err(format!(
+            "usecase {usecase} cannot map event field `{}` ({}) from {owner} ({})",
+            event.name, event.java_type, source.java_type
+        ));
+    }
+    Ok(())
+}
+
+fn outbox_usecase_java(
+    slice: &Slice,
+    usecase: &str,
+    target: &str,
+    event: &str,
+    emission: &Emission,
+) -> String {
+    let service: &str = &slice.placed(Layer::Service);
+    let domain: &str = &slice.owned(Layer::Domain);
+    let messaging: &str = &slice.owned(Layer::Messaging);
+    let jobs: &str = &slice.owned(Layer::Jobs);
+    let expressions: &[String] = &emission.expressions;
+    let needs_instant: bool = emission.needs_instant;
+    let target_import = crate::generate::import_of(service, domain, target);
+    let event_import = crate::generate::import_of(service, messaging, &format!("{event}Event"));
+    let store_import = crate::generate::import_of(service, jobs, &format!("Jdbc{usecase}Outbox"));
+    let instant_import = if needs_instant {
+        "import java.time.Instant;\n"
+    } else {
+        ""
+    };
+    let args = expressions
+        .iter()
+        .map(|expression| format!("                {expression}"))
+        .collect::<Vec<_>>()
+        .join(",\n");
+    crate::template::render(
+        crate::template::template!("spring/outbox_usecase_java.java"),
+        &[
+            ("service", service),
+            ("target_import", &*target_import),
+            ("event_import", &*event_import),
+            ("store_import", &*store_import),
+            ("instant_import", instant_import),
+            ("usecase", usecase),
+            ("target", target),
+            ("event", event),
+            ("args", &*args),
+        ],
+    )
+}
+
+fn outbox_store_java(
+    slice: &Slice,
+    usecase: &str,
+    event: &str,
+    table: &str,
+    property: &str,
+) -> String {
+    let pkg: &str = &slice.owned(Layer::Jobs);
+    let adapters: &str = &slice.owned(Layer::Adapters);
+    let messaging: &str = &slice.owned(Layer::Messaging);
+    let json_import = crate::generate::import_of(pkg, adapters, "Json");
+    let event_import = crate::generate::import_of(pkg, messaging, &format!("{event}Event"));
+    crate::template::render(
+        crate::template::template!("spring/outbox_store_java.java"),
+        &[
+            ("pkg", pkg),
+            ("json_import", &*json_import),
+            ("event_import", &*event_import),
+            ("usecase", usecase),
+            ("property", property),
+            ("event", event),
+            ("table", table),
+        ],
+    )
+}
+
+fn outbox_sink_java(pkg: &str, messaging: &str, usecase: &str, event: &str) -> String {
+    let event_import = crate::generate::import_of(pkg, messaging, &format!("{event}Event"));
+    crate::template::render(
+        crate::template::template!("spring/outbox_sink_java.java"),
+        &[
+            ("pkg", pkg),
+            ("event_import", &*event_import),
+            ("usecase", usecase),
+            ("event", event),
+        ],
+    )
+}
+
+fn outbox_kafka_sink_java(pkg: &str, messaging: &str, usecase: &str, event: &str) -> String {
+    let event_import = crate::generate::import_of(pkg, messaging, &format!("{event}Event"));
+    let publisher_import = crate::generate::import_of(pkg, messaging, &format!("{event}Publisher"));
+    crate::template::render(
+        crate::template::template!("spring/outbox_kafka_sink_java.java"),
+        &[
+            ("pkg", pkg),
+            ("event_import", &*event_import),
+            ("publisher_import", &*publisher_import),
+            ("usecase", usecase),
+            ("event", event),
+        ],
+    )
+}
+
+fn outbox_worker_java(pkg: &str, usecase: &str, property: &str) -> String {
+    crate::template::render(
+        crate::template::template!("spring/outbox_worker_java.java"),
+        &[("pkg", pkg), ("usecase", usecase), ("property", property)],
+    )
+}
+
+fn outbox_it_java(
+    slice: &Slice,
+    usecase: &str,
+    target: &str,
+    property: &str,
+    fields: &[crate::generate::Field],
+) -> String {
+    let root: &Path = slice.project().root();
+    let pkg: &str = &slice.owned(Layer::Jobs);
+    let service: &str = &slice.placed(Layer::Service);
+    let domain: &str = &slice.owned(Layer::Domain);
+    let app: &str = &slice.owned(Layer::App);
+    let samples = fields
+        .iter()
+        .map(|field| crate::generate::sample_value(field, root, domain))
+        .collect::<Option<Vec<_>>>();
+    let disabled = samples.is_none();
+    let args = samples.unwrap_or_default().join(",\n                ");
+    let command_import = crate::generate::import_of(pkg, service, &format!("{usecase}Command"));
+    let usecase_import = crate::generate::import_of(pkg, service, &format!("{usecase}UseCase"));
+    let target_import = crate::generate::import_of(pkg, domain, target);
+    let repo_import = crate::generate::import_of(pkg, app, &format!("{target}Repository"));
+    let imports = java_literal_imports(fields, domain)
+        .into_iter()
+        .map(|import| format!("import {import};\n"))
+        .collect::<String>();
+    let disabled_import = if disabled {
+        "import org.junit.jupiter.api.Disabled;\n"
+    } else {
+        ""
+    };
+    let annotation = if disabled {
+        "@Disabled(\"todo: supply outbox command samples\")\n"
+    } else {
+        ""
+    };
+    crate::template::render(
+        crate::template::template!("spring/outbox_it_java.java"),
+        &[
+            ("pkg", pkg),
+            ("command_import", &*command_import),
+            ("usecase_import", &*usecase_import),
+            ("target_import", &*target_import),
+            ("repo_import", &*repo_import),
+            ("imports", &*imports),
+            ("disabled_import", disabled_import),
+            ("annotation", annotation),
+            ("property", property),
+            ("usecase", usecase),
+            ("target", target),
+            ("args", &*args),
+            ("usecase_snake", &crate::sql::snake_case(usecase)),
+        ],
+    )
+}
+
+fn outbox_migration(table: &str) -> String {
+    format!(
+        "-- Transactional outbox: business writes and event staging share one commit.\n\
+         create table {table} (\n\
+           id uuid primary key,\n\
+           payload jsonb not null,\n\
+           state text not null check (state in ('PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED')),\n\
+           attempts integer not null check (attempts >= 0),\n\
+           max_attempts integer not null check (max_attempts > 0),\n\
+           next_attempt_at timestamptz not null,\n\
+           lease_until timestamptz,\n\
+           last_error text,\n\
+           created_at timestamptz not null,\n\
+           completed_at timestamptz\n\
+         );\n\n\
+         create index {table}_runnable_idx on {table} (state, next_attempt_at)\n\
+           where state in ('PENDING', 'RUNNING');\n"
+    )
+}

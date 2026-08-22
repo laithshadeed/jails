@@ -374,7 +374,7 @@ pub(crate) fn type_info(source: &str) -> Option<TypeInfo> {
     for clause in ["extends", "implements", "permits"] {
         if let Some(at) = header.find(clause) {
             let rest = &header[at + clause.len()..];
-            let end = rest.find(|c| c == '{').unwrap_or(rest.len());
+            let end = rest.find('{').unwrap_or(rest.len());
             let end = ["extends", "implements", "permits"]
                 .iter()
                 .filter_map(|next| rest.find(next))
@@ -575,10 +575,10 @@ fn match_delim(text: &str, open: usize, opener: u8, closer: u8) -> usize {
 /// the scanning copy, so this reads the original argument text.
 pub(crate) fn annotation_string(args: &str) -> Option<String> {
     for key in ["path = ", "path=", "value = ", "value="] {
-        if let Some(at) = args.find(key) {
-            if let Some(found) = first_string(&args[at + key.len()..]) {
-                return Some(found);
-            }
+        if let Some(at) = args.find(key)
+            && let Some(found) = first_string(&args[at + key.len()..])
+        {
+            return Some(found);
         }
     }
     // A bare `@GetMapping("/x")` has no key at all -- but `@GetMapping(produces

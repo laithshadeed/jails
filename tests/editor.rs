@@ -28,29 +28,6 @@ fn editor_file(path: &str) -> String {
         .unwrap_or_else(|error| panic!("could not read {path}: {error}"))
 }
 
-/// The quoted strings of `local <name> = { ... }`.
-fn lua_table(source: &str, name: &str) -> Vec<String> {
-    let start = source
-        .find(&format!("local {name} = {{"))
-        .unwrap_or_else(|| panic!("no `local {name}` table in the plugin"));
-    let body_start = start + source[start..].find('{').unwrap();
-    let end = body_start + source[body_start..].find('}').expect("unterminated table");
-    let body = &source[body_start..end];
-    let mut found = Vec::new();
-    let mut rest = body;
-    while let Some(open) = rest.find(['\'', '"']) {
-        let quote = rest.as_bytes()[open] as char;
-        let after = &rest[open + 1..];
-        let Some(close) = after.find(quote) else {
-            break;
-        };
-        found.push(after[..close].to_string());
-        rest = &after[close + 1..];
-    }
-    assert!(!found.is_empty(), "`local {name}` parsed as empty");
-    found
-}
-
 /// Canonical subcommand names and their aliases, from `jails --help`.
 fn cli_subcommands() -> Vec<String> {
     let output = std::process::Command::new(common::bin())
@@ -87,39 +64,82 @@ fn cli_subcommands() -> Vec<String> {
 }
 
 #[test]
-fn the_editor_plugin_completes_every_value_the_cli_accepts() {
+fn the_editor_plugin_derives_its_vocabulary_instead_of_copying_it() {
     let source = plugin_source();
-    let mut missing: Vec<String> = Vec::new();
 
-    for (table, wanted) in [
+    // The four hand-maintained tables are gone. They were the fourth of
+    // plan.md §6.1's five copies of "what does the CLI accept", and this test
+    // used to *pin* them -- which caught drift after the fact and left the copy
+    // in place to drift again. abstract.md §9: a test that polices duplication
+    // is a receipt for a decision not yet made. The decision is
+    // `jails commands --json`, derived from the same clap definition that
+    // parses the arguments.
+    for gone in [
+        "local KINDS = {",
+        "local CAPABILITIES = {",
+        "local SUBCOMMANDS = {",
+    ] {
+        assert!(
+            !source.contains(gone),
+            "`{gone}` is back in jails.nvim. That table is derived from \
+             `jails commands --json` now; reintroducing it reintroduces the drift \
+             that once left `:Jails g <Tab>` eight kinds behind the CLI."
+        );
+    }
+
+    assert!(
+        source.contains("'commands', '--json'"),
+        "the plugin should read its vocabulary from `jails commands --json`"
+    );
+
+    // A completer that errors is worse than one that offers nothing: an older
+    // binary, a `jails` off PATH, or a malformed payload must all degrade to an
+    // empty menu rather than raising inside a keystroke handler.
+    assert!(
+        source.contains("pcall(vim.json.decode"),
+        "decoding must be guarded -- a completion callback runs on every keystroke"
+    );
+    assert!(
+        source.contains("vim.v.shell_error ~= 0"),
+        "a non-zero exit from `jails commands` must degrade, not raise"
+    );
+}
+
+/// The derivation itself: every value the CLI accepts reaches the payload.
+#[test]
+fn jails_commands_json_carries_every_kind_capability_and_subcommand() {
+    let output = std::process::Command::new(common::bin())
+        .args(["commands", "--json"])
+        .output()
+        .expect("jails commands --json");
+    assert!(output.status.success());
+    let payload = String::from_utf8_lossy(&output.stdout);
+
+    let mut missing: Vec<String> = Vec::new();
+    for (label, wanted) in [
         (
-            "KINDS",
+            "kind",
             common::scenarios::cli_kinds()
                 .into_iter()
                 .collect::<Vec<_>>(),
         ),
         (
-            "CAPABILITIES",
+            "capability",
             common::scenarios::cli_capabilities()
                 .into_iter()
                 .collect::<Vec<_>>(),
         ),
-        ("SUBCOMMANDS", cli_subcommands()),
+        ("subcommand", cli_subcommands()),
     ] {
-        let have = lua_table(&source, table);
         for value in wanted {
-            if !have.contains(&value) {
-                missing.push(format!("{table} is missing `{value}`"));
+            if !payload.contains(&format!("\"name\": \"{value}\"")) {
+                missing.push(format!("{label} `{value}`"));
             }
         }
     }
-
     assert!(
         missing.is_empty(),
-        "jails.nvim would not complete {} value(s) the CLI accepts:\n  {}\n\n\
-         Add them to jails.nvim/lua/jails/init.lua. The keymaps that drive it live in \
-         a third repository (~/code/my-dotfiles), which this project's git history does \
-         not track -- so nothing else will tell you.",
+        "`jails commands --json` omits {} value(s) the CLI accepts:\n  {}",
         missing.len(),
         missing.join("\n  ")
     );

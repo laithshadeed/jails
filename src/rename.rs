@@ -112,8 +112,7 @@ pub fn rename(old: &str, new: &str, dry_run: bool, force: bool) -> Result<()> {
     // rewritten contents in unmoved files at least still describe one
     // consistent state.
     for edit in &edits {
-        std::fs::write(&edit.path, &edit.updated)
-            .map_err(|e| format!("failed to write {}: {e}", edit.path.display()))?;
+        crate::apply::put(&edit.path, &edit.updated)?;
     }
     for edit in &edits {
         if edit.path == edit.destination {

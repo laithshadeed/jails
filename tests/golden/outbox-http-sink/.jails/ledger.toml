@@ -1,0 +1,78 @@
+# jails' own bookkeeping. Written by jails, never hand-edited -- `jails.toml`
+# and `.jails/app.toml` are the files that are yours.
+#
+# Identity is (recipe, name, package). Everything else is content, which is
+# what makes an edited intent an update to a known entity rather than a new
+# one arriving against files that already exist.
+version = "0.1.0"
+
+[[applied]]
+recipe = "event"
+name = "MessageReceived"
+package = ""
+files = [
+  "src/main/java/com/example/demo/messaging/MessageReceivedEvent.java",
+  "src/main/java/com/example/demo/messaging/MessageReceivedListener.java",
+  "src/main/java/com/example/demo/messaging/MessageReceivedPublisher.java",
+  "src/test/java/com/example/demo/messaging/MessageReceivedMessagingIT.java",
+]
+
+[[applied]]
+recipe = "http-sink"
+name = "Provider"
+package = ""
+files = [
+  "src/main/java/com/example/demo/jobs/ProviderHttpOutboxSink.java",
+  "src/test/java/com/example/demo/jobs/ProviderHttpOutboxSinkTest.java",
+]
+
+[[applied]]
+recipe = "scaffold"
+name = "Message"
+package = ""
+files = [
+  "requests/message.http",
+  "src/main/java/com/example/demo/adapters/InMemoryMessageRepository.java",
+  "src/main/java/com/example/demo/adapters/JdbcMessageRepository.java",
+  "src/main/java/com/example/demo/app/MessageRepository.java",
+  "src/main/java/com/example/demo/domain/Message.java",
+  "src/main/java/com/example/demo/service/MessageService.java",
+  "src/main/java/com/example/demo/web/MessageController.java",
+  "src/main/java/com/example/demo/web/MessageRequest.java",
+  "src/main/java/com/example/demo/web/MessageResponse.java",
+  "src/main/resources/db/migration/V001__create_messages.sql",
+  "src/test/java/com/example/demo/adapters/JdbcMessageRepositoryIT.java",
+  "src/test/java/com/example/demo/domain/MessageTest.java",
+  "src/test/java/com/example/demo/service/MessageServiceTest.java",
+  "src/test/java/com/example/demo/web/MessageControllerTest.java",
+]
+
+[[applied]]
+recipe = "usecase"
+name = "ReceiveMessage"
+package = ""
+files = [
+  "src/main/java/com/example/demo/jobs/JdbcReceiveMessageOutbox.java",
+  "src/main/java/com/example/demo/jobs/ReceiveMessageKafkaOutboxSink.java",
+  "src/main/java/com/example/demo/jobs/ReceiveMessageOutboxSink.java",
+  "src/main/java/com/example/demo/jobs/ReceiveMessageOutboxWorker.java",
+  "src/main/java/com/example/demo/jobs/SchedulingConfig.java",
+  "src/main/java/com/example/demo/service/DefaultReceiveMessageUseCase.java",
+  "src/main/java/com/example/demo/service/OutboxReceiveMessageUseCase.java",
+  "src/main/java/com/example/demo/service/ReceiveMessageCommand.java",
+  "src/main/java/com/example/demo/service/ReceiveMessageUseCase.java",
+  "src/main/java/com/example/demo/web/ReceiveMessageController.java",
+  "src/main/resources/db/migration/V002__create_receive_message_outbox.sql",
+  "src/test/java/com/example/demo/jobs/ReceiveMessageOutboxIT.java",
+  "src/test/java/com/example/demo/service/ReceiveMessageUseCaseTest.java",
+  "src/test/java/com/example/demo/web/ReceiveMessageControllerTest.java",
+]
+
+[[model]]
+name = "Message"
+package = ""
+fields = [
+  "id:uuid@pk",
+  "body:string!",
+  "createdAt:instant",
+]

@@ -277,7 +277,7 @@ pub(super) fn record_test(root: &Path, pkg: &str, name: &str, fields: &[Field]) 
             .collect::<Vec<_>>()
             .join(", ");
         out += "\n    @Test\n    void rejectsANullComponent() {\n";
-        out += &format!("        assertThatNullPointerException()\n");
+        out += "        assertThatNullPointerException()\n";
         out += &format!("                .isThrownBy(() -> new {name}({nulled}))\n");
         out += &format!(
             "                .withMessageContaining(\"{}\");\n",
@@ -290,6 +290,12 @@ pub(super) fn record_test(root: &Path, pkg: &str, name: &str, fields: &[Field]) 
     out
 }
 
+/// A literal a generated test can construct the component from.
+///
+/// `None` means jails cannot fabricate one: a type this project owns could
+/// have any constructor at all, and guessing produces a test that does not
+/// compile. The one case it *can* solve is an enum -- hence `generate enum`
+/// pulling its weight twice.
 pub(crate) fn sample_value(field: &Field, root: &Path, pkg: &str) -> Option<String> {
     // An absent Optional is a sample of anything, so `?` rescues even a type
     // jails knows nothing about.
@@ -871,7 +877,7 @@ pub(super) fn sealed_java(pkg: &str, name: &str, variants: &[String]) -> String 
     out += " * every place that has to handle it.\n";
     out += " *\n";
     out += " * {@snippet :\n";
-    out += &format!(" * var summary = switch (result) {{\n");
+    out += " * var summary = switch (result) {\n";
     for variant in variants {
         out += &format!(
             " *     case {variant} v -> \"{}\";\n",
@@ -1033,11 +1039,9 @@ pub(super) fn strategy_interface_java(
          * sees every input, so more than one may answer.\n"
     );
     out += " *\n";
-    out += &format!(
-        " * <p>Take the whole set as a constructor parameter rather than naming\n \
+    out += " * <p>Take the whole set as a constructor parameter rather than naming\n \
          * implementations one by one -- that is what makes adding one a matter of\n \
-         * writing the class and nothing else:\n"
-    );
+         * writing the class and nothing else:\n";
     out += " *\n";
     out += " * {@snippet :\n";
     out += &format!(" * private final List<{name}> {}s;\n", lower_first(name));
@@ -1169,7 +1173,7 @@ pub(super) fn strategy_impl_test(
     out +=
         &format!("        // TODO: assert {class} declines a {param_name} it should not match.\n");
     out += "    }\n";
-    out += &format!("}}\n");
+    out += "}\n";
     let _ = name;
     out
 }

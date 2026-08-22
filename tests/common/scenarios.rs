@@ -472,6 +472,15 @@ pub const SCENARIOS: &[Scenario] = &[
         ],
     },
     Scenario {
+        name: "idempotency",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[
+            &["add", "db", "--no-start"],
+            &["g", "idempotency", "Request"],
+        ],
+    },
+    Scenario {
         name: "cases",
         fixture: Fixture::Plain,
         seed: &[("docs/behaviour.md", CASES_MARKDOWN)],

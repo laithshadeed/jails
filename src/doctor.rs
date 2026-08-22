@@ -13,6 +13,7 @@
 //! failing check carries the command that fixes it, because a diagnosis the
 //! reader has to translate into an action has only moved the work.
 
+use crate::model::Project;
 use std::fmt::Write as _;
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::path::Path;
@@ -40,6 +41,17 @@ enum Status {
 }
 
 impl Status {
+    /// The machine-readable spelling, which is deliberately *not* the display
+    /// mark: `--` reads as "skipped" to a person and as nothing to a parser.
+    fn name(self) -> &'static str {
+        match self {
+            Status::Ok => "ok",
+            Status::Fail => "fail",
+            Status::Warn => "warn",
+            Status::Skip => "skip",
+        }
+    }
+
     fn mark(self) -> &'static str {
         match self {
             Status::Ok => "ok  ",
@@ -74,9 +86,17 @@ impl Check {
     }
 }
 
-pub fn doctor() -> Result<()> {
+pub fn doctor(json: bool) -> Result<()> {
     let root = find_project_root()?;
-    let checks = run_checks(&root);
+    // `inspect` rather than `load`: doctor's whole value is that it works on a
+    // project that does not build, so an unresolvable base package is one more
+    // fact about the project rather than a reason to refuse to report.
+    let project = crate::model::Project::inspect(&root)?;
+    let checks = run_checks(&project);
+
+    if json {
+        return report_json(&checks);
+    }
 
     let title_width = checks.iter().map(|c| c.title.len()).max().unwrap_or(0);
     for check in &checks {
@@ -112,26 +132,248 @@ pub fn doctor() -> Result<()> {
     Ok(())
 }
 
-fn run_checks(root: &Path) -> Vec<Check> {
-    let mut checks = Vec::new();
-    let pom_text = pom::read(root).unwrap_or_default();
+/// Every check, against one resolved snapshot of the project.
+///
+/// `root` and the pom text used to travel together into almost every check,
+/// which is `Project` spelled as two parameters -- and the pair could be
+/// handed on inconsistently, since nothing tied the text to the directory.
+/// The same checks, as data.
+///
+/// Emitted from the identical `Vec<Check>` the human report prints, so the two
+/// cannot disagree about what was checked -- which is the failure mode a second
+/// rendering path would introduce, and the same reason `--pretend` and apply
+/// have to consume one value.
+///
+/// The exit code is unchanged: failures still exit non-zero, because
+/// `jails doctor --json && deploy` should behave like `jails doctor && deploy`.
+fn report_json(checks: &[Check]) -> Result<()> {
+    use crate::json;
 
-    checks.push(project_check(root, &pom_text));
+    let rows: Vec<String> = checks
+        .iter()
+        .map(|check| {
+            format!(
+                "    {{\"status\": {}, \"title\": {}, \"detail\": {}, \"fix\": {}}}",
+                json::string(check.status.name()),
+                json::string(&check.title),
+                json::string(&check.detail),
+                json::string(&check.fix)
+            )
+        })
+        .collect();
+    let failures = checks.iter().filter(|c| c.status == Status::Fail).count();
+    let warnings = checks.iter().filter(|c| c.status == Status::Warn).count();
+    println!(
+        "{{\n  \"version\": 1,\n  \"failures\": {failures},\n  \"warnings\": {warnings},\n  \"checks\": [\n{}\n  ]\n}}",
+        rows.join(",\n")
+    );
+    if failures > 0 {
+        return Err(String::new());
+    }
+    Ok(())
+}
+
+fn run_checks(project: &Project) -> Vec<Check> {
+    let root = project.root();
+    let pom_text = project.pom();
+    let mut checks = Vec::new();
+
+    checks.push(project_check(project));
     checks.push(maven_check(root));
-    checks.push(jdk_check(&pom_text));
-    checks.extend(compose_checks(root, &pom_text));
-    checks.extend(compose_provider_check(&pom_text));
-    checks.extend(database_checks(root, &pom_text));
-    checks.extend(in_memory_adapter_check(root, &pom_text));
-    checks.push(testcontainers_check(&pom_text));
-    checks.extend(container_reuse_check(&pom_text));
-    checks.push(kafka_check(root, &pom_text));
-    checks.push(jackson_check(&pom_text));
-    checks.extend(management_checks(root, &pom_text));
-    checks.extend(cors_checks(root, &pom_text));
+    checks.push(jdk_check(pom_text));
+    checks.extend(compose_checks(project));
+    checks.extend(compose_provider_check(pom_text));
+    checks.extend(database_checks(project));
+    checks.extend(in_memory_adapter_check(project));
+    checks.push(testcontainers_check(pom_text));
+    checks.extend(container_reuse_check(pom_text));
+    checks.push(kafka_check(project));
+    checks.push(jackson_check(pom_text));
+    checks.extend(management_checks(project));
+    checks.extend(cors_checks(project));
     checks.extend(virtual_thread_checks(root));
     checks.extend(port_checks(root));
+    checks.extend(capability_drift_checks(project));
+    checks.extend(template_override_checks());
     checks.push(beans_check(root));
+    checks
+}
+
+/// Name every template this project has overridden.
+///
+/// `plan.md` §6.6 states the cost of tier 2 plainly: **an overridden template
+/// is not golden-tested**, so a project that overrides one has opted out of
+/// the guarantee for that file. The mitigation it names is this check -- the
+/// same honesty rule as `remove`'s `unowned_properties`. A `Warn` rather than
+/// a `Fail`: overriding is a supported thing to do, and the reader is entitled
+/// to know they are doing it without being told they are broken.
+fn template_override_checks() -> Vec<Check> {
+    let active = crate::template::active();
+    if active.is_empty() {
+        return Vec::new();
+    }
+    let named = active
+        .iter()
+        .map(|(name, path)| format!("{name} <- {}", path.display()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    vec![
+        Check::new(
+            Status::Warn,
+            "templates",
+            format!(
+                "{} template(s) overridden, so their output is not covered by \
+                 jails' snapshot tests: {named}",
+                active.len()
+            ),
+        )
+        .fix("jails g <kind> --pretend, then read the generated file, if one of these looks wrong"),
+    ]
+}
+
+/// Every capability `jails.toml` records, re-planned against today's project.
+///
+/// This is the check `doctor` could not write for its whole life, and the
+/// reason is structural rather than an oversight: `add` knew which dependency,
+/// property, file and compose service each capability installs, and `doctor`
+/// could not reach that knowledge, so it re-encoded the parts it needed by
+/// reading the project back off disk. abstract.md §4.2 names it Feature Envy
+/// at module scale, and points out the sharp consequence -- the drift
+/// `tests/agreement.rs` catches between `generate` and `destroy` has an exact
+/// sibling between `add` and `doctor` that **nothing** catches, because there
+/// was no shared value to compare.
+///
+/// `add::plan_for` is that shared value. Planning is pure, so asking it what a
+/// capability *would* install costs nothing and writes nothing, and the delta
+/// against what is actually there is the report.
+///
+/// What this deliberately does **not** do is replace the hand-written checks.
+/// A derived check knows a dependency is missing; it does not know that two
+/// Jackson majors on one classpath is a silent disaster, or that podman's
+/// socket is somewhere Testcontainers will not look. Those are environment and
+/// interaction facts no plan can carry, and abstract.md §6.2 says exactly that:
+/// what survives is the checks that probe the environment.
+fn capability_drift_checks(project: &Project) -> Vec<Check> {
+    use clap::ValueEnum as _;
+
+    let recorded = project.capabilities();
+    if recorded.is_empty() {
+        return vec![Check::new(
+            Status::Skip,
+            "capabilities",
+            "jails.toml records none -- nothing to reconcile",
+        )];
+    }
+
+    let properties = std::fs::read_to_string(
+        project
+            .root()
+            .join("src/main/resources/application.properties"),
+    )
+    .unwrap_or_default();
+    let compose = std::fs::read_to_string(project.root().join("compose.yaml")).unwrap_or_default();
+
+    let mut checks = Vec::new();
+    for label in recorded {
+        let Some(capability) = crate::add::Capability::value_variants()
+            .iter()
+            .find(|candidate| candidate.label() == label)
+        else {
+            checks.push(
+                Check::new(
+                    Status::Warn,
+                    "capability",
+                    format!("jails.toml records `{label}`, which this jails does not know"),
+                )
+                .fix(format!(
+                    "remove it from [project] capabilities, or upgrade jails: jails remove {label}"
+                )),
+            );
+            continue;
+        };
+
+        // A capability that no longer *plans* is a finding in itself: it was
+        // applied to a project that has since changed shape under it.
+        let plan = match crate::add::plan_for(*capability, project) {
+            Ok(plan) => plan,
+            Err(error) => {
+                checks.push(
+                    Check::new(
+                        Status::Fail,
+                        format!("capability {label}"),
+                        format!("recorded, but can no longer be planned: {error}"),
+                    )
+                    .fix(format!("jails remove {label}")),
+                );
+                continue;
+            }
+        };
+
+        let mut missing = Vec::new();
+        for dep in &plan.deps {
+            if !crate::pom::has_dependency(project.pom(), dep.group_id, dep.artifact_id) {
+                missing.push(format!("dependency {}:{}", dep.group_id, dep.artifact_id));
+            }
+        }
+        for file in &plan.files {
+            if !file.path.exists() {
+                missing.push(format!(
+                    "file {}",
+                    file.path
+                        .strip_prefix(project.root())
+                        .unwrap_or(&file.path)
+                        .display()
+                ));
+            }
+        }
+        for property in &plan.properties {
+            let key = property.split('=').next().unwrap_or_default().trim();
+            // Only whole keys, and only outside comments: a commented example
+            // naming the key is not the key being set.
+            if !key.is_empty()
+                && !properties.lines().any(|line| {
+                    let line = line.trim();
+                    !line.starts_with('#')
+                        && line
+                            .split('=')
+                            .next()
+                            .is_some_and(|current| current.trim() == key)
+                })
+            {
+                missing.push(format!("property {key}"));
+            }
+        }
+        for service in &plan.compose {
+            if !compose.contains(&format!("{}:", service.name)) {
+                missing.push(format!("compose service {}", service.name));
+            }
+        }
+
+        if missing.is_empty() {
+            checks.push(Check::new(
+                Status::Ok,
+                format!("capability {label}"),
+                "everything it installs is present",
+            ));
+        } else {
+            let shown = missing.len().min(3);
+            let more = missing.len() - shown;
+            let detail = format!(
+                "{} missing: {}{}",
+                missing.len(),
+                missing[..shown].join(", "),
+                if more > 0 {
+                    format!(", and {more} more")
+                } else {
+                    String::new()
+                }
+            );
+            checks.push(
+                Check::new(Status::Fail, format!("capability {label}"), detail)
+                    .fix("jails sync".to_string()),
+            );
+        }
+    }
     checks
 }
 
@@ -194,7 +436,9 @@ fn virtual_thread_checks(root: &Path) -> Vec<Check> {
     checks
 }
 
-fn cors_checks(root: &Path, pom_text: &str) -> Vec<Check> {
+fn cors_checks(project: &Project) -> Vec<Check> {
+    let root: &Path = project.root();
+    let pom_text: &str = project.pom();
     if !pom_text.contains("spring-boot-starter-webmvc") {
         return Vec::new();
     }
@@ -259,7 +503,9 @@ fn property_value<'a>(properties: &'a str, key: &str) -> Option<&'a str> {
 /// Static safety checks for an actuator endpoint set. These are warnings,
 /// not startup failures: the application will run with all three mistakes,
 /// which is exactly why they belong in `doctor`.
-fn management_checks(root: &Path, pom_text: &str) -> Vec<Check> {
+fn management_checks(project: &Project) -> Vec<Check> {
+    let root: &Path = project.root();
+    let pom_text: &str = project.pom();
     if !pom::has_dependency(
         pom_text,
         "org.springframework.boot",
@@ -340,7 +586,9 @@ fn management_checks(root: &Path, pom_text: &str) -> Vec<Check> {
     checks
 }
 
-fn project_check(root: &Path, pom_text: &str) -> Check {
+fn project_check(project: &Project) -> Check {
+    let root: &Path = project.root();
+    let pom_text: &str = project.pom();
     if pom_text.is_empty() {
         return Check::new(Status::Fail, "project", "pom.xml is missing or unreadable")
             .fix("jails new <name>");
@@ -508,7 +756,9 @@ fn classify_compose_provider(banner: &str) -> Check {
     )
 }
 
-fn compose_checks(root: &Path, _pom_text: &str) -> Vec<Check> {
+fn compose_checks(project: &Project) -> Vec<Check> {
+    let root: &Path = project.root();
+    let _pom_text: &str = project.pom();
     let mut checks = Vec::new();
     if !compose::exists(root) {
         checks.push(Check::new(
@@ -566,7 +816,9 @@ fn compose_checks(root: &Path, _pom_text: &str) -> Vec<Check> {
     checks
 }
 
-fn database_checks(root: &Path, pom_text: &str) -> Vec<Check> {
+fn database_checks(project: &Project) -> Vec<Check> {
+    let root: &Path = project.root();
+    let pom_text: &str = project.pom();
     let mut checks = Vec::new();
     let yaml = compose::read(root).unwrap_or_default();
     let Some(conn) = compose::postgres_connect(&yaml) else {
@@ -845,7 +1097,9 @@ fn test_container_wiring(root: &Path) -> (Option<String>, Vec<String>) {
 /// already-generated scaffold -- deliberately: those files may have been
 /// edited by hand since, and silently regenerating them would cost more than
 /// this check does.
-fn in_memory_adapter_check(root: &Path, pom_text: &str) -> Option<Check> {
+fn in_memory_adapter_check(project: &Project) -> Option<Check> {
+    let root: &Path = project.root();
+    let pom_text: &str = project.pom();
     if !pom::has_dependency(
         pom_text,
         "org.springframework.boot",
@@ -1054,7 +1308,9 @@ fn podman_socket() -> Option<std::path::PathBuf> {
     socket.exists().then_some(socket)
 }
 
-fn kafka_check(root: &Path, pom_text: &str) -> Check {
+fn kafka_check(project: &Project) -> Check {
+    let root: &Path = project.root();
+    let pom_text: &str = project.pom();
     let has_client = pom::has_dependency(pom_text, "org.apache.kafka", "kafka-clients")
         || pom::has_dependency(
             pom_text,
@@ -1364,9 +1620,176 @@ fn tcp_reachable(host: &str, port: u16, timeout: Duration) -> bool {
         .any(|addr| TcpStream::connect_timeout(addr, timeout).is_ok())
 }
 
+// ---------------------------------------------------------------------------
+// `jails setup` -- the machine-level settings a project cannot carry.
+// ---------------------------------------------------------------------------
+
+/// Turn on Testcontainers container reuse for this machine.
+///
+/// Everything else jails configures lives in the project, where it is visible,
+/// reviewable and shared. This one cannot: Testcontainers reads
+/// `testcontainers.reuse.enable` from `~/.testcontainers.properties` or the
+/// environment and **never** from the classpath, so a project that asks for
+/// reuse gets it only on a machine that has opted in. That asymmetry is the
+/// whole reason this command exists.
+///
+/// **The flag alone changes nothing**, and that is deliberate. Generated
+/// container configs do not call `withReuse(true)`, because the reuse key is
+/// a hash of the container's configuration and nothing in it identifies the
+/// project -- two applications on the same image would share one database,
+/// and Flyway would refuse to start against the other one's migration
+/// history. This command sets up the half a machine owns; the project half is
+/// a one-line change the reader makes deliberately, and `TestcontainersConfig`
+/// says so in its Javadoc.
+///
+/// The edit is a splice, not a rewrite: `~/.testcontainers.properties` is a
+/// file the reader owns and may already hold `docker.client.strategy`,
+/// `ryuk.disabled` or a registry mirror. Same rule as `pom.xml`.
+pub fn setup(dry_run: bool) -> Result<()> {
+    let Some(home) = std::env::var_os("HOME") else {
+        return Err("no HOME, so there is no ~/.testcontainers.properties to write".to_string());
+    };
+    let path = Path::new(&home).join(".testcontainers.properties");
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+
+    if existing
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.starts_with('#'))
+        .any(|line| {
+            line.replace(' ', "")
+                .starts_with("testcontainers.reuse.enable=")
+        })
+    {
+        // Present already -- including as `=false`, which is a decision, not
+        // an omission. Flipping someone's explicit `false` would be jails
+        // overruling them on their own machine.
+        println!(
+            "  exists  testcontainers.reuse.enable is already set in {}",
+            path.display()
+        );
+        println!("          jails doctor reports whether it is on");
+        return Ok(());
+    }
+
+    let mut next = existing.clone();
+    if !next.is_empty() && !next.ends_with('\n') {
+        next.push('\n');
+    }
+    next.push_str(REUSE_BLOCK);
+
+    if dry_run {
+        println!("would add to {}:", path.display());
+        for line in REUSE_BLOCK.lines() {
+            println!("  {line}");
+        }
+        println!();
+        println!("--dry-run: nothing was written.");
+        return Ok(());
+    }
+
+    crate::apply::put_outside_project(&path, next)?;
+    println!(
+        "  write   testcontainers.reuse.enable=true -> {}",
+        path.display()
+    );
+    println!("          This machine now permits reuse. Nothing reuses anything yet:");
+    println!("          add `.withReuse(true)` to the container bean in TestcontainersConfig,");
+    println!("          and read its Javadoc first -- two projects on one image share a");
+    println!("          database, and Flyway will not start against another project's history.");
+    println!("          Reused containers are not reaped; `jails doctor` counts them.");
+    Ok(())
+}
+
+const REUSE_BLOCK: &str = "\
+# jails: permit containers to be reused between test runs -- the largest
+# saving available to a suite that starts PostgreSQL.
+#
+# This only permits it. A container is reused when its bean asks, with
+# `withReuse(true)`, and that is a per-project decision: the reuse key is a
+# hash of the container configuration, so two projects on the same image would
+# share one database and Flyway would reject the other one's migrations.
+#
+# Reused containers are deliberately not registered with Ryuk, so nothing
+# reaps them -- `jails doctor` counts them.
+testcontainers.reuse.enable=true
+";
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The drift class that had no test because it had no shared value.
+    ///
+    /// `add` knew what `json` installs; `doctor` could not ask. So a project
+    /// whose `jails.toml` still lists a capability while its dependency or its
+    /// generated file has gone reported nothing at all. Now `doctor` re-plans
+    /// the capability through `add::plan_for` and diffs.
+    #[test]
+    fn a_recorded_capability_missing_its_own_output_is_reported() {
+        let root = std::env::temp_dir().join(format!(
+            "jails-doctor-drift-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("src/main/java/com/example/demo")).unwrap();
+        std::fs::write(
+            root.join("src/main/java/com/example/demo/App.java"),
+            "package com.example.demo;\npublic final class App {}\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("pom.xml"), "<project></project>").unwrap();
+        // Recorded as installed, with none of it actually present.
+        std::fs::write(
+            root.join("jails.toml"),
+            "[project]\ncapabilities = [\"json\"]\n",
+        )
+        .unwrap();
+
+        let project = Project::inspect(&root).unwrap();
+        let checks = capability_drift_checks(&project);
+        assert_eq!(checks.len(), 1, "{}", checks.len());
+        assert_eq!(checks[0].status, Status::Fail);
+        assert!(checks[0].detail.contains("missing"), "{}", checks[0].detail);
+        assert_eq!(checks[0].fix, "jails sync");
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// A project that records nothing has nothing to reconcile, and saying so
+    /// is not a failure -- `doctor` must stay usable on a project jails did
+    /// not create.
+    #[test]
+    fn recording_no_capabilities_is_reported_as_nothing_to_do() {
+        let root = std::env::temp_dir().join(format!(
+            "jails-doctor-nodrift-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let project = project_with_pom(&root, "<project></project>");
+        let checks = capability_drift_checks(&project);
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].status, Status::Skip);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// A `Project` over a scratch root whose pom says exactly this.
+    ///
+    /// The checks take a resolved project now, so a test states the pom by
+    /// *writing* it rather than by passing a second argument beside the
+    /// directory -- which is the pairing that could go inconsistent, and the
+    /// reason these two parameters became one value.
+    fn project_with_pom(root: &Path, pom: &str) -> Project {
+        std::fs::create_dir_all(root).unwrap();
+        std::fs::write(root.join("pom.xml"), pom).unwrap();
+        Project::inspect(root).unwrap()
+    }
 
     #[test]
     fn cors_checks_flag_mvc_takeover_and_a_global_mapping_without_origins() {
@@ -1385,7 +1808,10 @@ mod tests {
             "@EnableWebMvc\nclass WebConfig { void x() { registry.addMapping(\"/**\"); } }",
         )
         .unwrap();
-        let checks = cors_checks(&root, "<artifactId>spring-boot-starter-webmvc</artifactId>");
+        let checks = cors_checks(&project_with_pom(
+            &root,
+            "<artifactId>spring-boot-starter-webmvc</artifactId>",
+        ));
         assert_eq!(checks.len(), 2);
         assert!(checks.iter().all(|check| check.status == Status::Warn));
         assert!(checks.iter().all(|check| !check.fix.is_empty()));
@@ -1493,7 +1919,7 @@ volumes:
         .unwrap();
         let pom = "<dependency><groupId>org.springframework.boot</groupId>\
                    <artifactId>spring-boot-starter-actuator</artifactId></dependency>";
-        let checks = management_checks(&root, pom);
+        let checks = management_checks(&project_with_pom(&root, pom));
         assert_eq!(checks.len(), 3);
         assert!(checks.iter().all(|check| check.status == Status::Warn));
         assert!(checks[1].detail.contains("env"), "{}", checks[1].detail);
@@ -1521,7 +1947,7 @@ volumes:
         .unwrap();
         let pom = "<dependency><groupId>org.springframework.boot</groupId>\
                    <artifactId>spring-boot-starter-actuator</artifactId></dependency>";
-        let checks = management_checks(&root, pom);
+        let checks = management_checks(&project_with_pom(&root, pom));
         assert!(checks.iter().all(|check| check.status == Status::Ok));
     }
 
@@ -1540,7 +1966,7 @@ volumes:
 
         let pom = "<dependency><groupId>org.springframework.boot</groupId>\
                    <artifactId>spring-boot-starter-jdbc</artifactId></dependency>";
-        let check = in_memory_adapter_check(&root, pom).expect("should report");
+        let check = in_memory_adapter_check(&project_with_pom(&root, pom)).expect("should report");
         assert_eq!(check.status, Status::Fail);
         assert!(
             check.detail.contains("InMemoryNoteRepository"),
@@ -1549,7 +1975,7 @@ volumes:
         );
 
         // Without a DataSource it is the correct design, not a problem.
-        assert!(in_memory_adapter_check(&root, "<project/>").is_none());
+        assert!(in_memory_adapter_check(&project_with_pom(&root, "<project/>")).is_none());
 
         // And once the annotation moves, there is nothing to report.
         std::fs::write(
@@ -1557,7 +1983,7 @@ volumes:
             "package com.example.demo.adapters;\n\npublic class InMemoryNoteRepository {}\n",
         )
         .unwrap();
-        assert!(in_memory_adapter_check(&root, pom).is_none());
+        assert!(in_memory_adapter_check(&project_with_pom(&root, pom)).is_none());
 
         std::fs::remove_dir_all(&root).ok();
     }
@@ -1641,98 +2067,3 @@ volumes:
         assert_eq!(runtime_flag("kafka"), "kafka");
     }
 }
-
-// ---------------------------------------------------------------------------
-// `jails setup` -- the machine-level settings a project cannot carry.
-// ---------------------------------------------------------------------------
-
-/// Turn on Testcontainers container reuse for this machine.
-///
-/// Everything else jails configures lives in the project, where it is visible,
-/// reviewable and shared. This one cannot: Testcontainers reads
-/// `testcontainers.reuse.enable` from `~/.testcontainers.properties` or the
-/// environment and **never** from the classpath, so a project that asks for
-/// reuse gets it only on a machine that has opted in. That asymmetry is the
-/// whole reason this command exists.
-///
-/// **The flag alone changes nothing**, and that is deliberate. Generated
-/// container configs do not call `withReuse(true)`, because the reuse key is
-/// a hash of the container's configuration and nothing in it identifies the
-/// project -- two applications on the same image would share one database,
-/// and Flyway would refuse to start against the other one's migration
-/// history. This command sets up the half a machine owns; the project half is
-/// a one-line change the reader makes deliberately, and `TestcontainersConfig`
-/// says so in its Javadoc.
-///
-/// The edit is a splice, not a rewrite: `~/.testcontainers.properties` is a
-/// file the reader owns and may already hold `docker.client.strategy`,
-/// `ryuk.disabled` or a registry mirror. Same rule as `pom.xml`.
-pub fn setup(dry_run: bool) -> Result<()> {
-    let Some(home) = std::env::var_os("HOME") else {
-        return Err("no HOME, so there is no ~/.testcontainers.properties to write".to_string());
-    };
-    let path = Path::new(&home).join(".testcontainers.properties");
-    let existing = std::fs::read_to_string(&path).unwrap_or_default();
-
-    if existing
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.starts_with('#'))
-        .any(|line| {
-            line.replace(' ', "")
-                .starts_with("testcontainers.reuse.enable=")
-        })
-    {
-        // Present already -- including as `=false`, which is a decision, not
-        // an omission. Flipping someone's explicit `false` would be jails
-        // overruling them on their own machine.
-        println!(
-            "  exists  testcontainers.reuse.enable is already set in {}",
-            path.display()
-        );
-        println!("          jails doctor reports whether it is on");
-        return Ok(());
-    }
-
-    let mut next = existing.clone();
-    if !next.is_empty() && !next.ends_with('\n') {
-        next.push('\n');
-    }
-    next.push_str(REUSE_BLOCK);
-
-    if dry_run {
-        println!("would add to {}:", path.display());
-        for line in REUSE_BLOCK.lines() {
-            println!("  {line}");
-        }
-        println!();
-        println!("--dry-run: nothing was written.");
-        return Ok(());
-    }
-
-    std::fs::write(&path, next).map_err(|e| format!("failed to write {}: {e}", path.display()))?;
-    println!(
-        "  write   testcontainers.reuse.enable=true -> {}",
-        path.display()
-    );
-    println!("          This machine now permits reuse. Nothing reuses anything yet:");
-    println!("          add `.withReuse(true)` to the container bean in TestcontainersConfig,");
-    println!("          and read its Javadoc first -- two projects on one image share a");
-    println!("          database, and Flyway will not start against another project's history.");
-    println!("          Reused containers are not reaped; `jails doctor` counts them.");
-    Ok(())
-}
-
-const REUSE_BLOCK: &str = "\
-# jails: permit containers to be reused between test runs -- the largest
-# saving available to a suite that starts PostgreSQL.
-#
-# This only permits it. A container is reused when its bean asks, with
-# `withReuse(true)`, and that is a per-project decision: the reuse key is a
-# hash of the container configuration, so two projects on the same image would
-# share one database and Flyway would reject the other one's migrations.
-#
-# Reused containers are deliberately not registered with Ryuk, so nothing
-# reaps them -- `jails doctor` counts them.
-testcontainers.reuse.enable=true
-";

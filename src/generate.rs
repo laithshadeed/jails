@@ -96,6 +96,11 @@ pub enum ArtifactKind {
     /// bounded retries, and terminal diagnostics.
     #[value(name = "http-sink", alias = "webhook")]
     HttpSink,
+    /// At-most-once execution with a *retained result*: a scoped receipt keyed
+    /// by request hash, so a retry replays the first response instead of being
+    /// answered 409 by a unique constraint. Needs `jails add db`.
+    #[value(alias = "idempotent")]
+    Idempotency,
     /// PostgreSQL-backed, leased, bounded-retry work that invokes an existing
     /// generated create use case. `--on` names the use case and `--yields`
     /// names its resource; fields include the stable resource `id`.
@@ -510,6 +515,41 @@ const KIND_FILES: &[(ArtifactKind, KindFiles)] = &[
         ],
     ),
     (
+        ArtifactKind::Idempotency,
+        &[
+            (
+                Tree::Main,
+                layout::DOMAIN,
+                Placement::Layered,
+                "{name}Receipt.java",
+            ),
+            (
+                Tree::Main,
+                layout::APP,
+                Placement::Layered,
+                "{name}Receipts.java",
+            ),
+            (
+                Tree::Main,
+                layout::ADAPTERS,
+                Placement::Layered,
+                "Jdbc{name}Receipts.java",
+            ),
+            (
+                Tree::Main,
+                layout::SERVICE,
+                Placement::Layered,
+                "{name}Guard.java",
+            ),
+            (
+                Tree::Test,
+                layout::SERVICE,
+                Placement::Layered,
+                "{name}GuardTest.java",
+            ),
+        ],
+    ),
+    (
         ArtifactKind::HttpSink,
         &[
             (
@@ -866,10 +906,10 @@ pub(crate) fn base_package(root: &Path) -> Result<String> {
         .map_err(|e| format!("failed to read {}: {e}", entry.display()))?;
     for line in contents.lines() {
         let line = line.trim();
-        if let Some(rest) = line.strip_prefix("package ") {
-            if let Some(pkg) = rest.trim().strip_suffix(';') {
-                return Ok(pkg.trim().to_string());
-            }
+        if let Some(rest) = line.strip_prefix("package ")
+            && let Some(pkg) = rest.trim().strip_suffix(';')
+        {
+            return Ok(pkg.trim().to_string());
         }
     }
     Err(format!(
@@ -925,24 +965,26 @@ fn shallowest_java_file(dir: &Path) -> Option<PathBuf> {
 /// shim, so the scaffolded controller test needs to import the right one.
 /// `@WebMvcTest` moved in Spring Boot 4 the same way `@AutoConfigureMockMvc`
 /// did, and for the same reason -- the web slice became its own module.
-pub(crate) fn webmvc_test_import(root: &Path) -> &'static str {
+/// `@WebMvcTest`'s package, which Boot 4 moved with no back-compat shim.
+///
+/// Reached through [`crate::model::Project::webmvc_test_import`]: the Boot
+/// major is a project fact, resolved once, not something a renderer re-reads
+/// off disk.
+pub(crate) fn webmvc_test_import_for(boot_major: u32) -> &'static str {
     const LEGACY: &str = "org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest";
     const CURRENT: &str = "org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest";
-    if spring_boot_major(root) >= 4 {
-        CURRENT
-    } else {
-        LEGACY
-    }
+    if boot_major >= 4 { CURRENT } else { LEGACY }
 }
 
 /// The Spring Boot major version from the parent pom, defaulting to 3 when it
 /// cannot be read -- the conservative choice, since the pre-4 package names
 /// still exist as deprecated aliases in some builds while the 4 ones simply
 /// do not exist before 4.
-pub(crate) fn spring_boot_major(root: &Path) -> u32 {
-    let Ok(pom) = fs::read_to_string(root.join("pom.xml")) else {
-        return 3;
-    };
+/// The same decision, taken from a pom already in hand.
+///
+/// `Project` caches the pom once; re-reading it per renderer is exactly the
+/// information leakage abstract.md §4.3 names.
+pub(crate) fn spring_boot_major_of(pom: &str) -> u32 {
     let Some(idx) = pom.find("spring-boot-starter-parent") else {
         return 3;
     };
@@ -960,16 +1002,15 @@ pub(crate) fn spring_boot_major(root: &Path) -> u32 {
         .unwrap_or(3)
 }
 
-pub(crate) fn mockmvc_autoconfigure_import(root: &Path) -> &'static str {
+/// `@AutoConfigureMockMvc`'s package, moved in the same Boot 4 change.
+///
+/// Reached through [`crate::model::Project::mockmvc_autoconfigure_import`],
+/// for the same reason as its `@WebMvcTest` sibling above.
+pub(crate) fn mockmvc_autoconfigure_import_for(boot_major: u32) -> &'static str {
     const LEGACY: &str =
         "org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc";
     const CURRENT: &str = "org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc";
-
-    if spring_boot_major(root) >= 4 {
-        CURRENT
-    } else {
-        LEGACY
-    }
+    if boot_major >= 4 { CURRENT } else { LEGACY }
 }
 
 /// Where each kind of artifact lives, relative to the project's base package.
@@ -1029,11 +1070,11 @@ fn writes_an_it(artifacts: &[Artifact]) -> bool {
 /// Under a Spring Boot parent the version is left to the BOM; without one it
 /// is pinned, since a versionless dependency is a pom Maven refuses to read
 /// (plan.md §8.1).
-pub(crate) fn ensure_assertj(root: &Path, writes_a_test: bool) -> Result<()> {
+pub(crate) fn ensure_assertj(project: &Project, writes_a_test: bool) -> Result<()> {
     if !writes_a_test {
         return Ok(());
     }
-    let pom = crate::pom::read(root)?;
+    let pom = project.pom().to_string();
     // A Spring Boot project gets AssertJ transitively through the test
     // starter, and jails' own `new` declares it outright. Adding a second
     // declaration would be noise in a file the reader owns.
@@ -1043,7 +1084,7 @@ pub(crate) fn ensure_assertj(root: &Path, writes_a_test: bool) -> Result<()> {
     {
         return Ok(());
     }
-    ensure_dependency(root, &crate::pom::assertj(crate::pom::flavor(&pom)))
+    ensure_dependency(project.root(), &crate::pom::assertj(project.flavor()))
 }
 
 /// Did this batch write anything under `src/test`?
@@ -1062,8 +1103,7 @@ fn ensure_dependency(root: &Path, dep: &crate::pom::Dependency) -> Result<()> {
     let pom = crate::pom::read(root)?;
     match crate::pom::add_dependency(&pom, dep)? {
         Some(updated) => {
-            fs::write(root.join("pom.xml"), updated)
-                .map_err(|e| format!("failed to write pom.xml: {e}"))?;
+            crate::apply::put_named(root.join("pom.xml"), updated, "pom.xml")?;
             println!("     dep {}:{}", dep.group_id, dep.artifact_id);
             Ok(())
         }
@@ -1093,17 +1133,15 @@ fn apply_build_change(root: &Path, pom: &str, change: &Change) -> Result<()> {
         }
     }
     if changed {
-        fs::write(root.join("pom.xml"), updated)
-            .map_err(|e| format!("failed to write pom.xml: {e}"))?;
+        crate::apply::put_named(root.join("pom.xml"), updated, "pom.xml")?;
     }
     Ok(())
 }
 
 /// Spring-only generator kinds refuse politely rather than writing code that
 /// cannot compile.
-fn require_spring_project(root: &Path, kind: &str) -> Result<()> {
-    let pom = crate::pom::read(root)?;
-    crate::spring::require_spring(crate::pom::flavor(&pom), kind)
+fn require_spring_project(project: &Project, kind: &str) -> Result<()> {
+    crate::spring::require_spring(project.flavor(), kind)
 }
 
 /// `com.example.demo` + `domain` -> `com.example.demo.domain`. An empty
@@ -1139,15 +1177,15 @@ pub(crate) fn test_dir(root: &Path, pkg: &str) -> PathBuf {
 /// is why a `new-cli` project's own base package never got the
 /// `package-info.java` every other package gets.
 pub(crate) fn write_new_file(root: &Path, path: &Path, contents: &str) -> Result<()> {
+    // The refusal stays here rather than in `apply::create`, because this is
+    // the one a person reads: it names the three ways forward. `apply::create`
+    // repeats the check underneath, which costs nothing and closes the window
+    // between the two.
     if path.exists() {
         return Err(format!(
             "{} already exists.\n       fix: choose a different name, destroy the generated artifact first, or use `jails g field` to evolve an existing model.",
             path.display()
         ));
-    }
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
     }
     let contents = if path.extension().is_some_and(|e| e == "java") {
         ensure_package_info(root, path)?;
@@ -1155,7 +1193,7 @@ pub(crate) fn write_new_file(root: &Path, path: &Path, contents: &str) -> Result
     } else {
         contents.to_string()
     };
-    fs::write(path, &contents).map_err(|e| format!("failed to write {}: {e}", path.display()))
+    crate::apply::create(path, &contents)
 }
 
 /// Collapse the blank lines a template leaves behind when an optional section
@@ -1230,7 +1268,13 @@ fn ensure_package_info(root: &Path, class_path: &Path) -> Result<()> {
         return Ok(());
     }
     let info = dir.join("package-info.java");
-    if info.exists() {
+    // The file being written may *be* the package-info: it is an artifact in
+    // its own right, so `write_new_file` is called for it like any other. Left
+    // unguarded this writes the path and then returns to a caller that writes
+    // it again -- harmless while the second write was a bare overwrite, and an
+    // "already exists" refusal the moment the write path started refusing to
+    // clobber. A latent double-write, surfaced by giving `create` real meaning.
+    if class_path == info || info.exists() {
         return Ok(());
     }
     if !jspecify_available(root) {
@@ -1239,8 +1283,7 @@ fn ensure_package_info(root: &Path, class_path: &Path) -> Result<()> {
     let Some(pkg) = package_of_dir(root, dir) else {
         return Ok(());
     };
-    fs::write(&info, package_info_java(&pkg))
-        .map_err(|e| format!("failed to write {}: {e}", info.display()))?;
+    crate::apply::put(&info, package_info_java(&pkg))?;
     Ok(())
 }
 
@@ -1421,6 +1464,37 @@ pub fn generate_with_timestamps(
     pretend: bool,
 ) -> Result<()> {
     let project = Project::discover()?;
+    generate_in_project(
+        &project,
+        kind,
+        name,
+        fields,
+        timestamps,
+        package,
+        indexes,
+        strategy_on,
+        strategy_yields,
+        pretend,
+    )
+}
+
+/// Generate against an explicitly resolved project.
+///
+/// App reconciliation uses this to render old and new intents in isolated
+/// project copies without mutating process-global cwd. The ordinary CLI path
+/// resolves the same value once in [`generate_with_timestamps`].
+pub(crate) fn generate_in_project(
+    project: &Project,
+    kind: ArtifactKind,
+    name: &str,
+    fields: &[String],
+    timestamps: bool,
+    package: Option<&str>,
+    indexes: &[String],
+    strategy_on: Option<&str>,
+    strategy_yields: Option<&str>,
+    pretend: bool,
+) -> Result<()> {
     let root = project.root().to_path_buf();
     let base = project.base().to_string();
 
@@ -1463,7 +1537,7 @@ pub fn generate_with_timestamps(
                     .to_string(),
             );
         }
-        return generate_field(&root, &base, &capitalize(name), fields, package, pretend);
+        return generate_field(project, &capitalize(name), fields, package, pretend);
     }
 
     // These kinds use NAME as a path/description rather than a Java class
@@ -1487,9 +1561,12 @@ pub fn generate_with_timestamps(
     let place = |default: &str| project.package_named(default, package);
 
     let artifacts = match kind {
-        ArtifactKind::Scaffold => {
-            scaffold_artifacts(&root, &base, &name, fields, package, indexes)?
-        }
+        ArtifactKind::Scaffold => scaffold_artifacts(
+            &crate::model::Slice::new(project, package),
+            &name,
+            fields,
+            indexes,
+        )?,
         ArtifactKind::Controller => {
             let web = place(layout::WEB);
             vec![
@@ -1504,7 +1581,7 @@ pub fn generate_with_timestamps(
                     contents: controller_stub_test(
                         &web,
                         &name,
-                        mockmvc_autoconfigure_import(&root),
+                        project.mockmvc_autoconfigure_import(),
                     ),
                 },
             ]
@@ -1554,49 +1631,25 @@ pub fn generate_with_timestamps(
         // Spring-only kinds. The templates live in spring.rs, next to the
         // capabilities that share their Spring Boot 4 assumptions.
         ArtifactKind::Client => {
-            require_spring_project(&root, "client")?;
-            let pkg = place(layout::CLIENTS);
-            crate::spring::client_files(&root, &pkg, &name)
-                .into_iter()
-                .map(|(path, contents, kind)| Artifact {
-                    kind,
-                    path,
-                    contents,
-                })
-                .collect()
+            require_spring_project(project, "client")?;
+            crate::spring::client_files(&crate::model::Slice::new(project, package), &name)
         }
         ArtifactKind::Fetcher => {
-            require_spring_project(&root, "fetcher")?;
+            require_spring_project(project, "fetcher")?;
             if !fields.is_empty() || strategy_on.is_some() || strategy_yields.is_some() {
                 return Err(
                     "fetcher takes only a name; limits and policy are external configuration"
                         .to_string(),
                 );
             }
-            let pkg = place(layout::CLIENTS);
-            crate::spring::fetcher_files(&root, &pkg, &name)
-                .into_iter()
-                .map(|(path, contents, kind)| Artifact {
-                    kind,
-                    path,
-                    contents,
-                })
-                .collect()
+            crate::spring::fetcher_files(&crate::model::Slice::new(project, package), &name)
         }
         ArtifactKind::Job => {
-            require_spring_project(&root, "job")?;
-            let pkg = place(layout::JOBS);
-            crate::spring::job_files(&root, &pkg, &name)
-                .into_iter()
-                .map(|(path, contents, kind)| Artifact {
-                    kind,
-                    path,
-                    contents,
-                })
-                .collect()
+            require_spring_project(project, "job")?;
+            crate::spring::job_files(&crate::model::Slice::new(project, package), &name)
         }
         ArtifactKind::HttpWorkflow => {
-            require_spring_project(&root, "http-workflow")?;
+            require_spring_project(project, "http-workflow")?;
             if !fields.is_empty() || strategy_yields.is_some() {
                 return Err(
                     "http-workflow takes a name and `--on <Fetcher>`; bounds are request/configuration data"
@@ -1608,27 +1661,14 @@ pub fn generate_with_timestamps(
                     "http-workflow {name} needs the safe fetcher it composes.\n       fix: pass `--on <Fetcher>`, for example `--on Page`."
                 )
             })?;
-            let jobs = place(layout::JOBS);
-            let clients = subpackage(&base, config.layer(layout::CLIENTS));
-            let web = subpackage(&base, config.layer(layout::WEB));
             crate::spring::http_workflow_files(
-                &root,
-                &jobs,
-                &clients,
-                &web,
+                &crate::model::Slice::new(project, package),
                 &name,
                 &strip_redundant_suffix(ArtifactKind::Fetcher, &capitalize(fetcher)),
             )?
-            .into_iter()
-            .map(|(path, contents, kind)| Artifact {
-                kind,
-                path,
-                contents,
-            })
-            .collect()
         }
         ArtifactKind::Association => {
-            require_spring_project(&root, "association")?;
+            require_spring_project(project, "association")?;
             if fields.is_empty() {
                 return Err(format!(
                     "association {name} needs at least one `childField=parentField` mapping"
@@ -1644,27 +1684,27 @@ pub fn generate_with_timestamps(
                     "association {name} needs its parent resource.\n       fix: pass `--yields <Parent>`."
                 )
             })?;
-            let domain = subpackage(&base, config.layer(layout::DOMAIN));
-            let adapters = place(layout::ADAPTERS);
             crate::spring::association_files(
-                &root,
-                &domain,
-                &adapters,
+                &crate::model::Slice::new(project, package),
                 &name,
                 &capitalize(child),
                 &capitalize(parent),
                 fields,
             )?
-            .into_iter()
-            .map(|(path, contents, kind)| Artifact {
-                kind,
-                path,
-                contents,
-            })
-            .collect()
+        }
+        ArtifactKind::Idempotency => {
+            require_spring_project(project, "idempotency")?;
+            if !fields.is_empty() || strategy_on.is_some() || strategy_yields.is_some() {
+                return Err(
+                    "idempotency takes only a name; the scope, key and request bytes are \
+                     runtime values the caller supplies, not generation-time ones"
+                        .to_string(),
+                );
+            }
+            crate::spring::idempotency_files(&crate::model::Slice::new(project, package), &name)?
         }
         ArtifactKind::HttpSink => {
-            require_spring_project(&root, "http-sink")?;
+            require_spring_project(project, "http-sink")?;
             if !fields.is_empty() {
                 return Err(
                     "http-sink payloads come from the typed outbox event; do not repeat fields"
@@ -1681,28 +1721,15 @@ pub fn generate_with_timestamps(
                     "http-sink {name} needs the typed event it delivers.\n       fix: pass `--yields <Event>`."
                 )
             })?;
-            let jobs = place(layout::JOBS);
-            let messaging = subpackage(&base, config.layer(layout::MESSAGING));
-            let adapters = subpackage(&base, config.layer(layout::ADAPTERS));
             crate::spring::http_sink_files(
-                &root,
-                &jobs,
-                &messaging,
-                &adapters,
+                &crate::model::Slice::new(project, package),
                 &name,
                 &capitalize(usecase),
                 &capitalize(event),
             )?
-            .into_iter()
-            .map(|(path, contents, kind)| Artifact {
-                kind,
-                path,
-                contents,
-            })
-            .collect()
         }
         ArtifactKind::DurableJob => {
-            require_spring_project(&root, "durable-job")?;
+            require_spring_project(project, "durable-job")?;
             let usecase = strategy_on.ok_or_else(|| {
                 format!(
                     "durable-job {name} needs the create use case it invokes.\n       fix: pass `--on <UseCase>`, for example `--on ProcessTask`."
@@ -1713,73 +1740,35 @@ pub fn generate_with_timestamps(
                     "durable-job {name} needs the resource that proves completion.\n       fix: pass `--yields <Resource>`, for example `--yields Task`."
                 )
             })?;
-            let jobs = place(layout::JOBS);
-            let web = subpackage(&base, config.layer(layout::WEB));
-            let service = subpackage(&base, config.layer(layout::SERVICE));
-            let app = subpackage(&base, config.layer(layout::APP));
-            let domain = subpackage(&base, config.layer(layout::DOMAIN));
+            let slice = crate::model::Slice::new(project, package);
             let parsed = parse_fields(fields)?;
             crate::spring::durable_job_files(
-                &root,
-                &base,
-                &jobs,
-                &web,
-                &service,
-                &app,
-                &domain,
+                &slice,
                 &name,
                 &capitalize(usecase),
                 &capitalize(target),
                 &parsed,
             )?
-            .into_iter()
-            .map(|(path, contents, kind)| Artifact {
-                kind,
-                path,
-                contents,
-            })
-            .collect()
         }
         ArtifactKind::Usecase => {
-            require_spring_project(&root, "usecase")?;
+            require_spring_project(project, "usecase")?;
             let target = strategy_on.ok_or_else(|| {
                 format!(
                     "usecase {name} needs the resource it creates.\n       fix: pass `--on <Resource>`, for example `jails g usecase {name} title:string --on Task`."
                 )
             })?;
-            let service = place(layout::SERVICE);
-            let web = place(layout::WEB);
             // `--package` places the operation itself. The target resource
             // already exists in the project's configured scaffold layers;
             // moving the operation must not make Jails look for a second copy
-            // of that resource in the override package.
-            let domain = subpackage(&base, config.layer(layout::DOMAIN));
-            let app = subpackage(&base, config.layer(layout::APP));
-            let adapters = subpackage(&base, config.layer(layout::ADAPTERS));
-            let messaging = subpackage(&base, config.layer(layout::MESSAGING));
-            let jobs = subpackage(&base, config.layer(layout::JOBS));
+            // of that resource in the override package. `Slice` owns that rule
+            // now, so no call site restates it.
+            let slice = crate::model::Slice::new(project, package);
             let parsed = parse_fields(fields)?;
-            let mut files = crate::spring::usecase_files(
-                &root,
-                &base,
-                &service,
-                &web,
-                &domain,
-                &app,
-                &adapters,
-                &name,
-                &capitalize(target),
-                &parsed,
-            )?;
+            let mut files =
+                crate::spring::usecase_files(&slice, &name, &capitalize(target), &parsed)?;
             if let Some(event) = strategy_yields {
                 files.extend(crate::spring::outbox_files(
-                    &root,
-                    &service,
-                    &domain,
-                    &app,
-                    &adapters,
-                    &messaging,
-                    &jobs,
+                    &slice,
                     &name,
                     &capitalize(target),
                     &capitalize(event),
@@ -1787,16 +1776,9 @@ pub fn generate_with_timestamps(
                 )?);
             }
             files
-                .into_iter()
-                .map(|(path, contents, kind)| Artifact {
-                    kind,
-                    path,
-                    contents,
-                })
-                .collect()
         }
         ArtifactKind::Query => {
-            require_spring_project(&root, "query")?;
+            require_spring_project(project, "query")?;
             let target = strategy_on.ok_or_else(|| {
                 format!(
                     "query {name} needs the resource it reads.\n       fix: pass `--on <Resource>`, for example `jails g query {name} status:TaskStatus --on Task`."
@@ -1808,34 +1790,12 @@ pub fn generate_with_timestamps(
                         .to_string(),
                 );
             }
-            let service = place(layout::SERVICE);
-            let web = place(layout::WEB);
-            let domain = subpackage(&base, config.layer(layout::DOMAIN));
-            let app = subpackage(&base, config.layer(layout::APP));
-            let adapters = subpackage(&base, config.layer(layout::ADAPTERS));
+            let slice = crate::model::Slice::new(project, package);
             let parsed = parse_fields(fields)?;
-            crate::spring::query_files(
-                &root,
-                &base,
-                &service,
-                &web,
-                &domain,
-                &app,
-                &adapters,
-                &name,
-                &capitalize(target),
-                &parsed,
-            )?
-            .into_iter()
-            .map(|(path, contents, kind)| Artifact {
-                kind,
-                path,
-                contents,
-            })
-            .collect()
+            crate::spring::query_files(&slice, &name, &capitalize(target), &parsed)?
         }
         ArtifactKind::Transition => {
-            require_spring_project(&root, "transition")?;
+            require_spring_project(project, "transition")?;
             let target = strategy_on.ok_or_else(|| {
                 format!(
                     "transition {name} needs the resource it updates.\n       fix: pass `--on <Resource>`, for example `jails g transition {name} id:uuid tenantId:uuid@scope status:TaskStatus version:long --on Task`."
@@ -1847,58 +1807,23 @@ pub fn generate_with_timestamps(
                         .to_string(),
                 );
             }
-            let service = place(layout::SERVICE);
-            let web = place(layout::WEB);
-            let domain = subpackage(&base, config.layer(layout::DOMAIN));
-            let app = subpackage(&base, config.layer(layout::APP));
-            let adapters = subpackage(&base, config.layer(layout::ADAPTERS));
+            let slice = crate::model::Slice::new(project, package);
             let parsed = parse_fields(fields)?;
-            crate::spring::transition_files(
-                &root,
-                &base,
-                &service,
-                &web,
-                &domain,
-                &app,
-                &adapters,
-                &name,
-                &capitalize(target),
-                &parsed,
-            )?
-            .into_iter()
-            .map(|(path, contents, kind)| Artifact {
-                kind,
-                path,
-                contents,
-            })
-            .collect()
+            crate::spring::transition_files(&slice, &name, &capitalize(target), &parsed)?
         }
         ArtifactKind::Event => {
-            require_spring_project(&root, "event")?;
-            let pkg = place(layout::MESSAGING);
-            let domain = place(layout::DOMAIN);
+            require_spring_project(project, "event")?;
             let parsed = parse_fields(fields)?;
-            crate::spring::event_files(&root, &pkg, &domain, &name, &parsed)?
-                .into_iter()
-                .map(|(path, contents, kind)| Artifact {
-                    kind,
-                    path,
-                    contents,
-                })
-                .collect()
+            crate::spring::event_files(&crate::model::Slice::new(project, package), &name, &parsed)?
         }
         ArtifactKind::Dto => {
             let domain = place(layout::DOMAIN);
-            let web = place(layout::WEB);
             let (components, _) = fields_from_spec_or_record(&root, &domain, &name, fields)?;
-            crate::spring::dto_files(&root, &web, &domain, &name, &components)
-                .into_iter()
-                .map(|(path, contents, kind)| Artifact {
-                    kind,
-                    path,
-                    contents,
-                })
-                .collect()
+            crate::spring::dto_files(
+                &crate::model::Slice::new(project, package),
+                &name,
+                &components,
+            )
         }
         ArtifactKind::Record => {
             let parsed = parse_fields(fields)?;
@@ -2017,7 +1942,7 @@ pub fn generate_with_timestamps(
                 kind: "JDBC adapter",
                 path: main_dir(&root, &adapters).join(format!("Jdbc{name}Repository.java")),
                 contents: jdbc_repository_for(
-                    &root,
+                    project,
                     &adapters,
                     &name,
                     &format!(
@@ -2025,7 +1950,7 @@ pub fn generate_with_timestamps(
                         import_of(&adapters, &domain, &name),
                         import_of(&adapters, &app, &format!("{name}Repository"))
                     ),
-                    &crate::sql::columns(&record_fields, &root, &domain, &lower_first(&name)),
+                    &crate::sql::columns(&record_fields, project, &domain, &lower_first(&name)),
                     &domain,
                 ),
             });
@@ -2349,18 +2274,19 @@ pub(crate) fn import_of(user: &str, owner: &str, class: &str) -> String {
 /// out loud which package each half of a vertical slice lives in -- and add
 /// the imports that crossing those boundaries now costs.
 fn scaffold_artifacts(
-    root: &Path,
-    base: &str,
+    slice: &crate::model::Slice,
     name: &str,
     fields: &[String],
-    package: Option<&str>,
     indexes: &[String],
 ) -> Result<Vec<Artifact>> {
-    let config = crate::config::Config::load(root)?;
-    let place = |default: &str| subpackage(base, package.unwrap_or(config.layer(default)));
-    let domain = place(layout::DOMAIN);
+    let root: &Path = slice.project().root();
+    let domain = slice.placed(Layer::Domain);
     let (parsed, reusing_record) = fields_from_spec_or_record(root, &domain, name, fields)?;
-    scaffold_artifacts_from_fields(root, base, name, &parsed, package, indexes, !reusing_record)
+    // The unmapped-component refusal deliberately lives in
+    // `scaffold_artifacts_from_fields`, which reads the referenced record's
+    // stored `@pk` and names the two commands that do the job. A generic
+    // refusal here would shadow that one and teach nothing.
+    scaffold_artifacts_from_fields(slice, name, &parsed, indexes, !reusing_record)
 }
 
 fn prepared_artifact_contents(path: &Path, contents: &str) -> String {
@@ -2421,13 +2347,15 @@ fn stored_primary_key(
 }
 
 fn generate_field(
-    root: &Path,
-    base: &str,
+    project: &Project,
     name: &str,
     fields: &[String],
     package: Option<&str>,
     pretend: bool,
 ) -> Result<()> {
+    let root: &Path = project.root();
+    let base: &str = project.base();
+    let slice = crate::model::Slice::new(project, package);
     if fields.len() != 1 {
         return Err(format!(
             "field {name} needs exactly one `name:type` component, got {}.\n       \
@@ -2467,7 +2395,7 @@ fn generate_field(
 
     let new_column = crate::sql::columns(
         std::slice::from_ref(&field),
-        root,
+        project,
         &domain,
         &lower_first(name),
     )
@@ -2483,10 +2411,8 @@ fn generate_field(
 
     let mut new_fields = old_fields.clone();
     new_fields.push(field.clone());
-    let old_artifacts =
-        scaffold_artifacts_from_fields(root, base, name, &old_fields, package, &[], true)?;
-    let new_artifacts =
-        scaffold_artifacts_from_fields(root, base, name, &new_fields, package, &[], true)?;
+    let old_artifacts = scaffold_artifacts_from_fields(&slice, name, &old_fields, &[], true)?;
+    let new_artifacts = scaffold_artifacts_from_fields(&slice, name, &new_fields, &[], true)?;
 
     let mut updates: Vec<(&Path, String)> = Vec::new();
     let mut skipped: Vec<&Path> = Vec::new();
@@ -2573,8 +2499,11 @@ fn generate_field(
         return Ok(());
     }
     for (path, contents) in &updates {
-        fs::write(path, contents)
-            .map_err(|error| format!("failed to update {}: {error}", path.display()))?;
+        // `g field` only reaches here for derived files that still match what
+        // jails would have written -- the ownership oracle already refused the
+        // rest and printed a snippet. So this is jails replacing its own
+        // output, which is what `replace` names.
+        crate::apply::replace(path, contents)?;
     }
     let mut written = Vec::new();
     if let Some((path, contents)) = migration {
@@ -2596,42 +2525,42 @@ fn generate_field(
 }
 
 fn scaffold_artifacts_from_fields(
-    root: &Path,
-    base: &str,
+    slice: &crate::model::Slice,
     name: &str,
     parsed: &[Field],
-    package: Option<&str>,
     indexes: &[String],
     include_record: bool,
 ) -> Result<Vec<Artifact>> {
-    let config = crate::config::Config::load(root)?;
-    let place = |default: &str| subpackage(base, package.unwrap_or(config.layer(default)));
-    let domain = place(layout::DOMAIN);
-    let repository = place(layout::APP);
-    let adapters = place(layout::ADAPTERS);
-    let service = place(layout::SERVICE);
-    let web = place(layout::WEB);
+    let root: &Path = slice.project().root();
+    let place = |layer| slice.placed(layer);
+    let domain = place(Layer::Domain);
+    let repository = place(Layer::App);
+    let adapters = place(Layer::Adapters);
+    let service = place(Layer::Service);
+    let web = place(Layer::Web);
 
-    crate::spring::require_scope_authorizer(root, base, "scaffold", name, parsed)?;
+    crate::spring::require_scope_authorizer(slice, "scaffold", name, parsed)?;
 
     let domain_in = |user: &str| import_of(user, &domain, name);
-    let columns = crate::sql::columns(parsed, root, &domain, &lower_first(name));
+    let columns = crate::sql::columns(parsed, slice.project(), &domain, &lower_first(name));
     for (field, column) in parsed.iter().zip(&columns) {
         if column.mapped() {
             continue;
         }
         if field.collection {
             return Err(format!(
-                "{name}.{} is a collection, which cannot be persisted as one column.\n       \
-                 fix: generate a record for the element and model the relationship explicitly.",
-                field.name
+                "scaffold {name} cannot persist `{}:{}`: a collection is not one column.\n       \
+                 fix: generate a record for the element and model the relationship explicitly \
+                 with `jails g association`.",
+                field.name, field.java_type
             ));
         }
         if main_dir(root, &domain)
             .join(format!("{}.java", field.java_type))
             .is_file()
         {
-            if let Some(key) = stored_primary_key(root, &field.java_type, package)? {
+            if let Some(key) = stored_primary_key(root, &field.java_type, slice.override_package())?
+            {
                 return Err(format!(
                     "{name}.{} has project record type {}, which cannot be persisted as one `{}` column.\n       \
                      fix: replace it with `{}:{}` and run `jails g association {name}{} {}={} --on {name} --yields {}`.",
@@ -2647,15 +2576,19 @@ fn scaffold_artifacts_from_fields(
                 ));
             }
             return Err(format!(
-                "{name}.{} has project record type {}, but that record has no single stored @pk mapping.\n       \
-                 fix: model the foreign key as a built-in scalar field, then generate an explicit association.",
-                field.name, field.java_type
+                "scaffold {name} cannot persist `{}:{}`: {} is a record in this project, but \
+                 it has no single stored @pk to reference.\n       \
+                 fix: give {} exactly one @pk component, or model the foreign key as a \
+                 built-in scalar field and relate them with `jails g association`.",
+                field.name, field.java_type, field.java_type, field.java_type
             ));
         }
         return Err(format!(
-            "{name}.{} has field type {}, for which jails has no SQL/JDBC mapping.\n       \
-             fix: use a mapped built-in/enum field type, or generate a referenced record and model it with `g association`.",
-            field.name, field.java_type
+            "scaffold {name} cannot persist `{}:{}`: jails has no SQL/JDBC mapping for that \
+             type.\n       \
+             fix: use a built-in field type or an enum (stored by name), or generate {} as a \
+             record and relate them with `jails g association`.",
+            field.name, field.java_type, field.java_type
         ));
     }
 
@@ -2730,7 +2663,7 @@ fn scaffold_artifacts_from_fields(
             kind: "JDBC adapter",
             path: main_dir(root, &adapters).join(format!("Jdbc{name}Repository.java")),
             contents: jdbc_repository_for(
-                root,
+                slice.project(),
                 &adapters,
                 name,
                 &format!(
@@ -2740,7 +2673,7 @@ fn scaffold_artifacts_from_fields(
                 ),
                 // The record was just written from these same fields, so the
                 // adapter and the type it maps cannot disagree.
-                &crate::sql::columns(parsed, root, &domain, &lower_first(name)),
+                &crate::sql::columns(parsed, slice.project(), &domain, &lower_first(name)),
                 &domain,
             ),
         },
@@ -2764,7 +2697,7 @@ fn scaffold_artifacts_from_fields(
                     .iter()
                     .find(|f| f.name == "id")
                     .map(|f| f.name.as_str()),
-                repository_wiring(root) != RepositoryWiring::JdbcClientBean,
+                repository_wiring(slice.project()) != RepositoryWiring::JdbcClientBean,
             ),
         },
         Artifact {
@@ -2815,8 +2748,7 @@ fn scaffold_artifacts_from_fields(
             kind: "controller",
             path: main_dir(root, &web).join(format!("{name}Controller.java")),
             contents: crate::spring::resource_controller_java(
-                base,
-                &web,
+                slice,
                 name,
                 &format!(
                     "{}{}",
@@ -2831,12 +2763,10 @@ fn scaffold_artifacts_from_fields(
             kind: "controller test",
             path: test_dir(root, &web).join(format!("{name}ControllerTest.java")),
             contents: crate::spring::resource_controller_test_java(
-                base,
-                &web,
+                slice,
                 name,
                 &import_of(&web, &service, &format!("{name}Service")),
                 parsed,
-                webmvc_test_import(root),
             ),
         },
     ]);
@@ -3060,7 +2990,7 @@ mod tests {
     fn exactly_one_repository_adapter_carries_the_bean_annotation() {
         let columns = crate::sql::columns(
             &parse_fields(&["id:string!".to_string(), "title:string".to_string()]).unwrap(),
-            Path::new("/tmp/does-not-matter"),
+            &crate::model::Project::inspect(Path::new("/tmp/does-not-matter")).unwrap(),
             "com.example.app.domain",
             "note",
         );
@@ -3118,7 +3048,7 @@ mod tests {
                 "currency:string".to_string(),
             ])
             .unwrap(),
-            Path::new("/tmp/does-not-matter"),
+            &crate::model::Project::inspect(Path::new("/tmp/does-not-matter")).unwrap(),
             "com.example.app.domain",
             "reward",
         );
@@ -3405,7 +3335,8 @@ mod tests {
             src.contains("\"\"\""),
             "SQL should be visible in text blocks: {src}"
         );
-        for forbidden in ["org.springframework"] {
+        {
+            let forbidden = "org.springframework";
             assert!(!src.contains(forbidden), "{forbidden} should not appear");
         }
     }
@@ -3688,7 +3619,9 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            mockmvc_autoconfigure_import(&root),
+            mockmvc_autoconfigure_import_for(spring_boot_major_of(
+                &fs::read_to_string(root.join("pom.xml")).unwrap_or_default(),
+            )),
             "org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc"
         );
     }
@@ -3702,7 +3635,9 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            mockmvc_autoconfigure_import(&root),
+            mockmvc_autoconfigure_import_for(spring_boot_major_of(
+                &fs::read_to_string(root.join("pom.xml")).unwrap_or_default(),
+            )),
             "org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc"
         );
     }
@@ -3711,7 +3646,9 @@ mod tests {
     fn mockmvc_import_defaults_to_legacy_when_pom_is_unreadable() {
         let root = scratch("no-pom");
         assert_eq!(
-            mockmvc_autoconfigure_import(&root),
+            mockmvc_autoconfigure_import_for(spring_boot_major_of(
+                &fs::read_to_string(root.join("pom.xml")).unwrap_or_default(),
+            )),
             "org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc"
         );
     }

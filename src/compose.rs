@@ -521,7 +521,7 @@ pub fn write(root: &Path, text: &str) -> Result<()> {
         }
         return Ok(());
     }
-    std::fs::write(&path, text).map_err(|e| format!("failed to write {}: {e}", path.display()))
+    crate::apply::put(&path, text)
 }
 
 /// Connection parameters for the compose postgres that `jails add db` wrote.

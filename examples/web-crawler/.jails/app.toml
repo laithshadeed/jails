@@ -25,25 +25,25 @@ indexes = ["crawl_run_id, discovered_at desc"]
 kind = "usecase"
 name = "QueueCrawl"
 fields = ["id:uuid", "seedUrl:uri"]
-strategy_on = "CrawlRun"
+on = "CrawlRun"
 
 [[generate]]
 kind = "usecase"
 name = "RecordCrawledPage"
 fields = ["id:uuid", "crawlRunId:uuid", "url:uri", "statusCode:int"]
-strategy_on = "CrawledPage"
+on = "CrawledPage"
 
 [[generate]]
 kind = "query"
 name = "CrawlRunsByStatus"
 fields = ["status:CrawlStatus"]
-strategy_on = "CrawlRun"
+on = "CrawlRun"
 
 [[generate]]
 kind = "query"
 name = "PagesByCrawlRun"
 fields = ["crawlRunId:uuid"]
-strategy_on = "CrawledPage"
+on = "CrawledPage"
 
 [[generate]]
 kind = "fetcher"
@@ -52,7 +52,7 @@ name = "PageFetcher"
 [[generate]]
 kind = "http-workflow"
 name = "SiteTraversal"
-strategy_on = "PageFetcher"
+on = "PageFetcher"
 
 [[generate]]
 kind = "event"
@@ -63,5 +63,5 @@ fields = ["id:uuid", "crawlRunId:uuid", "url:uri", "occurredAt:instant"]
 kind = "durable-job"
 name = "CrawlDispatcher"
 fields = ["id:uuid", "seedUrl:uri"]
-strategy_on = "QueueCrawl"
-strategy_yields = "CrawlRun"
+on = "QueueCrawl"
+yields = "CrawlRun"

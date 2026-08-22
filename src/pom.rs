@@ -320,10 +320,11 @@ fn project_dependencies_close(xml: &str) -> Option<usize> {
 
     for tag in &tags {
         if tag.closing {
-            if let Some(target_depth) = depth_of_target {
-                if stack.len() == target_depth && tag.name == "dependencies" {
-                    return Some(tag.start);
-                }
+            if let Some(target_depth) = depth_of_target
+                && stack.len() == target_depth
+                && tag.name == "dependencies"
+            {
+                return Some(tag.start);
             }
             stack.pop();
             continue;
@@ -577,10 +578,11 @@ fn build_plugins_close(xml: &str) -> Option<usize> {
 
     for tag in &tags {
         if tag.closing {
-            if let Some(target_depth) = depth_of_target {
-                if stack.len() == target_depth && tag.name == "plugins" {
-                    return Some(tag.start);
-                }
+            if let Some(target_depth) = depth_of_target
+                && stack.len() == target_depth
+                && tag.name == "plugins"
+            {
+                return Some(tag.start);
             }
             stack.pop();
             continue;

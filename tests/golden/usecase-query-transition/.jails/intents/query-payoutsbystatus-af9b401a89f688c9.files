@@ -1,6 +1,0 @@
-src/main/java/com/example/demo/adapters/JdbcPayoutsByStatusQuery.java
-src/main/java/com/example/demo/service/PayoutsByStatusQuery.java
-src/main/java/com/example/demo/service/PayoutsByStatusQueryPort.java
-src/main/java/com/example/demo/web/PayoutsByStatusQueryController.java
-src/test/java/com/example/demo/adapters/JdbcPayoutsByStatusQueryIT.java
-src/test/java/com/example/demo/web/PayoutsByStatusQueryControllerTest.java

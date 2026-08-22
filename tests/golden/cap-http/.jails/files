@@ -1,4 +1,0 @@
-src/main/java/com/example/demo/api/WorkItemHandler.java
-src/main/java/com/example/demo/domain/ApiError.java
-src/test/java/com/example/demo/api/WorkItemHandlerTest.java
-src/test/java/com/example/demo/domain/ApiErrorTest.java

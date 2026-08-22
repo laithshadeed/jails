@@ -1,8 +1,0 @@
-src/main/java/com/example/demo/jobs/ItemDispatcherQueue.java
-src/main/java/com/example/demo/jobs/ItemDispatcherWork.java
-src/main/java/com/example/demo/jobs/ItemDispatcherWorker.java
-src/main/java/com/example/demo/jobs/JdbcItemDispatcherStore.java
-src/main/java/com/example/demo/jobs/SchedulingConfig.java
-src/main/java/com/example/demo/web/ItemDispatcherJobController.java
-src/main/resources/db/migration/V004__create_item_dispatcher_jobs.sql
-src/test/java/com/example/demo/jobs/ItemDispatcherJobIT.java

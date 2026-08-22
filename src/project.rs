@@ -1,3 +1,4 @@
+use crate::json;
 use std::collections::HashSet;
 use std::env;
 use std::fs;
@@ -113,13 +114,13 @@ impl ProjectContext {
         let layout = config
             .layout_entries()
             .into_iter()
-            .map(|(name, package)| format!("{}:{}", json_string(name), json_string(&package)))
+            .map(|(name, package)| format!("{}:{}", json::string(name), json::string(&package)))
             .collect::<Vec<_>>()
             .join(",");
         let capabilities = config
             .capabilities()
             .iter()
-            .map(|capability| json_string(capability))
+            .map(|capability| json::string(capability))
             .collect::<Vec<_>>()
             .join(",");
         let java_root = self.module.root.join("src/main/java");
@@ -134,8 +135,8 @@ impl ProjectContext {
                     .unwrap_or(&module.root);
                 format!(
                     "    {{\"artifact_id\": {}, \"path\": {}}}",
-                    json_optional_string(module.artifact_id.as_deref()),
-                    json_string(&path.to_string_lossy())
+                    json::optional_string(module.artifact_id.as_deref()),
+                    json::string(&path.to_string_lossy())
                 )
             })
             .collect::<Vec<_>>()
@@ -158,20 +159,20 @@ impl ProjectContext {
                 "  \"modules\": [\n{}\n  ]\n",
                 "}}"
             ),
-            json_string(&self.reactor.root.to_string_lossy()),
-            json_optional_string(self.reactor.artifact_id.as_deref()),
-            json_string(&self.module.root.to_string_lossy()),
-            json_optional_string(self.module.artifact_id.as_deref()),
-            json_optional_string(base_package.as_deref()),
-            json_string(&java_root.to_string_lossy()),
-            json_string(&test_root.to_string_lossy()),
+            json::string(&self.reactor.root.to_string_lossy()),
+            json::optional_string(self.reactor.artifact_id.as_deref()),
+            json::string(&self.module.root.to_string_lossy()),
+            json::optional_string(self.module.artifact_id.as_deref()),
+            json::optional_string(base_package.as_deref()),
+            json::string(&java_root.to_string_lossy()),
+            json::string(&test_root.to_string_lossy()),
             layout,
             capabilities,
             self.java_release
                 .map(|release| release.to_string())
                 .unwrap_or_else(|| "null".to_string()),
             self.spring_boot,
-            json_string(&self.maven_command.to_string_lossy()),
+            json::string(&self.maven_command.to_string_lossy()),
             modules
         )
     }
@@ -355,30 +356,6 @@ fn module_label(module: &MavenModule) -> &str {
     module.artifact_id.as_deref().unwrap_or("unknown")
 }
 
-fn json_optional_string(value: Option<&str>) -> String {
-    value.map(json_string).unwrap_or_else(|| "null".to_string())
-}
-
-pub(crate) fn json_string(value: &str) -> String {
-    let mut escaped = String::with_capacity(value.len() + 2);
-    escaped.push('"');
-    for character in value.chars() {
-        match character {
-            '"' => escaped.push_str("\\\""),
-            '\\' => escaped.push_str("\\\\"),
-            '\n' => escaped.push_str("\\n"),
-            '\r' => escaped.push_str("\\r"),
-            '\t' => escaped.push_str("\\t"),
-            character if character.is_control() => {
-                escaped.push_str(&format!("\\u{:04x}", character as u32));
-            }
-            character => escaped.push(character),
-        }
-    }
-    escaped.push('"');
-    escaped
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -478,6 +455,6 @@ mod tests {
 
     #[test]
     fn json_escapes_strings() {
-        assert_eq!(json_string("a\\b\"c\n"), "\"a\\\\b\\\"c\\n\"");
+        assert_eq!(json::string("a\\b\"c\n"), "\"a\\\\b\\\"c\\n\"");
     }
 }

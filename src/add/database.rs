@@ -105,7 +105,10 @@ pub(super) const SPRING_TESTCONTAINERS: Dependency = Dependency {
 pub(super) const POSTGRES_IMAGE: &str = "postgres:17-alpine";
 pub(super) const TESTCONTAINERS_CONFIG: &str = "TestcontainersConfig";
 
-pub(super) fn db_plan(root: &std::path::Path, flavor: Flavor, pkg: &str) -> Result<Plan> {
+pub(super) fn db_plan(slice: &Slice) -> Result<Change> {
+    let root: &Path = slice.root();
+    let flavor: Flavor = slice.flavor();
+    let pkg: &str = &slice.root_package();
     let mut deps = match flavor {
         Flavor::SpringBoot => vec![
             SPRING_JDBC,
@@ -123,13 +126,13 @@ pub(super) fn db_plan(root: &std::path::Path, flavor: Flavor, pkg: &str) -> Resu
         deps.push(SPRING_TESTCONTAINERS);
     }
 
-    let mut files = vec![NewFile {
+    let mut files = vec![Artifact {
         kind: "capability file",
         path: root.join("src/main/resources/db/migration/.gitkeep"),
         contents: String::new(),
     }];
     let spring_test_import = if flavor == Flavor::SpringBoot {
-        files.push(NewFile {
+        files.push(Artifact {
             kind: "capability file",
             path: test_dir(root, pkg).join(format!("{TESTCONTAINERS_CONFIG}.java")),
             contents: testcontainers_config_java(pkg),
@@ -142,12 +145,12 @@ pub(super) fn db_plan(root: &std::path::Path, flavor: Flavor, pkg: &str) -> Resu
         None
     };
 
-    Ok(Plan {
+    Ok(Change {
         deps,
         files,
         compose: vec![compose::POSTGRES],
         spring_test_import,
-        ..Plan::default()
+        ..Change::default()
     })
 }
 
@@ -180,7 +183,7 @@ pub(super) fn db_plan(root: &std::path::Path, flavor: Flavor, pkg: &str) -> Resu
 /// suitable driver class" on a test the user did not write.
 pub(super) fn testcontainers_config_java(pkg: &str) -> String {
     crate::template::render(
-        include_str!("../../templates/add/testcontainers_config_java.java"),
+        crate::template::template!("add/testcontainers_config_java.java"),
         &[
             ("pkg", pkg),
             ("TESTCONTAINERS_CONFIG", TESTCONTAINERS_CONFIG),
@@ -319,7 +322,7 @@ pub(super) fn install_capability_properties(
         fs::create_dir_all(parent)
             .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
     }
-    fs::write(&path, next).map_err(|e| format!("failed to write {}: {e}", path.display()))?;
+    crate::apply::put(&path, next)?;
     for line in lines {
         println!("  set     {line}");
     }
@@ -386,7 +389,7 @@ pub(super) fn unowned_properties(existing: &str, label: &str, owned: &[String]) 
 /// reads as edited. That errs toward warning about a file that is fine, which
 /// is the safe direction -- the cost is a line of output, and the cost of the
 /// other mistake is someone's afternoon.
-pub(super) fn edited_files<'a>(plan: &'a Plan) -> Vec<&'a PathBuf> {
+pub(super) fn edited_files(plan: &Change) -> Vec<&PathBuf> {
     plan.files
         .iter()
         .filter(|f| fs::read_to_string(&f.path).is_ok_and(|on_disk| on_disk != f.contents))
@@ -401,7 +404,7 @@ pub(super) fn edited_files<'a>(plan: &'a Plan) -> Vec<&'a PathBuf> {
 /// documented inverse, so refusing would make the command unusable on exactly
 /// the projects that got the most use out of it. It must not delete them
 /// *silently*, which is the same line `report_unowned_properties` draws.
-pub(super) fn report_edited_files(root: &Path, plan: &Plan) {
+pub(super) fn report_edited_files(root: &Path, plan: &Change) {
     let edited = edited_files(plan);
     if edited.is_empty() {
         return;
@@ -471,7 +474,7 @@ pub(super) fn remove_capability_properties(root: &Path, label: &str) -> Result<(
         println!("  removed {}", rel(root, &path));
         return Ok(());
     }
-    fs::write(&path, out).map_err(|e| format!("failed to write {}: {e}", path.display()))?;
+    crate::apply::put(&path, out)?;
     println!("  updated {}", rel(root, &path));
     Ok(())
 }
@@ -527,7 +530,7 @@ pub(super) fn install_db_properties(root: &Path, dry_run: bool) -> Result<bool> 
         fs::create_dir_all(parent)
             .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
     }
-    fs::write(&path, next).map_err(|e| format!("failed to write {}: {e}", path.display()))?;
+    crate::apply::put(&path, next)?;
     println!("  properties  {}", rel(root, &path));
     Ok(true)
 }
@@ -546,7 +549,7 @@ pub(super) fn uninstall_db_properties(root: &Path) -> Result<()> {
         fs::remove_file(&path).map_err(|e| format!("failed to remove {}: {e}", path.display()))?;
         println!("  delete  {}", rel(root, &path));
     } else {
-        fs::write(&path, next).map_err(|e| format!("failed to write {}: {e}", path.display()))?;
+        crate::apply::put(&path, next)?;
         println!("  unsplice  {}", rel(root, &path));
     }
     Ok(())
@@ -633,7 +636,7 @@ pub(super) fn install_test_container_import(
             changed = true;
             continue;
         }
-        fs::write(&path, next).map_err(|e| format!("failed to write {}: {e}", path.display()))?;
+        crate::apply::put(&path, next)?;
         println!("  import  {} -> {}", cfg.class, rel(root, &path));
         changed = true;
     }
@@ -662,7 +665,7 @@ pub(super) fn remove_legacy_spring_factories(root: &Path) -> Result<bool> {
         fs::remove_file(&path).map_err(|e| format!("failed to remove {}: {e}", path.display()))?;
         println!("  delete  {} (superseded by @Import)", rel(root, &path));
     } else {
-        fs::write(&path, next).map_err(|e| format!("failed to write {}: {e}", path.display()))?;
+        crate::apply::put(&path, next)?;
         println!("  unsplice  {}", rel(root, &path));
     }
     Ok(true)
@@ -686,7 +689,7 @@ pub(super) fn uninstall_postgres_test_initializer(
         fs::remove_file(&path).map_err(|e| format!("failed to remove {}: {e}", path.display()))?;
         println!("  delete  {}", rel(root, &path));
     } else {
-        fs::write(&path, next).map_err(|e| format!("failed to write {}: {e}", path.display()))?;
+        crate::apply::put(&path, next)?;
         println!("  unsplice  {}", rel(root, &path));
     }
     Ok(())
@@ -737,7 +740,7 @@ pub(super) fn strip_legacy_postgres_imports(root: &Path, cfg: &SpringTestImport)
         let Some(next) = unsplice_spring_boot_test_import(&source, cfg.class, &extra) else {
             continue;
         };
-        fs::write(&path, next).map_err(|e| format!("failed to write {}: {e}", path.display()))?;
+        crate::apply::put(&path, next)?;
         println!("  unsplice  {} from {}", cfg.class, rel(root, &path));
         changed = true;
     }
@@ -910,41 +913,39 @@ pub(super) const SQLITE_JDBC: Dependency = Dependency {
 /// standard library, so a plain JDBC connection plus a migration runner needs
 /// nothing beyond the driver or the fiddliness of a persistence framework.
 /// A Spring project can inject the record wherever it needs a connection.
-pub(super) fn sqlite_plan(
-    root: &std::path::Path,
-    pkg: &str,
-    _flavor: Flavor,
-    name: Option<&str>,
-) -> Result<Plan> {
+pub(super) fn sqlite_plan(slice: &Slice, name: Option<&str>) -> Result<Change> {
+    let root: &Path = slice.root();
+    let pkg: &str = &slice.placed(Layer::Adapters);
+
     let base = name.map(capitalize).unwrap_or_default();
     let database = format!("{base}Database");
     let migrations = format!("{base}Migrations");
 
-    Ok(Plan {
+    Ok(Change {
         deps: vec![SQLITE_JDBC],
         files: vec![
-            NewFile {
+            Artifact {
                 kind: "capability file",
                 path: main_dir(root, pkg).join(format!("{database}.java")),
                 contents: database_java(pkg, &database),
             },
-            NewFile {
+            Artifact {
                 kind: "capability file",
                 path: main_dir(root, pkg).join(format!("{migrations}.java")),
                 contents: migrations_java(pkg, &migrations),
             },
-            NewFile {
+            Artifact {
                 kind: "capability file",
                 path: root.join("src/main/resources/db/migration/001_init.sql"),
                 contents: FIRST_MIGRATION.to_string(),
             },
-            NewFile {
+            Artifact {
                 kind: "capability file",
                 path: test_dir(root, pkg).join(format!("{database}Test.java")),
                 contents: database_test_java(pkg, &database, &migrations),
             },
         ],
-        ..Plan::default()
+        ..Change::default()
     })
 }
 
@@ -959,21 +960,21 @@ create table if not exists item (
 
 pub(super) fn database_java(pkg: &str, class: &str) -> String {
     crate::template::render(
-        include_str!("../../templates/add/database_java.java"),
+        crate::template::template!("add/database_java.java"),
         &[("pkg", pkg), ("class", class)],
     )
 }
 
 pub(super) fn migrations_java(pkg: &str, class: &str) -> String {
     crate::template::render(
-        include_str!("../../templates/add/migrations_java.java"),
+        crate::template::template!("add/migrations_java.java"),
         &[("pkg", pkg), ("class", class)],
     )
 }
 
 pub(super) fn database_test_java(pkg: &str, database: &str, migrations: &str) -> String {
     crate::template::render(
-        include_str!("../../templates/add/database_test_java.java"),
+        crate::template::template!("add/database_test_java.java"),
         &[
             ("pkg", pkg),
             ("database", database),

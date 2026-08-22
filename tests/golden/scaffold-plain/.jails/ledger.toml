@@ -1,0 +1,37 @@
+# jails' own bookkeeping. Written by jails, never hand-edited -- `jails.toml`
+# and `.jails/app.toml` are the files that are yours.
+#
+# Identity is (recipe, name, package). Everything else is content, which is
+# what makes an edited intent an update to a known entity rather than a new
+# one arriving against files that already exist.
+version = "0.1.0"
+
+[[applied]]
+recipe = "scaffold"
+name = "Note"
+package = ""
+files = [
+  "requests/note.http",
+  "src/main/java/com/example/demo/adapters/InMemoryNoteRepository.java",
+  "src/main/java/com/example/demo/adapters/JdbcNoteRepository.java",
+  "src/main/java/com/example/demo/app/NoteRepository.java",
+  "src/main/java/com/example/demo/domain/Note.java",
+  "src/main/java/com/example/demo/service/NoteService.java",
+  "src/main/java/com/example/demo/web/NoteController.java",
+  "src/main/java/com/example/demo/web/NoteRequest.java",
+  "src/main/java/com/example/demo/web/NoteResponse.java",
+  "src/test/java/com/example/demo/adapters/JdbcNoteRepositoryIT.java",
+  "src/test/java/com/example/demo/domain/NoteTest.java",
+  "src/test/java/com/example/demo/service/NoteServiceTest.java",
+  "src/test/java/com/example/demo/web/NoteControllerTest.java",
+]
+
+[[model]]
+name = "Note"
+package = ""
+fields = [
+  "id:uuid@pk",
+  "title:string!",
+  "amount:long@positive",
+  "createdAt:instant",
+]

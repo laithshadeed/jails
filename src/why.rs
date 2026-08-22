@@ -517,13 +517,13 @@ fn diagnoses_json(found: &[Diagnosis]) -> String {
             let fixes = diagnosis
                 .fixes
                 .iter()
-                .map(|fix| crate::project::json_string(fix))
+                .map(|fix| crate::json::string(fix))
                 .collect::<Vec<_>>()
                 .join(",");
             format!(
                 "{{\"headline\":{},\"because\":{},\"fixes\":[{}]}}",
-                crate::project::json_string(&diagnosis.headline),
-                crate::project::json_string(&diagnosis.because),
+                crate::json::string(&diagnosis.headline),
+                crate::json::string(&diagnosis.because),
                 fixes
             )
         })
@@ -602,7 +602,7 @@ fn explain(log: &str) -> Vec<Diagnosis> {
         .filter(|rule| rule.signatures.iter().all(|s| log.contains(s)))
         .map(|rule| (rule.signatures.len(), rule))
         .collect();
-    matched.sort_by(|a, b| b.0.cmp(&a.0));
+    matched.sort_by_key(|&(count, _)| std::cmp::Reverse(count));
     let mut seen: Vec<&str> = Vec::new();
     let mut found = Vec::new();
     for (_, rule) in matched {

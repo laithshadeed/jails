@@ -90,113 +90,113 @@ indexes = ["workspace_id, member_id, status"]
 kind = "association"
 name = "ContactWorkspace"
 fields = ["workspaceId=id"]
-strategy_on = "Contact"
-strategy_yields = "Workspace"
+on = "Contact"
+yields = "Workspace"
 
 [[generate]]
 kind = "association"
 name = "MemberWorkspace"
 fields = ["workspaceId=id"]
-strategy_on = "Member"
-strategy_yields = "Workspace"
+on = "Member"
+yields = "Workspace"
 
 [[generate]]
 kind = "association"
 name = "InboxWorkspace"
 fields = ["workspaceId=id"]
-strategy_on = "Inbox"
-strategy_yields = "Workspace"
+on = "Inbox"
+yields = "Workspace"
 
 [[generate]]
 kind = "association"
 name = "ConversationContact"
 fields = ["workspaceId=workspaceId", "contactId=id"]
-strategy_on = "Conversation"
-strategy_yields = "Contact"
+on = "Conversation"
+yields = "Contact"
 
 [[generate]]
 kind = "association"
 name = "ConversationInbox"
 fields = ["workspaceId=workspaceId", "inboxId=id"]
-strategy_on = "Conversation"
-strategy_yields = "Inbox"
+on = "Conversation"
+yields = "Inbox"
 
 [[generate]]
 kind = "association"
 name = "InboxMemberInbox"
 fields = ["workspaceId=workspaceId", "inboxId=id"]
-strategy_on = "InboxMember"
-strategy_yields = "Inbox"
+on = "InboxMember"
+yields = "Inbox"
 
 [[generate]]
 kind = "association"
 name = "InboxMemberMember"
 fields = ["workspaceId=workspaceId", "memberId=id"]
-strategy_on = "InboxMember"
-strategy_yields = "Member"
+on = "InboxMember"
+yields = "Member"
 
 [[generate]]
 kind = "association"
 name = "MessageConversation"
 fields = ["workspaceId=workspaceId", "conversationId=id"]
-strategy_on = "Message"
-strategy_yields = "Conversation"
+on = "Message"
+yields = "Conversation"
 
 [[generate]]
 kind = "association"
 name = "AssignmentConversation"
 fields = ["workspaceId=workspaceId", "conversationId=id"]
-strategy_on = "ConversationAssignment"
-strategy_yields = "Conversation"
+on = "ConversationAssignment"
+yields = "Conversation"
 
 [[generate]]
 kind = "association"
 name = "AssignmentMember"
 fields = ["workspaceId=workspaceId", "memberId=id"]
-strategy_on = "ConversationAssignment"
-strategy_yields = "Member"
+on = "ConversationAssignment"
+yields = "Member"
 
 [[generate]]
 kind = "usecase"
 name = "CreateWorkspace"
 fields = ["id:uuid@scope", "name:string!"]
-strategy_on = "Workspace"
+on = "Workspace"
 
 [[generate]]
 kind = "usecase"
 name = "CreateMember"
 fields = ["id:uuid", "workspaceId:uuid@scope", "email:string!", "displayName:string!", "role:MemberRole"]
-strategy_on = "Member"
+on = "Member"
 
 [[generate]]
 kind = "usecase"
 name = "CreateInbox"
 fields = ["id:uuid", "workspaceId:uuid@scope", "name:string!", "channel:InboxChannel"]
-strategy_on = "Inbox"
+on = "Inbox"
 
 [[generate]]
 kind = "usecase"
 name = "AddInboxMember"
 fields = ["id:uuid", "workspaceId:uuid@scope", "inboxId:uuid", "memberId:uuid"]
-strategy_on = "InboxMember"
+on = "InboxMember"
 
 [[generate]]
 kind = "usecase"
 name = "CreateContact"
 fields = ["id:uuid", "workspaceId:uuid@scope", "email:string!", "displayName:string?"]
-strategy_on = "Contact"
+on = "Contact"
 
 [[generate]]
 kind = "usecase"
 name = "OpenConversation"
 fields = ["id:uuid", "workspaceId:uuid@scope", "contactId:uuid", "inboxId:uuid"]
-strategy_on = "Conversation"
+on = "Conversation"
 
 [[generate]]
 kind = "usecase"
 name = "AssignConversation"
 fields = ["id:uuid", "workspaceId:uuid@scope", "conversationId:uuid", "memberId:uuid"]
-strategy_on = "ConversationAssignment"
+on = "ConversationAssignment"
 
 [[generate]]
 kind = "event"
@@ -207,65 +207,65 @@ fields = ["id:uuid", "workspaceId:uuid", "conversationId:uuid", "occurredAt:inst
 kind = "usecase"
 name = "ReceiveMessage"
 fields = ["id:uuid", "workspaceId:uuid@scope", "conversationId:uuid", "direction:MessageDirection", "body:text!"]
-strategy_on = "Message"
-strategy_yields = "MessageReceived"
+on = "Message"
+yields = "MessageReceived"
 
 [[generate]]
 kind = "http-sink"
 name = "Provider"
-strategy_on = "ReceiveMessage"
-strategy_yields = "MessageReceived"
+on = "ReceiveMessage"
+yields = "MessageReceived"
 
 [[generate]]
 kind = "query"
 name = "ContactsByWorkspace"
 fields = ["workspaceId:uuid@scope"]
-strategy_on = "Contact"
+on = "Contact"
 
 [[generate]]
 kind = "query"
 name = "MembersByWorkspace"
 fields = ["workspaceId:uuid@scope"]
-strategy_on = "Member"
+on = "Member"
 
 [[generate]]
 kind = "query"
 name = "InboxesByWorkspace"
 fields = ["workspaceId:uuid@scope"]
-strategy_on = "Inbox"
+on = "Inbox"
 
 [[generate]]
 kind = "query"
 name = "InboxMembersByInbox"
 fields = ["workspaceId:uuid@scope", "inboxId:uuid"]
-strategy_on = "InboxMember"
+on = "InboxMember"
 
 [[generate]]
 kind = "query"
 name = "ConversationsByWorkspace"
 fields = ["workspaceId:uuid@scope"]
-strategy_on = "Conversation"
+on = "Conversation"
 
 [[generate]]
 kind = "query"
 name = "MessagesByConversation"
 fields = ["workspaceId:uuid@scope", "conversationId:uuid"]
-strategy_on = "Message"
+on = "Message"
 
 [[generate]]
 kind = "query"
 name = "AssignmentByConversation"
 fields = ["workspaceId:uuid@scope", "conversationId:uuid"]
-strategy_on = "ConversationAssignment"
+on = "ConversationAssignment"
 
 [[generate]]
 kind = "transition"
 name = "ChangeConversationStatus"
 fields = ["id:uuid", "workspaceId:uuid@scope", "status:ConversationStatus", "version:long@nonnegative"]
-strategy_on = "Conversation"
+on = "Conversation"
 
 [[generate]]
 kind = "transition"
 name = "ReassignConversation"
 fields = ["id:uuid", "workspaceId:uuid@scope", "memberId:uuid", "status:AssignmentStatus", "version:long@nonnegative"]
-strategy_on = "ConversationAssignment"
+on = "ConversationAssignment"

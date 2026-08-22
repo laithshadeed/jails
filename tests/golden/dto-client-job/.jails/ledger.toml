@@ -1,0 +1,54 @@
+# jails' own bookkeeping. Written by jails, never hand-edited -- `jails.toml`
+# and `.jails/app.toml` are the files that are yours.
+#
+# Identity is (recipe, name, package). Everything else is content, which is
+# what makes an edited intent an update to a known entity rather than a new
+# one arriving against files that already exist.
+version = "0.1.0"
+
+[[applied]]
+recipe = "client"
+name = "Ledger"
+package = ""
+files = [
+  "src/main/java/com/example/demo/clients/HttpClientsConfig.java",
+  "src/main/java/com/example/demo/clients/LedgerClient.java",
+  "src/test/java/com/example/demo/clients/LedgerClientTest.java",
+]
+
+[[applied]]
+recipe = "dto"
+name = "Payout"
+package = ""
+files = [
+  "src/main/java/com/example/demo/web/PayoutRequest.java",
+  "src/main/java/com/example/demo/web/PayoutResponse.java",
+  "src/test/java/com/example/demo/web/PayoutDtoTest.java",
+]
+
+[[applied]]
+recipe = "job"
+name = "Reconcile"
+package = ""
+files = [
+  "src/main/java/com/example/demo/jobs/ReconcileJob.java",
+  "src/main/java/com/example/demo/jobs/SchedulingConfig.java",
+  "src/test/java/com/example/demo/jobs/ReconcileJobTest.java",
+]
+
+[[applied]]
+recipe = "record"
+name = "Payout"
+package = ""
+files = [
+  "src/main/java/com/example/demo/domain/Payout.java",
+  "src/test/java/com/example/demo/domain/PayoutTest.java",
+]
+
+[[model]]
+name = "Payout"
+package = ""
+fields = [
+  "id:uuid",
+  "amount:long",
+]

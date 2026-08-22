@@ -38,166 +38,66 @@ local STREAMING = {
   c = true,
 }
 
--- Pinned to `jails generate --help` by
--- `the_editor_plugin_completes_every_value_the_cli_accepts` in
--- tests/editor.rs: this list once fell eight kinds behind the CLI, which is
--- the worst kind of stale because a completion menu looks complete.
--- Aliases are here because a reader types them; the test only requires the
--- canonical names.
-local KINDS = {
-  'scaffold',
-  'controller',
-  'service',
-  'class',
-  'interface',
-  'record',
-  'field',
-  'factory',
-  'value',
-  'enum',
-  'sealed',
-  'strategy',
-  'rule',
-  'repo',
-  'repository',
-  'migration',
-  'mig',
-  'handler',
-  'command',
-  'cli',
-  'cases',
-  'client',
-  'fetcher',
-  'job',
-  'http-workflow',
-  'hflow',
-  'association',
-  'fk',
-  'http-sink',
-  'webhook',
-  'durable-job',
-  'djob',
-  'dto',
-  'usecase',
-  'uc',
-  'query',
-  'transition',
-  'event',
-  'test',
-  'integration-test',
-  'it',
-}
+-- The CLI's own vocabulary, read from the CLI.
+--
+-- These four tables used to be written out by hand, and they drifted exactly
+-- as `plan.md` §6.1 predicts a copy will: eight generator kinds and three
+-- capabilities reached the binary without the Lua moving, so `:Jails g <Tab>`
+-- offered a stale menu -- the worst kind of stale, because a completion list
+-- looks complete. `tests/editor.rs` then *pinned* them, which caught the drift
+-- after the fact but left the copy there to drift again.
+--
+-- `jails commands --json` is derived from the same clap definition that parses
+-- the arguments, so there is nothing left to keep in step: adding a kind is one
+-- edit and this menu follows. Read once per session and cached, because a
+-- completion callback runs on every keystroke.
+local vocabulary_cache = nil
 
-local CAPABILITIES = {
-  'db',
-  'postgres',
-  'kafka',
-  'csv',
-  'sqlite',
-  'json',
-  'testkit',
-  'fake',
-  'http',
-  'format',
-  'coverage',
-  'loadtest',
-  'ci',
-  'docker',
-  'image',
-  'k8s',
-  'kubernetes',
-  'api',
-  'errors',
-  'actuator',
-  'cache',
-  'security',
-  'cors',
-  'redis',
-  'observability',
-  'metrics',
-  'toxiproxy',
-  'faults',
-}
-local RUNTIMES = { 'db', 'kafka', 'redis' }
+local function vocabulary()
+  if vocabulary_cache then return vocabulary_cache end
 
-local SUBCOMMANDS = {
-  'about',
-  'info',
-  'doctor',
-  'lint',
-  'setup',
-  'why',
-  'routes',
-  'beans',
-  'rename',
-  'stats',
-  'notes',
-  'new',
-  'new-cli',
-  'app',
-  'generate',
-  'g',
-  'add',
-  'a',
-  'sync',
-  'remove',
-  'rm',
-  'destroy',
-  'd',
-  'test',
-  'build',
-  'clean',
-  'fmt',
-  'check',
-  'mvn',
-  'run',
-  'start',
-  'stop',
-  'db',
-  'dbconsole',
-  'kafka',
-  'migrate',
-  'console',
-  'c',
-  'completion',
-  'help',
-}
+  -- A completer that errors is worse than one that offers nothing, so every
+  -- failure path lands on an empty vocabulary rather than raising: an older
+  -- binary without `commands`, a `jails` that is not on PATH, a malformed
+  -- payload. `:Jails doctor` is where a broken install should be reported.
+  local empty = { subcommands = {}, kinds = {}, capabilities = {}, options = {} }
+  if vim.fn.executable(config.command) == 0 then return empty end
 
-local OPTIONS = {
-  about = { '--json' },
-  info = { '--json' },
-  new = { '--deps', '--java', '--no-git', '--no-devtools' },
-  ['new-cli'] = { '--release', '--no-git' },
-  add = { '--name', '--dry-run', '--no-start', '--package' },
-  a = { '--name', '--dry-run', '--no-start', '--package' },
-  sync = { '--dry-run', '--no-start' },
-  remove = { '--name', '--dry-run', '--force', '--package' },
-  rm = { '--name', '--dry-run', '--force', '--package' },
-  run = { '--no-build', '--watch', '--' },
-  console = { '--no-build', '--' },
-  c = { '--no-build', '--' },
-  db = { '--no-start', '--' },
-  dbconsole = { '--no-start', '--' },
-  -- `kafka` takes a sub-subcommand (topics/send/tail/dlt/lag/...), which
-  -- this completer does not model; `--no-start` is the only flag on the
-  -- parent.
-  kafka = { '--no-start' },
-  migrate = { '--no-start' },
-  routes = { '--json' },
-  -- `--pretend` is global (every writing command takes it); it is listed
-  -- here on the ones where previewing is most often wanted.
-  generate = { '--package', '--pretend', '--index', '--on', '--yields' },
-  g = { '--package', '--pretend', '--index', '--on', '--yields' },
-  destroy = { '--force', '--package', '--pretend' },
-  d = { '--force', '--package', '--pretend' },
-  notes = {},
-  beans = { '--json' },
-  rename = { '--dry-run', '--force' },
-  -- `app` takes plan/apply as its first argument; both share these flags.
-  app = { 'plan', 'apply', '--manifest', '--no-start' },
-  setup = { '--dry-run' },
-  test = { '--failed', '--fail-fast', '--slowest' },
-}
+  local out = vim.fn.system({ config.command, 'commands', '--json' })
+  if vim.v.shell_error ~= 0 then return empty end
+
+  local ok, decoded = pcall(vim.json.decode, out)
+  if not ok or type(decoded) ~= 'table' or type(decoded.subcommands) ~= 'table' then
+    return empty
+  end
+
+  local names = function(entries)
+    local flat = {}
+    for _, entry in ipairs(entries or {}) do
+      table.insert(flat, entry.name)
+      for _, alias in ipairs(entry.aliases or {}) do
+        table.insert(flat, alias)
+      end
+    end
+    return flat
+  end
+
+  local options = {}
+  for _, entry in ipairs(decoded.subcommands) do
+    options[entry.name] = entry.options or {}
+    for _, alias in ipairs(entry.aliases or {}) do
+      options[alias] = entry.options or {}
+    end
+  end
+
+  vocabulary_cache = {
+    subcommands = names(decoded.subcommands),
+    kinds = names(decoded.kinds),
+    capabilities = names(decoded.capabilities),
+    options = options,
+  }
+  return vocabulary_cache
+end
 
 function M.setup(opts)
   config = vim.tbl_deep_extend('force', config, opts or {})
@@ -526,15 +426,15 @@ function M.complete(arg_lead, cmd_line)
   table.remove(words, 1) -- :Jails
   local position = #words + (cmd_line:match('%s$') and 1 or 0)
 
-  if position <= 1 then return matching(SUBCOMMANDS, arg_lead) end
+  if position <= 1 then return matching(vocabulary().subcommands, arg_lead) end
 
   local sub = words[1]
   if position == 2 then
     if sub == 'generate' or sub == 'g' or sub == 'destroy' or sub == 'd' then
-      return matching(KINDS, arg_lead)
+      return matching(vocabulary().kinds, arg_lead)
     end
     if sub == 'add' or sub == 'a' or sub == 'remove' or sub == 'rm' then
-      return matching(CAPABILITIES, arg_lead)
+      return matching(vocabulary().capabilities, arg_lead)
     end
     if sub == 'start' or sub == 'stop' then
       return matching(RUNTIMES, arg_lead)
@@ -545,7 +445,7 @@ function M.complete(arg_lead, cmd_line)
     if sub == 'rename' then return matching(type_names(), arg_lead) end
   end
 
-  return matching(OPTIONS[sub] or {}, arg_lead)
+  return matching(vocabulary().options[sub] or {}, arg_lead)
 end
 
 return M

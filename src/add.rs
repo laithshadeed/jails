@@ -21,7 +21,7 @@ use crate::compose::{self, Service as ComposeService};
 use crate::generate::{
     base_package, import_of, main_dir, normalize_imports, package_of, test_dir, write_new_file,
 };
-use crate::model::{Artifact as NewFile, Change as Plan, Layer, Project, SpringTestImport};
+use crate::model::{Artifact, Change, Layer, Project, Slice, SpringTestImport};
 use crate::pom::{self, Dependency, Flavor, MIN_RELEASE, TARGET_RELEASE};
 use clap::ValueEnum;
 use std::fs;
@@ -137,7 +137,7 @@ const SPRING_DOCKER_COMPOSE: Dependency = Dependency {
     optional: true,
 };
 
-/// Plan every requested capability before any of them is applied.
+/// Change every requested capability before any of them is applied.
 ///
 /// `jails add db kafka` applied them in turn, so a project that cannot have
 /// the second was left with the first: `add` reported a failure over a
@@ -157,11 +157,23 @@ pub fn preflight(
     if capabilities.len() < 2 {
         return Ok(());
     }
-    let project = Project::discover()?;
+    preflight_in(&Project::discover()?, capabilities, name, package)
+}
+
+/// The same check against a project the caller already resolved.
+pub(crate) fn preflight_in(
+    project: &Project,
+    capabilities: &[Capability],
+    name: Option<&str>,
+    package: Option<&str>,
+) -> Result<()> {
+    if capabilities.len() < 2 {
+        return Ok(());
+    }
     require_java_release(project.java_release())?;
-    let mut combined = Plan::default();
+    let mut combined = Change::default();
     for &capability in capabilities {
-        let planned = build_plan(capability, &project, name, package).map_err(|e| {
+        let planned = build_plan(capability, project, name, package).map_err(|e| {
             format!(
                 "{e}\n\nnothing was written -- `{}` was refused, so none of the {} \
                  requested capabilities were applied.",
@@ -187,12 +199,39 @@ pub fn add(
     debug: bool,
     no_start: bool,
 ) -> Result<()> {
-    let project = Project::discover()?;
+    add_in(
+        &Project::discover()?,
+        capability,
+        name,
+        dry_run,
+        package,
+        debug,
+        no_start,
+    )
+}
+
+/// Apply a capability to a project the caller has already resolved.
+///
+/// `Project::discover()` reads the process CWD, which is the right default at
+/// the CLI boundary and wrong everywhere else: `jails new --app <manifest>`
+/// applies to the project it just created, not to whatever encloses the
+/// directory the user happens to be standing in. Resolving once at the top and
+/// threading the value is rung 1's whole shape.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn add_in(
+    project: &Project,
+    capability: Capability,
+    name: Option<&str>,
+    dry_run: bool,
+    package: Option<&str>,
+    debug: bool,
+    no_start: bool,
+) -> Result<()> {
     let root = project.root().to_path_buf();
     let pom_text = project.pom().to_string();
     let flavor = project.flavor();
     require_java_release(project.java_release())?;
-    let plan = build_plan(capability, &project, name, package)?;
+    let plan = build_plan(capability, project, name, package)?;
 
     let mut updated_pom = pom_text.clone();
     let mut spliced: Vec<&Dependency> = Vec::new();
@@ -283,8 +322,7 @@ pub fn add(
 
     let pom_changed = !spliced.is_empty() || !spliced_plugins.is_empty() || docker_compose_dep;
     if pom_changed {
-        std::fs::write(root.join("pom.xml"), &updated_pom)
-            .map_err(|e| format!("failed to write pom.xml: {e}"))?;
+        crate::apply::put_named(root.join("pom.xml"), &updated_pom, "pom.xml")?;
         for dep in &spliced {
             println!("     dep  {}:{}", dep.group_id, dep.artifact_id);
         }
@@ -308,8 +346,10 @@ pub fn add(
                 } else {
                     file.contents.clone()
                 };
-                fs::write(&file.path, &contents)
-                    .map_err(|e| format!("failed to write {}: {e}", file.path.display()))?;
+                // This is the write plan.md §11 names: a capability updating a
+                // file it wrote before, which used to go straight past the
+                // collision check with a bare `fs::write`. `replace` says so.
+                crate::apply::replace(&file.path, &contents)?;
                 println!("  update  {}", rel(&root, &file.path));
                 created += 1;
             } else {
@@ -345,7 +385,7 @@ pub fn add(
     // six `cannot find symbol: method assertThat` for a file the reader never
     // wrote.
     crate::generate::ensure_assertj(
-        &root,
+        project,
         plan.files
             .iter()
             .any(|f| f.path.to_string_lossy().contains("src/test/java")),
@@ -365,8 +405,7 @@ pub fn add(
         crate::spring::FAILSAFE_ARTIFACT,
         crate::spring::failsafe_plugin(pom::flavor(&updated_pom)),
     )? {
-        std::fs::write(root.join("pom.xml"), &next)
-            .map_err(|e| format!("failed to write pom.xml: {e}"))?;
+        crate::apply::put_named(root.join("pom.xml"), &next, "pom.xml")?;
         println!("  plugin  {}", crate::spring::FAILSAFE_ARTIFACT);
         tests_wired = true;
     }
@@ -409,8 +448,7 @@ pub fn add(
         if crate::run::fmt_quietly(&root) {
             println!("  format  applied to the existing sources");
         } else {
-            std::fs::write(root.join("pom.xml"), &pom_text)
-                .map_err(|e| format!("failed to restore pom.xml: {e}"))?;
+            crate::apply::put_named(root.join("pom.xml"), &pom_text, "pom.xml")?;
             return Err(
                 "the formatter could not run on this toolchain, so pom.xml was left unchanged.\n       \
                  palantir-java-format needs a JDK it was built against -- try a current LTS (Java 25),\n       \
@@ -536,23 +574,17 @@ pub fn remove(
     let mut updated_pom = pom_text.clone();
     let mut removed_deps: Vec<&Dependency> = Vec::new();
     for dep in plan.deps.iter().chain(plan.legacy_deps.iter()) {
-        match pom::remove_dependency(&updated_pom, dep.group_id, dep.artifact_id)? {
-            Some(next) => {
-                updated_pom = next;
-                removed_deps.push(dep);
-            }
-            None => {}
+        if let Some(next) = pom::remove_dependency(&updated_pom, dep.group_id, dep.artifact_id)? {
+            updated_pom = next;
+            removed_deps.push(dep);
         }
     }
 
     let mut removed_plugins: Vec<&str> = Vec::new();
     for (artifact_id, _) in &plan.plugins {
-        match pom::remove_plugin(&updated_pom, artifact_id)? {
-            Some(next) => {
-                updated_pom = next;
-                removed_plugins.push(artifact_id);
-            }
-            None => {}
+        if let Some(next) = pom::remove_plugin(&updated_pom, artifact_id)? {
+            updated_pom = next;
+            removed_plugins.push(artifact_id);
         }
     }
 
@@ -566,41 +598,34 @@ pub fn remove(
     let mut compose_text = compose::read(&root)?;
     let mut compose_removed: Vec<&ComposeService> = Vec::new();
     for svc in &plan.compose {
-        match compose::remove_service(&compose_text, svc) {
-            Some(next) => {
-                compose_text = next;
-                compose_removed.push(svc);
-            }
-            None => {}
+        if let Some(next) = compose::remove_service(&compose_text, svc) {
+            compose_text = next;
+            compose_removed.push(svc);
         }
     }
 
     let mut docker_compose_dep = false;
-    if flavor == Flavor::SpringBoot && !compose::has_services(&compose_text) {
-        match pom::remove_dependency(
+    if flavor == Flavor::SpringBoot
+        && !compose::has_services(&compose_text)
+        && let Some(next) = pom::remove_dependency(
             &updated_pom,
             SPRING_DOCKER_COMPOSE.group_id,
             SPRING_DOCKER_COMPOSE.artifact_id,
-        )? {
-            Some(next) => {
-                updated_pom = next;
-                docker_compose_dep = true;
-            }
-            None => {}
-        }
+        )?
+    {
+        updated_pom = next;
+        docker_compose_dep = true;
     }
-    if flavor == Flavor::SpringBoot && plan.spring_test_import.is_some() {
-        match pom::remove_dependency(
+    if flavor == Flavor::SpringBoot
+        && plan.spring_test_import.is_some()
+        && let Some(next) = pom::remove_dependency(
             &updated_pom,
             SPRING_TESTCONTAINERS.group_id,
             SPRING_TESTCONTAINERS.artifact_id,
-        )? {
-            Some(next) => {
-                updated_pom = next;
-                removed_deps.push(&SPRING_TESTCONTAINERS);
-            }
-            None => {}
-        }
+        )?
+    {
+        updated_pom = next;
+        removed_deps.push(&SPRING_TESTCONTAINERS);
     }
 
     let pom_changed = !removed_deps.is_empty() || !removed_plugins.is_empty() || docker_compose_dep;
@@ -724,8 +749,7 @@ pub fn remove(
     }
 
     if pom_changed {
-        std::fs::write(root.join("pom.xml"), &updated_pom)
-            .map_err(|e| format!("failed to write pom.xml: {e}"))?;
+        crate::apply::put_named(root.join("pom.xml"), &updated_pom, "pom.xml")?;
         for dep in &removed_deps {
             println!("  remove  {}:{}", dep.group_id, dep.artifact_id);
         }
@@ -794,83 +818,85 @@ fn require_java_release(release: Option<u32>) -> Result<()> {
     }
 }
 
+/// The `Change` a capability would make to this project, computed and not applied.
+///
+/// This is the half of `add` that `doctor` needs and could not reach.
+/// abstract.md §4.2 calls the consequence Feature Envy at module scale:
+/// `doctor.rs` re-derives, by reading the project back off disk, the facts
+/// `add/database.rs`, `add/messaging.rs` and `add/data.rs` already own -- and
+/// the drift between the two has no test, because there was no shared value to
+/// compare. There is one now.
+///
+/// Planning is pure: no writes, no subprocesses. That is what makes it safe
+/// for `doctor`, which is read-only by contract.
+pub(crate) fn plan_for(capability: Capability, project: &Project) -> Result<Change> {
+    build_plan(capability, project, None, None)
+}
+
 fn build_plan(
     capability: Capability,
     project: &Project,
     name: Option<&str>,
     package: Option<&str>,
-) -> Result<Plan> {
-    let root = project.root();
-    let flavor = project.flavor();
-    let place = |layer: Layer| project.package(layer, package);
-    let root_package = || project.package_named("", package);
+) -> Result<Change> {
+    // One value reaches every capability plan: the resolved project plus the
+    // `--package` override. `root`, `flavor` and a per-layer `place` closure
+    // used to be unpacked here and threaded on as three more arguments, which
+    // is how a plan could be handed a flavour that disagreed with the pom it
+    // was about to splice.
+    let slice = Slice::new(project, package);
     match capability {
-        Capability::Db => db_plan(root, flavor, &root_package()),
-        Capability::Kafka => kafka_plan(root, flavor, &place(Layer::Messaging)),
-        Capability::Csv => csv_plan(root, &place(Layer::Adapters), flavor, name),
-        Capability::Sqlite => sqlite_plan(root, &place(Layer::Adapters), flavor, name),
-        Capability::Json => json_plan(root, &place(Layer::Adapters), flavor, name),
-        Capability::Testkit => testkit_plan(root, &place(Layer::Testkit)),
-        Capability::Fake => fake_plan(root, &place(Layer::Testkit)),
-        Capability::Http => http_plan(root, &place(Layer::Api), name),
-        Capability::Format => format_plan(root),
+        Capability::Db => db_plan(&slice),
+        Capability::Kafka => kafka_plan(&slice),
+        Capability::Csv => csv_plan(&slice, name),
+        Capability::Sqlite => sqlite_plan(&slice, name),
+        Capability::Json => json_plan(&slice, name),
+        Capability::Testkit => testkit_plan(&slice),
+        Capability::Fake => fake_plan(&slice),
+        Capability::Http => http_plan(&slice, name),
+        Capability::Format => format_plan(&slice),
         Capability::Coverage => coverage_plan(),
-        Capability::Loadtest => loadtest_plan(root),
-        Capability::Ci => ci_plan(root),
-        Capability::Docker => docker_plan(root),
-        Capability::K8s => k8s_plan(root, flavor),
-        Capability::Api => spring_slice_plan(
-            crate::spring::api_slice(root, &place(Layer::Api)),
-            flavor,
-            "api",
-        ),
-        Capability::Actuator => spring_slice_plan(
-            crate::spring::actuator_slice(root, &root_package()),
-            flavor,
-            "actuator",
-        ),
-        Capability::Cache => spring_slice_plan(
-            crate::spring::cache_slice(root, &root_package()),
-            flavor,
-            "cache",
-        ),
-        Capability::Security => spring_slice_plan(
-            crate::spring::security_slice(root, &root_package()),
-            flavor,
-            "security",
-        ),
-        Capability::Cors => spring_slice_plan(
-            crate::spring::cors_slice(root, &root_package()),
-            flavor,
-            "cors",
-        ),
-        Capability::Observability => spring_slice_plan(
-            crate::spring::observability_slice(root, &root_package()),
-            flavor,
-            "observability",
-        ),
-        Capability::Toxiproxy => toxiproxy_plan(root, &place(Layer::Testkit)),
-        Capability::Redis => spring_slice_plan(
-            crate::spring::redis_slice(root, &place(Layer::Adapters)),
-            flavor,
-            "redis",
-        )
-        .map(|plan| Plan {
-            compose: vec![compose::REDIS],
-            ..plan
-        }),
+        Capability::Loadtest => loadtest_plan(&slice),
+        Capability::Ci => ci_plan(&slice),
+        Capability::Docker => docker_plan(&slice),
+        Capability::K8s => k8s_plan(&slice),
+        Capability::Api => spring_slice_plan(&slice, "api", crate::spring::api_slice),
+        Capability::Actuator => {
+            spring_slice_plan(&slice, "actuator", crate::spring::actuator_slice)
+        }
+        Capability::Cache => spring_slice_plan(&slice, "cache", crate::spring::cache_slice),
+        Capability::Security => {
+            spring_slice_plan(&slice, "security", crate::spring::security_slice)
+        }
+        Capability::Cors => spring_slice_plan(&slice, "cors", crate::spring::cors_slice),
+        Capability::Observability => {
+            spring_slice_plan(&slice, "observability", crate::spring::observability_slice)
+        }
+        Capability::Toxiproxy => toxiproxy_plan(&slice),
+        Capability::Redis => {
+            spring_slice_plan(&slice, "redis", crate::spring::redis_slice).map(|plan| Change {
+                compose: vec![compose::REDIS],
+                ..plan
+            })
+        }
     }
 }
 
 /// Adapt a Spring-only slice to the shape `add` already executes. The Spring
 /// check lives here rather than in each slice so there is one message for it.
+/// Check the one precondition these capabilities share, then build.
+///
+/// The check used to run *after* the slice was built, so a plain-Maven project
+/// rendered a pile of Spring Java and threw it away before refusing.
+/// abstract.md §6.2 puts it the other way round: `require_spring` is a
+/// precondition on the recipe, checked by `plan` against `Project.flavor`.
 fn spring_slice_plan(
-    slice: crate::spring::SpringSlice,
-    flavor: Flavor,
+    slice: &Slice,
     capability: &str,
-) -> Result<Plan> {
-    crate::spring::require_spring(flavor, capability)?;
-    Ok(slice)
+    build: fn(&Slice) -> Change,
+) -> Result<Change> {
+    crate::spring::require_spring(slice.flavor(), capability)?;
+    Ok(build(slice))
 }
 
 fn rel(root: &Path, path: &Path) -> String {
@@ -974,10 +1000,11 @@ mod tests {
         // Spring Boot's parent already pins Jackson; declaring our own version
         // would override the curated one.
         assert_eq!(JACKSON.version, Some("3.0.1"));
-        let root = std::path::Path::new("/tmp/does-not-matter");
-        let spring = json_plan(root, "com.example.demo", Flavor::SpringBoot, None).unwrap();
+        let (_sr, sp) = spring_project("json-plan-spring");
+        let spring = json_plan(&Slice::new(&sp, None), None).unwrap();
         assert!(spring.deps.iter().all(|d| d.version.is_none()));
-        let plain = json_plan(root, "com.example.demo", Flavor::PlainMaven, None).unwrap();
+        let (_pr, pp) = plain_project("json-plan-plain");
+        let plain = json_plan(&Slice::new(&pp, None), None).unwrap();
         assert!(
             plain
                 .deps
@@ -991,8 +1018,8 @@ mod tests {
     /// line beside the 3.x one -- the exact two-majors failure the move fixes.
     #[test]
     fn remove_json_also_unsplices_the_jackson_2_artifacts_it_no_longer_adds() {
-        let root = std::path::Path::new("/tmp/does-not-matter");
-        let plan = json_plan(root, "com.example.demo", Flavor::PlainMaven, None).unwrap();
+        let (_root, project) = plain_project("json-legacy");
+        let plan = json_plan(&Slice::new(&project, None), None).unwrap();
         let legacy: Vec<(&str, &str)> = plan
             .legacy_deps
             .iter()
@@ -1016,9 +1043,11 @@ mod tests {
     /// classpath, which is the bug this capability had.
     #[test]
     fn json_ships_one_artifact_because_jackson_3_has_java_time_built_in() {
-        let root = std::path::Path::new("/tmp/does-not-matter");
-        for flavor in [Flavor::SpringBoot, Flavor::PlainMaven] {
-            let plan = json_plan(root, "com.example.demo", flavor, None).unwrap();
+        let (_sr, sp) = spring_project("json-one-spring");
+        let (_pr, pp) = plain_project("json-one-plain");
+        for project in [&sp, &pp] {
+            let flavor = project.flavor();
+            let plan = json_plan(&Slice::new(project, None), None).unwrap();
             let artifacts: Vec<&str> = plan.deps.iter().map(|d| d.artifact_id).collect();
             assert_eq!(
                 artifacts,
@@ -1100,10 +1129,29 @@ mod tests {
         assert_eq!("", capitalize(""));
     }
 
+    /// A scratch project of each flavour.
+    ///
+    /// `build_plan` now hands every capability one `Slice`, so the flavour and
+    /// the base package come from a resolved project rather than from three
+    /// positional arguments a test could set inconsistently -- which is the
+    /// point of the change these fixtures exist to support.
+    fn plain_project(tag: &str) -> (std::path::PathBuf, Project) {
+        crate::spring::scratch_project(tag, "<project></project>")
+    }
+
+    fn spring_project(tag: &str) -> (std::path::PathBuf, Project) {
+        crate::spring::scratch_project(
+            tag,
+            "<project><parent><groupId>org.springframework.boot</groupId>\
+             <artifactId>spring-boot-starter-parent</artifactId>\
+             <version>4.0.0</version></parent></project>",
+        )
+    }
+
     #[test]
     fn db_plan_ships_compose_postgres_and_never_an_orm() {
-        let root = std::path::Path::new("/tmp/does-not-matter");
-        let plan = db_plan(root, Flavor::PlainMaven, "com.example.demo").unwrap();
+        let (_root, project) = plain_project("db-plan-plain");
+        let plan = db_plan(&Slice::new(&project, None)).unwrap();
         assert_eq!(plan.compose, vec![compose::POSTGRES]);
         let artifacts: Vec<&str> = plan.deps.iter().map(|d| d.artifact_id).collect();
         assert!(artifacts.contains(&"postgresql"));
@@ -1132,8 +1180,8 @@ mod tests {
 
     #[test]
     fn db_plan_on_spring_writes_an_importable_container_config() {
-        let root = std::path::Path::new("/tmp/does-not-matter");
-        let plan = db_plan(root, Flavor::SpringBoot, "com.example.demo").unwrap();
+        let (_root, project) = spring_project("db-plan-spring");
+        let plan = db_plan(&Slice::new(&project, None)).unwrap();
         let artifacts: Vec<&str> = plan.deps.iter().map(|d| d.artifact_id).collect();
         assert!(artifacts.contains(&"spring-boot-starter-jdbc"));
         assert!(
@@ -1394,23 +1442,8 @@ class TransactionMessagingIT {}
     fn kafka_plan_is_a_client_plus_a_compose_broker() {
         // The Spring path reads the base package, for the deserializer's
         // trusted-packages list -- so it needs a project to read.
-        let root = std::env::temp_dir().join(format!(
-            "jails-kafka-plan-{}-{:?}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let pkg = root.join("src/main/java/com/example/demo");
-        fs::create_dir_all(&pkg).unwrap();
-        fs::write(
-            pkg.join("DemoApplication.java"),
-            "package com.example.demo;\npublic class DemoApplication {}\n",
-        )
-        .unwrap();
-
-        let spring = kafka_plan(&root, Flavor::SpringBoot, "com.example.app.messaging").unwrap();
+        let (_spring_root, spring_project) = spring_project("kafka-plan-spring");
+        let spring = kafka_plan(&Slice::new(&spring_project, None)).unwrap();
         assert_eq!(spring.deps[0].artifact_id, "spring-boot-starter-kafka");
         assert!(spring.deps[0].version.is_none());
         assert_eq!(spring.compose, vec![compose::KAFKA]);
@@ -1443,13 +1476,12 @@ class TransactionMessagingIT {}
             spring.properties
         );
 
-        let plain = kafka_plan(&root, Flavor::PlainMaven, "com.example.app.messaging").unwrap();
+        let (_plain_root, plain_project) = plain_project("kafka-plan-plain");
+        let plain = kafka_plan(&Slice::new(&plain_project, None)).unwrap();
         assert_eq!(plain.deps[0].artifact_id, "kafka-clients");
         assert_eq!(plain.deps[0].version, Some("4.1.0"));
         assert_eq!(plain.compose, vec![compose::KAFKA]);
         // Plain Maven has no Spring properties file to write into.
         assert!(plain.properties.is_empty());
-
-        let _ = fs::remove_dir_all(&root);
     }
 }

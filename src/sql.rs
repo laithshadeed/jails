@@ -16,8 +16,6 @@
 //! column rather than a plausible-looking wrong mapping, and the generated
 //! Javadoc names it.
 
-use std::path::Path;
-
 use crate::generate::{Field, Optionality};
 
 /// How one record component crosses the JDBC boundary.
@@ -51,7 +49,7 @@ impl Column {
     }
 }
 
-/// Derive a column for every component. `root`/`pkg` are needed to recognise
+/// Derive a column for every component. The project and `pkg` are needed to recognise
 /// a project enum, which is the one owned type jails can map -- an enum is
 /// stored as its name and read back with `valueOf`.
 ///
@@ -62,14 +60,19 @@ impl Column {
 /// write` together produces `x.Timestamp.from(createdAt())`, which is
 /// exactly the kind of not-quite-right code this module exists to stop
 /// anyone from writing by hand.
-pub(crate) fn columns(fields: &[Field], root: &Path, pkg: &str, receiver: &str) -> Vec<Column> {
+pub(crate) fn columns(
+    fields: &[Field],
+    project: &crate::model::Project,
+    pkg: &str,
+    receiver: &str,
+) -> Vec<Column> {
     fields
         .iter()
-        .map(|field| column(field, root, pkg, receiver))
+        .map(|field| column(field, project, pkg, receiver))
         .collect()
 }
 
-fn column(field: &Field, root: &Path, pkg: &str, receiver: &str) -> Column {
+fn column(field: &Field, project: &crate::model::Project, pkg: &str, receiver: &str) -> Column {
     let name = snake_case(&field.name);
     let accessor = format!("{receiver}.{}()", field.name);
     // `?` means the component is an Optional<T>; the column is nullable and
@@ -111,7 +114,7 @@ fn column(field: &Field, root: &Path, pkg: &str, receiver: &str) -> Column {
     }
 
     // The one owned type with a knowable representation.
-    if field.owned && crate::generate::is_enum_type(root, pkg, &inner) {
+    if field.owned && crate::generate::is_enum_type(project.root(), pkg, &inner) {
         let read = format!("{inner}.valueOf(rows.getString(\"{name}\"))");
         let write = if optional {
             format!("{accessor}.map({inner}::name).orElse(null)")
@@ -671,7 +674,7 @@ pub(crate) fn validate_index(spec: &str, columns: &[Column]) -> Result<(), Strin
     for part in spec.split(',') {
         // `created_at desc` -- the column is the first word, the rest is
         // ordering that Postgres parses and jails does not.
-        let column = part.trim().split_whitespace().next().unwrap_or("");
+        let column = part.split_whitespace().next().unwrap_or("");
         if column.is_empty() {
             return Err(format!("--index '{spec}': empty column name"));
         }
@@ -761,12 +764,11 @@ mod tests {
 
     fn cols(specs: &[&str]) -> Vec<Column> {
         let fields = parse(&specs.iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap();
-        columns(
-            &fields,
-            &PathBuf::from("/nonexistent"),
-            "com.example",
-            "value",
-        )
+        // A project that does not exist: these cases are pure spec -> column
+        // mapping, and the only thing the project is asked is whether a type
+        // is an enum, which needs a file that is deliberately absent here.
+        let project = crate::model::Project::inspect(&PathBuf::from("/nonexistent")).unwrap();
+        columns(&fields, &project, "com.example", "value")
     }
 
     #[test]

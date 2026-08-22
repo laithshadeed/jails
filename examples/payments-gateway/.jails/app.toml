@@ -42,15 +42,15 @@ indexes = ["payment_id, created_at"]
 kind = "association"
 name = "PaymentMerchant"
 fields = ["merchantId=id"]
-strategy_on = "Payment"
-strategy_yields = "Merchant"
+on = "Payment"
+yields = "Merchant"
 
 [[generate]]
 kind = "association"
 name = "RefundPayment"
 fields = ["paymentId=id"]
-strategy_on = "Refund"
-strategy_yields = "Payment"
+on = "Refund"
+yields = "Payment"
 
 # Declared before the use case that yields it: intents run in manifest order.
 [[generate]]
@@ -62,32 +62,32 @@ fields = ["id:uuid", "merchantId:uuid", "paymentId:uuid", "occurredAt:instant"]
 kind = "usecase"
 name = "AuthorisePayment"
 fields = ["id:uuid", "merchantId:uuid@scope", "idempotencyKey:string!", "amountMinor:long", "currency:string!", "method:PaymentMethod"]
-strategy_on = "Payment"
-strategy_yields = "PaymentAuthorised"
+on = "Payment"
+yields = "PaymentAuthorised"
 
 [[generate]]
 kind = "transition"
 name = "CapturePayment"
 fields = ["id:uuid", "merchantId:uuid@scope", "status:PaymentStatus", "version:long@nonnegative"]
-strategy_on = "Payment"
+on = "Payment"
 
 [[generate]]
 kind = "usecase"
 name = "RefundPaymentRequest"
 fields = ["id:uuid", "merchantId:uuid@scope", "paymentId:uuid", "amountMinor:long"]
-strategy_on = "Refund"
+on = "Refund"
 
 [[generate]]
 kind = "query"
 name = "PaymentsByMerchant"
 fields = ["merchantId:uuid@scope"]
-strategy_on = "Payment"
+on = "Payment"
 
 [[generate]]
 kind = "query"
 name = "PaymentsByStatus"
 fields = ["merchantId:uuid@scope", "status:PaymentStatus"]
-strategy_on = "Payment"
+on = "Payment"
 
 [[generate]]
 kind = "fetcher"
@@ -96,8 +96,8 @@ name = "AcquirerFetcher"
 [[generate]]
 kind = "http-sink"
 name = "AcquirerSettlement"
-strategy_on = "AuthorisePayment"
-strategy_yields = "PaymentAuthorised"
+on = "AuthorisePayment"
+yields = "PaymentAuthorised"
 
 # Durable work carries the command it will invoke, so its fields are that
 # command's, in order. Jails refuses anything else rather than storing a
@@ -108,5 +108,5 @@ strategy_yields = "PaymentAuthorised"
 kind = "durable-job"
 name = "SettlementDispatcher"
 fields = ["id:uuid", "merchantId:uuid@scope", "idempotencyKey:string!", "amountMinor:long", "currency:string!", "method:PaymentMethod"]
-strategy_on = "AuthorisePayment"
-strategy_yields = "Payment"
+on = "AuthorisePayment"
+yields = "Payment"

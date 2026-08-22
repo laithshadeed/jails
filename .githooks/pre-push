@@ -1,0 +1,19 @@
+#!/bin/sh
+# jails pre-push: the full workflow from CLAUDE.md, minus the install step.
+# This is where the slow check belongs -- a green push, not a green keystroke.
+#
+# Bypass with: git push --no-verify
+set -e
+
+echo "pre-push: cargo build && cargo test"
+if ! cargo build -q; then
+    echo "  FAIL: build broken."
+    exit 1
+fi
+if ! cargo test -q; then
+    echo "  FAIL: tests red. Do not push."
+    echo "  fix: cargo test  (run without -q for the failing test names)"
+    exit 1
+fi
+
+echo "pre-push: ok"

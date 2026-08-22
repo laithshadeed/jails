@@ -68,7 +68,10 @@ pub(super) const AWAITILITY: Dependency = Dependency {
     optional: false,
 };
 
-pub(super) fn kafka_plan(root: &Path, flavor: Flavor, pkg: &str) -> Result<Plan> {
+pub(super) fn kafka_plan(slice: &Slice) -> Result<Change> {
+    let root: &Path = slice.root();
+    let flavor: Flavor = slice.flavor();
+    let pkg: &str = &slice.placed(Layer::Messaging);
     // Spring projects also get the properties that make publish-and-consume
     // work at all. Without them the broker is up, the code compiles, and
     // nothing is ever received -- see `spring::kafka_properties` for why each
@@ -102,23 +105,16 @@ pub(super) fn kafka_plan(root: &Path, flavor: Flavor, pkg: &str) -> Result<Plan>
                 TESTCONTAINERS_JUNIT,
                 AWAITILITY,
             ],
-            crate::spring::kafka_files(root, pkg)
-                .into_iter()
-                .map(|(path, contents, _)| NewFile {
-                    kind: "capability file",
-                    path,
-                    contents,
-                })
-                .collect(),
+            crate::spring::kafka_files(root, pkg),
         ),
         Flavor::PlainMaven => (vec![KAFKA_CLIENTS], Vec::new()),
     };
 
-    Ok(Plan {
+    Ok(Change {
         deps,
         files,
         compose: vec![compose::KAFKA],
         properties,
-        ..Plan::default()
+        ..Change::default()
     })
 }

@@ -88,17 +88,14 @@ pub(super) enum RepositoryWiring {
     PlainJdbc,
 }
 
-pub(super) fn repository_wiring(root: &Path) -> RepositoryWiring {
-    let Ok(pom) = crate::pom::read(root) else {
-        return RepositoryWiring::PlainJdbc;
-    };
-    if !matches!(crate::pom::flavor(&pom), crate::pom::Flavor::SpringBoot) {
+pub(super) fn repository_wiring(project: &crate::model::Project) -> RepositoryWiring {
+    if !matches!(project.flavor(), crate::pom::Flavor::SpringBoot) {
         return RepositoryWiring::PlainJdbc;
     }
     // The starter is what brings `JdbcClientAutoConfiguration` in. Checking
     // for it rather than for `compose.yaml` or a migration directory means
     // the answer matches what Spring will actually do at startup.
-    if crate::pom::has_dependency(&pom, "org.springframework.boot", "spring-boot-starter-jdbc") {
+    if project.has_dependency("org.springframework.boot", "spring-boot-starter-jdbc") {
         RepositoryWiring::JdbcClientBean
     } else {
         // `JdbcClient` lives in spring-jdbc, which the starter brings in.
@@ -110,14 +107,14 @@ pub(super) fn repository_wiring(root: &Path) -> RepositoryWiring {
 }
 
 pub(super) fn jdbc_repository_for(
-    root: &Path,
+    project: &crate::model::Project,
     pkg: &str,
     name: &str,
     extra: &str,
     columns: &[crate::sql::Column],
     owner: &str,
 ) -> String {
-    match repository_wiring(root) {
+    match repository_wiring(project) {
         RepositoryWiring::JdbcClientBean => {
             jdbc_client_repository(pkg, name, extra, columns, owner)
         }
@@ -483,10 +480,9 @@ pub(super) fn jdbc_repository(
         .map(|c| c.name.as_str())
         .collect();
     let doc_note = if !derived {
-        format!(
-            " * <p>{{@link #map}} and {{@link #bind}} are yours to finish: this adapter was \n\
+        " * <p>{@link #map} and {@link #bind} are yours to finish: this adapter was \n\
              * generated without a field spec, so jails knows the columns of exactly nothing.\n"
-        )
+            .to_string()
     } else if unmapped.is_empty() {
         " * <p>The SQL, the bind and the row mapper are all derived from the same field
  * spec, so they cannot disagree about a column name or a type.
@@ -619,7 +615,7 @@ public final class Jdbc{name}Repository implements {name}Repository {{
 
 pub(super) fn jdbc_repository_test(pkg: &str, name: &str) -> String {
     crate::template::render(
-        include_str!("../../templates/generate/jdbc_repository_test.java"),
+        crate::template::template!("generate/jdbc_repository_test.java"),
         &[("pkg", pkg), ("name", name)],
     )
 }

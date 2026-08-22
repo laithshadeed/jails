@@ -248,6 +248,8 @@ pub struct TestOptions {
     pub failed: bool,
     pub fail_fast: bool,
     pub slowest: Option<usize>,
+    /// Report the run as JSON instead of Maven's own output.
+    pub json: bool,
 }
 
 pub fn test(filter: Option<&str>, options: TestOptions, debug: bool) -> Result<()> {
@@ -307,6 +309,20 @@ pub fn test(filter: Option<&str>, options: TestOptions, debug: bool) -> Result<(
         cmd.arg("-Dfailsafe.skipAfterFailureCount=1");
     }
     cmd.current_dir(&root);
+
+    if options.json {
+        // Maven's own output would sit in front of the JSON and make it
+        // unparseable, so it is captured and dropped. The report is read from
+        // Surefire's XML afterwards -- the same source `--failed` and
+        // `--slowest` already use, so the three cannot disagree about what ran.
+        let captured = cmd
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .map_err(|error| format!("failed to run Maven: {error}"))?;
+        return report_json(&root, captured.status.success());
+    }
+
     let outcome = run_inherited(cmd, debug);
 
     if let Some(count) = options.slowest {
@@ -316,6 +332,41 @@ pub fn test(filter: Option<&str>, options: TestOptions, debug: bool) -> Result<(
         report_rerun_line(&root, rerun_hint.as_deref());
     }
     outcome
+}
+
+/// The finished run, as data.
+///
+/// `passed` is the build's own verdict rather than "no failed cases": a build
+/// can fail before a single test runs -- a compile error, a missing dependency
+/// -- and an empty failure list would then read as success. The `cases` array
+/// says what actually executed, which is the other half a consumer needs to
+/// tell "all green" from "nothing ran".
+fn report_json(root: &Path, passed: bool) -> Result<()> {
+    use crate::json;
+
+    let cases = crate::surefire::cases(root);
+    let rows: Vec<String> = cases
+        .iter()
+        .map(|case| {
+            format!(
+                "    {{\"class\": {}, \"method\": {}, \"seconds\": {:.3}, \"failed\": {}, \
+                 \"selector\": {}}}",
+                json::string(&case.class),
+                json::string(&case.method),
+                case.seconds,
+                case.failed,
+                json::string(&case.selector())
+            )
+        })
+        .collect();
+    let failed = cases.iter().filter(|case| case.failed).count();
+    println!(
+        "{{\n  \"version\": 1,\n  \"passed\": {passed},\n  \"total\": {},\n  \
+         \"failed\": {failed},\n  \"cases\": [\n{}\n  ]\n}}",
+        cases.len(),
+        rows.join(",\n")
+    );
+    if passed { Ok(()) } else { Err(String::new()) }
 }
 
 /// After a failing run, the command that reruns just what broke.
@@ -425,10 +476,10 @@ fn enclosing_class(source: &str, path: &Path) -> String {
     let text = crate::java::blanked(source);
     let mut nested: Option<String> = None;
     for line in text.lines() {
-        if let Some(name) = declared_type_name(line) {
-            if name != stem {
-                nested = Some(name);
-            }
+        if let Some(name) = declared_type_name(line)
+            && name != stem
+        {
+            nested = Some(name);
         }
     }
     match nested {
@@ -577,7 +628,7 @@ pub fn fmt(debug: bool) -> Result<()> {
 ///
 /// Best-effort: a project without Maven on PATH is not a reason to fail the
 /// capability, it just means the first `jails fmt` has work to do.
-pub fn fmt_quietly(root: &std::path::Path) -> bool {
+pub fn fmt_quietly(root: &Path) -> bool {
     Command::new(maven_binary(root))
         .args(["-q", "spotless:apply"])
         .current_dir(root)
@@ -607,7 +658,7 @@ pub fn mvn(args: &[String], debug: bool) -> Result<()> {
     run_inherited(cmd, debug)
 }
 
-fn require_spotless(root: &std::path::Path) -> Result<()> {
+fn require_spotless(root: &Path) -> Result<()> {
     let pom = fs::read_to_string(root.join("pom.xml"))
         .map_err(|e| format!("failed to read pom.xml: {e}"))?;
     if pom.contains("spotless-maven-plugin") {
@@ -912,12 +963,11 @@ fn any_main_file(dir: &Path) -> Option<PathBuf> {
             if let Some(found) = any_main_file(&path) {
                 return Some(found);
             }
-        } else if path.extension().is_some_and(|ext| ext == "java") {
-            if let Ok(contents) = fs::read_to_string(&path) {
-                if contents.contains("static void main") {
-                    return Some(path);
-                }
-            }
+        } else if path.extension().is_some_and(|ext| ext == "java")
+            && let Ok(contents) = fs::read_to_string(&path)
+            && contents.contains("static void main")
+        {
+            return Some(path);
         }
     }
     None

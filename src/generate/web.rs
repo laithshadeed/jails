@@ -32,7 +32,7 @@ class {name}IT {{
 
 pub(super) fn stub_controller(pkg: &str, name: &str) -> String {
     crate::template::render(
-        include_str!("../../templates/generate/stub_controller.java"),
+        crate::template::template!("generate/stub_controller.java"),
         &[
             ("pkg", pkg),
             ("name", name),
@@ -162,7 +162,7 @@ class {name}Test {{
 /// a thing you first have to reshape.
 pub(super) fn controller_stub_test(pkg: &str, name: &str, mockmvc_import: &str) -> String {
     crate::template::render(
-        include_str!("../../templates/generate/controller_stub_test.java"),
+        crate::template::template!("generate/controller_stub_test.java"),
         &[
             ("pkg", pkg),
             ("name", name),

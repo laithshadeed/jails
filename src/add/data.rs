@@ -21,45 +21,43 @@ pub(super) const COMMONS_CSV: Dependency = Dependency {
     optional: false,
 };
 
-pub(super) fn csv_plan(
-    root: &std::path::Path,
-    pkg: &str,
-    _flavor: Flavor,
-    name: Option<&str>,
-) -> Result<Plan> {
+pub(super) fn csv_plan(slice: &Slice, name: Option<&str>) -> Result<Change> {
+    let root: &Path = slice.root();
+    let pkg: &str = &slice.placed(Layer::Adapters);
+
     let base = capitalize(name.unwrap_or("Csv"));
     let class = format!("{base}Reader");
 
-    Ok(Plan {
+    Ok(Change {
         // Spring Boot's dependency management does not cover commons-csv, so
         // the version is pinned in both flavors.
         deps: vec![COMMONS_CSV],
         files: vec![
-            NewFile {
+            Artifact {
                 kind: "capability file",
                 path: main_dir(root, pkg).join(format!("{class}.java")),
                 contents: csv_reader_java(pkg, &class),
             },
-            NewFile {
+            Artifact {
                 kind: "capability file",
                 path: test_dir(root, pkg).join(format!("{class}Test.java")),
                 contents: csv_reader_test_java(pkg, &class),
             },
         ],
-        ..Plan::default()
+        ..Change::default()
     })
 }
 
 pub(super) fn csv_reader_java(pkg: &str, class: &str) -> String {
     crate::template::render(
-        include_str!("../../templates/add/csv_reader_java.java"),
+        crate::template::template!("add/csv_reader_java.java"),
         &[("pkg", pkg), ("class", class)],
     )
 }
 
 pub(super) fn csv_reader_test_java(pkg: &str, class: &str) -> String {
     crate::template::render(
-        include_str!("../../templates/add/csv_reader_test_java.java"),
+        crate::template::template!("add/csv_reader_test_java.java"),
         &[("pkg", pkg), ("class", class)],
     )
 }
@@ -101,12 +99,11 @@ pub(super) const JACKSON_JSR310: Dependency = Dependency {
     optional: false,
 };
 
-pub(super) fn json_plan(
-    root: &std::path::Path,
-    pkg: &str,
-    flavor: Flavor,
-    name: Option<&str>,
-) -> Result<Plan> {
+pub(super) fn json_plan(slice: &Slice, name: Option<&str>) -> Result<Change> {
+    let root: &Path = slice.root();
+    let pkg: &str = &slice.placed(Layer::Adapters);
+    let flavor: Flavor = slice.flavor();
+
     let base = name.map(capitalize).unwrap_or_default();
     let class = format!("{base}Json");
 
@@ -123,7 +120,7 @@ pub(super) fn json_plan(
         Flavor::PlainMaven => vec![JACKSON],
     };
 
-    Ok(Plan {
+    Ok(Change {
         deps,
         legacy_deps: vec![
             JACKSON_JSR310,
@@ -133,31 +130,31 @@ pub(super) fn json_plan(
             },
         ],
         files: vec![
-            NewFile {
+            Artifact {
                 kind: "capability file",
                 path: main_dir(root, pkg).join(format!("{class}.java")),
                 contents: json_java(pkg, &class),
             },
-            NewFile {
+            Artifact {
                 kind: "capability file",
                 path: test_dir(root, pkg).join(format!("{class}Test.java")),
                 contents: json_test_java(pkg, &class),
             },
         ],
-        ..Plan::default()
+        ..Change::default()
     })
 }
 
 pub(super) fn json_java(pkg: &str, class: &str) -> String {
     crate::template::render(
-        include_str!("../../templates/add/json_java.java"),
+        crate::template::template!("add/json_java.java"),
         &[("pkg", pkg), ("class", class)],
     )
 }
 
 pub(super) fn json_test_java(pkg: &str, class: &str) -> String {
     crate::template::render(
-        include_str!("../../templates/add/json_test_java.java"),
+        crate::template::template!("add/json_test_java.java"),
         &[("pkg", pkg), ("class", class)],
     )
 }

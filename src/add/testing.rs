@@ -21,43 +21,45 @@ use super::*;
 /// `Supplier<String>` instead of calling `Instant.now()` and
 /// `UUID.randomUUID()` -- so generating them nudges the design toward the one
 /// that can be tested deterministically at all.
-pub(super) fn testkit_plan(root: &std::path::Path, testkit: &str) -> Result<Plan> {
+pub(super) fn testkit_plan(slice: &Slice) -> Result<Change> {
+    let root: &Path = slice.root();
+    let testkit: &str = &slice.placed(Layer::Testkit);
     let dir = test_dir(root, testkit);
 
-    Ok(Plan {
+    Ok(Change {
         files: vec![
-            NewFile {
+            Artifact {
                 kind: "capability file",
                 path: dir.join("Clocks.java"),
                 contents: clocks_java(testkit),
             },
-            NewFile {
+            Artifact {
                 kind: "capability file",
                 path: dir.join("Ids.java"),
                 contents: ids_java(testkit),
             },
-            NewFile {
+            Artifact {
                 kind: "capability file",
                 path: dir.join("Fixtures.java"),
                 contents: fixtures_java(testkit),
             },
-            NewFile {
+            Artifact {
                 kind: "capability file",
                 path: dir.join("Cli.java"),
                 contents: testkit_cli_java(testkit),
             },
-            NewFile {
+            Artifact {
                 kind: "capability file",
                 path: dir.join("TestkitTest.java"),
                 contents: testkit_test_java(testkit),
             },
-            NewFile {
+            Artifact {
                 kind: "capability file",
                 path: root.join("src/test/resources/fixtures/example.json"),
                 contents: EXAMPLE_FIXTURE.to_string(),
             },
         ],
-        ..Plan::default()
+        ..Change::default()
     })
 }
 
@@ -65,35 +67,35 @@ pub(super) const EXAMPLE_FIXTURE: &str = "{\n  \"name\": \"bolt\",\n  \"qty\": 7
 
 pub(super) fn clocks_java(pkg: &str) -> String {
     crate::template::render(
-        include_str!("../../templates/add/clocks_java.java"),
+        crate::template::template!("add/clocks_java.java"),
         &[("pkg", pkg)],
     )
 }
 
 pub(super) fn ids_java(pkg: &str) -> String {
     crate::template::render(
-        include_str!("../../templates/add/ids_java.java"),
+        crate::template::template!("add/ids_java.java"),
         &[("pkg", pkg)],
     )
 }
 
 pub(super) fn fixtures_java(pkg: &str) -> String {
     crate::template::render(
-        include_str!("../../templates/add/fixtures_java.java"),
+        crate::template::template!("add/fixtures_java.java"),
         &[("pkg", pkg)],
     )
 }
 
 pub(super) fn testkit_cli_java(pkg: &str) -> String {
     crate::template::render(
-        include_str!("../../templates/add/testkit_cli_java.java"),
+        crate::template::template!("add/testkit_cli_java.java"),
         &[("pkg", pkg)],
     )
 }
 
 pub(super) fn testkit_test_java(pkg: &str) -> String {
     crate::template::render(
-        include_str!("../../templates/add/testkit_test_java.java"),
+        crate::template::template!("add/testkit_test_java.java"),
         &[("pkg", pkg)],
     )
 }
@@ -106,23 +108,25 @@ pub(super) fn testkit_test_java(pkg: &str) -> String {
 /// and no business acquiring one, so rather than generating a fake *of* some
 /// interface, this generates the replay engine and you attach it to any
 /// interface with a lambda. One class covers every collaborator in the project.
-pub(super) fn fake_plan(root: &std::path::Path, testkit: &str) -> Result<Plan> {
+pub(super) fn fake_plan(slice: &Slice) -> Result<Change> {
+    let root: &Path = slice.root();
+    let testkit: &str = &slice.placed(Layer::Testkit);
     let dir = test_dir(root, testkit);
 
-    Ok(Plan {
+    Ok(Change {
         files: vec![
-            NewFile {
+            Artifact {
                 kind: "capability file",
                 path: dir.join("Fake.java"),
                 contents: scripted_java(testkit),
             },
-            NewFile {
+            Artifact {
                 kind: "capability file",
                 path: dir.join("FakeTest.java"),
                 contents: scripted_test_java(testkit),
             },
         ],
-        ..Plan::default()
+        ..Change::default()
     })
 }
 
@@ -148,27 +152,29 @@ pub(super) const TOXIPROXY_JAVA: Dependency = Dependency {
     optional: false,
 };
 
-pub(super) fn toxiproxy_plan(root: &std::path::Path, testkit: &str) -> Result<Plan> {
+pub(super) fn toxiproxy_plan(slice: &Slice) -> Result<Change> {
+    let root: &Path = slice.root();
+    let testkit: &str = &slice.placed(Layer::Testkit);
     let dir = test_dir(root, testkit);
 
-    Ok(Plan {
+    Ok(Change {
         // Deliberately not TESTCONTAINERS_JUNIT: the generated test drives the
         // container itself, and claiming a dependency another capability also
         // owns means `remove toxiproxy` takes it away from `db` too.
         deps: vec![TESTCONTAINERS_TOXIPROXY, TOXIPROXY_JAVA],
         files: vec![
-            NewFile {
+            Artifact {
                 kind: "capability file",
                 path: dir.join("Faults.java"),
                 contents: faults_java(testkit),
             },
-            NewFile {
+            Artifact {
                 kind: "capability file",
                 path: dir.join("FaultsTest.java"),
                 contents: faults_test_java(testkit),
             },
         ],
-        ..Plan::default()
+        ..Change::default()
     })
 }
 
@@ -464,14 +470,14 @@ class FaultsTest {{
 
 pub(super) fn scripted_java(pkg: &str) -> String {
     crate::template::render(
-        include_str!("../../templates/add/scripted_java.java"),
+        crate::template::template!("add/scripted_java.java"),
         &[("pkg", pkg)],
     )
 }
 
 pub(super) fn scripted_test_java(pkg: &str) -> String {
     crate::template::render(
-        include_str!("../../templates/add/scripted_test_java.java"),
+        crate::template::template!("add/scripted_test_java.java"),
         &[("pkg", pkg)],
     )
 }

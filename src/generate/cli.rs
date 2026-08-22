@@ -65,17 +65,10 @@ public final class {name}Command {{
 
 pub(super) fn command_test(pkg: &str, name: &str) -> String {
     crate::template::render(
-        include_str!("../../templates/generate/command_test.java"),
+        crate::template::template!("generate/command_test.java"),
         &[("pkg", pkg), ("name", name)],
     )
 }
-
-/// A literal a generated test can construct the component from.
-///
-/// `None` means jails cannot fabricate one: a type this project owns could
-/// have any constructor at all, and guessing produces a test that does not
-/// compile. The one case it *can* solve is an enum -- hence `generate enum`
-/// pulling its weight twice.
 
 // ---- cli: the dispatcher that `generate command` leaves you to write. ----
 
@@ -351,8 +344,7 @@ pub(super) fn register_command(
         return Ok(());
     };
 
-    fs::write(dispatcher, spliced)
-        .map_err(|e| format!("failed to write {}: {e}", dispatcher.display()))?;
+    crate::apply::put(dispatcher, spliced)?;
     println!("registered {command_class} in {}", dispatcher.display());
     Ok(())
 }
@@ -394,13 +386,12 @@ pub(super) fn find_dispatchers(dir: &Path) -> Vec<PathBuf> {
             let path = entry.path();
             if path.is_dir() {
                 stack.push(path);
-            } else if path.extension().is_some_and(|e| e == "java") {
-                if fs::read_to_string(&path)
+            } else if path.extension().is_some_and(|e| e == "java")
+                && fs::read_to_string(&path)
                     .map(|s| is_dispatcher(&s))
                     .unwrap_or(false)
-                {
-                    found.push(path);
-                }
+            {
+                found.push(path);
             }
         }
     }
@@ -514,8 +505,7 @@ pub(super) fn unregister_command(root: &Path, name: &str) -> Result<()> {
         let Some(unspliced) = unsplice_registration(&source, &command_class) else {
             continue;
         };
-        fs::write(&dispatcher, unspliced)
-            .map_err(|e| format!("failed to write {}: {e}", dispatcher.display()))?;
+        crate::apply::put(&dispatcher, unspliced)?;
         println!("unregistered {command_class} from {}", dispatcher.display());
     }
     Ok(())

@@ -1,0 +1,20 @@
+# jails' own bookkeeping. Written by jails, never hand-edited -- `jails.toml`
+# and `.jails/app.toml` are the files that are yours.
+#
+# Identity is (recipe, name, package). Everything else is content, which is
+# what makes an edited intent an update to a known entity rather than a new
+# one arriving against files that already exist.
+version = "0.1.0"
+
+[[applied]]
+recipe = "idempotency"
+name = "Request"
+package = ""
+files = [
+  "src/main/java/com/example/demo/adapters/JdbcRequestReceipts.java",
+  "src/main/java/com/example/demo/app/RequestReceipts.java",
+  "src/main/java/com/example/demo/domain/RequestReceipt.java",
+  "src/main/java/com/example/demo/service/RequestGuard.java",
+  "src/main/resources/db/migration/V001__create_request_receipts.sql",
+  "src/test/java/com/example/demo/service/RequestGuardTest.java",
+]

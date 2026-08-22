@@ -35,8 +35,8 @@ fields = ["reference:string!", "postedAt:date", "amount:Money", "memo:string?"]
 kind = "strategy"
 name = "MatchRule"
 fields = ["ExactReference", "AmountAndDate", "FuzzyMemo"]
-strategy_on = "Entry"
-strategy_yields = "MatchOutcome"
+on = "Entry"
+yields = "MatchOutcome"
 
 [[generate]]
 kind = "cli"
@@ -48,4 +48,4 @@ name = "Ledger"
 [[generate]]
 kind = "command"
 name = "Reconcile"
-strategy_on = "Ledger"
+on = "Ledger"

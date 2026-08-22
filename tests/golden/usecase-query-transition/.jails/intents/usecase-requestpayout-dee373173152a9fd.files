@@ -1,6 +1,0 @@
-src/main/java/com/example/demo/service/DefaultRequestPayoutUseCase.java
-src/main/java/com/example/demo/service/RequestPayoutCommand.java
-src/main/java/com/example/demo/service/RequestPayoutUseCase.java
-src/main/java/com/example/demo/web/RequestPayoutController.java
-src/test/java/com/example/demo/service/RequestPayoutUseCaseTest.java
-src/test/java/com/example/demo/web/RequestPayoutControllerTest.java

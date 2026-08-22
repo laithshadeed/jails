@@ -1,3 +1,0 @@
-id:uuid@pk
-name:string!
-createdAt:instant
