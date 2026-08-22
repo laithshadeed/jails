@@ -310,8 +310,22 @@ fn app_manifest_builds_the_crawler_skeleton_and_is_resumable() {
         safe_fetcher.contains("private or reserved address"),
         "{safe_fetcher}"
     );
+    assert!(
+        safe_fetcher.contains("acceptedStatuses.contains(response.statusCode())"),
+        "{safe_fetcher}"
+    );
+    assert!(main.join("jobs/SiteTraversalWorkflow.java").is_file());
+    assert!(
+        main.join("web/SiteTraversalWorkflowController.java")
+            .is_file()
+    );
+    assert!(
+        root.join("src/test/java/com/example/demo/jobs/SiteTraversalWorkflowIT.java")
+            .is_file()
+    );
     assert!(main.join("messaging/PageDiscoveredEvent.java").is_file());
     assert!(main.join("jobs/CrawlDispatcherWork.java").is_file());
+    assert!(main.join("jobs/SchedulingConfig.java").is_file());
     assert!(main.join("jobs/JdbcCrawlDispatcherStore.java").is_file());
     assert!(main.join("jobs/CrawlDispatcherWorker.java").is_file());
     assert!(main.join("web/CrawlDispatcherJobController.java").is_file());
@@ -323,7 +337,7 @@ fn app_manifest_builds_the_crawler_skeleton_and_is_resumable() {
         fs::read_dir(root.join("src/main/resources/db/migration"))
             .unwrap()
             .count(),
-        4
+        5
     );
 }
 
@@ -351,19 +365,39 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
     );
 
     let main = root.join("src/main/java/com/example/demo");
-    for name in ["Workspace", "Contact", "Conversation", "Message"] {
+    for name in [
+        "Workspace",
+        "Member",
+        "Inbox",
+        "InboxMember",
+        "Contact",
+        "Conversation",
+        "Message",
+        "ConversationAssignment",
+    ] {
         assert!(main.join(format!("domain/{name}.java")).is_file(), "{name}");
         assert!(
             main.join(format!("web/{name}Controller.java")).is_file(),
             "{name} controller"
         );
     }
-    assert!(main.join("domain/ConversationStatus.java").is_file());
-    assert!(main.join("domain/MessageDirection.java").is_file());
+    for name in [
+        "ConversationStatus",
+        "MessageDirection",
+        "MemberRole",
+        "InboxChannel",
+        "AssignmentStatus",
+    ] {
+        assert!(main.join(format!("domain/{name}.java")).is_file(), "{name}");
+    }
     for name in [
         "CreateWorkspace",
+        "CreateMember",
+        "CreateInbox",
+        "AddInboxMember",
         "CreateContact",
         "OpenConversation",
+        "AssignConversation",
         "ReceiveMessage",
     ] {
         assert!(
@@ -377,8 +411,12 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
     }
     for name in [
         "ContactsByWorkspace",
+        "MembersByWorkspace",
+        "InboxesByWorkspace",
+        "InboxMembersByInbox",
         "ConversationsByWorkspace",
         "MessagesByConversation",
+        "AssignmentByConversation",
     ] {
         assert!(
             main.join(format!("service/{name}Query.java")).is_file(),
@@ -403,6 +441,7 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
     let outbox = fs::read_to_string(main.join("jobs/JdbcReceiveMessageOutbox.java")).unwrap();
     assert!(outbox.contains("for update skip locked"), "{outbox}");
     assert!(main.join("jobs/ReceiveMessageOutboxWorker.java").is_file());
+    assert!(main.join("jobs/SchedulingConfig.java").is_file());
     assert!(
         main.join("service/ChangeConversationStatusUseCase.java")
             .is_file()
@@ -423,13 +462,48 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
         main.join("web/ChangeConversationStatusController.java")
             .is_file()
     );
-    assert!(main.join("jobs/OutboundDeliveryWork.java").is_file());
-    assert!(main.join("jobs/JdbcOutboundDeliveryStore.java").is_file());
-    assert!(main.join("jobs/OutboundDeliveryWorker.java").is_file());
+    let assignment_transition =
+        fs::read_to_string(main.join("adapters/JdbcReassignConversationTransition.java")).unwrap();
     assert!(
-        main.join("web/OutboundDeliveryJobController.java")
+        assignment_transition.contains("member_id = :member_id"),
+        "{assignment_transition}"
+    );
+    assert!(
+        assignment_transition.contains("workspace_id = :workspace_id"),
+        "{assignment_transition}"
+    );
+    assert!(main.join("jobs/ReceiveMessageOutboxSink.java").is_file());
+    assert!(
+        main.join("jobs/ReceiveMessageKafkaOutboxSink.java")
             .is_file()
     );
+    let provider = fs::read_to_string(main.join("jobs/ProviderHttpOutboxSink.java")).unwrap();
+    assert!(provider.contains("Idempotency-Key"), "{provider}");
+    assert!(provider.contains("HttpClient.Redirect.NEVER"), "{provider}");
+    assert!(
+        root.join("src/test/java/com/example/demo/jobs/ProviderHttpOutboxSinkTest.java")
+            .is_file()
+    );
+    for name in [
+        "ContactWorkspace",
+        "MemberWorkspace",
+        "InboxWorkspace",
+        "ConversationContact",
+        "ConversationInbox",
+        "InboxMemberInbox",
+        "InboxMemberMember",
+        "MessageConversation",
+        "AssignmentConversation",
+        "AssignmentMember",
+    ] {
+        assert!(
+            root.join(format!(
+                "src/test/java/com/example/demo/adapters/{name}AssociationIT.java"
+            ))
+            .is_file(),
+            "{name} association test"
+        );
+    }
     let contacts =
         fs::read_to_string(main.join("web/ContactsByWorkspaceQueryController.java")).unwrap();
     assert!(contacts.contains("scopeAuthorizer.require"), "{contacts}");
@@ -441,12 +515,59 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
     );
     assert!(root.join("Dockerfile").is_file());
     assert!(root.join(".github/workflows/ci.yml").is_file());
+    let inbox_migration =
+        fs::read_to_string(root.join("src/main/resources/db/migration/V003__create_inboxes.sql"))
+            .unwrap();
+    assert!(
+        inbox_migration.contains("create table inboxes"),
+        "{inbox_migration}"
+    );
     assert_eq!(
         fs::read_dir(root.join("src/main/resources/db/migration"))
             .unwrap()
             .count(),
-        7
+        20
     );
+}
+
+#[test]
+fn generated_http_sink_delivers_typed_json_with_a_stable_idempotency_key() {
+    if !real_mvn_available() {
+        skip("mvn not found on PATH");
+        return;
+    }
+    if !real_java_available() {
+        skip("java/javac not found on PATH");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let root = temp_dir("http-outbox-sink-real");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/app.toml"),
+        include_str!("../examples/support-inbox/.jails/app.toml"),
+    )
+    .unwrap();
+
+    let output = jails_cmd_with_path(&root, &path)
+        .args(["app", "apply", "--no-start"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "apply: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let status = std::process::Command::new("mvn")
+        .current_dir(&root)
+        .env("PATH", &path)
+        .args(["-q", "-Dtest=ProviderHttpOutboxSinkTest", "test"])
+        .status()
+        .unwrap();
+    assert!(status.success(), "generated HTTP provider contract failed");
 }
 
 #[test]
