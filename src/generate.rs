@@ -22,7 +22,7 @@ pub(crate) use domain::*;
 mod repository;
 pub(crate) use repository::*;
 
-#[derive(Clone, Copy, Debug, ValueEnum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 #[value(rename_all = "lowercase")]
 pub enum ArtifactKind {
     /// A REST resource that runs: record, port, JDBC + in-memory adapters,
@@ -121,6 +121,290 @@ pub enum ArtifactKind {
     #[value(name = "integration-test", alias = "it")]
     IntegrationTest,
 }
+
+/// Which source tree a generated file lives in.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Tree {
+    Main,
+    Test,
+}
+
+/// Whether `--package` moves this file.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Placement {
+    /// The usual case: `--package` overrides the layer.
+    Layered,
+    /// Always the configured layer, whatever `--package` says. Two kinds
+    /// span layers and pin their HTTP half so that moving the durable half
+    /// does not strand a controller in a package with no web layer.
+    Pinned,
+}
+
+/// Every file a kind may write, as (tree, layer, placement, filename).
+///
+/// `{name}` is the capitalised, suffix-stripped artifact name -- the same
+/// string the generator builds its paths from.
+///
+/// **This is `plan.md` §6.1's copy 2**, and it used to be seventeen
+/// hand-written `vec![]` arms of `format!("{name}…java")`: a manual
+/// transcription of paths the generator right next door already computes,
+/// where adding `usecase` meant writing ten lines twice. As a table it is
+/// still a transcription -- deriving it from the generator is §6.2 B, and it
+/// needs lazily-rendered artifacts to get there -- but it is a *checked* one:
+/// `tests/agreement.rs` runs every kind and fails on a path either side
+/// invents, `every_kind_has_a_destroy_arm` fails on a kind that is missing
+/// from it altogether, and a new kind is one row rather than ten lines.
+///
+/// Conditional files are listed unconditionally on purpose. A `usecase`
+/// writes its outbox half only with `--yields`, and `destroy` is not told
+/// which; it filters by what is actually on disk, so the table is the
+/// **maximal** set and the filesystem decides.
+type KindFiles = &'static [(Tree, &'static str, Placement, &'static str)];
+
+const KIND_FILES: &[(ArtifactKind, KindFiles)] = &[
+    (
+        ArtifactKind::Scaffold,
+        &[
+            (Tree::Main, layout::DOMAIN, Placement::Layered, "{name}.java"),
+            (Tree::Test, layout::DOMAIN, Placement::Layered, "{name}Test.java"),
+            (Tree::Main, layout::APP, Placement::Layered, "{name}Repository.java"),
+            (Tree::Main, layout::ADAPTERS, Placement::Layered, "Jdbc{name}Repository.java"),
+            (Tree::Test, layout::ADAPTERS, Placement::Layered, "Jdbc{name}RepositoryIT.java"),
+            (Tree::Main, layout::ADAPTERS, Placement::Layered, "InMemory{name}Repository.java"),
+            (Tree::Main, layout::SERVICE, Placement::Layered, "{name}Service.java"),
+            (Tree::Test, layout::SERVICE, Placement::Layered, "{name}ServiceTest.java"),
+            (Tree::Main, layout::WEB, Placement::Layered, "{name}Controller.java"),
+            (Tree::Test, layout::WEB, Placement::Layered, "{name}ControllerTest.java"),
+            (Tree::Main, layout::WEB, Placement::Layered, "{name}Request.java"),
+            (Tree::Main, layout::WEB, Placement::Layered, "{name}Response.java"),
+        ],
+    ),
+    (
+        ArtifactKind::Controller,
+        &[
+            (Tree::Main, layout::WEB, Placement::Layered, "{name}Controller.java"),
+            (Tree::Test, layout::WEB, Placement::Layered, "{name}ControllerTest.java"),
+        ],
+    ),
+    (
+        ArtifactKind::Service,
+        &[
+            (Tree::Main, layout::SERVICE, Placement::Layered, "{name}Service.java"),
+            (Tree::Test, layout::SERVICE, Placement::Layered, "{name}ServiceTest.java"),
+        ],
+    ),
+    (
+        ArtifactKind::Record,
+        &[
+            (Tree::Main, layout::DOMAIN, Placement::Layered, "{name}.java"),
+            (Tree::Test, layout::DOMAIN, Placement::Layered, "{name}Test.java"),
+        ],
+    ),
+    (
+        ArtifactKind::Value,
+        &[
+            (Tree::Main, layout::DOMAIN, Placement::Layered, "{name}.java"),
+            (Tree::Test, layout::DOMAIN, Placement::Layered, "{name}Test.java"),
+        ],
+    ),
+    (
+        ArtifactKind::Enum,
+        &[
+            (Tree::Main, layout::DOMAIN, Placement::Layered, "{name}.java"),
+            (Tree::Test, layout::DOMAIN, Placement::Layered, "{name}Test.java"),
+        ],
+    ),
+    (
+        ArtifactKind::Sealed,
+        &[
+            (Tree::Main, layout::DOMAIN, Placement::Layered, "{name}.java"),
+            (Tree::Test, layout::DOMAIN, Placement::Layered, "{name}Test.java"),
+        ],
+    ),
+    (
+        ArtifactKind::Command,
+        &[
+            (Tree::Main, layout::CLI, Placement::Layered, "{name}Command.java"),
+            (Tree::Test, layout::CLI, Placement::Layered, "{name}CommandTest.java"),
+        ],
+    ),
+    (
+        ArtifactKind::Handler,
+        &[
+            (Tree::Main, layout::API, Placement::Layered, "{name}Handler.java"),
+            (Tree::Test, layout::API, Placement::Layered, "{name}HandlerTest.java"),
+        ],
+    ),
+    (
+        ArtifactKind::Repo,
+        &[
+            (Tree::Main, layout::APP, Placement::Layered, "{name}Repository.java"),
+            (Tree::Main, layout::ADAPTERS, Placement::Layered, "Jdbc{name}Repository.java"),
+            (Tree::Test, layout::ADAPTERS, Placement::Layered, "Jdbc{name}RepositoryIT.java"),
+        ],
+    ),
+    (
+        ArtifactKind::Cli,
+        &[
+            (Tree::Main, layout::CLI, Placement::Layered, "{name}Cli.java"),
+            (Tree::Test, layout::CLI, Placement::Layered, "{name}CliTest.java"),
+        ],
+    ),
+    (
+        ArtifactKind::Class,
+        &[
+            (Tree::Main, "", Placement::Layered, "{name}.java"),
+            (Tree::Test, "", Placement::Layered, "{name}Test.java"),
+        ],
+    ),
+    (
+        ArtifactKind::Interface,
+        &[(Tree::Main, "", Placement::Layered, "{name}.java")],
+    ),
+    (
+        ArtifactKind::Test,
+        &[(Tree::Test, "", Placement::Layered, "{name}Test.java")],
+    ),
+    (
+        ArtifactKind::IntegrationTest,
+        &[(Tree::Test, "", Placement::Layered, "{name}IT.java")],
+    ),
+    // The shared registration files (HttpClientsConfig, SchedulingConfig) are
+    // deliberately absent from every arm below: a second client or job still
+    // needs them, and deleting one would strand the other.
+    (
+        ArtifactKind::Client,
+        &[
+            (Tree::Main, layout::CLIENTS, Placement::Layered, "{name}Client.java"),
+            (Tree::Test, layout::CLIENTS, Placement::Layered, "{name}ClientTest.java"),
+        ],
+    ),
+    (
+        ArtifactKind::Fetcher,
+        &[
+            (Tree::Main, layout::CLIENTS, Placement::Layered, "{name}Fetcher.java"),
+            (Tree::Main, layout::CLIENTS, Placement::Layered, "Safe{name}Fetcher.java"),
+            (Tree::Test, layout::CLIENTS, Placement::Layered, "Safe{name}FetcherTest.java"),
+        ],
+    ),
+    (
+        ArtifactKind::Job,
+        &[
+            (Tree::Main, layout::JOBS, Placement::Layered, "{name}Job.java"),
+            (Tree::Test, layout::JOBS, Placement::Layered, "{name}JobTest.java"),
+        ],
+    ),
+    (
+        ArtifactKind::HttpSink,
+        &[
+            (Tree::Main, layout::JOBS, Placement::Layered, "{name}HttpOutboxSink.java"),
+            (Tree::Test, layout::JOBS, Placement::Layered, "{name}HttpOutboxSinkTest.java"),
+        ],
+    ),
+    (
+        ArtifactKind::HttpWorkflow,
+        &[
+            (Tree::Main, layout::JOBS, Placement::Layered, "{name}Workflow.java"),
+            (Tree::Main, layout::WEB, Placement::Pinned, "{name}WorkflowController.java"),
+            (Tree::Test, layout::JOBS, Placement::Layered, "{name}WorkflowIT.java"),
+        ],
+    ),
+    (
+        ArtifactKind::DurableJob,
+        &[
+            (Tree::Main, layout::JOBS, Placement::Layered, "{name}Work.java"),
+            (Tree::Main, layout::JOBS, Placement::Layered, "{name}Queue.java"),
+            (Tree::Main, layout::JOBS, Placement::Layered, "Jdbc{name}Store.java"),
+            (Tree::Main, layout::JOBS, Placement::Layered, "{name}Worker.java"),
+            (Tree::Main, layout::WEB, Placement::Pinned, "{name}JobController.java"),
+            (Tree::Test, layout::JOBS, Placement::Layered, "{name}JobIT.java"),
+        ],
+    ),
+    (
+        ArtifactKind::Event,
+        &[
+            (Tree::Main, layout::MESSAGING, Placement::Layered, "{name}Event.java"),
+            (Tree::Main, layout::MESSAGING, Placement::Layered, "{name}Publisher.java"),
+            (Tree::Main, layout::MESSAGING, Placement::Layered, "{name}Listener.java"),
+            (Tree::Test, layout::MESSAGING, Placement::Layered, "{name}MessagingIT.java"),
+        ],
+    ),
+    (
+        ArtifactKind::Usecase,
+        &[
+            (Tree::Main, layout::SERVICE, Placement::Layered, "{name}Command.java"),
+            (Tree::Main, layout::SERVICE, Placement::Layered, "{name}UseCase.java"),
+            (Tree::Main, layout::SERVICE, Placement::Layered, "Default{name}UseCase.java"),
+            (Tree::Test, layout::SERVICE, Placement::Layered, "{name}UseCaseTest.java"),
+            (Tree::Main, layout::WEB, Placement::Layered, "{name}Controller.java"),
+            (Tree::Test, layout::WEB, Placement::Layered, "{name}ControllerTest.java"),
+            // The `--yields` half: the outbox, its sinks and its relay. Left
+            // behind, the port has no implementation and the Kafka sink
+            // implements a type that is gone, so the project stops compiling.
+            (Tree::Main, layout::SERVICE, Placement::Layered, "Outbox{name}UseCase.java"),
+            (Tree::Main, layout::JOBS, Placement::Layered, "Jdbc{name}Outbox.java"),
+            (Tree::Main, layout::JOBS, Placement::Layered, "{name}OutboxSink.java"),
+            (Tree::Main, layout::JOBS, Placement::Layered, "{name}KafkaOutboxSink.java"),
+            (Tree::Main, layout::JOBS, Placement::Layered, "{name}OutboxWorker.java"),
+            (Tree::Test, layout::JOBS, Placement::Layered, "{name}OutboxIT.java"),
+        ],
+    ),
+    (
+        ArtifactKind::Query,
+        &[
+            (Tree::Main, layout::SERVICE, Placement::Layered, "{name}Query.java"),
+            (Tree::Main, layout::SERVICE, Placement::Layered, "{name}QueryPort.java"),
+            (Tree::Main, layout::ADAPTERS, Placement::Layered, "Jdbc{name}Query.java"),
+            (Tree::Test, layout::ADAPTERS, Placement::Layered, "Jdbc{name}QueryIT.java"),
+            (Tree::Main, layout::WEB, Placement::Layered, "{name}QueryController.java"),
+            (Tree::Test, layout::WEB, Placement::Layered, "{name}QueryControllerTest.java"),
+        ],
+    ),
+    (
+        ArtifactKind::Transition,
+        &[
+            (Tree::Main, layout::SERVICE, Placement::Layered, "{name}Command.java"),
+            (Tree::Main, layout::SERVICE, Placement::Layered, "{name}UseCase.java"),
+            (Tree::Main, layout::ADAPTERS, Placement::Layered, "Jdbc{name}Transition.java"),
+            (Tree::Test, layout::ADAPTERS, Placement::Layered, "Jdbc{name}TransitionIT.java"),
+            (Tree::Main, layout::WEB, Placement::Layered, "{name}Controller.java"),
+            (Tree::Test, layout::WEB, Placement::Layered, "{name}ControllerTest.java"),
+        ],
+    ),
+    (
+        ArtifactKind::Dto,
+        &[
+            (Tree::Main, layout::WEB, Placement::Layered, "{name}Request.java"),
+            (Tree::Main, layout::WEB, Placement::Layered, "{name}Response.java"),
+            (Tree::Test, layout::WEB, Placement::Layered, "{name}DtoTest.java"),
+        ],
+    ),
+];
+
+/// The kinds whose `destroy` is not a path list at all, with why.
+///
+/// Listed rather than left implicit so `every_kind_has_a_destroy_arm` can
+/// tell "deliberately special" from "forgotten".
+const NO_FILE_TABLE: &[(ArtifactKind, &str)] = &[
+    (
+        ArtifactKind::Strategy,
+        "reads the implementations off disk, so one added by hand after the \
+         generate call is still one of this strategy's classes",
+    ),
+    (
+        ArtifactKind::Cases,
+        "its NAME is a markdown path, and the class name is derived from it",
+    ),
+    (
+        ArtifactKind::Migration,
+        "forward-only: a migration that has run somewhere cannot be un-applied \
+         by deleting the file",
+    ),
+    (
+        ArtifactKind::Association,
+        "forward-only, for the same reason -- it is a migration plus a test",
+    ),
+];
 
 /// Walk up from the current directory looking for pom.xml.
 pub(crate) fn find_project_root() -> Result<PathBuf> {
@@ -309,13 +593,51 @@ fn ensure_failsafe(root: &Path, artifacts: &[Artifact]) -> Result<()> {
     if let Some(updated) = crate::pom::add_plugin(
         &pom,
         crate::spring::FAILSAFE_ARTIFACT,
-        crate::spring::FAILSAFE_PLUGIN,
+        crate::spring::failsafe_plugin(crate::pom::flavor(&pom)),
     )? {
         fs::write(root.join("pom.xml"), updated)
             .map_err(|e| format!("failed to write pom.xml: {e}"))?;
         println!("  plugin {}", crate::spring::FAILSAFE_ARTIFACT);
     }
     Ok(())
+}
+
+/// Every generated test is written against AssertJ, so the project has to
+/// have it.
+///
+/// The same rule as `ensure_failsafe` and for the same reason: handing the
+/// reader `cannot find symbol: method assertThat` for a file they did not
+/// write is the plumbing this tool exists to remove. `jails new` and
+/// `new-cli` put AssertJ in the pom, which is why this went unnoticed --
+/// **the projects that need it are the ones jails did not create**, and
+/// `jails add`/`jails g` on an existing plain Maven project is the whole
+/// point of §12.
+///
+/// Under a Spring Boot parent the version is left to the BOM; without one it
+/// is pinned, since a versionless dependency is a pom Maven refuses to read
+/// (plan.md §8.1).
+pub(crate) fn ensure_assertj(root: &Path, writes_a_test: bool) -> Result<()> {
+    if !writes_a_test {
+        return Ok(());
+    }
+    let pom = crate::pom::read(root)?;
+    // A Spring Boot project gets AssertJ transitively through the test
+    // starter, and jails' own `new` declares it outright. Adding a second
+    // declaration would be noise in a file the reader owns.
+    if crate::pom::has_dependency(&pom, "org.assertj", "assertj-core")
+        || pom.contains("spring-boot-starter-test")
+        || pom.contains("spring-boot-starter-webmvc-test")
+    {
+        return Ok(());
+    }
+    ensure_dependency(root, &crate::pom::assertj(crate::pom::flavor(&pom)))
+}
+
+/// Did this batch write anything under `src/test`?
+fn writes_a_test(artifacts: &[Artifact]) -> bool {
+    artifacts
+        .iter()
+        .any(|a| a.path.to_string_lossy().contains("src/test/java"))
 }
 
 /// Splice a dependency into pom.xml unless it is already there.
@@ -391,11 +713,54 @@ pub(crate) fn write_new_file(root: &Path, path: &Path, contents: &str) -> Result
     }
     let contents = if path.extension().is_some_and(|e| e == "java") {
         ensure_package_info(root, path)?;
-        normalize_imports(contents)
+        tidy_blank_lines(&normalize_imports(contents))
     } else {
         contents.to_string()
     };
     fs::write(path, &contents).map_err(|e| format!("failed to write {}: {e}", path.display()))
+}
+
+/// Collapse the blank lines a template leaves behind when an optional section
+/// renders empty, and end the file with exactly one newline.
+///
+/// Here for the same reason `normalize_imports` is: **palantir-java-format
+/// removes both**, so leaving them in means `add format` -- which jails
+/// installs itself -- fails `jails check` on a project whose every line jails
+/// wrote. That is not hypothetical. It is what App D (`examples/ledger-cli`)
+/// hit on its first gate run, in four files, because it is the first proof
+/// application to ask for `format` at all: `class NoteTest {` followed by two
+/// blank lines wherever the sample block was omitted, and a
+/// `package-info.java` ending on a blank line after its import.
+///
+/// Fixing it in each template is the rule-twenty-templates-must-remember that
+/// this write path exists to avoid.
+///
+/// **Text blocks are left alone.** A `"""` block is the one Java literal that
+/// can span lines, so a blank line inside one is data -- SQL, JSON, an
+/// expected message -- and collapsing it would change what the program says.
+/// Counting the delimiters is enough to know which side of one a line is on.
+pub(crate) fn tidy_blank_lines(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    let mut in_text_block = false;
+    let mut previous_blank = false;
+    for line in source.lines() {
+        let blank = line.trim().is_empty();
+        if !in_text_block && blank && previous_blank {
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+        if line.matches("\"\"\"").count() % 2 == 1 {
+            in_text_block = !in_text_block;
+        }
+        previous_blank = blank && !in_text_block;
+    }
+    // A file that ends on a blank line is the same violation at the bottom.
+    let trimmed = out.trim_end_matches('\n');
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    format!("{trimmed}\n")
 }
 
 /// Give a package a null-marked `package-info.java` the first time jails puts
@@ -1368,7 +1733,9 @@ pub fn generate(
             println!("would register {name} in the project's command dispatcher");
         }
         if let Some(dep) = match kind {
-            ArtifactKind::Dto | ArtifactKind::Scaffold => Some(&crate::spring::VALIDATION_STARTER),
+            ArtifactKind::Dto | ArtifactKind::Scaffold => Some(crate::spring::validation_dependency(
+                crate::pom::flavor(&crate::pom::read(&root)?),
+            )),
             ArtifactKind::Client => Some(&crate::spring::RESTCLIENT_STARTER),
             ArtifactKind::Fetcher => Some(&crate::spring::APACHE_HTTPCLIENT),
             ArtifactKind::Event => Some(&crate::spring::TESTCONTAINERS_KAFKA),
@@ -1393,7 +1760,7 @@ pub fn generate(
     }
 
     if matches!(kind, ArtifactKind::Command) {
-        register_command(&root, &base, &name)?;
+        register_command(&root, &base, &name, strategy_on)?;
     }
     // A generator that emits code needing a dependency has to supply it.
     // The alternative is handing the reader a compile error for a line they
@@ -1401,10 +1768,12 @@ pub fn generate(
     // remove. Splicing is idempotent -- pom.rs reports when it is already
     // there and changes nothing.
     ensure_failsafe(&root, &artifacts)?;
+    ensure_assertj(&root, writes_a_test(&artifacts))?;
     match kind {
-        ArtifactKind::Dto | ArtifactKind::Scaffold => {
-            ensure_dependency(&root, &crate::spring::VALIDATION_STARTER)?
-        }
+        ArtifactKind::Dto | ArtifactKind::Scaffold => ensure_dependency(
+            &root,
+            crate::spring::validation_dependency(crate::pom::flavor(&crate::pom::read(&root)?)),
+        )?,
         ArtifactKind::Client => ensure_dependency(&root, &crate::spring::RESTCLIENT_STARTER)?,
         ArtifactKind::Fetcher => {
             ensure_dependency(&root, &crate::spring::APACHE_HTTPCLIENT)?;
@@ -1644,35 +2013,6 @@ pub fn destroy(
     let name = strip_redundant_suffix(kind, &capitalize(name));
 
     let paths: Vec<PathBuf> = match kind {
-        ArtifactKind::Scaffold => vec![
-            main_dir(&root, &place(layout::DOMAIN)).join(format!("{name}.java")),
-            test_dir(&root, &place(layout::DOMAIN)).join(format!("{name}Test.java")),
-            main_dir(&root, &place(layout::APP)).join(format!("{name}Repository.java")),
-            main_dir(&root, &place(layout::ADAPTERS)).join(format!("Jdbc{name}Repository.java")),
-            test_dir(&root, &place(layout::ADAPTERS)).join(format!("Jdbc{name}RepositoryIT.java")),
-            main_dir(&root, &place(layout::ADAPTERS))
-                .join(format!("InMemory{name}Repository.java")),
-            main_dir(&root, &place(layout::SERVICE)).join(format!("{name}Service.java")),
-            test_dir(&root, &place(layout::SERVICE)).join(format!("{name}ServiceTest.java")),
-            main_dir(&root, &place(layout::WEB)).join(format!("{name}Controller.java")),
-            test_dir(&root, &place(layout::WEB)).join(format!("{name}ControllerTest.java")),
-            main_dir(&root, &place(layout::WEB)).join(format!("{name}Request.java")),
-            main_dir(&root, &place(layout::WEB)).join(format!("{name}Response.java")),
-        ],
-        ArtifactKind::Controller => vec![
-            main_dir(&root, &place(layout::WEB)).join(format!("{name}Controller.java")),
-            test_dir(&root, &place(layout::WEB)).join(format!("{name}ControllerTest.java")),
-        ],
-        ArtifactKind::Service => vec![
-            main_dir(&root, &place(layout::SERVICE)).join(format!("{name}Service.java")),
-            test_dir(&root, &place(layout::SERVICE)).join(format!("{name}ServiceTest.java")),
-        ],
-        ArtifactKind::Record | ArtifactKind::Value | ArtifactKind::Enum | ArtifactKind::Sealed => {
-            vec![
-                main_dir(&root, &place(layout::DOMAIN)).join(format!("{name}.java")),
-                test_dir(&root, &place(layout::DOMAIN)).join(format!("{name}Test.java")),
-            ]
-        }
         // The implementations are read back off disk rather than rebuilt from
         // a variant list destroy is not given. That also makes it a real
         // inverse of what is *there*: an implementation added by hand after
@@ -1697,23 +2037,6 @@ pub fn destroy(
             }
             paths
         }
-        ArtifactKind::Command => vec![
-            main_dir(&root, &place(layout::CLI)).join(format!("{name}Command.java")),
-            test_dir(&root, &place(layout::CLI)).join(format!("{name}CommandTest.java")),
-        ],
-        ArtifactKind::Handler => vec![
-            main_dir(&root, &place(layout::API)).join(format!("{name}Handler.java")),
-            test_dir(&root, &place(layout::API)).join(format!("{name}HandlerTest.java")),
-        ],
-        ArtifactKind::Repo => vec![
-            main_dir(&root, &place(layout::APP)).join(format!("{name}Repository.java")),
-            main_dir(&root, &place(layout::ADAPTERS)).join(format!("Jdbc{name}Repository.java")),
-            test_dir(&root, &place(layout::ADAPTERS)).join(format!("Jdbc{name}RepositoryIT.java")),
-        ],
-        ArtifactKind::Cli => vec![
-            main_dir(&root, &place(layout::CLI)).join(format!("{name}Cli.java")),
-            test_dir(&root, &place(layout::CLI)).join(format!("{name}CliTest.java")),
-        ],
         // `cases` derives its class from a markdown file's name, so destroy
         // takes that same path and resolves it the same way generate did.
         ArtifactKind::Cases => {
@@ -1728,128 +2051,29 @@ pub fn destroy(
                     .to_string(),
             );
         }
-        ArtifactKind::Class => vec![
-            main_dir(&root, &place("")).join(format!("{name}.java")),
-            test_dir(&root, &place("")).join(format!("{name}Test.java")),
-        ],
-        ArtifactKind::Interface => vec![main_dir(&root, &place("")).join(format!("{name}.java"))],
-        ArtifactKind::Test => vec![test_dir(&root, &place("")).join(format!("{name}Test.java"))],
-        // The shared registration files (HttpClientsConfig, SchedulingConfig)
-        // are deliberately not listed: a second client or job still needs
-        // them, and deleting one would strand the other.
-        ArtifactKind::Client => {
-            let pkg = place(layout::CLIENTS);
-            vec![
-                main_dir(&root, &pkg).join(format!("{name}Client.java")),
-                test_dir(&root, &pkg).join(format!("{name}ClientTest.java")),
-            ]
-        }
-        ArtifactKind::Fetcher => {
-            let pkg = place(layout::CLIENTS);
-            vec![
-                main_dir(&root, &pkg).join(format!("{name}Fetcher.java")),
-                main_dir(&root, &pkg).join(format!("Safe{name}Fetcher.java")),
-                test_dir(&root, &pkg).join(format!("Safe{name}FetcherTest.java")),
-            ]
-        }
-        ArtifactKind::Job => {
-            let pkg = place(layout::JOBS);
-            vec![
-                main_dir(&root, &pkg).join(format!("{name}Job.java")),
-                test_dir(&root, &pkg).join(format!("{name}JobTest.java")),
-            ]
-        }
-        ArtifactKind::HttpSink => {
-            let pkg = place(layout::JOBS);
-            vec![
-                main_dir(&root, &pkg).join(format!("{name}HttpOutboxSink.java")),
-                test_dir(&root, &pkg).join(format!("{name}HttpOutboxSinkTest.java")),
-            ]
-        }
-        ArtifactKind::HttpWorkflow => {
-            let jobs = place(layout::JOBS);
-            let web = subpackage(&base, config.layer(layout::WEB));
-            vec![
-                main_dir(&root, &jobs).join(format!("{name}Workflow.java")),
-                main_dir(&root, &web).join(format!("{name}WorkflowController.java")),
-                test_dir(&root, &jobs).join(format!("{name}WorkflowIT.java")),
-            ]
-        }
-        ArtifactKind::DurableJob => {
-            let jobs = place(layout::JOBS);
-            let web = subpackage(&base, config.layer(layout::WEB));
-            vec![
-                main_dir(&root, &jobs).join(format!("{name}Work.java")),
-                main_dir(&root, &jobs).join(format!("{name}Queue.java")),
-                main_dir(&root, &jobs).join(format!("Jdbc{name}Store.java")),
-                main_dir(&root, &jobs).join(format!("{name}Worker.java")),
-                main_dir(&root, &web).join(format!("{name}JobController.java")),
-                test_dir(&root, &jobs).join(format!("{name}JobIT.java")),
-            ]
-        }
-        ArtifactKind::Event => {
-            let pkg = place(layout::MESSAGING);
-            vec![
-                main_dir(&root, &pkg).join(format!("{name}Event.java")),
-                main_dir(&root, &pkg).join(format!("{name}Publisher.java")),
-                main_dir(&root, &pkg).join(format!("{name}Listener.java")),
-                test_dir(&root, &pkg).join(format!("{name}MessagingIT.java")),
-            ]
-        }
-        ArtifactKind::Usecase => {
-            let service = place(layout::SERVICE);
-            let web = place(layout::WEB);
-            let jobs = place(layout::JOBS);
-            vec![
-                main_dir(&root, &service).join(format!("{name}Command.java")),
-                main_dir(&root, &service).join(format!("{name}UseCase.java")),
-                main_dir(&root, &service).join(format!("Default{name}UseCase.java")),
-                test_dir(&root, &service).join(format!("{name}UseCaseTest.java")),
-                main_dir(&root, &web).join(format!("{name}Controller.java")),
-                test_dir(&root, &web).join(format!("{name}ControllerTest.java")),
-                main_dir(&root, &service).join(format!("Outbox{name}UseCase.java")),
-                main_dir(&root, &jobs).join(format!("Jdbc{name}Outbox.java")),
-                main_dir(&root, &jobs).join(format!("{name}OutboxWorker.java")),
-                test_dir(&root, &jobs).join(format!("{name}OutboxIT.java")),
-            ]
-        }
-        ArtifactKind::Query => {
-            let service = place(layout::SERVICE);
-            let web = place(layout::WEB);
-            let adapters = place(layout::ADAPTERS);
-            vec![
-                main_dir(&root, &service).join(format!("{name}Query.java")),
-                main_dir(&root, &service).join(format!("{name}QueryPort.java")),
-                main_dir(&root, &adapters).join(format!("Jdbc{name}Query.java")),
-                test_dir(&root, &adapters).join(format!("Jdbc{name}QueryIT.java")),
-                main_dir(&root, &web).join(format!("{name}QueryController.java")),
-                test_dir(&root, &web).join(format!("{name}QueryControllerTest.java")),
-            ]
-        }
-        ArtifactKind::Transition => {
-            let service = place(layout::SERVICE);
-            let web = place(layout::WEB);
-            let adapters = place(layout::ADAPTERS);
-            vec![
-                main_dir(&root, &service).join(format!("{name}Command.java")),
-                main_dir(&root, &service).join(format!("{name}UseCase.java")),
-                main_dir(&root, &adapters).join(format!("Jdbc{name}Transition.java")),
-                test_dir(&root, &adapters).join(format!("Jdbc{name}TransitionIT.java")),
-                main_dir(&root, &web).join(format!("{name}Controller.java")),
-                test_dir(&root, &web).join(format!("{name}ControllerTest.java")),
-            ]
-        }
-        ArtifactKind::Dto => {
-            let web = place(layout::WEB);
-            vec![
-                main_dir(&root, &web).join(format!("{name}Request.java")),
-                main_dir(&root, &web).join(format!("{name}Response.java")),
-                test_dir(&root, &web).join(format!("{name}DtoTest.java")),
-            ]
-        }
-        ArtifactKind::IntegrationTest => {
-            vec![test_dir(&root, &place("")).join(format!("{name}IT.java"))]
-        }
+        // Everything else is the table: one row per file, `{name}`
+        // substituted, `--package` honoured wherever the generator honours
+        // it.
+        _ => KIND_FILES
+            .iter()
+            .find(|(entry, _)| *entry == kind)
+            .map(|(_, files)| {
+                files
+                    .iter()
+                    .map(|(tree, layer, placement, pattern)| {
+                        let pkg = match placement {
+                            Placement::Layered => place(layer),
+                            Placement::Pinned => subpackage(&base, config.layer(layer)),
+                        };
+                        let dir = match tree {
+                            Tree::Main => main_dir(&root, &pkg),
+                            Tree::Test => test_dir(&root, &pkg),
+                        };
+                        dir.join(pattern.replace("{name}", &name))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
     };
 
     let existing: Vec<&PathBuf> = paths.iter().filter(|p| p.exists()).collect();
@@ -3318,6 +3542,44 @@ mod tests {
             fs::read_to_string(web.join("CommentController.java")).unwrap(),
             "// already here"
         );
+    }
+
+    /// Every kind is either in the file table or deliberately outside it.
+    ///
+    /// The failure this prevents is the quiet one: a kind added to `generate`
+    /// and not to `destroy` used to fall through to an empty path list, so
+    /// `jails destroy` printed "nothing to destroy" over files that were
+    /// right there. `tests/agreement.rs` catches it too, but only for a kind
+    /// somebody remembered to put in the scenario table; this catches it from
+    /// the enum itself.
+    #[test]
+    fn every_kind_is_either_in_the_file_table_or_deliberately_outside_it() {
+        use clap::ValueEnum as _;
+
+        let mut missing: Vec<String> = Vec::new();
+        for kind in ArtifactKind::value_variants() {
+            let in_table = KIND_FILES.iter().any(|(entry, _)| entry == kind);
+            let explained = NO_FILE_TABLE.iter().any(|(entry, _)| entry == kind);
+            if !in_table && !explained {
+                missing.push(format!("{kind:?}"));
+            }
+            assert!(
+                !(in_table && explained),
+                "{kind:?} is in both tables -- the special case wins, so the rows are dead"
+            );
+        }
+        assert!(
+            missing.is_empty(),
+            "{} kind(s) have no destroy arm, so `jails destroy` would say \
+             \"nothing to destroy\" over files that are right there: {}\n\n\
+             Add the rows to KIND_FILES, or -- if the kind genuinely has no \
+             path list -- add it to NO_FILE_TABLE with the reason.",
+            missing.len(),
+            missing.join(", ")
+        );
+        // Every explanation is load-bearing: it is what tells the next reader
+        // that the omission was a decision.
+        assert!(NO_FILE_TABLE.iter().all(|(_, why)| !why.is_empty()));
     }
 
     #[test]

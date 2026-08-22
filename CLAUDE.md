@@ -266,14 +266,14 @@ templates:
   build their paths through the same `place()` closure. A kind added to one
   and not the other silently strands files.
 
-  This is worse than it sounds and is a live hazard, not a historical note:
-  `destroy` holds a `match kind` with **17 hand-written `vec![]` arms** that
-  are a manual transcription of paths the generator right next door already
-  computes. Adding `usecase` meant writing ten `format!("{name}…java")` lines
-  twice. There *is* a test that checks the two agree —
-  `destroy_removes_only_files_that_generate_would_have_created` — but it
-  covers exactly one kind (`Record`) out of 30. If you add a kind, add its
-  destroy arm and extend that test. `plan.md` §6.2 has the structural fix.
+  `destroy` still holds a `match kind` with **17 hand-written `vec![]` arms**
+  that are a manual transcription of paths the generator right next door
+  already computes — adding `usecase` meant writing ten
+  `format!("{name}…java")` lines twice, and `plan.md` §6.2 has the structural
+  fix (derive the list from the generator). Until that lands, the drift is at
+  least *caught*: `tests/agreement.rs` compares the two over every kind in
+  the scenario table, in both directions. If you add a kind, add its destroy
+  arm; the agreement test is what tells you that you forgot.
 
 ## Import order is normalised at write time, not in templates
 
@@ -355,17 +355,30 @@ jails knows nothing about.
 
 ## Gotchas hit so far
 
-- **The golden suite claims a coverage it does not have.**
-  `tests/golden.rs` says "Every artifact kind and every capability, in the
-  smallest invocation that exercises it." That comment is false by twelve:
-  `usecase`, `query`, `transition`, `durable-job`, `fetcher`, `association`,
-  `http-workflow`, `http-sink`, `cases`, `format`, `ci` and `docker` appear
-  **zero** times in it. Eight kinds were added without the golden count
-  moving off 162 files / 25 scenarios. These are the most complex generators
-  in the tree, and their only byte-level verification is the two dogfood
-  manifests, which are a composition test rather than a snapshot. **If you
-  add a kind, add a `Scenario`** — and see `plan.md` §8.5 for the test that
-  makes forgetting impossible.
+- **The scenario table is the one place a new kind gets registered, and a
+  test enforces it.** `tests/common/scenarios.rs` holds `SCENARIOS` — every
+  artifact kind and every capability in the smallest invocation that
+  exercises it — and three targets read it: `tests/golden.rs` snapshots the
+  bytes, `tests/agreement.rs` checks `generate` and `destroy` agree, and
+  `every_kind_and_capability_has_a_golden_scenario` reads the kinds and
+  capabilities out of `jails generate --help` / `jails add --help` and
+  **fails when one has no scenario**. This is not decoration: twelve kinds
+  and capabilities had zero coverage before it existed, eight kinds having
+  been added without the golden count moving off 162 files / 25 scenarios.
+  So **add the `Scenario`, do not add a fourth list** — which kinds a
+  scenario covers is derived from its steps, not declared beside them.
+  `format` is the single documented exemption (it shells out to
+  `spotless:apply`, so its output depends on the toolchain rather than on
+  jails); it is listed in `COVERED_ELSEWHERE` with the test that does cover
+  it, and that test's existence is asserted.
+- **`destroy` and `generate` are checked against each other for every kind.**
+  `tests/agreement.rs` runs each scenario, attributes the created files to the
+  command that wrote them, then runs `destroy --pretend` and compares. Both
+  directions fail: a path `destroy` names that nothing generated, and a file
+  `generate` wrote that `destroy` would strand. It found the `usecase`
+  outbox sink port and its Kafka implementation being stranded on the first
+  run. A file that is *deliberately* kept — a migration, a fixture, a shared
+  `SchedulingConfig` — goes in `ALLOWED_LEFTOVER` **with its reason**.
 - **Generated projects target Java 25** (`pom::TARGET_RELEASE`), the current
   LTS. This was 27 and was changed deliberately: 27 is non-LTS, was not GA
   until 2026-09-15, had no vendor build in mise's registry (so an EA build had
@@ -451,6 +464,21 @@ jails knows nothing about.
   exactly the plumbing this tool exists to remove. `register_command` splices
   one line above `return commands;`, idempotently, and falls back to the
   Javadoc instructions when there is no dispatcher or more than one.
+- **The test fixtures are handed to real Maven now, so they have to be valid
+  poms.** `write_plain_fixture`'s pom had no `modelVersion` and no `version`
+  for as long as nothing ran Maven against it; the moment
+  `ledger_cli_manifest_builds_without_spring` did, every goal failed with
+  `'modelVersion' is missing`. There was also a *second*
+  `write_plain_fixture` in `tests/cli.rs` shadowing the shared one, whose
+  doc comment said "Still never handed to Maven" — deleted.
+- **`sql::table_name` is the only pluraliser, and `web::resource_path`
+  delegates to it.** A second one does not stay in step: the framework-free
+  handler served `/categorys` over a table called `categories`, while the
+  Spring scaffold's controller (which did go through `table_name`) used the
+  right path for the same resource. Irregulars are a deliberately short list
+  matched on the last word, plus a short uncountable list; there is no
+  `jails.toml` override, because derivability is what lets `destroy` find
+  what `generate` wrote.
 - **Commons CSV renamed `Builder.build()` to `Builder.get()` in 1.13.**
   The pinned version and the generated call have to move together; a unit
   test in `add.rs` asserts they do, because the mismatch only surfaces as
@@ -678,6 +706,24 @@ same for capability plans. Both goals are bound: `integration-test` runs
 them, `verify` is what makes a failure fail the build.
 
 ## A generator that emits code must supply the dependency it needs
+
+**And the version it needs depends on the project's flavour.** A
+`<dependency>` with no `<version>` is correct under
+`spring-boot-starter-parent`, which manages it, and *fatal* without one:
+Maven refuses to read the pom at all and every goal fails, `validate`
+included. So anything spliced goes through a flavour-aware chooser --
+`spring::validation_dependency` (the Boot starter, or pinned
+`jakarta.validation:jakarta.validation-api`, which is the artifact the
+generated annotations actually come from), `spring::failsafe_plugin`,
+`pom::assertj`. A versionless plugin is the quiet half: Maven only *warns*
+and resolves whatever the running Maven defaults to.
+
+**Every generated test is written against AssertJ, so `ensure_assertj` runs
+from the write path** — `generate` and `add` both — for the same reason
+`ensure_failsafe` does. `jails new`/`new-cli` put AssertJ in the pom, which is
+exactly why this went unnoticed: the projects that need it are the ones jails
+did **not** create, which is the case §12 is about.
+
 
 `g dto` splices `spring-boot-starter-validation`; `g client` splices
 `spring-boot-starter-restclient`. Handing the reader a compile error for a

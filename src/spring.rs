@@ -34,6 +34,30 @@ pub(crate) const VALIDATION_STARTER: Dependency = Dependency {
     optional: false,
 };
 
+/// The annotations themselves, for a project with no Spring Boot BOM.
+///
+/// `g scaffold` and `g dto` emit `jakarta.validation.constraints.*` and
+/// `@Valid`, and on Spring the starter is how you get them *plus* an
+/// implementation. On plain Maven the starter is two mistakes at once: it is
+/// versionless, which is a pom Maven refuses to read (plan.md §8.1), and it
+/// drags Boot into a project that deliberately has none. The API jar is the
+/// artifact the generated code actually imports.
+pub(crate) const JAKARTA_VALIDATION_API: Dependency = Dependency {
+    group_id: "jakarta.validation",
+    artifact_id: "jakarta.validation-api",
+    version: Some("3.1.1"),
+    scope: None,
+    optional: false,
+};
+
+/// Whichever of the two the project can actually resolve.
+pub(crate) fn validation_dependency(flavor: crate::pom::Flavor) -> &'static Dependency {
+    match flavor {
+        crate::pom::Flavor::SpringBoot => &VALIDATION_STARTER,
+        crate::pom::Flavor::PlainMaven => &JAKARTA_VALIDATION_API,
+    }
+}
+
 pub(crate) const ACTUATOR_STARTER: Dependency = Dependency {
     group_id: "org.springframework.boot",
     artifact_id: "spring-boot-starter-actuator",
@@ -1739,10 +1763,31 @@ pub(crate) fn outbox_files(
         {
             needs_instant = true;
             expressions.push("Instant.now()".to_string());
+        } else if event_field.name
+            == format!("{}Id", crate::generate::lower_first(target))
+            && let Some(id) = target_fields.iter().find(|f| f.name == "id")
+        {
+            // `<Target>Id` is the identity of the row this use case just
+            // created, referred to by the resource's own name rather than by
+            // the component's. It is the same convention every other generic
+            // relation already uses -- `association` maps `childField=id`,
+            // `durable-job` carries the resource id, and a scaffold declares
+            // a parent as `<parent>Id` -- so an event that names it is not
+            // asking for an inference jails does not already make.
+            //
+            // Without this an event has to spell the field `id`, which it
+            // cannot: `id` is the event's *own* identity, and the outbox
+            // requires it to be a distinct required UUID. That is what App C
+            // (`examples/payments-gateway`) refused on.
+            ensure_outbox_type(usecase, event_field, id, target)?;
+            expressions.push("result.id()".to_string());
         } else {
             return Err(format!(
-                "usecase {usecase} cannot derive event field `{}` for {event_class}.\n       fix: use a component from the command/result, or a required Instant name ending in `At`.",
-                event_field.name
+                "usecase {usecase} cannot derive event field `{}` for {event_class}.\n       \
+                 fix: use a component from the command/result, `{}Id` for the created \
+                 {target}'s own id, or a required Instant named `...At`.",
+                event_field.name,
+                crate::generate::lower_first(target)
             ));
         }
     }
@@ -6218,6 +6263,36 @@ import java.util.concurrent.ConcurrentHashMap;
 /// the second is what makes a failure fail the build. Binding only the first
 /// runs them and ignores the result.
 pub(crate) const FAILSAFE_ARTIFACT: &str = "maven-failsafe-plugin";
+
+/// The Failsafe plugin, versioned for the project it is going into.
+///
+/// Versionless is correct under `spring-boot-starter-parent`, which manages
+/// it, and a trap without one: Maven only *warns* about a versionless plugin
+/// rather than refusing the pom, so it resolves whatever the running Maven
+/// defaults to, which is not a decision jails should be making silently.
+/// plan.md §8.1 names it as the quiet half of that defect.
+pub(crate) fn failsafe_plugin(flavor: crate::pom::Flavor) -> &'static str {
+    match flavor {
+        crate::pom::Flavor::SpringBoot => FAILSAFE_PLUGIN,
+        crate::pom::Flavor::PlainMaven => FAILSAFE_PLUGIN_PINNED,
+    }
+}
+
+pub(crate) const FAILSAFE_PLUGIN_PINNED: &str = r#"<plugin>
+    <groupId>org.apache.maven.plugins</groupId>
+    <artifactId>maven-failsafe-plugin</artifactId>
+    <version>3.5.6</version>
+    <executions>
+        <execution>
+            <goals>
+                <!-- `verify` as well as `integration-test`: without it the
+                     tests run and their failures are ignored. -->
+                <goal>integration-test</goal>
+                <goal>verify</goal>
+            </goals>
+        </execution>
+    </executions>
+</plugin>"#;
 
 pub(crate) const FAILSAFE_PLUGIN: &str = r#"<plugin>
     <groupId>org.apache.maven.plugins</groupId>

@@ -570,6 +570,27 @@ fn generated_http_sink_delivers_typed_json_with_a_stable_idempotency_key() {
     assert!(status.success(), "generated HTTP provider contract failed");
 }
 
+/// The proof applications, as (name, manifest). One list, read by both gates
+/// below: a second copy is how one of them quietly stops covering an app.
+///
+/// The ledger CLI is **not** here -- it is the control, has no Spring parent,
+/// and needs the plain fixture. `ledger_cli_manifest_builds_without_spring`
+/// is its gate.
+const SPRING_APP_MANIFESTS: &[(&str, &str)] = &[
+    (
+        "web-crawler",
+        include_str!("../examples/web-crawler/.jails/app.toml"),
+    ),
+    (
+        "support-inbox",
+        include_str!("../examples/support-inbox/.jails/app.toml"),
+    ),
+    (
+        "payments-gateway",
+        include_str!("../examples/payments-gateway/.jails/app.toml"),
+    ),
+];
+
 #[test]
 fn app_manifests_compile_without_manual_source_edits() {
     if !real_mvn_available() {
@@ -581,16 +602,7 @@ fn app_manifests_compile_without_manual_source_edits() {
         return;
     }
     let path = real_path_without_mvnd();
-    for (name, manifest) in [
-        (
-            "web-crawler",
-            include_str!("../examples/web-crawler/.jails/app.toml"),
-        ),
-        (
-            "support-inbox",
-            include_str!("../examples/support-inbox/.jails/app.toml"),
-        ),
-    ] {
+    for (name, manifest) in SPRING_APP_MANIFESTS {
         let root = temp_dir(&format!("app-manifest-real-{name}"));
         write_spring_fixture(&root);
         fs::create_dir_all(root.join(".jails")).unwrap();
@@ -632,16 +644,7 @@ fn app_manifests_pass_the_full_generated_verification_gate() {
         return;
     }
     let path = real_path_without_mvnd();
-    for (name, manifest) in [
-        (
-            "web-crawler",
-            include_str!("../examples/web-crawler/.jails/app.toml"),
-        ),
-        (
-            "support-inbox",
-            include_str!("../examples/support-inbox/.jails/app.toml"),
-        ),
-    ] {
+    for (name, manifest) in SPRING_APP_MANIFESTS {
         let root = temp_dir(&format!("app-manifest-verify-{name}"));
         write_spring_fixture(&root);
         fs::create_dir_all(root.join(".jails")).unwrap();
@@ -690,6 +693,137 @@ fn app_manifests_pass_the_full_generated_verification_gate() {
             "{name} image did not retain the non-root runtime user"
         );
     }
+}
+
+/// Can Maven *read* what jails wrote? (`plan.md` §8.8.)
+///
+/// `mvn -o validate` parses the pom and stops -- about two seconds a cell, no
+/// downloads, no compilation -- and it is the check nothing in this suite was
+/// doing. The 293-second manifest gate compiles far more, but every cell of it
+/// is a Spring Boot project, so a versionless dependency (correct under
+/// `spring-boot-starter-parent`, fatal without one) survived it and shipped:
+/// `g scaffold` on a plain Maven project wrote a `spring-boot-starter-validation`
+/// with no version, and *every* Maven goal then failed with
+/// `'dependencies.dependency.version' ... is missing` -- including `validate`
+/// itself. The golden suite had a snapshot of that pom and ratified it.
+///
+/// So the matrix is over the thing that differed: the flavour of project.
+#[test]
+fn every_generated_pom_is_one_maven_can_read() {
+    if !real_mvn_available() {
+        skip("mvn not found on PATH");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    // Kinds that splice something into the pom, which is where the defect
+    // lives: a dependency, a plugin, or a test that needs AssertJ.
+    let cells: &[(&str, &[&str])] = &[
+        ("scaffold", &["g", "scaffold", "Note", "id:uuid@pk", "title:string!"]),
+        ("record", &["g", "record", "Note", "title:string!"]),
+        ("integration-test", &["g", "integration-test", "Checkout"]),
+        ("cli", &["g", "cli", "Admin"]),
+    ];
+    for spring in [false, true] {
+        for (label, args) in cells {
+            let root = temp_dir(&format!(
+                "pom-readable-{}-{label}",
+                if spring { "spring" } else { "plain" }
+            ));
+            if spring {
+                write_spring_fixture(&root);
+            } else {
+                write_plain_fixture(&root);
+            }
+            let output = jails_cmd_with_path(&root, &path).args(*args).output().unwrap();
+            assert!(
+                output.status.success(),
+                "{label} failed: {}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+
+            let output = std::process::Command::new("mvn")
+                .current_dir(&root)
+                .env("PATH", &path)
+                .args(["-o", "-q", "validate"])
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "after `jails {}` on a {} project, Maven cannot read the pom:\n{}{}",
+                args.join(" "),
+                if spring { "Spring Boot" } else { "plain Maven" },
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+}
+
+/// The control application: `plan.md` §4.4's whole point is that the crawler,
+/// the inbox and the payments gateway are all Spring Boot, so a Spring-shaped
+/// assumption in the generic machinery is invisible to every one of them.
+///
+/// It runs against the **plain** fixture -- no parent POM, no starters, no
+/// container -- and asks for `value`, `sealed`, `strategy`, `record`, `cli`
+/// and `command`, which the three Spring manifests never touch. `mvn verify`
+/// here is seconds rather than minutes, so this is the cheapest gate in the
+/// suite and the one that catches "it only works because Spring".
+#[test]
+fn ledger_cli_manifest_builds_without_spring() {
+    if !real_mvn_available() {
+        skip("mvn not found on PATH");
+        return;
+    }
+    if !real_java_supports_target_release() {
+        skip(&format!(
+            "javac on PATH does not support --release {TARGET_RELEASE}"
+        ));
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let root = temp_dir("app-manifest-ledger-cli");
+    write_plain_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/app.toml"),
+        include_str!("../examples/ledger-cli/.jails/app.toml"),
+    )
+    .unwrap();
+
+    let output = jails_cmd_with_path(&root, &path)
+        .args(["app", "apply", "--no-start"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "ledger-cli apply: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // The manifest names the dispatcher its command belongs to, so the
+    // registration is part of what this gate proves rather than a note.
+    let dispatcher =
+        fs::read_to_string(root.join("src/main/java/com/example/demo/cli/LedgerCli.java")).unwrap();
+    assert!(
+        dispatcher.contains("ReconcileCommand::run"),
+        "the manifest named its dispatcher, so the command must be registered in it: {dispatcher}"
+    );
+
+    // Not `-DskipTests`: `verify` includes the formatter the manifest asked
+    // for, and "does jails' own output satisfy the formatter jails installs"
+    // is exactly what this application found broken.
+    let status = std::process::Command::new("mvn")
+        .current_dir(&root)
+        .env("PATH", &path)
+        .args(["-q", "verify"])
+        .status()
+        .unwrap();
+    assert!(
+        status.success(),
+        "the ledger CLI failed its generated Maven verification"
+    );
 }
 
 #[test]
@@ -824,26 +958,6 @@ fn write_project_skeleton(root: &std::path::Path) {
     .unwrap();
 }
 
-/// Like `write_project_skeleton`, but with the pom `add` actually reads: a
-/// declared release level and a `<dependencies>` element to splice into.
-/// Still never handed to Maven.
-fn write_plain_fixture(root: &std::path::Path) {
-    let pkg_dir = root.join("src/main/java/com/example/demo");
-    fs::create_dir_all(&pkg_dir).unwrap();
-    fs::write(
-        root.join("pom.xml"),
-        format!(
-            "<project>\n    <groupId>com.example</groupId>\n    <artifactId>demo</artifactId>\n    <properties>\n        <maven.compiler.release>{TARGET_RELEASE}</maven.compiler.release>\n    </properties>\n    <dependencies>\n        <dependency>\n            <groupId>org.junit.jupiter</groupId>\n            <artifactId>junit-jupiter</artifactId>\n            <version>5.11.4</version>\n            <scope>test</scope>\n        </dependency>\n    </dependencies>\n</project>\n"
-        ),
-    )
-    .unwrap();
-    fs::write(
-        pkg_dir.join("DemoApplication.java"),
-        "package com.example.demo;\n\npublic class DemoApplication {}\n",
-    )
-    .unwrap();
-}
-
 // ---- mocked mvn/mvnd: verify jails' own command-construction logic
 // (which binary, which args) without needing real Maven. ----
 
@@ -916,6 +1030,21 @@ fn test_command_infers_unit_and_integration_test_names() {
             .success()
     );
 
+    // `Class#method` is the case that was silently wrong: the `Test` suffix
+    // was appended to the whole filter (`Payout#settlesTest`), and the
+    // Failsafe routing decision was then taken on that mangled string, so
+    // `PayoutIT#settles` went to Surefire -- which does not run `*IT` -- and
+    // Maven reported success having executed nothing.
+    for filter in ["Payout#settles", "PayoutIT#settles"] {
+        assert!(
+            jails_cmd(&root, Some(&fake_dir))
+                .args(["test", filter])
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+
     let invocation = read_log(&log);
     assert!(invocation.contains("test -Dtest=MoneyTest"), "{invocation}");
     assert!(
@@ -924,6 +1053,20 @@ fn test_command_infers_unit_and_integration_test_names() {
     );
     assert!(
         invocation.contains("test -Dtest=BankApplicationTests"),
+        "{invocation}"
+    );
+    assert!(
+        invocation.contains("test -Dtest=PayoutTest#settles"),
+        "the suffix belongs to the class, not the method: {invocation}"
+    );
+    assert!(
+        invocation.contains("verify -Dit.test=PayoutIT#settles"),
+        "an *IT is Failsafe's whatever the method is called: {invocation}"
+    );
+    // A filter that matches nothing is "no tests ran", not a build failure
+    // with a stack trace.
+    assert!(
+        invocation.contains("-Dsurefire.failIfNoSpecifiedTests=false"),
         "{invocation}"
     );
 }
@@ -2651,16 +2794,44 @@ fn generators_compose_through_user_owned_field_types() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("only applies to text"));
 
-    // An enum-typed component can be sampled; one whose constructor jails
-    // cannot know must disable the test rather than guess.
+    // An enum-typed component can be sampled by reading the enum, and a
+    // component whose type is a record *this project already has* by reading
+    // the record: `SourceRef` was generated two commands ago, so refusing to
+    // build one would be the tool forgetting what it just wrote.
     let test = fs::read_to_string(
         root.join("src/test/java/com/example/gym/domain/CanonicalTransactionTest.java"),
     )
     .unwrap();
     assert!(test.contains("Currency.values()[0]"), "{test}");
     assert!(
-        test.contains("@Disabled"),
-        "an unfabricable component must disable the test: {test}"
+        test.contains("new SourceRef("),
+        "a component whose type is a record on disk is sampled from it: {test}"
+    );
+    assert!(
+        !test.contains("@Disabled"),
+        "every component is fabricable now, so nothing should be disabled: {test}"
+    );
+
+    // A type jails owns but cannot construct is still an honest refusal: a
+    // sealed interface has no constructor to call and jails will not pick one
+    // of its variants for you, so the test is emitted whole and disabled
+    // naming the component rather than guessing.
+    let status = jails_cmd_with_path(&root, &path)
+        .args(["generate", "sealed", "outcome", "Accepted", "Rejected"])
+        .status()
+        .unwrap();
+    assert!(status.success(), "generate sealed failed");
+    let status = jails_cmd_with_path(&root, &path)
+        .args(["generate", "value", "stamped", "at:string!", "result:Outcome"])
+        .status()
+        .unwrap();
+    assert!(status.success(), "generate value with a sealed type failed");
+    let stamped =
+        fs::read_to_string(root.join("src/test/java/com/example/gym/domain/StampedTest.java"))
+            .unwrap();
+    assert!(
+        stamped.contains("@Disabled") && stamped.contains("result"),
+        "an unfabricable component must disable the test and name itself: {stamped}"
     );
 
     let status = jails_cmd_with_path(&root, &path)

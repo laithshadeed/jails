@@ -84,13 +84,15 @@ Installs to `~/.cargo/bin/jails`. Shell completion:
   constructs the class, so it compiles the moment it is written and stops
   compiling the day you add a real constructor, which is the prompt to write
   the real assertion.
-- `jails generate|g command <Name>` — a CLI subcommand for `new-cli`
+- `jails generate|g command <Name> [--on <Dispatcher>]` — a CLI subcommand for `new-cli`
   projects, registered in the project's dispatcher automatically: `run(PrintStream, PrintStream, String...)` returning an exit
   code, with a `NAME` constant to dispatch on. Output streams are arguments
   and nothing calls `System.exit`, so the companion test drives the whole
   command in-process. jails splices one line into the dispatcher's
-  `commands()`; if the project has no dispatcher (or more than one) it says
-  so and leaves the Javadoc's instructions as the fallback.
+  `commands()`. A project can easily have two — `new-cli` writes `App.java`
+  and `g cli <Name>` writes another — so `--on <Dispatcher>` names the one
+  this command belongs to; without it, an ambiguous project gets a note
+  listing the candidates and the Javadoc's instructions as the fallback.
 - `jails generate|g cli <Name>` — a second dispatcher, for projects that
   want one separate from `App.java`. `new-cli` already gives you one.
 - `jails add|a db` — PostgreSQL JDBC, Flyway, PostgreSQL Testcontainers, a
@@ -227,6 +229,26 @@ it already draws for hand-written properties inside a jails-owned block.
   `.bearer-token`, `.connect-timeout-ms`, and `.request-timeout-ms`. Every sink
   is at-least-once: if a later sink fails, earlier sinks may see the same stable
   event id again and must deduplicate it.
+- `jails generate|g usecase <Name> <field:type...> --on <Resource>
+  [--yields <Event>]` (alias `uc`) — an executable create operation over an
+  existing scaffold: a typed command, an application port, a transactional
+  implementation that fills in what it can infer (ids, timestamps, status
+  defaults, counters, flags, empty optionals) and refuses what it cannot, an
+  HTTP adapter, and tests. With `--yields <Event>` it also generates a
+  transactional outbox: the business row and the typed event commit together,
+  a leased relay delivers to every configured sink, and PostgreSQL tests prove
+  bounded retry and inspectable terminal failure. An event component named
+  `<Resource>Id` is the identity of the row the use case just created.
+- `jails generate|g query <Name> <field:type...> --on <Resource>` — a typed
+  read: a query record, a port, a JDBC adapter and an HTTP adapter, with every
+  declared field an equality filter. Results have stable key ordering and a
+  hard row ceiling; the adapter's SQL comes from the same column model as the
+  table's DDL.
+- `jails generate|g cases <path/to/file.md>` — one `@Test` per bullet in a
+  markdown file, as a class-level `@Disabled` todo list the build can read.
+  Every case throws rather than passing vacuously: delete one `@Disabled`,
+  make that case pass, move to the next. Note the NAME here is the markdown
+  path, not a class name.
 - `jails generate|g transition <Name> <field:type...> --on <Resource>` — an
   atomic PostgreSQL compare-and-swap for state changes. `id`, fields marked
   `@scope`, and the required numeric `version` match the row; every remaining
@@ -690,7 +712,7 @@ into one flat pile beside `App.java`:
 | `repo` (adapter) | `adapters` |
 | `migration` | `src/main/resources/db/migration` |
 | `add csv`/`json`/`sqlite` | `adapters` |
-| `add db` / `add kafka` | `compose.yaml` (and `src/main/resources/db/migration` for `db`; Spring `add db` also writes `PostgresContainerConfig` and test-classpath `META-INF/spring.factories`) |
+| `add db` / `add kafka` | `compose.yaml` (and `src/main/resources/db/migration` for `db`; Spring `add db` also writes `TestcontainersConfig` and `@Import`s it into the `@SpringBootTest` classes already on disk) |
 | `add http`, `handler` | `api` |
 | `add testkit`/`fake` | `testkit` (test tree) |
 

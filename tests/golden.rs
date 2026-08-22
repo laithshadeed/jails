@@ -27,226 +27,11 @@
 
 mod common;
 
+use common::scenarios::{Fixture, SCENARIOS, Scenario};
 use common::*;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-
-/// Which fixture a scenario starts from.
-#[derive(Copy, Clone)]
-enum Fixture {
-    Plain,
-    Spring,
-}
-
-struct Scenario {
-    /// Directory under `tests/golden/`.
-    name: &'static str,
-    fixture: Fixture,
-    /// jails invocations, run in order.
-    steps: &'static [&'static [&'static str]],
-}
-
-/// Every artifact kind and every capability, in the smallest invocation that
-/// exercises it.
-const SCENARIOS: &[Scenario] = &[
-    // ---- generators, plain Maven ----
-    Scenario {
-        name: "record",
-        fixture: Fixture::Plain,
-        steps: &[&[
-            "g",
-            "record",
-            "Note",
-            "title:string!",
-            "body:string?",
-            "at:instant",
-        ]],
-    },
-    Scenario {
-        name: "value",
-        fixture: Fixture::Plain,
-        steps: &[&["g", "value", "Money", "amount:long", "currency:string"]],
-    },
-    Scenario {
-        name: "enum-and-sealed",
-        fixture: Fixture::Plain,
-        steps: &[
-            &["g", "enum", "Status", "ACTIVE", "CLOSED"],
-            &["g", "sealed", "Outcome", "Accepted", "Rejected"],
-        ],
-    },
-    Scenario {
-        name: "strategy",
-        fixture: Fixture::Plain,
-        steps: &[
-            &["g", "record", "Transaction", "id:uuid", "amount:long"],
-            &["g", "record", "Reward", "id:uuid", "amount:long"],
-            &[
-                "g",
-                "strategy",
-                "RewardRule",
-                "Coffee",
-                "Large",
-                "--on",
-                "Transaction",
-                "--yields",
-                "Reward",
-            ],
-            &[
-                "g",
-                "strategy",
-                "Eligibility",
-                "Domestic",
-                "--on",
-                "Transaction",
-            ],
-        ],
-    },
-    Scenario {
-        name: "class-interface-test",
-        fixture: Fixture::Plain,
-        steps: &[
-            &["g", "class", "RingBuffer"],
-            &["g", "interface", "Clock"],
-            &["g", "test", "Parser"],
-            &["g", "integration-test", "Checkout"],
-        ],
-    },
-    Scenario {
-        name: "command-and-cli",
-        fixture: Fixture::Plain,
-        steps: &[&["g", "cli", "Admin"], &["g", "command", "Greet"]],
-    },
-    Scenario {
-        name: "repo",
-        fixture: Fixture::Plain,
-        steps: &[&["g", "repo", "Note", "id:uuid", "title:string"]],
-    },
-    Scenario {
-        name: "scaffold-plain",
-        fixture: Fixture::Plain,
-        steps: &[&[
-            "g",
-            "scaffold",
-            "Note",
-            "id:uuid@pk",
-            "title:string!",
-            "amount:long@positive",
-            "createdAt:instant",
-        ]],
-    },
-    Scenario {
-        name: "migration",
-        fixture: Fixture::Plain,
-        steps: &[&["g", "migration", "add_note_index"]],
-    },
-    // ---- generators that need Spring ----
-    Scenario {
-        name: "scaffold-spring",
-        fixture: Fixture::Spring,
-        steps: &[&[
-            "g",
-            "scaffold",
-            "Note",
-            "id:uuid@pk",
-            "title:string!",
-            "createdAt:instant",
-            "--index",
-            "title, created_at desc",
-        ]],
-    },
-    Scenario {
-        name: "controller-service",
-        fixture: Fixture::Spring,
-        steps: &[&["g", "controller", "Health"], &["g", "service", "Billing"]],
-    },
-    Scenario {
-        name: "dto-client-job",
-        fixture: Fixture::Spring,
-        steps: &[
-            &["g", "record", "Payout", "id:uuid", "amount:long"],
-            &["g", "dto", "Payout"],
-            &["g", "client", "Ledger"],
-            &["g", "job", "Reconcile"],
-        ],
-    },
-    Scenario {
-        name: "event",
-        fixture: Fixture::Spring,
-        steps: &[&["g", "event", "Transaction"]],
-    },
-    // ---- capabilities, plain Maven ----
-    Scenario {
-        name: "cap-csv",
-        fixture: Fixture::Plain,
-        steps: &[&["add", "csv", "--no-start"]],
-    },
-    Scenario {
-        name: "cap-json",
-        fixture: Fixture::Plain,
-        steps: &[&["add", "json", "--no-start"]],
-    },
-    Scenario {
-        name: "cap-sqlite",
-        fixture: Fixture::Plain,
-        steps: &[&["add", "sqlite", "--no-start"]],
-    },
-    Scenario {
-        name: "cap-testkit-fake",
-        fixture: Fixture::Plain,
-        steps: &[&["add", "testkit", "fake", "--no-start"]],
-    },
-    Scenario {
-        name: "cap-http",
-        fixture: Fixture::Plain,
-        steps: &[
-            &["add", "http", "--no-start"],
-            &["g", "handler", "WorkItem"],
-        ],
-    },
-    // `add format` is deliberately absent: it shells out to spotless:apply
-    // as a best-effort last step, and whether that succeeds depends on the
-    // JDK this machine has. A golden target has to be hermetic, and a
-    // scenario whose output depends on the toolchain is not a snapshot of
-    // jails. `add_format_*` in tests/cli.rs covers it instead.
-    // ---- capabilities that need Spring ----
-    Scenario {
-        name: "cap-db",
-        fixture: Fixture::Spring,
-        steps: &[&["add", "db", "--no-start"]],
-    },
-    Scenario {
-        name: "cap-kafka",
-        fixture: Fixture::Spring,
-        steps: &[&["add", "kafka", "--no-start"]],
-    },
-    Scenario {
-        name: "cap-api-actuator",
-        fixture: Fixture::Spring,
-        steps: &[&["add", "api", "actuator", "--no-start"]],
-    },
-    Scenario {
-        name: "cap-cache-security",
-        fixture: Fixture::Spring,
-        steps: &[&["add", "cache", "security", "--no-start"]],
-    },
-    Scenario {
-        name: "cap-redis",
-        fixture: Fixture::Spring,
-        steps: &[&["add", "redis", "--no-start"]],
-    },
-    Scenario {
-        name: "cap-observability",
-        fixture: Fixture::Spring,
-        steps: &[&["add", "observability", "--no-start"]],
-    },
-    Scenario {
-        name: "cap-toxiproxy",
-        fixture: Fixture::Spring,
-        steps: &[&["add", "toxiproxy", "--no-start"]],
-    },
-];
 
 fn golden_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden")
@@ -314,28 +99,19 @@ fn fixture_files(fixture: Fixture) -> BTreeMap<String, String> {
 }
 
 fn run_scenario(scenario: &Scenario) -> BTreeMap<String, String> {
-    let root = temp_dir(&format!("golden-{}", scenario.name));
-    match scenario.fixture {
-        Fixture::Plain => write_plain_fixture(&root),
-        Fixture::Spring => write_spring_fixture(&root),
-    }
+    let root = common::scenarios::prepare(scenario);
     let baseline = fixture_files(scenario.fixture);
 
-    for step in scenario.steps {
-        let output = jails_cmd(&root, None).args(*step).output().unwrap();
-        assert!(
-            output.status.success(),
-            "scenario `{}` step `{}` failed:\n{}",
-            scenario.name,
-            step.join(" "),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
+    common::scenarios::run_steps(&root, scenario);
 
     let mut files = snapshot(&root);
     // Keep a file the fixture also had only when jails changed it (pom.xml,
     // application.properties): identical content means jails left it alone.
     files.retain(|path, contents| baseline.get(path) != Some(contents));
+    // A seed file is the scenario's input, not jails' output.
+    for (rel, _) in scenario.seed {
+        files.remove(*rel);
+    }
     fs::remove_dir_all(&root).ok();
     files
 }
@@ -435,6 +211,116 @@ fn the_goldens_still_hold_the_properties_that_matter() {
         assert!(
             text.starts_with("package ") || text.starts_with("/**"),
             "{path}: a generated Java file should start with its package or Javadoc"
+        );
+        // palantir-java-format removes both of these, so leaving one in means
+        // `add format` -- which jails installs itself -- fails `jails check`
+        // on a project whose every line jails wrote. `tidy_blank_lines` is
+        // the write-path rule; this is what keeps a new template honest.
+        // A blank line inside a text block is data, and is left alone.
+        let mut in_text_block = false;
+        let mut previous_blank = false;
+        for (number, line) in text.lines().enumerate() {
+            let blank = line.trim().is_empty();
+            assert!(
+                !(blank && previous_blank),
+                "{path}:{}: two blank lines in a row -- palantir-java-format removes one",
+                number + 1
+            );
+            if line.matches("\"\"\"").count() % 2 == 1 {
+                in_text_block = !in_text_block;
+            }
+            previous_blank = blank && !in_text_block;
+        }
+        assert!(
+            text.ends_with('\n') && !text.ends_with("\n\n"),
+            "{path}: a generated file should end with exactly one newline"
+        );
+    }
+}
+
+/// Kinds and capabilities that deliberately have no golden scenario, each
+/// with the test that covers them instead.
+///
+/// A golden target has to be hermetic. `add format` shells out to
+/// `spotless:apply` as its last step -- deliberately, so a freshly generated
+/// project passes `jails check` -- and whether that succeeds depends on the
+/// JDK and the plugin cache of the machine running the suite. A snapshot of
+/// that is a snapshot of the toolchain, not of jails.
+///
+/// An exemption is only allowed to be a pointer, never a hole: the test named
+/// here must exist, and the assertion below fails if it is renamed away.
+const COVERED_ELSEWHERE: &[(&str, &str)] =
+    &[("format", "a_freshly_generated_project_passes_check_with_no_manual_formatting")];
+
+/// The header of this file claims *"every artifact kind and every capability,
+/// in the smallest invocation that exercises it."* That comment was false by
+/// twelve when `plan.md` §8.5 counted: eight kinds were added and the golden
+/// count never moved off 162 files / 25 scenarios, so the most complex
+/// generators in the tree -- a leased store, an outbox, a traversal engine --
+/// had no byte-level verification at all.
+///
+/// This is the test that makes the claim true and keeps it true. It reads the
+/// kinds and capabilities out of the binary's own help, so a kind added to the
+/// enum is a kind this test demands a scenario for on the next run.
+#[test]
+fn every_kind_and_capability_has_a_golden_scenario() {
+    let covered_kinds = common::scenarios::covered_kinds();
+    let covered_caps = common::scenarios::covered_capabilities();
+    let exempt: Vec<&str> = COVERED_ELSEWHERE.iter().map(|(name, _)| *name).collect();
+
+    let mut missing: Vec<String> = Vec::new();
+    for kind in common::scenarios::cli_kinds() {
+        if !covered_kinds.contains(kind.as_str()) && !exempt.contains(&kind.as_str()) {
+            missing.push(format!("kind `{kind}`"));
+        }
+    }
+    for cap in common::scenarios::cli_capabilities() {
+        if !covered_caps.contains(cap.as_str()) && !exempt.contains(&cap.as_str()) {
+            missing.push(format!("capability `{cap}`"));
+        }
+    }
+
+    assert!(
+        missing.is_empty(),
+        "{} thing(s) jails can generate have no golden scenario:\n  {}\n\n\
+         Add a `Scenario` to tests/common/scenarios.rs in the smallest \
+         invocation that exercises it, then \
+         `UPDATE_GOLDEN=1 cargo test --test golden` and read the diff. \
+         If it genuinely cannot be snapshotted -- output that depends on the \
+         toolchain rather than on jails -- add it to COVERED_ELSEWHERE with \
+         the test that does cover it.",
+        missing.len(),
+        missing.join("\n  ")
+    );
+
+    // Every scenario also has to be reachable: a `SCENARIOS` entry naming a
+    // kind clap no longer accepts would fail as a step, but one naming a
+    // *capability* that was renamed would quietly stop covering anything.
+    let kinds = common::scenarios::cli_kinds();
+    let caps = common::scenarios::cli_capabilities();
+    for kind in &covered_kinds {
+        assert!(
+            kinds.contains(*kind),
+            "SCENARIOS exercises `g {kind}`, which is not a value `jails generate` accepts \
+             -- spell the canonical name, not an alias"
+        );
+    }
+    for cap in &covered_caps {
+        assert!(
+            caps.contains(*cap),
+            "SCENARIOS exercises `add {cap}`, which is not a value `jails add` accepts"
+        );
+    }
+
+    let cli_tests = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cli.rs"),
+    )
+    .unwrap();
+    for (name, test) in COVERED_ELSEWHERE {
+        assert!(
+            cli_tests.contains(test),
+            "`{name}` is exempt from the golden suite because `{test}*` in tests/cli.rs covers \
+             it, but no such test exists any more"
         );
     }
 }

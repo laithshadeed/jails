@@ -1,0 +1,51 @@
+# The control application: plain Maven, no Spring, no web, no database.
+#
+# A, B and C are all Spring Boot, and every one of the newest kinds calls
+# `require_spring`. Any Spring-shaped assumption in the generic machinery is
+# invisible to all three -- so D is a CSV -> double-entry ledger reconciler
+# built out of the kinds the other three never touch: `value`, `sealed`,
+# `strategy`, `record`, `cli`, `command`.
+#
+# The rule that makes it a control: standing it up must not add a line to
+# `src/`. If it does, that line is the finding.
+schema = 1
+capabilities = ["csv", "json", "sqlite", "testkit", "format"]
+
+[[generate]]
+kind = "value"
+name = "Money"
+fields = ["amountMinor:long", "currency:string!"]
+
+[[generate]]
+kind = "enum"
+name = "MatchOutcome"
+fields = ["MATCHED", "AMOUNT_DIFFERS", "DATE_DIFFERS", "UNMATCHED"]
+
+[[generate]]
+kind = "sealed"
+name = "LedgerError"
+fields = ["MalformedRow", "UnknownCurrency", "DuplicateReference"]
+
+[[generate]]
+kind = "record"
+name = "Entry"
+fields = ["reference:string!", "postedAt:date", "amount:Money", "memo:string?"]
+
+[[generate]]
+kind = "strategy"
+name = "MatchRule"
+fields = ["ExactReference", "AmountAndDate", "FuzzyMemo"]
+strategy_on = "Entry"
+strategy_yields = "MatchOutcome"
+
+[[generate]]
+kind = "cli"
+name = "Ledger"
+
+# `new-cli` writes App.java and `g cli Ledger` writes a second dispatcher, so
+# the project has two: name the one this command belongs to rather than
+# letting jails guess.
+[[generate]]
+kind = "command"
+name = "Reconcile"
+strategy_on = "Ledger"

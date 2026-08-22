@@ -367,6 +367,18 @@ pub fn add(
     tests_wired |=
         install_capability_properties(&root, capability.label(), &plan.properties, false)?;
 
+    // Same rule as Failsafe: a capability that writes a test writes it
+    // against AssertJ, so the project has to have AssertJ. `add testkit` on a
+    // plain Maven project jails did not create is where this showed up --
+    // six `cannot find symbol: method assertThat` for a file the reader never
+    // wrote.
+    crate::generate::ensure_assertj(
+        &root,
+        plan.files
+            .iter()
+            .any(|f| f.path.to_string_lossy().contains("src/test/java")),
+    )?;
+
     // Same rule as the generators: a capability that writes an `*IT` has to
     // make sure something runs it. Failsafe is not in the Spring Boot
     // parent's default build, so without this `mvn verify` completes,
@@ -379,7 +391,7 @@ pub fn add(
     }) && let Some(next) = pom::add_plugin(
         &updated_pom,
         crate::spring::FAILSAFE_ARTIFACT,
-        crate::spring::FAILSAFE_PLUGIN,
+        crate::spring::failsafe_plugin(pom::flavor(&updated_pom)),
     )? {
         std::fs::write(root.join("pom.xml"), &next)
             .map_err(|e| format!("failed to write pom.xml: {e}"))?;
@@ -392,6 +404,22 @@ pub fn add(
         // manifest that omits it because it happened to be installed before
         // the manifest existed is a manifest `sync` would act on wrongly.
         crate::config::record_capability(&root, capability.label())?;
+        // `format` is the one capability whose work is not finished by its
+        // pom edit: it also has to leave the sources formatted. Code written
+        // *after* it was installed has never been through the formatter, and
+        // that is the normal case rather than an odd one -- `jails app apply`
+        // installs every capability first and then runs the generate intents,
+        // so on a manifest naming `format` every generated file arrives after
+        // the plugin does. Returning early here is what made App D fail
+        // `jails check` on a project whose every line jails wrote.
+        if matches!(capability, Capability::Format) {
+            if crate::run::fmt_quietly(&root) {
+                println!("  format  applied to the sources generated since");
+            } else {
+                println!("  note    could not run the formatter on this toolchain");
+            }
+            return Ok(());
+        }
         println!("{} is already set up -- nothing to do", capability.label());
         return Ok(());
     }

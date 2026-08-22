@@ -1,3 +1,7 @@
+#![allow(dead_code)]
+
+pub mod scenarios;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -9,7 +13,17 @@ pub fn bin() -> &'static str {
 /// A fresh, isolated scratch directory under the OS temp dir -- real
 /// filesystem, but never the actual project checkout, so tests can't step
 /// on each other or on this repo.
+///
+/// Nothing removes these at the end of a test, deliberately: when a
+/// real-toolchain test fails, the generated project is the evidence, and a
+/// `Drop` guard would delete it before anyone could look. The cost is that
+/// they accumulate -- a full sweep leaves a Maven project per cell -- and
+/// `examples/DOGFOOD.md` records the day 15,288 of them filled `/tmp` and
+/// Maven failed with `Disk quota exceeded` mid-gate. It happened again on
+/// 2026-08-22, which is why the sweep below exists: **keep the evidence from
+/// this run, take out the ones nobody is looking at any more.**
 pub fn temp_dir(label: &str) -> PathBuf {
+    sweep_stale_fixtures();
     let dir = std::env::temp_dir().join(format!(
         "jails-e2e-{label}-{}-{:?}",
         std::process::id(),
@@ -20,6 +34,52 @@ pub fn temp_dir(label: &str) -> PathBuf {
     ));
     fs::create_dir_all(&dir).unwrap();
     dir
+}
+
+/// How old a fixture has to be before it is rubbish rather than evidence.
+///
+/// Well clear of a full sweep: the longest single test here is minutes, so a
+/// directory this old belongs to a run that finished long ago. Anything
+/// younger is left alone, including every fixture a *concurrent* run is
+/// using.
+const FIXTURE_LIFETIME: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
+/// Remove `jails-*` fixtures older than `FIXTURE_LIFETIME`, once per process.
+///
+/// Opportunistic on purpose: it never fails a test. A directory that cannot
+/// be read or removed -- one another user owns, one a running process holds
+/// -- is skipped, because a cleaner that can break a test run is worse than
+/// a full disk you can `rm`.
+fn sweep_stale_fixtures() {
+    use std::sync::Once;
+    static SWEPT: Once = Once::new();
+    SWEPT.call_once(|| {
+        let Ok(entries) = fs::read_dir(std::env::temp_dir()) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            // Everything this project creates, not just this file's
+            // fixtures: each module's unit tests have their own `scratch()`
+            // label, so the leftovers are `jails-e2e-*`, `jails-run-test-*`,
+            // `jails-new-test-*`, `jails-project-*` and half a dozen more.
+            // Sweeping only the two prefixes I first thought of left 3,166
+            // directories behind and 13 GB still gone.
+            if !name.starts_with("jails-") {
+                continue;
+            }
+            let stale = fs::metadata(&path)
+                .and_then(|m| m.modified())
+                .map(|when| when.elapsed().is_ok_and(|age| age > FIXTURE_LIFETIME))
+                .unwrap_or(false);
+            if stale {
+                fs::remove_dir_all(&path).ok();
+            }
+        }
+    });
 }
 
 /// Build a `jails` invocation rooted at `cwd`. When `fake_maven_dir` is
@@ -252,7 +312,13 @@ pub fn write_plain_fixture(root: &Path) {
     std::fs::write(
         root.join("pom.xml"),
         format!(
-            "<project>\n    <groupId>com.example</groupId>\n    <artifactId>demo</artifactId>\n    <properties>\n        <maven.compiler.release>{TARGET_RELEASE}</maven.compiler.release>\n    </properties>\n    <dependencies>\n        <dependency>\n            <groupId>org.junit.jupiter</groupId>\n            <artifactId>junit-jupiter</artifactId>\n            <version>5.11.4</version>\n            <scope>test</scope>\n        </dependency>\n    </dependencies>\n</project>\n"
+            // `modelVersion` and the project's own `version` are not
+            // decoration: without them Maven refuses to read the POM at all,
+            // and every test that only ever *inspected* this fixture passed
+            // while nothing had ever built it. That is plan.md 8.8 in
+            // miniature, and `add format` -- which shells out to Maven -- is
+            // what finally noticed.
+            "<project>\n    <modelVersion>4.0.0</modelVersion>\n    <groupId>com.example</groupId>\n    <artifactId>demo</artifactId>\n    <version>0.1.0</version>\n    <properties>\n        <maven.compiler.release>{TARGET_RELEASE}</maven.compiler.release>\n    </properties>\n    <dependencies>\n        <dependency>\n            <groupId>org.junit.jupiter</groupId>\n            <artifactId>junit-jupiter</artifactId>\n            <version>5.11.4</version>\n            <scope>test</scope>\n        </dependency>\n    </dependencies>\n</project>\n"
         ),
     )
     .unwrap();

@@ -1,6 +1,7 @@
 use crate::Result;
 use crate::compose;
 use crate::generate::find_project_root;
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -159,24 +160,60 @@ fn forced_color(cmd: &mut Command) {
         .arg("-Dspring-boot.run.jvmArguments=-Dspring.output.ansi.enabled=always");
 }
 
+/// Split `Class#method` into its two halves. Anything with no `#` is all
+/// class.
+fn split_method(filter: &str) -> (&str, Option<&str>) {
+    match filter.split_once('#') {
+        Some((class, method)) => (class, Some(method)),
+        None => (filter, None),
+    }
+}
+
+/// `Payout` -> `PayoutTest`, `Payout#settles` -> `PayoutTest#settles`.
+///
+/// The suffix belongs to the class alone. Appending it to the whole filter
+/// produced `Payout#settlesTest`, a method nothing declares, and Surefire
+/// then failed the build for a filter jails itself had corrupted.
+fn expand_filter(filter: &str) -> String {
+    let (class, method) = split_method(filter);
+    let expanded = if class.ends_with("Test")
+        || class.ends_with("Tests")
+        || class.ends_with("IT")
+        || class.contains('*')
+    {
+        class.to_string()
+    } else {
+        format!("{class}Test")
+    };
+    match method {
+        Some(method) => format!("{expanded}#{method}"),
+        None => expanded,
+    }
+}
+
 pub fn test(filter: Option<&str>, debug: bool) -> Result<()> {
     let root = find_project_root()?;
     let mut cmd = Command::new(maven_binary(&root));
     if let Some(f) = filter {
-        let test_name = if f.ends_with("Test")
-            || f.ends_with("Tests")
-            || f.ends_with("IT")
-            || f.contains('*')
-        {
-            f.to_string()
-        } else {
-            format!("{f}Test")
-        };
-        if test_name.ends_with("IT") {
+        let test_name = expand_filter(f);
+        // Decided on the *class*, not on the whole filter. `PayoutIT#settles`
+        // ends in `settles`, so routing on the finished string sent an
+        // integration test to Surefire, which does not run `*IT` -- Maven
+        // reported success having executed nothing. Splitting first is what
+        // makes both halves right.
+        let (class, _) = split_method(&test_name);
+        if class.ends_with("IT") {
             cmd.arg("verify").arg(format!("-Dit.test={test_name}"));
         } else {
             cmd.arg("test").arg(format!("-Dtest={test_name}"));
         }
+        // Without this, a filter that matches nothing is a *build failure*
+        // with a stack trace rather than "no tests ran" -- and jails' own
+        // routing above can hand Surefire a filter that legitimately matches
+        // nothing when the project holds both kinds. The payments team keeps
+        // this as tribal knowledge; it belongs in the tool.
+        cmd.arg("-Dsurefire.failIfNoSpecifiedTests=false");
+        cmd.arg("-Dfailsafe.failIfNoSpecifiedTests=false");
     } else {
         cmd.arg("test");
     }
@@ -277,72 +314,140 @@ pub fn watch(debug: bool) -> Result<()> {
 
     let mut run_cmd = Command::new(maven_binary(&root));
     run_cmd.arg("spring-boot:run").current_dir(&root);
-    if debug {
-        crate::debug_cmd(&run_cmd);
-    }
-    let mut child = run_cmd
-        .spawn()
-        .map_err(|e| format!("failed to start spring-boot:run: {e}"))?;
+    // The same treatment `jails run` gets, and for the same reason:
+    // `mvn spring-boot:run` exits 0 over an application that never started,
+    // because devtools runs `main` on its own thread and catches the
+    // exception there. Watching a dead application and reporting nothing is
+    // the worst version of that bug, since the reader is *sitting there*
+    // waiting for it to come up.
+    forced_color(&mut run_cmd);
+    let (finished, when_it_exits) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = finished.send(run_watched(run_cmd, debug));
+    });
 
-    let src_root = root.join("src/main/java");
-    let mut last_change = latest_mtime(&src_root);
+    let mut seen = fingerprint(&root);
     println!(
         "jails: watching {} for changes (Ctrl-C to stop)",
-        src_root.display()
+        root.display()
     );
 
     loop {
         std::thread::sleep(std::time::Duration::from_millis(750));
 
-        if let Ok(Some(status)) = child.try_wait() {
-            return if status.success() {
-                Ok(())
-            } else {
-                Err(format!("spring-boot:run exited with {status}"))
-            };
+        match when_it_exits.try_recv() {
+            // `run_watched` has already printed the log and, for a fatal
+            // startup, the `why` explanation of it.
+            Ok(result) => return result,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => return Ok(()),
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
         }
 
-        let change = latest_mtime(&src_root);
-        if change > last_change {
-            last_change = change;
-            println!("jails: change detected, recompiling...");
-            let mut compile = Command::new(maven_binary(&root));
-            compile.arg("compile").current_dir(&root);
-            if debug {
-                crate::debug_cmd(&compile);
+        let now = fingerprint(&root);
+        let changes = changes_between(&seen, &now, &root);
+        if changes.is_empty() {
+            continue;
+        }
+        seen = now;
+        for change in &changes {
+            println!("jails: {change}");
+        }
+        println!("jails: recompiling...");
+        let mut compile = Command::new(maven_binary(&root));
+        compile.arg("compile").current_dir(&root);
+        if debug {
+            crate::debug_cmd(&compile);
+        }
+        match compile.status() {
+            Ok(s) if s.success() => {
+                println!("jails: recompiled -- devtools should restart shortly")
             }
-            match compile.status() {
-                Ok(s) if s.success() => {
-                    println!("jails: recompiled -- devtools should restart shortly")
-                }
-                Ok(s) => eprintln!("jails: recompile failed ({s})"),
-                Err(e) => eprintln!("jails: failed to run compile: {e}"),
-            }
+            Ok(s) => eprintln!("jails: recompile failed ({s})"),
+            Err(e) => eprintln!("jails: failed to run compile: {e}"),
         }
     }
 }
 
-fn latest_mtime(dir: &Path) -> std::time::SystemTime {
-    let mut latest = std::time::SystemTime::UNIX_EPOCH;
+/// What every watched file looked like at one moment: path -> mtime.
+///
+/// A map, not a high-water mark. The mtime *maximum* the watcher used before
+/// could only answer "has anything got newer", which gets three cases wrong,
+/// all of them ordinary: it cannot name the file that changed, a **deletion**
+/// lowers nothing so it goes unnoticed, and `git checkout` of an older
+/// revision moves mtimes backwards -- the exact moment a reader most wants a
+/// restart. Comparing maps with `!=` catches all three.
+///
+/// The watched set is the whole project, not just `.java`: a template, a
+/// migration, `application.properties`, `pom.xml`, `compose.yaml` and
+/// `jails.toml` all change what a running application does, and a watcher
+/// that ignores them makes the reader wonder why their change did nothing.
+fn fingerprint(root: &Path) -> BTreeMap<PathBuf, std::time::SystemTime> {
+    let mut found = BTreeMap::new();
+    for dir in [
+        "src/main/java",
+        "src/main/resources",
+        "src/test/java",
+        "src/test/resources",
+    ] {
+        collect_mtimes(&root.join(dir), &mut found);
+    }
+    for file in ["pom.xml", "compose.yaml", "jails.toml"] {
+        let path = root.join(file);
+        if let Ok(modified) = fs::metadata(&path).and_then(|m| m.modified()) {
+            found.insert(path, modified);
+        }
+    }
+    found
+}
+
+fn collect_mtimes(dir: &Path, out: &mut BTreeMap<PathBuf, std::time::SystemTime>) {
     let Ok(entries) = fs::read_dir(dir) else {
-        return latest;
+        return;
     };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            let sub = latest_mtime(&path);
-            if sub > latest {
-                latest = sub;
+            // Build output is a *consequence* of a change, not one.
+            if path.file_name().is_some_and(|n| n == "target") {
+                continue;
             }
-        } else if path.extension().is_some_and(|ext| ext == "java") {
-            if let Ok(modified) = fs::metadata(&path).and_then(|m| m.modified()) {
-                if modified > latest {
-                    latest = modified;
-                }
-            }
+            collect_mtimes(&path, out);
+        } else if let Ok(modified) = fs::metadata(&path).and_then(|m| m.modified()) {
+            out.insert(path, modified);
         }
     }
-    latest
+}
+
+/// What moved between two fingerprints, as lines a reader can act on.
+fn changes_between(
+    before: &BTreeMap<PathBuf, std::time::SystemTime>,
+    after: &BTreeMap<PathBuf, std::time::SystemTime>,
+    root: &Path,
+) -> Vec<String> {
+    let relative = |path: &Path| {
+        path.strip_prefix(root)
+            .unwrap_or(path)
+            .display()
+            .to_string()
+    };
+    let mut changes = Vec::new();
+    for (path, when) in after {
+        match before.get(path) {
+            None => changes.push(format!("added   {}", relative(path))),
+            // `!=`, not `>`: `git checkout` of an older revision moves an
+            // mtime backwards, and that is still a change.
+            Some(previous) if previous != when => {
+                changes.push(format!("changed {}", relative(path)))
+            }
+            Some(_) => {}
+        }
+    }
+    for path in before.keys() {
+        if !after.contains_key(path) {
+            changes.push(format!("deleted {}", relative(path)));
+        }
+    }
+    changes
 }
 
 /// `args` is everything after `--`, forwarded verbatim to the program. A tool
@@ -512,27 +617,81 @@ mod tests {
     }
 
     #[test]
-    fn latest_mtime_ignores_non_java_files_and_recurses() {
-        let root = scratch("latest-mtime");
-        let nested = root.join("com/example");
-        fs::create_dir_all(&nested).unwrap();
-        fs::write(root.join("notes.txt"), "x").unwrap();
-        fs::write(nested.join("App.java"), "x").unwrap();
+    fn the_watcher_notices_every_kind_of_change_and_names_the_file() {
+        let root = scratch("fingerprint");
+        let java = root.join("src/main/java/com/example");
+        let resources = root.join("src/main/resources");
+        fs::create_dir_all(&java).unwrap();
+        fs::create_dir_all(&resources).unwrap();
+        fs::write(java.join("App.java"), "x").unwrap();
+        fs::write(resources.join("application.properties"), "a=1").unwrap();
+        fs::write(root.join("pom.xml"), "<project/>").unwrap();
 
-        let before_touch = latest_mtime(&root);
+        let before = fingerprint(&root);
+        assert_eq!(before.len(), 3, "{before:?}");
+        assert!(changes_between(&before, &before, &root).is_empty());
 
+        // A resource is a change: it decides what the running application
+        // does just as much as a class does.
         std::thread::sleep(std::time::Duration::from_millis(20));
-        fs::write(nested.join("App.java"), "changed").unwrap();
-        let after_touch = latest_mtime(&root);
-        assert!(after_touch > before_touch);
-
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        fs::write(root.join("notes.txt"), "changed too").unwrap();
-        let after_txt_touch = latest_mtime(&root);
+        fs::write(resources.join("application.properties"), "a=2").unwrap();
+        let changed = fingerprint(&root);
         assert_eq!(
-            after_txt_touch, after_touch,
-            "non-.java changes shouldn't move the watermark"
+            changes_between(&before, &changed, &root),
+            vec!["changed src/main/resources/application.properties"]
         );
+
+        // A new file, and a deleted one -- which the old high-water mark
+        // could not see at all, since removing a file lowers nothing.
+        fs::write(java.join("Extra.java"), "x").unwrap();
+        fs::remove_file(java.join("App.java")).unwrap();
+        let after = fingerprint(&root);
+        let changes = changes_between(&changed, &after, &root);
+        assert!(
+            changes.contains(&"added   src/main/java/com/example/Extra.java".to_string()),
+            "{changes:?}"
+        );
+        assert!(
+            changes.contains(&"deleted src/main/java/com/example/App.java".to_string()),
+            "{changes:?}"
+        );
+    }
+
+    #[test]
+    fn an_mtime_that_moves_backwards_is_still_a_change() {
+        // `git checkout` of an older revision does exactly this, and it is
+        // the moment a reader most wants a restart.
+        let root = scratch("fingerprint-backwards");
+        let java = root.join("src/main/java");
+        fs::create_dir_all(&java).unwrap();
+        fs::write(java.join("App.java"), "x").unwrap();
+
+        let before = fingerprint(&root);
+        let mut older = before.clone();
+        let path = java.join("App.java");
+        older.insert(
+            path,
+            before.values().next().unwrap().checked_sub(std::time::Duration::from_secs(60)).unwrap(),
+        );
+        assert_eq!(
+            changes_between(&older, &before, &root),
+            vec!["changed src/main/java/App.java"]
+        );
+        assert_eq!(
+            changes_between(&before, &older, &root),
+            vec!["changed src/main/java/App.java"],
+            "a change is a change in either direction"
+        );
+    }
+
+    #[test]
+    fn build_output_is_not_a_change() {
+        let root = scratch("fingerprint-target");
+        let java = root.join("src/main/java");
+        fs::create_dir_all(java.join("target")).unwrap();
+        fs::write(java.join("App.java"), "x").unwrap();
+        fs::write(java.join("target/App.class"), "compiled").unwrap();
+        assert_eq!(fingerprint(&root).len(), 1);
     }
 
     #[test]

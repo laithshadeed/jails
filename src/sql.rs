@@ -325,11 +325,74 @@ pub(crate) fn imports(columns: &[Column]) -> Vec<&'static str> {
     found
 }
 
+/// The short list. Anything not here is pluralised by rule or left alone --
+/// a long dictionary in a scaffolding tool is a maintenance burden that pays
+/// only in surprise.
+fn irregular_plural(word: &str) -> Option<&'static str> {
+    Some(match word {
+        "person" => "people",
+        "child" => "children",
+        "man" => "men",
+        "woman" => "women",
+        "foot" => "feet",
+        "tooth" => "teeth",
+        "goose" => "geese",
+        "mouse" => "mice",
+        // Uncountable, or identical in both numbers: appending `s` is wrong
+        // rather than merely ugly.
+        "equipment" | "information" | "money" | "news" | "series" | "species" | "staff"
+        | "audio" | "metadata" | "data" => return Some(word_as_is(word)),
+        _ => return None,
+    })
+}
+
+/// The uncountables above map to themselves; this keeps the borrow static.
+fn word_as_is(word: &str) -> &'static str {
+    match word {
+        "equipment" => "equipment",
+        "information" => "information",
+        "money" => "money",
+        "news" => "news",
+        "series" => "series",
+        "species" => "species",
+        "staff" => "staff",
+        "audio" => "audio",
+        "metadata" => "metadata",
+        _ => "data",
+    }
+}
+
 /// The table a type maps to: snake_case plus conservative regular-English
-/// pluralisation. We handle suffixes whose spelling rule is deterministic,
-/// but deliberately do not guess irregular forms such as person/people.
+/// pluralisation.
+///
+/// **One owner, because three things derive from it**: the table name, the
+/// route path (`web::resource_path`) and the fixture filename. A second
+/// pluraliser somewhere else does not stay in step -- `g handler Category`
+/// served `/categorys` while its table was `categories`, from two functions
+/// forty lines apart.
+///
+/// Suffixes whose spelling rule is deterministic are applied; irregular
+/// forms are **not guessed**, with two exceptions kept deliberately short:
+/// a handful of English irregulars common enough in a schema that `persons`
+/// and `childs` would look like a bug, and a handful of uncountables where
+/// appending `s` is simply wrong. `jails.toml` gets no override for either:
+/// derivability is what lets `destroy` find what `generate` wrote.
 pub(crate) fn table_name(type_name: &str) -> String {
     let base = snake_case(type_name);
+    // Matched on the last word, so `SupportPerson` -> `support_people`.
+    let (prefix, last) = match base.rfind('_') {
+        Some(at) => base.split_at(at + 1),
+        None => ("", base.as_str()),
+    };
+    if let Some(plural) = irregular_plural(last) {
+        return format!("{prefix}{plural}");
+    }
+    if base.ends_with("fe") {
+        return format!("{}ves", &base[..base.len() - 2]);
+    }
+    if base.ends_with('f') && !base.ends_with("ff") {
+        return format!("{}ves", &base[..base.len() - 1]);
+    }
     if base.ends_with("ss")
         || base.ends_with('x')
         || base.ends_with('z')
@@ -631,6 +694,34 @@ mod tests {
         assert_eq!(table_name("Toy"), "toys");
         // Already plural: appending a second `s` would be worse than nothing.
         assert_eq!(table_name("News"), "news");
+        assert_eq!(table_name("Shelf"), "shelves");
+        assert_eq!(table_name("Knife"), "knives");
+        // `ff` is not the `f -> ves` case: staffs, cliffs, not stayves.
+        assert_eq!(table_name("Cliff"), "cliffs");
+    }
+
+    #[test]
+    fn the_short_irregular_list_covers_what_a_schema_actually_contains() {
+        assert_eq!(table_name("Person"), "people");
+        assert_eq!(table_name("Child"), "children");
+        // The last word decides, so a compound gets it right too.
+        assert_eq!(table_name("SupportPerson"), "support_people");
+        // Uncountable: `equipments` is not a word.
+        assert_eq!(table_name("Equipment"), "equipment");
+        assert_eq!(table_name("Metadata"), "metadata");
+    }
+
+    #[test]
+    fn the_route_path_and_the_table_are_the_same_pluralisation() {
+        // One owner. Two of these disagreed: the framework-free handler
+        // served `/categorys` over a table called `categories`.
+        for name in ["Category", "Inbox", "WorkItem", "Person", "Shelf", "News"] {
+            assert_eq!(
+                crate::generate::resource_path(name),
+                format!("/{}", table_name(name).replace('_', "-")),
+                "{name}"
+            );
+        }
     }
 
     #[test]

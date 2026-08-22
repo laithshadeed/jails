@@ -110,8 +110,54 @@ pub fn new(
 fn finish_spring_project(root: &Path, requested_deps: &str) -> Result<()> {
     verify_requested_deps(root, requested_deps);
     add_jspecify(root)?;
-    write_default_properties(root)
+    write_default_properties(root)?;
+    write_devtools_defaults(root)
 }
+
+/// Make the restart loop as fast as devtools can make it.
+///
+/// `META-INF/spring-devtools.properties` is read by `DevToolsSettings`, and
+/// its `defaults.<property>` entries are added to the environment as the
+/// **last** property source -- so anything the project or the reader sets
+/// still wins. It is also applied only when devtools is active locally, which
+/// means **zero effect on the packaged jar** and zero effect in tests. That
+/// combination is what makes it the right place for a machine-loop setting
+/// rather than `application.properties`, where it would follow the artifact
+/// into production.
+///
+/// The two values are the ones the loop is actually waiting on: devtools
+/// polls the classpath every second and waits 400 ms of quiet before
+/// restarting, so a saved file costs up to 1.4 s before the restart even
+/// begins. 200 ms and 50 ms are well inside the time a compile takes, and the
+/// quiet period only has to outlast the gap between one file being written
+/// and the next.
+///
+/// Not written here: `spring.docker.compose.enabled=false`. `add db` owns
+/// that property in its own marked block, and a second owner is how a
+/// property ends up with two values and no obvious winner.
+fn write_devtools_defaults(root: &Path) -> Result<()> {
+    let path = root.join("src/main/resources/META-INF/spring-devtools.properties");
+    if path.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
+    }
+    fs::write(&path, DEVTOOLS_DEFAULTS)
+        .map_err(|e| format!("failed to write {}: {e}", path.display()))
+}
+
+const DEVTOOLS_DEFAULTS: &str = "# Applied only when spring-boot-devtools is on the classpath and the
+# application is running locally -- never in a packaged jar, never in tests.
+# These are `defaults.`, so they are added as the last property source and
+# anything you set yourself still wins.
+#
+# Boot's own defaults are 1s and 400ms, which is up to 1.4s of waiting after
+# a save before the restart begins.
+defaults.spring.devtools.restart.poll-interval=200ms
+defaults.spring.devtools.restart.quiet-period=50ms
+";
 
 /// Report any `--deps` that did not arrive.
 ///

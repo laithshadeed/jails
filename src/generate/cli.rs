@@ -266,23 +266,52 @@ class {class}Test {{
 /// after every single `generate` is exactly the plumbing this tool exists to
 /// remove. The splice is idempotent and touches one line inside one method.
 ///
-/// No dispatcher, or more than one, means jails cannot know where it goes: it
-/// says so and leaves the Javadoc instructions as the fallback.
-pub(super) fn register_command(root: &Path, base: &str, name: &str) -> Result<()> {
+/// No dispatcher means jails cannot know where it goes: it says so and leaves
+/// the Javadoc instructions as the fallback.
+///
+/// **More than one is the normal case, not an exotic one.** `new-cli` writes
+/// `App.java`, and the obvious next command -- `g cli Ledger` -- writes a
+/// second dispatcher, so any project with its own CLI has two. Guessing
+/// between them would produce a command wired into the wrong entry point, so
+/// `--on <Dispatcher>` names it: `jails g command Reconcile --on Ledger`,
+/// which is also what `strategy_on` carries in a manifest. Without it the
+/// note names every candidate, since "add it to the one you meant" without
+/// saying which ones exist is a refusal that teaches nothing (plan.md §9.6).
+pub(super) fn register_command(
+    root: &Path,
+    base: &str,
+    name: &str,
+    into: Option<&str>,
+) -> Result<()> {
     let dispatchers = find_dispatchers(&root.join("src/main/java"));
-    let dispatcher = match dispatchers.as_slice() {
-        [one] => one,
-        [] => {
+    let chosen;
+    let dispatcher = match (dispatchers.as_slice(), into) {
+        ([], _) => {
             println!(
                 "note: no *Cli.java dispatcher found -- see {name}Command's Javadoc for the dispatch line,\n      \
                  or run `jails generate cli <Name>` to get one that registers commands for you"
             );
             return Ok(());
         }
-        many => {
+        (_, Some(wanted)) => {
+            let Some(found) = dispatchers.iter().find(|path| matches_dispatcher(path, wanted))
+            else {
+                return Err(format!(
+                    "--on {wanted} does not name a dispatcher in this project.\n       \
+                     fix: use one of {}, or `jails generate cli {wanted}` to create it",
+                    dispatcher_names(&dispatchers).join(", ")
+                ));
+            };
+            chosen = found.clone();
+            &chosen
+        }
+        ([one], None) => one,
+        (many, None) => {
             println!(
-                "note: {} dispatchers found, so {name}Command was not registered automatically -- add it to the one you meant",
-                many.len()
+                "note: {name}Command was not registered -- this project has {} dispatchers ({}).\n      \
+                 fix: rerun with `--on <Dispatcher>`, or add the line from {name}Command's Javadoc by hand",
+                many.len(),
+                dispatcher_names(many).join(", ")
             );
             return Ok(());
         }
@@ -324,6 +353,27 @@ pub(super) fn register_command(root: &Path, base: &str, name: &str) -> Result<()
         .map_err(|e| format!("failed to write {}: {e}", dispatcher.display()))?;
     println!("registered {command_class} in {}", dispatcher.display());
     Ok(())
+}
+
+/// Does this dispatcher answer to `wanted`? `Ledger`, `LedgerCli` and
+/// `App` all name a file, and a reader will type whichever they are
+/// thinking of.
+fn matches_dispatcher(path: &Path, wanted: &str) -> bool {
+    let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    stem.eq_ignore_ascii_case(wanted)
+        || stem.eq_ignore_ascii_case(&format!("{wanted}Cli"))
+        || stem.eq_ignore_ascii_case(&crate::generate::capitalize(wanted))
+        || stem.eq_ignore_ascii_case(&format!("{}Cli", crate::generate::capitalize(wanted)))
+}
+
+fn dispatcher_names(dispatchers: &[PathBuf]) -> Vec<String> {
+    dispatchers
+        .iter()
+        .filter_map(|p| p.file_stem().and_then(|s| s.to_str()))
+        .map(|s| s.to_string())
+        .collect()
 }
 
 /// Every dispatcher under the source root.

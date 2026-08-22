@@ -87,10 +87,21 @@ pub(super) fn record_test(root: &Path, pkg: &str, name: &str, fields: &[Field]) 
     imports.sort();
     imports.dedup();
 
-    // A component whose type this project owns has no literal jails can write.
-    // Rather than invent a constructor call that will not compile, the test is
-    // generated in full and disabled, naming exactly what it needs.
-    let samples: Vec<Option<String>> = fields.iter().map(|f| sample_value(f, root, pkg)).collect();
+    // A component whose type this project owns has no literal jails can write
+    // -- unless the type is a record jails can read off disk, in which case it
+    // builds the constructor call. Rather than invent one it cannot check, the
+    // test is generated in full and disabled, naming exactly what it needs.
+    let sampled: Vec<Option<(String, Vec<&'static str>)>> = fields
+        .iter()
+        .map(|f| sample_in_package(f, root, pkg))
+        .collect();
+    imports.extend(sampled.iter().flatten().flat_map(|(_, needed)| needed));
+    imports.sort();
+    imports.dedup();
+    let samples: Vec<Option<String>> = sampled
+        .iter()
+        .map(|s| s.as_ref().map(|(value, _)| value.clone()))
+        .collect();
     let unfabricable: Vec<&str> = fields
         .iter()
         .zip(&samples)
@@ -213,6 +224,79 @@ pub(crate) fn sample_value(field: &Field, root: &Path, pkg: &str) -> Option<Stri
         return Some(sample_literal(&field.java_type).to_string());
     }
     is_enum_type(root, pkg, &field.java_type).then(|| format!("{}.values()[0]", field.java_type))
+}
+
+/// `sample_value`, plus the one case it cannot answer for callers outside the
+/// type's own package: a component whose type is a **record this project
+/// already has on disk**.
+///
+/// jails has no type model, which is why `sample_value` gives up on an owned
+/// type -- but it does have the record, and `fields_from_record` already
+/// reads it for `g repo` and eight newer kinds. A `value` generated two
+/// intents earlier is not an unknown type; refusing to sample it is the tool
+/// forgetting what it just wrote. App D hit exactly that: `Entry` carries an
+/// `amount:Money` where `Money` is a jails-generated value object, and the
+/// companion test arrived `@Disabled` naming a type jails authored itself.
+///
+/// **Only for code generated into `pkg` itself.** The rendered call is
+/// `new Money(...)` with no qualification, so a caller writing a test into
+/// the web or service package would get a class it never imported. Those
+/// call sites keep `sample_value` and its honest `null`.
+///
+/// Returns the expression and any imports its *components* need, since the
+/// nested literals are not otherwise visible to the file's import list.
+pub(crate) fn sample_in_package(
+    field: &Field,
+    root: &Path,
+    pkg: &str,
+) -> Option<(String, Vec<&'static str>)> {
+    if let Some(direct) = sample_value(field, root, pkg) {
+        return Some((direct, Vec::new()));
+    }
+    owned_record_sample(root, pkg, &field.java_type, 3)
+}
+
+/// Build `new Type(a, b)` from the record on disk, recursively.
+///
+/// Bounded depth rather than a visited set: three levels is deeper than any
+/// value object a reader would write, and a record cannot contain itself
+/// anyway -- but a *pair* of records referring to each other can, and an
+/// unbounded walk would not return.
+fn owned_record_sample(
+    root: &Path,
+    pkg: &str,
+    type_name: &str,
+    depth: usize,
+) -> Option<(String, Vec<&'static str>)> {
+    if depth == 0 {
+        return None;
+    }
+    let components = fields_from_record(root, pkg, type_name)?;
+    let mut imports: Vec<&'static str> = Vec::new();
+    let mut args: Vec<String> = Vec::new();
+    for component in &components {
+        // Every component has to be fabricable: one that is not would make
+        // the whole expression a guess, and a guess that does not compile is
+        // worse than a disabled test that says why.
+        let (arg, needed) = match sample_value(component, root, pkg) {
+            Some(direct) => (direct, Vec::new()),
+            None => owned_record_sample(root, pkg, &component.java_type, depth - 1)?,
+        };
+        imports.extend(component.imports.iter().copied());
+        imports.extend(needed);
+        args.push(arg);
+    }
+    // An `Optional` component is spelled `Optional.empty()` in the call, so
+    // the import is needed even though no field declares it.
+    if components
+        .iter()
+        .any(|c| c.optionality == Optionality::Nullable)
+    {
+        imports.push("java.util.Optional");
+    }
+    imports.sort_unstable();
+    imports.dedup();
+    Some((format!("new {type_name}({})", args.join(", ")), imports))
 }
 
 /// Whether `<Type>.java` in this package declares an enum. Reading the file is
@@ -429,7 +513,17 @@ pub(super) fn value_test(root: &Path, pkg: &str, name: &str, fields: &[Field]) -
     imports.sort();
     imports.dedup();
 
-    let samples: Vec<Option<String>> = fields.iter().map(|f| sample_value(f, root, pkg)).collect();
+    let sampled: Vec<Option<(String, Vec<&'static str>)>> = fields
+        .iter()
+        .map(|f| sample_in_package(f, root, pkg))
+        .collect();
+    imports.extend(sampled.iter().flatten().flat_map(|(_, needed)| needed));
+    imports.sort();
+    imports.dedup();
+    let samples: Vec<Option<String>> = sampled
+        .iter()
+        .map(|s| s.as_ref().map(|(value, _)| value.clone()))
+        .collect();
     let unfabricable: Vec<&str> = fields
         .iter()
         .zip(&samples)

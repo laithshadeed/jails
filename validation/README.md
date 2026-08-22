@@ -34,79 +34,33 @@ Run on 2026-08-14, after `g enum` / capitalized types / `!`/`?` landed:
 | 09 variance agent | 25 | `g sealed`, `list<T>`, `map<K,V>` |
 | 10 orchestrator | 25 | all of the above |
 
-## The features these scripts assume
+## The features these scripts assumed — all seven have shipped
 
-Ranked by how many workouts they unblock. None of them knows what an
-"accounting transaction" is — every one is ordinary Java plumbing.
+This section used to rank seven missing features by how many workouts they
+unblocked. **Every one of them now exists**, which is what the scripts were
+for; the list is kept because the *reasons* are still the design, and because
+"a spec, not a test suite" only stays honest if the spec says what is done:
 
-### 1. `list<T>` field types — needed by 2, 3, 4, 7, 8, 9, 10
+| Assumed feature | Where it lives now |
+|---|---|
+| `list<T>` field types | `generate/field.rs`, resolved recursively; the component is `List.copyOf`'d and defaults to empty |
+| `map<K,V>` field types | same, both parameters resolved through the normal rules |
+| `instant` field type | the builtin table in `generate/field.rs`; `datetime` still means `LocalDateTime` |
+| `jails g repo <Name>` | `generate/repository.rs` — port, derived JDBC adapter, real-database IT |
+| `jails g sealed <Name> <Variant>...` | `generate/domain.rs`, beside its open counterpart `g strategy` |
+| `jails g handler <Name>` | `generate/web.rs`, over the JDK server `add http` sets up |
+| `Json.readJsonl` | `add json` (`add/data.rs`), pinned by a unit test |
 
-```bash
-jails g value ReconcileResult 'matched:list<Match>' 'unmatchedBank:list<string>'
-```
+The syntax question below was decided in favour of `list<T>`: quoting at a
+prompt is the cost, and it reads best in a manifest, which is where field
+specs mostly live now (`.jails/app.toml`). `g repo` reads the record on disk
+when it is given no fields, which is the rule §9.4 of `plan.md` generalises.
 
-The single biggest blocker. Every workout from 2 onward returns a record of
-grouped buckets, and there is currently no way to declare one.
-
-Element types resolve through the existing rules: lowercase through the field
-table, capitalized as a type you own. The generated component must be
-`List.copyOf`'d (a record holding a caller's mutable list is not immutable)
-and default to empty rather than null (no consumer should have to null-check a
-bucket). A bare `list` or an unknown element type is an error, not
-`List<Object>`.
-
-### 2. `map<K,V>` field types — needed by 6, 8, 9, 10
-
-```bash
-jails g value ApiError code:string! message:string! 'details:map<string,string>'
-```
-
-Same treatment: `Map.copyOf`, empty default, both type parameters resolved
-through the normal rules.
-
-### 3. `instant` field type — needed by 4, 7, 8, 10
-
-Audit timestamps are `Instant`, not `LocalDateTime`. A moment on a global
-timeline is not a wall-clock reading, and `datetime` already takes the latter,
-so this needs its own token. Roughly a one-line addition to the field table.
-
-### 4. `jails g repo <Name>` — needed by 5, 10
-
-Emits the port/adapter pair, which is otherwise three hand-written files every
-time:
-
-- `app/<Name>Repository.java` — interface, no `java.sql` in any signature, so
-  the application layer stays persistence-ignorant
-- `adapters/Sqlite<Name>Repository.java` — implements it over plain JDBC,
-  `PreparedStatement` throughout, try-with-resources
-- a companion test round-tripping against the in-memory database `add sqlite`
-  already provides
-
-No ORM — the gym bans them, and `add sqlite` is already framework-free.
-
-### 5. `jails g sealed <Name> <Variant>...` — needed by 9, 10
-
-```bash
-jails g sealed ToolOutcome Succeeded Failed TimedOut
-```
-
-A sealed interface plus one record per variant. This is the case an enum
-cannot cover: a closed set where each case carries different data. The payoff
-is exhaustiveness — a `switch` over it fails to compile when a variant is
-added later. The gym's own `Result<T,E>` has exactly this shape.
-
-### 6. `jails g handler <Name>` — needed by 6, 10
-
-An `HttpHandler` on the JDK server `add http` already sets up, wired to a
-service passed in the constructor (so CLI and HTTP share one code path),
-returning a shared error envelope, plus an integration test that drives it
-over a real loopback socket on an ephemeral port.
-
-### 7. `Json.readJsonl` — needed by 4, 5
-
-One JSON object per line, blank lines skipped, returning `List<JsonNode>`. An
-event log is the canonical JSONL case and both those workouts take `.jsonl`
-input. Small addition to the existing `add json` capability.
+**What these scripts do *not* cover** is everything added since: `usecase`,
+`query`, `transition`, `association`, `durable-job`, `http-workflow`,
+`http-sink`, `fetcher`, `cases`, and the capabilities beyond `sqlite`/`json`/
+`http`. The four proof applications under `examples/` are where those are
+exercised end to end.
 
 ## Design notes worth deciding before building
 

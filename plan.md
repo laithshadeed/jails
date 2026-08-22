@@ -27,8 +27,10 @@ cannot be proved generic by its own test suite.
 | **C** | **Payments gateway** | money, idempotency, o11y, throughput | that "production ready" is a slogan (§5) |
 | **D** | **CLI app** (ledger reconciler, **no Spring**) | plain Maven, no web, no database | that the machinery is Spring-shaped |
 
-Full manifests: A and B exist at `examples/{web-crawler,support-inbox}/.jails/app.toml`;
-C and D are specified in §4.3 and §4.4 and are **not yet built**.
+Full manifests: **all four now exist and all four pass their gates** --
+`examples/{web-crawler,support-inbox,payments-gateway,ledger-cli}/.jails/app.toml`.
+C and D were stood up on 2026-08-22 (§4.3, §4.4, and the ledgers in
+`examples/DOGFOOD.md`); six generic defects came out of the two runs.
 
 ### 0.2 The one constraint
 
@@ -82,7 +84,7 @@ number, so "it feels better" is never the answer.
 | **Cheaper** | generated lines per manifest line | ~18× for one scaffold | rises |
 | **Faster** | full gate wall time | **293 s** | container reuse (§10.1) is the biggest lever |
 | **Faster** | edit → test result | 3,810 ms | ~110 ms (§10.2), measured not estimated |
-| **Confidence** | kinds with a golden snapshot | **18 of 30** | 30 of 30 (§8.5) |
+| **Confidence** | kinds with a golden snapshot | **30 of 30** (§8.5, closed) | 30 of 30, enforced by a test |
 | **Confidence** | acceptance clauses open | 4, all lifecycle (§4.2) | 0 |
 
 Two numbers are load-bearing and easy to lose:
@@ -91,8 +93,10 @@ Two numbers are load-bearing and easy to lose:
   manifest lines and 23 migrations — the strongest single fact in this
   repository. If it ever goes positive, stop feature work.
 - **Golden coverage must track the kind count.** Eight kinds were added and
-  the golden count did not move. That is §8.5, and it is how confidence
-  silently rots while everything looks green.
+  the golden count did not move. That was §8.5 — now closed:
+  `every_kind_and_capability_has_a_golden_scenario` reads the kinds and
+  capabilities out of the binary's own help and fails when one has no
+  scenario, so the count cannot silently stop tracking again.
 
 ### 0.5 Done
 
@@ -162,15 +166,17 @@ Counted today.
 | `Capability` | **18** | 16 |
 | Layers (`LAYERS_IN_ORDER`) | **11** | 8 |
 | Java templates | **57** (4 `generate` / 17 `add` / 36 `spring`) | 51 |
-| Golden files / scenarios | **162 / 25** | 162 / 25 |
+| Golden files / scenarios | **308 / 32** | 162 / 25 |
 | `doctor` checks | 50 | 50 |
 | `why` rules | 20 | 20 |
 | Commands with `--json` | 3 | 3 |
 | `pom::TARGET_RELEASE` | **`"25"`** | `"27"` |
 | Full sweep | **123 tests, 293 s** | — |
 
-**The golden count did not move while eight kinds were added.** That is §8.5,
-and it is the single most important item in this document.
+**The golden count did not move while eight kinds were added.** That was §8.5,
+the single most important item in this document, and it is now closed: the
+twelve uncovered kinds and capabilities have scenarios, and a test enumerating
+the CLI's own value lists refuses to let a thirteenth appear.
 
 ### 1.1 What the newest generators do
 
@@ -358,8 +364,10 @@ not.
 a `durable-job`. If any of that needs a new noun in `src/`, that is the
 finding.
 
-**Proposed manifest.** Untested — nothing here has been run; it is a
-specification for §17's runbook to execute.
+**The manifest**, as run. Two corrections came out of running it: the `event`
+intent has to precede the `usecase` that yields it, since intents apply in
+manifest order, and a `durable-job`'s fields are its command's fields exactly,
+in order. Live at `examples/payments-gateway/.jails/app.toml`.
 
 ```toml
 # examples/payments-gateway/.jails/app.toml  (proposed)
@@ -885,7 +893,7 @@ nothing checks that they agree.**
 |---|---|---|
 | 1. The generator | 14 `*_files` functions in `spring.rs`, all returning `Vec<(PathBuf, String, &'static str)>` | ~6,000 lines |
 | 2. **The destroy path list** | `generate::destroy`, a `match kind` with **17 hand-written `vec![]` arms** | ~200 lines |
-| 3. The golden scenario | `tests/golden.rs` `SCENARIOS` | **missing for 12 kinds** (§8.5) |
+| 3. The golden scenario | `tests/common/scenarios.rs` `SCENARIOS` | **complete, and a test keeps it so** (§8.5) |
 | 4. The editor lists | four Lua tables in `jails.nvim` | **stale by 8 kinds** |
 | 5. The README table | prose | stale |
 
@@ -894,9 +902,10 @@ to one and not the other silently strands files"* — and it is a **manual
 transcription of paths that the generator right next door already computes.**
 Adding `usecase` meant writing ten `format!("{name}…java")` lines twice.
 
-There is already a test that checks copies 1 and 2 agree —
-`destroy_removes_only_files_that_generate_would_have_created` — but **it
-covers exactly one kind (`Record`)**, out of 30.
+Copies 1 and 2 are now *checked* against each other for every kind in the
+scenario table (`tests/agreement.rs`, §6.2 A) — but checked is not the same as
+single: the transcription is still there to drift, and the test only says so
+after the fact.
 
 So the maintainability question is not "how do we write less Rust". It is:
 **how does "what kind X produces" stop having five definitions?**
@@ -908,16 +917,25 @@ they come first.
 
 ---
 
-**A. Generalise the agreement test.** *Hours. No design.*
+**A. Generalise the agreement test.** ~~*Hours. No design.*~~ **DONE** —
+`tests/agreement.rs`.
 
-Loop every `ArtifactKind` over a scratch project: generate, snapshot the set
-of files on disk, `destroy --pretend`, assert the sets are equal. The test
-exists for `Record`; make it a table over the enum.
+Every scenario in `tests/common/scenarios.rs` runs, the created files are
+attributed to the command that wrote them, then `destroy --pretend` runs per
+generate step and the two sets are compared **in both directions**: a path
+destroy names that nothing created, and a file generate wrote that destroy
+would strand. A leftover that is deliberate — a forward-only migration, a
+fixture, a shared `SchedulingConfig` — is listed in `ALLOWED_LEFTOVER` with
+its reason, scoped to the kind that earns it.
 
-- **Buys**: catches copy-2 drift for all 30 kinds, today, permanently.
-- **Costs**: nothing structural; does not reduce a line of code.
-- **Do it first regardless of what else you pick** — it is the evidence that
-  makes B safe to attempt.
+- **Bought**: it found a live bug on the first run — `g usecase --yields`
+  writes `{name}OutboxSink.java` and `{name}KafkaOutboxSink.java`, and the
+  destroy arm listed neither, so destroying the use case left a port nothing
+  implements and an implementation of a deleted type: a project that stops
+  compiling. Fixed in `src/generate.rs`.
+- **Costs**: nothing structural; it did not reduce a line of code.
+- **This is the evidence that makes B safe to attempt** — run it before and
+  after and the sets must not move.
 
 ---
 
@@ -1196,6 +1214,7 @@ Those are the plugin system README defers, and nothing above requires them.
 | **Toxiproxy's Java bodies are still `format!` strings** (`ideas-fable.md` §8.11) | **Fixed.** `add/testing.rs` is 7 `include_str!` against 2 `format!` |
 | **`g load` with HdrHistogram** (`ideas-kimi.md` K11) | Superseded by §5.5 — k6, which sidesteps the "two `main` methods" invocation problem entirely |
 | **CLAUDE.md: the manifest is `deps/deps.tsv`** | It is `deps.tsv` and `deps-update.sh` at the repo root |
+| **`withReuse(true)` is "safe unconditionally" and the largest lever on the 293 s gate** (§10.1, this document) | **False, and it was tried.** The reuse key is `sha1` of the serialised `CreateContainerCmd` (`GenericContainer.hash`), and **nothing in it identifies the project** — so every jails project on `postgres:17` reuses the *same* database. Both number their migrations from `V001`, so Flyway refuses to start: *"Migration checksum mismatch for migration version 001 — applied to database 544218698, resolved locally 656450728."* The verification gate went red on the support inbox inheriting the crawler's schema history. A per-project label would fix the hash, but nothing deterministic and portable is unique per project — package and coordinates are `com.example.demo` in half the world. **So the generated config does not ask for reuse**; it documents the one-line change, `jails setup` writes the machine flag, and `doctor` counts what reuse leaves running |
 
 ---
 
@@ -1206,15 +1225,16 @@ blocker (`spring::transition_files` missing) is gone.
 
 | # | Defect | Evidence | Fix | Effort |
 |---|---|---|---|---|
-| 8.1 | **`g scaffold` and `g dto` write a `pom.xml` Maven cannot read.** `VALIDATION_STARTER` has `version: None` — correct under `spring-boot-starter-parent`, fatal without one. No flavor check | `src/generate.rs`, `src/spring.rs:29`. `mvn -o test` on a `new-cli` project: `'dependencies.dependency.version' … is missing` | Have `ensure_dependency` consult `pom::flavor` and splice a pinned version when there is no parent BOM — what every non-Spring capability already does. `maven-failsafe-plugin` is versionless too; Maven only warns, so it is a trap not a break | 30 min |
-| 8.2 | **The golden suite ratifies that broken pom** | `tests/golden/scaffold-plain/pom.xml` | Regenerate and **read the diff** | 10 min |
-| 8.3 | **`jails test 'Class#method'` silently runs the wrong thing and exits 0.** The suffix is appended to the whole filter, then the Failsafe routing check runs against the **already-mangled** string | `src/run.rs`, `pub fn test`: `format!("{f}Test")` then `if test_name.ends_with("IT")` | Split on `#` first, suffix only the class part, **and** move the Failsafe decision before the mangle. Also pass `-Dsurefire.failIfNoSpecifiedTests=false` — which the payments repo documents as tribal knowledge (§5.8) | 20 min |
-| 8.4 | **`run --watch` cannot report a failed startup, and the watcher only stats `.java`.** `mvn spring-boot:run` exits 0 over a dead app; the fix `run_watched` has one caller and it is the *non-watch* branch. The mtime scan compares a max, so it cannot name the changed file, misses deletions, and misses `git checkout` | `src/run.rs` | Route `watch()` through `run_watched`. Replace the scan with a `HashMap<PathBuf, SystemTime>` over main/test/resources/migrations/pom/compose/jails.toml; compare with `!=`; report added/changed/**deleted** | 3 h |
-| 8.5 | **Twelve kinds and three capabilities have zero golden coverage — and the suite claims otherwise.** `tests/golden.rs:50` reads *"Every artifact kind and every capability, in the smallest invocation that exercises it."* `usecase`, `query`, `transition`, `durable-job`, `fetcher`, `association`, `http-workflow`, `http-sink`, `cases`, `format`, `ci`, `docker` appear **0 times**. **Eight kinds were added and the count did not move: still 162 files, 25 scenarios.** These are the most complex generators in the tree — a leased store, an outbox, a 24 KB traversal engine, a 14 KB safe fetcher | `grep -c '"http-workflow"' tests/golden.rs` → 0, and so for all twelve | A test enumerating `ArtifactKind` and `Capability` that **fails when one has no `Scenario`**, then the twelve scenarios. §6.2 option F makes it permanent by requiring `[golden]` in the descriptor. Predicted by `ideas-fable.md` §8.11 before it happened | 1 day |
+| 8.1 | ~~**`g scaffold` and `g dto` write a `pom.xml` Maven cannot read**~~ **CLOSED** | was `mvn -o test` on a `new-cli` project: `'dependencies.dependency.version' … is missing` | `spring::validation_dependency` picks by `pom::flavor`: the starter under a Boot parent, and pinned `jakarta.validation:jakarta.validation-api` -- the artifact the generated code actually imports -- without one, so a plain project does not get Boot dragged into it either. `spring::failsafe_plugin` pins the plugin version the same way. `ensure_assertj` is the same rule for the test dependency every generated test needs | done |
+| 8.2 | ~~**The golden suite ratifies that broken pom**~~ **CLOSED** | `tests/golden/scaffold-plain/pom.xml` | Regenerated and read: the versionless Spring starter is gone, the validation API and AssertJ are pinned, Failsafe carries a version. The plain **fixture** was also invalid -- no `modelVersion`, no `version` -- which is why nothing had ever built it | done |
+| 8.3 | ~~**`jails test 'Class#method'` silently runs the wrong thing and exits 0**~~ **CLOSED** | was `src/run.rs`: `format!("{f}Test")` then `if test_name.ends_with("IT")` | `expand_filter` suffixes the class half only, `split_method` decides Surefire vs Failsafe on the class, and both `failIfNoSpecifiedTests` flags are passed so an empty filter is "no tests ran" rather than a stack trace. `test_command_infers_unit_and_integration_test_names` covers `Payout#settles` and `PayoutIT#settles` | done |
+| 8.4 | ~~**`run --watch` cannot report a failed startup, and the watcher only stats `.java`**~~ **CLOSED** | was `src/run.rs` | `watch` runs `spring-boot:run` through `run_watched` on its own thread and polls the filesystem on the main one, so a startup that dies is reported with `why`'s explanation instead of watched in silence. `fingerprint` is a `BTreeMap<PathBuf, SystemTime>` over main/test java **and resources**, plus `pom.xml`, `compose.yaml` and `jails.toml`; `changes_between` compares with `!=` and names each file as added/changed/**deleted**. Three unit tests, including `git checkout`'s backwards mtime | done |
+| 8.5 | ~~**Twelve kinds and three capabilities have zero golden coverage**~~ **CLOSED.** Seven scenarios added (`usecase-query-transition`, `association-durable-job`, `fetcher-workflow`, `outbox-http-sink`, `cases`, `cap-ci`, `cap-docker`): **308 files / 32 scenarios**, up from 162 / 25 | was `grep -c '"http-workflow"' tests/golden.rs` → 0 | `every_kind_and_capability_has_a_golden_scenario` reads `jails generate --help` / `jails add --help` and fails on a kind with no `Scenario`. `format` is the one exemption, in `COVERED_ELSEWHERE` with the test that covers it and an assertion that the test still exists. The table itself moved to `tests/common/scenarios.rs`, shared with `tests/agreement.rs`, and *which* kinds a scenario covers is derived from its steps rather than declared beside them | done |
 | 8.6 | **`spring.rs` at 6,459 lines with ~42 inline Java bodies** | `grep -c 'r#"'` → 42 | §6 | ongoing |
-| 8.7 | **Drift.** `g cases` implemented and absent from README. `jails.nvim` missing `toxiproxy`, `app` and eight kinds. `validation/README.md` far behind. CLAUDE.md still documents the JDK 27 pin, the mise symlink, and 8 layers where there are 11 | greps today | Fix each, then **a test pinning the Lua tables to the enums and the clap tree** — or delete them via `jails commands --json` (§6.2 option F) | 1 h |
-| 8.8 | **Nothing cheap asks whether the generated project builds.** The 293 s manifest gate does, but 8.1 survives under it because `new-cli` + `g scaffold` is not a cell | The structural cause of 8.1 | A tier-3 matrix over `{new-cli, new-spring}` × kinds × `{none, db, json}` running **`mvn -o validate`** (~2 s a cell) | 3 h |
-| 8.9 | **`doctor` reports health over a pom Maven refuses to parse**, because `pom::read` falls back to `unwrap_or_default` | `src/doctor.rs` | Make an unparseable pom a loud FAIL | 1 h |
+| 8.7 | ~~**Drift**~~ **CLOSED.** `g cases`, `usecase` and `query` now have README entries; `jails.nvim` has all 30 kinds, all 18 capabilities and `app`; `validation/README.md` says which of its seven assumed features shipped (all of them) and what it does not cover; CLAUDE.md's golden-suite, destroy-hazard and JDK entries are rewritten | was greps | `tests/editor.rs` reads the Lua tables and the binary's own help and **fails when the plugin cannot complete something the CLI accepts** -- the drift is checked now, not just fixed | done |
+| 8.8 | ~~**Nothing cheap asks whether the generated project builds**~~ **PARTLY CLOSED** | The structural cause of 8.1 | `every_generated_pom_is_one_maven_can_read` runs `mvn -o validate` over `{plain, spring}` x four pom-touching kinds, ~9 s for the lot. Still open: the `{none, db, json}` capability axis, and `validate` parses the pom without compiling -- a plain-project scaffold still emits Spring MVC code it cannot resolve, which is the next cell to add | partly |
+| 8.9 | ~~**`doctor` reports health over a pom Maven refuses to parse**~~ **CLOSED** | was `pom::read` + `unwrap_or_default` | `pom::problems` names every structural reason Maven would refuse the file -- no `modelVersion`, no inheritable `version`, a versionless dependency with no BOM -- and `project_check` FAILs with the first one and its fix. Structural only: `doctor` is read-only, so it cannot run `mvn validate`, and it does not need to | done |
+
 
 ---
 
@@ -1261,14 +1281,22 @@ component's type is a record in this project with exactly one `@pk`, **refuse
 the scaffold** and name the two commands that do the job. A refusal that
 teaches beats both a silent `text` column and a second inference path.
 
-### 9.3 The pluraliser is `+ "s"`, and it is visible in the URL
+### 9.3 ~~The pluraliser is `+ "s"`~~ — **CLOSED**
 
-`src/sql.rs`, `fn table_name`. `/categorys`, `/companys`, `/boxs`, `/status`.
-**One owner** — route path, table name and fixture filename all derive from
-it, so one closed inflector fixes three: `…y` after a consonant → `ies`;
-`…s|x|z|ch|sh` → `es`; `…f|fe` → `ves`; a short irregular table; an
-uncountable list. ~60 lines. Keep it **out of `jails.toml`** — derivability is
-why `destroy` can find what `generate` wrote.
+`sql::table_name` is the single owner and now applies `…y` after a consonant
+→ `ies`, `…s|x|z|ch|sh` → `es`, `…f|fe` → `ves` (but not `ff`), a short
+irregular list matched on the **last word** (`SupportPerson` →
+`support_people`), and a short uncountable list (`equipment`, `metadata`,
+`news`). No `jails.toml` override: derivability is what lets `destroy` find
+what `generate` wrote.
+
+The half that was still live is the interesting one, and it is what "one
+owner" means: `web::resource_path` had its own `push('s')`, so
+`g handler Category` served **`/categorys`** over a table called
+`categories`, while the Spring scaffold's controller — which did go through
+`table_name` — disagreed with it about the URL of the same resource. It
+delegates now, and `the_route_path_and_the_table_are_the_same_pluralisation`
+pins the two together.
 
 ### 9.4 One rule for where fields come from
 
@@ -1329,15 +1357,27 @@ would fail §4.6 question 1.
 
 ### 10.1 Free wins
 
-**Testcontainers reuse — the largest lever on the 293 s gate.** Add
-`.withReuse(true)` to `TestcontainersConfig`'s `@Bean` (`@UnstableAPI`; say
-so). Safe unconditionally: without the machine flag it is a no-op plus a
-warning. The flag **must** be in `~/.testcontainers.properties` or
-`TESTCONTAINERS_REUSE_ENABLE`; a classpath file does nothing. `doctor` reports
-it; `jails setup` writes it. Two consequences to encode: reused containers are
-**never registered with Ryuk** so they accumulate (doctor should count
-`org.testcontainers.hash` labels), and **the database keeps state between
-runs**, so a test assuming an empty table fails on the second run.
+**~~Testcontainers reuse — the largest lever on the 293 s gate.~~ Tried, and
+it is not safe by default.** See §7: the reuse key is a hash of the container
+configuration, nothing in it identifies the project, so two jails projects on
+one image share a database and Flyway rejects the other one's migration
+history — the gate went red. What shipped instead: `jails setup` writes the
+machine flag (`testcontainers.reuse.enable=true` in
+`~/.testcontainers.properties` — **not** the classpath, which is the trap),
+`doctor` reports whether it is on and **counts the containers reuse leaves
+behind** (a reused container is never registered with Ryuk, so nothing reaps
+it), and `TestcontainersConfig`'s Javadoc states the one-line change and
+exactly what it costs. The saving is real for a single-project machine; it is
+the reader's decision, not a default.
+
+**`META-INF/spring-devtools.properties` — done.** `new` writes it: poll 200 ms,
+quiet 50 ms, against Boot's 1 s / 400 ms, so a save costs up to 1.4 s less
+before the restart begins. Verified in `DevToolsSettings`: `defaults.*`
+entries become the **last** property source, so anything the reader sets wins,
+and they apply only when devtools is active locally — zero effect on the
+packaged jar and zero in tests. `spring.docker.compose.enabled=false` is
+deliberately *not* here: `add db` owns that property in its own marked block,
+and two owners is how a property ends up with two values.
 
 **`META-INF/spring-devtools.properties`** — `defaults.*` apply only when
 devtools is present, zero effect on the packaged jar. Poll 200 ms, quiet 50 ms
@@ -1767,17 +1807,17 @@ CLI, **—** infrastructure.
 
 | # | Item | § | Effort | Proves |
 |---|---|---|---|---|
-| 0 | **The golden-coverage test** (§8.5) **and the generate/destroy agreement test** (§6.2 A) — same shape, same sitting — then the twelve missing scenarios | §8.5, §6.2 | 1 day | A B C D |
-| 0b | **§6.2 B + D** — artifact builder; delete `destroy`'s 17 hand-written path arms | §6.2 | 2 days | A B C D |
-| 1 | **Stand up App D** (`examples/ledger-cli/`) and **App C** (`examples/payments-gateway/`), run §18, record every friction row | §4.3–4.4, §18 | 1–2 days | C D |
-| 2 | Tier 0 remainder: 8.1–8.4, 8.7–8.9 | §8 | 1 day | A B C **D** |
+| ~~0~~ | ~~**The golden-coverage test and the generate/destroy agreement test**~~ **DONE.** Seven scenarios added (308 files / 32 scenarios); `tests/agreement.rs` found and fixed a live stranding bug in `usecase --yields` on its first run | §8.5, §6.2 | — | A B C D |
+| 0b | **§6.2 B + D** — artifact builder; ~~delete `destroy`'s 17 hand-written path arms~~ **HALF DONE.** The arms are gone: `KIND_FILES` is one table of (tree, layer, placement, filename) and `NO_FILE_TABLE` holds the four kinds that genuinely have no path list, each with its reason. `every_kind_is_either_in_the_file_table_or_deliberately_outside_it` reads the enum, so a forgotten kind fails a test instead of printing "nothing to destroy" over files that are right there. **Still copy 2**, though: a table is a shorter transcription, not a derivation. Deriving it needs D — lazily-rendered artifacts, so a path can be computed without a body and without the `--on`/`--yields`/fields that `destroy` is never given | §6.2 | 1 day left | A B C D |
+| ~~1~~ | ~~**Stand up App D and App C**~~ **DONE 2026-08-22.** Both manifests live, both gates green (C: 83 tests, 1 m 45 s; D: 53 tests, 1.9 s), zero hand-written Java or SQL. Six generic fixes came out of it; friction and defect rows are in `examples/DOGFOOD.md` | §4.3–4.4, §18 | — | C D |
+| ~~2~~ | ~~Tier 0 remainder: 8.1–8.4, 8.7–8.9~~ **DONE.** All closed except 8.6 (`spring.rs` size, which is §6's ongoing work). Each closure carries the test that keeps it closed: the pom matrix, the editor pinning test, the watcher's three unit tests, `Class#method` routing | §8 | — | A B C **D** |
 | 3 | Editor config: jdt.ls settings + bundles + HCR, `'path'`, `:compiler jails`, keymap split | §14 | S, no Rust | — |
-| 4 | Testcontainers reuse + doctor + `jails setup`; devtools defaults; `mise.toml` from `new` | §10.1 | S | A B C |
+| ~~4~~ | ~~Testcontainers reuse~~ **corrected — see §7: unsafe as a default, and the gate proved it.** `jails setup` + the `doctor` reuse/leak count + the devtools defaults from `new` are **done**; `mise.toml` from `new` is not | §10.1 | — | A B C |
 | 5 | `jails test` flags: `Class#method`, `path:line`, `--failed`, `--fail-fast`, `--slowest` | §10.1 | S–M | — |
 | 6 | `why` on every Maven failure; `why --json` | §10.1, §15 | S | A B C D |
 | 7 | **§5.2 observability defaults** + the three doctor checks | §5.2 | M | C |
 | 8 | **§5.3 datasource defaults** incl. the `pg_is_in_recovery` init SQL | §5.3 | M | C |
-| 9 | **The inflector**, **scaffold reads the record**, **refusal messages with `fix:`** | §9.3, §9.4, §9.6 | S each | A B C |
+| 9 | ~~**The inflector**~~ **DONE** (§9.3); **scaffold reads the record**, **refusal messages with `fix:`** still open | §9.3, §9.4, §9.6 | S each | A B C |
 | 10 | **`g field`** | §9.1 | M | A B C |
 | 11 | **`.jails/files` + `.jails/version`** (§11.2), then **regenerate + 3-way merge** (§11.1) | §11.1–11.2 | M | A B C |
 | 12 | `--timestamps`, `g factory`, `requests/*.http` | §9.5, §9.6 | M total | A B C D |

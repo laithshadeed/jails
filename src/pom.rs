@@ -62,6 +62,31 @@ pub struct Dependency {
     pub optional: bool,
 }
 
+/// AssertJ, versioned for the project it is going into.
+///
+/// Under a Spring Boot parent the BOM owns the version; without one it has to
+/// be pinned, because a `<dependency>` with no `<version>` and no BOM is not
+/// a pom Maven will read at all -- `'dependencies.dependency.version' ... is
+/// missing`, and every goal fails, including `validate`. That is plan.md
+/// §8.1, and it is the reason nothing versionless may be spliced into a plain
+/// project.
+pub fn assertj(flavor: Flavor) -> Dependency {
+    Dependency {
+        group_id: "org.assertj",
+        artifact_id: "assertj-core",
+        version: match flavor {
+            Flavor::SpringBoot => None,
+            Flavor::PlainMaven => Some(ASSERTJ_VERSION),
+        },
+        scope: Some("test"),
+        optional: false,
+    }
+}
+
+/// Kept in step with `new.rs`'s generated pom deliberately: a project jails
+/// created and a project jails adopted should end up with the same AssertJ.
+pub const ASSERTJ_VERSION: &str = "3.27.7";
+
 pub fn read(root: &Path) -> Result<String> {
     let path = root.join("pom.xml");
     std::fs::read_to_string(&path).map_err(|e| format!("failed to read {}: {e}", path.display()))
@@ -143,6 +168,90 @@ pub fn has_dependency(pom: &str, group_id: &str, artifact_id: &str) -> bool {
         from = at + needle.len();
     }
     false
+}
+
+/// Everything about this pom that would stop Maven reading it, in the order a
+/// reader should fix them.
+///
+/// **Structural only, and deliberately so.** `doctor` is read-only by
+/// contract, so it cannot run `mvn validate` to find out -- and it should not
+/// need to: every one of these is decidable from the text, and the failure
+/// they cause is total. A pom missing `modelVersion` fails *every* goal, and
+/// `pom::read`'s `unwrap_or_default` meant `doctor` cheerfully reported
+/// fifteen checks over a project Maven could not open at all (plan.md §8.9).
+///
+/// Each entry is (what is wrong, what to do about it).
+pub fn problems(pom: &str) -> Vec<(String, String)> {
+    let mut found = Vec::new();
+    if !pom.contains("<project") {
+        found.push((
+            "pom.xml has no <project> element".to_string(),
+            "this is not a Maven pom -- `jails new <name>` writes one".to_string(),
+        ));
+        return found;
+    }
+    if element_text(pom, "modelVersion").is_none() {
+        found.push((
+            "no <modelVersion> -- Maven refuses the pom outright, so every goal fails".to_string(),
+            "add <modelVersion>4.0.0</modelVersion> as the first child of <project>".to_string(),
+        ));
+    }
+    let has_parent = pom.contains("<parent>");
+    if element_text(pom, "artifactId").is_none() {
+        found.push((
+            "no <artifactId>".to_string(),
+            "give the project an artifactId".to_string(),
+        ));
+    }
+    // groupId and version may be inherited, so they are only missing when
+    // there is no parent to inherit them from.
+    if !has_parent {
+        for (tag, what) in [("groupId", "groupId"), ("version", "version")] {
+            if element_text(pom, tag).is_none() {
+                found.push((
+                    format!("no <{tag}> and no <parent> to inherit it from"),
+                    format!("declare the project's {what}"),
+                ));
+            }
+        }
+    }
+    for (group, artifact) in versionless_dependencies(pom) {
+        if !manages_versions(pom) {
+            found.push((
+                format!("dependency {group}:{artifact} has no <version>, and this project has no parent or dependencyManagement to supply one"),
+                "pin the version, or add the BOM that manages it".to_string(),
+            ));
+        }
+    }
+    found
+}
+
+/// Does anything in this pom supply managed versions?
+fn manages_versions(pom: &str) -> bool {
+    pom.contains("<parent>") || pom.contains("<dependencyManagement>")
+}
+
+/// Every `<dependency>` with no `<version>`, as (groupId, artifactId).
+fn versionless_dependencies(pom: &str) -> Vec<(String, String)> {
+    let mut found = Vec::new();
+    let mut from = 0;
+    while let Some(rel) = pom[from..].find("<dependency>") {
+        let start = from + rel;
+        let end = pom[start..]
+            .find("</dependency>")
+            .map(|i| start + i)
+            .unwrap_or(pom.len());
+        let block = &pom[start..end];
+        from = end + 1;
+        if inside_comment(pom, start) || block.contains("<version>") {
+            continue;
+        }
+        found.push((
+            element_text(block, "groupId").unwrap_or_default(),
+            element_text(block, "artifactId").unwrap_or_default(),
+        ));
+    }
+    found
 }
 
 /// A tag found by the scanner, with byte offsets into the original string.
@@ -879,5 +988,40 @@ mod tests {
             .unwrap();
         assert!(out.contains("<artifactId>real</artifactId>"));
         assert!(!out.contains("spotless-maven-plugin"));
+    }
+
+    #[test]
+    fn problems_names_what_stops_maven_reading_the_pom() {
+        // The exact shape `g scaffold` used to leave behind on a plain
+        // project: a Spring starter with no version and no BOM.
+        let broken = "<project>\n<groupId>com.example</groupId>\n<artifactId>demo</artifactId>\n\
+             <dependencies><dependency><groupId>org.springframework.boot</groupId>\
+             <artifactId>spring-boot-starter-validation</artifactId></dependency></dependencies>\
+             </project>";
+        let found = problems(broken);
+        let text = found
+            .iter()
+            .map(|(what, _)| what.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("modelVersion"), "{text}");
+        assert!(text.contains("<version> and no <parent>"), "{text}");
+        assert!(text.contains("spring-boot-starter-validation"), "{text}");
+        assert!(found.iter().all(|(_, fix)| !fix.is_empty()));
+    }
+
+    #[test]
+    fn a_versionless_dependency_under_a_parent_is_not_a_problem() {
+        // Correct, and the normal case: the Boot parent manages it.
+        assert!(problems(SPRING_POM).is_empty(), "{:?}", problems(SPRING_POM));
+    }
+
+    #[test]
+    fn a_commented_out_dependency_is_not_read_as_a_real_one() {
+        let pom = "<project><modelVersion>4.0.0</modelVersion><groupId>g</groupId>\
+             <artifactId>a</artifactId><version>1</version><dependencies>\
+             <!-- <dependency><groupId>x</groupId><artifactId>y</artifactId></dependency> -->\
+             </dependencies></project>";
+        assert!(problems(pom).is_empty(), "{:?}", problems(pom));
     }
 }

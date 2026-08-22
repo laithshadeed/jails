@@ -1,6 +1,5 @@
 package com.example.demo.domain;
 
-
 /**
  * TODO: say what makes a transaction qualify under DomesticEligibility.
  */

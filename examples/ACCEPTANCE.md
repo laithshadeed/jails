@@ -1,13 +1,13 @@
 # Dogfood acceptance contracts
 
-The two examples are executable specifications for Jails' generic machinery.
-They are not special templates, and no crawler-, inbox-, conversation-, or
-workspace-named branch belongs in Jails core.
+The examples are executable specifications for Jails' generic machinery.
+They are not special templates, and no crawler-, inbox-, conversation-,
+workspace-, payment-, or ledger-named branch belongs in Jails core.
 
 ## Shared generated-application contract
 
 A claim is complete only when a fresh directory produced from a manifest,
-with no hand-edited Java or SQL, proves it. Both applications must:
+with no hand-edited Java or SQL, proves it. Every Spring application must:
 
 - apply the same manifest twice without changing generated output;
 - compile every generated source file;
@@ -22,6 +22,10 @@ with no hand-edited Java or SQL, proves it. Both applications must:
 
 The gate may report `generated`, `configured`, `user-owned`, or `not selected`.
 It must never call an unproved property guaranteed or production ready.
+
+The **ledger CLI is deliberately outside that list**: it is the control, and
+every clause above naming Spring, HTTP, a broker or a container is a clause it
+must *not* need. Its own contract is below.
 
 ## Web crawler contract
 
@@ -46,7 +50,69 @@ duplicate effects, stale optimistic versions fail without mutation, message
 creation and delivery staging are atomic, retries keep a stable delivery ID,
 and terminal delivery failure is inspectable.
 
-## Current evidence (2026-08-21)
+## Payments gateway contract
+
+From `examples/payments-gateway/.jails/app.toml`, Jails must produce a runnable
+application that authorises a payment under a merchant scope, stages the
+authorisation event and the business row in one transaction, captures it under
+an optimistic version, records refunds against an existing payment, and lists
+payments by merchant and status through tenant-scoped queries. Ownership must
+be enforced in PostgreSQL -- a payment's merchant and a refund's payment --
+rather than trusted from a JWT claim. Money is minor units in a `long`; no
+`double` may appear in generated money code.
+
+### Current evidence -- payments gateway (2026-08-22)
+
+`jails app apply` + `doctor` + `migrate --check` + `jails check`: **15 doctor
+checks all clear, 7 migrations applied to a scratch database, 66 unit tests
+and 17 integration tests against real PostgreSQL and Kafka, 0 failures,
+BUILD SUCCESS in 1 m 45 s.** 80 manifest lines produced 6,429 lines across 137
+files. **No Java or SQL was hand-edited.**
+
+Four clauses of its contract are **not** proved and are not claimed:
+
+- a duplicate idempotency key produces one payment, but the retained result is
+  not returned and a conflicting payload under the same key is not a 409. The
+  unique column is `generated`; the receipt semantics are `not selected`;
+- SLO histogram buckets, a `ping`-only liveness probe and the readiness
+  datasource contribution are `not selected`;
+- the connection-pool and replica-awareness datasource defaults are
+  `not selected`;
+- no load profile is generated and no p99 is recorded, so nothing here says
+  anything about throughput.
+
+The three skipped tests are the scaffold's `Jdbc<Name>RepositoryIT` stubs,
+which are `@Disabled` by generation rather than by failure. They are recorded
+as friction in [`DOGFOOD.md`](DOGFOOD.md), not as passing coverage.
+
+## Ledger CLI contract -- the control
+
+From `examples/ledger-cli/.jails/app.toml`, Jails must produce a runnable
+plain-Maven application with **no Spring, no web server and no PostgreSQL**:
+a value object with its own validation, an enum, a sealed result set, a
+record, an open strategy with one bean-free implementation per variant, a
+second CLI dispatcher, and a subcommand registered into the dispatcher the
+manifest names. `mvn clean verify` must pass offline against the local
+repository, including the formatter the manifest asks for.
+
+The clause that makes it a control: **standing it up must not add a line to
+`src/`**. A generator that only works because the project is a Spring Boot
+application is a generator this app cannot use, and that is the finding.
+
+## Current evidence -- ledger CLI (2026-08-22)
+
+`jails new-cli` + `app apply` + `jails check`: **53 tests, 0 failures, 6
+skipped, BUILD SUCCESS in 1.9 s**, from 31 manifest lines to 1,633 generated
+lines across 38 files. **No Java or SQL was hand-edited.** The six skipped
+tests are the three strategy implementations' `@Disabled` "say what makes this
+qualify" bodies and their generated companions -- work the reader is meant to
+do, not coverage jails dropped.
+
+Three generic defects were found and fixed rather than worked around; they are
+in the defect ledger in [`DOGFOOD.md`](DOGFOOD.md). The application is
+`generated` and `configured`; nothing here claims it reconciles anything.
+
+## Current evidence -- crawler and inbox (2026-08-21)
 
 The clean-manifest gate now proves idempotent application, Java 25 LTS
 compilation, real PostgreSQL migrations/repositories/typed equality queries,

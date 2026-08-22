@@ -1,0 +1,60 @@
+package com.example.demo.clients;
+
+import java.net.URI;
+import java.util.Arrays;
+import java.util.Objects;
+import java.util.Set;
+
+/** A bounded outbound byte fetch; callers own parsing and link policy. */
+@FunctionalInterface
+public interface PageFetcher {
+
+    FetchedResource fetch(URI uri);
+
+    /**
+     * Fetch while treating selected non-2xx statuses as protocol data.
+     *
+     * <p>The ordinary one-argument operation remains the functional method,
+     * so test doubles and existing callers stay source-compatible. Secure
+     * adapters override this operation without changing redirect, DNS,
+     * response-size, media-type, or timeout enforcement.
+     */
+    default FetchedResource fetch(URI uri, Set<Integer> acceptedStatuses) {
+        Objects.requireNonNull(acceptedStatuses, "accepted statuses are required");
+        return fetch(uri);
+    }
+
+    record FetchedResource(URI uri, int statusCode, String contentType, byte[] body) {
+
+        public FetchedResource {
+            Objects.requireNonNull(uri, "uri is required");
+            Objects.requireNonNull(contentType, "contentType is required");
+            body = Arrays.copyOf(Objects.requireNonNull(body, "body is required"), body.length);
+        }
+
+        @Override
+        public byte[] body() {
+            return Arrays.copyOf(body, body.length);
+        }
+    }
+
+    /** Failure classification lets a durable caller avoid retrying policy and 4xx errors. */
+    final class FetchException extends RuntimeException {
+
+        private final boolean retryable;
+
+        public FetchException(String message, boolean retryable) {
+            super(message);
+            this.retryable = retryable;
+        }
+
+        public FetchException(String message, boolean retryable, Throwable cause) {
+            super(message, cause);
+            this.retryable = retryable;
+        }
+
+        public boolean retryable() {
+            return retryable;
+        }
+    }
+}

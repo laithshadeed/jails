@@ -124,6 +124,7 @@ fn run_checks(root: &Path) -> Vec<Check> {
     checks.extend(database_checks(root, &pom_text));
     checks.extend(in_memory_adapter_check(root, &pom_text));
     checks.push(testcontainers_check(&pom_text));
+    checks.extend(container_reuse_check(&pom_text));
     checks.push(kafka_check(root, &pom_text));
     checks.push(jackson_check(&pom_text));
     checks.push(port_check(root));
@@ -147,6 +148,18 @@ fn project_check(root: &Path, pom_text: &str) -> Check {
             "project",
             format!("{flavor}, but src/main/java does not exist"),
         );
+    }
+    // Before anything else about the project: can Maven open this pom at
+    // all? `pom::read` falls back to an empty string, so without this every
+    // check below happily reported on a project no goal can run against --
+    // fifteen greens over a build that cannot start (plan.md §8.9).
+    if let Some((problem, fix)) = pom::problems(pom_text).into_iter().next() {
+        return Check::new(
+            Status::Fail,
+            "project",
+            format!("{flavor}, and Maven cannot read pom.xml: {problem}"),
+        )
+        .fix(&fix);
     }
     Check::new(
         Status::Ok,
@@ -511,6 +524,35 @@ fn database_checks(root: &Path, pom_text: &str) -> Vec<Check> {
 /// Deliberately textual, like the rest of jails' Java reading -- it answers on
 /// a project that does not compile, which is the case that matters when
 /// something is already broken.
+/// Does this test import `class`, however the annotation is spelled?
+///
+/// Not a substring match on `@Import(Foo.class)`: Spring's `@Import` is not
+/// repeatable, so jails' own splicer *merges* -- a test that also needs its
+/// own containers ends up with
+/// `@Import({SomeIT.Containers.class, TestcontainersConfig.class})`, which the
+/// literal form misses. A check that goes red on correctly wired code is
+/// worse than no check, because the fix it names changes nothing.
+fn imports_config(text: &str, class: &str) -> bool {
+    crate::java::annotations(text)
+        .iter()
+        .filter(|a| a.name == "Import")
+        .any(|a| {
+            a.args
+                .split(',')
+                .map(|member| {
+                    member
+                        .trim()
+                        .trim_start_matches(['{', '('])
+                        .trim_end_matches(['}', ')'])
+                        .trim()
+                })
+                .any(|member| {
+                    member == format!("{class}.class")
+                        || member.ends_with(&format!(".{class}.class"))
+                })
+        })
+}
+
 fn test_container_wiring(root: &Path) -> (Option<String>, Vec<String>) {
     let mut config: Option<String> = None;
     let mut boot_tests: Vec<(String, String)> = Vec::new();
@@ -537,10 +579,26 @@ fn test_container_wiring(root: &Path) -> (Option<String>, Vec<String>) {
                 .and_then(|s| s.to_str())
                 .unwrap_or_default()
                 .to_string();
-            if text.contains("@ServiceConnection") && text.contains("@TestConfiguration") {
+            // Read the annotations rather than the bytes. Both facts here
+            // have a decoy in the tree: `TestcontainersConfig`'s own Javadoc
+            // shows a `@SpringBootTest` usage example inside `{@code ...}`,
+            // and `g event` writes a `Containers` @TestConfiguration *nested
+            // inside* its messaging IT. A substring scan reads the first as a
+            // test and the second as the project's container config, which is
+            // how `doctor` came to name the wrong class and then report every
+            // other test as missing an import of it.
+            let annotations = crate::java::annotations(&text);
+            let on_the_top_level_type = |name: &str| {
+                annotations.iter().any(|a| {
+                    a.name == name && a.target == crate::java::Target::Type(stem.clone())
+                })
+            };
+            if on_the_top_level_type("TestConfiguration")
+                && annotations.iter().any(|a| a.name == "ServiceConnection")
+            {
                 config = Some(stem.clone());
             }
-            if text.contains("@SpringBootTest") {
+            if on_the_top_level_type("SpringBootTest") {
                 boot_tests.push((stem, text));
             }
         }
@@ -548,12 +606,11 @@ fn test_container_wiring(root: &Path) -> (Option<String>, Vec<String>) {
 
     let unimported = match &config {
         Some(class) => {
-            let annotation = format!("@Import({class}.class)");
             let mut missing: Vec<String> = boot_tests
                 .into_iter()
                 // The config class itself may carry @SpringBootTest in a
                 // sample snippet; it obviously does not import itself.
-                .filter(|(stem, text)| stem != class && !text.contains(&annotation))
+                .filter(|(stem, text)| stem != class && !imports_config(text, class))
                 .map(|(stem, _)| stem)
                 .collect();
             missing.sort();
@@ -640,6 +697,103 @@ fn in_memory_adapter_check(root: &Path, pom_text: &str) -> Option<Check> {
              jails destroy repo <Name> && jails g repo <Name> <fields...>",
         ),
     )
+}
+
+/// Is container reuse switched on for this machine, and is anything piling up
+/// because of it?
+///
+/// Reuse is the largest single saving available to a suite that starts
+/// PostgreSQL, and it is **not** what jails generates -- see
+/// `TestcontainersConfig`'s Javadoc for why: the reuse key is a hash of the
+/// container's configuration, nothing in that configuration identifies the
+/// project, so two applications on the same image share one database and
+/// Flyway refuses to start against the other one's migration history.
+///
+/// So this check does not push anyone towards it. What it does is report the
+/// machine flag honestly, and count what reuse has left behind -- a reused
+/// container is deliberately not registered with Ryuk, so nothing else will
+/// ever mention it.
+fn container_reuse_check(pom_text: &str) -> Vec<Check> {
+    if !pom_text.contains("org.testcontainers") {
+        return vec![Check::new(Status::Skip, "container reuse", "not in use")];
+    }
+    if !reuse_enabled() {
+        return vec![Check::new(
+            Status::Skip,
+            "container reuse",
+            "off for this machine; generated container configs do not ask for it",
+        )];
+    }
+    let kept = reusable_containers();
+    let detail = match kept {
+        0 => "enabled for this machine; nothing kept".to_string(),
+        1 => "enabled for this machine; 1 container kept between runs".to_string(),
+        n => format!("enabled for this machine; {n} containers kept between runs"),
+    };
+    // Not a failure at any count: they are *supposed* to survive. Past a
+    // couple, though, they are the residue of runs nobody is coming back to,
+    // and nothing else reports them.
+    let mut check = Check::new(Status::Ok, "container reuse", detail);
+    if kept > 2 {
+        check = Check::new(
+            Status::Warn,
+            "container reuse",
+            format!("{kept} reusable containers are still up, and nothing reaps them"),
+        )
+        .fix("docker rm -f $(docker ps -aq --filter label=org.testcontainers.hash)");
+    }
+    vec![check]
+}
+
+/// The two places Testcontainers looks, in its own order: the environment
+/// variable wins, then the file in the user's home directory. **Not** the
+/// classpath -- `TestcontainersConfiguration` reads
+/// `~/.testcontainers.properties` for this setting and a project-local file
+/// is never consulted.
+fn reuse_enabled() -> bool {
+    if let Some(value) = std::env::var_os("TESTCONTAINERS_REUSE_ENABLE") {
+        return value.to_string_lossy().trim() == "true";
+    }
+    let Some(home) = std::env::var_os("HOME") else {
+        return false;
+    };
+    let Ok(text) = std::fs::read_to_string(Path::new(&home).join(".testcontainers.properties"))
+    else {
+        return false;
+    };
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.starts_with('#'))
+        .any(|line| line.replace(' ', "") == "testcontainers.reuse.enable=true")
+}
+
+/// How many containers carry Testcontainers' reuse hash label.
+///
+/// `docker ps -a --format` rather than `--filter ... --quiet`, for the same
+/// reason the compose checks avoid Docker-specific spellings: this machine's
+/// `docker` is podman's shim, and both understand this form.
+fn reusable_containers() -> usize {
+    let Some(docker) = crate::process::docker_program() else {
+        return 0;
+    };
+    let spec = crate::process::CommandSpec::new(docker)
+        .args([
+            "ps",
+            "-a",
+            "--filter",
+            "label=org.testcontainers.hash",
+            "--format",
+            "{{.Names}}",
+        ])
+        .output(crate::process::OutputMode::Capture);
+    match crate::process::run(&spec, crate::process::Diagnostics::Normal) {
+        Ok(done) if done.status.success() => done
+            .stdout_string()
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .count(),
+        _ => 0,
+    }
 }
 
 fn testcontainers_check(pom_text: &str) -> Check {
@@ -1178,3 +1332,95 @@ volumes:
         assert_eq!(runtime_flag("kafka"), "kafka");
     }
 }
+
+// ---------------------------------------------------------------------------
+// `jails setup` -- the machine-level settings a project cannot carry.
+// ---------------------------------------------------------------------------
+
+/// Turn on Testcontainers container reuse for this machine.
+///
+/// Everything else jails configures lives in the project, where it is visible,
+/// reviewable and shared. This one cannot: Testcontainers reads
+/// `testcontainers.reuse.enable` from `~/.testcontainers.properties` or the
+/// environment and **never** from the classpath, so a project that asks for
+/// reuse gets it only on a machine that has opted in. That asymmetry is the
+/// whole reason this command exists.
+///
+/// **The flag alone changes nothing**, and that is deliberate. Generated
+/// container configs do not call `withReuse(true)`, because the reuse key is
+/// a hash of the container's configuration and nothing in it identifies the
+/// project -- two applications on the same image would share one database,
+/// and Flyway would refuse to start against the other one's migration
+/// history. This command sets up the half a machine owns; the project half is
+/// a one-line change the reader makes deliberately, and `TestcontainersConfig`
+/// says so in its Javadoc.
+///
+/// The edit is a splice, not a rewrite: `~/.testcontainers.properties` is a
+/// file the reader owns and may already hold `docker.client.strategy`,
+/// `ryuk.disabled` or a registry mirror. Same rule as `pom.xml`.
+pub fn setup(dry_run: bool) -> Result<()> {
+    let Some(home) = std::env::var_os("HOME") else {
+        return Err("no HOME, so there is no ~/.testcontainers.properties to write".to_string());
+    };
+    let path = Path::new(&home).join(".testcontainers.properties");
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+
+    if existing
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.starts_with('#'))
+        .any(|line| line.replace(' ', "").starts_with("testcontainers.reuse.enable="))
+    {
+        // Present already -- including as `=false`, which is a decision, not
+        // an omission. Flipping someone's explicit `false` would be jails
+        // overruling them on their own machine.
+        println!(
+            "  exists  testcontainers.reuse.enable is already set in {}",
+            path.display()
+        );
+        println!("          jails doctor reports whether it is on");
+        return Ok(());
+    }
+
+    let mut next = existing.clone();
+    if !next.is_empty() && !next.ends_with('\n') {
+        next.push('\n');
+    }
+    next.push_str(REUSE_BLOCK);
+
+    if dry_run {
+        println!("would add to {}:", path.display());
+        for line in REUSE_BLOCK.lines() {
+            println!("  {line}");
+        }
+        println!();
+        println!("--dry-run: nothing was written.");
+        return Ok(());
+    }
+
+    std::fs::write(&path, next).map_err(|e| format!("failed to write {}: {e}", path.display()))?;
+    println!(
+        "  write   testcontainers.reuse.enable=true -> {}",
+        path.display()
+    );
+    println!("          This machine now permits reuse. Nothing reuses anything yet:");
+    println!("          add `.withReuse(true)` to the container bean in TestcontainersConfig,");
+    println!("          and read its Javadoc first -- two projects on one image share a");
+    println!("          database, and Flyway will not start against another project's history.");
+    println!("          Reused containers are not reaped; `jails doctor` counts them.");
+    Ok(())
+}
+
+const REUSE_BLOCK: &str = "\
+# jails: permit containers to be reused between test runs -- the largest
+# saving available to a suite that starts PostgreSQL.
+#
+# This only permits it. A container is reused when its bean asks, with
+# `withReuse(true)`, and that is a per-project decision: the reuse key is a
+# hash of the container configuration, so two projects on the same image would
+# share one database and Flyway would reject the other one's migrations.
+#
+# Reused containers are deliberately not registered with Ryuk, so nothing
+# reaps them -- `jails doctor` counts them.
+testcontainers.reuse.enable=true
+";

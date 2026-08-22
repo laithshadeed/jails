@@ -197,16 +197,14 @@ class {name}ServiceTest {{
 
 /// `WorkItem` -> `/work-items`. The URL convention is kebab-case and plural,
 /// and deriving it beats making every caller remember to type it.
-pub(super) fn resource_path(name: &str) -> String {
-    let mut path = String::from("/");
-    for (i, c) in name.chars().enumerate() {
-        if c.is_uppercase() && i > 0 {
-            path.push('-');
-        }
-        path.extend(c.to_lowercase());
-    }
-    path.push('s');
-    path
+///
+/// Through `sql::table_name`, not a second pluraliser: this function used to
+/// append a bare `s`, so `g handler Category` served `/categorys` while the
+/// very same resource's table was `categories` -- and the Spring scaffold's
+/// controller, which does go through `table_name`, disagreed with the
+/// framework-free handler about the URL of the same thing.
+pub(crate) fn resource_path(name: &str) -> String {
+    format!("/{}", crate::sql::table_name(name).replace('_', "-"))
 }
 
 pub(super) fn handler_java(pkg: &str, name: &str, extra: &str) -> String {

@@ -166,7 +166,8 @@ enum Command {
         /// For `strategy`, the type each implementation examines. For
         /// `usecase`, the existing scaffolded resource the operation creates;
         /// for `query`, the scaffolded resource it reads; for `durable-job`,
-        /// the existing generated use case it invokes.
+        /// the existing generated use case it invokes. For `command`, the
+        /// dispatcher to register it in, when the project has more than one.
         ///
         ///   jails g strategy RewardRule Coffee Large --on Transaction --yields Reward
         #[arg(long = "on", value_name = "TYPE")]
@@ -390,6 +391,19 @@ enum Command {
         #[arg(last = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Prepare this machine for fast runs: container reuse, and what else it needs
+    ///
+    /// Machine-level, not project-level. The one setting jails cannot write
+    /// into a project is the Testcontainers reuse flag: it is read from
+    /// `~/.testcontainers.properties` or the environment, and a file on the
+    /// classpath does nothing at all -- so a generated `withReuse(true)` is
+    /// ignored until this has run, and every test run pays for a fresh
+    /// PostgreSQL.
+    Setup {
+        /// Describe what would change and write nothing
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Print a shell-completion script: source <(jails completion bash)
     Completion { shell: Shell },
 }
@@ -530,6 +544,7 @@ fn main() -> std::process::ExitCode {
                 run::run(no_build, &args, debug)
             }
         }
+        Command::Setup { dry_run } => doctor::setup(dry_run || pretend),
         Command::Completion { shell } => {
             clap_complete::generate(shell, &mut Cli::command(), "jails", &mut std::io::stdout());
             Ok(())

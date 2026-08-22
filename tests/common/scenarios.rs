@@ -1,0 +1,613 @@
+//! The one table of "how do I invoke kind X", shared by every test that
+//! needs to run a generator.
+//!
+//! `plan.md` §6.1 counts five separate answers to *"what files does kind X
+//! produce?"* and nothing that checks they agree. This module exists so that
+//! adding a thirteenth one is not the price of a new test: the golden
+//! snapshots (`tests/golden.rs`) and the generate/destroy agreement check
+//! (`tests/agreement.rs`) both read these scenarios, and the coverage test
+//! derives *which* kinds and capabilities are exercised from the steps
+//! themselves rather than from a list somebody maintains by hand.
+
+use super::{temp_dir, write_plain_fixture, write_spring_fixture};
+use std::collections::BTreeSet;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+/// Which fixture a scenario starts from.
+#[derive(Copy, Clone)]
+pub enum Fixture {
+    Plain,
+    Spring,
+}
+
+pub struct Scenario {
+    /// Directory under `tests/golden/`.
+    pub name: &'static str,
+    pub fixture: Fixture,
+    /// Files the scenario needs on disk before jails runs -- `g cases` reads
+    /// a markdown file it did not write. Subtracted from the snapshot, since
+    /// they are input rather than jails' output.
+    pub seed: &'static [(&'static str, &'static str)],
+    /// jails invocations, run in order.
+    pub steps: &'static [&'static [&'static str]],
+}
+
+/// Every artifact kind and every capability, in the smallest invocation that
+/// exercises it.
+///
+/// That sentence used to be a wish. `every_kind_and_capability_has_a_golden_scenario`
+/// in `tests/golden.rs` is what makes it a fact: it reads the kinds and
+/// capabilities out of the binary's own help and fails when one has no
+/// scenario here, so a kind can no longer be added without its snapshot.
+pub const SCENARIOS: &[Scenario] = &[
+    // ---- generators, plain Maven ----
+    Scenario {
+        name: "record",
+        fixture: Fixture::Plain,
+        seed: &[],
+        steps: &[&[
+            "g",
+            "record",
+            "Note",
+            "title:string!",
+            "body:string?",
+            "at:instant",
+        ]],
+    },
+    Scenario {
+        name: "value",
+        fixture: Fixture::Plain,
+        seed: &[],
+        steps: &[&["g", "value", "Money", "amount:long", "currency:string"]],
+    },
+    Scenario {
+        name: "enum-and-sealed",
+        fixture: Fixture::Plain,
+        seed: &[],
+        steps: &[
+            &["g", "enum", "Status", "ACTIVE", "CLOSED"],
+            &["g", "sealed", "Outcome", "Accepted", "Rejected"],
+        ],
+    },
+    Scenario {
+        name: "strategy",
+        fixture: Fixture::Plain,
+        seed: &[],
+        steps: &[
+            &["g", "record", "Transaction", "id:uuid", "amount:long"],
+            &["g", "record", "Reward", "id:uuid", "amount:long"],
+            &[
+                "g",
+                "strategy",
+                "RewardRule",
+                "Coffee",
+                "Large",
+                "--on",
+                "Transaction",
+                "--yields",
+                "Reward",
+            ],
+            &[
+                "g",
+                "strategy",
+                "Eligibility",
+                "Domestic",
+                "--on",
+                "Transaction",
+            ],
+        ],
+    },
+    Scenario {
+        name: "class-interface-test",
+        fixture: Fixture::Plain,
+        seed: &[],
+        steps: &[
+            &["g", "class", "RingBuffer"],
+            &["g", "interface", "Clock"],
+            &["g", "test", "Parser"],
+            &["g", "integration-test", "Checkout"],
+        ],
+    },
+    Scenario {
+        name: "command-and-cli",
+        fixture: Fixture::Plain,
+        seed: &[],
+        steps: &[&["g", "cli", "Admin"], &["g", "command", "Greet"]],
+    },
+    Scenario {
+        name: "repo",
+        fixture: Fixture::Plain,
+        seed: &[],
+        steps: &[&["g", "repo", "Note", "id:uuid", "title:string"]],
+    },
+    Scenario {
+        name: "scaffold-plain",
+        fixture: Fixture::Plain,
+        seed: &[],
+        steps: &[&[
+            "g",
+            "scaffold",
+            "Note",
+            "id:uuid@pk",
+            "title:string!",
+            "amount:long@positive",
+            "createdAt:instant",
+        ]],
+    },
+    Scenario {
+        name: "migration",
+        fixture: Fixture::Plain,
+        seed: &[],
+        steps: &[&["g", "migration", "add_note_index"]],
+    },
+    // ---- generators that need Spring ----
+    Scenario {
+        name: "scaffold-spring",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[&[
+            "g",
+            "scaffold",
+            "Note",
+            "id:uuid@pk",
+            "title:string!",
+            "createdAt:instant",
+            "--index",
+            "title, created_at desc",
+        ]],
+    },
+    Scenario {
+        name: "controller-service",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[&["g", "controller", "Health"], &["g", "service", "Billing"]],
+    },
+    Scenario {
+        name: "dto-client-job",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[
+            &["g", "record", "Payout", "id:uuid", "amount:long"],
+            &["g", "dto", "Payout"],
+            &["g", "client", "Ledger"],
+            &["g", "job", "Reconcile"],
+        ],
+    },
+    Scenario {
+        name: "event",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[&["g", "event", "Transaction"]],
+    },
+    // ---- capabilities, plain Maven ----
+    Scenario {
+        name: "cap-csv",
+        fixture: Fixture::Plain,
+        seed: &[],
+        steps: &[&["add", "csv", "--no-start"]],
+    },
+    Scenario {
+        name: "cap-json",
+        fixture: Fixture::Plain,
+        seed: &[],
+        steps: &[&["add", "json", "--no-start"]],
+    },
+    Scenario {
+        name: "cap-sqlite",
+        fixture: Fixture::Plain,
+        seed: &[],
+        steps: &[&["add", "sqlite", "--no-start"]],
+    },
+    Scenario {
+        name: "cap-testkit-fake",
+        fixture: Fixture::Plain,
+        seed: &[],
+        steps: &[&["add", "testkit", "fake", "--no-start"]],
+    },
+    Scenario {
+        name: "cap-http",
+        fixture: Fixture::Plain,
+        seed: &[],
+        steps: &[
+            &["add", "http", "--no-start"],
+            &["g", "handler", "WorkItem"],
+        ],
+    },
+    // `add format` is deliberately absent: it shells out to spotless:apply
+    // as a best-effort last step, and whether that succeeds depends on the
+    // JDK this machine has. A golden target has to be hermetic, and a
+    // scenario whose output depends on the toolchain is not a snapshot of
+    // jails. `add_format_*` in tests/cli.rs covers it instead.
+    // ---- capabilities that need Spring ----
+    Scenario {
+        name: "cap-db",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[&["add", "db", "--no-start"]],
+    },
+    Scenario {
+        name: "cap-kafka",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[&["add", "kafka", "--no-start"]],
+    },
+    Scenario {
+        name: "cap-api-actuator",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[&["add", "api", "actuator", "--no-start"]],
+    },
+    Scenario {
+        name: "cap-cache-security",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[&["add", "cache", "security", "--no-start"]],
+    },
+    Scenario {
+        name: "cap-redis",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[&["add", "redis", "--no-start"]],
+    },
+    Scenario {
+        name: "cap-observability",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[&["add", "observability", "--no-start"]],
+    },
+    Scenario {
+        name: "cap-toxiproxy",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[&["add", "toxiproxy", "--no-start"]],
+    },
+    // ---- generators over an existing scaffold (Spring, no database) ----
+    Scenario {
+        name: "usecase-query-transition",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[
+            &["g", "enum", "PayoutStatus", "PENDING", "SETTLED", "FAILED"],
+            &[
+                "g",
+                "scaffold",
+                "Payout",
+                "id:uuid@pk",
+                "amount:long@positive",
+                "status:PayoutStatus@index",
+                "version:long@nonnegative",
+                "createdAt:instant",
+            ],
+            &[
+                "g",
+                "usecase",
+                "RequestPayout",
+                "id:uuid",
+                "amount:long",
+                "--on",
+                "Payout",
+            ],
+            &[
+                "g",
+                "query",
+                "PayoutsByStatus",
+                "status:PayoutStatus",
+                "--on",
+                "Payout",
+            ],
+            &[
+                "g",
+                "transition",
+                "ChangePayoutStatus",
+                "id:uuid",
+                "status:PayoutStatus",
+                "version:long@nonnegative",
+                "--on",
+                "Payout",
+            ],
+        ],
+    },
+    // ---- generators that need a database, so `add db` is a prerequisite
+    // rather than the subject: each refuses without it, naming the fix ----
+    Scenario {
+        name: "association-durable-job",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[
+            &["add", "db", "--no-start"],
+            &["g", "scaffold", "Owner", "id:uuid@pk", "name:string!", "createdAt:instant"],
+            &[
+                "g",
+                "scaffold",
+                "Item",
+                "id:uuid@pk",
+                "ownerId:uuid@index",
+                "name:string!",
+                "createdAt:instant",
+            ],
+            &[
+                "g",
+                "association",
+                "ItemOwner",
+                "ownerId=id",
+                "--on",
+                "Item",
+                "--yields",
+                "Owner",
+            ],
+            &[
+                "g",
+                "usecase",
+                "AddItem",
+                "id:uuid",
+                "ownerId:uuid",
+                "name:string!",
+                "--on",
+                "Item",
+            ],
+            &[
+                "g",
+                "durable-job",
+                "ItemDispatcher",
+                "id:uuid",
+                "ownerId:uuid",
+                "name:string!",
+                "--on",
+                "AddItem",
+                "--yields",
+                "Item",
+            ],
+        ],
+    },
+    Scenario {
+        name: "fetcher-workflow",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[
+            &["add", "db", "--no-start"],
+            &["g", "fetcher", "Page"],
+            &["g", "http-workflow", "SiteWalk", "--on", "Page"],
+        ],
+    },
+    Scenario {
+        name: "outbox-http-sink",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[
+            &["add", "db", "--no-start"],
+            &["add", "json", "--no-start"],
+            &["g", "scaffold", "Message", "id:uuid@pk", "body:string!", "createdAt:instant"],
+            &["g", "event", "MessageReceived", "id:uuid", "occurredAt:instant"],
+            &[
+                "g",
+                "usecase",
+                "ReceiveMessage",
+                "id:uuid",
+                "body:string!",
+                "--on",
+                "Message",
+                "--yields",
+                "MessageReceived",
+            ],
+            &[
+                "g",
+                "http-sink",
+                "Provider",
+                "--on",
+                "ReceiveMessage",
+                "--yields",
+                "MessageReceived",
+            ],
+        ],
+    },
+    Scenario {
+        name: "cases",
+        fixture: Fixture::Plain,
+        seed: &[("docs/behaviour.md", CASES_MARKDOWN)],
+        steps: &[&["g", "cases", "docs/behaviour.md"]],
+    },
+    Scenario {
+        name: "cap-ci",
+        fixture: Fixture::Plain,
+        seed: &[],
+        steps: &[&["add", "ci", "--no-start"]],
+    },
+    Scenario {
+        name: "cap-docker",
+        fixture: Fixture::Plain,
+        seed: &[],
+        steps: &[&["add", "docker", "--no-start"]],
+    },
+];
+
+/// `g cases` reads scenarios out of a markdown file, so the file is input,
+/// not output -- the only scenario that needs anything on disk first.
+const CASES_MARKDOWN: &str = "\
+# Behaviour
+
+## a payout is settled
+
+- given a payout that is pending
+- when the provider confirms it
+- then it is settled
+
+## a payout is rejected
+
+- given a payout that is pending
+- when the provider declines it
+- then it is failed
+";
+
+/// A scratch project with the scenario's fixture and seed files in place,
+/// before any jails command has run.
+pub fn prepare(scenario: &Scenario) -> PathBuf {
+    let root = temp_dir(&format!("scenario-{}", scenario.name));
+    match scenario.fixture {
+        Fixture::Plain => write_plain_fixture(&root),
+        Fixture::Spring => write_spring_fixture(&root),
+    }
+    for (rel, contents) in scenario.seed {
+        let path = root.join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, contents).unwrap();
+    }
+    root
+}
+
+/// Run one step, failing with the command and its stderr rather than a bare
+/// exit code -- a scenario that stops working is usually a refusal with a
+/// `fix:` line in it, and that line is the whole diagnosis.
+pub fn run_step(root: &Path, scenario_name: &str, step: &[&str]) {
+    let output = Command::new(super::bin())
+        .current_dir(root)
+        .args(step)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "scenario `{scenario_name}` step `jails {}` failed:\n{}{}",
+        step.join(" "),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+pub fn run_steps(root: &Path, scenario: &Scenario) {
+    for step in scenario.steps {
+        run_step(root, scenario.name, step);
+    }
+}
+
+/// Every file under `dir`, as paths relative to it. `target/` is build
+/// output, not something jails wrote.
+pub fn file_set(dir: &Path) -> BTreeSet<String> {
+    let mut found = BTreeSet::new();
+    walk(dir, dir, &mut found);
+    found
+}
+
+fn walk(root: &Path, dir: &Path, out: &mut BTreeSet<String>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if path.file_name().is_some_and(|n| n == "target") {
+                continue;
+            }
+            walk(root, &path, out);
+            continue;
+        }
+        out.insert(
+            path.strip_prefix(root)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/"),
+        );
+    }
+}
+
+/// The `generate` steps of a scenario, as (kind, name).
+///
+/// Derived from the steps rather than declared beside them: a third list of
+/// "which kinds does this scenario cover" is exactly the drift §6.1 counts.
+pub fn generate_steps(scenario: &Scenario) -> Vec<(&'static str, &'static str)> {
+    scenario
+        .steps
+        .iter()
+        .filter(|s| matches!(s.first(), Some(&"g") | Some(&"generate")))
+        .map(|s| (s[1], s[2]))
+        .collect()
+}
+
+/// Which artifact kinds the scenario table exercises, by canonical name.
+///
+/// A scenario that spells a kind with a clap alias (`fk`, `uc`, `mig`) will
+/// read as *uncovered* here, and the coverage test will say so. Spell the
+/// canonical name in `SCENARIOS`; the aliases are for humans at a terminal.
+pub fn covered_kinds() -> BTreeSet<&'static str> {
+    SCENARIOS
+        .iter()
+        .flat_map(generate_steps)
+        .map(|(kind, _)| kind)
+        .collect()
+}
+
+/// Which capabilities the scenario table exercises. `add a b --no-start`
+/// installs two, so every argument up to the first flag counts.
+pub fn covered_capabilities() -> BTreeSet<&'static str> {
+    let mut found = BTreeSet::new();
+    for scenario in SCENARIOS {
+        for step in scenario.steps {
+            if step.first() != Some(&"add") {
+                continue;
+            }
+            for arg in &step[1..] {
+                if arg.starts_with('-') {
+                    break;
+                }
+                found.insert(*arg);
+            }
+        }
+    }
+    found
+}
+
+/// The canonical value names clap accepts, read out of the binary's own
+/// long help.
+///
+/// The alternative is a hand-copied list of the enum variants, which is the
+/// fifth copy §6.1 is about. Parsing help means the oracle is the CLI a user
+/// actually types at.
+fn possible_values(subcommand: &str) -> BTreeSet<String> {
+    let output = Command::new(super::bin())
+        .args([subcommand, "--help"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "`jails {subcommand} --help` failed");
+    let help = String::from_utf8_lossy(&output.stdout);
+    let mut values = BTreeSet::new();
+    for line in help.lines() {
+        let trimmed = line.trim_start();
+        // Indentation matters: clap indents the value list further than the
+        // surrounding prose, and a bullet in a doc comment would otherwise
+        // read as a value.
+        if line.len() - trimmed.len() < 8 {
+            continue;
+        }
+        let Some(rest) = trimmed.strip_prefix("- ") else {
+            continue;
+        };
+        let Some((value, _)) = rest.split_once(':') else {
+            continue;
+        };
+        if !value.is_empty() && value.chars().all(|c| c.is_ascii_lowercase() || c == '-') {
+            values.insert(value.to_string());
+        }
+    }
+    values
+}
+
+pub fn cli_kinds() -> BTreeSet<String> {
+    let kinds = possible_values("generate");
+    // A parse that silently returns nothing would make the coverage test
+    // pass while covering nothing, which is the failure mode it exists to
+    // catch in the first place.
+    assert!(
+        kinds.contains("scaffold") && kinds.len() > 20,
+        "could not read the artifact kinds out of `jails generate --help`: {kinds:?}"
+    );
+    kinds
+}
+
+pub fn cli_capabilities() -> BTreeSet<String> {
+    let caps = possible_values("add");
+    assert!(
+        caps.contains("db") && caps.len() > 10,
+        "could not read the capabilities out of `jails add --help`: {caps:?}"
+    );
+    caps
+}

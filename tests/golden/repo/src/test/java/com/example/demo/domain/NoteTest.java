@@ -8,7 +8,6 @@ import org.junit.jupiter.api.Test;
 
 class NoteTest {
 
-
     @Test
     void rejectsANullComponent() {
         assertThatNullPointerException()
