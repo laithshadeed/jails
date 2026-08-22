@@ -110,6 +110,11 @@ pub enum ArtifactKind {
     /// answered 409 by a unique constraint. Needs `jails add db`.
     #[value(alias = "idempotent")]
     Idempotency,
+    /// A JWT issuer for this service's own tokens: the `JwtEncoder` Boot does
+    /// not auto-configure, and a decoder that refuses a token with no `exp` --
+    /// which every default configuration accepts. Needs `jails add security`.
+    #[value(alias = "jwt")]
+    Auth,
     /// PostgreSQL-backed, leased, bounded-retry work that invokes an existing
     /// generated create use case. `--on` names the use case and `--yields`
     /// names its resource; fields include the stable resource `id`.
@@ -815,6 +820,17 @@ fn artifacts_for(
                 );
             }
             crate::spring::idempotency_files(&crate::model::Slice::new(project, package), name)?
+        }
+        ArtifactKind::Auth => {
+            require_spring_project(project, "auth")?;
+            if !fields.is_empty() || strategy_on.is_some() || strategy_yields.is_some() {
+                return Err(
+                    "auth takes only a name; the subject and scopes are runtime values the \
+                     caller supplies, not generation-time ones"
+                        .to_string(),
+                );
+            }
+            crate::spring::auth_files(&crate::model::Slice::new(project, package), name)?
         }
         ArtifactKind::HttpSink => {
             require_spring_project(project, "http-sink")?;

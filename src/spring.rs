@@ -17,6 +17,7 @@ use std::path::Path;
 use crate::Result;
 use crate::model::{Artifact, Change, Layer, Slice};
 
+mod auth;
 mod durable;
 mod http;
 mod query;
@@ -24,6 +25,7 @@ mod schema;
 mod sse;
 mod transition;
 mod workflow;
+pub(crate) use auth::*;
 pub(crate) use durable::*;
 pub(crate) use http::*;
 pub(crate) use query::*;

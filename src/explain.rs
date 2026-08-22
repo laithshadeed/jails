@@ -219,6 +219,27 @@ const EXPLANATIONS: &[Explanation] = &[
                implementation.",
     },
     Explanation {
+        kind: ArtifactKind::Auth,
+        summary: "A JWT issuer for this service's own tokens, and the default it undoes.",
+        body: "Two facts, both read out of the Spring source rather than remembered, and both \
+               the kind that surprise people.\n\n\
+               **Spring Boot auto-configures no `JwtEncoder`.** Not one occurrence of the type \
+               exists in the whole of Boot: the resource-server starter hands you a decoder for \
+               *someone else's* tokens and stops there. A service issuing its own has to \
+               declare the encoder, which is what the generated config is.\n\n\
+               **A token with no `exp` passes the default decoder.** \
+               `JwtTimestampValidator` ships with `allowEmptyExpiryClaim = true`, so every \
+               out-of-the-box configuration accepts a token that never expires, and nothing \
+               warns. One line closes it, and the generated test is what keeps that line \
+               there: deleting it changes no behaviour any other test can observe.\n\n\
+               The key is symmetric and read from configuration, which fits a service that \
+               both issues and verifies. Two services that must verify each other's tokens \
+               want a key pair and a published JWK set -- never one shared secret, since every \
+               holder of it can mint tokens for every other.\n\n\
+               Needs `jails add security`: without a filter chain reading the token, the \
+               encoder and decoder are beans nothing consumes.",
+    },
+    Explanation {
         kind: ArtifactKind::Migration,
         summary: "An empty, correctly numbered Flyway migration.",
         body: "Numbered numerically rather than lexically: `V10` sorts before `V9` as a string, \

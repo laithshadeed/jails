@@ -303,6 +303,13 @@ to build next and why. Do not add proposals here.
   other parameter objects that fell out — each one a group of values that is
   computed together and consumed together.
 
+  `src/spring/auth.rs` (`g auth`) and `src/spring/sse.rs` (`add sse`) are the
+  two most recent, and both exist because a default is wrong in a way nothing
+  reports: `JwtTimestampValidator` accepts a token with no `exp`, and
+  `spring.task.scheduling.pool.size` is 1. In both cases the generated *test*
+  is the thing that keeps the fix in place, because removing the fix changes no
+  behaviour any other test can observe.
+
   **Every template was written against `deps/`, not from memory.** The
   generated code targets APIs that moved recently, and the failure mode is
   silent: it compiles against the version you had.

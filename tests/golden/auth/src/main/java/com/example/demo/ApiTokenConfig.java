@@ -1,0 +1,81 @@
+package com.example.demo;
+
+import java.nio.charset.StandardCharsets;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.SecretKeySpec;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.JwtEncoder;
+import org.springframework.security.oauth2.jwt.JwtTimestampValidator;
+import org.springframework.security.oauth2.jwt.JwtValidators;
+import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
+import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
+
+/**
+ * Issuing and verifying this service's own tokens.
+ *
+ * <p>Two facts, both of which surprise people, and both confirmed against the
+ * Spring source rather than remembered.
+ *
+ * <p><b>Boot auto-configures no {@link JwtEncoder}.</b> There is not one in the
+ * whole of Spring Boot: the resource-server starter gives you a
+ * {@link JwtDecoder} for someone else's tokens and stops there. A service that
+ * issues its own has to declare the encoder, which is what this class is for.
+ *
+ * <p><b>A JWT with no {@code exp} passes the default decoder.</b>
+ * {@code JwtTimestampValidator} ships with {@code allowEmptyExpiryClaim = true},
+ * so a token that never expires is accepted by every out-of-the-box
+ * configuration. Nothing warns. The one line that closes it is
+ * {@code setAllowEmptyExpiryClaim(false)}, below — and the generated test
+ * exists to keep it there, because deleting it changes no behaviour any other
+ * test can see.
+ *
+ * <p>The secret is symmetric (HS256) and read from configuration, which is the
+ * right shape for a service that both issues and verifies its own tokens. Two
+ * services that need to verify each other's want an asymmetric key: swap
+ * {@code withSecretKey} for {@code withKeyPair} and publish a JWK set. Do not
+ * "temporarily" share one secret between services — every holder of it can mint
+ * tokens for every other.
+ */
+@Configuration
+public class ApiTokenConfig {
+
+    /**
+     * At least 32 bytes for HS256; Nimbus refuses a shorter one at startup
+     * rather than at the first request, which is the failure you want.
+     */
+    private final SecretKey key;
+
+    public ApiTokenConfig(@Value("${app.auth.secret}") String secret) {
+        this.key = new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
+    }
+
+    @Bean
+    public JwtEncoder jwtEncoder() {
+        return NimbusJwtEncoder.withSecretKey(key).build();
+    }
+
+    @Bean
+    public JwtDecoder jwtDecoder() {
+        NimbusJwtDecoder decoder =
+                NimbusJwtDecoder.withSecretKey(key).macAlgorithm(MacAlgorithm.HS256).build();
+        decoder.setJwtValidator(JwtValidators.createDefaultWithValidators(requireExpiry()));
+        return decoder;
+    }
+
+    /**
+     * The default validator with the one permissive default turned off.
+     *
+     * <p>Kept as a named method because the reason is not visible from the call
+     * site: the class it configures is already in the default chain, and this
+     * replaces it with a stricter instance of itself.
+     */
+    private static JwtTimestampValidator requireExpiry() {
+        JwtTimestampValidator timestamps = new JwtTimestampValidator();
+        timestamps.setAllowEmptyExpiryClaim(false);
+        return timestamps;
+    }
+}

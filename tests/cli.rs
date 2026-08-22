@@ -6143,3 +6143,62 @@ fn add_sse_produces_tests_that_run_and_pass() {
         "all four hub tests must actually run: {report}"
     );
 }
+
+/// `plan.md` §13.3's `g auth`. Both claims behind it are behavioural, so a
+/// compile check would prove nothing: Boot auto-configures no `JwtEncoder`,
+/// and `JwtTimestampValidator` accepts a token with no `exp` unless one line
+/// says otherwise. The second is the reason `a_token_with_no_expiry_is_refused`
+/// exists — delete that line and no other test notices.
+#[test]
+fn generate_auth_produces_tests_that_run_and_pass() {
+    if !real_mvn_available() {
+        skip("mvn not found on PATH");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let root = temp_dir("real-auth");
+    write_spring_fixture(&root);
+
+    let status = jails_cmd_with_path(&root, &path)
+        .args(["add", "security", "--no-start"])
+        .status()
+        .unwrap();
+    assert!(status.success(), "add security failed");
+
+    let status = jails_cmd_with_path(&root, &path)
+        .args(["generate", "auth", "Api"])
+        .status()
+        .unwrap();
+    assert!(status.success(), "generate auth failed");
+
+    let output = jails_cmd_with_path(&root, &path)
+        .args(["test", "ApiTokensTest"])
+        .output()
+        .unwrap();
+    let report = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.status.success(), "{report}");
+    assert!(
+        report.contains("Tests run: 4"),
+        "all four token tests must actually run: {report}"
+    );
+}
+
+/// Without Spring Security there is no filter chain to read the token, so the
+/// encoder and decoder would be beans nothing consumes.
+#[test]
+fn generate_auth_refuses_without_the_security_capability() {
+    let root = temp_dir("auth-no-security");
+    write_spring_fixture(&root);
+
+    let output = jails_cmd(&root, None)
+        .args(["generate", "auth", "Api"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(stderr.contains("jails add security"), "{stderr}");
+}

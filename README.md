@@ -310,6 +310,17 @@ it already draws for hand-written properties inside a jails-owned block.
   either order both leave `prometheus` exposed. The generated test scrapes the
   live endpoint rather than the registry, since a missing registry is not an
   error — it is a 404 nobody notices for days.
+- `jails g auth <Name>` (alias `jwt`) — this service issuing its own tokens,
+  and the default that has to be undone. **Spring Boot auto-configures no
+  `JwtEncoder`** — there is not one occurrence of the type in the whole of
+  Boot; the resource-server starter gives you a decoder for *someone else's*
+  tokens and stops. And **a token with no `exp` passes the default decoder**:
+  `JwtTimestampValidator` ships `allowEmptyExpiryClaim = true`, so every
+  out-of-the-box configuration accepts a token that never expires, and nothing
+  warns. One line closes it and one generated test keeps it closed — delete the
+  line and no other test notices. The key is symmetric and read from
+  configuration; two services that verify each other's tokens want a key pair
+  and a published JWK set, never one shared secret. Needs `jails add security`.
 - `jails add|a sse` (alias `events`) — Server-Sent Events, and the five details
   this design gets wrong. The emitter timeout is `-1L`, not `Long.MAX_VALUE`:
   it reaches `AsyncContext.setTimeout`, where the Servlet spec reads zero or

@@ -1,0 +1,17 @@
+# jails' own bookkeeping. Written by jails, never hand-edited -- `jails.toml`
+# and `.jails/app.toml` are the files that are yours.
+#
+# Identity is (recipe, name, package). Everything else is content, which is
+# what makes an edited intent an update to a known entity rather than a new
+# one arriving against files that already exist.
+version = "0.1.0"
+
+[[applied]]
+recipe = "auth"
+name = "Api"
+package = ""
+files = [
+  "src/main/java/com/example/demo/ApiTokenConfig.java",
+  "src/main/java/com/example/demo/ApiTokens.java",
+  "src/test/java/com/example/demo/ApiTokensTest.java",
+]
