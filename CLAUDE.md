@@ -6,9 +6,13 @@ deliberately deferred) — treat it as the spec, and update it in the same
 change as the code. The original `prompt.md` spec was deleted once the
 commands it described all shipped; don't go looking for it.
 
-The scope bar: this is a deliberately small v1. No `routes`, no Gradle, no
-plugin system. Check `README.md`'s "Not yet" before adding a command that
-isn't already there.
+The scope bar: no Gradle, no ORM, no jails runtime jar, no Lombok, no preview
+features in generated Java, and no plugin system with lifecycle hooks. Check
+`README.md`'s "Not yet" before adding a command that isn't already there.
+
+**Every idea, roadmap item and open design question lives in `plan.md`.** This
+file describes what the code *is* and the traps in it; `plan.md` describes what
+to build next and why. Do not add proposals here.
 
 ## Layout
 
@@ -47,8 +51,12 @@ isn't already there.
   - `add/testing.rs` — `testkit`, `fake`, `toxiproxy`.
   - `add/tooling.rs` — `http` and `format`.
 
-  The Spring-only capabilities stay in `src/spring.rs`, which is a different
-  cut: they share one precondition (`require_spring`), not one subject.
+  `ci` and `docker` are the two capabilities whose plans live in `add.rs`
+  itself rather than a submodule.
+
+  The Spring-only capabilities live in `src/spring.rs` instead — a different
+  cut: they share one precondition (`require_spring`), not one subject. See
+  that entry below, and note it has outgrown its original rationale.
 - `templates/**.java` + `src/template.rs` — the Java bodies, as Java files.
   A template used to be a Rust `format!` string, which meant **every brace
   doubled** (`class {name}Controller {{`, and `{{@code public}}` in Javadoc)
@@ -56,7 +64,7 @@ isn't already there.
   templates are real `.java` files now, pulled in with `include_str!` so they
   are still compile-time constants with no runtime file access and no new
   dependency. Placeholders are `{{name}}`, chosen by **checking**: no `{{`
-  appears anywhere in the 159 golden files, so it cannot collide, while
+  appears anywhere in the 162 golden files, so it cannot collide, while
   `${name}` would (spring.rs generates `@Value("${...}")`). A missing or
   unused key is a panic, not silent text in a generated class. It is
   substitution only — **not** a template engine: anything structural (Spring's
@@ -171,13 +179,46 @@ isn't already there.
   `a_scaffold_with_database_types_compiles_including_its_derived_jdbc_adapter`
   exists.
 - `src/spring.rs` — the Spring-only capabilities (`api`, `actuator`, `cache`,
-  `security`, `redis`, `observability`) and generator kinds (`client`, `job`,
-  `dto`, `event`). Kept apart from `add.rs`
+  `security`, `redis`, `observability`) **and most of the generator kinds**:
+  `client`, `job`, `dto`, `event`, plus everything added since —
+  `fetcher`, `usecase` (and its `outbox` half), `query`, `transition`,
+  `durable-job`, `association`, `http-workflow`, `http-sink`. They are here
   because they share one precondition — a Spring Boot parent, checked once in
-  `require_spring` — and because `add.rs` was already the biggest file here.
+  `require_spring`.
+
+  **This file is now 6,459 lines and that is a known problem.** The original
+  reason for the split said `add.rs` "was already the biggest file here";
+  that is now inverted — `spring.rs` is nearly twice `generate.rs` (3,361)
+  and 4.5× `add.rs` (1,444). It also still holds ~42 whole Java files as
+  inline `format!` strings with doubled braces, which is exactly the tax
+  `template.rs` exists to remove. `plan.md` §6 has the ranked options and the
+  proposed split; do not start a big-bang refactor, extract as you touch.
+
   **Every template was written against `deps/`, not from memory.** The
   generated code targets APIs that moved recently, and the failure mode is
   silent: it compiles against the version you had.
+- `src/app.rs` — `jails app plan|apply`: a declarative manifest at
+  `.jails/app.toml` (`schema`, `capabilities`, and a closed `[[generate]]`
+  schema of `kind`/`name`/`fields`/`indexes`/`package`/`strategy_on`/
+  `strategy_yields`). **Deliberately domain-blind** — the module docs say it,
+  and it is load-bearing: a crawler, a support inbox and a payments gateway
+  are three lists of the same generic intents, and none of them gets a
+  command, branch, enum or template in core. `apply` installs capabilities,
+  runs each unapplied intent, **writes `.jails/app-state-v1` after every one**
+  (so an interrupted apply resumes), then **reconciles every capability a
+  second time** — because a generator can create a new integration point for
+  an already-installed capability. The state key is
+  `kind|name|package|fields|indexes|on|yields`, so **editing a `fields` line
+  changes the key**: the old intent stays in state and the edited one arrives
+  as pending, then `generate` refuses on the existing files. That is a known
+  gap, not a design; `plan.md` §9.7 and §11 have the fix.
+- `examples/` — the proof applications, and the reason the generic machinery
+  can be trusted. `examples/web-crawler/` and `examples/support-inbox/` are
+  manifests built from the same generic intents; `ACCEPTANCE.md` is the
+  done/not-done contract per app; `DOGFOOD.md` is the command log, the
+  twenty-one-defect ledger, and the friction ledger. **Never hand-edit a
+  generated proof app to make it pass** — a manual edit is evidence for the
+  next generic improvement and belongs in the friction ledger.
 - `src/rename.rs` — `rename`. Textual by design (see its module docs for
   when to prefer jdt.ls `grn`): whole identifiers only, string literals left
   alone and the skipped count reported.
@@ -193,9 +234,10 @@ isn't already there.
   git history does not track.
 
 Untracked siblings in this directory are **not** part of the project:
-`rails/` and `start.spring.io/` are gitignored reference checkouts (separate
-upstream repos, read-only research), and `demo/`/`stacks/` are scratch. Never
-edit or document them as if they were jails'.
+`deps/` holds ~80 gitignored upstream checkouts (each its own repo, read-only
+research) and `ideas/` holds reference projects — crawler implementations, the
+minicom stubs — cloned for study. Never edit or document either as if it were
+jails'. `deps.tsv` and `deps-update.sh` at the repo root *are* tracked.
 
 ## Workflow (every change, no exceptions)
 
@@ -209,9 +251,10 @@ though the hook exists, since the hook only fires on turn end, not mid-turn.
 ## Package layout
 
 Generated code does **not** all land in the base package. `generate::layout`
-maps each kind to the subpackage its layer conventionally owns (`domain`,
-`repository`, `service`, `web`, `cli`, `adapters`, `api`, `testkit`), and
-`--package` overrides it. Two consequences worth knowing before editing
+maps each kind to the subpackage its layer conventionally owns. There are
+**eleven** layers, and `config::LAYERS_IN_ORDER` is their single owner:
+`domain`, `app`, `service`, `web`, `api`, `messaging`, `cli`, `clients`,
+`jobs`, `adapters`, `testkit`. `--package` overrides the placement. Two consequences worth knowing before editing
 templates:
 
 - **`scaffold` now crosses package boundaries**, so `stub_repository`,
@@ -222,6 +265,15 @@ templates:
 - **`destroy` has to resolve the same subpackage `generate` used**, so both
   build their paths through the same `place()` closure. A kind added to one
   and not the other silently strands files.
+
+  This is worse than it sounds and is a live hazard, not a historical note:
+  `destroy` holds a `match kind` with **17 hand-written `vec![]` arms** that
+  are a manual transcription of paths the generator right next door already
+  computes. Adding `usecase` meant writing ten `format!("{name}…java")` lines
+  twice. There *is* a test that checks the two agree —
+  `destroy_removes_only_files_that_generate_would_have_created` — but it
+  covers exactly one kind (`Record`) out of 30. If you add a kind, add its
+  destroy arm and extend that test. `plan.md` §6.2 has the structural fix.
 
 ## Import order is normalised at write time, not in templates
 
@@ -242,6 +294,12 @@ without Maven just gets a note).
 (before the `!`/`?` suffix, so either order works) into `Field::constraints`,
 ride through `sql::Column`, and are read only by `create_table`. They change
 SQL and nothing about the Java type.
+
+**`@scope` is the exception and does not touch SQL at all.** It marks a
+request-boundary field that must be proved against a same-named JWT claim, and
+`spring::require_scope_authorizer` refuses any scoped operation when
+`add security` has not written a `ScopeAuthorizer`. It is how tenancy works
+without the word "tenant" existing in core.
 
 Two rules that are the whole point:
 
@@ -297,12 +355,25 @@ jails knows nothing about.
 
 ## Gotchas hit so far
 
-- **Generated projects target Java 27** (`pom::TARGET_RELEASE`), which is
-  not GA until 2026-09-15. mise's java registry carries *no* JDK 27 build
-  of any vendor, so the EA build is symlinked in — see `mise.toml`. This
-  shell does not run mise's activation hook, so `java` on a bare PATH is
-  still 26; use `mise exec` or an explicit `JAVA_HOME` when something has
-  to compile at release 27.
+- **The golden suite claims a coverage it does not have.**
+  `tests/golden.rs` says "Every artifact kind and every capability, in the
+  smallest invocation that exercises it." That comment is false by twelve:
+  `usecase`, `query`, `transition`, `durable-job`, `fetcher`, `association`,
+  `http-workflow`, `http-sink`, `cases`, `format`, `ci` and `docker` appear
+  **zero** times in it. Eight kinds were added without the golden count
+  moving off 162 files / 25 scenarios. These are the most complex generators
+  in the tree, and their only byte-level verification is the two dogfood
+  manifests, which are a composition test rather than a snapshot. **If you
+  add a kind, add a `Scenario`** — and see `plan.md` §8.5 for the test that
+  makes forgetting impossible.
+- **Generated projects target Java 25** (`pom::TARGET_RELEASE`), the current
+  LTS. This was 27 and was changed deliberately: 27 is non-LTS, was not GA
+  until 2026-09-15, had no vendor build in mise's registry (so an EA build had
+  to be symlinked in), had no `eclipse-temurin:27-jre` image for `add docker`,
+  and made `doctor` FAIL by default on any shell without mise's activation
+  hook. Everything jails generates is available at 25. `java` on a bare PATH
+  here is 26, which accepts `--release 25`, so the tier-3 tests no longer skip
+  for that reason.
 - **Tier-3 tests gate on `real_java_supports_target_release()`, not just
   on a JDK being present.** A JDK older than the target rejects
   `--release N` outright, so presence is not enough. Without the gate the
@@ -539,7 +610,8 @@ jails knows nothing about.
 ## Generated code tracks Spring Boot 4 / Framework 7, verified against source
 
 The upstream checkouts under `deps/` are the reference, not memory.
-`deps/deps.tsv` is the manifest (dir -> `owner/repo`) and `deps/update.sh`
+`deps.tsv` at the repo root is the manifest (dir -> `owner/repo`) and
+`deps-update.sh`, also at the root,
 clones what's missing and fast-forwards the rest — both tracked here, while
 `/deps/*/` is gitignored because each checkout is its own upstream repo. The
 manifest covers every third-party library the payments-gateway-service poms
@@ -635,16 +707,16 @@ Three tiers, don't blur them:
    actually compiles and passes tests?" Don't let tier 2 masquerade as
    tier 3.
 
-**A skipped tier-3 test is reported as passing, and on this machine most of
-them skip.** `TARGET_RELEASE` is 27, whose JDK is not GA, so `javac` on a
-bare PATH rejects it — measured: **11 of the 104 integration tests do
-nothing** and the suite still says green. Every skip therefore goes through
-`common::skip()`, and `JAILS_REQUIRE_TOOLCHAIN=1 cargo test` turns each one
-into a failure naming what was missing. Use it before believing a green run
-covered the generated-code path:
+**A skipped tier-3 test is reported as passing.** When `TARGET_RELEASE` was
+27 — an unreleased JDK — `javac` on a bare PATH rejected it and **11 of the
+104 integration tests did nothing** while the suite said green. The move to 25
+should have removed that cause; confirm it rather than assume it. Every skip
+goes through `common::skip()`, and `JAILS_REQUIRE_TOOLCHAIN=1 cargo test`
+turns each one into a failure naming what was missing. Use it before believing
+a green run covered the generated-code path:
 
 ```
-JAILS_REQUIRE_TOOLCHAIN=1 JAVA_HOME=~/.local/share/jdk/jdk-27 cargo test
+JAILS_REQUIRE_TOOLCHAIN=1 cargo test
 ```
 
 Note `real_path_without_mvnd()` rebuilds PATH for the real-mvn tests, so

@@ -1,375 +1,504 @@
-# plan.md — one plan, from six documents and the source
+# plan.md — the jails plan, written for handover
 
-Written 2026-08-21/22 against the tree at `94107ef`, merging `ideas-opus.md`
-(461 lines), `ideas-grok.md` (1,001), `ideas-kimi.md` (915), `ideas-sol.md`
-(2,578), `ideas-fable.md` (1,269) and `ideas-opus2.md` (1,517) — 7,741 lines
-in total — plus the **27,485** lines of Rust in `src/` (33 files), the 51
-Java templates, the 162 golden snapshots, the 5,000-odd lines of tests,
-and the upstream checkouts under `deps/`.
+Rewritten 2026-08-22 against the tree at `e523c16` (builds clean). Sources:
+the six `ideas-*.md` documents (7,741 lines), the 28,305 lines of Rust in
+`src/`, the 57 Java templates, the 162 golden snapshots, the two proof
+applications under `examples/`, the upstream checkouts in `deps/`, and
+**`/home/laith/code/projects/payments-gateway-service`** — a 22-module,
+332,397-line production payments system read for this rewrite and used in §5
+as the source of jails' production defaults.
 
-The six documents disagree in about a dozen load-bearing places. This file
-**resolves** those disagreements rather than listing them, and every claim
-about the current tree in §4 was re-checked with a grep or a read *today* —
-several things the earlier documents call defects have since been fixed, and
-several they call opportunities have since shipped.
+## 0. The goal, and how to know it is met
 
-## 0. How to read this
+### 0.1 The goal
 
-There are **two budgets**, not one.
+**Build four real applications using nothing but `jails` commands, with zero
+hand-written Java or SQL — and make each rebuild faster, cheaper and easier
+than the last.**
 
-**Latency** is how long you wait. It is what you pay hundreds of times a day
-and it is what five of the six documents optimise.
+The applications are not the product. **jails is the product.** The
+applications exist to make the tool's gaps observable, because a generic tool
+cannot be proved generic by its own test suite.
 
-**Authorship** is how much you type and decide. It is what you pay every time
-the *shape* of the code changes, and when the generator is missing you do not
-wait — you spend an afternoon on mechanical edits across six files.
-
-Per occurrence, authorship is the larger number and it has been the
-under-counted one. A test that reruns in 11 ms is worth little on a model you
-cannot change without editing six files by hand. So this plan puts the
-generator surface (§5) ahead of the test daemon (§6), and puts eleven live
-defects (§4) ahead of both, because a tool that silently writes a broken
-project costs more than either budget can measure.
-
-**And nothing in it is believed until an application proves it.** §2 is the
-mechanism: three real projects — a web crawler, an Intercom-shaped support
-inbox, and a deliberately unlike plain-Maven CLI — each built from a
-declarative manifest with **zero hand-written Java**, each with an executable
-acceptance contract, each acting as a falsifier. Two of the three already
-exist and have already found and fixed twenty-one generic defects. Every item
-in §5–§11 should be traceable to a gap one of those apps exposed, and §13's
-sequence carries a column saying which.
-
-Everything here obeys the constraints that make jails small enough to trust:
-no plugin system, no Gradle, no ORM, no jails runtime jar, no Lombok, no
-preview features in generated Java, templates stay real `.java` files, doctor
-stays read-only, tests stay three-tier. `src/app.rs:1-6` adds one more that
-post-dates most of the source documents: **core is domain-blind** — a crawler
-and a support inbox are two lists of the same generic intents, and neither
-gets a command, branch, enum or template in core. §2.7 turns that from a
-doctrine into a gate; §9 respects it. Three of the six source documents do
-not, and are superseded where they conflict.
-
-**A note on the baseline.** The working tree has moved substantially since
-five of the six documents were written, and this file is written against the
-tree, not against them. `usecase`, `query`, `fetcher`, `durable-job` and
-(in flight) `transition` are shipped `ArtifactKind`s; `ci` and `docker` are
-shipped `Capability`s; `@scope` is a shipped, *enforced* field marker; and
-`TARGET_RELEASE` is now `"25"`. Several things the source documents propose as
-future work are done, and several things they rule out are consequently
-unblocked. Where this file and they disagree, check the tree.
-
-The growth is not evenly distributed, and where it is uneven is itself a
-finding. `src/spring.rs` is now **5,808 lines** — larger than `generate.rs`
-(3,213) and more than the whole of `add.rs` (1,444) plus its five submodules.
-It holds 42 complete Java files as inline `format!` strings with doubled
-braces, while `templates/` holds 51 real `.java` files, and the newest six
-kinds have **no golden snapshots at all**. So the machinery that grew fastest
-is the machinery with the least byte-level verification and the least
-tool-checkable source. That is 4.10 and 4.11, and it is why Tier 0 got longer
-rather than shorter.
-
----
-
-## 1. The two budgets, measured
-
-### 1.1 Latency
-
-Measured on this machine (`ideas-opus2.md` §1, `ideas-fable.md` §2), warm
-`~/.m2`, `mvn -o`, on `tests/golden/scaffold-spring`:
-
-| What | Time | Note |
-|---|---:|---|
-| JVM boot (`java -version`) | 0.03 s | the language is not the problem |
-| `java Hi.java` (source launcher) | 0.6–0.9 s | |
-| `mvn -o -q compile`, nothing changed | 2.27 s | pure no-op overhead |
-| `mvn -o -q test -Dtest=X`, warm | **3.81 s** | median across the corpus: 2.57 s, p90 25.2 s |
-| `javac` all 13 files, cold | 3.19 s | of which ~1.2 s is JVM start |
-| `javac` one file, `-J-XX:+AutoCreateSharedArchive` | **0.25 s** | measured, vs 1.45 s without |
-| JUnit `Launcher`, precompiled, fresh JVM | 1.65 s | |
-| **same test, 2nd run in the same JVM** | **9–13 ms** | |
-| **one file recompiled via `JavaCompiler` API, warm** | **74–166 ms** | |
-| a domain record test itself | 5 ms | `domain.MccTest`, 3 tests |
-| a `@WebMvcTest` slice | 2.2 s | context start |
-| a Testcontainers `postgres:17-alpine` | 7.0–8.8 s | plus 0.45 s of Ryuk |
-| save → app restarted (`run --watch`) | ≥2.15 s of pure waiting | before any work happens |
-
-Two rows carry the story: **edit one test, recompile it, rerun it is ~110 ms
-of real work, and Maven charges 3,810 ms for it.** The overhead is not the
-JVM, not javac, not JUnit. It is Maven's project model resolution, plugin
-descriptor loading and a forked JVM per invocation.
-
-Reference points: Quarkus goes 1,470 ms → 295 ms on a one-line change from
-*test selection* alone, and nags when a reload exceeds 4 s. That is the bar.
-
-### 1.2 Authorship
-
-Measured (`ideas-opus2.md` §5.1) on `jails new-cli inbox` + `add sqlite json`
-+ one scaffold:
-
-| | |
-|---|---:|
-| Commands typed | 3 + 1 |
-| Lines of Java in the project afterwards | **1,180** |
-| Lines *you* wrote | 0 |
-| Time for the scaffold command | **0.039 s** |
-
-That is jails at its best, and it is already won. Now the second row, which
-nobody had counted. **Add one field to that scaffold:**
-
-| File | Sites | What changes |
-|---|---:|---|
-| `domain/Message.java` | 5 | component, `requireNonNull`, trim, blank check, Javadoc |
-| `adapters/JdbcMessageRepository.java` | 5 | select list, insert columns, placeholders, bind, row mapper |
-| `web/MessageRequest.java` | 2 | component + mapping |
-| `web/MessageResponse.java` | 2 | component + mapping |
-| `db/migration/V002__create_messages.sql` | 1 | and you cannot edit it — forward-only, so a new file by hand |
-| `test/resources/fixtures/messages.json` | 2 | one per fixture row |
-| **6 files** | **~17** | **plus a migration written from scratch** |
-
-And there is no command for it. Re-running the scaffold with the extra field
-refuses on the fixture file.
-
-**One command creates 1,180 lines; changing one field is six files by hand.**
-That asymmetry is the whole ergonomic story, and it is why `g scaffold Note`
-is the first afternoon and the rest of the week is not.
-
-### 1.3 The authorship budget, as a formula
-
-```
-authorship cost = Σ over change-shapes ( files touched × edit sites × frequency )
-```
-
-Ranked by that product, on a real project:
-
-| Change shape | Today | After §5 | Frequency |
+| | Application | Shape | What it falsifies if it fails |
 |---|---|---|---|
-| Add a field to a resource | 6 files, ~17 sites, + a migration | 1 command | weekly, often daily |
-| Store a relation (`author:User`) | **not stored at all** — column, bind, mapper and FK by hand | 1 field spec | per model |
-| Fix `/categorys` → `/categories` | 5 edits: controller, DDL, migration, DTO, fixture rename | 0 | per badly-pluralised noun |
-| Model first (`g record`, then scaffold it) | blocked; retype every field | `g scaffold <Name>` | per model |
-| `created_at` / `updated_at` | typed per table, and `updated_at` never updates | `--timestamps` | per table |
-| Test data for a new test | `new` a six-component record; +1 component breaks 40 call sites | `g factory` | 5–20/day |
-| Change a field in `.jails/app.toml` | **no effect** — the intent is skipped | re-applied | per manifest edit |
-| Commands available in a repo you didn't create | **0 of ~30** | 8 demonstrated | per foreign codebase |
+| **A** | **Web crawler** | outbound I/O, bounded traversal, termination | that generators only do CRUD |
+| **B** | **Intercom-shaped support inbox** | tenancy, ordering, durable delivery | that generators only do single-tenant |
+| **C** | **Payments gateway** | money, idempotency, o11y, throughput | that "production ready" is a slogan (§5) |
+| **D** | **CLI app** (ledger reconciler, **no Spring**) | plain Maven, no web, no database | that the machinery is Spring-shaped |
 
-The right quality metric for a generator is therefore **authored lines and
-decisions remaining after generation**, not generated line count
-(`ideas-sol.md`). If you must immediately repair imports, align DTO fields,
-add a migration, invent fixtures, wire a bean or write the first meaningful
-test, the generator is incomplete.
+Full manifests: A and B exist at `examples/{web-crawler,support-inbox}/.jails/app.toml`;
+C and D are specified in §4.3 and §4.4 and are **not yet built**.
 
-### 1.4 The honest multiple
+### 0.2 The one constraint
 
-There is no 1000× on anything. What is actually available:
+**jails stays a generic tool.** A crawler, a support inbox, a payments gateway
+and a ledger CLI are four lists of the same generic intents.
 
-- **~35×** on the edit→test cycle (3,810 ms → ~110 ms), measured;
-- **~345×** on the rerun alone (3,810 ms → 11 ms), measured;
-- **2.4×** on JVM start for a packaged app with an AOT cache, measured;
-- **~8 s per test run** from Testcontainers reuse, upstream-verified;
-- **6 files → 1 command** on the single most common model change, measured;
-- **0 → 8 commands** in a repository jails did not create, run;
-- and a category change in *not being stuck*, which is where the hours
-  actually vanish and which nothing measures.
+> **The moment a proof app needs the word `crawl`, `conversation`,
+> `workspace`, `payment`, `merchant`, `settlement`, `ledger` or `inbox`
+> inside `src/` or `templates/`, the abstraction has failed. The fix is a new
+> generic primitive, never a branch.**
 
-Do not multiply unrelated ratios into a fake headline. The compounding claim
-that survives scrutiny is: 5–10× on the three loops you run hundreds of times
-a day, 3–5× on standing up a vertical, and the removal of a class of silent
-failure whose cost is unbounded.
+§4.6 is the enforceable form: six questions every core change must pass, plus
+a repository test that greps for showcase vocabulary and fails on a hit.
+
+### 0.3 The loop
+
+This is the whole method. It has already produced twenty-one generic defect
+fixes (`examples/DOGFOOD.md`), so it is known to work.
+
+```
+1. Write / update the app's .jails/app.toml
+2. Run the runbook (§18) — record EVERY command, verbatim
+3. Did it need a hand-edit to Java or SQL?
+       yes -> that is the finding. Do NOT fix the app.
+               Write a friction-ledger row, fix jails generically, go to 2.
+       no  -> continue
+4. Does it pass its acceptance contract (examples/ACCEPTANCE.md)?
+       no  -> same as above
+       yes -> continue
+5. Score it (§0.4). Did faster/cheaper/easier improve?
+       no  -> pick the worst number, fix that, go to 2
+       yes -> the app is done; move to the next one
+```
+
+**Rule 3 is the one that matters, and it is the easiest to violate under time
+pressure.** Never hand-fix a proof application to make it pass. A manual edit
+is not a fix — it is evidence, and it belongs in `examples/DOGFOOD.md`'s
+friction ledger as a row naming the generic jails improvement it implies.
+
+### 0.4 The scorecard — what "faster, cheaper, easier" means
+
+Record these per app, per run, in `examples/DOGFOOD.md`. Every one is a
+number, so "it feels better" is never the answer.
+
+| Axis | Metric | Now | Target |
+|---|---|---|---|
+| **Easier** | **hand-written Java or SQL lines** | **0** for A and B | **0**, always — any other value is a defect |
+| **Easier** | manual interventions during the gate | friction-ledger row count | trending to zero |
+| **Easier** | commands from empty directory to passing gate | 4 (`new`, `mkdir`, `cp`, `app apply`) | **1** — see §18's closing question |
+| **Cheaper** | manifest lines per app | 65 (A), 263 (B) | falls as generators absorb repetition |
+| **Cheaper** | generated lines per manifest line | ~18× for one scaffold | rises |
+| **Faster** | full gate wall time | **293 s** | container reuse (§10.1) is the biggest lever |
+| **Faster** | edit → test result | 3,810 ms | ~110 ms (§10.2), measured not estimated |
+| **Confidence** | kinds with a golden snapshot | **18 of 30** | 30 of 30 (§8.5) |
+| **Confidence** | acceptance clauses open | 4, all lifecycle (§4.2) | 0 |
+
+Two numbers are load-bearing and easy to lose:
+
+- **Hand-written lines must stay at zero.** It is currently zero across 328
+  manifest lines and 23 migrations — the strongest single fact in this
+  repository. If it ever goes positive, stop feature work.
+- **Golden coverage must track the kind count.** Eight kinds were added and
+  the golden count did not move. That is §8.5, and it is how confidence
+  silently rots while everything looks green.
+
+### 0.5 Done
+
+**Each app is done** when it is generated from its manifest with zero hand
+edits, passes its contract in `examples/ACCEPTANCE.md`, and has a
+friction-ledger entry for anything that was awkward.
+
+**jails is done with this round** when all four are done *and* the four
+lifecycle clauses in §4.3 are closed — atomic apply, drift repair, offline
+creation, hosted CI — because those are what stop the loop from being cheap
+to run again.
+
+**jails is never done with the loop.** The next application, in a shape none
+of these four covers, is the next falsifier.
+
+## How to use this document
+
+**This file is written to be handed to another coding agent.** It is
+structured so that an agent can pick any numbered item, find the file and
+symbol it touches, the evidence it is real, the fix, and the test that pins
+it, without re-deriving the analysis.
+
+**Read §0 first.** It states the goal, the four applications that validate it,
+the loop, and the numbers that say whether the loop is working. Everything
+below §0 is detail in service of it.
+
+- **§1–§3** are state of the world: what exists, what it costs, what proves it.
+- **§4** is the four proof applications — the testing ground, with runnable
+  manifests. **§17 is the command runbook.**
+- **§5** is production defaults, extracted from a real system and stated in
+  generic form.
+- **§6** is the maintainability plan: seven options (A–G) for the generator
+  code, ranked by value ÷ effort, with what to reject and why. The disease is
+  not file size — it is that *"what files does kind X produce?"* has **five**
+  definitions and nothing checks they agree.
+- **§7** is a corrections ledger: designs in the source documents that rest on
+  facts that are not true. Read it before implementing anything from them.
+- **§8–§15** are the work, in tiers.
+- **§16** is the sequence, with a *Proves* column tying each item to the proof
+  app whose acceptance clause it closes.
+
+Three standing rules for anyone working from this file:
+
+1. **jails stays generic.** A crawler, a support inbox and a payments gateway
+   are three lists of the same generic intents. None of them gets a command,
+   branch, enum, template or property named after its domain. §4.6 is the
+   enforceable form of this rule.
+2. **Never hand-edit a proof application.** A manual edit is not a fix — it is
+   evidence for the next generic improvement, and it belongs in
+   `examples/DOGFOOD.md`'s friction ledger.
+3. **The tree wins.** Where this file and the six source documents disagree,
+   the tree is right; where this file and the tree disagree, the tree is
+   right. This file will drift the way `validation/README.md` did.
 
 ---
 
-## 2. The proof projects — three apps that keep jails honest
+## 1. Where the project actually is
 
-### 2.1 Why the proof has to be an application, not a test
+Counted today.
+
+| | Now | Two passes ago |
+|---|---:|---:|
+| Rust in `src/` | **28,305** | 22,593 |
+| `src/spring.rs` | **6,459** | 1,969 |
+| `src/generate.rs` | 3,361 | 2,767 |
+| `ArtifactKind` | **30** | 22 |
+| `Capability` | **18** | 16 |
+| Layers (`LAYERS_IN_ORDER`) | **11** | 8 |
+| Java templates | **57** (4 `generate` / 17 `add` / 36 `spring`) | 51 |
+| Golden files / scenarios | **162 / 25** | 162 / 25 |
+| `doctor` checks | 50 | 50 |
+| `why` rules | 20 | 20 |
+| Commands with `--json` | 3 | 3 |
+| `pom::TARGET_RELEASE` | **`"25"`** | `"27"` |
+| Full sweep | **123 tests, 293 s** | — |
+
+**The golden count did not move while eight kinds were added.** That is §8.5,
+and it is the single most important item in this document.
+
+### 1.1 What the newest generators do
+
+Read this before any gap list; four of the six source documents propose as
+future work things that now exist, three in worse shapes than what shipped.
+
+**`usecase --on <Resource>`** reads the target record off disk, **refuses** if
+it cannot (naming the fix), requires a stable non-optional `id`, **type-checks
+every declared input against the target's component** (normalised Java type
+*and* nullability), and **infers every component you did not supply**,
+refusing to guess the rest: *"Jails only infers ids, timestamps, status
+defaults, counters, flags, and empty optional/collection values."* That is
+`ideas-sol.md`'s "infer aggressively, guess conservatively", implemented.
+`--yields <Event>` additionally emits a transactional outbox.
+
+**`query --on`** — typed parameters and results, JDBC adapter, real-database
+test. **`transition --on`** — the update counterpart, with `version` and
+`@scope`.
+
+**`durable-job --on <UseCase> --yields <Resource>`** — a PostgreSQL-leased
+queue whose store is pinned by source assertions to contain `for update skip
+locked`, `lease_until <= now()`, `attempts >= max_attempts`, `on conflict (id)
+do nothing`, with an IT covering replay, conflicting idempotency keys,
+expired-lease reclaim, bounded retry, terminal error visibility, and recovery
+after the business effect committed but before queue acknowledgement.
+
+**`fetcher`** — a safe outbound boundary: exact-host redirect policy,
+HTTPS-downgrade prevention, reserved-address rejection, DNS pinning after
+validation, byte/media/time/redirect bounds, failure classification, metrics,
+adversarial real-socket tests.
+
+**`association <Name> child=parent... --on <Child> --yields <Parent>`** —
+relations, in a better shape than two source documents proposed. Requires
+`add db`, reads **both** records, checks each field exists on both sides,
+type-checks across the boundary, rejects a child field mapped twice, checks
+PostgreSQL's 63-byte identifier limit, reads the migration directory to decide
+whether the parent needs a unique index, and emits a forward migration with
+`on update no action on delete no action deferrable initially deferred`.
+Composite keys free; no `ON DELETE` invented.
+
+**`http-workflow <Name> --on <Fetcher>`** — durable, exact-origin,
+robots-aware graph traversal: `start`/`status`/`pages`/`cancel`/`runOnce`, a
+**PostgreSQL frontier** reusing the durable-queue leasing pattern, canonical
+dedup, `maxPages`/`maxDepth`, cancellation. Two choices worth recording
+because three documents argued the other way: **robots.txt is just another
+frontier entry** (depth `-1`, `Kind.ROBOTS`) fetched through the same safe
+boundary, and **HTML is parsed with the JDK's own `HTMLEditorKit` callbacks —
+no jsoup, no crawler-commons, zero new dependencies.**
+
+**`http-sink --on <UseCase> --yields <Event>`** (alias `webhook`) — delivers a
+typed outbox event over HTTP.
+
+**`@scope`** is enforced: `require_scope_authorizer` refuses a scoped
+operation when `security` has not written a `ScopeAuthorizer`.
+
+**Eleven call sites read a record off disk.** That shared field model is why
+`DOGFOOD.md`'s defect table reads as it does — most of those twenty-one bugs
+were *two outputs of one model disagreeing*, and each fix collapsed them onto
+one source of truth.
+
+---
+
+## 2. The two budgets
+
+### 2.1 Latency (measured; `ideas-opus2.md` §1, `ideas-fable.md` §2)
+
+| What | Time |
+|---|---:|
+| `mvn -o -q compile`, nothing changed | 2.27 s |
+| `mvn -o -q test -Dtest=X`, warm | **3.81 s** (corpus median 2.57 s, p90 25.2 s) |
+| `javac` one file with `-J-XX:+AutoCreateSharedArchive` | **0.25 s** (vs 1.45 s) |
+| JUnit `Launcher`, precompiled, fresh JVM | 1.65 s |
+| **same test, 2nd run in the same JVM** | **9–13 ms** |
+| **one file recompiled via `JavaCompiler` API, warm** | **74–166 ms** |
+| a domain record test itself | 5 ms |
+| `postgres:17-alpine` via Testcontainers | 7.0–8.8 s + 0.45 s Ryuk |
+
+**Edit one test, recompile, rerun is ~110 ms of real work; Maven charges
+3,810 ms.** Quarkus' bar: 1,470 → 295 ms from *selection* alone, and it nags
+above 4 s.
+
+**The number that matters most now is the gate: 293 s.** Most of it is
+containers, and `grep -rn withReuse src/ templates/` still returns nothing.
+
+### 2.2 Authorship — where the remaining asymmetry is
+
+One `g scaffold` writes **1,180 lines in 39 ms**. Adding **one field** to it
+is 6 files, ~17 edit sites, plus a hand-written migration — and there is still
+no `g field` (`grep -c 'ArtifactKind::Field'` → 0).
+
+This matters *more* than a pass ago, not less: the support-inbox manifest is
+**263 lines and 40-odd intents**. jails can create all of them and evolve none
+of them.
+
+| Change shape | Today | After §9 |
+|---|---|---|
+| Add a field to a resource | 6 files, ~17 sites, + a migration | 1 command |
+| Fix `/categorys` → `/categories` | 5 edits across controller, DDL, migration, DTO, fixture | 0 |
+| Model first (`g record`, then scaffold) | blocked; retype every field | `g scaffold <Name>` |
+| `created_at`/`updated_at` | typed per table; `updated_at` never updates | `--timestamps` |
+| Test data for a new test | `new` a 6-component record; +1 breaks 40 call sites | `g factory` |
+| Change a field in `.jails/app.toml` | **fails on a path collision** (§9.7) | re-applied |
+| Store a relation | **shipped** — `g association` | — |
+
+The right generator metric is **authored lines and decisions remaining after
+generation**, not generated line count. Today that is **0** for both proof
+apps across 328 manifest lines and 23 migrations. That is the strongest single
+fact in this repository, and §4.5 makes keeping it at zero a gate.
+
+---
+
+## 3. The honest multiple
+
+**~35×** on the edit→test cycle and **~345×** on the rerun alone (measured);
+**~8 s per run** from container reuse; **6 files → 1 command** on the most
+common model change; **0 → 8 commands** in a repository jails did not create.
+Do not multiply unrelated ratios into a headline.
+
+---
+
+## 4. The proof applications
+
+### 4.1 Why a proof has to be an application
 
 jails' own test suite cannot prove jails is generic. Golden files pin bytes,
 tier 3 compiles what someone wrote a test for, and neither answers the only
 question that matters: **can a real product be built out of these primitives
-with no hand-written Java, and without a single domain word appearing in
-core?**
+with no hand-written Java, and without a domain word appearing in core?**
 
-That question is falsifiable, and the falsifier is an application. The rule:
+> **The moment a proof app needs `crawl`, `conversation`, `workspace`,
+> `payment`, `settlement` or `inbox` inside `src/`, the abstraction has
+> failed. The fix is a generic primitive, never a branch.**
 
-> **The moment a proof app needs the word `crawl`, `conversation`,
-> `workspace`, `robots` or `inbox` inside `src/`, the abstraction has failed.
-> The fix is a new generic primitive, never a branch.**
+The harness exists — do not rebuild it: `examples/*/.jails/app.toml`,
+`examples/ACCEPTANCE.md`, `examples/DOGFOOD.md`, and five tests in
+`tests/cli.rs` from `app_manifest_plan_is_domain_blind_and_writes_nothing`
+through `app_manifests_pass_the_full_generated_verification_gate`.
 
-`src/app.rs:1-6` already states the doctrine. The proof projects are what
-enforce it, because a doctrine nothing tests is a comment.
+**Four apps, chosen so that no two share a floor:**
 
-**This harness already exists and is working.** Do not rebuild it:
+| | App | Shape | Falsifies |
+|---|---|---|---|
+| **A** | web crawler | outbound I/O, termination, bounded traversal | that generators only do CRUD |
+| **B** | support inbox | tenancy, ordering, durable delivery | that generators only do single-tenant |
+| **C** | payments gateway | money, idempotency, o11y, high throughput | that "production ready" is a slogan (§5) |
+| **D** | ledger CLI | **no Spring at all** | that the machinery is Spring-shaped |
 
-- `examples/web-crawler/.jails/app.toml` — 60 lines, 10 generic intents.
-- `examples/support-inbox/.jails/app.toml` — 90 lines, 15 generic intents.
-- `examples/ACCEPTANCE.md` — the done/not-done boundary, per app.
-- `examples/DOGFOOD.md` — the command log, the defect ledger, the friction
-  ledger.
-- `tests/cli.rs`: `app_manifest_plan_is_domain_blind_and_writes_nothing`,
-  `app_manifest_builds_the_crawler_skeleton_and_is_resumable`,
-  `app_manifest_builds_the_support_inbox_from_the_same_generic_intents`,
-  `app_manifests_compile_without_manual_source_edits`,
-  `app_manifests_pass_the_full_generated_verification_gate`.
+### 4.2 What A and B already prove
 
-The rest of this plan should be read as **work that closes a gap one of these
-apps has already exposed.** §13's sequence carries a column saying which.
+`examples/ACCEPTANCE.md`, latest sweep: **123 tests passing in 293.35 s.** The
+fresh-manifest gate applied all 19 support-inbox migrations and all 4 crawler
+migrations, ran every generated unit and integration test against real
+PostgreSQL and Kafka, passed the provider socket contract, built both OCI
+images, and retained runtime user `10001:10001`. **No Java or SQL was
+hand-edited.**
 
-### 2.2 What the harness has already proved
+That closed what were the two largest open clauses one pass ago: the crawler's
+"composition of the fetch boundary into finite traversal" (now
+`http-workflow`) and the inbox's transactional outbox delivery (now
+`usecase --yields` plus `http-sink`).
 
-The tree has moved a long way past what four of the six source documents
-assumed. Verified against the working tree today:
+Between them the manifests use eleven kinds: 10 `scaffold`, 10 `usecase`, 10
+`association`, 9 `query`, 6 `enum`, 2 `transition`, 2 `event`, and one each of
+`http-workflow`, `http-sink`, `fetcher`, `durable-job`.
 
-| | |
+**What `ACCEPTANCE.md` still lists as open is no longer capability work:**
+
+| Open | Closed by |
 |---|---|
-| `ArtifactKind` | **27** variants — including `usecase`, `query`, `fetcher`, `durable-job` and `transition`, four of which three source documents propose as future work |
-| `Capability` | **18** — including `ci` and `docker`, which two documents propose as future work |
-| `pom::TARGET_RELEASE` | **`"25"`** — the LTS decision two documents argued for **has been made**; see §14 for what that unblocks |
-| `@scope` | A generic field marker that compares a request field against a same-named JWT claim, and suppresses scaffold routes that cannot prove the boundary. Tenancy without the word "tenant" in core |
-| Proved by `mvn verify` | Idempotent re-apply, real PostgreSQL migrations and typed queries, generated create use-cases through MVC, authenticated observability, typed Kafka round trips, PostgreSQL-leased durable work with replay/lease-reclaim/bounded-retry/terminal-visibility tests |
+| Atomic whole-manifest `ChangeSet` | §11 |
+| Provenance / drift repair | §11, whose primitive is §9.1 |
+| Offline project creation | §11, asset already exists as `write_spring_fixture` |
+| Execution of the generated hosted CI workflows | External — keep hosted CI a required check |
 
-**Two live caveats about the tree, both true right now.** First,
-`src/generate.rs` and `src/spring.rs` are modified in the working tree and
-**the crate does not currently compile** — `generate.rs:872` calls
-`crate::spring::transition_files`, which `spring.rs` does not yet define. That
-is somebody's in-flight work, not a defect to fix here; it does mean any gate
-run has to wait for it, and it means the enum inventories above are a snapshot
-of a moving target. Second, that in-flight work is a **`transition` kind**
-(`generate.rs:855-872`) whose refusal message reads
-`jails g transition {name} id:uuid workspaceId:uuid@scope status:Status
-version:long --on Conversation` — which is precisely sequence item #13, the
-optimistic-transition gap App B's `version` column exposes. The method is
-already working: the acceptance clause came first, the generic kind followed.
+### 4.3 App C — the payments gateway
 
-`examples/DOGFOOD.md`'s defect table is the evidence that this works as a
-method: **twenty-one defects found by building the two apps, every one fixed
-generically.** A sample, because the shape is the point — none of these fixes
-mentions a crawler or an inbox:
+**Purpose.** A and B prove jails can *build* a system. C proves jails can
+build a system that would survive production — and it is the app that forces
+§5's defaults into the generators, because every one of them is something the
+real payments-gateway-service does and a jails-generated app currently does
+not.
 
-- multiword resources generated `crawlrun` while other generators emitted
-  `crawlRun` → **one lower-camel naming rule across all generators**;
-- `Optional<Instant>` was passed to `Timestamp.from(...)` before unwrapping →
-  **optional JDBC writes map the contained value before `orElse(null)`**;
-- database wiring only covered tests that existed when `db` was added →
-  **`app apply` reconciles every capability after all generation intents**;
-- `generate event` ignored declared fields → **event contracts, constructors,
-  examples and broker tests derive from the shared typed field model**;
-- reconciliation added a second `@Import`, which is not repeatable →
-  **the generic Java splicer merges configuration classes into one `@Import`
-  and removes only its own member on unsplice**;
-- generated transactional use-cases were `final`, so Spring could not build a
-  CGLIB proxy → **transactional generated components are proxyable, pinned by
-  a regression test**.
+**It must not add a payments concept to core.** Money is `amount:long` plus a
+`Currency` enum; idempotency is a unique key plus a receipt row; settlement is
+a `durable-job`. If any of that needs a new noun in `src/`, that is the
+finding.
 
-That is exactly the loop the plan should run on. **Never hand-fix the
-examples.** A manual edit inside a proof app is not a fix — it is evidence for
-the next generic improvement, and it belongs in the friction ledger.
+**Proposed manifest.** Untested — nothing here has been run; it is a
+specification for §17's runbook to execute.
 
-### 2.3 App A — the web crawler
+```toml
+# examples/payments-gateway/.jails/app.toml  (proposed)
+schema = 1
+capabilities = ["db", "api", "actuator", "observability", "security",
+                "json", "testkit", "kafka", "docker", "ci"]
 
-**What it is for.** It is the app whose hard parts are *outbound I/O and
-termination*: a bounded, polite, resumable traversal of a page graph. Nothing
-about it is CRUD, which is why it is the better falsifier of the two.
+[[generate]]
+kind = "enum"
+name = "PaymentStatus"
+fields = ["AUTHORISED", "CAPTURED", "REFUNDED", "REVERSED", "DECLINED", "FAILED"]
 
-**What it must do, from a manifest and no hand-written Java** (`ACCEPTANCE.md`):
-accept a seed URL, durably resume after restart, fetch an exact-host finite
-page graph, store each canonical URL once, and report status and pages through
-generated APIs — with adversarial tests covering robots policy, redirects
-leaving scope, private/reserved-address SSRF including DNS rebinding,
-response size/type/time limits, cycles, duplicate links, retryable versus
-terminal failure, cancellation, and hard page/depth bounds.
+[[generate]]
+kind = "enum"
+name = "PaymentMethod"
+fields = ["CARD", "BANK_TRANSFER", "WALLET"]
 
-**What is already generated:** `CrawlStatus`, two scaffolds, two create
-use-cases, two typed queries, a typed `PageDiscovered` Kafka event whose
-publisher keys on the event id, a `durable-job` dispatcher — and the
-`fetcher` kind, which is the interesting one. `PageFetcher` is a **generic
-safe outbound fetch boundary**: exact-host redirect policy, HTTPS-downgrade
-prevention, reserved-address rejection, DNS pinning after validation, byte and
-media-type and time and redirect bounds, failure classification, metrics, and
-adversarial real-socket tests. It knows no seed URL and no robots file, which
-is what makes it a capability-shaped thing rather than a crawler feature.
+[[generate]]
+kind = "scaffold"
+name = "Merchant"
+fields = ["id:uuid@pk@scope", "reference:string!@unique", "displayName:string!", "createdAt:instant"]
 
-**What is open, and which plan item closes it:**
+[[generate]]
+kind = "scaffold"
+name = "Payment"
+fields = ["id:uuid@pk", "merchantId:uuid@index@scope", "idempotencyKey:string!@unique",
+          "amountMinor:long@positive", "currency:string!", "method:PaymentMethod",
+          "status:PaymentStatus@index", "version:long@nonnegative",
+          "authorisedAt:instant?", "capturedAt:instant?", "createdAt:instant"]
+indexes = ["merchant_id, created_at desc", "status, created_at"]
 
-| Open (ACCEPTANCE.md) | Closed by |
-|---|---|
-| Composing the fetch boundary into finite HTML traversal | The traversal `usecase` intent, plus `add crawl` for `Urls`/`Robots`/`Politeness`/`Frontier` — §9.4 |
-| robots.txt and cancellation tests | `add crawl` (`crawlercommons`, 5xx ⇒ disallow-all) — §9.4 |
-| Building the OCI image in the local gate; running the hosted CI files | A local OCI build assertion in the gate; keep hosted CI a required check |
-| Adding a field to `CrawledPage` costs six files by hand | **`g field`** — §5.1 |
-| `crawl_run_id` is a bare `uuid`, not a foreign key | **Relations** — §5.2 |
+[[generate]]
+kind = "scaffold"
+name = "Refund"
+fields = ["id:uuid@pk", "merchantId:uuid@index@scope", "paymentId:uuid@index",
+          "amountMinor:long@positive", "reason:string?", "createdAt:instant"]
+indexes = ["payment_id, created_at"]
 
-**The genericity check for this app:** `add crawl` is inside the line because
-it knows no seed URL, exactly as `add kafka` knows no topic. A `spider`
-*kind* is outside it, and three of the six source documents propose one. They
-are superseded.
+[[generate]]
+kind = "association"
+name = "PaymentMerchant"
+fields = ["merchantId=id"]
+strategy_on = "Payment"
+strategy_yields = "Merchant"
 
-### 2.4 App B — the Intercom-shaped support inbox
+[[generate]]
+kind = "association"
+name = "RefundPayment"
+fields = ["paymentId=id"]
+strategy_on = "Refund"
+strategy_yields = "Payment"
 
-**What it is for.** It is the app whose hard parts are *tenancy, ordering and
-durable delivery*: many actors writing to shared aggregates under an isolation
-boundary, with effects that must survive a crash.
+[[generate]]
+kind = "usecase"
+name = "AuthorisePayment"
+fields = ["id:uuid", "merchantId:uuid@scope", "idempotencyKey:string!",
+          "amountMinor:long", "currency:string!", "method:PaymentMethod"]
+strategy_on = "Payment"
+strategy_yields = "PaymentAuthorised"
 
-**One correction it is built on.** `ideas/minicom-public` is **not** a product
-spec — its entire success condition is an alert reading `Yay! Everything
-works`, there is no messaging code in the repository, and there is no
-conversations table. Two of the source documents designed generators against
-a product that does not exist. This app is designed from Intercom's own
-documented shape instead, which is why the manifest has `Workspace`,
-`Contact`, `Conversation` and `Message` with a `version` column and a
-`@scope`d `workspaceId` — none of which minicom has.
+[[generate]]
+kind = "transition"
+name = "CapturePayment"
+fields = ["id:uuid", "merchantId:uuid@scope", "status:PaymentStatus", "version:long"]
+strategy_on = "Payment"
 
-**What it must do:** create workspaces, contacts, conversations and messages;
-list them through stable tenant-scoped queries; durably stage outbound
-delivery — with executable tests proving cross-workspace reads and writes are
-denied, duplicate idempotency keys do not duplicate effects, stale optimistic
-versions fail without mutation, message creation and delivery staging are
-atomic, retries keep a stable delivery ID, and terminal delivery failure is
-inspectable.
+[[generate]]
+kind = "usecase"
+name = "RefundPaymentRequest"
+fields = ["id:uuid", "merchantId:uuid@scope", "paymentId:uuid", "amountMinor:long"]
+strategy_on = "Refund"
 
-**What is already generated:** four scaffolds, two enums, four create
-use-cases, three tenant-key-shaped queries, a typed `MessageReceived` event, an
-`OutboundDelivery` durable job, and a production JWT resource-server chain
-where `@scope` fields are compared against same-named claims. Scaffold routes
-that cannot prove scope are **not emitted** — a generic refusal, not an inbox
-rule.
+[[generate]]
+kind = "query"
+name = "PaymentsByMerchant"
+fields = ["merchantId:uuid@scope"]
+strategy_on = "Payment"
 
-**What is open, and which plan item closes it:**
+[[generate]]
+kind = "query"
+name = "PaymentsByStatus"
+fields = ["merchantId:uuid@scope", "status:PaymentStatus"]
+strategy_on = "Payment"
 
-| Open (ACCEPTANCE.md) | Closed by |
-|---|---|
-| Tenant enforcement against every persisted *association* (not just the request boundary) | `@scope` propagated through relations — needs **relations** first, §5.2 |
-| Optimistic transitions — `version` is a column nothing checks | A generic `--expect <field>` on `usecase`, generating the compare-and-set and the 409 |
-| Transactional outbox / provider delivery | **Partly there already**: `usecase --yields <Event>` emits an outbox use-case, store, worker, IT and migration (`spring::outbox_files`). The manifest's `ReceiveMessage` does not use it — it routes through a `durable-job` instead. Try `--yields` first and see what the clause still needs; only then §9.3 |
-| Realtime: an agent inbox that updates without a refresh | **`add sse`** — §9.2, with the four details both source documents get wrong |
-| A browser widget can't call it at all | **`add cors`** — §9.1. `grep -rni cors src/ templates/` still returns nothing |
-| `conversationId` is a bare `uuid` | **Relations** — §5.2 |
-| `/messages` route names are fine, but `/status`, `/analysis`-shaped nouns are not | **The inflector** — §5.3 |
+[[generate]]
+kind = "event"
+name = "PaymentAuthorised"
+fields = ["id:uuid", "merchantId:uuid", "paymentId:uuid", "occurredAt:instant"]
 
-**The honest counterweight, worth keeping in front of you.**
-`ideas/minicom-rails` is the "Rails is super productive" exhibit, and in ~90
-lines it shipped three bugs a compiler would have caught: a route to a
-controller action that does not exist, `find_by` called on undefined local
-variables, and a `_send_message(direction)` that overwrites its own parameter
-so every admin reply is stored as outbound. It also did not do realtime — the
-widget polls and the inbox does `window.location = window.location`.
+[[generate]]
+kind = "fetcher"
+name = "AcquirerFetcher"
 
-**So the jails pitch is not "as fast as Rails".** It is: *as fast to the first
-endpoint, and those three bugs cannot compile.* That is a claim jails can make
-and Rails cannot, and this app is where it is demonstrated.
+[[generate]]
+kind = "http-sink"
+name = "AcquirerSettlement"
+strategy_on = "AuthorisePayment"
+strategy_yields = "PaymentAuthorised"
 
-### 2.5 App C — the control, and why two apps are not enough
+[[generate]]
+kind = "durable-job"
+name = "SettlementDispatcher"
+fields = ["id:uuid", "merchantId:uuid@scope", "paymentId:uuid"]
+strategy_on = "AuthorisePayment"
+strategy_yields = "Payment"
+```
 
-Two proof apps can share an accidental abstraction. Three deliberately unlike
-ones cannot. And App A and App B currently share a very large floor: **both
-are Spring, both select `db api actuator observability security json testkit
-kafka docker ci`, both are web services.** Any Spring-shaped assumption that
-leaked into the generic machinery is invisible to both.
+**Its acceptance contract** — every clause maps to something the real system
+does:
 
-So add a third, whose only job is to falsify:
+- a duplicate `idempotencyKey` for one merchant produces **one** payment and
+  returns the retained result; a different payload under the same key is a
+  409;
+- a stale `version` on capture fails with 409 and mutates nothing;
+- cross-merchant read or write is denied (`@scope`);
+- authorisation and the settlement outbox row commit in **one** transaction;
+- settlement retries reuse a stable delivery ID and terminal failure is
+  inspectable;
+- amounts are minor units in `long` — **no `double` anywhere in generated
+  money code**, which is a `jails lint` rule (§15);
+- `/management/prometheus` exposes `http.server.requests` with **explicit SLO
+  buckets** and `percentiles-histogram: false` (§5.2);
+- liveness is `ping` only and readiness includes the datasource (§5.2);
+- a k6 load profile exists and the gate records p99 (§5.5).
 
-**A plain-Maven CLI with no Spring at all.** Concretely: a CSV → double-entry
-ledger reconciler. It reads two statement files, normalises them, matches
-entries, and reports the unmatched ones with reasons.
+**What C is expected to expose.** Predicted findings, to be confirmed by
+running §17: no CORS (§14.1); no idempotency receipt primitive — the
+`@unique` column gives one-per-key but not the *retained result* semantics, so
+this is likely the first genuinely new generic intent C demands; `--timestamps`
+absent so `createdAt` is hand-declared five times; no money type, so
+`amountMinor:long` plus a currency string is the honest spelling and the plan
+should **not** add a `money` field type (§9.8).
+
+### 4.4 App D — the control
+
+A, B and C are all Spring, and all eight new kinds call
+`require_spring_project`. Any Spring-shaped assumption in the generic
+machinery is invisible to all three. D is a plain-Maven CLI with no Spring: a
+CSV → double-entry ledger reconciler.
 
 ```toml
 # examples/ledger-cli/.jails/app.toml  (proposed)
@@ -378,1476 +507,1446 @@ capabilities = ["csv", "json", "sqlite", "testkit", "format"]
 
 [[generate]]
 kind = "value"
-name  = "Money"
-fields = ["amount:long", "currency:Currency"]
+name = "Money"
+fields = ["amountMinor:long", "currency:string!"]
 
 [[generate]]
 kind = "enum"
-name  = "MatchOutcome"
+name = "MatchOutcome"
 fields = ["MATCHED", "AMOUNT_DIFFERS", "DATE_DIFFERS", "UNMATCHED"]
 
 [[generate]]
 kind = "sealed"
-name  = "LedgerError"
+name = "LedgerError"
 fields = ["MalformedRow", "UnknownCurrency", "DuplicateReference"]
 
 [[generate]]
 kind = "record"
-name  = "Entry"
+name = "Entry"
 fields = ["reference:string!", "postedAt:date", "amount:Money", "memo:string?"]
 
 [[generate]]
 kind = "strategy"
-name  = "MatchRule"
+name = "MatchRule"
 fields = ["ExactReference", "AmountAndDate", "FuzzyMemo"]
 strategy_on = "Entry"
 strategy_yields = "MatchOutcome"
 
 [[generate]]
 kind = "cli"
-name  = "Ledger"
+name = "Ledger"
 
 [[generate]]
 kind = "command"
-name  = "Reconcile"
+name = "Reconcile"
 ```
 
-Why this one:
+Why: it removes every shared assumption; it **walks straight into live defect
+§8.1** (a `new-cli` project gets a `pom.xml` Maven refuses to parse), turning
+it into a failing gate instead of folklore; it exercises `value`, `sealed`,
+`strategy`, `cli`, `command`, `record` — kinds A/B/C never touch, including
+`register_command`'s dispatcher splice and `g strategy`'s read-disk `destroy`;
+and it is cheap, `mvn -o verify` in seconds against C's containers.
 
-- **It removes every shared assumption.** No Spring, no web, no Kafka, no
-  security, no tenancy, no outbound I/O. If `app apply` only works when a
-  Spring parent POM is present, this app says so on the first run.
-- **It walks straight into a known live defect.** `g scaffold`/`g dto` splice
-  a versionless `spring-boot-starter-validation` with no flavor check, so a
-  `new-cli` project gets a `pom.xml` Maven refuses to parse (§4.1). A
-  plain-Maven proof app makes that defect a **failing gate** rather than
-  something you find by hand on a Tuesday.
-- **It exercises the kinds the other two never touch** — `value`, `sealed`,
-  `strategy`, `cli`, `command`, `record` — including `register_command`'s
-  dispatcher splice and `g strategy`'s read-disk `destroy`.
-- **It is cheap.** Seven intents, no containers, no broker; the gate is
-  `mvn -o verify` in seconds, not the 196 s the durable-work gate takes.
+**The rule that makes D a real control: adding it must not add a line to
+`src/`.** If it does, that line is the finding.
 
-**Its acceptance contract**, in the same shape as the other two: from the
-manifest and no hand-written Java, produce a CLI that reads two CSVs, reports
-matched and unmatched entries with a reason per row, exits non-zero when
-unmatched entries exist, and round-trips its report as JSON — with tests
-covering a malformed row, an unknown currency, a duplicate reference, an
-amount that differs by one minor unit, and an empty file.
+### 4.5 The authorship ledger — the number that proves the thesis
 
-**And one rule that makes it a real control:** *adding App C must not add a
-line to `src/`.* If it does, that line is the finding, and the fix is generic
-— exactly as the twenty-one defects in `DOGFOOD.md` were.
-
-### 2.6 The authorship ledger — the number that proves the thesis
-
-§1.2 argues that generators buy authorship time. The proof apps are where that
-stops being an argument. **Record these per app, per gate run:**
+Record per app, per gate run:
 
 | Metric | Why |
 |---|---|
-| Manifest lines | 60 (crawler), 90 (inbox), ~35 (ledger) — the input |
-| Generated Java + SQL lines | the output. One `g scaffold` alone is 1,180 |
-| **Hand-written Java or SQL lines** | **must be 0.** Any non-zero value is a friction-ledger row, not a footnote |
-| Manual interventions during the gate | the friction ledger's row count, which should trend to zero |
-| Commands to go from empty directory to passing gate | `new` → `app apply` → `check`. If it grows, something regressed |
-| Gate wall time | 196 s today for durable work; it is also a latency budget |
+| Manifest lines | 65 (A), 263 (B), ~110 (C), ~35 (D) — the input |
+| Generated Java + SQL lines | the output |
+| **Hand-written Java or SQL** | **must be 0.** Non-zero is a friction-ledger row, not a footnote |
+| Manual interventions during the gate | should trend to zero |
+| Commands from empty directory to passing gate | `new` → `app apply` → `check` |
+| Gate wall time | 293 s today; also a latency budget |
 
-The one that carries the whole thesis is the third. "Smarter generators mean
-you move faster" is measurable exactly as **hand-written lines per feature
-trending to zero while the feature set grows** — and today it is genuinely 0
-for both apps, which is the strongest single fact in this document.
+"Smarter generators mean you move faster" is measurable exactly as **hand-written
+lines per feature trending to zero while the feature set grows**.
 
-### 2.7 The genericity gate, applied to every core change
+### 4.6 The genericity gate
 
-Before a line lands in `src/`, it must pass all six (adapted from
-`ideas-sol.md`):
+Before a line lands in `src/`, all six must hold:
 
 1. Can it be named without mentioning a showcase domain?
-2. Is it useful to at least three materially different applications? — which
-   is now a question you can *answer*, because there are three.
-3. Does it represent a Spring/build/application concern rather than business
-   behaviour?
+2. Is it useful to at least three materially different applications? — a
+   question you can *answer* once C and D exist.
+3. Is it a Spring/build/application concern rather than business behaviour?
 4. Can a project decline it without weakening unrelated capabilities?
 5. Does it lower through the same intent, capability and write path?
-6. Does the generated application remain understandable and operable **without
-   jails installed**?
+6. Does the generated application remain operable **without jails installed**?
 
-Fail 1–3 and it belongs in a manifest, not in core. Fail 4–6 and the design is
-too coupled.
+Two mechanical guards:
 
-Two mechanical guards worth adding so this is enforced rather than believed:
-
-- **A repository test that greps `src/` and `templates/` for the showcase
-  vocabulary** (`crawl`, `spider`, `robots`, `conversation`, `workspace`,
-  `inbox`, `ledger`, `reconcile`) and fails on a hit outside a comment. Cheap,
-  and it is the only thing that stops the doctrine eroding one convenient
-  branch at a time.
-- **`app plan` must stay domain-blind and write nothing** — already pinned by
-  `app_manifest_plan_is_domain_blind_and_writes_nothing`. Keep that test first
-  in the file; it is the canary.
-
-### 2.8 How the harness runs
-
-From `examples/DOGFOOD.md`, unchanged:
-
-```bash
-cargo build && export JAILS_BIN="$PWD/target/debug/jails"
-
-"$JAILS_BIN" new web-crawler --deps web,validation
-mkdir -p web-crawler/.jails
-cp examples/web-crawler/.jails/app.toml web-crawler/.jails/app.toml
-cd web-crawler
-"$JAILS_BIN" app plan
-"$JAILS_BIN" app apply --no-start
-"$JAILS_BIN" routes && "$JAILS_BIN" beans && "$JAILS_BIN" doctor && "$JAILS_BIN" check
-```
-
-Three friction items in that flow are themselves plan work, and they are the
-first three rows of the friction ledger:
-
-- `jails new` needs Initializr and a network → **`new --offline`**, whose
-  asset already exists as `write_spring_fixture` in `tests/common/mod.rs`;
-- the manifest is copied by hand → **`jails app init --manifest <path>`** or
-  `new --app <path>`;
-- `app apply` describes intents but does not lower them through one atomic
-  plan → §7, and it is the trigger that makes provenance worth building.
-
-The automated tier uses the offline fixture instead of Initializr, which is
-why the gate runs without a network. Keep it that way.
+- **A repository test that greps `src/` and `templates/` for showcase
+  vocabulary** (`crawl`, `spider`, `conversation`, `workspace`, `inbox`,
+  `payment`, `merchant`, `settlement`, `ledger`, `reconcile`) and fails on a
+  hit outside a comment. One allow-list entry with a stated reason:
+  `http_workflow_java.java` legitimately contains `robots`, because RFC 9309
+  is a web standard rather than a domain noun. Make the reason the point.
+- **`app plan` must stay domain-blind and write nothing** — already pinned;
+  keep that test first in the file, it is the canary.
 
 ---
 
-## 3. Corrections ledger — do not build these
+## 5. Production defaults, from a real system
 
-The most expensive thing in a plan is a design resting on a fact that is not
-true. Each row below was checked against source; two of them would have eaten
-a week each.
+Read out of `/home/laith/code/projects/payments-gateway-service` (22 modules,
+332,397 lines of Java, Boot 4 / Java 26, Prometheus + Tempo + Grafana,
+Hikari, Kafka, k6 load tests, Helm). **The point of this section is that every
+row is domain-blind**: each one is a Spring/ops concern that any serious
+service needs, so each one has a generic home in jails and none of them
+introduces a payments concept.
+
+The pattern to copy is not the config — it is that **each setting exists
+because of a specific silent failure**, and the real system documents which.
+That is exactly jails' bar.
+
+### 5.1 What "batteries included" should mean
+
+Rails' actual promise is not that it writes more code; it is that the defaults
+are the ones an expert would have chosen, and you never have to know why. So
+each row below becomes one of three things:
+
+- a **generated default** in the capability that owns it,
+- a **`doctor` check** when the failure is a misconfiguration jails cannot own,
+- a **`why` rule** when the failure surfaces as a runtime symptom.
+
+Never a fourth thing: an option the user has to discover.
+
+### 5.2 Observability — `add observability` / `add actuator`
+
+| Practice | Generic home | The silent failure it prevents |
+|---|---|---|
+| `management.server.port: 8081`, `base-path: /management` | `add actuator` | Actuator on the public port. Every k8s probe and Prometheus scrape then rides the same connector and thread pool as customer traffic |
+| Probe **groups**: `liveness: include: ping` only; `readiness: include: ping, <real deps>` | `add actuator` | *This is the one everyone gets wrong.* A dependency check in the **liveness** group means a transient database blip makes Kubernetes **kill the pod**. The real system carries that reasoning as a comment; jails should generate the same comment |
+| `management.endpoint.health.cache.time-to-live: 5s` | `add actuator` | A 10 s probe interval × N pods hammering a health check that queries dependencies |
+| `exposure.include: health,info,prometheus,threaddump` | `add actuator` | `*` exposes `env`, `configprops`, `heapdump` — a credential leak with no error |
+| **Explicit SLO buckets** on `http.server.requests` (`100ms,…,10s`) with **`percentiles-histogram: false`** | `add observability` | The default histogram is ~70 buckets **per endpoint per status** — a Prometheus cardinality bomb that nothing warns about. The real system's comment says the SLO list *doubles as* the histogram |
+| Per-metric `percentiles` (`0.5,0.9,0.95,0.99`) and `minimum/maximum-expected-value` | `add observability` | Unbounded ranges produce useless buckets |
+| Selective `management.metrics.enable.<name>: false` | `add observability` | Resilience4j and Kafka each emit dozens of series nobody reads; the real system disables six circuit-breaker series by name |
+| `tracing.propagation.type: w3c`; `sampling.probability` explicit | `add observability` | Vendor-specific propagation silently drops the trace at the first hop you do not own |
+| **`tracing.baggage.correlation.fields`** → MDC, plus `tag-fields` and **`local-fields`** | `add observability` | Two distinct failures: an id that never reaches the logs, and an internal id that **is propagated over the wire to third parties** because nobody listed it as local |
+| Access log to stdout: `directory: /dev, prefix: stdout, suffix: "", file-date-format: ""` | `add observability` | A container writing access logs to a file nobody reads. The real system carries a second comment: the *management* connector auto-prefixes, producing `/dev/management_stdout`, **which a non-root user cannot write** |
+| `info.app.*` from `@project.*@` Maven filtering | `add actuator` | `/management/info` that says nothing, so you cannot tell which build is running |
+
+**A `MeterRegistryCustomizer` with `commonTags`, not `management.metrics.tags.*`** — jails already knows this
+(`management.metrics.tags.*` was removed in Boot 3 and its replacement tags
+*observations*, so a plain `Counter` goes untagged). Keep it, and note the
+payments system's `pod.name: ${POD_NAME}` as the canonical common tag.
+
+### 5.3 Data access — `add db`
+
+| Practice | Generic home | The silent failure it prevents |
+|---|---|---|
+| **`pool-name` set per pool** | `add db` | Hikari metrics are labelled by pool name; unnamed pools all report as `HikariPool-1` and are unreadable |
+| `connection-timeout: 1000`, `max-lifetime: 60000`, `initialization-fail-timeout` explicit | `add db` | A pool that blocks the request thread for 30 s (the default) instead of failing fast |
+| `transaction-isolation: TRANSACTION_READ_COMMITTED` explicit | `add db` | Isolation inherited from the server and silently different between environments |
+| **`connection-init-sql: SELECT 1/(1-pg_is_in_recovery()::int)`** on the write pool, and the inverse on the read pool | `add db`, when a read replica is configured | **The standout trick in the whole system.** A write pool that lands on a read replica fails at the first `INSERT`, in production, under load. This makes the pool refuse to start instead. Free, one line, and no ORM required |
+| Separate pools per role, sized independently (20 primary / 5 read / 3 admin) | documented; `--module` territory | One pool for everything means a batch job starves the request path |
+| `spring.lifecycle.timeout-per-shutdown-phase` + `server.shutdown: graceful` | `add db` / `new` | A rolling deploy kills in-flight transactions |
+| `server.max-http-request-header-size: 16KB` | `new` | Large JWTs produce a 431 nobody can reproduce locally |
+
+### 5.4 Build and quality gates — `new` and `add format`
+
+The real root POM carries: `maven-enforcer-plugin` with **`requireJavaVersion`
+and `requireMavenVersion`** (so a wrong local toolchain fails at `validate`,
+not at a mysterious bytecode error), `jacoco-maven-plugin`,
+`maven-checkstyle-plugin`, `editorconfig-maven-plugin`, `flatten-maven-plugin`,
+`maven-dependency-plugin`, and both `surefire` and `failsafe`.
+
+Generic homes: **`new` writes the enforcer rules** (jails already knows
+`TARGET_RELEASE`, so this is free and it converts jails' most common `doctor`
+FAIL into a build-time error with a fix line). **`add coverage`** owns Jacoco
+with a stated threshold. **`add format`** already owns the formatter; add
+`editorconfig` alongside it. `flatten-maven-plugin` matters only for
+multi-module and belongs with `--module`.
+
+### 5.5 Load and capacity — `add loadtest`
+
+The real system ships a `load-tests/` directory with **k6** (`load-test.js`,
+`api.js`, `payload-builder.js`, `token-cache.js`, a `Makefile`, a `README`).
+Not JMeter, not Gatling — a JS file and a binary.
+
+Generic form: **`add loadtest` writes a k6 script derived from the generated
+routes** (`inspect.rs` already computes the route table) with bodies from
+`sample_value` — the fourth reuse of that machinery after fixtures, factories
+and `.http` files — plus a `Makefile` target and a `README` paragraph. Then
+**`jails bench --load` records p50/p95/p99 into `.jails/benchmarks/`**, and
+App C's contract asserts a p99 budget. A tool whose pitch is speed should
+prove its own numbers.
+
+Note this replaces `ideas-kimi.md` K11's `g load` (a Java `main` with
+HdrHistogram), which had an unresolved invocation problem — `jails run` finds
+"the file with `static void main`" and a second one creates ambiguity. k6 has
+no such problem because it is not Java.
+
+### 5.6 Deployment — `add docker` (shipped) and `add k8s`
+
+`add docker` already generates a non-root multi-stage image running as
+`10001:10001` — verified in the gate. What the real system adds and jails does
+not: a **Helm chart** whose probes point at the **management port** by name
+(`port: o11y`) with `failureThreshold: 5/3, periodSeconds: 10,
+timeoutSeconds: 3`, and a `prometheus-rule.yaml` whose burn-rate alerts depend
+on the SLO buckets in §5.2.
+
+`add k8s` is a reasonable capability *after* §5.2 exists, because the probes
+and the alert rules are only correct if the management port and the buckets
+are. Sequence it last, and keep it to one deployment, one service, one
+configmap, and probes — not a chart framework.
+
+### 5.7 One honest counterweight
+
+**`spring.threads.virtual.enabled: false`.** A Boot 4 payments system on Java
+26 explicitly *disables* virtual threads and runs a bounded pool
+(`threads: 100`). Four of the six source documents recommend virtual threads
+as an unqualified default.
+
+Do not read that as "virtual threads are wrong". Read it as: **a production
+system with real throughput requirements made the opposite call, so jails must
+not force it.** The generated default should be explicit and commented either
+way, and `doctor` should carry the two real traps rather than an opinion: a
+virtual-threads app whose only work is `@Scheduled` **exits 0 immediately**
+unless `spring.main.keep-alive=true`, and pinning is observable via the JFR
+`jdk.VirtualThreadPinned` event (on by default at 20 ms) — not via
+`-Djdk.tracePinnedThreads`, which no longer exists on JDK ≥ 24.
+
+### 5.8 The meta-lesson
+
+The payments system's `AGENTS.md` is 166 lines and is the highest-signal file
+in a 332,397-line repository. It encodes conventions an agent would otherwise
+violate: package layout, `CREATE INDEX CONCURRENTLY`, partition-by-date,
+reuse `java.util.Currency`, the exact `./mvnw test -pl <module> -am
+-Dtest=<X> -Dsurefire.failIfNoSpecifiedTests=false` invocation.
+
+That is §15.1's argument, with evidence: **`jails new` should write an
+`AGENTS.md`**, and its content should be *rendered from* the same tables
+`jails lint` and `jails commands --json` use, so it cannot drift into a lie.
+Note the payments file already carries jails' own `failIfNoSpecifiedTests`
+fix (§8.3) as documented tribal knowledge — which is exactly the kind of thing
+a generator should be handing you instead.
+
+---
+
+## 6. Maintainability — options, ranked
+
+`src/spring.rs` is **6,459 lines** and holds ~42 whole Java files as inline
+`format!` strings, each opening `r#"package {pkg};`. Every brace in them is
+doubled — the exact tax `src/template.rs` exists to remove — and none of it is
+Java any editor or compiler can check. CLAUDE.md's stated reason for the
+`add.rs`/`spring.rs` split (*"`add.rs` was already the biggest file here"*) is
+now **inverted**: `spring.rs` is nearly twice `generate.rs` and 4.5× `add.rs`.
+
+But file size is the symptom, not the disease.
+
+### 6.0 First principles: what a generator is, and where everyone puts the pieces
+
+A generator is a function `(intent, project state) → set of file writes`. Every
+system in this space splits that into four separable concerns, and the quality
+of the system is decided almost entirely by whether concern 4 is kept **out
+of** concerns 2 and 3.
+
+1. **Identity** — name, aliases, help text, option schema, preconditions.
+2. **Content** — the bytes of each file.
+3. **Placement / composition** — which files, where, in what order,
+   conditionally.
+4. **Decisions** — read project state and choose.
+
+**Read against the checkouts in `ideas/`, not from memory** — the same rule
+CLAUDE.md applies to templates. Citations are paths inside `ideas/`.
+
+| System | Identity | Content | Placement | Decisions |
+|---|---|---|---|---|
+| cookiecutter | `cookiecutter.json` | Jinja tree | directory names + Jinja | none (hooks only) |
+| copier | `copier.yml` | Jinja tree | same | none — but see §6.0.2 |
+| Rails generators | Thor class | ERB | **Ruby method body**, a script of *actions* (`create_file`, `inject_into_class`, `gsub_file`) | Ruby |
+| Angular / Nx schematics | **`collection.json` + `schema.json`** | templates | TS `Rule: Tree → Tree` | TS |
+| OpenAPI generator | config + `-t` override | **Mustache — logic-less on purpose** | Java codegen class | Java |
+| JHipster | JDL + Yeoman | EJS | sub-generators | JS + **blueprints** |
+| OpenRewrite | **YAML recipe** with `preconditions` + `recipeList` | — | Java visitor | Java |
+| Dart `build_runner` | `build.yaml` | `source_gen` builders | `*.g.dart` beside source | Dart |
+| Spring Roo (dead) | annotations | AspectJ ITDs | round-trip weaving | Java |
+| **jails today** | Rust enum + clap | mix of templates and Rust strings | Rust | Rust |
+| **jails with option F** | TOML descriptor | templates | descriptor (simple) + Rust (conditional) | Rust |
+
+#### 6.0.1 What the source actually shows
+
+**Angular schematics is jails option F, already proven at scale.**
+`ideas/angular/packages/core/schematics/collection.json` maps a name to
+`{description, factory: "./bundles/x.cjs#migrate", schema: "./schema.json",
+aliases: [...]}` — identity and the option schema are **data**; the logic is a
+function the descriptor points at. The meta-schema
+(`ideas/angular-cli/packages/angular_devkit/schematics/collection-schema.json`)
+names exactly seven fields, and three of them are ones jails' descriptor
+should copy and I had not considered:
+
+| Field | Why jails wants it |
+|---|---|
+| `aliases` | already needed (`uc`, `djob`, `webhook`) |
+| `factory` | the Rust function — jails' equivalent is the dispatch arm |
+| `description` | becomes `jails g --help` |
+| `schema` | the option schema; jails' is the field-spec grammar plus `--on`/`--yields` |
+| **`extends`** | *"a schematic override… local or from another collection"* — the sanctioned way to specialise a generator without forking it. This is a better answer to "flexibility" than a plugin hook, and it is §6.6 Tier 2 done properly |
+| **`hidden`** | listed by tooling or not — jails has kinds that exist for composition (`outbox` is reached through `usecase --yields`) and should not clutter `--help` |
+| **`private`** | callable from another schematic but not from the CLI — exactly `outbox`'s status |
+
+**OpenRewrite makes preconditions first-class data.**
+`ideas/rewrite/rewrite.yml` is `type` / `name` / `displayName` / `description`
+/ **`preconditions:`** / **`recipeList:`** — declarative *composition* of
+units that are implemented in Java. jails' `requires = { spring = true,
+capabilities = ["db"] }` is the same idea, and `recipeList` is what
+`.jails/app.toml` already is one level up. Confirmation that the hybrid —
+declarative composition, coded units — is the stable shape.
+
+**OpenAPI generator's `-t/--template-dir` is real** and is at
+`ideas/openapi-generator/modules/openapi-generator-cli/src/main/java/org/openapitools/codegen/cmd/Generate.java:88`,
+wired at `:504`. §6.6 Tier 2 is not invented.
+
+**Nx converged on Angular's format independently.**
+`ideas/nx/packages/js/generators.json` is the same object — `factory`,
+`schema`, `aliases`, `description` — plus one extra field, `x-type`, a
+classification used for filtering. Two mature systems arriving at the same
+descriptor shape is the strongest available signal that option F is the
+stable design rather than a guess.
+
+**cookiecutter is the concrete evidence for §6.6's refusal of hooks.**
+`ideas/cookiecutter/cookiecutter/hooks.py:95` runs `pre_gen_project` /
+`post_gen_project` through
+`subprocess.Popen(script_command, shell=run_thru_shell)` — annotated `# nosec`
+in the source. That is arbitrary shell execution from a downloaded template,
+and it is exactly the line §6.6 says never to cross. The refusal is not
+squeamishness; it is a citation.
+
+**JHipster confirms the maximal plugin model, and its cost.**
+`ideas/generator-jhipster/generators/base/command.ts:49` takes
+`--blueprints kotlin,vuejs` and `--disable-blueprints`: npm packages that
+override sub-generators wholesale. That is real power and it is also why
+blueprint/core version skew is the standing cautionary tale — the override
+surface is every sub-generator, so every core change can break a blueprint.
+
+**Dart `build_runner` is the model jails deliberately rejects.**
+`ideas/dart/build/example/build.yaml` declares `builders:` with `import`,
+`builder_factories`, **`build_extensions: {".txt": [".txt.copy"]}`** and
+`build_to: source` — a *derivation* model keyed on input extension, where the
+output is a function of a source file and is regenerated every build. The
+`build_to: source` versus cache switch is precisely the "is generated code
+yours?" fork. jails takes the other branch: **you own and edit the generated
+code.** Worth naming so nobody drifts toward it — the moment generated code is
+"not yours", `g field`, `edited_files` and print-never-clobber all stop making
+sense.
+
+Three observations carried forward:
+
+- **Rails' generator is a script of actions, not a template.** jails already
+  has that vocabulary scattered across `pom::add_dependency`,
+  `register_command`, `install_test_container_import` and the `@Import`
+  merger — the independent argument for `src/codemod.rs` (§11).
+- **OpenAPI generator picked Mustache *because* it has no conditionals**,
+  independently arriving at `template.rs`'s rule.
+- **jails with option F lands where Angular schematics landed.** That is not a
+  novel design; it is a well-trodden point in the space, and the meta-schema
+  above is a ready-made field list.
+
+#### 6.0.2 When a DSL is actually justified
+
+A DSL earns its place when you need to **analyze** the programs, not merely
+run them — validate, diff, invert, or reconcile them.
+
+jails genuinely needs that: `destroy` needs the inverse, `--pretend` needs the
+plan, `app apply` needs drift detection. That is a real argument for data over
+code, and it is why "just write more Rust" is not the whole answer.
+
+But look at *what* it needs to analyze: **paths and ownership, never
+content.** So the thing to model declaratively is the **artifact manifest** —
+which files, where, owned by which intent — not the generator. A full DSL
+would force you to encode the 90% that is never analyzed to reach the 10% that
+is.
+
+> **Model the output, not the process.** Declare the artifact set; keep the
+> decisions in Rust.
+
+That rule is what separates options B/D/F (worth doing) from a generator DSL
+(§6.3, rejected).
+
+**And copier proves the corollary**: for *reconciliation* you do not need an
+ownership model at all — you need the stored inputs and the ability to re-run
+the generator. See §11.1, which replaces this plan's earlier "output
+fingerprints" design.
+
+### 6.1 The disease, measured
+
+**"What files does kind X produce?" is answered in five separate places, and
+nothing checks that they agree.**
+
+| Copy | Where | Size |
+|---|---|---|
+| 1. The generator | 14 `*_files` functions in `spring.rs`, all returning `Vec<(PathBuf, String, &'static str)>` | ~6,000 lines |
+| 2. **The destroy path list** | `generate::destroy`, a `match kind` with **17 hand-written `vec![]` arms** | ~200 lines |
+| 3. The golden scenario | `tests/golden.rs` `SCENARIOS` | **missing for 12 kinds** (§8.5) |
+| 4. The editor lists | four Lua tables in `jails.nvim` | **stale by 8 kinds** |
+| 5. The README table | prose | stale |
+
+Copy 2 is the dangerous one. CLAUDE.md already warns about it — *"a kind added
+to one and not the other silently strands files"* — and it is a **manual
+transcription of paths that the generator right next door already computes.**
+Adding `usecase` meant writing ten `format!("{name}…java")` lines twice.
+
+There is already a test that checks copies 1 and 2 agree —
+`destroy_removes_only_files_that_generate_would_have_created` — but **it
+covers exactly one kind (`Record`)**, out of 30.
+
+So the maintainability question is not "how do we write less Rust". It is:
+**how does "what kind X produces" stop having five definitions?**
+
+### 6.2 The options
+
+Ranked by value ÷ effort. A–C need no new file format at all, which is why
+they come first.
+
+---
+
+**A. Generalise the agreement test.** *Hours. No design.*
+
+Loop every `ArtifactKind` over a scratch project: generate, snapshot the set
+of files on disk, `destroy --pretend`, assert the sets are equal. The test
+exists for `Record`; make it a table over the enum.
+
+- **Buys**: catches copy-2 drift for all 30 kinds, today, permanently.
+- **Costs**: nothing structural; does not reduce a line of code.
+- **Do it first regardless of what else you pick** — it is the evidence that
+  makes B safe to attempt.
+
+---
+
+**B. Delete the destroy path list; derive it from the generator.** *~1 day.*
+
+`destroy` calls the same `*_files` function `generate` does, and takes the
+path out of each returned tuple. Copy 2 stops existing.
+
+- **Buys**: kills a documented class of bug outright. No new format, no new
+  concept, ~200 lines deleted.
+- **Note**: this is the right mechanism for `--pretend`, where nothing has
+  been written yet. For `destroy` after a jails upgrade, prefer the **recorded**
+  file list of §11.2 — a recomputed path gives you today's answer for
+  yesterday's file.
+- **Costs**: some `*_files` read records off disk (`fields_from_record`) to
+  decide what to emit, and at destroy time the record may be the thing being
+  deleted. Two mitigations, both already precedented in the tree: make
+  rendering lazy so paths are computed without bodies, and keep the
+  `g strategy` pattern where destroy deliberately reads disk to find
+  implementations added by hand.
+- **This is the highest value-per-day item in the whole section**, and the
+  previous draft of this plan missed it entirely.
+
+---
+
+**C. Finish the template migration.** *Ongoing, incremental.*
+
+Every `r#"package {pkg};` block becomes `templates/spring/*.java`. Already the
+house pattern; `add/` is done (7 `include_str!` against 2 `format!`).
+
+- **Buys**: `spring.rs` from ~6,459 to roughly 2,500 lines *of decisions*;
+  Java that an editor highlights and a human can review as Java; no doubled
+  braces.
+- **Costs**: none beyond the work. Each extraction is independently
+  reviewable and golden-testable.
+- **Do it as you touch each generator, never as a big-bang refactor.**
+
+---
+
+**D. A typed artifact builder.** *~2 days, Rust only.*
+
+Replace the `Vec<(PathBuf, String, &'static str)>` convention with a builder
+each generator declares into:
+
+```rust
+Artifacts::new(&root)
+    .main(layout::SERVICE, "{name}Command.java",   tpl::USECASE_COMMAND)
+    .main(layout::SERVICE, "Default{name}UseCase.java", tpl::USECASE_IMPL)
+    .test(layout::WEB,     "{name}ControllerTest.java", tpl::USECASE_CTRL_TEST)
+```
+
+- **Buys**: path and template declared together and once; `destroy` reads
+  `.paths()`; each generator's *shape* becomes readable at a glance instead of
+  buried in 400 lines of string building. Makes B fall out for free.
+- **Costs**: 14 call sites to convert; still Rust, so no external tool can
+  read it.
+- **B and D are really one move** — do D as the mechanism, B as the result.
+
+---
+
+**E. Data-ise the type table.** *~1 day.*
+
+`builtin_by_java_name` (`generate/field.rs`) and `builtin_mapping` (`sql.rs`)
+are a pure lookup table — java type ↔ SQL type ↔ read expression ↔ write
+expression ↔ sample value — expressed as Rust `match` arms in two files that
+must stay in step.
+
+```toml
+# types/instant.toml
+java = "java.time.Instant"
+sql  = "timestamptz"
+read  = "rs.getTimestamp(\"{col}\").toInstant()"
+write = "Timestamp.from({recv})"
+sample = "Instant.parse(\"2026-01-01T00:00:00Z\")"
+imports = ["java.time.Instant", "java.sql.Timestamp"]
+```
+
+- **Buys**: adding a field type becomes one file instead of edits in two
+  modules; the round-trip property (`reverse(forward(t)) == t`) becomes a
+  table test; `jails inspect db` (reverse mapping) gets its table for free.
+- **Costs**: small; the `write` expression must keep baking in the receiver
+  (`Timestamp.from(x.at())`, not `x.Timestamp.from(at())`) — a documented trap.
+- **Genuinely declarative, genuinely low-risk.** This is data, not logic.
+
+---
+
+**F. One descriptor file per kind.** *~1 week.*
+
+```toml
+# kinds/usecase.toml
+name     = "usecase"
+aliases  = ["uc"]
+summary  = "A create workflow with a transaction boundary, route and tests"
+requires = { spring = true, capabilities = ["db"] }
+args     = { on = "required:Resource", yields = "optional:Event", fields = "spec" }
+
+[[artifact]]
+template = "spring/usecase_command.java"
+path     = "{service}/{Name}Command.java"
+
+[golden]                                   # REQUIRED KEY
+fixture = "spring"
+steps   = [["g","scaffold","Note","id:uuid@pk","title:string!"],
+           ["g","usecase","CreateNote","id:uuid","title:string!","--on","Note"]]
+```
+
+Copies 1–5 collapse to one file, consumed by: the `ArtifactKind` enum and
+clap aliases (generated in `build.rs`), `--help` text, `destroy`'s paths, the
+golden scenario table, `jails commands --json` (which then *deletes* the Lua
+lists rather than pinning them), the README table, and `AGENTS.md` in
+generated projects (§5.8).
+
+- **Buys**: the structural fix. And one property nothing else on this list
+  has: **`[golden]` is a required key, so it becomes impossible to add a kind
+  without a snapshot test** — converting §8.5's recurring discipline failure
+  into a compile error.
+- **Costs**: a week; a `build.rs`; a second place to look when reading a
+  generator; and a standing risk of drifting into a template language.
+- **Scope rule**: descriptors hold **data** — names, aliases, preconditions,
+  template→path pairs, golden steps. Never logic. The test: *could this be
+  wrong in a way only a human reading the generated Java would notice?* If
+  yes, it is logic and it stays in Rust. `usecase`'s compatibility check and
+  inference engine are logic.
+- **Do F after A–D**, because A–D change what a descriptor needs to hold. A
+  format designed before the agreement test exists will forget the golden key.
+
+---
+
+**G. Path metadata in the template header.** *Considered, not recommended.*
+
+```java
+// jails:path {service}/{{name}}Command.java
+```
+
+- **Buys**: no new files at all; the template *is* the descriptor; impossible
+  to add a template without declaring where it goes.
+- **Costs**: ordering and conditionality are not expressible, and roughly a
+  third of jails' artifacts are conditional (`--yields` adds the outbox;
+  `repository_wiring` changes the adapter shape). You would end up with the
+  header for simple kinds and Rust for the rest — six copies instead of five.
+- **Rejected**, but worth recording so nobody re-proposes it.
+
+---
+
+### 6.3 What not to build
+
+**A template language with conditionals and loops.** It would shrink Rust and
+grow something worse: logic no test can reach directly and no compiler can
+check. `template.rs`'s module docs already rule it out and the reason holds.
+Substitution only; anything structural stays in Rust and arrives pre-rendered.
+
+**A general "generator DSL" in YAML/JSON that describes how to build Java.**
+That is a plugin system with a different file extension, and README's "Not
+yet" defers it for good reasons.
+
+**Codegen from an external schema language** (JSON Schema, protobuf). Two
+build steps and a dependency, for a config file with fifteen keys.
+
+### 6.4 Recommended path
+
+1. **A** (hours) — the agreement test over all 30 kinds. Do this in the same
+   sitting as §8.5's golden-coverage test; they are the same shape and the
+   same argument.
+2. **B + D** (~2 days) — the artifact builder, and delete the destroy list.
+   This is the one that removes a real bug class.
+3. **C** (ongoing) — templates out of `spring.rs` as you touch each generator,
+   plus §6.5's file split.
+4. **E** (~1 day) — the type table as data. Independent of everything else.
+5. **F** (~1 week) — descriptors, once A–D have settled what they must hold.
+
+Steps 1–2 are three days and remove the duplication that actually causes bugs.
+Steps 3–5 are the long-term shape.
+
+### 6.5 The file split, whichever option you take
+
+`spring.rs` is one file for two unrelated reasons: Spring *capabilities* and
+Spring *generators*. Mirror the convention `add/` and `generate/` already use:
+
+```
+src/spring.rs            -> require_spring, exposure_include, shared helpers
+src/spring/capability/   -> api.rs actuator.rs cache.rs security.rs observability.rs
+src/spring/workflow/     -> usecase.rs query.rs transition.rs
+src/spring/durable/      -> job.rs outbox.rs sink.rs
+src/spring/http/         -> client.rs fetcher.rs workflow.rs
+src/spring/schema.rs     -> association.rs
+```
+
+and **fix CLAUDE.md's rationale in the same change**, so the next split is
+made on a true premise.
+
+### 6.6 Extension: four tiers, and where a plugin system is and is not safe
+
+README defers "any kind of plugin system", and all six source documents list
+it as an anti-goal. That deferral is right about *one* form of plugin and
+wrong as a blanket answer, because "I want flexibility" decomposes into four
+wants with wildly different costs.
+
+**What a plugin system actually buys** is third-party extension without a core
+release, plus per-team customisation. For a tool whose maintainer and user are
+the same person, the first is worth approximately nothing — you can add a kind.
+What it **costs** is permanent: a public API surface that must stay stable
+forever, version skew between core and plugins (JHipster blueprints are the
+standing cautionary tale), untested combinations, and the loss of the property
+that every generated file is golden-tested.
+
+So do not ask "should jails have plugins". Ask which tier is wanted:
+
+| Tier | The want | Mechanism | Cost | Status |
+|---|---|---|---|---|
+| 1 | "put generated code somewhere else" | `jails.toml [layout]` | — | **exists**, and §12's `jails adopt` extends it |
+| 2 | "change what the generated code *looks like*" | `--template-dir` / `.jails/templates/` override, resolved before `include_str!` defaults | small | **worth doing** |
+| 3 | **"add a new generator"** | **data-only kind**: a descriptor plus templates dropped in `.jails/kinds/` or `~/.config/jails/kinds/` | falls out of option F | **the safe plugin system** |
+| 4 | "add a generator that makes decisions" | Rust, and a release | — | unchanged |
+
+**Tier 2 — template overrides.** OpenAPI generator's `-t` flag is the
+precedent, and it is the flexibility people actually reach for: not a new
+generator, just *this* class shaped differently. Resolution order becomes
+`.jails/templates/<name>.java` → `~/.config/jails/templates/<name>.java` →
+the `include_str!` default. Cheap, and independent of every other item here.
+
+The honest cost: **an overridden template is not golden-tested**, so a project
+that overrides one has opted out of the guarantee for that file. Mitigate by
+having `doctor` report every active override by name — the same honesty rule
+as `remove`'s `unowned_properties`, which names hand-written lines before
+deleting a block.
+
+**Tier 3 — data-only kinds, which is a plugin system in the only form that
+does not break jails' guarantees.** A kind expressible as
+
+- metadata (name, aliases, summary, preconditions),
+- a list of `template → path` pairs,
+- a `[golden]` block,
+
+with **no conditionals**, needs no Rust. Dropping such a directory in gives a
+user-defined generator with no arbitrary code execution, no API to keep
+stable, and — because the descriptor carries its own golden steps — output
+that is still snapshot-tested. `destroy` works on it for free, because the
+path list is the same data.
+
+**The line is precise and checkable: data is extensible, logic is not.** A
+kind that needs an `if` is logic and belongs in core.
+
+**The slope, and the guard.** The first person to want a conditional in a
+data-only kind will ask for one, and granting it is how this becomes JHipster.
+Two guards, both cheap:
+
+- **Refuse conditionals outright** in the descriptor schema — an unknown key
+  is an error, the same closed-set rule `jails.toml` and the field markers
+  already use.
+- **Make the boundary visible**: `jails commands --json` and `doctor` report
+  which kinds are core and which are data-only, so nobody discovers by
+  accident that half their generators are unversioned local files.
+
+**What stays refused, at every tier**: lifecycle hooks, arbitrary shell,
+downloadable packs, and anything that executes code at plan or apply time.
+Those are the plugin system README defers, and nothing above requires them.
+
+## 7. Corrections ledger — do not build these
 
 | Claim, and where it came from | What the source says |
 |---|---|
-| **AOT cache pays on every devtools restart, `mvn test` fork and `jails run`** (`ideas-opus.md` A2) | The AOT cache **refuses any classpath containing a directory**, and `target/classes` is a directory (`deps/jdk/.../aotClassLocation.cpp:687-708`; reproduced: `Error: non-empty directory 'target/classes'`). All three named loops are out. Worse, a devtools restart is a new classloader **in the same JVM** (`RestartClassLoader`), so there is no process start for a cache to save. AOT is real — 6.6 s → 2.96 s on a **jar** classpath — and belongs to `jails build` / `add docker`, not the dev loop. |
-| **`-XX:+AllowEnhancedClassRedefinition` covers ~90% of real edits** (`ideas-opus.md` A1) | The flag does not exist in OpenJDK (`grep -rl` over `deps/jdk` returns nothing) — it is JetBrains Runtime / DCEVM. The source documents then ruled it out because **JBR tops out at JDK 25** while `TARGET_RELEASE` was 27. **`TARGET_RELEASE` is now `"25"`, so that objection is gone** and the JBR path is reachable for the first time — see §14. It is still not the default: stock JVMTI is method bodies only (`jvmti.xml:8136-8140`), so plan for it and treat enhanced redefinition as an opt-in `doctor`-detected bonus. Either way, since jails' domain layer is records and sealed types, **every domain edit is a restart on a stock JVM** — say so, or `jails dev` looks broken. |
-| **JDWP `RedefineClasses` is command set 2, command 18** (`ideas-opus.md` A1) | Command set **1** (`VirtualMachine`); set 2 is `ReferenceType`. You also need `IDSizes` and `ClassesBySignature` first and ID widths are dynamic — a working client is ~400 lines, not 150 (`deps/jdk/.../jdwp.spec`). Use jdt.ls's existing HCR (free) or `jdb redefine` before writing one. |
-| **`SseEmitter`'s never-time-out value is `Long.MAX_VALUE`** (folk answer behind both SSE designs) | Spring's own reactive path uses **`-1L`**, and Spring's default is `null` — the 30 s is Tomcat's `Connector.asyncTimeout`. Write `new SseEmitter(0L)` or `-1L` and `spring.mvc.async.request-timeout=-1`, verified end to end into `AbstractProcessor`. |
-| **Intercom webhooks are `X-Hub-Signature-256` / HMAC-SHA-256** (`ideas-grok.md` §8.1) | Intercom signs `X-Hub-Signature` with HMAC-**SHA-1**, `sha1=` prefix, keyed by `client_secret`. A verifier built to that spec **rejects every real delivery**. The closed set is three: `hmac_sha1_hex`, `hmac_sha256_hex`, `stripe_v1` (with a mandatory 300 s tolerance check). |
-| **minicom is "users → conversations → messages"** (`ideas-opus.md` B1, `ideas-grok.md` §8) | `ideas/minicom-public/README.md` says the entire success condition is an alert reading `Yay! Everything works`. There is **no messaging code in the repository at all** and **no conversations table** — `users(id,email,created_at,updated_at)` and `messages(id,user_id,content,message_read,…)`, flat, with a direction char. Both documents designed against a product that does not exist. The Intercom slices are still worth building, but from Intercom's own docs, not from this stub. |
-| **`jails run --watch` already pipes through `why`** (`ideas-opus.md`) | It does not, and still does not — see §4.4. |
-| **A `notify` crate would be the second dependency** (`ideas-opus.md` A1) | Third: `clap` and `clap_complete` are both declared. Polling is still right (devtools and Quarkus both poll), so this changes nothing except the sentence. |
-| **`rails test --only-failures`** (`ideas-grok.md`) | Not a Rails feature; it is RSpec's. Rails prints a copy-pasteable `bin/rails test path:LINE` instead — which is the better thing to copy. |
-| **Boot 4 sets `spring.threads.virtual.enabled=true`** (`ideas-grok.md` §8.3) | Default is **`false`**. And a virtual-threads app whose only work is `@Scheduled` **exits 0 immediately** unless `spring.main.keep-alive=true`. That is a `why` rule. |
-| **`-XX:TieredStopAtLevel=1` and `spring.jmx.enabled=false` are speed tips** | `spring-boot:run` already passes the first (`optimizedLaunch=true`) and JMX is already off. Obsolete advice — and for STS4 live hover you actually want JMX back **on**. |
-| **Mint JWTs with Nimbus directly** (`ideas-grok.md` §8.2) | A level too low. Spring Security 7 ships `NimbusJwtEncoder.withSecretKey` (`@since 7.0`, so every tutorial predates it) and Nimbus arrives transitively. The silent failure that earns the generator its place: **a JWT with no `exp` claim passes the default decoder** (`JwtTimestampValidator.allowEmptyExpiryClaim = true`), and the default chain checks no issuer and no audience. |
-| **`add http` can be extended into a fetcher** (`ideas-opus.md` B3) | `add http` is an HTTP **server** on `com.sun.net.httpserver`. A crawler capability is a different thing; name it `add crawl`. |
-| **robots.txt via `re2j` or a hand-rolled parser** | Take `crawlercommons.robots` — RFC 9309's longest-octet match, Allow-wins-tie and group-combining are exactly where hand parsers go wrong, and the 5xx⇒disallow-all rule is the one everybody gets backwards. |
-| **CLAUDE.md: the manifest is `deps/deps.tsv` and `deps/update.sh`** | They are `deps.tsv` and `deps-update.sh` at the repo root. Confirmed by `ls`. This one matters because CLAUDE.md is the first thing every agent reads, and the wrong path propagated into roughly six citations before anyone checked. |
-
-Two more facts worth carrying, both **confirmed** rather than corrected:
-`@MockBean` is gone in Boot 4 (`@MockitoBean` in `spring-test`); `MockMvcTester`
-is `@since 6.2`, i.e. Boot ≥ 3.4 — which is why §4.3 exists.
+| **AOT cache pays on every devtools restart, `mvn test` fork and `jails run`** (`ideas-opus.md` A2) | The cache **refuses any classpath containing a directory**, and `target/classes` is one. All three named loops are out. A devtools restart is also a new classloader in the same JVM, so there is no process start to save. AOT is real — 6.6 s → 2.96 s on a **jar** classpath — and belongs to `jails build` / `add docker` |
+| **`-XX:+AllowEnhancedClassRedefinition` covers ~90% of edits** (`ideas-opus.md` A1) | Not an OpenJDK flag; it is JetBrains Runtime / DCEVM. The documents ruled it out because JBR tops out at JDK 25 while `TARGET_RELEASE` was 27 — **it is now `"25"`, so the path is reachable.** Still not a default: stock JVMTI is method bodies only, and jails' domain layer is records and sealed types, so **every domain edit is a restart on a stock JVM** |
+| **JDWP `RedefineClasses` is command set 2** (`ideas-opus.md` A1) | Command set **1**; set 2 is `ReferenceType`. A working client is ~400 lines, not 150. Use jdt.ls's HCR or `jdb redefine` first |
+| **`SseEmitter`'s never-time-out value is `Long.MAX_VALUE`** | Spring's own reactive path uses **`-1L`**; Spring's default is `null` and the 30 s is Tomcat's `Connector.asyncTimeout` |
+| **Intercom webhooks are `X-Hub-Signature-256` / SHA-256** (`ideas-grok.md` §8.1) | Intercom signs `X-Hub-Signature` with HMAC-**SHA-1**, `sha1=` prefix, keyed by `client_secret`. A verifier built to that spec **rejects every real delivery** |
+| **minicom is "users → conversations → messages"** (`ideas-opus.md` B1, `ideas-grok.md` §8) | Its entire success condition is an alert reading `Yay! Everything works`. **No messaging code and no conversations table.** Two documents designed against a product that does not exist |
+| **A crawler needs jsoup and crawler-commons** (`ideas-grok.md` §7, `ideas-fable.md` §6.1) | `http_workflow_java.java` parses with the JDK's `HTMLEditorKit` and fetches `/robots.txt` as a frontier entry. **Zero new dependencies.** The `add crawl` capability those documents specify is unnecessary — do not add it, do not clone jsoup |
+| **Relations should be inferred from an `author:User` component** (`ideas-grok.md` §6) | `g association` does it **explicitly**, with both records read, types checked across the boundary, composite keys free, identifier length checked, no `ON DELETE` invented. Explicit beat inferred. What survives is narrower — §9.2 |
+| **`jails run --watch` already pipes through `why`** | It does not — §8.4 |
+| **A `notify` crate would be the second dependency** | Third: `clap` and `clap_complete` are both declared. Polling is still right |
+| **`rails test --only-failures`** | RSpec's, not Rails'. Rails prints a copy-pasteable `bin/rails test path:LINE` — copy that instead |
+| **Boot 4 sets `spring.threads.virtual.enabled=true`** (`ideas-grok.md` §8.3) | Default is **`false`** — and see §5.7, where a production system sets it to `false` deliberately |
+| **`-XX:TieredStopAtLevel=1` / `spring.jmx.enabled=false` are speed tips** | `spring-boot:run` already passes the first; JMX is already off. For STS4 live hover you want JMX back **on** |
+| **Mint JWTs with Nimbus directly** (`ideas-grok.md` §8.2) | A level too low. Spring Security 7 ships `NimbusJwtEncoder.withSecretKey` (`@since 7.0`). The silent failure: **a JWT with no `exp` passes the default decoder**, and the default chain checks no issuer and no audience |
+| **Toxiproxy's Java bodies are still `format!` strings** (`ideas-fable.md` §8.11) | **Fixed.** `add/testing.rs` is 7 `include_str!` against 2 `format!` |
+| **`g load` with HdrHistogram** (`ideas-kimi.md` K11) | Superseded by §5.5 — k6, which sidesteps the "two `main` methods" invocation problem entirely |
+| **CLAUDE.md: the manifest is `deps/deps.tsv`** | It is `deps.tsv` and `deps-update.sh` at the repo root |
 
 ---
 
-## 4. Tier 0 — the live defects, verified today
+## 8. Tier 0 — the debt behind the new code
 
-Every row was re-checked against `94107ef` while writing this file. One defect
-the source documents report (`doctor` reading `java` on PATH instead of
-`JAVA_HOME`) **is already fixed** — `doctor.rs:871-875` now prefers
-`JAVA_HOME`. The rest are live.
+All re-verified against `e523c16`. The tree **builds**; the previous pass's
+blocker (`spring::transition_files` missing) is gone.
 
 | # | Defect | Evidence | Fix | Effort |
 |---|---|---|---|---|
-| 4.1 | **`g scaffold` and `g dto` write a `pom.xml` Maven cannot read.** `VALIDATION_STARTER` has `version: None`, correct under `spring-boot-starter-parent` and fatal without one. No flavor check: `require_spring_project` guards only `client`, `job`, `event`. | `src/generate.rs:1029,1059`; `src/spring.rs:29` — confirmed present today. `mvn -o test` on a `new-cli` project: `'dependencies.dependency.version' … is missing`. | Have `ensure_dependency` consult `pom::flavor` and splice a pinned version with no parent BOM — which is what every non-Spring capability in `add` already does. `maven-failsafe-plugin` is spliced versionless too; Maven only warns, so it is a trap rather than a break. | 30 min |
-| 4.2 | **The golden suite ratifies that broken pom.** | `tests/golden/scaffold-plain/pom.xml:14-17` — read today, still versionless. | Regenerate and **read the diff**. That diff is the bug report. | 10 min |
-| 4.3 | **`g controller` / `g scaffold` emit Java that cannot compile on Boot 3.0–3.3.** `controller_stub_test.java` imports `MockMvcTester` unconditionally (`@since 6.2` = Boot ≥ 3.4), while `spring_boot_major` resolves only the major and gates just the `@AutoConfigureMockMvc` package move. On Boot 3.2 jails emits the legacy package **and** the 6.2-only type. | `src/generate.rs:187-206`; `git -C deps/spring-boot show v3.3.0:gradle.properties` → Framework 6.1.8. | Resolve a **framework** version, not a Boot major; below 6.2 **refuse with a `fix:` line** rather than growing a second template family. Nine API families would have to fork to support Boot 2.7 output — that is the trap, quantified. Add `--no-test` as the escape hatch. | 2 h |
-| 4.4 | **`jails test 'Class#method'` silently runs the wrong thing and exits 0.** The suffix is appended to the whole filter, then the Failsafe routing check runs against the **already-mangled** string. | `src/run.rs:162-180`, read today: `format!("{f}Test")` then `if test_name.ends_with("IT")`. `MoneyTest#roundsDown` → `-Dtest=MoneyTest#roundsDownTest`; `CheckoutIT#happy` → `…happyTest`, no longer ends in `IT`, routed to Surefire. | Split on `#` first, suffix only the class part, **and** move the Failsafe decision before the mangle. Fixing one without the other leaves the `IT` case broken. Also pass `-Dsurefire.failIfNoSpecifiedTests=false` — mandatory the moment any selection feature exists. | 20 min |
-| 4.5 | **`jails run --watch` cannot report a failed startup** — the documented fix has one caller and it is the *non-watch* branch. `mvn spring-boot:run` exits 0 over a dead app because devtools catches on `restartedMain`. | `src/run.rs:83` (`run_watched`), sole caller `:372`; `watch()` at `:264` uses a bare `.spawn()` with inherited stdio. | Route `watch()` through `run_watched`. | 1 h |
-| 4.6 | **The watcher only stats `.java`**, so editing `application.properties` or dropping a migration triggers nothing; it compares max-mtime, so it cannot name the changed file, misses deletions, and misses `git checkout` / `stash pop` (older mtimes). | `src/run.rs:325-346`. | Replace with a `HashMap<PathBuf, SystemTime>` over `src/main/java`, `src/test/java`, `src/main/resources/**`, `db/migration`, `pom.xml`, `compose.yaml`, `jails.toml`; compare with `!=`; report added/changed/**deleted**. Still polling, no crate. | 2 h |
-| 4.7 | **Nothing asks whether the generated project builds.** Tier 1 tests pure functions, tier 2 tests argv, tier 3 compiles only the combinations someone wrote a test for (`new-cli` + `g scaffold` is not one), and the golden tier compares bytes to bytes — it cannot tell a correct pom from an unparseable one. | The structural cause of 4.1 and 4.3. | A tier-3 matrix over `{new-cli, new-spring}` × `{scaffold, dto, repo, handler, command, event, client, job}` × `{none, add db, add json}` running **`mvn -o validate`** (~2 s a cell, under a minute total). Gate it like the other tier-3 tests and add it to `JAILS_REQUIRE_TOOLCHAIN`. Two cells fail today. | 2–3 h |
-| 4.8 | **`doctor` reports health over a pom Maven refuses to parse** (`ok maven`, `ok beans`, and a clean report over 50 checks), because `pom::read` falls back to `unwrap_or_default`. | `src/doctor.rs:117`. | At minimum make an unparseable pom a loud FAIL. Optionally `mvn -o -q validate` — it writes nothing so it stays inside doctor's read-only contract, at the cost of a subprocess. | 1 h |
-| 4.9 | **Drift.** `g cases` is implemented (`ArtifactKind::Cases`, `src/generate/migration.rs`) and **absent from README** — `grep -c cases README.md` still returns 1, and it is about sample values. `jails.nvim`'s lists are missing `toxiproxy` and `app`, plus aliases, `repository`/`mig`/`it`, `--check` on `migrate`, and `--debug` everywhere. `validation/README.md`'s status table blocks nine workouts on features that have shipped. CLAUDE.md still documents the JDK 27 pin and the mise symlink, which `TARGET_RELEASE = "25"` has superseded. | greps run today. | Fix each, then **a Rust test pinning the four Lua tables to `Capability::label()`, `ArtifactKind` and the clap tree.** That test is what stops the class of bug rather than an instance — every idea in every document adds an enum variant. | 1 h |
-| 4.10 | **Six kinds and three capabilities have zero golden coverage — and the golden suite claims otherwise.** `tests/golden.rs:50` says *"Every artifact kind and every capability, in the smallest invocation that exercises it."* Counted today: `"usecase"`, `"query"`, `"transition"`, `"durable-job"`, `"fetcher"`, `"cases"`, `"format"`, `"ci"` and `"docker"` appear **0 times** in `tests/golden.rs`. These are the newest and by a wide margin the most complex generators — a durable store with `for update skip locked`, an outbox, a 14 KB safe fetcher — and their only byte-level verification is the two dogfood manifests, which are a *composition* test, not a snapshot. | `grep -c '"usecase"' tests/golden.rs` → 0, and so on for all nine. 25 scenarios, 162 files. | A test that enumerates `ArtifactKind` and `Capability` and **fails when one has no `Scenario`** — the same shape as the Lua-list pinning test in 4.9, and predicted by `ideas-fable.md` §8.11 before it happened. Then add the nine scenarios. A false comment in the test that is supposed to be the safety net is the worst version of this. | 2–3 h |
-| 4.11 | **`src/spring.rs` is 5,808 lines and holds 42 whole Java files as inline `format!` strings.** `grep -c 'r#"' src/spring.rs` → 42, each opening `r#"package {pkg};`. So every brace in them is doubled — the exact tax `src/template.rs` exists to remove — and they are not Java that any editor or compiler can check. The migration is done for `add` (7 `include_str!`, 2 `format!` left in `add/testing.rs`, so `ideas-fable.md` §8.11's "Toxiproxy is still `format!` strings" is **stale/fixed**) and half done for `spring` (30 templates against 42 inline bodies). `generate/` has 4 templates against ~300 `format!` calls. | line counts and greps today. | Not urgent, and explicitly *not* a rewrite. But CLAUDE.md's stated reason for the `add.rs`/`spring.rs` split — *"`add.rs` was already the biggest file here"* — is now **inverted**: `spring.rs` (5,808) is larger than `generate.rs` (3,213) and `add.rs` (1,444) combined is not. Extract the newest bodies to templates as you touch them, and fix the rationale in CLAUDE.md so the next split is made on a true premise. | ongoing |
-
-Two `jails.nvim` bugs worth folding in while there: `setqflist({}, 'r', …)`
-**replaces** the error list jdtls just built (should be `' '`), and
-`vim.fn.termopen` is deprecated since 0.11.
-
-**This tier is roughly one focused day and it is strictly ahead of every
-feature in every document**, because features land on top of it.
+| 8.1 | **`g scaffold` and `g dto` write a `pom.xml` Maven cannot read.** `VALIDATION_STARTER` has `version: None` — correct under `spring-boot-starter-parent`, fatal without one. No flavor check | `src/generate.rs`, `src/spring.rs:29`. `mvn -o test` on a `new-cli` project: `'dependencies.dependency.version' … is missing` | Have `ensure_dependency` consult `pom::flavor` and splice a pinned version when there is no parent BOM — what every non-Spring capability already does. `maven-failsafe-plugin` is versionless too; Maven only warns, so it is a trap not a break | 30 min |
+| 8.2 | **The golden suite ratifies that broken pom** | `tests/golden/scaffold-plain/pom.xml` | Regenerate and **read the diff** | 10 min |
+| 8.3 | **`jails test 'Class#method'` silently runs the wrong thing and exits 0.** The suffix is appended to the whole filter, then the Failsafe routing check runs against the **already-mangled** string | `src/run.rs`, `pub fn test`: `format!("{f}Test")` then `if test_name.ends_with("IT")` | Split on `#` first, suffix only the class part, **and** move the Failsafe decision before the mangle. Also pass `-Dsurefire.failIfNoSpecifiedTests=false` — which the payments repo documents as tribal knowledge (§5.8) | 20 min |
+| 8.4 | **`run --watch` cannot report a failed startup, and the watcher only stats `.java`.** `mvn spring-boot:run` exits 0 over a dead app; the fix `run_watched` has one caller and it is the *non-watch* branch. The mtime scan compares a max, so it cannot name the changed file, misses deletions, and misses `git checkout` | `src/run.rs` | Route `watch()` through `run_watched`. Replace the scan with a `HashMap<PathBuf, SystemTime>` over main/test/resources/migrations/pom/compose/jails.toml; compare with `!=`; report added/changed/**deleted** | 3 h |
+| 8.5 | **Twelve kinds and three capabilities have zero golden coverage — and the suite claims otherwise.** `tests/golden.rs:50` reads *"Every artifact kind and every capability, in the smallest invocation that exercises it."* `usecase`, `query`, `transition`, `durable-job`, `fetcher`, `association`, `http-workflow`, `http-sink`, `cases`, `format`, `ci`, `docker` appear **0 times**. **Eight kinds were added and the count did not move: still 162 files, 25 scenarios.** These are the most complex generators in the tree — a leased store, an outbox, a 24 KB traversal engine, a 14 KB safe fetcher | `grep -c '"http-workflow"' tests/golden.rs` → 0, and so for all twelve | A test enumerating `ArtifactKind` and `Capability` that **fails when one has no `Scenario`**, then the twelve scenarios. §6.2 option F makes it permanent by requiring `[golden]` in the descriptor. Predicted by `ideas-fable.md` §8.11 before it happened | 1 day |
+| 8.6 | **`spring.rs` at 6,459 lines with ~42 inline Java bodies** | `grep -c 'r#"'` → 42 | §6 | ongoing |
+| 8.7 | **Drift.** `g cases` implemented and absent from README. `jails.nvim` missing `toxiproxy`, `app` and eight kinds. `validation/README.md` far behind. CLAUDE.md still documents the JDK 27 pin, the mise symlink, and 8 layers where there are 11 | greps today | Fix each, then **a test pinning the Lua tables to the enums and the clap tree** — or delete them via `jails commands --json` (§6.2 option F) | 1 h |
+| 8.8 | **Nothing cheap asks whether the generated project builds.** The 293 s manifest gate does, but 8.1 survives under it because `new-cli` + `g scaffold` is not a cell | The structural cause of 8.1 | A tier-3 matrix over `{new-cli, new-spring}` × kinds × `{none, db, json}` running **`mvn -o validate`** (~2 s a cell) | 3 h |
+| 8.9 | **`doctor` reports health over a pom Maven refuses to parse**, because `pom::read` falls back to `unwrap_or_default` | `src/doctor.rs` | Make an unparseable pom a loud FAIL | 1 h |
 
 ---
 
-## 5. Tier 1 — the authorship engine
+## 9. Tier 1 — the authorship engine
 
-This is the section the latency framing was crowding out. Everything in it is
-**domain-blind** and therefore inside the line `src/app.rs:1-6` draws: growing
-a record, resolving a foreign key, pluralising a noun and reading a field spec
-are not crawler features or inbox features.
+jails can create almost anything and change almost nothing.
 
-**What is already done here, so this list stays honest.** Read the source
-before reading the gaps: the generator surface is much further along than four
-of the six documents assume, and it is further along in the *right* direction.
-
-`usecase --on <Resource>` does not merely stamp out a template. It:
-
-1. reads the target record off disk (`fields_from_record`) and **refuses** if
-   it cannot — naming the fix (`generate the {target} scaffold first, or
-   correct --on`);
-2. requires the target to carry a **stable non-optional `id`**, so it can
-   return a resource location and verify persistence;
-3. **type-checks every declared input against the target's component** — same
-   normalised Java type *and* same nullability — and refuses with both
-   spellings when they disagree;
-4. **infers every component you did not supply**, and refuses to guess the
-   rest: *"Jails only infers ids, timestamps, status defaults, counters,
-   flags, and empty optional/collection values"*, naming the field and the
-   fix.
-
-That is `ideas-sol.md`'s "infer aggressively, guess conservatively" principle,
-implemented — and point 4 is the exact bar the rest of jails is held to: an
-unknown case is an error, never a silent default.
-
-Around it: `query --on` (typed parameters and results, a JDBC adapter, a real
-database test), `transition --on` (in flight — the update counterpart, with
-`version` and `@scope` in its own refusal message), `durable-job --on <UseCase>
---yields <Resource>` (PostgreSQL-leased work: `for update skip locked`,
-`lease_until <= now()`, `attempts >= max_attempts`, `on conflict (id) do
-nothing` — all pinned by source assertions), `fetcher` (the safe outbound
-boundary), and **`usecase --yields <Event>`, which additionally emits a
-transactional outbox** — use-case, store, worker, IT and migration.
-
-`@scope` is enforced rather than decorative: `require_scope_authorizer`
-refuses any scoped operation when `security` has not written a
-`ScopeAuthorizer`, with the fix line naming `jails add security`.
-
-**Eight call sites now read a record off disk** — `repo`, `dto`, `usecase`,
-`query`, `transition`, `durable-job` (twice: the command and the target) and
-`outbox` (the event and the target). That is the shared field model doing its
-job, and it is why `DOGFOOD.md`'s defect table reads the way it does: most of
-those twenty-one bugs were *two outputs of one model disagreeing*, and each
-fix collapsed them onto a single source of truth rather than patching a
-template.
-
-**So the gap is no longer "generate more kinds."** Creation, reading and
-(shortly) updating are covered. What remains is **evolution** — changing a
-resource that already exists — plus three naming/derivation defects that
-survive because nothing forces them through the model. Each item below names
-the proof app that exposed it.
-
-### 5.1 `g field` — the single highest-value generator jails does not have
+### 9.1 `g field` — the highest-value generator jails does not have
 
 ```
-jails g field Message priority:int
-jails g field Message archivedAt:instant?
+jails g field Payment settledAt:instant?
 ```
 
-Reads the record with `fields_from_record` (exists, `generate/domain.rs:230`),
-refuses a duplicate component, appends in declaration order, then rewrites
-**only the derived files that still match what jails would have written**:
+Reads the record with `fields_from_record`, refuses a duplicate component,
+appends in declaration order, then rewrites **only the derived files that
+still match what jails would have written**, printing snippets for the rest:
 
 ```
-updated  domain/Message.java
-updated  web/MessageRequest.java
-updated  web/MessageResponse.java
-created  db/migration/V007__add_priority_to_messages.sql
-skipped  adapters/JdbcMessageRepository.java -- you have edited this file
-         add to the select list:  priority
-         add to the insert:       priority
-         bind:                    ps.setInt(6, m.priority())
-         map:                     rs.getInt("priority")
+updated  domain/Payment.java
+updated  web/PaymentRequest.java
+created  db/migration/V021__add_settled_at_to_payments.sql
+skipped  adapters/JdbcPaymentRepository.java -- you have edited this file
+         add to the select list:  settled_at
+         bind:                    ps.setObject(9, …)
 ```
 
-**That refusal is the design, not a limitation.** The ownership oracle is
-`edited_files` (`src/add/database.rs:371-379`) — nine lines that re-render the
-current template and diff the bytes. It cannot distinguish "you edited this"
-from "jails changed its template", so on any jails upgrade it over-reports.
-Over-reporting prints a snippet you paste; over-writing silently destroys
-work. **Print, never clobber.**
+**The refusal is the design.** The ownership oracle is `edited_files`
+(`src/add/database.rs`) — nine lines that re-render the template and diff the
+bytes. It over-reports after a jails upgrade; over-reporting prints a snippet
+you paste, over-writing destroys work. **Print, never clobber.**
 
-`ideas-grok.md` §6 assumed a jails-owned marker already exists in generated
-Java "same as capability property blocks". It does not — property blocks carry
-`# jails:<label>` comments; generated `.java` carries nothing. `edited_files`
-is the whole oracle available today, and it is enough to ship.
+Migration from `sql.rs`, forward-only. A `not null` column on a populated
+table needs a default, so the generated SQL carries one and says so.
+**`--remove` is not in v1** — dropping a column is a data decision.
 
-The migration comes from `sql.rs`, which already owns the column projection:
-`alter table messages add column priority integer not null`, forward-only,
-never an edit to `V002`. A `not null` column on a populated table needs a
-default, so the generated SQL carries one and says so in a comment.
+### 9.2 The narrow relation gap that survives `g association`
 
-**`--remove` is deliberately not in v1.** Dropping a column is a migration you
-write by hand because of the data. Adding is the 95% case.
+`g scaffold Post id:uuid@pk author:User` still emits `author text not null`
+plus a Javadoc reading *"Not persisted, because jails has no mapping for the
+type"*. **The app compiles, starts, returns 201, and the author is gone.**
 
-Test: a golden scenario that scaffolds, runs `g field`, and snapshots the
-record, both DTOs, the adapter, the new migration and the fixture; plus a unit
-test that a hand-edited adapter is skipped rather than rewritten.
+The fix is now small because `association` proved the machinery: when a
+component's type is a record in this project with exactly one `@pk`, **refuse
+the scaffold** and name the two commands that do the job. A refusal that
+teaches beats both a silent `text` column and a second inference path.
 
-### 5.2 Relations — the only defect here whose symptom is lost data
+### 9.3 The pluraliser is `+ "s"`, and it is visible in the URL
 
-Measured. `User.java` is on disk with `id:uuid@pk`. Then:
+`src/sql.rs`, `fn table_name`. `/categorys`, `/companys`, `/boxs`, `/status`.
+**One owner** — route path, table name and fixture filename all derive from
+it, so one closed inflector fixes three: `…y` after a consonant → `ies`;
+`…s|x|z|ch|sh` → `es`; `…f|fe` → `ves`; a short irregular table; an
+uncountable list. ~60 lines. Keep it **out of `jails.toml`** — derivability is
+why `destroy` can find what `generate` wrote.
 
-```
-jails g scaffold Post id:uuid@pk author:User title:'string!'
-```
+### 9.4 One rule for where fields come from
 
-produces `author text not null` in the migration and an adapter Javadoc
-saying "Not persisted, because jails has no mapping for the type: author."
-**The scaffold compiles, the app starts, `POST /posts` returns 201, and the
-author is gone.** jails is honest about it in two comments, which is
-consistent with its philosophy and is not enough — a comment in a generated
-file is exactly what nobody reads.
+Eleven call sites read a record off disk and disagree about failure. `g repo`
+errors; **`g dto` uses `unwrap_or_default()` — the one silent case**;
+`usecase`, `query`, `transition`, `durable-job`, `association` and `outbox`
+each raise their own wording. **And `g scaffold` does not read it at all.**
 
-The information needed is right there, and jails already reads records off
-disk for `g repo` and `g dto`.
+So model-first is blocked on the kind spanning the most files, while eight
+newer kinds *require* it. State the rule once: spec if given, else the record
+on disk, else an error naming the record and the fix.
 
-**The rule, closed and small:** if the referenced type is a record in this
-project with exactly one `@pk` component — or failing that a component named
-`id` — persist `<name>_id` with that component's SQL type and emit
-`references <pluralised type> (<pk column>)` in the create table. The Java
-component stays `User`; the *adapter* stores the id and the service loads it.
-No lazy loading, no proxies, no `@ManyToOne`. This is `belongs_to` without
-ActiveRecord.
+### 9.5 `--timestamps`
 
-Anything jails cannot resolve this way — no pk, a collection, a type it has
-never seen — keeps today's behaviour exactly: named in the Javadoc, named in
-the migration comment, not guessed at. **Do not invent `on delete` behaviour;**
-omit it and document that the database default applies.
+Absent. **Half of it exists in the wrong half of the tool**: `usecase` already
+infers timestamps. What is missing is the DDL and adapter side, where the lie
+lives — `updated_at` is a column nothing updates. All four proof manifests
+hand-declare `createdAt:instant`.
 
-An explicit `@fk(users)` marker is the validatable escape hatch (the table is
-in `db/migration`, so jails can check it), and it fits the existing closed
-marker set.
+### 9.6 `g factory`, `requests/*.http`, and refusals
 
-### 5.3 The pluraliser is `+ "s"`, and it is visible in the URL
+**`g factory Payment`** — defaults from `sample_value`; a component jails
+cannot sample starts `null` and `build()` **throws naming it**, never a
+guessed default. **`requests/payment.http`** as a `g scaffold` side artifact.
 
-Confirmed today at `src/sql.rs:288-295`: append `s` unless it already ends in
-`s`. Measured by scaffolding six nouns:
+**Refusals are ergonomics.** `jails: …/fixtures/payments.json already exists`
+is the message for the most common mistaken command in the tool. It should
+name the cause and the next command. `doctor` is held to this standard by a
+test asserting every `FAIL` carries `fix:`; **generators are not — add the
+same test.**
 
-| Type | route / table / fixture | should be |
-|---|---|---|
-| `Category` | `/categorys` | categories |
-| `Company` | `/companys` | companies |
-| `Box` | `/boxs` | boxes |
-| `Analysis` | `/analysis` | analyses |
-| `Status` | `/status` | statuses |
-| `Person` | `/persons` | people (or persons — defensible) |
+### 9.7 The manifest is the ergonomic unit, and editing a field breaks it
 
-`/categorys` is what you notice in the first minute of a demo, and fixing it
-by hand is the same six-file spread as §5.1 for a typo you did not make.
+`app.rs`: `plan` runs `add::preflight` and writes nothing; `apply` installs
+capabilities, runs each pending intent, **writes state after every one** (so
+an interrupt resumes), then **reconciles every capability a second time**.
 
-**The good news is one owner.** Route path, table name and fixture filename
-all derive from `table_name`. One closed inflector fixes all three: `…y` after
-a consonant → `ies`; `…s|x|z|ch|sh` → `es`; `…f|fe` → `ves`; a short irregular
-table (`person/people`, `analysis/analyses`, `status/statuses`,
-`child/children`); an uncountable list (`data`, `info`). ~60 lines and a table
-test.
-
-Keep it closed and **keep it out of `jails.toml`**. A per-project override
-means the table name is no longer derivable from the type name, and
-derivability is the whole reason `destroy` can find what `generate` wrote.
-
-The current Javadoc defends the naive rule on the grounds that "an irregular
-plural is a judgment call, and a wrong guess in a migration is expensive to
-undo". That is right about irregulars and wrong about the regular rules —
-`categorys` is not a judgment call, it is a misspelling. Ship the regular
-rules plus a short irregular table, and keep refusing to guess beyond it.
-
-### 5.4 One rule for where fields come from
-
-Eight call sites read a record off disk today, and they disagree about what
-happens when they cannot. `g repo` reads it and errors with a message; `g dto`
-reads it with `unwrap_or_default()` — a silent empty field list; `usecase`,
-`query`, `transition`, `durable-job` and `outbox` each read it and each raise
-their own differently-worded refusal. **And `g scaffold Draft` does not read
-it at all** — it refuses because `Draft.java` exists.
-
-So the natural workflow — model the type first, then generate the machinery
-around it — is blocked on the one kind that spans the most files, while five
-newer kinds already require exactly that workflow. `usecase --on CrawlRun`
-*only* works if the scaffold ran first.
-
-**State the rule once and implement it once:** a kind's fields come from the
-spec if given, else from the record on disk if there is one, else it is an
-error naming the record and the fix. `scaffold` joins the list; `dto`'s
-`unwrap_or_default()` stops being the one silent case. This is a small
-refactor with a disproportionate payoff, because every future kind inherits
-one behaviour instead of inventing an eighth.
-
-### 5.5 `--timestamps`
-
-Verified absent (`jails g --help` lists `--package`, `--index`, `--on`,
-`--yields` only). Every table anyone writes carries `created_at` and
-`updated_at`; both minicom tables do, in all four language stubs. So you type
-`createdAt:instant updatedAt:instant` on every scaffold — and then the
-`updatedAt` half is a lie because nothing updates it.
-
-**Half of this already exists in the wrong half of the tool.** `usecase`
-infers timestamps rather than making you pass them — that is one of the five
-categories in its inference list. So the model already knows what a timestamp
-component *means*; what is missing is the **DDL and adapter** side, which is
-where the lie lives. Both proof manifests hand-declare `createdAt:instant` /
-`discoveredAt:instant` on every scaffold, which is the friction showing up as
-data.
-
-`--timestamps` adds both columns, puts `created_at` in the insert with the
-clock the project already has (`add testkit` generates one), and — the part
-that makes it a flag rather than two more keystrokes — **writes the
-`updated_at` assignment into the adapter's update path**, so the column means
-what its name says. Default on for `scaffold` and for `g repo` when it writes
-a migration; off for bare `record`/`value`, because a domain type is not a
-row. `--no-timestamps` declines. Golden files change wholesale; that is the
-correct price.
-
-### 5.6 `g factory` — the missing half of test speed
-
-After generation, the biggest remaining Java tax is test data setup. Every
-hand-written test `new`s a six-component record, and the day a component is
-added, forty call sites break. FactoryBot is half of why Rails testing feels
-fast, and jails already owns the hard part (`sample_value`).
-
-```
-jails g factory Note   ->  testkit/NoteFactory.valid().title("x").build()
-```
-
-Rules inherit the field-spec semantics exactly: enums get `values()[0]`, `?`
-components get `Optional.empty()`, collections default empty, `!` fields get
-non-blank samples. A component jails cannot sample starts `null` and
-`build()` **throws naming the component** — the factory analogue of the
-`@Disabled`-with-a-name rule. Never a guessed default: a silently-wrong
-default in a factory poisons every test that uses it, which is strictly worse
-than forty broken constructors.
-
-Reads the record off disk, so it works on hand-written records too.
-
-### 5.7 `requests/*.http`
-
-The third everyday loop after test and dev is "fire the request", and today
-that is a hand-typed curl lost in scrollback. `g scaffold` gains a side
-artifact: `requests/note.http` — `@host = http://localhost:8080`, one block
-per operation, bodies built from `sample_value` (the machinery that already
-fills fixture rows and factory defaults — third reuse). The format is
-tool-agnostic (IntelliJ, VS Code REST Client, `kulala.nvim`) and the files are
-useful without any plugin. Once `g field` exists it updates the body the same
-way it updates the fixture. Half a day.
-
-### 5.8 Refusals are ergonomics
-
-```
-$ jails g scaffold Message ... priority:int
-jails: .../src/test/resources/fixtures/messages.json already exists
-```
-
-Technically true, practically useless, and it is the message you get for the
-single most common mistaken command in the tool. It should be:
-
-```
-jails: Message is already scaffolded (6 files).
-       jails cannot grow a scaffold in place.
-  fix: jails g field Message priority:int
-```
-
-`doctor` is already held to this standard — an integration test asserts every
-`FAIL` carries a `fix:` line. Generators are held to no such standard, and
-they are the commands people actually run. **Add the same test for generator
-refusals.** One hour, and every wrong command starts teaching the right one.
-
-### 5.9 The manifest is the new ergonomic unit, and it cannot be edited
-
-`jails app` shipped (`src/app.rs`, 539 lines; `.jails/app.toml`,
-`.jails/app-state-v1`, `plan`/`apply`, closed `[[generate]]` schema of
-`kind`/`name`/`fields`/`indexes`/`package`/`strategy_on`/`strategy_yields`).
-That answers `ideas-opus.md` B2's `new --template` and `ideas-grok.md` §8.5's
-"a README section, not a command" — both are superseded; build on the
-manifest.
-
-**The engine is better than the source documents credit, and the failure is
-sharper than they describe.** Reading `app.rs`:
-
-- `plan` runs `add::preflight` over the capability list and prints
-  `ensure`/`applied`/`pending` per line, writing nothing. Preconditions are
-  therefore checked before any write — a real plan-before-apply property.
-- `apply` installs capabilities, runs each pending intent, and **writes state
-  after every single one**, so an interrupted apply resumes where it stopped.
-- It then **reconciles every capability a second time**, because a generator
-  can create a new integration point for an already-installed capability.
-  That is `DOGFOOD.md`'s third defect, fixed generically, and the comment in
-  the source says exactly why.
-
-The gap is the state key: `kind|name|package|fields|indexes|on|yields`.
+The gap is the state key — `kind|name|package|fields|indexes|on|yields`.
 **Change a `fields` line and you change the key**, so the old intent stays in
-state forever and the edited one arrives as *pending*. `apply` then calls
-`generate`, which finds the files already on disk and refuses. So editing a
-manifest field does not silently do nothing — **it fails, with §5.8's useless
-refusal message naming a fixture file.** Worse than the source documents say,
-and more fixable, because the two halves are already identified.
+state and the edited one arrives *pending*; `apply` calls `generate`, which
+finds the files and refuses. **It fails, with §9.6's useless message.** At 263
+manifest lines that is not theoretical. `g field` is the primitive;
+`DOGFOOD.md` already names the durable fix: *"store output fingerprints and
+reconcile drift instead of blindly skipping."*
 
-That is §5.1 one level up. **`g field` is the primitive the manifest needs to
-become editable**, because "reconcile drift for a changed `fields` line" *is*
-"add the field that is in the manifest and not in the record". Build the
-command first, then let `app apply` call it — the other order writes the
-reconciliation logic twice. `DOGFOOD.md`'s friction ledger already names the
-durable fix: *"store output fingerprints and reconcile drift instead of
-blindly skipping."*
+### 9.8 What not to build here
 
-Two more manifest notes:
-
-- Inside a manifest **there is no shell-quoting problem at all**, which is a
-  real argument for making the manifest rather than the prompt the place you
-  write field specs. At a prompt, `list<Match>` is a redirect and `!` is
-  history expansion, so a realistic scaffold needs quotes on most of its
-  arguments. Resolve it by accepting both spellings — `matched:list:Match` and
-  `content:string.req` quote-free at a prompt, `list<T>` and `!` in a manifest
-  — and documenting which is which. `validation/README.md` has recorded this
-  tax for months with nothing done; make the decision either way.
-- `parse_fields` should reject the eight names javac refuses as record
-  components (`clone finalize getClass hashCode notify notifyAll toString
-  wait`) with a sentence, instead of emitting a file that does not compile.
-
-### 5.10 What not to build here
-
-- **No ORM, no relation traversal, no lazy loading.** §5.2 is a column and a
-  foreign key. `post.author()` returns a `User` the service loaded.
-- **No `g field --remove`** in v1.
-- **No inflector overrides in `jails.toml`.**
-- **No `g field` that rewrites an old migration.** Forward-only stays.
-- **No provenance ledger as a prerequisite** — see §7.
-- **No domain-specific field types.** `email:string` is a string; if it needs
-  a check it needs a constraint, and constraints are already a closed set.
-- **No Django-style `makemigrations` autodetect.** It requires models to own
-  the schema, which is ORM thinking through the back door. `g field` is the
-  explicit, reviewable half. A read-only `jails schema --diff` that replays
-  jails' own DDL subset and compares it to the records on disk is the honest
-  version, and it is a `doctor` check (`migrate --check` cannot be one — it
-  writes).
+No ORM, no lazy loading, no `g field --remove` in v1, no inflector overrides,
+no rewriting an applied migration, no provenance ledger as a *prerequisite*
+(§11), no `makemigrations` autodetect. **And no `money` field type** — App C
+uses `amountMinor:long` plus a currency string, which is what the real
+payments system does; a `money` type would be a domain concept in core and
+would fail §4.6 question 1.
 
 ---
 
-## 6. Tier 2 — the latency engine
+## 10. Tier 2 — the latency engine
 
-Ordered by measured value, with §3's corrections already applied.
+### 10.1 Free wins
 
-### 6.1 Free wins, hours not days
+**Testcontainers reuse — the largest lever on the 293 s gate.** Add
+`.withReuse(true)` to `TestcontainersConfig`'s `@Bean` (`@UnstableAPI`; say
+so). Safe unconditionally: without the machine flag it is a no-op plus a
+warning. The flag **must** be in `~/.testcontainers.properties` or
+`TESTCONTAINERS_REUSE_ENABLE`; a classpath file does nothing. `doctor` reports
+it; `jails setup` writes it. Two consequences to encode: reused containers are
+**never registered with Ryuk** so they accumulate (doctor should count
+`org.testcontainers.hash` labels), and **the database keeps state between
+runs**, so a test assuming an empty table fails on the second run.
 
-**Testcontainers reuse — ~8 s per run, the biggest single number here.**
-`grep -rn withReuse templates/ src/` returns nothing today. Add
-`.withReuse(true)` to `TestcontainersConfig`'s `@Bean` (`@UnstableAPI`; say so
-in the Javadoc). Safe unconditionally: without the machine flag it is a no-op
-plus a warning naming the file, and Boot's lifecycle processor already refuses
-to destroy a reused container. The flag **must** live in
-`~/.testcontainers.properties` or `TESTCONTAINERS_REUSE_ENABLE` — a classpath
-`testcontainers.properties` does nothing. `doctor` reports it (reading `$HOME`
-is a read); a one-off `jails setup` writes it, because doctor never writes.
-Two consequences to encode: reused containers are **never registered with
-Ryuk**, so they accumulate — doctor should count containers labelled
-`org.testcontainers.hash` and print the cleanup line — and **the database
-keeps its state between runs**, so a test assuming an empty table fails on the
-second run; say that in the generated Javadoc. Confirm the interaction with
-`@ServiceConnection` before writing it into the template (two lines to try).
+**`META-INF/spring-devtools.properties`** — `defaults.*` apply only when
+devtools is present, zero effect on the packaged jar. Poll 200 ms, quiet 50 ms
+(defaults are 1 s / 400 ms), and `spring.docker.compose.enabled=false` for
+this machine's podman problem.
 
-**`META-INF/spring-devtools.properties` — ~1.2 s off every restart.** Every
-`defaults.<key>` in that file applies **only when devtools is present**, with
-zero effect on the packaged jar and no profile to remember. Boot's own modules
-use it. `jails new` should write one:
+**`jails test` flags** — `-o -q -ntp`, `-Dsurefire.failIfNoSpecifiedTests=false`,
+`Class#method`, `--fail-fast`, `--failed` (parse surefire XML, ~30 lines),
+`--slowest`, and **print the rerun line on failure**. `--retry` off by
+default.
 
-```properties
-defaults.spring.devtools.restart.poll-interval=200ms
-defaults.spring.devtools.restart.quiet-period=50ms
-defaults.spring.docker.compose.enabled=false   # this machine's podman-compose problem
-```
+**`jails test <file>:<line>`** — resolve the enclosing `@Test` with
+`java::blanked()` + `java::annotations()`. Jupiter never resolves a
+`FileSelector`, so jails must do it. Nested classes are `Outer$Nested#method`.
 
-The defaults are 1 s and 400 ms.
+**`why` on every Maven failure**, not just watched runs. Non-zero exit → run
+the tail through `why::explain`. Multiplies all 20 rules.
 
-**`jails test` flags.** `-o -q -ntp`, `-Dsurefire.failIfNoSpecifiedTests=false`
-(mandatory alongside §4.4), `Class#method`, `--fail-fast`
-(`-Dsurefire.skipAfterFailureCount=1`), `--failed` (parse `<failure>`/`<error>`
-out of `target/surefire-reports/TEST-*.xml`, ~30 lines, no XML library),
-`--slowest`, and **the Rails move: print the rerun line on failure**
-(`jails test path:LINE`). `--retry N` exists but is **off by default** — a
-green build over a flake is the Failsafe failure mode again.
+### 10.2 `jails test --fast`
 
-**`jails test <file>:<line>`.** Find the enclosing `@Test` with
-`java::blanked()` + `java::annotations()` and emit `Class#method`. Jupiter
-never resolves a `FileSelector`, so `--select-file …?line=N` on the console
-launcher parses and silently runs nothing — jails must do the resolution.
-Nested classes are `Outer$Nested#method`; the Neovim ftplugin currently uses
-the filename, which is wrong for `@Nested`.
+**Step 1, console launcher.** Splice `junit-platform-console` test-scoped with
+**no version** (Boot's parent imports `junit-bom`), then
+`java @cp.args org.junit.platform.console.ConsoleLauncher execute
+--select-method … --details=testfeed --fail-if-no-tests`. `cwd` must be the
+module root. Estimated 0.35–0.6 s vs 2.57 s — **unverified; measure first.**
 
-**`why` on every Maven failure, not just watched runs.** `run.rs` pipes
-through `why::FATAL_MARKERS` only in `run_watched`; `test`, `build`, `check`
-and `fmt` print raw Maven and stop. Non-zero exit → run the tail through
-`why::explain` and print the top rule's explanation and `fix:` line after the
-raw output (`--plain` opts out). Reuse the colour flags `run_watched` already
-passes, since piping costs the child its TTY. This multiplies the value of
-every rule already in the table and every future mined one.
+**Step 2, `jails testd`** — one resident JVM holding
+`ToolProvider.getSystemJavaCompiler()` and the `"junit"` provider over a unix
+socket. Compile in-process (74–166 ms warm), run via
+`LauncherFactory.openSession()` (9–13 ms warm), fresh `URLClassLoader` per
+run. **That classloader cost is the one unmeasured piece.**
 
-**`mise.toml` from `new`**, pinning `java` and `maven` to what the pom
-targets, so doctor's most common FAIL has a copy-pasteable fix.
+**Step 3, `--affected`** — a reverse-dependency index from `.class` constant
+pools: ~120 lines (skip entries by tag width — `CONSTANT_Long`/`Double` take
+**two** slots — keep `Utf8` and `Class`, scan `Utf8` for `L<pkg>/<Class>;`).
+Blunt rules for Spring; **unknown ⇒ run**; exclude `*IT` by default.
 
-### 6.2 `jails test --fast` — get Maven out of the loop
+**The correctness price:** compiling only the changed file is unsound — a
+removed method leaves a stale caller. Which is why **`jails check` stays `mvn
+clean verify`** and every fast path falls back to it loudly.
 
-The category change is not "run Maven on a watch". Both `ideas-opus.md` A4.1
-and `ideas-grok.md` §4 re-invoke Maven per change and therefore cap at ~2.5–3.8
-s: they remove the keystroke, not the cost.
+### 10.3 `jails dev`
 
-**Step 1, the console launcher.** Splice
-`org.junit.platform:junit-platform-console` in test scope with **no version**
-— Boot's parent imports `junit-bom`, so it tracks the project's Jupiter. Then:
+Watcher (8.4's replacement, 150–250 ms poll, 400 ms quiet, plus Quarkus' extra
+200 ms when a file is size 0); compile with `javac -J-XX:+AutoCreateSharedArchive`
+(**0.25 s vs 1.45 s**); **classify before acting** — method body → swap;
+record component, `sealed`, annotation, new class, field or signature →
+**restart, printing the JVMTI reason by name**; `pom.xml` → full restart.
+**jails' domain layer is records, so every edit there is a restart** — say so
+or it looks broken. Swap via jdt.ls's java-debug bundle (free, with frame
+popping) before `jdb`, before a Rust JDWP client. Write
+`target/classes/.jails-reload` only after a successful compile and point
+`spring.devtools.restart.trigger-file` at it. Pipe through
+`why::FATAL_MARKERS`. Quarkus' key map. `--timings` on everything.
 
-```
-java @target/jails/cp.args org.junit.platform.console.ConsoleLauncher execute \
-  --select-method com.x.MoneyTest#roundsHalfUp --details=testfeed \
-  --fail-if-no-tests --reports-dir target/jails/reports
-```
+**Check first:** with m2e setting the output folder to `target/classes` and
+devtools watching classpath directories, `:w` → jdt.ls writes the class →
+devtools restarts in ~1.4 s, with no Maven. If that holds here, `jails run
+--hot` is a README paragraph and a doctor check rather than a supervisor.
 
-`cwd` must be the module root (Surefire's `basedir`; Flyway `filesystem:`
-locations and `src/test/resources` relative paths depend on it). `testfeed`
-streams one line per test, which is the `--watch` and quickfix format. Spring's
-test support is pure Jupiter extensions plus `spring.factories` — nothing
-reads a Surefire API. Estimated 0.35–0.6 s vs 2.57 s; **unverified on this
-machine and the first thing to measure.** `neotest-java` ships exactly this
-path, which is independent evidence it works.
+### 10.4 `jails run --tc`, `runner`, `boot`
 
-Classpath from `mvn -q -o dependency:build-classpath
--Dmdep.outputFile=.jails/cp.txt`, cached against `pom.xml`'s hash and
-invalidated by every `add`/`remove`. (`jails c` re-runs this on every start
-even with `--no-build`; use the same cache.)
-
-**Step 2, `jails testd`.** One resident JVM holding
-`ToolProvider.getSystemJavaCompiler()` and the launcher's `"junit"` tool
-provider, over a unix socket at `~/.jails/testd/<project-hash>.sock`. Compile
-the changed file in-process (**74–166 ms warm, measured**), run through
-`LauncherFactory.openSession()` (**9–13 ms warm, measured**), isolate each run
-behind a fresh `URLClassLoader` so redefinition limits never apply — you throw
-the classloader away rather than hot-swapping into it. Die on `pom.xml`
-change, on `testd stop`, and after an idle timeout.
-
-**The fresh-classloader cost is the one unmeasured piece** of the 110 ms
-figure (measured with a shared loader). Expect tens of ms, not seconds, but
-treat it as unverified until benchmarked. A test that calls `System.exit`
-kills the daemon; jails' own `command` template already avoids that.
-
-**Step 3, `--affected`** — Quarkus' actual killer feature, which none of the
-source documents except `ideas-fable.md` has. A reverse-dependency index built
-from `.class` constant pools in `target/classes` and `target/test-classes`:
-~120 lines of Rust (magic, pool count, skip entries by tag width —
-`CONSTANT_Long`/`Double` take **two** slots — keep `Utf8` and `Class`, and
-scan `Utf8` for `L<pkg>/<Class>;` so descriptor-only and annotation references
-count). Sound for plain-Java tests. Blunt rules for Spring: any change to a
-`@Component`/`@Service`/`@Repository`/`@Configuration` class, any new file
-under the base package, any resource or migration change re-runs every
-context-starting test. **Unknown ⇒ run.** Exclude `*IT` from the watch loop by
-default; `--it` opts in. Print the count skipped and explain each selection;
-`--since <ref>` takes the change set from `git diff --name-only`.
-
-**The correctness price, stated plainly:** compiling only the changed file is
-`useIncrementalCompilation=false`'s unsoundness — a removed method leaves a
-stale caller and you get `NoSuchMethodError`. The index closes the common
-case; `static final` constants javac inlines and annotation-processor output
-stay unsound. **Which is why `jails check` stays `mvn clean verify`**, every
-fast path falls back to it loudly, and the README says so in the same
-paragraph. Do not make `check` incremental; the leftover-`.class` bug is real.
-
-**`jails bench`** prints the ladder for *this* project on *this* machine
-(Maven lifecycle / `surefire:test` / launcher / daemon / ±container reuse),
-into `.jails/benchmarks/`, no telemetry. A tool whose pitch is speed should
-prove its own numbers, and the README should promise no number it has not
-printed.
-
-### 6.3 `jails dev`
-
-One process that starts the services a project's capabilities imply, starts
-the app, watches the right files, compiles only what changed with a warm
-`javac`, swaps or restarts — **and says which and why** — applies new
-migrations, and prints one timed line per action.
-
-1. **Watcher**: §4.6's replacement, 150–250 ms poll, 400 ms quiet period, plus
-   Quarkus' extra 200 ms sleep when a file is size 0 (caught mid-write). No
-   crate and **no inotify path at all** — a second code path that only runs on
-   some machines only breaks on some machines.
-2. **Compile**: `javac -J-XX:+AutoCreateSharedArchive
-   -J-XX:SharedArchiveFile=.jails/javac.jsa --release N -cp <cached>:target/classes
-   -d target/classes <files>` — **0.25 s instead of 1.45 s, measured**, versus
-   `mvn compile` at seconds. Fall back to `mvn compile` loudly if javac is
-   missing or the archive misbehaves.
-3. **Classify before acting**, because stock HotSpot refuses everything except
-   method bodies: a method-body change in a loaded class → **swap**; a record
-   component, `sealed … permits`, an annotation, a new class, a field or a
-   signature → **restart, printing the JVMTI reason by name**; `pom.xml` →
-   full restart and classpath re-resolution. **jails' domain layer is records
-   and sealed types, so every edit there is a restart** — a `jails dev` that
-   promises "hot reload" without saying this looks broken.
-4. **How to swap**, in order of cost: (a) leave it to the editor — jdt.ls's
-   java-debug bundle already does `redefineClasses` **with frame popping**,
-   zero jails code; (b) drive `jdb -attach` + `redefine`, which ships with
-   every JDK; (c) a Rust JDWP client, a day, structured errors. Sequence c
-   after a and b work. **Trap**: devtools' restart classloader can make one
-   class name resolve to two `ReferenceType`s and JDI refuses — a run is
-   *either* devtools-restart *or* JDWP-redefine. `new-cli` projects have no
-   devtools, which is what makes jails-owned swap worth having at all.
-5. Write `target/classes/.jails-reload` only after a **successful** compile and
-   point `spring.devtools.restart.trigger-file` at it, so devtools never
-   restarts into a half-written directory.
-6. **Migrations**: a new file under `db/migration` is applied to the dev
-   database immediately (`migrate.rs` has the psql path).
-7. **Output**: pipe through `why::FATAL_MARKERS`; keep the last fatal match
-   for `jails why --last` (the supervisor outlives the crashed app); print the
-   routes table once at boot (`inspect.rs` computes it).
-8. **Keys**, Quarkus' map: `r` re-run tests, `f` failing only, `m` re-apply
-   migrations, `s` force restart, `q` quit. `stty raw -echo` through
-   `process.rs`, no crate.
-9. **`--timings` on everything.**
-
-One free discovery worth checking before building any of this: **the
-save→restart loop may already exist with no Maven in it.** jdt.ls imports
-Maven through m2e, which sets the Eclipse output folder to `target/classes`;
-devtools watches classpath directories; Spring's docs say saving in Eclipse
-triggers a restart. So with `java.autobuild.enabled` and an app started by
-`jails run`, `:w` → jdt.ls writes the class → devtools restarts in ~1.4 s,
-with no `mvn compile` and no jails poll. If that holds here, `jails run --hot`
-is a README paragraph and a doctor check rather than a supervisor. **Verify
-where jdt.ls writes `.class` files in this setup first** — the whole thing
-pivots on it.
-
-### 6.4 `jails run --tc` — the honest "console with beans"
-
-`mvn spring-boot:test-run` is a real goal since Boot 3.1. Paired with a
-generated `src/test/.../TestApplication.java` doing
+`mvn spring-boot:test-run` with a generated `TestApplication` doing
 `SpringApplication.from(App::main).with(TestcontainersConfig.class).run(args)`
-— and `@RestartScope` on the container bean so it survives devtools restarts —
-it gives a dev run backed by the Testcontainers config **`add db` already
-generates**, with no compose file at all. On this machine that also routes
-around `spring-boot-docker-compose` being unable to drive podman-compose,
-rather than working around it.
-
-This replaces the "boot a Spring context inside jshell" idea in
-`ideas-opus.md` A3. That design dies on the DataSource, tries to drive
-podman-compose, and is slower than `jails run`. The honest pair is:
-
-- **`jails console` keeps its truthful banner** — jshell plus this module's
-  classpath, not a Spring context — and gains a generated `startup.jsh`
-  (`import module java.base;`, the base package, AssertJ). ~15 lines.
-- **`jails runner -e '<expr>' | <file> | -`** and `g script <Name>` boot the
-  context and `getBean` for the non-interactive case, which is most of what
-  `rails runner` is used for and 80% of "console with beans" for a tenth of
-  the work.
-- **`jails boot`** = `-Dspring.context.exit=onRefresh`: boots past singleton
-  creation and `afterPropertiesSet`, before `Lifecycle` start and the HTTP
-  port, then exits. A startup smoke test with no port and no compose — and the
-  AOT training-run switch, so one mechanism serves two features.
-
-### 6.5 Where AOT actually belongs
-
-`jails build --extract` (`java -Djarmode=tools -jar app.jar extract`, ~15.7%
-off start and the prerequisite for the cache) and `add aot`, which trains on
-the **extracted** jar with `-Dspring.context.exit=onRefresh`, uses
-`-XX:AOTMode=auto` (never `required` — a stale cache should degrade, not
-refuse to boot), gitignores the cache, and has `doctor` flag one older than
-any jar. Deploy-time and short-lived workers only. Note a JVM agent and an AOT
-cache are mutually exclusive.
-
-### 6.6 Explicitly out of the dev loop
-
-CRaC (no CRaC JDK installed; vendor-only; the privilege story under rootless
-podman is untested; **the checkpoint is a memory image containing every secret
-the JVM saw**). JBR/DCEVM/HotswapAgent/JRebel (§3). The AOT cache (§3). Maven 4
-(4.0.0-rc-6, not GA, and nothing in it moves the inner loop). The Maven build
-cache extension (it would restore a `target/` that `clean` just deleted).
+and `@RestartScope` on the container bean gives a dev run backed by the
+Testcontainers config `add db` **already generates**, with no compose — which
+also routes around podman-compose. **`jails runner -e`** boots the context and
+`getBean`s for the non-interactive case. **`jails boot`** =
+`-Dspring.context.exit=onRefresh`: a startup smoke test with no port, and the
+AOT training-run switch. This replaces "boot a context inside jshell", which
+dies on the DataSource.
 
 ---
 
-## 7. Tier 3 — safe mutation, and exactly how much of it you need
+## 11. Tier 3 — lifecycle: the clauses `ACCEPTANCE.md` still names
 
-`ideas-sol.md` Bet 2 wants a universal `ChangeSet` engine, a provenance lock,
-a journaled crash-recoverable apply and `jails status` — 3–5 weeks — **before**
-field evolution. `ideas-opus2.md` §5.10 says `edited_files` plus "print the
-snippet, never clobber" is correct today and does not block on it.
+Sequence, rather than `ideas-sol.md`'s 3–5 week `ChangeSet` up front:
 
-**Resolution: ship §5 on `edited_files`; build provenance when `app apply`
-needs drift reconciliation, not before.** The reasoning:
+1. **`g field` first** (§9.1) — drift reconciliation for a changed manifest
+   line *is* that command.
+2. **Regenerate and 3-way merge** — see §11.1, which replaces the "output
+   fingerprints" design this plan used to carry. Less code, no new file
+   format, and it reuses `git merge-file`.
+3. **Then** one atomic plan, if it still earns its keep.
 
-- The failure `edited_files` cannot prevent is *over-reporting* — it prints a
-  snippet you paste. The failure a bad ledger causes is *under-reporting* — it
-  overwrites work. Over-reporting is the safe direction, so the cheap oracle
-  is not merely acceptable, it fails the right way.
-- The one thing a hash-based ledger buys that `edited_files` cannot is
-  recognising an untouched file generated by an **older jails** — real, but
-  paid once per upgrade, and paid in extra printed snippets rather than lost
-  code.
-- Provenance becomes load-bearing the moment `app apply` must reconcile a
-  changed manifest line against a file on disk (§5.9), which is the natural
-  trigger to build it.
+Keep: paths normalised and confined; all conflicts detected before the first
+write; `--pretend` and apply rendering the **same** object; expected hashes,
+not string matching; a second identical apply a no-op. **A sequence of
+per-file renames is not an atomic transaction** — promise deterministic
+preflight plus crash recovery, and say so.
 
-**One structural note for whoever does build it:** `write_new_file` is *not*
-the single choke point it looks like. `src/add.rs:325-333` writes an existing
-path directly with `fs::write` after `normalize_imports`, bypassing the
-collision check and `package-info` planning. A ledger hung off `write_new_file`
-alone would have a hole exactly where a capability updates a file it
-previously wrote.
+**Structural note:** `write_new_file` is *not* the single choke point it looks
+like — `src/add.rs` writes an existing path directly with `fs::write`,
+bypassing the collision check. A ledger hung off `write_new_file` alone has a
+hole exactly where a capability updates a file it previously wrote.
 
-When it is built, keep these properties and drop the rest: paths normalised,
-relative and confined to the project; all conflicts detected before the first
-persistent write; `--pretend` and apply rendering the **same** object; expected
-hashes rather than best-effort string matching; a second identical apply is a
-no-op. **A sequence of per-file renames is not an atomic multi-file
-transaction** — promise deterministic preflight plus crash recovery, and say
-so, rather than implying a rollback that did not happen.
+**`src/codemod.rs`** — collect the splice primitives (`pom::add_dependency`,
+compose blocks, property blocks, `register_command`,
+`install_test_container_import`, the `@Import` merger, the `jails.toml`
+one-liner) under named operations. Same extraction as `process.rs`; pays on
+every capability and is a prerequisite for §6.2 option F.
 
-Also worth extracting on the way, as a refactor rather than a feature:
-**`src/codemod.rs`**, collecting the six splice primitives jails already has
-(`pom::add_dependency`/`add_plugin`, compose marked blocks, property blocks +
-`exposure_include`, `register_command`, `install_test_container_import`, the
-`jails.toml` one-liner) under named operations. Same extraction as
-`process.rs`, for the same reason, and it pays on every capability.
+**`new --offline`** closes the third clause in a day: vendor
+`write_spring_fixture` via `include_str!`, explicit flag, and when
+start.spring.io fails the error *suggests* it rather than silently falling
+back.
 
 ---
 
-## 8. Tier 4 — reach: the codebase you did not create
+### 11.1 Drift repair: regenerate and 3-way merge, not an ownership ledger
 
-Run, in `ideas/minicom-public/spring` and `ideas/monzo-crawler2/app`:
+**This supersedes the "output fingerprints" design earlier drafts of this plan
+carried.** `ideas/copier` solves the same problem and solves it better, and
+jails is unusually well placed to copy it.
+
+**Copier's `_apply_update`** (`ideas/copier/copier/_main.py:1377`):
+
+1. Regenerate the **old** template version into a temp dir, using the
+   **stored answers** (`subproject.last_answers`) and the **stored commit**
+   (`subproject.template.commit`).
+2. Regenerate the **new** version into a second temp dir.
+3. Diff old-generated against new-generated.
+4. `git apply` that diff to the user's real project, and where it conflicts,
+   **`git merge-file`** — a 3-way merge leaving conflict markers
+   (`_main.py:1610-1642`).
+
+**The insight: you never need per-file ownership hashes.** You need the stored
+inputs and the ability to re-run the generator. The diff between old-output
+and new-output *is* exactly what jails changed; git decides how it lands on
+top of the user's edits, which is a problem git is far better at than any
+hash comparison.
+
+#### Why this fits jails better than it fits copier
+
+The hard part for copier is step 1 — it must check out an old template commit.
+**jails' most important case does not need that at all.** For the §9.7 failure
+— a `fields` line edited in `.jails/app.toml` — the *generator* is unchanged;
+only the *intent* differs. So:
 
 ```
-$ jails about
-jails: no pom.xml found in this or any parent directory
+regenerate intent with the OLD fields   -> temp A        (jails is deterministic)
+regenerate intent with the NEW fields   -> temp B
+git diff --no-index A B                 -> patch
+git apply --3way <patch>                -> the project
 ```
 
-**Zero of ~30 commands work.** The gate is one function —
-`generate::find_project_root`, 11 lines at `src/generate.rs:86-96`, confirmed
-today, walking up looking for `pom.xml` and nothing else — with ~30 call sites
-and three further copies of the rule (`project::nearest_pom`,
-`project::workspace_root`, and `root_markers = { 'pom.xml' }` in the Lua).
+No version pinning, no ledger, no ownership model. `.jails/app-state-v1`
+already stores the old intent — that *is* `last_answers`. And `--pretend`
+becomes "print the patch", which is strictly more informative than the list of
+paths it prints today.
 
-The decisive experiment: dropping a **one-line stub `pom.xml`** into a copy of
-the Gradle Intercom stub makes `routes`, `beans`, `stats`, `notes`, `rename
---dry-run`, `destroy --pretend`, `doctor` and `g record`/`g controller` all
-work correctly against the Gradle sources. `jails routes` printed
-`POST /bar BarController#verify`. `src/inspect.rs` and `src/rename.rs` contain
-**zero** occurrences of the string `pom` — their entire Maven dependency is
-the root-finding call.
+#### What it costs, stated honestly
 
-**The change:** widen the marker list in that one function and return *why* it
-matched.
+- **It needs a git repo.** `jails new` runs `git init` by default and
+  `--no-git` exists, so the fallback is: no repo → fall back to today's
+  behaviour and say so.
+- **It leaves conflict markers** in a `.java` file when the user has edited
+  the same lines. That is correct and is what every developer already knows
+  how to resolve — and it is strictly better than `g field`'s "print the
+  snippet and refuse", which is the right call only while this does not exist.
+- **The jails-upgrade case is genuinely harder, and Nx has the better
+  answer.** When the *template* changed rather than the intent, step 1 would
+  need the old jails binary to regenerate old output. Do not go there.
+  `ideas/nx/packages/js/migrations.json` shows the alternative: a
+  `generators` map whose every entry carries a **`version`**, a
+  `description` and a `factory`, so upgrading collects every migration newer
+  than the project's recorded version and runs them in order — transforming
+  the existing project forward instead of reconstructing its past.
+
+  That is the same shape as Flyway, which jails already uses for SQL, so it
+  is idiomatic here: a jails release that changes a template ships a
+  migration declaring the version it applies at, and `.jails/version`
+  (§11.2) is the project's current mark. **Scope v1 to intent edits** — the
+  case broken today — and add versioned migrations when the first template
+  change actually needs one.
+
+#### How it changes the sequence
+
+`g field` (§9.1) stays first — it is the primitive, and its "print, never
+clobber" refusal remains correct until this lands. But **step 2 of §11 becomes
+"regenerate + 3-way merge" instead of "output fingerprints"**, which is less
+code, no new file format, and reuses `git merge-file` already on the machine.
+The `edited_files` oracle (`src/add/database.rs`) stays for the capability
+path, where there is no stored intent to re-run.
+
+
+### 11.2 The path set: record what was written, do not recompute it
+
+`ideas/openapi-generator` solves the other half, and its javadoc states the
+purpose exactly (`DefaultGenerator.java:2000`):
+
+> *"Generates a file at `.openapi-generator/FILES` to track the files created
+> by the user's latest run. This is ideal for CI and regeneration of code
+> without stale/unused files from older generations."*
+
+The implementation (`:2005-2050`) is ~40 lines: take the list of files the run
+produced, relativise each against the output dir, **normalise separators to
+`/` so Windows and Linux agree**, sort case-sensitively, write one per line.
+Alongside it goes `.openapi-generator/VERSION` — the generator version that
+produced them.
+
+**jails should write `.jails/files` and `.jails/version` the same way**, and it
+is better than both designs this plan previously carried:
+
+- **Better than recomputing paths from the generator** (§6.2 option B). Option
+  B is still right for `--pretend`, where nothing has been written yet. But
+  for `destroy` *after a jails upgrade*, recomputation gives you today's paths
+  for yesterday's files — and silently strands anything whose path changed.
+  A recorded list cannot drift, because it is not derived.
+- **Better than output fingerprints.** It answers "what did this intent
+  write?" directly, which is the question `destroy` and drift repair both ask.
+- **It closes the stale-file case `examples/DOGFOOD.md` names** — *"does not
+  yet notice a generated file deleted afterward"*. Regenerate, diff the new
+  file list against the recorded one, and act on the difference: files no
+  longer produced are stale, files missing from disk were deleted by hand.
+- **`VERSION` is exactly the pin §11.1 says the upgrade case needs.**
+
+The two halves compose into the whole drift story: **§11.2 gives you the path
+set; §11.1 gives you the content merge.** Neither needs an ownership model.
+
+Two details worth copying rather than rediscovering: sort and separator
+normalisation are what make the file diffable and stable across machines, and
+`FILES` deliberately excludes its own metadata entry so regeneration does not
+churn it.
+
+## 12. Tier 4 — reach: the codebase you did not create
+
+In `ideas/minicom-public/spring`, **zero of ~30 commands work** — the gate is
+`generate::find_project_root`, 11 lines looking for `pom.xml` and nothing
+else, with ~30 call sites and three further copies of the rule.
+
+Dropping a **one-line stub `pom.xml`** into a copy makes `routes`, `beans`,
+`stats`, `notes`, `rename --dry-run`, `destroy --pretend`, `doctor` and
+`g record` all work against Gradle sources. `inspect.rs` and `rename.rs`
+contain **zero** occurrences of `pom`.
 
 ```rust
 pub(crate) enum Build { Maven, Foreign(&'static str), Bare }
-pub(crate) fn find_project_root() -> Result<PathBuf>   // signature unchanged
-pub(crate) fn project_build(root: &Path) -> Build      // new
+pub(crate) fn project_build(root: &Path) -> Build      // new; signature of find_project_root unchanged
 ```
 
-Checked per directory while walking up so the nearest wins: `pom.xml` →
-`Maven`; `build.gradle{,.kts}` / `settings.gradle{,.kts}` → `Foreign`;
-`jails.toml` → `Bare`. A `pom.xml` beside a `build.gradle` still wins.
+Nearest wins. Then three guards: `pom::read` says which build tool it found;
+eight Maven-inherent commands get `require_maven`; and **`doctor` reports the
+real build tool** — not optional, because a confident wrong report is worse
+than a refusal. **Frame it in README**: *jails never reads, writes, parses or
+invokes `build.gradle`.* That is strictly less than Gradle support.
 
-Then three guards so the degraded mode is honest rather than lying:
+Caveats: the stub-pom trick **changes the Java jails emits**
+(`repository_wiring` returns `PlainJdbc`, `jspecify_available` false), so
+degraded mode must *say* which shape it chose; **`add` still will not work**
+and should not be exempted; **multi-module Gradle** puts `build.gradle` in
+`app/` with `settings.gradle` above.
 
-- `pom::read` is the funnel for every command needing pom *content*; on ENOENT
-  it consults `project_build` and says "this project is built by Gradle
-  (build.gradle); jails only edits pom.xml".
-- The eight Maven-inherent commands (`test build clean fmt check mvn run
-  console`) get a one-line `require_maven` guard.
-- **`doctor` reports the real build tool.** Not optional: with a stub pom,
-  doctor today prints a clean run over a Gradle Boot 2.7 project —
-  and a confident wrong report is worse than a refusal.
-
-**Frame it correctly in README**: *jails never reads, writes, parses or invokes
-`build.gradle`. It stops treating `pom.xml` as the only thing that marks a
-project root.* That is strictly less than Gradle support, and the "no Gradle"
-constraint has been applied to a case it does not cover — at the cost of
-leaving 100% of the tool unreachable in the one codebase you are handed on
-interview day.
-
-Three caveats the experiment surfaced:
-
-1. **The stub-pom trick changes the Java jails emits.** Without a readable
-   pom, `repository_wiring` returns `PlainJdbc` and `jspecify_available`
-   returns false, so no `package-info.java` and a different adapter shape. A
-   degraded mode must *say* which shape it chose.
-2. **`add` still will not work** — `require_java_release` hard-errors without
-   `<maven.compiler.release>`. It should not be exempted; `add`'s whole job is
-   a pom edit.
-3. **Multi-module Gradle breaks the Maven-shaped assumption**: in
-   `monzo-crawler2`, `build.gradle` is in `app/` while `settings.gradle` is a
-   directory above. Rooting at the nearest marker is right for `generate` and
-   wrong for `workspace_root`. Pick per command and write the test.
-
-### `jails adopt`
-
-Once the root resolves, `g record` in the Intercom stub lands in
-`com.intercom.spring.domain` — a package that project does not have. Its real
-packages are `models` and `controllers`.
-
-**The placement engine for this already exists**, verified end to end: writing
-`[layout] web = "controllers"` / `domain = "models"` into the stub made `jails
-stats` report `Web 2` (previously `Other 4`) and put generated files in the
-right directories, with no code change.
-
-So `jails adopt` writes no new machinery — it writes that file. Resolve the
-base package (`base_package` already falls back to the shallowest `.java`),
-enumerate the immediate subpackage directories, map them onto
-`config::LAYERS_IN_ORDER` through a small **closed** synonym table
-(`model|models|entity|entities|domain → domain`,
-`controller|controllers|web|rest → web`, …). A directory matching nothing is
-**reported, not guessed**; a layer with two candidates is reported and left
-unmapped, because choosing between `model/` and `domain/` is exactly the
-silent-wrong-placement failure the command exists to prevent.
-
-It must **never** write `[project] capabilities` — that table means "what
-`add` installed and `sync` should restore", and in a foreign project jails
-installed nothing.
+**`jails adopt`** writes a `[layout]` table, not new machinery — verified:
+`[layout] web = "controllers"` made `stats` report `Web 2` (was `Other 4`)
+with no code change. Map subpackages onto `LAYERS_IN_ORDER` through a closed
+synonym table; a directory matching nothing is **reported, not guessed**. It
+must **never** write `[project] capabilities`.
 
 ---
 
-## 9. Tier 5 — the capability set, inside the domain-blind line
+## 13. Tier 5 — the capabilities still missing
 
-`src/app.rs:1-6` rules out a `spider` kind, an `inbox` kind and anything else
-named after a showcase. Three of the six documents propose exactly those. What
-survives that doctrine, and why:
+`ci`, `docker`, the durable queue, the outbox, the safe fetcher, traversal and
+outbound HTTP delivery have all shipped. What is left:
 
-- **A capability is inside the line when it knows no domain noun.** `add
-  crawl` (jsoup + `Urls` + `Robots` + `Fetcher`) is as domain-blind as `add
-  csv` — it knows no seed URL, exactly as `add kafka` knows no topic. `add
-  cors`, `add sse`, `add queue`, `add mail`, `add auth`, `add storage` are all
-  the same shape.
-- **Traversal, assignment and extraction arrive as generic intents** —
-  `usecase`, `query`, `event`, `durable-job`, all four of which now **exist**;
-  the friction ledger's commitment has been kept.
-- **The bug list is the acceptance criteria** regardless of which command
-  emits the code.
+### 13.1 `add cors` — still the actual blocker
 
-Two of the capabilities the source documents propose have already shipped:
-**`ci`** (pinned, least-privilege workflows) and **`docker`** (a non-root
-multi-stage image deriving Java from the POM). Both proof apps select them.
-So the list below is what `examples/ACCEPTANCE.md`'s "still open" paragraph
-names, and nothing else — ordered by what is blocking a proof app today, not
-by interest:
+`grep -rni cors src/ templates/ README.md` returns **nothing**, and
+`security_config_java.java` has `anyRequest().authenticated()` and never calls
+`.cors(...)`. **A jails app plus `add security` cannot serve a browser
+widget.** The naive fix is wrong in a way that bites later:
+`applyPermitDefaultValues()` permits only GET, HEAD and POST and no
+credentials — the classic "works until mark-as-read becomes a PUT". Name the
+methods, put origins in a marked properties block, and **wire `.cors(...)`
+into the generated chain in the same change.** Two doctor checks fall out:
+`@EnableWebMvc` with the webmvc starter (switches off auto-configuration), and
+`addMapping("/**")` with no `allowedOrigins`.
 
-### 9.1 `add cors` — the actual blocker, and nobody mentioned it
+### 13.2 `add sse` — the four details both SSE designs get wrong
 
-`grep -rni cors src/ templates/ README.md` returns **nothing** — verified
-today. And `templates/spring/security_config_java.java` has
-`anyRequest().authenticated()` and never calls `.cors(...)`, so `add security`
-leaves no CORS configuration and the preflight is handled by the security
-chain. **A jails-generated Spring app plus `add security` cannot serve a
-browser widget.** The minicom exercise is inherently cross-origin — foo on
-:8008, bar on :8009, both POSTing to :3000, three distinct origins.
+`-1L` (or `0L`), not `Long.MAX_VALUE`. **`onCompletion` alone suffices** for
+removal — but it runs on a *container* thread concurrently with the
+broadcaster, so the registry must be `ConcurrentHashMap<K, Set<SseEmitter>>`
+with `newKeySet()`, which both documents miss.
+**`spring.task.scheduling.pool.size` defaults to 1**, so a 15 s heartbeat
+blocking on one dead client stalls every other scheduled job.
+**`Last-Event-ID` is not implemented by Spring** — emitting `id()` without a
+`@RequestHeader` replay path advertises resumability you do not have. One
+Framework-7-only fact that makes "SSE + virtual threads" real: Framework 7
+replaced `synchronized` with a `ReentrantLock` throughout
+`ResponseBodyEmitter` to avoid pinning.
 
-The naive fix is wrong in a way that bites later:
-`CorsConfiguration.applyPermitDefaultValues()` — what a bare
-`addMapping("/**")` gets you — permits only GET, HEAD and POST and does not
-allow credentials. That is the classic "works until mark-as-read becomes a
-PUT" failure. `add cors` must name the methods explicitly, put the origins in
-a marked properties block, and **wire `.cors(...)` into the generated security
-chain in the same change.**
+### 13.3 The rest, each waiting for an acceptance clause
 
-Two doctor checks fall out, both seen in the corpus: `@EnableWebMvc` in a
-project with the Boot webmvc starter (switches off Boot's auto-configuration;
-static resources stop being served), and `addMapping("/**")` with no
-`allowedOrigins`.
+| Slice | The silent failure it prevents | Proves |
+|---|---|---|
+| **`g idempotency`** (a receipt keyed by scope + key + canonical request hash) | A `@unique` column gives one-row-per-key but **not the retained result**; a retry gets a 409 instead of the original response. App C is the first app that needs it | C |
+| **`add coverage`** (Jacoco + a stated threshold) | §5.4 | C |
+| **`add loadtest`** (k6 from the route table) | §5.5 | C |
+| **`add k8s`** (probes on the management port, burn-rate rules) | §5.6 — only correct after §5.2 | C |
+| **`g auth`** | Boot 4 auto-configures **no `JwtEncoder`**, and **a JWT with no `exp` passes the default decoder** | B, C |
+| **`g webhook`** (inbound; `http-sink` is outbound) | Signature over **raw bytes**, `MessageDigest.isEqual`, Stripe's 300 s tolerance | B |
+| **`add mail`** | Boot 4's `-test` twin convention; the IT reads mail back over POP3 as Boot's own test does | B |
+| **`g search`** | A `generated always as (…) stored` `tsvector` — *generated*, because a trigger someone forgets on UPDATE is the silent failure | B |
+| **`add flags`, `add shedlock`, `add storage`, `add arch`, `add nullcheck`** | Build the first time a project needs one. `add shedlock`: two instances fire the 02:00 job, customers get two emails, nothing logs an error | — |
 
-### 9.2 `add sse` — with the four details both SSE designs get wrong
+### 13.4 The UI decision
 
-`SseEmitter` is alive and undeprecated in Framework 7; both documents pick it
-and both are right about that.
-
-- **The never-time-out value is `-1L`** (or `0L`), not `Long.MAX_VALUE` — §3.
-- **`onCompletion` alone suffices for removal** ("called when an async request
-  completed for **any** reason including timeout and network error"). One
-  document prescribes three callbacks, the other prescribes "complete on
-  IOException" which `send()`'s javadoc explicitly calls unnecessary. The
-  requirement both **miss** is the real one: `onCompletion` runs on a
-  *container* thread, concurrently with whatever thread is broadcasting, so
-  the registry must be `ConcurrentHashMap<K, Set<SseEmitter>>` with
-  `newKeySet()` — not a synchronized list.
-- **`spring.task.scheduling.pool.size` defaults to 1.** A
-  `@Scheduled(fixedRate = 15000)` heartbeat blocking on one dead client stalls
-  **every other scheduled job in the application**, and nothing logs it. Raise
-  the pool or set `spring.threads.virtual.enabled=true`, and say which in the
-  Javadoc.
-- **`Last-Event-ID` is not implemented by Spring** — zero matches across
-  spring-web and spring-webmvc. Spring gives you `SseEventBuilder.id()` on the
-  way out and reads nothing on the way back in. A hub that emits `id()`
-  without a `@RequestHeader("Last-Event-ID")` replay path is advertising
-  resumability it does not have. The replay itself is visible SQL:
-  `select … where topic = ? and id > ? order by id`.
-
-One Framework-7-only fact that makes "SSE + virtual threads" a real
-recommendation rather than a slogan: Framework 7 replaced `synchronized` with
-an explicit `ReentrantLock` throughout `ResponseBodyEmitter` specifically to
-avoid virtual-thread pinning. On 6.2 the same hub pins the carrier thread on
-every `send()`.
-
-Test over a real port with `RestTestClient` (`MockMvc` has no connector), and
-a `CountDownLatch`, never a sleep.
-
-### 9.3 `add queue` — the backbone both verticals silently assume
-
-**Read this before building it: most of it exists.** `g durable-job` already
-generates a PostgreSQL-leased queue whose store is pinned by source assertions
-to contain `for update skip locked`, `lease_until <= now()`,
-`attempts >= max_attempts` and `on conflict (id) do nothing`, with an IT
-covering same-payload replay, conflicting idempotency keys, expired-lease
-reclaim, bounded retry, terminal-error visibility, and recovery after the
-business effect committed but before queue acknowledgement. `usecase --yields`
-adds the transactional outbox on top. `g job` remains the *timer*.
-
-So the honest framing is not "jails has no queue". It is: **jails generates a
-queue per durable job, and has no shared one.** Two questions decide whether
-`add queue` is even the right answer, and both are answerable by reading the
-generated output of the two proof apps rather than by design:
-
-1. Do two `durable-job` intents in one project produce two tables and two
-   workers, or share one? If they share, `add queue` may already be redundant
-   and the remaining work is a `jails queue list|failed|retry` CLI.
-2. Does the generated store have a **reaper** for `running` rows with a stale
-   lease? `lease_until <= now()` in the claim suggests reclaim-on-claim, which
-   is the cheaper and mostly-equivalent design — in which case the classic
-   "`kill -9` strands a job forever" failure is already closed.
-
-Answer those first. What follows is the specification to check the generated
-code *against*, not a greenfield design:
-
-One `jobs` table (jsonb payload, `state in (ready,running,done,dead)`,
-`run_at`, `attempts`, `max_attempts`, `locked_at/by`, `idempotency_key`), with:
-
-- a **partial index on `state='ready'`** so the claim stays O(1) as `done`
-  rows accumulate, and a unique partial index on the idempotency key;
-- **enqueue in the caller's transaction** — the adapter takes the caller's
-  `Connection`, exactly as the scaffold's does. This is the property a Redis
-  queue cannot give, and it is the reason the DB queue is the right default;
-- **claim** with `select … for update skip locked limit ?` inside a CTE,
-  `order by run_at, id`, and `attempts` incremented **at claim** — so a
-  SIGKILLed worker has burned its attempt and an OOM-killing job cannot loop
-  forever;
-- **a reaper** every minute for `running` rows with a stale `locked_at`.
-  Without it a `kill -9` leaves a job `running` forever and nothing logs it.
-  **This, not `SKIP LOCKED`, is what is usually missing.**
-- full-jitter backoff capped at an hour, `dead` at `max_attempts`, never
-  dropped, never swallowed;
-- a worker with the semaphore acquired **before** claiming, virtual threads,
-  `LISTEN` on a dedicated non-pooled connection with polling as the durable
-  fallback, and `server.shutdown=graceful`.
-
-`g worker <Name> --queue <q>` writes a handler; a generated `JobWiringTest`
-fails the context when two handlers claim one queue — the "missing
-`@Component` means the list is silently short" failure `g strategy` already
-teaches. `jails queue list|failed|retry` shells through the `console.rs` psql
-path, mirroring `jails kafka`. Name `db-scheduler` in the Javadoc as the
-graduation path.
-
-Tests (Testcontainers + Awaitility): two workers × 100 jobs = exactly 100
-runs; a poison handler retries then goes `dead` with `last_error`; `dead` is
-never claimed; shutdown completes in-flight work.
-
-**Sequence this before `g mailer` and before any durable crawl frontier.** A
-mailer that sends synchronously in the request is the tutorial version; a
-queue that retries is the product version; the difference is one capability.
-
-### 9.4 The rest, with the trap each one exists to remove
-
-| Slice | The silent failure it prevents |
-|---|---|
-| **`g auth`** (Spring Security 7 `NimbusJwtEncoder.withSecretKey`, HS256, secret from a property) | **Boot 4 auto-configures no `JwtEncoder` at all** and configures a `JwtDecoder` only from `jwk-set-uri`/`issuer-uri`, so 100% of symmetric mint/verify wiring is hand-written. And **a JWT with no `exp` passes the default decoder** — call `setAllowEmptyExpiryClaim(false)` and add issuer/audience validators explicitly. Use `spring-boot-starter-security-oauth2-resource-server`; the un-prefixed one is deprecated in Boot 4. Test `alg: "none"`. |
-| **`g webhook --strategy hmac_sha1_hex\|hmac_sha256_hex\|stripe_v1`** | Signature over **raw bytes** (`@RequestBody byte[]`), never re-serialised JSON; `MessageDigest.isEqual`; Stripe's 300 s tolerance mandatory; 401/202. Closed strategy set — a passthrough algorithm name is a string jails cannot validate. Test a body with a non-ASCII character. |
-| **`add mail`** | `spring-boot-starter-mail` + its `-test` twin (Boot 4 convention: splice `X-test` with every `X`), Mailpit in compose, the IT reading mail back over **POP3** as Boot's own test does, and `Mailer.send` enqueuing through `add queue` when present. No `@ServiceConnection` factory exists for SMTP — use a `DynamicPropertyRegistrar` and say why. |
-| **`g search <Entity> --on body,subject`** | A `generated always as (…) stored` `tsvector` column plus a GIN index — a *generated* column, because a trigger someone forgets to fire on UPDATE is the silent failure. `websearch_to_tsquery` (does not throw on user input), `ts_rank_cd`, keyset pagination. Validate `--on` against the record's components before writing anything, same rule as `--index`. 30 lines of visible SQL; no search service. |
-| **`add crawl`** | `Urls` (canonicalisation; the dedup key *is* the value), `Robots` via `crawlercommons` (4xx ⇒ allow all, **5xx or unreachable ⇒ disallow all** — the rule everyone gets backwards), `Politeness` (per host: `Semaphore(1)` + next-allowed instant; **acquire the permit first, then sleep the gap** — the Go reference does it backwards and collapses its own concurrency), `Fetcher` (redirects re-scoped per hop, `Retry-After` on 429/503, retry only 5xx/`IOException`, body cap, `HttpClient` is `AutoCloseable`), `Frontier` (`newKeySet().add` **is** the dedup — no separate `contains()`; termination is `enqueued == completed`, **never** `queue.isEmpty()`), `Crawler` (virtual threads + a semaphore acquired on the submitting thread, `completed` in `finally`), and a `FakeSite` on `com.sun.net.httpserver` for tests. Clone jsoup and crawler-commons into `deps.tsv` **before** writing a line of template — CLAUDE.md's rule. Note `deps-update.sh` reads the manifest with `IFS=$'\t' read`, so append rows with `printf`, not `echo`. |
-| **`g timeline <Name> --parts …`** | The generator neither vertical document has and the Intercom data model needs: an append-only part table, a `Projection.fold(parts)` **switch with no `default`** so adding a part type stops the build until its effect on state is decided, and the denormalised summary row updated **in the same transaction**. Prevents the inbox saying "open" while the timeline says closed. A plain scaffold would generate `update … set assignee = ?` and lose the audit trail. |
-| **`add flags`**, **`add shedlock`**, **`add storage`**, **`add arch`**, **`add nullcheck`**, **`add ci`**, **`add docker`** | Each is specified in the source documents and each is real; build them the first time a project needs one, not before. `add shedlock` earns its place on the classic silent failure — two instances both fire the 02:00 job, customers get two emails, nothing logs an error. |
-
-The five crawler bugs, read out of the three reference solutions in `ideas/`,
-are the acceptance criteria for whatever shape wins: check-then-act dedup; the
-raw URL as the visited key; fused fetch+parse (the parser cannot be tested
-without a network); a latch counted down on one path only; **relative links
-silently dropped** because `Jsoup.parse` was called with no base URI while the
-tests used only absolute hrefs; and zero robots.txt implementations across all
-three. Three assertions carry the design: exactly one *request* per canonical
-URL (`verify(1, getRequestedFor(...))`, stronger than "visited once"),
-`assertTimeoutPreemptively` (pins the in-flight counter and fails the moment
-anyone moves the decrement out of the `finally`), and zero requests to a
-robots-disallowed path.
-
-### 9.5 The UI decision
-
-An agent inbox needs HTML, and today a jails project can only be an API — a
-take-home that renders nothing is half a submission. The recommendation is
-`g page <Name>` with **JTE** + htmx + `add sse`: JTE templates are compiled,
-type-checked Java, so a renamed record component breaks the build rather than
-the request — which is jails' bar — and its development mode runs its own
-watcher, so template edits are sub-second with no context restart and no
-dependence on devtools LiveReload (deprecated in Boot 4.1 with no
-replacement). One layout, one fragment convention, no asset pipeline. The
-widget stays hand-written static JS; jails does not own frontends.
+An agent inbox needs HTML; a take-home that renders nothing is half a
+submission. `g page` with **JTE** + htmx + `add sse`: JTE templates are
+compiled, type-checked Java, so a renamed record component breaks the build
+rather than the request — jails' bar — and its dev mode runs its own watcher,
+so edits are sub-second with no dependence on devtools LiveReload (deprecated
+in Boot 4.1 with no replacement).
 
 ---
 
-## 10. Tier 6 — the editor
+## 14. Tier 6 — the editor
 
-Most of this is configuration in `~/code/my-dotfiles`, not Rust, and it is the
-cheapest tier in the plan.
-
-**Navigation via projectionist, not a Lua reimplementation.**
-`tpope/vim-projectionist` fires `User ProjectionistDetect` and accepts
-projections **in memory** via `projectionist#append(root, projections)` —
-nothing written into the repo, which dissolves the "don't leak editor config
-into the Java project" objection. On detect, run `jails about --json` once per
-root, build the table from `layout` + `base_package`, append. You get
-`:A`/`:AS`/`:AV`/`:AT` with a **list of alternates, first readable wins**
-(controller → its test, else its service; JDBC adapter → its IT, else the
-in-memory one, else the port), `:Econtroller` `:Eservice` `:Erepo`
-`:Emigration` `:Etest` `:Efixture` with completion, `path` (so `gf` works),
-`make: jails`, `dispatch: jails test`, `console: jails console`, `start: jails
-run`. Several hundred lines of Lua not written and not tested.
+**Projectionist, not a Lua reimplementation.** `tpope/vim-projectionist`
+accepts projections **in memory** via `projectionist#append(root, …)` —
+nothing written into the repo, which dissolves the objection. On detect, run
+`jails about --json` once per root and build the table from `layout` +
+`base_package`. **This matters more now: 11 layers means a generated slice
+crosses more directories than it used to.**
 
 **`about --json` v2** is the prerequisite: add `layout` (through
-`Config::layers()`, i.e. *renamed* values — the drift `inspect.rs` already
-suffered once), `base_package`, `capabilities`, `java_root`/`test_root`, with
-a test pinning the keys to `config::LAYERS_IN_ORDER`. Normalise the version
-key while there: `about` uses `schema_version`, `routes`/`beans` use
-`version`. Add `line` to `Route`/`Bean` (`java.rs`'s `blank_range` already
-preserves newlines for exactly this) — without a line, `routes --json` is a
-list; with one it is a quickfix and a picker source.
+`Config::layers()`, i.e. *renamed* values), `base_package`, `capabilities`,
+`java_root`/`test_root`, pinned to `LAYERS_IN_ORDER` by a test. Normalise the
+version key (`about` uses `schema_version`, `routes`/`beans` use `version`).
+**Add `line` to `Route`/`Bean`** — today `line` exists on `Note` and nothing
+else, so `routes --json` is a list; with a line it is a quickfix and a picker.
 
-**`gf` into JDK and project source — six lines, no plugin.** Neovim's own
-`ftplugin/java.vim` already sets `includeexpr`, `suffixesadd`, `include` and
-`define`, and honours `g:ftplugin_java_source_path` (a `.zip` gets a
-`JavaFileTypeZipFile()` `includeexpr`). Only `'path'` is missing:
+**`gf` into JDK and project source — six lines, no plugin.** Neovim's
+`ftplugin/java.vim` already sets `includeexpr`, `suffixesadd`, `include`,
+`define` and honours `g:ftplugin_java_source_path`; only `'path'` is missing.
 
-```lua
-vim.opt_local.path:prepend({ root..'/src/main/java', root..'/src/test/java' })
-vim.g.ftplugin_java_source_path = (vim.env.JAVA_HOME or '~/.local/share/jdk/jdk-27')..'/lib/src.zip'
-```
+**jdt.ls settings and bundles.** Add `updateBuildConfiguration = 'automatic'`
+(the default `'interactive'` is why **every `jails add` leaves red squiggles
+until prompted**), `autobuild.enabled`, `downloadSources`, `-Xmx2G`. Then
+**java-debug** and **vscode-java-test**, which give
+`jdtls.dap.test_nearest_method()` — one test, no Maven, no Surefire — and hot
+code replace with frame popping. Pair with `jails run --debug` and
+`spring.devtools.restart.enabled=false` for that run.
 
-That is "`gf` while jdt.ls is cold" by configuration instead of code, plus
-`[i`, `:ilist`, `:dsearch` for free.
+**`:compiler jails`** — `$VIMRUNTIME/compiler/maven.vim` already carries javac
+errors, non-parseable POM and the Surefire multi-line pattern. Copy the
+`errorformat` verbatim (the `current_compiler` guard makes `runtime!` bite).
 
-**jdt.ls settings and bundles.** `ftplugin/java.lua` sets no `init_options`
-and no `settings.java.configuration`. Add `updateBuildConfiguration =
-'automatic'` (default is `'interactive'`, which is why **every `jails add`
-leaves red squiggles until prompted**), `autobuild.enabled = true` (§6.3
-depends on it), `downloadSources`, `-Xmx2G`. Then the two bundles —
-**java-debug** and **vscode-java-test** — which give
-`jdtls.dap.test_nearest_method()` (one test method, no Maven, no Surefire, on
-the already-compiled workspace) and **hot code replace with frame popping**.
-Pair with `jails run --debug` appending
-`-agentlib:jdwp=…,address=127.0.0.1:5005` and setting
-`spring.devtools.restart.enabled=false` for that run, since a devtools restart
-kills the JDWP session.
+**Pickers** via `fzf-lua` (this config has no telescope) over `routes --json`
+/ `beans --json` — sub-50 ms on a project that does not compile, which jdt.ls
+cannot do. **`jails src <Type>`** resolves a project type, else a type under
+`deps/`.
 
-**`:compiler jails`.** `$VIMRUNTIME/compiler/maven.vim` already carries javac
-errors with and without columns, non-parseable POM, and the Surefire
-multi-line `<<< FAILURE!` … `at Foo.bar(Foo.java:42)` pattern.
-`jails.nvim/compiler/jails.vim` is ~15 lines: `makeprg`, that `errorformat`
-copied verbatim (the `current_compiler` guard makes `runtime!` bite), plus
-`%-Gcreate\ %f`. `why`'s explanation goes in the quickfix **title** and a
-`vim.notify`, not as entry text.
-
-**Pickers**: `fzf-lua` (this config has no telescope) over `routes --json` /
-`beans --json`, jumping to `source:line`. Sub-50 ms on a project that does not
-compile — jdt.ls cannot do that.
-
-**`jails src <Type>`**: resolve a project type, else a type under `deps/`
-(filename stem, then `^public (class|interface|record|enum) X\b`), print
-`file:line`. `deps/` is a real checkout with `git log`; `gd` through jdt.ls is
-a source-jar download of possibly another version. Have `why`'s `fix:` lines
-cite it, which is how `deps/` stops being a jails-developer trick and becomes
-a jails-user one. Doctor may WARN when `deps/` is absent **only** when
-`JAILS_DEPS` is set, so a machine that never cloned deps is not nagged.
-
-**Keymap collisions**: `<leader>j{t,c,r,b,g}` (ftplugin) versus
-`<leader>J{t,c,r,b,g}` (jails) — a shift-key slip turns "extract constant"
-into `mvn clean verify`. Make the split semantic: `<leader>j` = this buffer /
-language server, `<leader>J` = the project / jails. Point `jt`/`jf`/`jm` at
-`jails test` (one Maven resolver — `about --json` already emits
-`maven_command` and nothing reads it) or better at `test_nearest_method()`.
-
-**`javac_lint` on `BufWritePost`** has three problems: it recompiles the
-**whole** `src/main/java` on every save; it runs bare `javac` with **no
-`--release`**, i.e. JDK 26 semantics against a release-27 project; and it
-re-runs `dependency:build-classpath` on every pom mtime change, so the first
-save after any `jails add` pays a second Maven run on top of jdt.ls's
-re-import. Pass `--release`, resolve `javac` from `JAVA_HOME`, put the autocmd
-behind `vim.g.jails_javac_on_save`, and keep its output **out of**
-`target/classes` — that is what stops it triggering devtools.
+**Keymap collisions**: `<leader>j{t,c,r,b,g}` vs `<leader>J{t,c,r,b,g}` — a
+shift slip turns "extract constant" into `mvn clean verify`. Split
+semantically. **`javac_lint`** recompiles the whole tree on every save, runs
+bare `javac` with **no `--release`**, and re-runs `dependency:build-classpath`
+on every pom change; fix all three and keep its output out of
+`target/classes`. **Two bugs**: `setqflist({}, 'r', …)` **replaces** the list
+jdtls just built (should be `' '`), and `vim.fn.termopen` is deprecated.
 
 ---
 
-## 11. Tier 7 — the agent as second user
+## 15. Tier 7 — the agent as second user
 
-`java.md`, `spring.md` and `backend.md` are ~70 KB of hand-written personas
-whose whole purpose is stopping a model from writing Boot 2 / JPA / Lombok /
-`@MockBean` code, and `CLAUDE.md` is 40 KB of the same for this repo. **A
-generated project inherits none of it.**
+### 15.1 `AGENTS.md`, with evidence
 
-1. **`jails new` writes `AGENTS.md` into the project** — and the banned-API
-   list in it is *rendered from* the same table `jails lint` matches against,
-   so it cannot drift into a lie. That is the whole trick: a hand-written
-   AGENTS.md is a `validation/README.md` waiting to happen. Content: the
-   project is jails-managed; use `jails test <Name>`, not `mvn test`; `jails
-   check` is the gate and *why*; `jails doctor` before debugging the
-   environment; records, no Lombok, no ORM; the layer table and a pointer to
-   the field-spec grammar. Claude Code, Cursor and codex all pick it up with
-   zero wiring.
-2. **`jails lint`** — a closed rule table over the stale-API families jails
-   already knows about (`@MockBean`, `javax.validation`, Jackson 2 alongside
-   3, `spring-boot-starter-web`, `@Entity`, Lombok, preview features).
-   Sub-second, exit 1, `file:line`. It turns a six-minute compile-read-fix
-   loop into a check an agent can run before handing back. `doctor` already
-   does the Jackson-majors version of this, so the rule shape is proven.
-3. **`--json` everywhere.** Only `about`, `routes` and `beans` have it today.
-   `doctor --json`, `why --json`, `test --json` (one object per `testfeed`
-   event), `stats`, `notes` are each an afternoon and each removes a parsing
-   step from both the editor and the agent. **`why --json` is the highest
-   value** — it makes the *explanation* available as quickfix text, and
-   `why.rs` already stores exactly `{signature, explanation, fix}`.
-   `jails commands --json` (a walk of the clap tree) then deletes the
-   hand-copied Lua lists rather than pinning them.
-4. **`jails explain <kind>`** exposes the design rationale the Javadoc and
-   CLAUDE.md carry, so an agent stops "fixing" `@Repository` onto the second
-   adapter.
-5. **Promote `g cases`.** It turns a markdown brief's acceptance bullets into
-   a test class. It is the spec-first workflow both you and an agent want, it
-   is implemented, and §4.9 says nobody can find it.
+§5.8: a 166-line `AGENTS.md` is the highest-signal file in a 332K-line
+repository. **`jails new` should write one**, and its banned-API list must be
+*rendered from* the same table `jails lint` matches against, so it cannot
+drift into a lie — a hand-written one is a `validation/README.md` waiting to
+happen. Content: use `jails test <Name>`, not `mvn test`; `jails check` is the
+gate and *why*; `jails doctor` before debugging the environment; records, no
+Lombok, no ORM; the layer table; the field-spec grammar.
 
-Two things to say no to. **An MCP server is worse than the CLI an agent
-already shells to** — it adds a process, a schema to keep in sync, and a
-failure mode in headless runs, for no capability the CLI lacks. (If it is ever
-wanted: ~600–800 lines, zero crates, and it needs a JSON *parser* jails does
-not have.) And **no LLM inside jails**: deterministic generation is the
-product, and the moment a generator asks a model for a selector you cannot
-golden-file it and you cannot destroy it.
+### 15.2 The rest
+
+**`jails lint`** — a closed rule table over the stale-API families jails
+already knows (`@MockBean`, `javax.validation`, Jackson 2 alongside 3,
+`spring-boot-starter-web`, `@Entity`, Lombok, preview features), plus **`double`
+in money code** from §4.3. Sub-second, exit 1, `file:line`.
+
+**`--json` everywhere.** Three commands have it. `doctor --json`,
+`why --json`, `test --json`, `stats`, `notes` are an afternoon each.
+**`why --json` is highest value** — it makes the explanation available as
+quickfix text, and `why.rs` already stores exactly `{signature, explanation,
+fix}`. **`jails commands --json`** then *deletes* the Lua lists rather than
+pinning them (§6.2).
+
+**`jails explain <kind>`** exposes the rationale the Javadoc carries, so an
+agent stops "fixing" `@Repository` onto the second adapter. **Promote
+`g cases`** — it turns a markdown brief's acceptance bullets into a test
+class, and 8.7 says nobody can find it.
+
+**No MCP server** — worse than the CLI an agent already shells to. **No LLM
+inside jails** — deterministic generation is the product.
 
 ---
 
-## 12. Anti-goals — the union, with reasons
+## 16. Anti-goals
 
 | Temptation | Why not |
 |---|---|
-| A plugin system, `jails recipe intercom`, a template DSL, pack catalogs | README "Not yet". `.jails/app.toml`'s closed `[[generate]]` schema is the answer, and it is already close to the line — a closed schema of existing kinds is defensible, an ordered list of arbitrary user intents a compiler expands is the thing being deferred |
-| Gradle *support* | Distinct from Gradle-directory *tolerance*, which is §8 and is worth having |
-| ORM, JPA, `JpaRepository`, an Active Record clone, lazy loading | SQL stays derived and visible; §5.2 is a column and a foreign key |
-| Django-style `makemigrations` autodetect | Requires models to own the schema — ORM thinking through the back door |
+| Plugin **lifecycle hooks**, arbitrary shell, downloadable packs, a **generator DSL with conditionals**, codegen from an external schema language (note §6.6 Tier 3 is *not* this) | §6.3. `.jails/app.toml`'s closed schema and §6.2's descriptors are data, not logic |
+| Gradle *support* | Distinct from Gradle-directory *tolerance*, which is §12 |
+| ORM, lazy loading, an Active Record clone | `g association` is a constraint, not a mapping layer |
+| A `money` field type, a `payment` kind, a `spider` kind | §4.6 |
 | A `jails-support` runtime jar | ActiveSupport lock-in; capabilities write classes *into* the project |
-| Lombok | Editor tax on modern JDKs; records exist |
-| Preview features, string templates, `StructuredTaskScope`, `LazyConstant` | All still preview at 27; string templates were withdrawn. Virtual threads and `ScopedValue` are final and are the concurrency story |
-| Wrapping crawler4j / webmagic / Nutch / StormCrawler / spider / crawl4ai | Dead, or platforms, or a second runtime. Generate the types |
-| `jails crawl <url>` as a subcommand | jails scaffolds crawlers; it is not one |
-| A `spider` / `inbox` / `conversation` kind, enum or template in core | `src/app.rs:1-6` |
-| A Rust `jails lsp` | ~1.2–1.8k lines, a JSON parser, a second server fighting jdt.ls over `.java` buffers, and the pressure that turns `java.rs` into the parser CLAUDE.md forbids |
-| Migrating to `nvim-java`; neotest; snippets generated from `templates/*.java` | Each discards a correct existing fix, or duplicates `jails g class` with something worse |
-| The AOT cache in `dev`/`test`; CRaC; JBR/DCEVM/HotswapAgent/JRebel | §3 |
-| Maven 4, the build cache extension, `useIncrementalCompilation=false` in generated poms | Not GA / restores a `target/` `clean` just deleted / trades ~200 ms for stale-dependent `NoSuchMethodError` |
-| Making `jails check` incremental | The leftover-`.class` bug is real. The fast path is `jails test`, loudly documented |
-| `TESTCONTAINERS_RYUK_DISABLED` by default | Buys 0.45 s, loses all crash cleanup |
-| Booting a Spring context inside jshell | Dies on the DataSource, tries to drive podman-compose, slower than `jails run`. `jails runner` and `--tc` are the honest designs |
-| Web UIs (Telescope / Horizon / Dev UI analogues) | `why`, `jails queue` and structured events are the terminal-honest half |
-| Redis required for the queue; Elasticsearch for v1 search | §9.3, §9.4 |
-| Auto-fallback to a vendored `new` on network failure | Explicit `--offline`; silent mode switches are how "works on my machine" happens |
-| Treating a skipped test as coverage | 11 of 104 integration tests do nothing on this machine and the suite still says green — `JAILS_REQUIRE_TOOLCHAIN=1` exists for this |
-| Any generator whose failure mode is loud | A loud failure is one the compiler already reports |
+| Lombok; preview features; `StructuredTaskScope` | Editor tax; still preview |
+| **`add crawl`, jsoup, crawler-commons** | Superseded — `http-workflow` does it with zero dependencies |
+| Wrapping crawler4j / webmagic / Nutch / StormCrawler | Dead, platforms, or a second runtime |
+| A Rust `jails lsp` | ~1.2–1.8k lines, a JSON parser, a second server fighting jdt.ls, parser pressure on `java.rs` |
+| The AOT cache in `dev`/`test`; CRaC; JBR as a default | §7 |
+| Maven 4, the build cache extension, `useIncrementalCompilation=false` | Not GA / restores a deleted `target/` / stale-dependent `NoSuchMethodError` |
+| Making `jails check` incremental | The leftover-`.class` bug is real |
+| Forcing virtual threads on | §5.7 — a production system chose the opposite |
+| Treating a skipped test as coverage | `JAILS_REQUIRE_TOOLCHAIN=1` exists for this |
 
 ---
 
-## 13. The sequence
+## 17. The sequence
 
-Effort is in jails-shaped days: golden scenario, README, nvim list, enum entry,
-no plugin. **S** < 1 day, **M** 1–3 days, **L** > 3 days.
+**Proves**: **A** crawler, **B** inbox, **C** payments gateway, **D** ledger
+CLI, **—** infrastructure.
 
-The **Proves** column is the point: it names the proof app whose acceptance
-contract the item closes, so nothing on this list is here because it sounded
-good. **A** = web crawler, **B** = support inbox, **C** = the ledger CLI
-control, **—** = infrastructure for the plan itself.
+| # | Item | § | Effort | Proves |
+|---|---|---|---|---|
+| 0 | **The golden-coverage test** (§8.5) **and the generate/destroy agreement test** (§6.2 A) — same shape, same sitting — then the twelve missing scenarios | §8.5, §6.2 | 1 day | A B C D |
+| 0b | **§6.2 B + D** — artifact builder; delete `destroy`'s 17 hand-written path arms | §6.2 | 2 days | A B C D |
+| 1 | **Stand up App D** (`examples/ledger-cli/`) and **App C** (`examples/payments-gateway/`), run §18, record every friction row | §4.3–4.4, §18 | 1–2 days | C D |
+| 2 | Tier 0 remainder: 8.1–8.4, 8.7–8.9 | §8 | 1 day | A B C **D** |
+| 3 | Editor config: jdt.ls settings + bundles + HCR, `'path'`, `:compiler jails`, keymap split | §14 | S, no Rust | — |
+| 4 | Testcontainers reuse + doctor + `jails setup`; devtools defaults; `mise.toml` from `new` | §10.1 | S | A B C |
+| 5 | `jails test` flags: `Class#method`, `path:line`, `--failed`, `--fail-fast`, `--slowest` | §10.1 | S–M | — |
+| 6 | `why` on every Maven failure; `why --json` | §10.1, §15 | S | A B C D |
+| 7 | **§5.2 observability defaults** + the three doctor checks | §5.2 | M | C |
+| 8 | **§5.3 datasource defaults** incl. the `pg_is_in_recovery` init SQL | §5.3 | M | C |
+| 9 | **The inflector**, **scaffold reads the record**, **refusal messages with `fix:`** | §9.3, §9.4, §9.6 | S each | A B C |
+| 10 | **`g field`** | §9.1 | M | A B C |
+| 11 | **`.jails/files` + `.jails/version`** (§11.2), then **regenerate + 3-way merge** (§11.1) | §11.1–11.2 | M | A B C |
+| 12 | `--timestamps`, `g factory`, `requests/*.http` | §9.5, §9.6 | M total | A B C D |
+| 13 | `g idempotency` | §13.3 | M | C |
+| 14 | Scaffold **refuses** an unmapped project-typed component | §9.2 | S | B C |
+| 15 | §5.4 enforcer rules in `new`; `add coverage`; `add loadtest` | §5.4–5.5 | M | C |
+| 16 | `about --json` v2 + line numbers; projectionist; pickers; `jails src` | §14 | M | — |
+| 17 | **§6.2 C + §6.5** — templates out of `spring.rs`, split the file; **§6.2 E** — type table as data | §6 | M, ongoing | — |
+| 18 | `jails test --fast` + `jails bench` | §10.2 | M | D first |
+| 19 | `add cors` | §13.1 | S | B C |
+| 19b | **§6.6 Tier 2** — template overrides (`.jails/templates/`) + `doctor` reports active overrides | §6.6 | S | — |
+| 20 | `new --offline` + `app init` | §11 | S–M | A B C D |
+| 21 | **§6.2 F** — one descriptor per kind; delete the Lua lists; `[golden]` becomes a required key | §6 | L | — |
+| 22 | §12 marker widening + `jails adopt` | §12 | M | — |
+| 23 | `jails testd` + `--affected` | §10.2 | L | — |
+| 24 | `jails dev` v1 | §10.3 | L | — |
+| 25 | `add sse`; `g auth`, `g webhook`, `add mail`, `g search`; `add k8s` | §13 | M each | B C |
+| 26 | `AGENTS.md` + `jails lint` + `--json` everywhere | §15 | M | — |
+| 27 | Atomic whole-manifest `ChangeSet`; `codemod.rs` | §11 | L | A B C |
 
-| # | Item | § | Effort | Proves | Why here |
-|---|---|---|---|---|---|
-| 0 | **Stand up App C** (`examples/ledger-cli/.jails/app.toml` + its acceptance contract + a gate cell) | §2.5 | S | C | Costs an afternoon and immediately makes 4.1 a failing gate instead of folklore. It is also the only thing that can falsify "generic" along the Spring axis |
-| 1 | Tier 0: all eleven defects + the `mvn validate` matrix + the Lua-pinning test + the golden-coverage test | §4 | 1–2 days | A B **C** | Features land on top of it. Two of them make jails write a broken project, and C hits one on its first run |
-| 2 | Editor config: jdt.ls settings + bundles + HCR, `'path'`/`src.zip`, `:compiler jails`, keymap split, `javac_lint --release`/opt-in | §10 | S, no Rust | — | Test-at-cursor, debugging, `gf` and quickfix — today, with no Rust written |
-| 3 | Testcontainers reuse + doctor + `jails setup`; `spring-devtools.properties`; `mise.toml` from `new` | §6.1 | S | A B | −8 s per container test. The full gate takes 196 s today; most of it is containers |
-| 4 | `jails test` flags: `Class#method`, `path:line`, `--failed`, `--fail-fast`, `--slowest`, rerun snippet, `failIfNoSpecifiedTests=false` | §6.1 | S–M | — | Every test run, including every gate run |
-| 5 | `why` on every Maven failure; `why --json`; doctor/why additions | §6.1, §11 | S | A B C | Multiplies every rule already in the table; the gate's failures become readable |
-| 6 | **The inflector**, **scaffold reads the record off disk**, **refusal messages with `fix:`** | §5.3, §5.4, §5.8 | S each | A B | Half-day changes, all three visible in the first minute of a demo |
-| 7 | **`g field`**, then **relations** | §5.1, §5.2 | M each | A B | The two that move jails from "makes a project" to "grows a project". `g field` first — §5.9 means `app apply` needs it before the manifest can become editable. Relations unblock B's "tenant enforcement against every persisted association", which is its largest open clause |
-| 8 | `--timestamps`, `g factory`, `requests/*.http` | §5.5–§5.7 | M total | A B C | Ride the same generator surface; do them together. Both manifests hand-declare `createdAt`/`discoveredAt` today |
-| 9 | `about --json` v2 + line numbers; projectionist; fzf-lua pickers; `jails src` | §10 | M | — | `:A`/`:E*` and routes/beans jump — 50–200 keystroke-saves a day |
-| 10 | `jails test --fast` (console launcher + classpath cache) + `jails bench` | §6.2 | M | C first | 2.5 s → ~0.5 s, and the first thing that proves its own number. Measure on C, which has no containers to hide behind |
-| 11 | `add cors`, then `add sse` | §9.1, §9.2 | S, M | B | `cors` is small and is what currently makes a jails app unusable from a browser widget — B's whole point |
-| 12 | **Already in flight** — a generic `transition` kind (`generate.rs:855-872`, `spring::transition_files` not yet written, so the tree does not compile). Finish it | §2.4 | M | B | B's `version` column exists and nothing checks it. One generic kind closes a named acceptance clause — and it is the method working as designed |
-| 13 | `add queue` (transactional outbox, reaper, stable delivery ID) | §9.3 | L | B, then A | B's "transactional outbox / provider delivery" clause, and later A's durable frontier. Before mailer and webhook retry |
-| 14 | `add crawl` (+ `deps.tsv` rows, cloned first) and the traversal `usecase` | §9.4 | L | A | A's largest open clause: composing the shipped `fetcher` into finite traversal, plus robots and cancellation. After #4 and #10 |
-| 15 | §8 marker widening + `jails adopt` | §8 | M | — | Changes what the tool *is*: from "makes new projects" to "you can bring it to a codebase" |
-| 16 | `jails testd` + `--affected` | §6.2 | L | — | The biggest single number (35×/345×) and deliberately not first — it has the one unmeasured piece, and an 11 ms test loop is worth little on a model you cannot change |
-| 17 | `jails dev` v1: watcher, `javac`+CDS, trigger file, `why` piping, migrations, keys, timings | §6.3 | L | — | After #10/#16 prove the primitives |
-| 18 | Provenance / `ChangeSet`, `jails status`, `codemod.rs` | §7 | L | A B | Exactly when `app apply` must reconcile a changed manifest line — friction-ledger rows 3 and 4 |
-| 19 | `g auth`, `g webhook`, `add mail`, `g search`, `g timeline` | §9.4 | M each | B | In that order; each waits for a real acceptance clause |
-| 20 | `AGENTS.md` + `jails lint` + `--json` everywhere + `g cases` in README | §11 | M | — | Every agent session |
-| 21 | `new --offline`, `app init`, local OCI build in the gate, hosted CI as a required check | §2.8 | S–M | A B C | The three friction-ledger rows in the harness flow, plus two open delivery clauses |
-| 22 | `add aot`, `jails ship`, `jails upgrade`, `add arch`, `add nullcheck`, `--module`, `g load`, `jails recap` | §6.5, §9.4 | S–M each | — | As they come up |
-
-Items 0–6 are roughly a week of mostly small changes and they change the feel
-of every subsequent hour. Items 7–8 are the ones you pay for on **every single
-model change**. Item 16 is the biggest number and is correctly late.
+Items 0–2 close a verification hole that is currently growing once per kind.
+Items 7–8 are what make "batteries included" true rather than a slogan. Items
+9–14 are the authorship debt, paid on **every model change**. Item 23 is the
+biggest latency number and is correctly late.
 
 **The stopping rule:** when a proof app's acceptance clause is closed, stop
 working on that capability. `ACCEPTANCE.md` says the gate may report
 `generated`, `configured`, `user-owned` or `not selected` and **must never
-call an unproved property guaranteed or production ready** — that sentence is
-what keeps this list from growing forever.
+call an unproved property guaranteed or production ready.**
 
 ---
 
-## 14. Measure before promising
+## 18. Runbook — the exact commands
 
-These are the numbers a feature in this plan rests on that have **not** been
-measured on this machine. `jails bench` exists to answer the first four.
+Nothing in this section has been run in the session that wrote it. **Record
+every deviation in `examples/DOGFOOD.md`'s friction ledger as you go; that
+ledger is the output, not a by-product.**
 
-1. Console-launcher wall time here (estimated 0.35–0.6 s) and the resident-JVM
-   band (estimated 50–150 ms).
-2. The cost of a fresh `URLClassLoader` per `testd` run — the one unmeasured
-   piece of the 110 ms figure.
-3. How many distinct Spring contexts a jails scaffold's suite actually builds
-   (`missCount` under `org.springframework.test.context.cache=DEBUG`). 1, 2 or
-   3 decides whether context accounting is worth anything.
-4. `postgres:17` with reuse under podman: confirm ~0 s on the second run, and
-   confirm `withReuse(true)` does not disturb the `@ServiceConnection` wiring.
-5. **Does a `@SpringBootTest` with Testcontainers succeed on this machine
-   today?** `DOCKER_HOST=unix:///run/user/1000/podman/podman.sock` is exported
-   and `podman.socket` is active, which contradicts the documented gotcha in
-   CLAUDE.md. Re-verify before designing around it:
-   `JAILS_REQUIRE_TOOLCHAIN=1 JAVA_HOME=~/.local/share/jdk/jdk-27 cargo test`.
-6. Where jdt.ls writes `.class` files in this setup — `target/classes` via m2e
-   is the expectation, and devtools prints the classpath at startup. **The
-   whole §6.3 "the loop already exists" finding pivots on it.**
-7. Whether `CSVFormat.Builder.build()` still exists at commons-csv 1.14.1 —
-   CLAUDE.md says it was *renamed* in 1.13; the javadoc says *deprecated*. Add
-   the checkout to `deps.tsv` and settle it.
-8. The newest `gg.jte:jte-spring-boot-starter-4` and the released coordinates
-   for jsoup and the split WireMock artifacts.
+```bash
+cd ~/code/jails
+cargo build && cargo test && cargo install --path .
+export JAILS_BIN="$PWD/target/debug/jails"
+```
 
-### The decision that was already made, and what it unblocks
+**App C — payments gateway**
 
-Three of the six source documents argued that `pom::TARGET_RELEASE = 27` was
-wrong: JDK 27 is non-LTS, was not GA until 2026-09-15, had no vendor build in
-mise's registry, had no `eclipse-temurin:27-jre` image, made `doctor` FAIL by
-default on any shell without the mise hook, and silently skipped **11 of 104
-integration tests** while the suite still reported green.
+```bash
+cd /tmp && "$JAILS_BIN" new payments-gateway --deps web,validation
+mkdir -p payments-gateway/.jails
+cp ~/code/jails/examples/payments-gateway/.jails/app.toml payments-gateway/.jails/app.toml
+cd payments-gateway
+"$JAILS_BIN" app plan                 # must write nothing; read the intent list
+"$JAILS_BIN" app apply --no-start
+"$JAILS_BIN" routes && "$JAILS_BIN" beans && "$JAILS_BIN" stats
+"$JAILS_BIN" doctor
+"$JAILS_BIN" migrate --check
+"$JAILS_BIN" check                    # mvn clean verify
+git -C . diff --stat                  # MUST be empty of hand edits
+```
 
-**It has been changed.** `src/pom.rs:32` now reads `TARGET_RELEASE = "25"`,
-and `tests/golden/scaffold-plain/pom.xml` pins `<maven.compiler.release>25`.
-`examples/ACCEPTANCE.md` records the gate passing on "Java 25 LTS
-compilation". Nothing further is needed here — but four consequences follow
-that the plan should collect rather than rediscover:
+**App D — ledger CLI (no Spring)**
 
-1. **The tier-3 skips should be gone.** JDK 26 on a bare PATH accepts
-   `--release 25`. Run `JAILS_REQUIRE_TOOLCHAIN=1 cargo test` and confirm the
-   11 tests now execute; if any still skip, the gate is measuring something
-   else and that is worth knowing.
-2. **`doctor`'s daily false FAIL should be gone**, since `java` on PATH is 26
-   and the project targets 25. That removes the "health check that cries
-   wolf" problem independently of the `JAVA_HOME` fix.
-3. **`add docker` no longer needs a `jlink` stage.** `eclipse-temurin:25-jre`
-   exists, so the runtime stage is the plain `-jre` base — simpler than the
-   design two documents wrote around the EA problem.
-4. **The JetBrains Runtime path is reachable for the first time.** JBR's
-   ceiling is 25 and the target is now 25, so `-XX:+AllowEnhancedClassRedefinition`
-   is a real option for `jails dev` (§6.3) rather than a dead end. It stays
-   opt-in and `doctor`-detected — a second JVM is a big ask for a default —
-   but it moves from "blocked" to "an experiment worth an afternoon", and it
-   is the only thing that would make a record-component edit hot-swappable.
+```bash
+cd /tmp && "$JAILS_BIN" new-cli ledger-cli
+mkdir -p ledger-cli/.jails
+cp ~/code/jails/examples/ledger-cli/.jails/app.toml ledger-cli/.jails/app.toml
+cd ledger-cli
+"$JAILS_BIN" app plan
+"$JAILS_BIN" app apply --no-start     # EXPECT §8.1 to fail here — that is the point
+mvn -o validate                       # the assertion that 8.1 is real
+"$JAILS_BIN" check
+```
 
-**What still needs recording** is the reason, next to the pin, in CLAUDE.md —
-which currently documents the 27 rationale and the mise symlink, and is now
-wrong. That is one of the drift items in §4.9, and it matters more than the
-others because CLAUDE.md is the first thing every agent on this repo reads.
+**A and B — regression, unchanged**
+
+```bash
+cargo test app_manifests_compile_without_manual_source_edits -- --nocapture
+cargo test app_manifests_pass_the_full_generated_verification_gate -- --nocapture
+```
+
+**What to record for each app** (§4.5): manifest lines, generated lines,
+**hand-written lines (must be 0)**, manual interventions, command count, wall
+time. Then add one row per friction item to `DOGFOOD.md`, in its existing
+shape: *Application | Step | Manual intervention or weak output | Generic
+jails improvement.*
+
+**Then ask the question this whole exercise exists to answer:** which two
+commands in the runbook above should have been one? Today the answer is
+already visible — `new` + `mkdir` + `cp` + `app apply` is four steps that
+should be `jails new <name> --app <manifest>`. That is item 20.
 
 ---
 
-## 15. Provenance
+## 19. Measure before promising
 
-What this file is made of, and how much to trust each part.
+1. Console-launcher wall time here (est. 0.35–0.6 s) and the resident-JVM band
+   (est. 50–150 ms).
+2. The cost of a fresh `URLClassLoader` per `testd` run.
+3. How many distinct Spring contexts the proof apps build (`missCount` under
+   `org.springframework.test.context.cache=DEBUG`). At 293 s and 123 tests
+   this is the highest-value measurement in the list.
+4. `postgres:17` with reuse under podman, and whether `withReuse(true)`
+   disturbs `@ServiceConnection`.
+5. Where jdt.ls writes `.class` files here — **§10.3's "the loop already
+   exists" finding pivots on it.**
+6. p99 for App C under the §5.5 k6 profile, before any performance claim.
+7. Whether `CSVFormat.Builder.build()` still exists at commons-csv 1.14.1.
 
-- **`ideas-opus.md`** — the loop-latency framing, `jails dev`, the sub-second
-  test list, `g sse`/`g page`/`add auth`, `new --template`, `jails scratch`,
-  `jails docs`, `jails upgrade`. Its two headline mechanisms (the AOT cache in
-  the dev loop, enhanced class redefinition) are dead; see §3. Everything else
-  survives.
+### The JDK decision, already made
+
+`TARGET_RELEASE` is `"25"` and the golden poms pin release 25. Four
+consequences to collect: **the tier-3 skips should be gone** (run
+`JAILS_REQUIRE_TOOLCHAIN=1 cargo test` and confirm); **`doctor`'s daily false
+FAIL should be gone**; **`add docker` no longer needs `jlink`** because
+`eclipse-temurin:25-jre` exists, which is presumably why both images now
+build; and **the JetBrains Runtime path is reachable** (§7).
+
+Note the payments gateway targets **Java 26**, not 25. That is a data point,
+not a reason to move: 25 is LTS and everything in this plan is available at
+25. **What still needs recording is the reason, next to the pin, in
+CLAUDE.md**, which documents the 27 rationale and is now wrong (8.7).
+
+---
+
+## 20. Provenance
+
+- **`ideas-opus.md`** — loop-latency framing, `jails dev`, sub-second tests.
+  Its two headline mechanisms (AOT in the dev loop, enhanced redefinition) are
+  dead; see §7.
 - **`ideas-grok.md`** — vim-rails projections, `jails src`, `g field` + alter
-  migrations, `add html` + `g spider`, `g webhook`/`g auth`/`add sse`/`g
-  mailer`, the Lua-list pinning test, and the sharpest anti-goal table. Its
-  webhook algorithm and its "console with beans is a trap" call are corrected
-  and confirmed respectively.
-- **`ideas-kimi.md`** — the synthesis discipline and K1–K21: `recap`, `.env`,
-  `inspect db`, `g factory`, `--timestamps`, `add queue`, `g search`, `add
-  flags`, `add shedlock`, `g extractor`, `g load`, `add ci`, `add docker`,
-  `requests/*.http`, `new --offline`, `migrate --status`, `db --seed`, CRaC,
-  `AGENTS.md`, `why` on every failure, `--module`. `add queue` is the single
-  most valuable thing it added.
-- **`ideas-sol.md`** — the `ChangeSet`/provenance/journal design, the CLI
-  schema and event protocol, the production contract, package-by-feature, the
-  genericity release gate (six questions every core change must pass), the
-  toolchain resolver, and the crawler safety corpus. The largest and the most
-  ambitious; its sequencing (provenance before evolution) is the one place
-  this plan overrules it, in §7.
-- **`ideas-fable.md`** — twelve research passes with `file:line` citations. The
-  correction table in §3 is largely its work, as is the jdt.ls/HCR path, the
-  `--affected` constant-pool index, `spring-devtools.properties`, the Rails
-  migration grammar, the queue reaper, the JWT `exp` finding, the SSE
-  `ReentrantLock` finding, `crawlercommons`, projectionist, and `run --tc`.
+  migrations, the Lua pinning test. Its webhook algorithm is corrected; its
+  `add html` + `g spider` design is superseded by `http-workflow`.
+- **`ideas-kimi.md`** — the synthesis discipline and K1–K21. `add queue` was
+  its best addition and has shipped as `durable-job`; `g load` is superseded
+  by §5.5.
+- **`ideas-sol.md`** — `ChangeSet`/provenance, the CLI schema protocol, the
+  production contract, the genericity gate (§4.6), the capability lifecycle
+  trait that §6.2 option F is the data-driven form of. Its "infer
+  aggressively, guess conservatively" is now implemented in `usecase`. Its
+  sequencing is overruled once (§11).
+- **`ideas-fable.md`** — twelve research passes with `file:line` citations.
+  §7's table is largely its work, as are the jdt.ls/HCR path, the `--affected`
+  index, `spring-devtools.properties`, the JWT `exp` finding, the SSE
+  `ReentrantLock` finding and projectionist. It predicted §8.5 before it
+  happened.
 - **`ideas-opus2.md`** — the only document that ran the tool. Every number in
-  §1 and every defect in §4 traces to it. It is also where the authorship
-  budget (§1.2–§1.3) comes from, which is the axis this plan is organised
-  around.
+  §2 and the authorship budget come from it.
+- **`examples/`** — `ACCEPTANCE.md`, `DOGFOOD.md`, the manifests. The harness,
+  and §4 makes it the plan's driver.
+- **`/home/laith/code/projects/payments-gateway-service`** — read for this
+  rewrite: `AGENTS.md`, the root POM's plugin set,
+  `payments-gateway-service-web/src/main/resources/application.yml` (the
+  `management:`, `spring.datasource:` and `server:` blocks), `k8s/chart`,
+  `load-tests/`. §5 is entirely from it, restated in generic form.
 
-- **`examples/`** — `ACCEPTANCE.md` (the done/not-done boundary, §2.3–§2.4),
-  `DOGFOOD.md` (the twenty-one-defect ledger and the friction ledger), and the
-  two manifests. This is not a source document, it is the *harness*, and §2
-  makes it the plan's driver rather than an appendix.
+**Verified against `e523c16`** (still live unless noted): 8.1 (versionless
+validation dep), 8.2 (golden pom), 8.3 (`run.rs` mangle-then-route), 8.4
+(`run_watched`'s single non-watch caller; `.java`-only scan), 8.5 (`grep -c`
+→ 0 for twelve kinds and capabilities; 162 files / 25 scenarios unchanged
+across eight new kinds), 8.6 (6,459 lines, ~42 `r#"package {pkg};` blocks),
+8.7 (`grep -c cases README.md` → 1; `toxiproxy`/`app` absent from the Lua;
+CLAUDE.md's 8-layer description against 11), 9.1 (no `ArtifactKind::Field`),
+9.2 ("Not persisted" in `generate/repository.rs`), 9.3 (`sql.rs` naive
+`+ "s"`), 9.4 (`scaffold` does not read the record), 9.5 (no `--timestamps`),
+13.1 (**zero** `cors` matches), 10.1 (**zero** `withReuse` matches), §12
+(`find_project_root`, `pom.xml` only).
 
-**Re-verified against the working tree while writing this file** (still live
-unless noted): §4.1 (`generate.rs:1029,1059`, `spring.rs:29` — versionless,
-no flavor check), §4.2 (`tests/golden/scaffold-plain/pom.xml:16` — still
-versionless, though the pom now pins release **25**), §4.4
-(`run.rs`, `pub fn test` — the mangle-then-route bug reads exactly as
-described), §4.5 (`run.rs:83` `run_watched`, sole caller `:372`; `watch()` at
-`:264`), §4.6 (`run.rs:325`), §4.9 (`grep -c cases README.md` → 1;
-`toxiproxy`/`app` absent from `jails.nvim/lua/jails/init.lua`), §5.1 (no
-`ArtifactKind::Field`), §5.3 (`sql.rs:331-338`, naive `+ "s"`, and its unit
-test still asserts only `rewards`/`work_items`/`news`), §5.4
-(`generate.rs:710,789` — `repo` and `dto` read the record, `scaffold` does
-not), §5.5 (no `--timestamps` anywhere in `src/`), §8 (`generate.rs:86-96`,
-`pom.xml` only), §9.1 (**zero** `cors` matches in `src/`, `templates/`,
-`README.md`), §6.1 (**zero** `withReuse` matches).
-
-**A second pass over `src/` and `templates/` added** §4.10 (nine kinds and
-capabilities with zero golden coverage, against `tests/golden.rs:50`'s claim
-of total coverage), §4.11 (`spring.rs` at 5,808 lines with 42 inline Java
-bodies; the `add`-side template migration confirmed **done**, which retires
-`ideas-fable.md` §8.11's Toxiproxy item), the eight record-readers in §5.4,
-`usecase`'s compatibility-check-and-infer engine and `require_scope_authorizer`
-in §5's preamble, and the precise `app.rs` state-key mechanism in §5.9.
-Counted today: 27,485 lines of Rust across 33 files; 51 templates (4
-`generate`, 17 `add`, 30 `spring`); 162 golden files in 25 scenarios; 50
-`doctor` checks; 20 `why` rules; `--json` on exactly three commands
-(`about`, `routes`, `beans`), and `line` numbers on `Note` but not on `Route`
-or `Bean`.
-
-**Corrected while writing this file** — the earlier draft of this plan got
-these wrong by truncating an enum extraction, and they matter because four of
-the six source documents propose as future work things that already exist:
-`ArtifactKind` has **26** variants, not 22 — including `Fetcher`,
-`DurableJob`, `Usecase` and `Query`. `Capability` has **18**, not 16 —
-including `Ci` and `Docker`. `@scope` is a shipped field constraint
-(`generate/field.rs:349,360`). And `pom::TARGET_RELEASE` is **`"25"`**, not
-27, which resolves a decision three source documents argued about and
-unblocks four things — see §14.
-
-**One defect the source documents report is already fixed**: `doctor` now
-resolves `JAVA_HOME` before PATH (`doctor.rs:871-875`).
-
-**Not verified here, and therefore not load-bearing**: every latency figure
-attributed to `ideas-opus2.md` §1 and `ideas-fable.md` §2 (they were measured
-in those sessions, not this one); the 196 s gate duration and the "both
-manifests pass `mvn verify`" claims, which come from `DOGFOOD.md` rather than
-from a run in this session; the upstream `deps/` line numbers, which drift —
-prefer the stable anchors (function names, enum variants, the grep itself);
-and everything in §14.
-
-This file will drift the same way `validation/README.md` did. When it
-contradicts the working tree, the working tree wins.
+**Not load-bearing**: §2.1's latency figures (measured in earlier sessions);
+the 293 s and "both images built" claims, from `ACCEPTANCE.md` rather than a
+run here; **every manifest in §4.3 and §4.4, which has not been executed** —
+§18 is how they become evidence; the upstream `deps/` line numbers, which
+drift; and everything in §19.
