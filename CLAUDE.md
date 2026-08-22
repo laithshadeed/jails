@@ -395,14 +395,25 @@ templates:
   build their paths through the same `place()` closure. A kind added to one
   and not the other silently strands files.
 
-  `destroy` still holds a `match kind` with **17 hand-written `vec![]` arms**
-  that are a manual transcription of paths the generator right next door
-  already computes — adding `usecase` meant writing ten
-  `format!("{name}…java")` lines twice, and `plan.md` §6.2 has the structural
-  fix (derive the list from the generator). Until that lands, the drift is at
-  least *caught*: `tests/agreement.rs` compares the two over every kind in
-  the scenario table, in both directions. If you add a kind, add its destroy
-  arm; the agreement test is what tells you that you forgot.
+  **`destroy` no longer transcribes paths.** It reads the record first
+  (`.jails/ledger.toml`), and where there is none it recomputes through
+  `generate::artifacts_for` — the same function `generate` writes from.
+  `KIND_FILES`, 672 lines of hand-written `(tree, layer, placement, filename)`
+  rows, is deleted.
+
+  The trick that made that possible: `destroy` is given a kind and a name and
+  never the arguments, and most generators refuse without them — but **those
+  arguments decide the file contents, not the file names**. So
+  `recomputed_paths` offers each generator a short list of argument *shapes*
+  and keeps the paths of the first it accepts. **Adding a kind therefore needs
+  no destroy arm at all**; if it demands an argument no shape supplies, it
+  shows up in `tests/agreement.rs`'s `SILENT_WITHOUT_A_RECORD`, which must
+  name it with the reason. That test now runs both directions twice: once with
+  the record, and once over a project whose `.jails/` has been deleted, which
+  is the only way the recomputed path is exercised at all.
+
+  A kind with no answer prints why, naming the generate command that would
+  record it — not a bare "nothing to destroy" over files that are right there.
 
 ## Import order is normalised at write time, not in templates
 

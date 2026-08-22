@@ -148,6 +148,143 @@ fn would_remove(root: &Path, kind: &str, name: &str) -> Result<BTreeSet<String>,
         .collect())
 }
 
+/// The same question, asked of a project that has **no** record of what jails
+/// wrote -- which is every project generated before `.jails/` existed.
+///
+/// This is the half `destroy_removes_exactly_what_generate_created` could never
+/// reach: the recorded path list always wins, so the derived path was dead code
+/// under test. It is the only path such a project has, and until this existed
+/// nothing ran it.
+#[test]
+fn destroy_agrees_with_generate_on_a_project_with_no_recorded_paths() {
+    let mut findings: Vec<String> = Vec::new();
+    // How many intents the derived path can still name at all. Without this the
+    // test passes trivially the day recomputation starts returning nothing --
+    // "destroy would remove nothing" violates no assertion below.
+    let mut named = 0usize;
+    let mut silent: Vec<String> = Vec::new();
+
+    for scenario in SCENARIOS {
+        let root = scenarios::prepare(scenario);
+        let mut created_by: BTreeMap<usize, BTreeSet<String>> = BTreeMap::new();
+        let mut before = scenarios::file_set(&root);
+        for (index, step) in scenario.steps.iter().enumerate() {
+            scenarios::run_step(&root, scenario.name, step);
+            let after = scenarios::file_set(&root);
+            created_by.insert(index, after.difference(&before).cloned().collect());
+            before = after;
+        }
+        let all_created: BTreeSet<String> = created_by.values().flatten().cloned().collect();
+
+        // Erase the ledger: what is left is a project jails can only reason
+        // about by recomputing.
+        let _ = std::fs::remove_dir_all(root.join(".jails"));
+
+        for (index, step) in scenario.steps.iter().enumerate() {
+            if !matches!(step.first(), Some(&"g") | Some(&"generate")) {
+                continue;
+            }
+            let (kind, name) = (step[1], step[2]);
+            if FORWARD_ONLY.contains(&kind) {
+                continue;
+            }
+            let created = &created_by[&index];
+            let where_ = format!("{}/{kind} {name} (no record)", scenario.name);
+
+            let Ok(removed) = would_remove(&root, kind, name) else {
+                silent.push(format!("{where_} (refused)"));
+                continue;
+            };
+            if removed.is_empty() {
+                silent.push(where_.clone());
+            } else {
+                named += 1;
+            }
+            for path in &removed {
+                if !all_created.contains(path) {
+                    findings.push(format!(
+                        "{where_}: destroy would remove `{path}`, which no jails command wrote"
+                    ));
+                }
+            }
+            // Not the other direction. Without the record, a kind whose paths
+            // depend on the fields it was given cannot name them all, and
+            // under-naming is the *safe* failure -- the reader keeps a file
+            // and deletes it by hand. Over-naming is the one that loses work,
+            // and that is what is checked above.
+            let _ = created;
+        }
+    }
+
+    assert!(
+        findings.is_empty(),
+        "on a project with no recorded paths, destroy names {} file(s) nothing generated:\n  {}",
+        findings.len(),
+        findings.join("\n  ")
+    );
+    // Named exactly, not counted. A count would let a kind go silent while
+    // another started answering, and the sum would not move -- and this list
+    // is what took over the job `NO_FILE_TABLE` used to do: a kind `destroy`
+    // cannot answer for has to be *declared* so, with a reason.
+    let silent_kinds: BTreeSet<&str> = silent
+        .iter()
+        .filter_map(|entry| entry.split('/').nth(1))
+        .filter_map(|rest| rest.split(' ').next())
+        .collect();
+    let expected: BTreeSet<&str> = SILENT_WITHOUT_A_RECORD
+        .iter()
+        .map(|(kind, _)| *kind)
+        .collect();
+    assert_eq!(
+        silent_kinds, expected,
+        "recomputation's silent kinds changed. It named files for {named} intent(s).\n\n\
+         A kind that went silent is a regression: `destroy` on a project with no record \
+         will say \"nothing to destroy\" over files that are right there. A kind that \
+         started answering is an improvement -- take it out of SILENT_WITHOUT_A_RECORD."
+    );
+    assert!(
+        SILENT_WITHOUT_A_RECORD
+            .iter()
+            .all(|(_, why)| !why.is_empty()),
+        "every entry states what argument recomputation cannot guess"
+    );
+}
+
+/// Kinds whose paths cannot be recomputed once the record is gone, and why.
+///
+/// `destroy` offers each generator a short list of argument shapes and keeps
+/// the paths of the first it accepts (`generate::recomputed_paths`). These six
+/// demand an argument no generic shape supplies -- a specific enum, a specific
+/// target, a capability. Recomputation yields nothing for them, `destroy` says
+/// so in as many words, and the reader deletes by hand.
+///
+/// Under-naming is the safe failure. The alternative, a hand-written table of
+/// every path every kind writes, is what `abstract.md` rungs 4-5 removed: it
+/// drifted, and the test that caught the drift was a receipt for a decision
+/// nobody had made.
+const SILENT_WITHOUT_A_RECORD: &[(&str, &str)] = &[
+    (
+        "transition",
+        "the state enum it moves a resource through, which no generic probe can name",
+    ),
+    (
+        "usecase",
+        "`--yields` turns on the outbox half, which needs capabilities the project may not have",
+    ),
+    (
+        "durable-job",
+        "the use case it drives, which must already exist under a name only the caller knew",
+    ),
+    (
+        "http-workflow",
+        "the fetcher and the resource it walks, both specific types",
+    ),
+    (
+        "http-sink",
+        "the outbound payload type, which is not derivable from the sink's name",
+    ),
+];
+
 #[test]
 fn destroy_removes_exactly_what_generate_created() {
     let mut findings: Vec<String> = Vec::new();

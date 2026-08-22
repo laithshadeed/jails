@@ -501,7 +501,24 @@ keeping.
 
 ### 6.2 What falls out rather than being built
 
-- **`KIND_FILES` deleted.** `destroy` = `plan(…).files.map(path)`; bodies are
+- **`KIND_FILES` deleted** — and not quite the way this section imagined.
+  `destroy` is given a kind and a name, never the arguments, and most
+  generators refuse without them. The insight that made the deletion possible
+  is that **those arguments decide the file contents, not the file names**: so
+  `recomputed_paths` offers each generator a short list of argument *shapes*
+  and keeps the paths of the first it accepts. Seven rows, describing what
+  generators demand, in place of 672 describing what they produce — and a row
+  that goes stale makes a kind stop answering, which `tests/agreement.rs` now
+  fails on by name rather than by count.
+
+  Six kinds still cannot be recomputed (`SILENT_WITHOUT_A_RECORD` in that test
+  names each with the argument no shape can guess). They yield nothing, and
+  `destroy` says so in as many words rather than printing "nothing to destroy"
+  over files that are right there. Under-naming is the safe failure; the table
+  that avoided it drifted, and the test catching the drift was §9's receipt for
+  a decision nobody had made.
+
+  The original sketch: `destroy` = `plan(…).files.map(path)`; bodies are
   never rendered because `Body` is lazy. plan.md §6.2 B as a consequence, not a
   project.
 - **`--pretend` cannot disagree with apply** — `describe` and `apply` consume
@@ -628,8 +645,8 @@ that a silent overwrite had been hiding.
 | 1 | Adopt `Project` + `Layers`; thread instead of `root` | Introduce Parameter Object | 188 `root: &Path`; the 8–11-param clump; ~120 re-reads | 2–3 d, mechanical (`Project::root()` keeps old sites alive mid-move) |
 | 2 | One `Change`; delete `Artifact`/`NewFile`/`SpringSlice`/tuple | Extract Class | 4 shapes → 1 | 1 d |
 | 3 | One `apply`/`revert`/`describe`; `Change` monoid | Command with undo | `add`'s dry-run branch; `remove`'s longhand; `dry_run\|\|pretend`; **plan.md §11's ChangeSet** | 1–2 d |
-| 4 | `Body` lazy; `plan` pure | Separate Query from Modifier | the reason `KIND_FILES` exists | 1 d |
-| 5 | Derive `destroy` from `plan`; **delete `KIND_FILES`** | — | plan.md §6.1 copy 2 | 0.5 d, free after 4 |
+| ✅ 4 | `artifacts_for` is the query; `generate` is the modifier | Separate Query from Modifier | the reason `KIND_FILES` existed | 1 d |
+| ✅ 5 | `destroy` recomputes from `artifacts_for`; **`KIND_FILES` deleted** (−1,017 lines) | — | plan.md §6.1 copy 2 | 0.5 d, free after 4 |
 | 6 | `Edit` + `apply/codemod.rs` | Replace Conditional with Polymorphism | splices across 5 modules; 29 production `fs::write` sites | 1 d |
 | 7 | Typed `Refs`; `on`/`yields` in `app.toml`, `strategy_on` deprecated alias | Replace Type Code with Subclasses | §4.4 | 1 d |
 | 8 | ✅ One `.jails/ledger.toml`; identity = (recipe,name,package) | Entity vs Value Object | 5 machine-owned state files → 1; **§9.7 fixed structurally** | 1–2 d |
@@ -688,7 +705,7 @@ confidence than the five before it. Three answers, in descending strength:
 | 1 | `root: &Path` count 188 → under 40; no `spring.rs` fn over 5 params |
 | 2 | exactly one struct in `src/` with a `contents`/`body` field |
 | 3 | `add.rs` loses its `if dry_run` branch; `remove` under 60 lines; zero `dry_run \|\| pretend` |
-| 4–5 | `KIND_FILES` and `NO_FILE_TABLE` deleted; `tests/agreement.rs` still green |
+| ✅ 4–5 | `KIND_FILES` and `NO_FILE_TABLE` deleted; `tests/agreement.rs` still green |
 | 6 | zero `fs::write` outside `src/apply/` |
 | 8 | ✅ **met.** `.jails/` holds 2 files (`the_goldens_still_hold_the_properties_that_matter`); an edited `fields` line round-trips (`app_manifest_merges_an_edited_intent_over_user_changes`) |
 | 9 | `doctor.rs` under 700 lines with capability checks still passing |

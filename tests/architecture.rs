@@ -131,7 +131,7 @@ fn gates() -> Vec<(Ratchet, usize)> {
             Ratchet {
                 name: "`KIND_FILES`/`NO_FILE_TABLE` references",
                 rung: "4–5 — Separate Query from Modifier; derive `destroy`",
-                ceiling: 2,
+                ceiling: 0,
                 target: 0,
                 why: "A second transcription of the file list the generator right next door \
                       already computes. `tests/agreement.rs` polices it; abstract.md §9 says \
@@ -232,7 +232,7 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // relocated, and the next monolith was already the one
                 // abstract.md §3.2 calls Ousterhout's named anti-pattern
                 // verbatim: parse -> dispatch -> write -> side effects.
-                ceiling: 2379,
+                ceiling: 1813,
                 target: 700,
                 why: "The row above can be satisfied by *moving* a monolith rather than \
                       decomposing one, so this asks the question the split is actually for: \
