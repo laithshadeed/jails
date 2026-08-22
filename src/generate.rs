@@ -1,4 +1,5 @@
 use crate::Result;
+use crate::model::{Artifact, Change, Layer, Project};
 use clap::ValueEnum;
 use std::fs;
 use std::io::Write as _;
@@ -1003,33 +1004,15 @@ pub(crate) mod layout {
     pub const MESSAGING: &str = "messaging";
 }
 
-/// Ensure Failsafe is configured, whenever jails writes an `*IT`.
-///
-/// Called from the write path rather than from each kind's arm, so a new
-/// generator that emits an integration test cannot forget it. Without this
-/// the generated `*IT` never executes and `mvn verify` still reports
-/// success -- a test that silently does not run is worse than no test.
-fn ensure_failsafe(root: &Path, artifacts: &[Artifact]) -> Result<()> {
-    let writes_an_it = artifacts.iter().any(|a| {
+/// Whether this change writes an integration test and therefore needs the
+/// Failsafe plugin. Derived from the planned files so a recipe cannot forget.
+fn writes_an_it(artifacts: &[Artifact]) -> bool {
+    artifacts.iter().any(|a| {
         a.path
             .file_name()
             .and_then(|n| n.to_str())
             .is_some_and(|n| n.ends_with("IT.java"))
-    });
-    if !writes_an_it {
-        return Ok(());
-    }
-    let pom = crate::pom::read(root)?;
-    if let Some(updated) = crate::pom::add_plugin(
-        &pom,
-        crate::spring::FAILSAFE_ARTIFACT,
-        crate::spring::failsafe_plugin(crate::pom::flavor(&pom)),
-    )? {
-        fs::write(root.join("pom.xml"), updated)
-            .map_err(|e| format!("failed to write pom.xml: {e}"))?;
-        println!("  plugin {}", crate::spring::FAILSAFE_ARTIFACT);
-    }
-    Ok(())
+    })
 }
 
 /// Every generated test is written against AssertJ, so the project has to
@@ -1088,6 +1071,34 @@ fn ensure_dependency(root: &Path, dep: &crate::pom::Dependency) -> Result<()> {
     }
 }
 
+/// Apply the POM portion of a planned change in memory and write it once.
+fn apply_build_change(root: &Path, pom: &str, change: &Change) -> Result<()> {
+    let mut updated = pom.to_string();
+    let mut changed = false;
+
+    // Preserve the historical insertion order (plugin, AssertJ, recipe
+    // dependencies) while collapsing all edits into one filesystem write.
+    for (artifact_id, body) in &change.plugins {
+        if let Some(next) = crate::pom::add_plugin(&updated, artifact_id, body)? {
+            updated = next;
+            changed = true;
+            println!("  plugin {artifact_id}");
+        }
+    }
+    for dep in &change.deps {
+        if let Some(next) = crate::pom::add_dependency(&updated, dep)? {
+            updated = next;
+            changed = true;
+            println!("  dep {}:{}", dep.group_id, dep.artifact_id);
+        }
+    }
+    if changed {
+        fs::write(root.join("pom.xml"), updated)
+            .map_err(|e| format!("failed to write pom.xml: {e}"))?;
+    }
+    Ok(())
+}
+
 /// Spring-only generator kinds refuse politely rather than writing code that
 /// cannot compile.
 fn require_spring_project(root: &Path, kind: &str) -> Result<()> {
@@ -1115,12 +1126,6 @@ pub(crate) fn main_dir(root: &Path, pkg: &str) -> PathBuf {
 
 pub(crate) fn test_dir(root: &Path, pkg: &str) -> PathBuf {
     root.join("src/test/java").join(pkg_dir(pkg))
-}
-
-struct Artifact {
-    kind: &'static str,
-    path: PathBuf,
-    contents: String,
 }
 
 /// Write a file jails is creating, into a project whose root the caller
@@ -1415,8 +1420,9 @@ pub fn generate_with_timestamps(
     strategy_yields: Option<&str>,
     pretend: bool,
 ) -> Result<()> {
-    let root = find_project_root()?;
-    let base = base_package(&root)?;
+    let project = Project::discover()?;
+    let root = project.root().to_path_buf();
+    let base = project.base().to_string();
 
     let expanded_fields;
     let fields = if timestamps {
@@ -1477,8 +1483,8 @@ pub fn generate_with_timestamps(
     let name = strip_redundant_suffix(kind, &capitalize(name));
     // `--package` replaces the conventional home for every artifact in this
     // call; without it each kind goes where its convention says.
-    let config = crate::config::Config::load(&root)?;
-    let place = |default: &str| subpackage(&base, package.unwrap_or(config.layer(default)));
+    let config = project.layers();
+    let place = |default: &str| project.package_named(default, package);
 
     let artifacts = match kind {
         ArtifactKind::Scaffold => {
@@ -2137,31 +2143,39 @@ pub fn generate_with_timestamps(
             artifacts
         }
         ArtifactKind::Command => {
-            let cli = place(layout::CLI);
+            let cli = project.package(Layer::Cli, package);
             vec![
                 Artifact {
                     kind: "command",
-                    path: main_dir(&root, &cli).join(format!("{name}Command.java")),
+                    path: project
+                        .main(Layer::Cli, package)
+                        .join(format!("{name}Command.java")),
                     contents: command_java(&cli, &name),
                 },
                 Artifact {
                     kind: "command test",
-                    path: test_dir(&root, &cli).join(format!("{name}CommandTest.java")),
+                    path: project
+                        .test(Layer::Cli, package)
+                        .join(format!("{name}CommandTest.java")),
                     contents: command_test(&cli, &name),
                 },
             ]
         }
         ArtifactKind::Cli => {
-            let cli = place(layout::CLI);
+            let cli = project.package(Layer::Cli, package);
             vec![
                 Artifact {
                     kind: "cli",
-                    path: main_dir(&root, &cli).join(format!("{name}Cli.java")),
+                    path: project
+                        .main(Layer::Cli, package)
+                        .join(format!("{name}Cli.java")),
                     contents: cli_java(&cli, &format!("{name}Cli"), &name.to_lowercase()),
                 },
                 Artifact {
                     kind: "cli test",
-                    path: test_dir(&root, &cli).join(format!("{name}CliTest.java")),
+                    path: project
+                        .test(Layer::Cli, package)
+                        .join(format!("{name}CliTest.java")),
                     contents: cli_test(&cli, &format!("{name}Cli")),
                 },
             ]
@@ -2197,7 +2211,40 @@ pub fn generate_with_timestamps(
         artifacts = planned;
     }
 
-    for artifact in &artifacts {
+    let mut change = Change {
+        files: artifacts,
+        ..Change::default()
+    };
+    if writes_a_test(&change.files)
+        && !crate::pom::has_dependency(project.pom(), "org.assertj", "assertj-core")
+        && !project.pom().contains("spring-boot-starter-test")
+        && !project.pom().contains("spring-boot-starter-webmvc-test")
+    {
+        change.deps.push(crate::pom::assertj(project.flavor()));
+    }
+    match kind {
+        ArtifactKind::Dto | ArtifactKind::Scaffold => change
+            .deps
+            .push(*crate::spring::validation_dependency(project.flavor())),
+        ArtifactKind::Client => change.deps.push(crate::spring::RESTCLIENT_STARTER),
+        ArtifactKind::Fetcher => change.deps.extend([
+            crate::spring::APACHE_HTTPCLIENT,
+            crate::spring::ACTUATOR_STARTER,
+        ]),
+        ArtifactKind::Event => change.deps.extend([
+            crate::spring::TESTCONTAINERS_KAFKA,
+            crate::spring::SPRING_TESTCONTAINERS,
+        ]),
+        _ => {}
+    }
+    if writes_an_it(&change.files) {
+        change.plugins.push((
+            crate::spring::FAILSAFE_ARTIFACT,
+            crate::spring::failsafe_plugin(project.flavor()).to_string(),
+        ));
+    }
+
+    for artifact in &change.files {
         if artifact.path.exists()
             && !(artifact.kind == "scheduling"
                 && fs::read_to_string(&artifact.path)
@@ -2212,32 +2259,27 @@ pub fn generate_with_timestamps(
     // `--pretend` still runs every check above, so a run that would have
     // collided reports the collision rather than a clean-looking plan.
     if pretend {
-        for artifact in &artifacts {
+        for artifact in &change.files {
             println!("would create {} {}", artifact.kind, artifact.path.display());
         }
         if matches!(kind, ArtifactKind::Command) {
             println!("would register {name} in the project's command dispatcher");
         }
-        if let Some(dep) = match kind {
-            ArtifactKind::Dto | ArtifactKind::Scaffold => Some(
-                crate::spring::validation_dependency(crate::pom::flavor(&crate::pom::read(&root)?)),
-            ),
-            ArtifactKind::Client => Some(&crate::spring::RESTCLIENT_STARTER),
-            ArtifactKind::Fetcher => Some(&crate::spring::APACHE_HTTPCLIENT),
-            ArtifactKind::Event => Some(&crate::spring::TESTCONTAINERS_KAFKA),
-            _ => None,
-        } {
+        for dep in &change.deps {
             println!(
                 "would ensure dependency {}:{}",
                 dep.group_id, dep.artifact_id
             );
+        }
+        for (artifact_id, _) in &change.plugins {
+            println!("would ensure plugin {artifact_id}");
         }
         println!();
         println!("--pretend: nothing was written.");
         return Ok(());
     }
     let mut written = Vec::new();
-    for artifact in &artifacts {
+    for artifact in &change.files {
         if artifact.path.exists() && artifact.kind == "scheduling" {
             println!("exists scheduling {}", artifact.path.display());
             continue;
@@ -2265,24 +2307,7 @@ pub fn generate_with_timestamps(
     // did not write, which is exactly the plumbing this tool exists to
     // remove. Splicing is idempotent -- pom.rs reports when it is already
     // there and changes nothing.
-    ensure_failsafe(&root, &artifacts)?;
-    ensure_assertj(&root, writes_a_test(&artifacts))?;
-    match kind {
-        ArtifactKind::Dto | ArtifactKind::Scaffold => ensure_dependency(
-            &root,
-            crate::spring::validation_dependency(crate::pom::flavor(&crate::pom::read(&root)?)),
-        )?,
-        ArtifactKind::Client => ensure_dependency(&root, &crate::spring::RESTCLIENT_STARTER)?,
-        ArtifactKind::Fetcher => {
-            ensure_dependency(&root, &crate::spring::APACHE_HTTPCLIENT)?;
-            ensure_dependency(&root, &crate::spring::ACTUATOR_STARTER)?;
-        }
-        ArtifactKind::Event => {
-            ensure_dependency(&root, &crate::spring::TESTCONTAINERS_KAFKA)?;
-            ensure_dependency(&root, &crate::spring::SPRING_TESTCONTAINERS)?;
-        }
-        _ => {}
-    }
+    apply_build_change(&root, project.pom(), &change)?;
     Ok(())
 }
 
@@ -2872,10 +2897,10 @@ pub fn destroy(
     package: Option<&str>,
     pretend: bool,
 ) -> Result<()> {
-    let root = find_project_root()?;
-    let base = base_package(&root)?;
-    let config = crate::config::Config::load(&root)?;
-    let place = |default: &str| subpackage(&base, package.unwrap_or(config.layer(default)));
+    let project = Project::discover()?;
+    let root = project.root().to_path_buf();
+    let base = project.base().to_string();
+    let place = |default: &str| project.package_named(default, package);
     // `cases` is addressed by the markdown path it was generated from, which
     // must not be run through capitalize like a class name.
     let raw_name = name.to_string();
@@ -2939,7 +2964,7 @@ pub fn destroy(
                     .map(|(tree, layer, placement, pattern)| {
                         let pkg = match placement {
                             Placement::Layered => place(layer),
-                            Placement::Pinned => subpackage(&base, config.layer(layer)),
+                            Placement::Pinned => subpackage(&base, project.layers().named(layer)),
                         };
                         let dir = match tree {
                             Tree::Main => main_dir(&root, &pkg),

@@ -15,15 +15,14 @@
 use std::path::Path;
 
 use crate::Result;
+use crate::model::{Artifact, Change};
 use crate::pom::{Dependency, Flavor};
 
-/// A capability's contribution, in the shape `add.rs` already understands.
-pub(crate) struct SpringSlice {
-    pub deps: Vec<Dependency>,
-    pub files: Vec<(std::path::PathBuf, String)>,
-    /// Lines to splice into `application.properties`, each with the marker
-    /// comment that lets `remove` take them back out.
-    pub properties: Vec<String>,
+/// A Spring capability is the same command value every other recipe returns.
+pub(crate) type SpringSlice = Change;
+
+fn artifact(path: std::path::PathBuf, contents: String) -> Artifact {
+    Artifact::rendered(path, contents)
 }
 
 pub(crate) const VALIDATION_STARTER: Dependency = Dependency {
@@ -150,17 +149,18 @@ pub(crate) fn api_slice(root: &Path, pkg: &str) -> SpringSlice {
     SpringSlice {
         deps: vec![VALIDATION_STARTER],
         files: vec![
-            (main.join("ApiException.java"), api_exception_java(pkg)),
-            (
+            artifact(main.join("ApiException.java"), api_exception_java(pkg)),
+            artifact(
                 main.join("ApiExceptionHandler.java"),
                 api_exception_handler_java(pkg),
             ),
-            (
+            artifact(
                 test.join("ApiExceptionHandlerTest.java"),
                 api_exception_handler_test_java(pkg),
             ),
         ],
         properties: Vec::new(),
+        ..Change::default()
     }
 }
 
@@ -236,7 +236,7 @@ pub(crate) fn actuator_slice(root: &Path, pkg: &str) -> SpringSlice {
     let test = crate::generate::test_dir(root, pkg);
     SpringSlice {
         deps: vec![ACTUATOR_STARTER],
-        files: vec![(
+        files: vec![artifact(
             test.join("ActuatorEndpointsTest.java"),
             actuator_test_java(pkg),
         )],
@@ -258,6 +258,7 @@ pub(crate) fn actuator_slice(root: &Path, pkg: &str) -> SpringSlice {
             "info.app.version=@project.version@".to_string(),
             "info.app.description=@project.description@".to_string(),
         ],
+        ..Change::default()
     }
 }
 
@@ -278,14 +279,15 @@ pub(crate) fn cache_slice(root: &Path, pkg: &str) -> SpringSlice {
     SpringSlice {
         deps: vec![CACHE_STARTER, CAFFEINE],
         files: vec![
-            (main.join("CacheConfig.java"), cache_config_java(pkg)),
-            (test.join("CacheConfigTest.java"), cache_test_java(pkg)),
+            artifact(main.join("CacheConfig.java"), cache_config_java(pkg)),
+            artifact(test.join("CacheConfigTest.java"), cache_test_java(pkg)),
         ],
         properties: vec![
             "spring.cache.type=caffeine".to_string(),
             // A cache with no bound is a memory leak with a friendly name.
             "spring.cache.caffeine.spec=maximumSize=1000,expireAfterWrite=60s".to_string(),
         ],
+        ..Change::default()
     }
 }
 
@@ -5690,25 +5692,26 @@ pub(crate) fn security_slice(root: &Path, pkg: &str) -> SpringSlice {
     SpringSlice {
         deps: vec![SECURITY_STARTER, OAUTH2_RESOURCE_SERVER, SECURITY_TEST],
         files: vec![
-            (main.join("SecurityConfig.java"), security_config_java(pkg)),
-            (
+            artifact(main.join("SecurityConfig.java"), security_config_java(pkg)),
+            artifact(
                 main.join("ProductionSecurityConfig.java"),
                 production_security_config_java(pkg),
             ),
-            (
+            artifact(
                 main.join("ScopeAuthorizer.java"),
                 scope_authorizer_java(pkg),
             ),
-            (
+            artifact(
                 test.join("SecurityConfigTest.java"),
                 security_test_java(pkg),
             ),
-            (
+            artifact(
                 test.join("ScopeAuthorizerTest.java"),
                 scope_authorizer_test_java(pkg),
             ),
         ],
         properties: Vec::new(),
+        ..Change::default()
     }
 }
 
@@ -5718,13 +5721,14 @@ pub(crate) fn cors_slice(root: &Path, pkg: &str) -> SpringSlice {
     SpringSlice {
         deps: Vec::new(),
         files: vec![
-            (main.join("CorsConfig.java"), cors_config_java(pkg)),
-            (test.join("CorsConfigTest.java"), cors_config_test_java(pkg)),
+            artifact(main.join("CorsConfig.java"), cors_config_java(pkg)),
+            artifact(test.join("CorsConfigTest.java"), cors_config_test_java(pkg)),
         ],
         properties: vec![
             "# Exact browser origins; never use `*` together with credentials.".to_string(),
             "app.cors.allowed-origins=http://localhost:3000".to_string(),
         ],
+        ..Change::default()
     }
 }
 
@@ -6386,8 +6390,8 @@ pub(crate) fn redis_slice(root: &Path, pkg: &str) -> SpringSlice {
     SpringSlice {
         deps: vec![REDIS_STARTER, TESTCONTAINERS_CORE, SPRING_TESTCONTAINERS],
         files: vec![
-            (main.join("KeyValueStore.java"), key_value_store_java(pkg)),
-            (
+            artifact(main.join("KeyValueStore.java"), key_value_store_java(pkg)),
+            artifact(
                 test.join("KeyValueStoreIT.java"),
                 key_value_store_it_java(pkg),
             ),
@@ -6400,6 +6404,7 @@ pub(crate) fn redis_slice(root: &Path, pkg: &str) -> SpringSlice {
             // the default the wrapper applies when no TTL is given.
             "app.redis.default-ttl=PT10M".to_string(),
         ],
+        ..Change::default()
     }
 }
 
@@ -6445,13 +6450,13 @@ pub(crate) fn observability_slice(root: &Path, pkg: &str) -> SpringSlice {
     SpringSlice {
         deps: vec![ACTUATOR_STARTER, PROMETHEUS_REGISTRY],
         files: vec![
-            (
+            artifact(
                 main.join("MetricsConfig.java"),
                 metrics_config_java(pkg, meter_registry_customizer_import(root)),
             ),
-            (main.join("AppMetrics.java"), app_metrics_java(pkg)),
-            (test.join("AppMetricsTest.java"), app_metrics_test_java(pkg)),
-            (
+            artifact(main.join("AppMetrics.java"), app_metrics_java(pkg)),
+            artifact(test.join("AppMetricsTest.java"), app_metrics_test_java(pkg)),
+            artifact(
                 test.join("PrometheusScrapeTest.java"),
                 prometheus_scrape_test_java(pkg),
             ),
@@ -6504,6 +6509,7 @@ pub(crate) fn observability_slice(root: &Path, pkg: &str) -> SpringSlice {
             "server.tomcat.accesslog.buffered=false".to_string(),
             "management.server.tomcat.accesslog.prefix=stdout".to_string(),
         ],
+        ..Change::default()
     }
 }
 

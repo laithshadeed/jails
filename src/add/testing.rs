@@ -27,26 +27,32 @@ pub(super) fn testkit_plan(root: &std::path::Path, testkit: &str) -> Result<Plan
     Ok(Plan {
         files: vec![
             NewFile {
+                kind: "capability file",
                 path: dir.join("Clocks.java"),
                 contents: clocks_java(testkit),
             },
             NewFile {
+                kind: "capability file",
                 path: dir.join("Ids.java"),
                 contents: ids_java(testkit),
             },
             NewFile {
+                kind: "capability file",
                 path: dir.join("Fixtures.java"),
                 contents: fixtures_java(testkit),
             },
             NewFile {
+                kind: "capability file",
                 path: dir.join("Cli.java"),
                 contents: testkit_cli_java(testkit),
             },
             NewFile {
+                kind: "capability file",
                 path: dir.join("TestkitTest.java"),
                 contents: testkit_test_java(testkit),
             },
             NewFile {
+                kind: "capability file",
                 path: root.join("src/test/resources/fixtures/example.json"),
                 contents: EXAMPLE_FIXTURE.to_string(),
             },
@@ -106,10 +112,12 @@ pub(super) fn fake_plan(root: &std::path::Path, testkit: &str) -> Result<Plan> {
     Ok(Plan {
         files: vec![
             NewFile {
+                kind: "capability file",
                 path: dir.join("Fake.java"),
                 contents: scripted_java(testkit),
             },
             NewFile {
+                kind: "capability file",
                 path: dir.join("FakeTest.java"),
                 contents: scripted_test_java(testkit),
             },
@@ -150,10 +158,12 @@ pub(super) fn toxiproxy_plan(root: &std::path::Path, testkit: &str) -> Result<Pl
         deps: vec![TESTCONTAINERS_TOXIPROXY, TOXIPROXY_JAVA],
         files: vec![
             NewFile {
+                kind: "capability file",
                 path: dir.join("Faults.java"),
                 contents: faults_java(testkit),
             },
             NewFile {
+                kind: "capability file",
                 path: dir.join("FaultsTest.java"),
                 contents: faults_test_java(testkit),
             },

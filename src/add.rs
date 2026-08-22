@@ -19,9 +19,9 @@
 use crate::Result;
 use crate::compose::{self, Service as ComposeService};
 use crate::generate::{
-    base_package, find_project_root, import_of, layout, main_dir, normalize_imports, package_of,
-    subpackage, test_dir, write_new_file,
+    base_package, import_of, main_dir, normalize_imports, package_of, test_dir, write_new_file,
 };
+use crate::model::{Artifact as NewFile, Change as Plan, Layer, Project, SpringTestImport};
 use crate::pom::{self, Dependency, Flavor, MIN_RELEASE, TARGET_RELEASE};
 use clap::ValueEnum;
 use std::fs;
@@ -129,53 +129,6 @@ impl Capability {
     }
 }
 
-/// A file a capability wants to create.
-struct NewFile {
-    path: PathBuf,
-    contents: String,
-}
-
-/// Everything a capability wants to do to the project, computed before
-/// anything is written so `--dry-run` can describe it without side effects.
-#[derive(Default)]
-struct Plan {
-    deps: Vec<Dependency>,
-    /// Build plugins to splice, as (artifactId, rendered `<plugin>` block).
-    /// Plugin configuration is far too varied to model as a struct, so the
-    /// capability renders the XML and pom.rs only places it.
-    plugins: Vec<(&'static str, String)>,
-    files: Vec<NewFile>,
-    compose: Vec<ComposeService>,
-    /// `application.properties` lines this capability owns, spliced into a
-    /// `# jails:<label>` block so `remove` can take exactly them back out.
-    properties: Vec<String>,
-    /// Dependencies an *earlier* jails added for this capability and the
-    /// current one no longer does. Removed by `remove`, never added by `add`.
-    ///
-    /// Without this a capability that drops an artifact leaves it behind
-    /// forever: `remove <cap>` unsplices `plan.deps`, and the artifact is not
-    /// in there any more. `add json` moving from Jackson 2 to Jackson 3 is the
-    /// case that needed it -- leaving `jackson-datatype-jsr310` in the pom
-    /// keeps a second Jackson major on the classpath, which is the exact
-    /// failure the move was meant to fix.
-    legacy_deps: Vec<Dependency>,
-    /// Spring `add db` only: a test-classpath ApplicationContextInitializer
-    /// so every `@SpringBootTest` gets a DataSource without editing those
-    /// files. Docker Compose is skipped in tests by default.
-    spring_test_import: Option<SpringTestImport>,
-}
-
-struct SpringTestImport {
-    pkg: String,
-    class: &'static str,
-}
-
-impl SpringTestImport {
-    fn fqcn(&self) -> String {
-        format!("{}.{}", self.pkg, self.class)
-    }
-}
-
 const SPRING_DOCKER_COMPOSE: Dependency = Dependency {
     group_id: "org.springframework.boot",
     artifact_id: "spring-boot-docker-compose",
@@ -204,16 +157,21 @@ pub fn preflight(
     if capabilities.len() < 2 {
         return Ok(());
     }
-    let root = find_project_root()?;
-    let pom_text = pom::read(&root)?;
-    let flavor = pom::flavor(&pom_text);
-    require_java_release(&pom_text)?;
+    let project = Project::discover()?;
+    require_java_release(project.java_release())?;
+    let mut combined = Plan::default();
     for &capability in capabilities {
-        build_plan(capability, &root, flavor, name, package).map_err(|e| {
+        let planned = build_plan(capability, &project, name, package).map_err(|e| {
             format!(
                 "{e}\n\nnothing was written -- `{}` was refused, so none of the {} \
                  requested capabilities were applied.",
                 capability.label(),
+                capabilities.len()
+            )
+        })?;
+        combined = combined.merge(planned).map_err(|e| {
+            format!(
+                "{e}\n\nnothing was written -- the {} requested capabilities conflict.",
                 capabilities.len()
             )
         })?;
@@ -229,11 +187,12 @@ pub fn add(
     debug: bool,
     no_start: bool,
 ) -> Result<()> {
-    let root = find_project_root()?;
-    let pom_text = pom::read(&root)?;
-    let flavor = pom::flavor(&pom_text);
-    require_java_release(&pom_text)?;
-    let plan = build_plan(capability, &root, flavor, name, package)?;
+    let project = Project::discover()?;
+    let root = project.root().to_path_buf();
+    let pom_text = project.pom().to_string();
+    let flavor = project.flavor();
+    require_java_release(project.java_release())?;
+    let plan = build_plan(capability, &project, name, package)?;
 
     let mut updated_pom = pom_text.clone();
     let mut spliced: Vec<&Dependency> = Vec::new();
@@ -514,9 +473,8 @@ pub fn add(
 pub fn sync(dry_run: bool, debug: bool, no_start: bool) -> Result<()> {
     use clap::ValueEnum;
 
-    let root = find_project_root()?;
-    let config = crate::config::Config::load(&root)?;
-    let labels = config.capabilities();
+    let project = Project::discover()?;
+    let labels = project.capabilities();
 
     if labels.is_empty() {
         println!(
@@ -569,10 +527,11 @@ pub fn remove(
     package: Option<&str>,
     debug: bool,
 ) -> Result<()> {
-    let root = find_project_root()?;
-    let pom_text = pom::read(&root)?;
-    let flavor = pom::flavor(&pom_text);
-    let plan = build_plan(capability, &root, flavor, name, package)?;
+    let project = Project::discover()?;
+    let root = project.root().to_path_buf();
+    let pom_text = project.pom().to_string();
+    let flavor = project.flavor();
+    let plan = build_plan(capability, &project, name, package)?;
 
     let mut updated_pom = pom_text.clone();
     let mut removed_deps: Vec<&Dependency> = Vec::new();
@@ -821,8 +780,8 @@ pub fn remove(
     Ok(())
 }
 
-fn require_java_release(pom_text: &str) -> Result<()> {
-    match pom::release_level(pom_text) {
+fn require_java_release(release: Option<u32>) -> Result<()> {
+    match release {
         Some(level) if level < MIN_RELEASE => Err(format!(
             "this project targets Java {level}, but jails generates Java {MIN_RELEASE}+ code.\n       \
              Raise <maven.compiler.release> (or <java.version>) to at least {MIN_RELEASE} in pom.xml and try again."
@@ -837,23 +796,23 @@ fn require_java_release(pom_text: &str) -> Result<()> {
 
 fn build_plan(
     capability: Capability,
-    root: &Path,
-    flavor: Flavor,
+    project: &Project,
     name: Option<&str>,
     package: Option<&str>,
 ) -> Result<Plan> {
-    let base = base_package(root)?;
-    let config = crate::config::Config::load(root)?;
-    let place = |default: &str| subpackage(&base, package.unwrap_or(config.layer(default)));
+    let root = project.root();
+    let flavor = project.flavor();
+    let place = |layer: Layer| project.package(layer, package);
+    let root_package = || project.package_named("", package);
     match capability {
-        Capability::Db => db_plan(root, flavor, &place("")),
-        Capability::Kafka => kafka_plan(root, flavor, &place(crate::generate::layout::MESSAGING)),
-        Capability::Csv => csv_plan(root, &place(layout::ADAPTERS), flavor, name),
-        Capability::Sqlite => sqlite_plan(root, &place(layout::ADAPTERS), flavor, name),
-        Capability::Json => json_plan(root, &place(layout::ADAPTERS), flavor, name),
-        Capability::Testkit => testkit_plan(root, &place(layout::TESTKIT)),
-        Capability::Fake => fake_plan(root, &place(layout::TESTKIT)),
-        Capability::Http => http_plan(root, &place(layout::API), name),
+        Capability::Db => db_plan(root, flavor, &root_package()),
+        Capability::Kafka => kafka_plan(root, flavor, &place(Layer::Messaging)),
+        Capability::Csv => csv_plan(root, &place(Layer::Adapters), flavor, name),
+        Capability::Sqlite => sqlite_plan(root, &place(Layer::Adapters), flavor, name),
+        Capability::Json => json_plan(root, &place(Layer::Adapters), flavor, name),
+        Capability::Testkit => testkit_plan(root, &place(Layer::Testkit)),
+        Capability::Fake => fake_plan(root, &place(Layer::Testkit)),
+        Capability::Http => http_plan(root, &place(Layer::Api), name),
         Capability::Format => format_plan(root),
         Capability::Coverage => coverage_plan(),
         Capability::Loadtest => loadtest_plan(root),
@@ -861,36 +820,38 @@ fn build_plan(
         Capability::Docker => docker_plan(root),
         Capability::K8s => k8s_plan(root, flavor),
         Capability::Api => spring_slice_plan(
-            crate::spring::api_slice(root, &place(layout::API)),
+            crate::spring::api_slice(root, &place(Layer::Api)),
             flavor,
             "api",
         ),
         Capability::Actuator => spring_slice_plan(
-            crate::spring::actuator_slice(root, &place("")),
+            crate::spring::actuator_slice(root, &root_package()),
             flavor,
             "actuator",
         ),
         Capability::Cache => spring_slice_plan(
-            crate::spring::cache_slice(root, &place("")),
+            crate::spring::cache_slice(root, &root_package()),
             flavor,
             "cache",
         ),
         Capability::Security => spring_slice_plan(
-            crate::spring::security_slice(root, &place("")),
+            crate::spring::security_slice(root, &root_package()),
             flavor,
             "security",
         ),
-        Capability::Cors => {
-            spring_slice_plan(crate::spring::cors_slice(root, &place("")), flavor, "cors")
-        }
+        Capability::Cors => spring_slice_plan(
+            crate::spring::cors_slice(root, &root_package()),
+            flavor,
+            "cors",
+        ),
         Capability::Observability => spring_slice_plan(
-            crate::spring::observability_slice(root, &place("")),
+            crate::spring::observability_slice(root, &root_package()),
             flavor,
             "observability",
         ),
-        Capability::Toxiproxy => toxiproxy_plan(root, &place(layout::TESTKIT)),
+        Capability::Toxiproxy => toxiproxy_plan(root, &place(Layer::Testkit)),
         Capability::Redis => spring_slice_plan(
-            crate::spring::redis_slice(root, &place(layout::ADAPTERS)),
+            crate::spring::redis_slice(root, &place(Layer::Adapters)),
             flavor,
             "redis",
         )
@@ -909,16 +870,7 @@ fn spring_slice_plan(
     capability: &str,
 ) -> Result<Plan> {
     crate::spring::require_spring(flavor, capability)?;
-    Ok(Plan {
-        deps: slice.deps,
-        files: slice
-            .files
-            .into_iter()
-            .map(|(path, contents)| NewFile { path, contents })
-            .collect(),
-        properties: slice.properties,
-        ..Plan::default()
-    })
+    Ok(slice)
 }
 
 fn rel(root: &Path, path: &Path) -> String {

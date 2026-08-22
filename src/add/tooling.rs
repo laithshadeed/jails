@@ -22,10 +22,12 @@ pub(super) fn http_plan(root: &std::path::Path, pkg: &str, name: Option<&str>) -
     Ok(Plan {
         files: vec![
             NewFile {
+                kind: "capability file",
                 path: main_dir(root, pkg).join(format!("{class}.java")),
                 contents: http_server_java(pkg, &class),
             },
             NewFile {
+                kind: "capability file",
                 path: test_dir(root, pkg).join(format!("{class}Test.java")),
                 contents: http_server_test_java(pkg, &class),
             },
@@ -60,6 +62,7 @@ pub(super) fn format_plan(root: &Path) -> Result<Plan> {
     Ok(Plan {
         plugins: vec![(SPOTLESS_ARTIFACT, SPOTLESS_PLUGIN.to_string())],
         files: vec![NewFile {
+            kind: "capability file",
             path: root.join(".editorconfig"),
             contents: EDITORCONFIG.to_string(),
         }],
@@ -181,26 +184,32 @@ pub(super) fn loadtest_plan(root: &Path) -> Result<Plan> {
     Ok(Plan {
         files: vec![
             NewFile {
+                kind: "capability file",
                 path: dir.join("load-test.js"),
                 contents: load_test_js(),
             },
             NewFile {
+                kind: "capability file",
                 path: dir.join("api.js"),
                 contents: load_api_js(&routes),
             },
             NewFile {
+                kind: "capability file",
                 path: dir.join("payload-builder.js"),
                 contents: payload_builder_js(),
             },
             NewFile {
+                kind: "capability file",
                 path: dir.join("token-cache.js"),
                 contents: token_cache_js(),
             },
             NewFile {
+                kind: "capability file",
                 path: dir.join("Makefile"),
                 contents: loadtest_makefile(),
             },
             NewFile {
+                kind: "capability file",
                 path: dir.join("README.md"),
                 contents: loadtest_readme(),
             },
@@ -321,6 +330,7 @@ pub(super) fn ci_plan(root: &Path) -> Result<Plan> {
     let release = project_release(root)?;
     Ok(Plan {
         files: vec![NewFile {
+            kind: "capability file",
             path: root.join(".github/workflows/ci.yml"),
             contents: ci_workflow(release, root.join("mvnw").is_file()),
         }],
@@ -333,14 +343,17 @@ pub(super) fn docker_plan(root: &Path) -> Result<Plan> {
     Ok(Plan {
         files: vec![
             NewFile {
+                kind: "capability file",
                 path: root.join("Dockerfile"),
                 contents: dockerfile(release, root.join("mvnw").is_file()),
             },
             NewFile {
+                kind: "capability file",
                 path: root.join(".dockerignore"),
                 contents: dockerignore().to_string(),
             },
             NewFile {
+                kind: "capability file",
                 path: root.join(".github/workflows/image.yml"),
                 contents: image_workflow(),
             },
@@ -381,26 +394,32 @@ pub(super) fn k8s_plan(root: &Path, flavor: Flavor) -> Result<Plan> {
     Ok(Plan {
         files: vec![
             NewFile {
+                kind: "capability file",
                 path: chart.join("Chart.yaml"),
                 contents: chart_yaml(&name),
             },
             NewFile {
+                kind: "capability file",
                 path: chart.join("values.yaml"),
                 contents: values_yaml(&name),
             },
             NewFile {
+                kind: "capability file",
                 path: chart.join("templates/deployment.yaml"),
                 contents: deployment_yaml(&name),
             },
             NewFile {
+                kind: "capability file",
                 path: chart.join("templates/service.yaml"),
                 contents: service_yaml(&name),
             },
             NewFile {
+                kind: "capability file",
                 path: chart.join("templates/configmap.yaml"),
                 contents: configmap_yaml(&name),
             },
             NewFile {
+                kind: "capability file",
                 path: chart.join("templates/prometheus-rule.yaml"),
                 contents: prometheus_rule_yaml(&name),
             },

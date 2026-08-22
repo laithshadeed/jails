@@ -104,7 +104,11 @@ pub(super) fn kafka_plan(root: &Path, flavor: Flavor, pkg: &str) -> Result<Plan>
             ],
             crate::spring::kafka_files(root, pkg)
                 .into_iter()
-                .map(|(path, contents, _)| NewFile { path, contents })
+                .map(|(path, contents, _)| NewFile {
+                    kind: "capability file",
+                    path,
+                    contents,
+                })
                 .collect(),
         ),
         Flavor::PlainMaven => (vec![KAFKA_CLIENTS], Vec::new()),

@@ -124,11 +124,13 @@ pub(super) fn db_plan(root: &std::path::Path, flavor: Flavor, pkg: &str) -> Resu
     }
 
     let mut files = vec![NewFile {
+        kind: "capability file",
         path: root.join("src/main/resources/db/migration/.gitkeep"),
         contents: String::new(),
     }];
     let spring_test_import = if flavor == Flavor::SpringBoot {
         files.push(NewFile {
+            kind: "capability file",
             path: test_dir(root, pkg).join(format!("{TESTCONTAINERS_CONFIG}.java")),
             contents: testcontainers_config_java(pkg),
         });
@@ -922,18 +924,22 @@ pub(super) fn sqlite_plan(
         deps: vec![SQLITE_JDBC],
         files: vec![
             NewFile {
+                kind: "capability file",
                 path: main_dir(root, pkg).join(format!("{database}.java")),
                 contents: database_java(pkg, &database),
             },
             NewFile {
+                kind: "capability file",
                 path: main_dir(root, pkg).join(format!("{migrations}.java")),
                 contents: migrations_java(pkg, &migrations),
             },
             NewFile {
+                kind: "capability file",
                 path: root.join("src/main/resources/db/migration/001_init.sql"),
                 contents: FIRST_MIGRATION.to_string(),
             },
             NewFile {
+                kind: "capability file",
                 path: test_dir(root, pkg).join(format!("{database}Test.java")),
                 contents: database_test_java(pkg, &database, &migrations),
             },

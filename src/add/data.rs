@@ -36,10 +36,12 @@ pub(super) fn csv_plan(
         deps: vec![COMMONS_CSV],
         files: vec![
             NewFile {
+                kind: "capability file",
                 path: main_dir(root, pkg).join(format!("{class}.java")),
                 contents: csv_reader_java(pkg, &class),
             },
             NewFile {
+                kind: "capability file",
                 path: test_dir(root, pkg).join(format!("{class}Test.java")),
                 contents: csv_reader_test_java(pkg, &class),
             },
@@ -132,10 +134,12 @@ pub(super) fn json_plan(
         ],
         files: vec![
             NewFile {
+                kind: "capability file",
                 path: main_dir(root, pkg).join(format!("{class}.java")),
                 contents: json_java(pkg, &class),
             },
             NewFile {
+                kind: "capability file",
                 path: test_dir(root, pkg).join(format!("{class}Test.java")),
                 contents: json_test_java(pkg, &class),
             },

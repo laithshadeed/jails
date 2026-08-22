@@ -11,6 +11,7 @@ mod java;
 mod kafka;
 mod lint;
 mod migrate;
+mod model;
 mod new;
 mod pom;
 mod process;
