@@ -78,6 +78,23 @@ pub const LAYERS_IN_ORDER: &[(&str, &str)] = &[
     (layout::TESTKIT, "Testkit"),
 ];
 
+#[cfg(test)]
+mod layer_list_tests {
+    use super::LAYERS_IN_ORDER;
+    use jails_spec::spec::layout::Layer;
+
+    /// One list, in one order. `LAYERS_IN_ORDER` adds the report heading;
+    /// everything else about a layer comes from `Layer`, and a layer added to
+    /// one and not the other is the drift this file's own doc comment is
+    /// about.
+    #[test]
+    fn the_report_list_covers_every_layer_in_declaration_order() {
+        let listed: Vec<&str> = LAYERS_IN_ORDER.iter().map(|(name, _)| *name).collect();
+        let declared: Vec<&str> = Layer::ALL.iter().map(|layer| layer.package()).collect();
+        assert_eq!(listed, declared);
+    }
+}
+
 fn is_layer(key: &str) -> bool {
     LAYERS_IN_ORDER.iter().any(|(name, _)| *name == key)
 }

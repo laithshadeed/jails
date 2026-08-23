@@ -31,7 +31,7 @@
 //! one.
 
 use crate::Result;
-use crate::identity::{ObjectId, ProjectPath};
+use crate::identity::{ObjectId, ObjectRef, ProjectPath};
 use jails_support::codec::{self, Decoder, Encoder, ordered};
 
 /// The committed live image of a file: content, length and mode together.
@@ -49,8 +49,127 @@ pub struct LiveFileImage {
 /// The desired bytes and their mode, by reference into the object store.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StoredFileImage {
-    pub object: ObjectId,
+    pub object: ObjectRef,
     pub mode: FileMode,
+}
+
+/// A path's content *including its absence*.
+///
+/// plan.md §R3.1 makes absence a variant rather than an `Option`, because
+/// "this path is meant to have no file" is a claim a plan makes and must be
+/// able to record — an `Option::None` in a map is indistinguishable from a
+/// path nobody mentioned.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FileImage {
+    Absent,
+    Present { object: ObjectRef, mode: FileMode },
+}
+
+impl FileImage {
+    pub fn encode(&self, encoder: &mut Encoder) {
+        match self {
+            Self::Absent => encoder.tag(0),
+            Self::Present { object, mode } => {
+                encoder.tag(1);
+                object.encode(encoder);
+                mode.encode(encoder);
+            }
+        }
+    }
+
+    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(match decoder.tag()? {
+            0 => Self::Absent,
+            1 => Self::Present {
+                object: ObjectRef::decode(decoder)?,
+                mode: FileMode::decode(decoder)?,
+            },
+            other => Err(format!("unknown file image tag {other}"))?,
+        })
+    }
+}
+
+/// The identity of one frozen pending conflict.
+///
+/// A newtype rather than a bare [`ObjectId`] because it is compared against
+/// stored values on every resume, and comparing it to the wrong digest is a
+/// mistake the type system can prevent for free.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+pub struct PendingIdentity(ObjectId);
+
+impl PendingIdentity {
+    pub fn from_object(id: ObjectId) -> Self {
+        Self(id)
+    }
+
+    pub fn object(&self) -> ObjectId {
+        self.0
+    }
+
+    pub fn encode(&self, encoder: &mut Encoder) {
+        self.0.encode(encoder);
+    }
+
+    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(Self(ObjectId::decode(decoder)?))
+    }
+}
+
+impl std::fmt::Display for PendingIdentity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+/// One path a human resolved, and what they resolved it to.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolutionIdentity {
+    pub path: ProjectPath,
+    pub resolved: FileImage,
+}
+
+impl ResolutionIdentity {
+    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        self.path.encode(encoder)?;
+        self.resolved.encode(encoder);
+        Ok(())
+    }
+
+    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(Self {
+            path: ProjectPath::decode(decoder)?,
+            resolved: FileImage::decode(decoder)?,
+        })
+    }
+}
+
+/// One path an abort puts back, with **both** images.
+///
+/// `guarded_from` is what the abort expects to find. Restoring without
+/// checking it would overwrite an edit the user made after the conflict was
+/// frozen — the one thing an abort must never do.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RestoreIdentity {
+    pub path: ProjectPath,
+    pub guarded_from: FileImage,
+    pub restore_to: FileImage,
+}
+
+impl RestoreIdentity {
+    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        self.path.encode(encoder)?;
+        self.guarded_from.encode(encoder);
+        self.restore_to.encode(encoder);
+        Ok(())
+    }
+
+    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(Self {
+            path: ProjectPath::decode(decoder)?,
+            guarded_from: FileImage::decode(decoder)?,
+            restore_to: FileImage::decode(decoder)?,
+        })
+    }
 }
 
 /// A POSIX mode, restricted to the permission bits.
@@ -79,11 +198,11 @@ impl FileMode {
         self.0
     }
 
-    fn encode(self, encoder: &mut Encoder) {
+    pub fn encode(self, encoder: &mut Encoder) {
         encoder.u32(self.0);
     }
 
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Self::new(decoder.u32()?)
     }
 }
@@ -114,7 +233,7 @@ impl StoredFileImage {
 
     pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
-            object: ObjectId::decode(decoder)?,
+            object: ObjectRef::decode(decoder)?,
             mode: FileMode::decode(decoder)?,
         })
     }
@@ -326,7 +445,7 @@ mod tests {
 
     fn stored(seed: &str) -> StoredFileImage {
         StoredFileImage {
-            object: object(seed),
+            object: ObjectRef::new(object(seed), seed.len() as u64),
             mode: mode(),
         }
     }

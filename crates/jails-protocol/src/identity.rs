@@ -451,6 +451,43 @@ impl std::fmt::Display for ProjectPath {
     }
 }
 
+/// A stored object's address **and its length**.
+///
+/// plan.md §R3.1: *"`ObjectRef` is an `ObjectId` plus its length; `FileImage`
+/// never repeats those facts."* The length travels with the id because every
+/// consumer needs it before reading — to check a limit, to size a buffer, to
+/// tell a truncated object from a missing one — and a length recorded
+/// somewhere else is a length that can disagree with the bytes.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+pub struct ObjectRef {
+    pub id: ObjectId,
+    pub len: u64,
+}
+
+impl ObjectRef {
+    pub fn new(id: ObjectId, len: u64) -> Self {
+        Self { id, len }
+    }
+
+    pub fn encode(&self, encoder: &mut Encoder) {
+        self.id.encode(encoder);
+        encoder.u64(self.len);
+    }
+
+    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(Self {
+            id: ObjectId::decode(decoder)?,
+            len: decoder.u64()?,
+        })
+    }
+}
+
+impl std::fmt::Display for ObjectRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}+{}", self.id, self.len)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Logical identifiers
 // ---------------------------------------------------------------------------

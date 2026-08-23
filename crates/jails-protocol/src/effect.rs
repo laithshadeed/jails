@@ -160,6 +160,37 @@ fn nonzero(value: u32, what: &str) -> Result<()> {
     Ok(())
 }
 
+/// One effect's retry and idempotency key.
+///
+/// Distinct from the operation that scheduled it: a retry after a crash must
+/// address *this* effect, and an operation may carry several.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+pub struct EffectId(ObjectId);
+
+impl EffectId {
+    pub fn from_object(id: ObjectId) -> Self {
+        Self(id)
+    }
+
+    pub fn object(&self) -> ObjectId {
+        self.0
+    }
+
+    pub fn encode(&self, encoder: &mut Encoder) {
+        self.0.encode(encoder);
+    }
+
+    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(Self(ObjectId::decode(decoder)?))
+    }
+}
+
+impl std::fmt::Display for EffectId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 /// The runtime work a committed transaction asks for.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PostCommitEffect {

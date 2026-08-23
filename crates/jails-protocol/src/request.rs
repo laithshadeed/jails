@@ -31,9 +31,10 @@
 
 use crate::Result;
 use crate::entity::{
-    CapabilityId, CapabilityInstance, CapabilitySpec, EntityId, EntitySpec, OneShotId, OneShotSpec,
-    ToolFeature,
+    CapabilityId, CapabilityInstance, CapabilitySpec, EntityId, EntitySpec, ExternalPathId,
+    IntentId, OneShotId, OneShotSpec, ToolFeature,
 };
+use crate::envelope::LegacyKey;
 use crate::identity::{JavaType, ObjectId, ProjectPath};
 use jails_support::codec::{self, Decoder, Encoder, ordered};
 use std::collections::{BTreeMap, BTreeSet};
@@ -264,6 +265,14 @@ pub enum CanonicalMutationRequest {
         force: bool,
     },
     AdoptLayout,
+    /// Resolve one legacy row into a typed intent. `replace` says an existing
+    /// entity of that identity is to be taken over rather than collided with.
+    AdoptLegacy {
+        legacy_key: LegacyKey,
+        intent: IntentId,
+        replace: bool,
+        force: bool,
+    },
     FastTest,
     Format {
         scopes: BTreeSet<ProjectPath>,
@@ -402,10 +411,286 @@ impl CanonicalMutationRequest {
             Self::AppApply { .. } => 6,
             Self::Rename { .. } => 7,
             Self::AdoptLayout => 8,
+            Self::AdoptLegacy { .. } => 9,
             Self::FastTest => 10,
             Self::Format { .. } => 11,
             Self::RemoveToolFeature { .. } => 12,
         }
+    }
+}
+
+impl CanonicalMutationRequest {
+    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        encoder.tag(self.tag());
+        match self {
+            Self::Add {
+                capabilities,
+                no_start,
+            } => {
+                encode_capabilities(encoder, capabilities)?;
+                encoder.bool(*no_start);
+            }
+            Self::Remove {
+                capabilities,
+                force,
+                no_start,
+            } => {
+                encode_capabilities(encoder, capabilities)?;
+                encoder.bool(*force);
+                encoder.bool(*no_start);
+            }
+            Self::Sync { no_start } | Self::AppApply { no_start } => encoder.bool(*no_start),
+            Self::Generate(request) => request.encode(encoder)?,
+            Self::Destroy { subject, force } => {
+                subject.encode(encoder)?;
+                encoder.bool(*force);
+            }
+            Self::AppInit { target } => target.encode(encoder)?,
+            Self::Rename { from, to, force } => {
+                from.encode(encoder)?;
+                to.encode(encoder)?;
+                encoder.bool(*force);
+            }
+            Self::AdoptLayout | Self::FastTest => {}
+            Self::AdoptLegacy {
+                legacy_key,
+                intent,
+                replace,
+                force,
+            } => {
+                legacy_key.encode(encoder)?;
+                intent.encode(encoder)?;
+                encoder.bool(*replace);
+                encoder.bool(*force);
+            }
+            Self::Format { scopes } => {
+                encoder.count(scopes.len())?;
+                let mut previous: Option<&ProjectPath> = None;
+                for scope in scopes {
+                    ordered(previous, scope)?;
+                    previous = Some(scope);
+                    scope.encode(encoder)?;
+                }
+            }
+            Self::RemoveToolFeature { feature, force } => {
+                encoder.string(feature.label())?;
+                encoder.bool(*force);
+            }
+        }
+        Ok(())
+    }
+
+    /// Every route back in goes through the same constructor the CLI uses, so
+    /// a request recovered from a journal is checked exactly as a typed one.
+    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(match decoder.tag()? {
+            0 => Self::Add {
+                capabilities: Self::capabilities(decode_capabilities(decoder)?)?,
+                no_start: decoder.bool()?,
+            },
+            1 => Self::Remove {
+                capabilities: Self::capabilities(decode_capabilities(decoder)?)?,
+                force: decoder.bool()?,
+                no_start: decoder.bool()?,
+            },
+            2 => Self::Sync {
+                no_start: decoder.bool()?,
+            },
+            3 => match CanonicalGenerateRequest::decode(decoder)? {
+                CanonicalGenerateRequest::Entity { id, spec } => Self::generate_entity(id, spec)?,
+                CanonicalGenerateRequest::OneShot { id, spec } => {
+                    Self::generate_one_shot(id, spec)?
+                }
+            },
+            4 => match ChangeSubject::decode(decoder)? {
+                ChangeSubject::Entity(id) => Self::destroy_entity(id, decoder.bool()?)?,
+                ChangeSubject::OneShot(id) => Self::destroy_one_shot(id, decoder.bool()?)?,
+            },
+            5 => Self::AppInit {
+                target: ProjectPath::decode(decoder)?,
+            },
+            6 => Self::AppApply {
+                no_start: decoder.bool()?,
+            },
+            7 => Self::Rename {
+                from: JavaType::decode(decoder)?,
+                to: JavaType::decode(decoder)?,
+                force: decoder.bool()?,
+            },
+            8 => Self::AdoptLayout,
+            9 => Self::AdoptLegacy {
+                legacy_key: LegacyKey::decode(decoder)?,
+                intent: IntentId::decode(decoder)?,
+                replace: decoder.bool()?,
+                force: decoder.bool()?,
+            },
+            10 => Self::FastTest,
+            11 => {
+                let count = decoder.count()?;
+                let mut scopes = BTreeSet::new();
+                let mut previous: Option<ProjectPath> = None;
+                for _ in 0..count {
+                    let scope = ProjectPath::decode(decoder)?;
+                    ordered(previous.as_ref(), &scope)?;
+                    previous = Some(scope.clone());
+                    scopes.insert(scope);
+                }
+                Self::Format { scopes }
+            }
+            12 => {
+                let feature = ToolFeature::parse(&decoder.string()?)?;
+                Self::remove_tool_feature(feature, decoder.bool()?)?
+            }
+            other => Err(format!("unknown mutation request tag {other}"))?,
+        })
+    }
+}
+
+fn encode_capabilities(encoder: &mut Encoder, rows: &[CanonicalCapability]) -> Result<()> {
+    encoder.count(rows.len())?;
+    for row in rows {
+        row.id.encode(encoder)?;
+        row.spec.encode(encoder)?;
+    }
+    Ok(())
+}
+
+fn decode_capabilities(decoder: &mut Decoder<'_>) -> Result<Vec<CanonicalCapability>> {
+    let count = decoder.count()?;
+    let mut rows = Vec::new();
+    for _ in 0..count {
+        rows.push(CanonicalCapability {
+            id: CapabilityId::decode(decoder)?,
+            spec: CapabilitySpec::decode(decoder)?,
+        });
+    }
+    Ok(rows)
+}
+
+impl CanonicalGenerateRequest {
+    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        match self {
+            Self::Entity { id, spec } => {
+                encoder.tag(0);
+                id.encode(encoder)?;
+                spec.encode(encoder)
+            }
+            Self::OneShot { id, spec } => {
+                encoder.tag(1);
+                id.encode(encoder)?;
+                spec.encode(encoder)
+            }
+        }
+    }
+
+    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(match decoder.tag()? {
+            0 => Self::Entity {
+                id: EntityId::decode(decoder)?,
+                spec: EntitySpec::decode(decoder)?,
+            },
+            1 => Self::OneShot {
+                id: OneShotId::decode(decoder)?,
+                spec: OneShotSpec::decode(decoder)?,
+            },
+            other => Err(format!("unknown generate request tag {other}"))?,
+        })
+    }
+}
+
+impl ChangeSubject {
+    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        match self {
+            Self::Entity(id) => {
+                encoder.tag(0);
+                id.encode(encoder)
+            }
+            Self::OneShot(id) => {
+                encoder.tag(1);
+                id.encode(encoder)
+            }
+        }
+    }
+
+    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(match decoder.tag()? {
+            0 => Self::Entity(EntityId::decode(decoder)?),
+            1 => Self::OneShot(OneShotId::decode(decoder)?),
+            other => Err(format!("unknown change subject tag {other}"))?,
+        })
+    }
+}
+
+/// Where this invocation's app manifest came from.
+///
+/// §R1.1: *"Neither becomes an `OwnerId`, and switching manifest paths cannot
+/// leave a hidden second app owner."* There is one app-manifest namespace; the
+/// source is an input fact, recorded in the fingerprint rather than in the
+/// ownership model.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ManifestSourceId {
+    Project(ProjectPath),
+    External { path_id: ExternalPathId },
+}
+
+impl ManifestSourceId {
+    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        match self {
+            Self::Project(path) => {
+                encoder.tag(0);
+                path.encode(encoder)
+            }
+            Self::External { path_id } => {
+                encoder.tag(1);
+                path_id.encode(encoder);
+                Ok(())
+            }
+        }
+    }
+
+    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(match decoder.tag()? {
+            0 => Self::Project(ProjectPath::decode(decoder)?),
+            1 => Self::External {
+                path_id: ExternalPathId::decode(decoder)?,
+            },
+            other => Err(format!("unknown manifest source tag {other}"))?,
+        })
+    }
+}
+
+/// Everything that decides whether two runs are *the same invocation*.
+///
+/// The four fields are the four independent ways two runs can differ: what was
+/// typed, what that resolved to, which manifest was selected, and what that
+/// manifest and the other declaration inputs contained. plan.md §R5.4 makes
+/// structural equality of all four the test a conflict resume applies — so a
+/// field left out here is a way for a resume to mistake one request for
+/// another, which is the whole failure this value exists to prevent.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InvocationFingerprint {
+    pub request_syntax: RequestSyntaxFingerprint,
+    pub request: CanonicalMutationRequest,
+    pub manifest_source: Option<ManifestSourceId>,
+    pub desired_input_sha256: ObjectId,
+}
+
+impl InvocationFingerprint {
+    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        self.request_syntax.encode(encoder);
+        self.request.encode(encoder)?;
+        encoder.option(self.manifest_source.as_ref(), |e, source| source.encode(e))?;
+        self.desired_input_sha256.encode(encoder);
+        Ok(())
+    }
+
+    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(Self {
+            request_syntax: RequestSyntaxFingerprint::decode(decoder)?,
+            request: CanonicalMutationRequest::decode(decoder)?,
+            manifest_source: decoder.option(ManifestSourceId::decode)?,
+            desired_input_sha256: ObjectId::decode(decoder)?,
+        })
     }
 }
 

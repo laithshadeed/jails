@@ -225,7 +225,7 @@ fn decimal(value: &str) -> Result<usize> {
 // ---------------------------------------------------------------------------
 
 use crate::entity::{EntityId, EntitySpec, OwnerId};
-use crate::identity::OperationId;
+use crate::identity::{ObjectId, OperationId};
 use jails_support::codec::{Decoder, Encoder, ordered};
 use std::collections::BTreeSet;
 
@@ -303,6 +303,131 @@ impl AppliedEntity {
     }
 }
 
+/// Which pre-schema-2 store a row came out of.
+///
+/// The kind is part of the key, not decoration: two stores could hold rows
+/// with identical bytes, and adopting "the row" would then be ambiguous about
+/// which one is being resolved.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+pub enum LegacySourceKind {
+    Schema1Ledger,
+    Schema1Applied,
+    Schema1Model,
+    AppStateHeader,
+    AppState,
+    IntentFiles,
+    ModelFiles,
+    GlobalFiles,
+    VersionFile,
+}
+
+impl LegacySourceKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Schema1Ledger => "schema1-ledger",
+            Self::Schema1Applied => "schema1-applied",
+            Self::Schema1Model => "schema1-model",
+            Self::AppStateHeader => "app-state-header",
+            Self::AppState => "app-state",
+            Self::IntentFiles => "intent-files",
+            Self::ModelFiles => "model-files",
+            Self::GlobalFiles => "global-files",
+            Self::VersionFile => "version-file",
+        }
+    }
+
+    fn tag(self) -> u8 {
+        match self {
+            Self::Schema1Ledger => 0,
+            Self::Schema1Applied => 1,
+            Self::Schema1Model => 2,
+            Self::AppStateHeader => 3,
+            Self::AppState => 4,
+            Self::IntentFiles => 5,
+            Self::ModelFiles => 6,
+            Self::GlobalFiles => 7,
+            Self::VersionFile => 8,
+        }
+    }
+
+    fn from_tag(tag: u8) -> Result<Self> {
+        Ok(match tag {
+            0 => Self::Schema1Ledger,
+            1 => Self::Schema1Applied,
+            2 => Self::Schema1Model,
+            3 => Self::AppStateHeader,
+            4 => Self::AppState,
+            5 => Self::IntentFiles,
+            6 => Self::ModelFiles,
+            7 => Self::GlobalFiles,
+            8 => Self::VersionFile,
+            other => Err(format!("unknown legacy source kind tag {other}"))?,
+        })
+    }
+}
+
+/// A stable name for one legacy row, so a human can adopt exactly it.
+///
+/// plan.md §R1.4: the digest is `SHA256("JAILS-LEGACY-1" || row_bytes)`. It is
+/// **derived, never stored** — a recorded key would be a second authority for
+/// what the row says, and the failure mode is adopting a row whose content has
+/// since changed under a key that still matches.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+pub struct LegacyKey {
+    pub source_kind: LegacySourceKind,
+    pub digest: ObjectId,
+}
+
+impl LegacyKey {
+    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        encoder.tag(self.source_kind.tag());
+        self.digest.encode(encoder);
+        Ok(())
+    }
+
+    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(Self {
+            source_kind: LegacySourceKind::from_tag(decoder.tag()?)?,
+            digest: ObjectId::decode(decoder)?,
+        })
+    }
+
+    /// The short spelling `jails doctor` prints and `jails adopt` accepts.
+    pub fn to_label(self) -> String {
+        format!("{}:{}", self.source_kind.label(), self.digest.to_hex())
+    }
+
+    pub fn parse_label(text: &str) -> Result<Self> {
+        let (kind, digest) = text
+            .split_once(':')
+            .ok_or_else(|| format!("`{text}` is not a legacy key: expected <source>:<digest>"))?;
+        let source_kind = [
+            LegacySourceKind::Schema1Ledger,
+            LegacySourceKind::Schema1Applied,
+            LegacySourceKind::Schema1Model,
+            LegacySourceKind::AppStateHeader,
+            LegacySourceKind::AppState,
+            LegacySourceKind::IntentFiles,
+            LegacySourceKind::ModelFiles,
+            LegacySourceKind::GlobalFiles,
+            LegacySourceKind::VersionFile,
+        ]
+        .into_iter()
+        .find(|candidate| candidate.label() == kind)
+        .ok_or_else(|| format!("unknown legacy source `{kind}`"))?;
+        Ok(Self {
+            source_kind,
+            digest: ObjectId::parse_hex(digest)?,
+        })
+    }
+}
+
+impl std::fmt::Display for LegacyKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.to_label())
+    }
+}
+
 /// A row carried forward from a pre-schema-2 store, origin unresolved.
 ///
 /// plan.md §R1.4 keeps these deliberately separate from `applied`. A schema-1
@@ -355,7 +480,7 @@ impl SpecPresence {
 }
 
 impl LegacyEntry {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.string(&self.recipe)?;
         encoder.string(&self.name)?;
         encoder.string(&self.package)?;
@@ -368,7 +493,7 @@ impl LegacyEntry {
         encode_strings(encoder, &self.paths)
     }
 
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
             recipe: decoder.string()?,
             name: decoder.string()?,
@@ -380,6 +505,20 @@ impl LegacyEntry {
             yields: decoder.string()?,
             spec_presence: SpecPresence::from_tag(decoder.tag()?)?,
             paths: decode_strings(decoder)?,
+        })
+    }
+
+    /// This row's stable adoption key, derived from its canonical bytes.
+    pub fn legacy_key(&self, source_kind: LegacySourceKind) -> Result<LegacyKey> {
+        let mut encoder = Encoder::new();
+        self.encode(&mut encoder)?;
+        let bytes = encoder.finish()?;
+        Ok(LegacyKey {
+            source_kind,
+            digest: ObjectId::from_bytes(jails_support::codec::domain_hash(
+                "JAILS-LEGACY-1",
+                &bytes,
+            )),
         })
     }
 

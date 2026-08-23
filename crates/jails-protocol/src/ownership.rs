@@ -90,6 +90,54 @@ impl ReconcileScope {
     }
 }
 
+/// One scope's complete declaration set: what is wanted, and how far the
+/// claim reaches.
+///
+/// The scope travels *with* the entities rather than beside them because the
+/// two are only meaningful together — a map of entities with no scope cannot
+/// say whether an absent entity means "remove it" or "not my business", and
+/// that is exactly the question reconciliation asks of every row.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DesiredState {
+    pub scope: ReconcileScope,
+    pub entities: BTreeMap<EntityId, DesiredEntity>,
+}
+
+impl DesiredState {
+    /// Refuses a row filed under an identity other than its own. Two
+    /// authorities for one entity's identity is how a plan comes to name a
+    /// file it never rendered.
+    pub fn new(scope: ReconcileScope, entities: BTreeMap<EntityId, DesiredEntity>) -> Result<Self> {
+        for (id, entity) in &entities {
+            if &entity.id != id {
+                return Err(format!(
+                    "desired entity {:?} is filed under the identity {id:?}",
+                    entity.id
+                ));
+            }
+            if !entity.spec.matches(id) {
+                return Err(format!(
+                    "desired entity {id:?} pairs an identity and a spec of different kinds"
+                ));
+            }
+            if entity.owners.is_empty() {
+                return Err(format!(
+                    "desired entity {id:?} has no owner; an unowned declaration is an absence"
+                ));
+            }
+        }
+        Ok(Self { scope, entities })
+    }
+
+    /// The single entity a `DirectEntity` scope speaks for, if this is one.
+    pub fn direct_subject(&self) -> Option<&EntityId> {
+        match &self.scope {
+            ReconcileScope::DirectEntity(id) => Some(id),
+            _ => None,
+        }
+    }
+}
+
 /// The result of comparing one scope's declarations against what was applied.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Reconciled {

@@ -62,6 +62,12 @@ const ALLOWED: &[AllowedConcept] = &[
             // Bootstrap order is *defined* by reading the ledger first, so it
             // cannot be described without naming it.
             "crates/jails-protocol/src/bootstrap.rs",
+            // `LedgerIntent` is what a plan says the store should hold
+            // afterwards, and the guard it carries is the ledger generation.
+            "crates/jails-protocol/src/plan.rs",
+            // A transition is chosen against the ledger's pending-conflict
+            // state, and its tests construct one to prove the pairing.
+            "crates/jails-protocol/src/transition.rs",
             "src/app.rs",
             // The typed shadow reads the schema-1 store's rows to build its
             // observed side, so it names the module they live in.

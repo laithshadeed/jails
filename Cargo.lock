@@ -198,6 +198,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "jails-java",
+ "jails-protocol",
  "jails-spec",
  "jails-support",
 ]

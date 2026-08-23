@@ -11,16 +11,23 @@
 //! There is one constructor per type and the codec calls it.
 
 pub mod bootstrap;
+pub mod change;
 pub mod conflict;
 pub mod declaration;
+pub mod edit;
 pub mod effect;
 pub mod entity;
 pub mod envelope;
+pub mod fact;
 pub mod identity;
 pub mod ownership;
+pub mod plan;
 pub mod provenance;
 pub mod recipe;
+pub mod render;
 pub mod request;
+pub mod resource;
 pub mod snapshot;
+pub mod transition;
 
 pub(crate) use jails_support::Result;

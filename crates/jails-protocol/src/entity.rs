@@ -241,6 +241,24 @@ pub enum ToolFeature {
     FastTest,
 }
 
+impl ToolFeature {
+    /// The canonical CLI spelling, which is also the wire form: §R1.4 encodes
+    /// a feature as its lowercase name rather than a Rust discriminant, so
+    /// reordering the enum cannot change a recorded value.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::FastTest => "fast-test",
+        }
+    }
+
+    pub fn parse(text: &str) -> Result<Self> {
+        match text {
+            "fast-test" => Ok(Self::FastTest),
+            other => Err(format!("unknown tool feature `{other}`")),
+        }
+    }
+}
+
 /// Anything that can be owned and reconciled.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
 pub enum EntityId {
@@ -481,6 +499,14 @@ impl ExternalPathId {
 
     pub fn object(&self) -> ObjectId {
         self.0
+    }
+
+    pub fn encode(&self, encoder: &mut Encoder) {
+        self.0.encode(encoder);
+    }
+
+    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(Self(ObjectId::decode(decoder)?))
     }
 }
 
