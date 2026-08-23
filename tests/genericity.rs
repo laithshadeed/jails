@@ -81,6 +81,9 @@ const ALLOWED: &[AllowedConcept] = &[
             "crates/jails-prepare/src/receipt.rs",
             "crates/jails-prepare/src/command.rs",
             "crates/jails-prepare/src/serialize.rs",
+            // A journal names the ledger-committed phase, which is the point
+            // after which recovery must roll forward rather than back.
+            "crates/jails-commit/src/journal.rs",
             "src/app.rs",
             // The typed shadow reads the schema-1 store's rows to build its
             // observed side, so it names the module they live in.

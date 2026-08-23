@@ -397,14 +397,103 @@ impl PreparedIdentityV1 {
         self.kind.encode(encoder)
     }
 
-    /// `SHA256("JAILS-TRANSACTION-1" || encode(self))`.
+    /// `SHA256("JAILS-PREPARED-1" || encode(self))`.
+    ///
+    /// §R4.2 names this prefix, and a journal's directory name and stored
+    /// transaction must both equal it — so the id is the prepared identity
+    /// and nothing else can be substituted for it.
     pub fn transaction_id(&self) -> Result<TransactionId> {
         let mut encoder = Encoder::new();
         self.encode(&mut encoder)?;
         Ok(TransactionId::from_bytes(codec::domain_hash(
-            "JAILS-TRANSACTION-1",
+            "JAILS-PREPARED-1",
             &encoder.finish()?,
         )))
+    }
+
+    /// Decode one prepared identity.
+    ///
+    /// A journal recovered after a crash comes back through here, and it goes
+    /// through the same constructors the live path used — a decoder with its
+    /// own idea of a valid value is a second validator, and two validators
+    /// drift.
+    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        let format = decoder.u32()?;
+        if format != FORMAT {
+            return Err(format!("prepared identity format {format} is not {FORMAT}"));
+        }
+        let operation_identity = OperationIdentityV1::decode(decoder)?;
+        let operation_id = OperationId::decode(decoder)?;
+        let preparation = PreparationContextFingerprint::decode(decoder)?;
+        let count = decoder.count()?;
+        let mut input_preconditions = Vec::new();
+        for _ in 0..count {
+            input_preconditions.push(jails_protocol::snapshot::decode_precondition(decoder)?);
+        }
+        let count = decoder.count()?;
+        let mut operations = Vec::new();
+        for _ in 0..count {
+            operations.push(FileOp::decode(decoder)?);
+        }
+        let count = decoder.count()?;
+        let mut directories = Vec::new();
+        for _ in 0..count {
+            directories.push(DirectoryOp::decode(decoder)?);
+        }
+        let ledger_before = FileImage::decode(decoder)?;
+        let ledger_after = FileImage::decode(decoder)?;
+        let count = decoder.count()?;
+        let mut object_manifest = Vec::new();
+        for _ in 0..count {
+            object_manifest.push(ObjectRef::decode(decoder)?);
+        }
+        let count = decoder.count()?;
+        let mut post_commit = Vec::new();
+        for _ in 0..count {
+            post_commit.push(PostCommitEffect::decode(decoder)?);
+        }
+        let kind = PreparedKind::decode(decoder)?;
+        let identity = Self {
+            operation_identity,
+            operation_id,
+            preparation,
+            input_preconditions,
+            operations,
+            directories,
+            ledger_before,
+            ledger_after,
+            object_manifest,
+            post_commit,
+            kind,
+        };
+        identity.validate()?;
+        Ok(identity)
+    }
+
+    /// The checks that hold for a prepared identity however it arrived.
+    pub fn validate(&self) -> Result<()> {
+        self.operation_identity.semantics.agrees_with(&self.kind)?;
+        if self.operation_id != self.operation_identity.operation_id()? {
+            return Err(
+                "the operation id does not hash its own identity; this record was assembled                  from two different operations"
+                    .to_string(),
+            );
+        }
+        let mut targets = BTreeSet::new();
+        for operation in &self.operations {
+            if !targets.insert(operation.target().clone()) {
+                return Err(format!(
+                    "{} carries two operations in one transaction",
+                    operation.target()
+                ));
+            }
+        }
+        let mut previous: Option<&ObjectRef> = None;
+        for object in &self.object_manifest {
+            ordered(previous, object)?;
+            previous = Some(object);
+        }
+        Ok(())
     }
 }
 

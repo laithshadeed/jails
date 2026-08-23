@@ -21,6 +21,8 @@ edition.workspace = true
 
 [dependencies]
 jails-tooling = { path = "crates/jails-tooling" }
+jails-commit = { path = "crates/jails-commit" }
+jails-prepare = { path = "crates/jails-prepare" }
 jails-generate = { path = "crates/jails-generate" }
 jails-project = { path = "crates/jails-project" }
 jails-spec = { path = "crates/jails-spec" }

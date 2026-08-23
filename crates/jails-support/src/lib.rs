@@ -12,6 +12,7 @@ pub mod apply;
 pub mod codec;
 pub mod codemod;
 pub mod json;
+pub mod lock;
 pub mod process;
 pub mod runner;
 pub mod scratch;
