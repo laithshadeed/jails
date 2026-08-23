@@ -711,14 +711,6 @@ mod tests {
         assert!(error.is_err());
     }
 
-    #[test]
-
-    /// A plugin's `<configuration>` routinely names other artifacts. Reading
-    /// the first `<artifactId>` in the whole block would attribute one of
-    /// those to the plugin itself.
-    #[test]
-    #[test]
-
     /// The format owner supplies indentation and markers. A mapping that
     /// carried either would be indented or marked twice on splice.
     #[test]

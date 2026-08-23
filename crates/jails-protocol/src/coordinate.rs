@@ -297,6 +297,7 @@ mod tests {
         MavenCoordinate::parse(group, artifact).unwrap()
     }
 
+    #[test]
     fn a_plugin_block_declaring_another_coordinate_is_refused() {
         let block = CanonicalPluginXml::parse(
             "<plugin>\n  <groupId>com.diffplug.spotless</groupId>\n  \
@@ -311,6 +312,7 @@ mod tests {
         assert!(error.contains("declares"), "{error}");
     }
 
+    #[test]
     fn a_coordinate_is_read_before_the_configuration_not_inside_it() {
         let block = CanonicalPluginXml::parse(
             "<plugin>\n  <artifactId>maven-failsafe-plugin</artifactId>\n  \
@@ -325,6 +327,7 @@ mod tests {
         );
     }
 
+    #[test]
     fn a_plugin_block_must_be_one_element_and_nothing_else() {
         for bad in [
             "<plugins><plugin><artifactId>a</artifactId></plugin></plugins>",
@@ -335,6 +338,7 @@ mod tests {
         }
     }
 
+    #[test]
     fn an_absent_scope_is_compile_and_an_unknown_one_is_an_error() {
         assert_eq!(MavenScope::parse("").unwrap(), MavenScope::Compile);
         assert_eq!(MavenScope::parse("test").unwrap(), MavenScope::Test);

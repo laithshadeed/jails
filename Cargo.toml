@@ -6,6 +6,14 @@ version = "0.1.0"
 edition = "2024"
 
 # One place for the lint policy, so a new crate cannot quietly opt out of it.
+[workspace.lints.rust]
+# A function nobody calls inside a `mod tests` is almost always a test that
+# stopped being one: a `#[test]` lost while moving code between modules leaves
+# a plausible-looking function that never runs, and the suite goes green over
+# it. That happened while splitting `resource.rs`, and only a warning nobody
+# had to read caught it. It is a denial now, so the build stops instead.
+dead_code = "deny"
+
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
 
