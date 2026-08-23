@@ -18,9 +18,9 @@
 //! command that would record it. Under-naming is the safe failure: the reader
 //! keeps a file and deletes it by hand, where over-naming loses work.
 
-use crate::Result;
 use crate::model::Project;
 use clap::ValueEnum;
+use jails_support::Result;
 use std::path::{Path, PathBuf};
 
 use super::*;

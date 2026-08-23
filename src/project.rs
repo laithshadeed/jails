@@ -1,11 +1,11 @@
-use crate::json;
+use jails_support::json;
 use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::Result;
 use crate::pom;
+use jails_support::Result;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MavenModule {

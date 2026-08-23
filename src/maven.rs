@@ -16,6 +16,7 @@
 //! Windows while `run.rs`'s was wrong, so `jails about` reported a Maven
 //! command `jails test` would not have used.
 
+use jails_support::process;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -37,7 +38,7 @@ pub(crate) fn binary(root: &Path) -> PathBuf {
     if wrapper.is_file() {
         return wrapper;
     }
-    if crate::process::on_path(mvnd_binary()) {
+    if process::on_path(mvnd_binary()) {
         PathBuf::from(mvnd_binary())
     } else {
         PathBuf::from("mvn")

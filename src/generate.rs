@@ -1,6 +1,6 @@
-use crate::Result;
 use crate::model::{Artifact, Change, Layer, Project};
 use clap::ValueEnum;
+use jails_support::Result;
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -534,7 +534,7 @@ pub(crate) struct Recipe<'a> {
 mod tests {
     use super::*;
 
-    use crate::CWD_LOCK;
+    use jails_support::CWD_LOCK;
 
     fn scratch(label: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(

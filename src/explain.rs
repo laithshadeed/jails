@@ -22,9 +22,9 @@
 //! The rule for content: say what the artifact *is for* and name the trap.
 //! A restatement of the `--help` line earns nothing; `--help` is right there.
 
-use crate::Result;
 use crate::generate::ArtifactKind;
 use clap::ValueEnum;
+use jails_support::Result;
 
 /// What one kind is for, and the mistake it invites.
 struct Explanation {

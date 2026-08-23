@@ -8,7 +8,7 @@
 //! to "which directory am I in and what is it called", which the generators
 //! then use.
 
-use crate::Result;
+use jails_support::Result;
 use std::fs;
 use std::path::{Path, PathBuf};
 

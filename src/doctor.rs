@@ -21,12 +21,12 @@ mod wiring;
 use environment::*;
 use wiring::*;
 
-use crate::Result;
 use crate::compose;
 use crate::generate::find_project_root;
 use crate::inspect;
 use crate::pom;
 use crate::run;
+use jails_support::{Result, apply};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Status {
@@ -148,7 +148,7 @@ pub fn doctor(json: bool) -> Result<()> {
 /// The exit code is unchanged: failures still exit non-zero, because
 /// `jails doctor --json && deploy` should behave like `jails doctor && deploy`.
 fn report_json(checks: &[Check]) -> Result<()> {
-    use crate::json;
+    use jails_support::json;
 
     let rows: Vec<String> = checks
         .iter()
@@ -628,7 +628,7 @@ pub fn setup(dry_run: bool) -> Result<()> {
         return Ok(());
     }
 
-    crate::apply::put_outside_project(&path, next)?;
+    apply::put_outside_project(&path, next)?;
     println!(
         "  write   testcontainers.reuse.enable=true -> {}",
         path.display()

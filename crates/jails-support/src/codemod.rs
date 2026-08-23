@@ -42,27 +42,27 @@
 /// marker at column zero inside a mapping is a YAML parse error rather than a
 /// comment in the wrong place.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Marked<'a> {
-    pub(crate) marker: &'a str,
-    pub(crate) indent: &'a str,
+pub struct Marked<'a> {
+    pub marker: &'a str,
+    pub indent: &'a str,
 }
 
 impl<'a> Marked<'a> {
     /// A block at column zero — properties, `spring.factories`.
-    pub(crate) fn new(marker: &'a str) -> Self {
+    pub fn new(marker: &'a str) -> Self {
         Self { marker, indent: "" }
     }
 
     /// A block nested inside a YAML mapping.
-    pub(crate) fn indented(marker: &'a str, indent: &'a str) -> Self {
+    pub fn indented(marker: &'a str, indent: &'a str) -> Self {
         Self { marker, indent }
     }
 
-    pub(crate) fn open(&self) -> String {
+    pub fn open(&self) -> String {
         format!("{}# jails:{}", self.indent, self.marker)
     }
 
-    pub(crate) fn close(&self) -> String {
+    pub fn close(&self) -> String {
         format!("{}# /jails:{}", self.indent, self.marker)
     }
 
@@ -71,7 +71,7 @@ impl<'a> Marked<'a> {
     /// Matched on the opening marker alone: a file with an opener and no closer
     /// is damaged, and reporting it as absent would have the next `add` write a
     /// second copy rather than say something is wrong.
-    pub(crate) fn present_in(&self, text: &str) -> bool {
+    pub fn present_in(&self, text: &str) -> bool {
         exact_line(text, &self.open(), 0).is_some()
     }
 
@@ -80,7 +80,7 @@ impl<'a> Marked<'a> {
     /// Every line of `body` is indented, not just the markers: in YAML the
     /// markers and the content are at the same level, and in a properties file
     /// the indent is empty so this costs nothing.
-    pub(crate) fn render(&self, body: &str) -> String {
+    pub fn render(&self, body: &str) -> String {
         let mut out = String::with_capacity(body.len() + 64);
         out.push_str(&self.open());
         out.push('\n');
@@ -102,7 +102,7 @@ impl<'a> Marked<'a> {
     ///
     /// The indent is stripped, so a caller comparing against what it would have
     /// written is comparing like with like.
-    pub(crate) fn body_in(&self, text: &str) -> Option<String> {
+    pub fn body_in(&self, text: &str) -> Option<String> {
         let (start, end) = self.bounds(text)?;
         let inner = &text[start..end];
         let mut lines = inner.lines();
@@ -123,7 +123,7 @@ impl<'a> Marked<'a> {
     /// Takes the trailing newline with it, so removing a block does not leave a
     /// blank line where it was -- which would accumulate one per add/remove
     /// cycle in a file people read.
-    pub(crate) fn strip_from(&self, text: &str) -> Option<String> {
+    pub fn strip_from(&self, text: &str) -> Option<String> {
         let (start, end) = self.bounds(text)?;
         let mut out = String::with_capacity(text.len());
         out.push_str(&text[..start]);

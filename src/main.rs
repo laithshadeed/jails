@@ -1,12 +1,11 @@
+use jails_support::Result;
 mod add;
 mod adopt;
 mod affected;
 mod app;
-mod apply;
 mod bench;
 mod build;
 mod classfile;
-mod codemod;
 mod commands;
 mod compose;
 mod config;
@@ -17,7 +16,6 @@ mod generate;
 mod generated_files;
 mod inspect;
 mod java;
-mod json;
 mod kafka;
 mod launcher;
 mod ledger;
@@ -27,7 +25,6 @@ mod migrate;
 mod model;
 mod new;
 mod pom;
-mod process;
 mod project;
 mod rename;
 mod run;
@@ -46,31 +43,6 @@ use clap_complete::Shell;
 use compose::Runtime;
 use generate::ArtifactKind;
 use std::path::PathBuf;
-
-pub type Result<T> = std::result::Result<T, String>;
-
-/// Prints the program, args and working directory of a command about to be
-/// run, for `--debug`. Called right before every `.status()`/`.spawn()` in
-/// run.rs/new.rs.
-pub(crate) fn debug_cmd(cmd: &std::process::Command) {
-    let program = cmd.get_program().to_string_lossy();
-    let args: Vec<String> = cmd
-        .get_args()
-        .map(|a| a.to_string_lossy().to_string())
-        .collect();
-    let dir = cmd
-        .get_current_dir()
-        .map(|d| format!("  (in {})", d.display()))
-        .unwrap_or_default();
-    eprintln!("+ {program} {}{dir}", args.join(" "));
-}
-
-/// All unit tests across the crate's modules share one test binary and thus
-/// one process-global current directory. Tests that need to change it (to
-/// exercise cwd-relative project lookup) must hold this lock for the
-/// duration so they can't interleave and race each other.
-#[cfg(test)]
-pub(crate) static CWD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[derive(Parser)]
 #[command(

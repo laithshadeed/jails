@@ -19,9 +19,9 @@
 //! second list to keep in step, which is the whole point -- adding a kind is
 //! one edit, and this output follows.
 
-use crate::Result;
-use crate::json;
 use clap::{Command, CommandFactory, ValueEnum};
+use jails_support::Result;
+use jails_support::json;
 
 /// One name the CLI accepts, with whatever else it answers to.
 struct Name {

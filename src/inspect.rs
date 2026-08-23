@@ -17,10 +17,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use crate::Result;
 use crate::java::{self, Target};
-use crate::json;
 use crate::spec::find_project_root;
+use jails_support::Result;
+use jails_support::json;
 
 /// One HTTP route: verb, path, and the method behind it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -736,7 +736,7 @@ pub fn stats(json: bool) -> Result<()> {
 /// needs a layer that went to zero to still be there. That is the one place
 /// the two renderings legitimately differ, and it is worth saying out loud.
 fn stats_json(main: &[LayerStats], test: &[LayerStats]) -> Result<()> {
-    use crate::json;
+    use jails_support::json;
 
     let render = |rows: &[LayerStats]| {
         rows.iter()
@@ -857,7 +857,7 @@ pub fn notes(tag: Option<&str>, json: bool) -> Result<()> {
     let found = collect_notes(&root, tag);
 
     if json {
-        use crate::json;
+        use jails_support::json;
         let rows: Vec<String> = found
             .iter()
             .map(|note| {

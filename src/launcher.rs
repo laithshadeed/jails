@@ -26,8 +26,8 @@
 //! since — the pom is the only thing that can alter it, and comparing
 //! mtimes is the cheapest question that answers correctly.
 
-use crate::Result;
 use crate::run;
+use jails_support::Result;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::SystemTime;

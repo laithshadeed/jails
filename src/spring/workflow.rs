@@ -26,7 +26,7 @@ pub(crate) fn require_scope_authorizer(
     kind: &str,
     name: &str,
     fields: &[crate::generate::Field],
-) -> crate::Result<()> {
+) -> jails_support::Result<()> {
     if !fields.iter().any(|field| field.constraints.scoped) {
         return Ok(());
     }
@@ -86,7 +86,12 @@ impl Target {
     /// the record on disk, else an error naming the record *and the fix*.
     /// `usecase`, `query` and `transition` each used to raise their own
     /// wording, and only some of them carried a `fix:` line.
-    pub(crate) fn read(slice: &Slice, kind: &str, name: &str, target: &str) -> crate::Result<Self> {
+    pub(crate) fn read(
+        slice: &Slice,
+        kind: &str,
+        name: &str,
+        target: &str,
+    ) -> jails_support::Result<Self> {
         let fields = slice.record(Layer::Domain, target).ok_or_else(|| {
             format!(
                 "{kind} {name} targets {target}, but no record components could be read from {target}.java.\n       fix: generate the {target} scaffold first, or correct `--on {target}`."
@@ -100,7 +105,11 @@ impl Target {
 
     /// The stable non-optional `id` that lets an operation return a resource
     /// location and verify persistence, or a refusal saying why it needs one.
-    pub(crate) fn id(&self, kind: &str, name: &str) -> crate::Result<&crate::generate::Field> {
+    pub(crate) fn id(
+        &self,
+        kind: &str,
+        name: &str,
+    ) -> jails_support::Result<&crate::generate::Field> {
         let target = &self.name;
         self.fields
             .iter()
@@ -131,7 +140,7 @@ pub(crate) fn usecase_files(
     name: &str,
     target: &str,
     fields: &[crate::generate::Field],
-) -> crate::Result<Vec<Artifact>> {
+) -> jails_support::Result<Vec<Artifact>> {
     require_scope_authorizer(slice, "usecase", name, fields)?;
     let resolved = Target::read(slice, "usecase", name, target)?;
     let target_fields = &resolved.fields;

@@ -1,6 +1,7 @@
-use crate::Result;
 use crate::compose;
 use crate::generate::find_project_root;
+use jails_support::Result;
+use jails_support::{apply, process};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -24,7 +25,7 @@ mod filter;
 use filter::*;
 
 pub(crate) fn find_on_path(bin: &str) -> bool {
-    crate::process::on_path(bin)
+    process::on_path(bin)
 }
 
 /// Run a command with our stdio, failing on a non-zero exit.
@@ -40,12 +41,12 @@ pub(crate) fn run_inherited(mut cmd: Command, debug: bool) -> Result<()> {
     if is_maven {
         forced_color(&mut cmd);
     }
-    let mut spec = crate::process::CommandSpec::new(cmd.get_program())
+    let mut spec = process::CommandSpec::new(cmd.get_program())
         .args(cmd.get_args())
         .output(if is_maven {
-            crate::process::OutputMode::Tee
+            process::OutputMode::Tee
         } else {
-            crate::process::OutputMode::Inherit
+            process::OutputMode::Inherit
         });
     if let Some(dir) = cmd.get_current_dir() {
         spec = spec.current_dir(dir);
@@ -55,7 +56,7 @@ pub(crate) fn run_inherited(mut cmd: Command, debug: bool) -> Result<()> {
             spec = spec.env(key, value);
         }
     }
-    let done = crate::process::run(&spec, crate::process::Diagnostics::from_flag(debug))?;
+    let done = process::run(&spec, process::Diagnostics::from_flag(debug))?;
     if done.status.success() {
         return Ok(());
     }
@@ -113,7 +114,7 @@ fn run_watched(mut cmd: Command, debug: bool) -> Result<()> {
     cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     if debug {
-        crate::debug_cmd(&cmd);
+        jails_support::debug_cmd(&cmd);
     }
     let program = cmd.get_program().to_string_lossy().to_string();
     let mut child = cmd
@@ -323,7 +324,7 @@ pub fn test(filter: Option<&str>, options: TestOptions, debug: bool) -> Result<(
 /// says what actually executed, which is the other half a consumer needs to
 /// tell "all green" from "nothing ran".
 fn report_json(root: &Path, passed: bool) -> Result<()> {
-    use crate::json;
+    use jails_support::json;
 
     let cases = crate::surefire::cases(root);
     let rows: Vec<String> = cases
@@ -439,7 +440,7 @@ fn ensure_console_launcher(root: &Path, debug: bool) -> Result<()> {
     let Some(updated) = crate::pom::add_dependency(&pom, &dependency)? else {
         return Ok(());
     };
-    crate::apply::put_named(root.join("pom.xml"), updated, "pom.xml")?;
+    apply::put_named(root.join("pom.xml"), updated, "pom.xml")?;
     println!(
         "added {}:{} (test scope) -- `--fast` runs JUnit's console launcher directly",
         dependency.group_id, dependency.artifact_id
@@ -597,7 +598,7 @@ pub fn watch(debug: bool) -> Result<()> {
         let mut compile = Command::new(crate::maven::binary(&root));
         compile.arg("compile").current_dir(&root);
         if debug {
-            crate::debug_cmd(&compile);
+            jails_support::debug_cmd(&compile);
         }
         match compile.status() {
             Ok(s) if s.success() => {

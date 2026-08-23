@@ -41,7 +41,7 @@ pub(crate) fn search_files(
     slice: &Slice,
     name: &str,
     fields: &[String],
-) -> crate::Result<Vec<Artifact>> {
+) -> jails_support::Result<Vec<Artifact>> {
     if !slice.project().has_jdbc() {
         return Err(format!(
             "search {name} indexes a PostgreSQL table.\n       fix: run `jails add db` first."
@@ -159,7 +159,7 @@ fn searched_columns(
     fields: &[String],
     columns: &[crate::sql::Column],
     name: &str,
-) -> crate::Result<Vec<String>> {
+) -> jails_support::Result<Vec<String>> {
     if fields.is_empty() {
         return Err(format!(
             "search {name} needs the components to index, e.g. \

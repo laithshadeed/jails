@@ -6,6 +6,7 @@
 //! usable Maven just gets a note.
 
 use super::*;
+use jails_support::json;
 
 // ---------------------------------------------------------------------------
 // http
@@ -251,9 +252,9 @@ fn load_api_js(routes: &[crate::inspect::Route]) -> String {
         .map(|route| {
             format!(
                 "  {{ method: {}, path: {}, handler: {} }}",
-                crate::json::string(&route.verb),
-                crate::json::string(&load_path(&route.path)),
-                crate::json::string(&route.handler),
+                json::string(&route.verb),
+                json::string(&load_path(&route.path)),
+                json::string(&route.handler),
             )
         })
         .collect::<Vec<_>>()

@@ -26,9 +26,9 @@
 //! say one thing, and picking the first alphabetically would be a coin toss the
 //! reader never saw.
 
-use crate::Result;
 use crate::config;
 use crate::generate::{find_project_root, layout};
+use jails_support::Result;
 use std::collections::BTreeMap;
 use std::path::Path;
 

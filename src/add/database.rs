@@ -9,6 +9,7 @@
 use super::test_wiring::remove_jails_db_block;
 use super::*;
 use crate::spring::TESTCONTAINERS_JUNIT;
+use jails_support::{apply, codemod};
 
 // ---------------------------------------------------------------------------
 // db -- PostgreSQL, Flyway, and real integration tests; deliberately no ORM
@@ -296,7 +297,7 @@ pub(super) fn install_capability_properties(
     } else {
         String::new()
     };
-    let marked = crate::codemod::Marked::new(label);
+    let marked = codemod::Marked::new(label);
     if marked.present_in(&existing) {
         println!("  exists  {}", rel(root, &path));
         return Ok(false);
@@ -317,7 +318,7 @@ pub(super) fn install_capability_properties(
         fs::create_dir_all(parent)
             .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
     }
-    crate::apply::put(&path, next)?;
+    apply::put(&path, next)?;
     for line in lines {
         println!("  set     {line}");
     }
@@ -342,7 +343,7 @@ pub(super) fn install_capability_properties(
 /// Comments and blank lines are ignored: a comment inside the block is
 /// usually jails' own explanation of the property below it.
 pub(super) fn unowned_properties(existing: &str, label: &str, owned: &[String]) -> Vec<String> {
-    let Some(body) = crate::codemod::Marked::new(label).body_in(existing) else {
+    let Some(body) = codemod::Marked::new(label).body_in(existing) else {
         return Vec::new();
     };
     body.lines()
@@ -425,7 +426,7 @@ pub(super) fn remove_capability_properties(root: &Path, label: &str) -> Result<(
     let Ok(existing) = fs::read_to_string(&path) else {
         return Ok(());
     };
-    let Some(out) = crate::codemod::Marked::new(label).strip_from(&existing) else {
+    let Some(out) = codemod::Marked::new(label).strip_from(&existing) else {
         return Ok(());
     };
     if out.trim().is_empty() {
@@ -435,7 +436,7 @@ pub(super) fn remove_capability_properties(root: &Path, label: &str) -> Result<(
         println!("  removed {}", rel(root, &path));
         return Ok(());
     }
-    crate::apply::put(&path, out)?;
+    apply::put(&path, out)?;
     println!("  updated {}", rel(root, &path));
     Ok(())
 }
@@ -491,7 +492,7 @@ pub(super) fn install_db_properties(root: &Path, dry_run: bool) -> Result<bool> 
         fs::create_dir_all(parent)
             .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
     }
-    crate::apply::put(&path, next)?;
+    apply::put(&path, next)?;
     println!("  properties  {}", rel(root, &path));
     Ok(true)
 }
@@ -510,7 +511,7 @@ pub(super) fn uninstall_db_properties(root: &Path) -> Result<()> {
         fs::remove_file(&path).map_err(|e| format!("failed to remove {}: {e}", path.display()))?;
         println!("  delete  {}", rel(root, &path));
     } else {
-        crate::apply::put(&path, next)?;
+        apply::put(&path, next)?;
         println!("  unsplice  {}", rel(root, &path));
     }
     Ok(())

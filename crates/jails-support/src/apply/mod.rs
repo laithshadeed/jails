@@ -60,7 +60,7 @@ fn ensure_parent(path: &Path) -> Result<()> {
 /// snippet instead of clobbering. Callers that have already run their own
 /// collision check still come through here, because the check and the write
 /// racing is a different bug from the check being absent.
-pub(crate) fn create(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<()> {
+pub fn create(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<()> {
     let (path, contents) = (path.as_ref(), contents.as_ref());
     if path.exists() {
         return Err(format!(
@@ -78,7 +78,7 @@ pub(crate) fn create(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Resul
 /// Distinct from [`put`] only in what it says about intent: this one is for a
 /// capability rewriting its own output, where finding the file absent is a
 /// surprise worth not hiding.
-pub(crate) fn replace(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<()> {
+pub fn replace(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<()> {
     let (path, contents) = (path.as_ref(), contents.as_ref());
     ensure_parent(path)?;
     fs::write(path, contents)
@@ -92,7 +92,7 @@ pub(crate) fn replace(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Resu
 /// rule that protects them -- an edit must be surgical and leave every other
 /// byte alone -- is enforced *before* this call, by the module that owns the
 /// format. By the time bytes reach here the merge is a decision already taken.
-pub(crate) fn put(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<()> {
+pub fn put(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<()> {
     let (path, contents) = (path.as_ref(), contents.as_ref());
     ensure_parent(path)?;
     fs::write(path, contents)
@@ -104,7 +104,7 @@ pub(crate) fn put(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<(
 /// The 3-way merge produces a file that may not be valid UTF-8 and may carry
 /// conflict markers: it is whatever `git merge-file` decided, and re-encoding
 /// it through `String` would be jails editing a merge result it did not make.
-pub(crate) fn put_bytes(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> Result<()> {
+pub fn put_bytes(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> Result<()> {
     let path = path.as_ref();
     ensure_parent(path)?;
     fs::write(path, contents)
@@ -115,11 +115,7 @@ pub(crate) fn put_bytes(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> R
 ///
 /// `failed to write pom.xml` is what a person needs; the absolute path of a
 /// file in the directory they are standing in is noise.
-pub(crate) fn put_named(
-    path: impl AsRef<Path>,
-    contents: impl AsRef<str>,
-    label: &str,
-) -> Result<()> {
+pub fn put_named(path: impl AsRef<Path>, contents: impl AsRef<str>, label: &str) -> Result<()> {
     let (path, contents) = (path.as_ref(), contents.as_ref());
     ensure_parent(path)?;
     fs::write(path, contents).map_err(|error| format!("failed to write {label}: {error}"))
@@ -129,7 +125,7 @@ pub(crate) fn put_named(
 ///
 /// Deliberately long: `jails setup` writes `~/.testcontainers.properties`, and
 /// nothing that edits a *project* should ever reach for this by accident.
-pub(crate) fn put_outside_project(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<()> {
+pub fn put_outside_project(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<()> {
     let (path, contents) = (path.as_ref(), contents.as_ref());
     ensure_parent(path)?;
     fs::write(path, contents)
@@ -141,7 +137,7 @@ pub(crate) fn put_outside_project(path: impl AsRef<Path>, contents: impl AsRef<s
 /// For the bookkeeping under `.jails/`, where a half-written ledger is worse
 /// than an absent one: an interrupted `app apply` has to be resumable, and it
 /// can only resume from a file that is either the old one or the new one.
-pub(crate) fn atomically(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<()> {
+pub fn atomically(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<()> {
     let (path, contents) = (path.as_ref(), contents.as_ref());
     let parent = path
         .parent()

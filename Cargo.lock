@@ -125,7 +125,12 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "clap_complete",
+ "jails-support",
 ]
+
+[[package]]
+name = "jails-support"
+version = "0.1.0"
 
 [[package]]
 name = "once_cell_polyfill"

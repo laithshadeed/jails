@@ -124,7 +124,7 @@ pub(crate) fn http_workflow_files(
     slice: &Slice,
     name: &str,
     fetcher: &str,
-) -> crate::Result<Vec<Artifact>> {
+) -> jails_support::Result<Vec<Artifact>> {
     let root: &Path = slice.project().root();
     let jobs: &str = &slice.placed(Layer::Jobs);
     let clients: &str = &slice.owned(Layer::Clients);

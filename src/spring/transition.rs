@@ -26,7 +26,7 @@ pub(crate) fn transition_files(
     name: &str,
     target: &str,
     fields: &[crate::generate::Field],
-) -> crate::Result<Vec<Artifact>> {
+) -> jails_support::Result<Vec<Artifact>> {
     let root: &Path = slice.project().root();
     let service: &str = &slice.placed(Layer::Service);
     let web: &str = &slice.placed(Layer::Web);

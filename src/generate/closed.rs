@@ -16,7 +16,7 @@
 //! project compiling.
 
 use super::*;
-use crate::Result;
+use jails_support::Result;
 
 // ---- enum: the closed set of alternatives, and the one owned type whose
 // shape jails can work out without being told. ----

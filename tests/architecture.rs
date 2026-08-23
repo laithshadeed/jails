@@ -587,9 +587,19 @@ const LAYERS: &[(&str, usize)] = &[
 
 /// `src/spring/durable.rs` -> `spring`; `src/ledger.rs` -> `ledger`.
 fn module_of(path: &Path) -> Option<String> {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let rest = path.strip_prefix(&src).ok()?;
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let rest = path.strip_prefix(root.join("src")).ok().or_else(|| {
+        let from_crates = path.strip_prefix(root.join("crates")).ok()?;
+        // crates/<member>/src/<module>...
+        let mut parts = from_crates.components();
+        parts.next()?;
+        let src = parts.next()?;
+        (src.as_os_str() == "src").then(|| Path::new(parts.as_path()))
+    })?;
     let first = rest.components().next()?.as_os_str().to_str()?;
+    if first == "lib.rs" || first == "main.rs" {
+        return None;
+    }
     Some(first.strip_suffix(".rs").unwrap_or(first).to_string())
 }
 
@@ -653,11 +663,36 @@ struct Source {
     production: String,
 }
 
+/// Every production Rust file in the workspace, not only the binary's own.
+///
+/// The binary is one crate of seven. A scanner that walked `src/` alone would
+/// keep reporting green while the code it gates moved into `crates/*/src` --
+/// the same failure as a skipped tier-3 test, which the suite also reports as
+/// passing unless something insists otherwise.
 fn sources() -> Vec<Source> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut files = Vec::new();
-    collect(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("src").as_path(),
-        &mut files,
+    collect(root.join("src").as_path(), &mut files);
+    let crates = root.join("crates");
+    if crates.is_dir() {
+        let mut members: Vec<PathBuf> = fs::read_dir(&crates)
+            .expect("failed to read crates/")
+            .map(|entry| entry.expect("failed to read a crates/ entry").path())
+            .collect();
+        members.sort();
+        for member in members {
+            let src = member.join("src");
+            if src.is_dir() {
+                collect(&src, &mut files);
+            }
+        }
+    }
+    assert!(
+        files.len() > 30,
+        "the workspace scanner found only {} files -- it has lost track of where \
+         the code lives, and every gate below would report green over code it \
+         never read",
+        files.len()
     );
     files.sort_by(|a, b| a.path.cmp(&b.path));
     files

@@ -16,13 +16,14 @@
 //! `jails add <TAB>`, and the doc comment on each variant becomes its
 //! completion description.
 
-use crate::Result;
 use crate::compose::{self, Service as ComposeService};
 use crate::generate::{
     base_package, import_of, main_dir, normalize_imports, package_of, test_dir, write_new_file,
 };
 use crate::model::{Artifact, Change, Layer, Project, Slice, SpringTestImport};
 use crate::pom::{self, Dependency, Flavor, MIN_RELEASE, TARGET_RELEASE};
+use jails_support::Result;
+use jails_support::apply;
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -247,7 +248,7 @@ pub(crate) fn add_in(
 
     let pom_changed = !spliced.is_empty() || !spliced_plugins.is_empty() || docker_compose_dep;
     if pom_changed {
-        crate::apply::put_named(root.join("pom.xml"), &updated_pom, "pom.xml")?;
+        apply::put_named(root.join("pom.xml"), &updated_pom, "pom.xml")?;
         for dep in &spliced {
             println!("     dep  {}:{}", dep.group_id, dep.artifact_id);
         }
@@ -274,7 +275,7 @@ pub(crate) fn add_in(
                 // This is the write plan.md §11 names: a capability updating a
                 // file it wrote before, which used to go straight past the
                 // collision check with a bare `fs::write`. `replace` says so.
-                crate::apply::replace(&file.path, &contents)?;
+                apply::replace(&file.path, &contents)?;
                 println!("  update  {}", rel(&root, &file.path));
                 created += 1;
             } else {
@@ -330,7 +331,7 @@ pub(crate) fn add_in(
         crate::spring::FAILSAFE_ARTIFACT,
         crate::spring::failsafe_plugin(pom::flavor(&updated_pom)),
     )? {
-        crate::apply::put_named(root.join("pom.xml"), &next, "pom.xml")?;
+        apply::put_named(root.join("pom.xml"), &next, "pom.xml")?;
         println!("  plugin  {}", crate::spring::FAILSAFE_ARTIFACT);
         tests_wired = true;
     }
@@ -373,7 +374,7 @@ pub(crate) fn add_in(
         if crate::maven::format_quietly(&root) {
             println!("  format  applied to the existing sources");
         } else {
-            crate::apply::put_named(root.join("pom.xml"), &pom_text, "pom.xml")?;
+            apply::put_named(root.join("pom.xml"), &pom_text, "pom.xml")?;
             return Err(
                 "the formatter could not run on this toolchain, so pom.xml was left unchanged.\n       \
                  palantir-java-format needs a JDK it was built against -- try a current LTS (Java 25),\n       \

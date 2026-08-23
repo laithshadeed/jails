@@ -28,7 +28,7 @@
 /// newline inside a quoted string is invalid JSON, and the values here are
 /// arbitrary — a `detail` line from `doctor`, a note's text, a Java type name —
 /// so "this one will not contain anything odd" is not a claim worth making.
-pub(crate) fn string(value: &str) -> String {
+pub fn string(value: &str) -> String {
     let mut escaped = String::with_capacity(value.len() + 2);
     escaped.push('"');
     for character in value.chars() {
@@ -49,7 +49,7 @@ pub(crate) fn string(value: &str) -> String {
 }
 
 /// The same, or the literal `null` when there is no value.
-pub(crate) fn optional_string(value: Option<&str>) -> String {
+pub fn optional_string(value: Option<&str>) -> String {
     value.map(string).unwrap_or_else(|| "null".to_string())
 }
 

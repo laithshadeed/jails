@@ -20,8 +20,8 @@
 //! the most history to lose; deleting them while merely reading -- which is
 //! what this module used to do -- made `app plan` and `--pretend` destructive.
 
-use crate::Result;
 use crate::ledger::{self, Applied, Ledger, Model};
+use jails_support::Result;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};

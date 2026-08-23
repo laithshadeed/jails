@@ -1,4 +1,5 @@
-use crate::Result;
+use jails_support::Result;
+use jails_support::apply;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -21,7 +22,7 @@ pub(crate) fn seed_manifest(root: &Path, manifest: &Path, debug: bool) -> Result
             manifest.display()
         )
     })?;
-    crate::apply::put(root.join(".jails/app.toml"), &source)?;
+    apply::put(root.join(".jails/app.toml"), &source)?;
     println!("  manifest {}", manifest.display());
     crate::app::apply_in(root, false, debug)
 }
@@ -86,7 +87,7 @@ pub fn new(
         .arg("-o")
         .arg(&zip_path);
     if debug {
-        crate::debug_cmd(&curl);
+        jails_support::debug_cmd(&curl);
     }
     let status = curl
         .status()
@@ -103,7 +104,7 @@ pub fn new(
     let mut unzip = Command::new("unzip");
     unzip.args(["-q"]).arg(&zip_path).args(["-d", "."]);
     if debug {
-        crate::debug_cmd(&unzip);
+        jails_support::debug_cmd(&unzip);
     }
     let status = unzip
         .status()
@@ -180,7 +181,7 @@ fn new_offline(
     fs::create_dir_all(&tests)
         .map_err(|error| format!("failed to create {}: {error}", tests.display()))?;
     let dependencies = offline_dependencies(deps)?;
-    crate::apply::put_named(
+    apply::put_named(
         root.join("pom.xml"),
         crate::template::render(
             crate::template::template!("new/offline_pom.xml"),
@@ -214,7 +215,7 @@ fn new_offline(
     write_mise(root, java)?;
     write_agents(root, java)?;
     if git {
-        crate::apply::put(root.join(".gitignore"), GITIGNORE)?;
+        apply::put(root.join(".gitignore"), GITIGNORE)?;
         git_init(root, debug);
     }
     println!("Created ./{name} offline (deps: {deps}, Java {java})");
@@ -317,7 +318,7 @@ fn write_devtools_defaults(root: &Path) -> Result<()> {
         fs::create_dir_all(parent)
             .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
     }
-    crate::apply::put(&path, DEVTOOLS_DEFAULTS)
+    apply::put(&path, DEVTOOLS_DEFAULTS)
 }
 
 const DEVTOOLS_DEFAULTS: &str =
@@ -380,7 +381,7 @@ fn add_jspecify(root: &Path) -> Result<()> {
         optional: false,
     };
     if let Some(updated) = crate::pom::add_dependency(&pom, &dep)? {
-        crate::apply::put_named(root.join("pom.xml"), updated, "pom.xml")?;
+        apply::put_named(root.join("pom.xml"), updated, "pom.xml")?;
     }
     Ok(())
 }
@@ -439,7 +440,7 @@ fn write_default_properties(root: &Path) -> Result<()> {
         fs::create_dir_all(parent)
             .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
     }
-    crate::apply::put(&path, next)
+    apply::put(&path, next)
 }
 
 fn initializr_java(requested: &str) -> &str {
@@ -461,7 +462,7 @@ fn set_java_release(root: &Path, from: &str, to: &str) -> Result<()> {
             path.display()
         ));
     }
-    crate::apply::put(
+    apply::put(
         &path,
         pom.replacen(&old, &format!("<java.version>{to}</java.version>"), 1),
     )
@@ -524,7 +525,7 @@ pub fn new_cli(name: &str, java: &str, git: bool, debug: bool, pretend: bool) ->
     fs::create_dir_all(&test_dir)
         .map_err(|e| format!("failed to create {}: {e}", test_dir.display()))?;
 
-    crate::apply::put_named(
+    apply::put_named(
         root.join("pom.xml"),
         pom_xml(name, &package, java),
         "pom.xml",
@@ -558,7 +559,7 @@ pub fn new_cli(name: &str, java: &str, git: bool, debug: bool, pretend: bool) ->
     write_agents(root, java)?;
 
     if git {
-        crate::apply::put(root.join(".gitignore"), GITIGNORE)?;
+        apply::put(root.join(".gitignore"), GITIGNORE)?;
         git_init(root, debug);
     }
 
@@ -572,13 +573,13 @@ pub fn new_cli(name: &str, java: &str, git: bool, debug: bool, pretend: bool) ->
 fn write_fixtures_dir(root: &Path) -> Result<()> {
     let dir = root.join("src/test/resources/fixtures");
     fs::create_dir_all(&dir).map_err(|e| format!("failed to create {}: {e}", dir.display()))?;
-    crate::apply::put(dir.join(".gitkeep"), "")?;
+    apply::put(dir.join(".gitkeep"), "")?;
     Ok(())
 }
 
 fn write_mise(root: &Path, java: &str) -> Result<()> {
     let path = root.join("mise.toml");
-    crate::apply::put(&path, format!("[tools]\njava = \"{java}\"\n"))
+    apply::put(&path, format!("[tools]\njava = \"{java}\"\n"))
 }
 
 fn write_agents(root: &Path, java: &str) -> Result<()> {
@@ -616,7 +617,7 @@ This project targets Java {java}. Its base package is `{package}`.
 {rules}
 "#
     );
-    crate::apply::put(&path, body)
+    apply::put(&path, body)
 }
 
 fn ensure_enforcer(root: &Path, java: &str) -> Result<()> {
@@ -647,7 +648,7 @@ fn ensure_enforcer(root: &Path, java: &str) -> Result<()> {
 </plugin>"#
     );
     if let Some(updated) = crate::pom::add_plugin(&pom, "maven-enforcer-plugin", &plugin)? {
-        crate::apply::put_named(root.join("pom.xml"), updated, "pom.xml")?;
+        apply::put_named(root.join("pom.xml"), updated, "pom.xml")?;
     }
     Ok(())
 }
@@ -660,7 +661,7 @@ fn git_init(root: &Path, debug: bool) {
     let mut cmd = Command::new("git");
     cmd.args(["init", "-q"]).current_dir(root);
     if debug {
-        crate::debug_cmd(&cmd);
+        jails_support::debug_cmd(&cmd);
     }
     match cmd.status() {
         Ok(status) if status.success() => {}
@@ -770,7 +771,7 @@ fn pom_xml(artifact: &str, package: &str, java: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::CWD_LOCK;
+    use jails_support::CWD_LOCK;
     use std::path::PathBuf;
 
     fn scratch(label: &str) -> PathBuf {

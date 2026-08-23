@@ -22,7 +22,7 @@ pub(crate) fn outbox_files(
     target: &str,
     event: &str,
     command_fields: &[crate::generate::Field],
-) -> crate::Result<Vec<Artifact>> {
+) -> jails_support::Result<Vec<Artifact>> {
     let root: &Path = slice.project().root();
     let service: &str = &slice.placed(Layer::Service);
     let adapters: &str = &slice.owned(Layer::Adapters);
@@ -171,7 +171,7 @@ fn ensure_outbox_type(
     event: &crate::generate::Field,
     source: &crate::generate::Field,
     owner: &str,
-) -> crate::Result<()> {
+) -> jails_support::Result<()> {
     if usecase_normalized_type(&event.java_type) != usecase_normalized_type(&source.java_type)
         || (event.optionality == crate::generate::Optionality::Nullable)
             != (source.optionality == crate::generate::Optionality::Nullable)

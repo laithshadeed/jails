@@ -11,7 +11,7 @@
 //! document on write, which is unacceptable for a file people maintain by
 //! hand.
 
-use crate::Result;
+use jails_support::Result;
 use std::path::Path;
 
 /// The Java release every generated project targets by default. Referenced by

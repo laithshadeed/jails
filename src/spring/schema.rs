@@ -25,7 +25,7 @@ pub(crate) fn association_files(
     child: &str,
     parent: &str,
     mappings: &[String],
-) -> crate::Result<Vec<Artifact>> {
+) -> jails_support::Result<Vec<Artifact>> {
     let root: &Path = slice.project().root();
     let domain: &str = &slice.owned(Layer::Domain);
     let adapters: &str = &slice.placed(Layer::Adapters);
@@ -252,7 +252,7 @@ fn association_sql_literal(column: &crate::sql::Column) -> &'static str {
 /// payments one: the scope is a string the caller chooses, the request is bytes
 /// the caller canonicalises, and the stored result is opaque. Nothing here
 /// knows what is being made at most once.
-pub(crate) fn idempotency_files(slice: &Slice, name: &str) -> crate::Result<Vec<Artifact>> {
+pub(crate) fn idempotency_files(slice: &Slice, name: &str) -> jails_support::Result<Vec<Artifact>> {
     if !slice.project().has_jdbc() {
         return Err(format!(
             "idempotency {name} needs PostgreSQL/JDBC to keep receipts across restarts.\n       \
@@ -379,7 +379,7 @@ pub(crate) fn http_sink_files(
     name: &str,
     usecase: &str,
     event: &str,
-) -> crate::Result<Vec<Artifact>> {
+) -> jails_support::Result<Vec<Artifact>> {
     let root: &Path = slice.project().root();
     let jobs: &str = &slice.placed(Layer::Jobs);
     let messaging: &str = &slice.owned(Layer::Messaging);

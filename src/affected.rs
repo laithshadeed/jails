@@ -27,7 +27,7 @@
 //! why `jails check` stays `mvn clean verify` and why this is opt-in.
 
 use crate::classfile;
-use crate::process::{self, CommandSpec, Diagnostics, OutputMode};
+use jails_support::process::{self, CommandSpec, Diagnostics, OutputMode};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 

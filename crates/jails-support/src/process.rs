@@ -37,20 +37,20 @@ use crate::Result;
 /// Preview is a separate concept and lives in the planning layer, which
 /// decides not to call this at all.
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) enum Diagnostics {
+pub enum Diagnostics {
     Normal,
     Debug,
 }
 
 impl Diagnostics {
-    pub(crate) fn from_flag(debug: bool) -> Self {
+    pub fn from_flag(debug: bool) -> Self {
         if debug { Self::Debug } else { Self::Normal }
     }
 }
 
 /// What to do with the child's stdout/stderr.
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) enum OutputMode {
+pub enum OutputMode {
     /// Hand the child our streams. Interactive tools need this.
     Inherit,
     /// Capture both for the caller to inspect.
@@ -66,7 +66,7 @@ pub(crate) enum OutputMode {
 
 /// A child process described as data, so it can be asserted on without being
 /// run.
-pub(crate) struct CommandSpec {
+pub struct CommandSpec {
     program: OsString,
     args: Vec<OsString>,
     cwd: Option<PathBuf>,
@@ -79,7 +79,7 @@ pub(crate) struct CommandSpec {
 }
 
 impl CommandSpec {
-    pub(crate) fn new(program: impl Into<OsString>) -> Self {
+    pub fn new(program: impl Into<OsString>) -> Self {
         Self {
             program: program.into(),
             args: Vec::new(),
@@ -91,7 +91,7 @@ impl CommandSpec {
         }
     }
 
-    pub(crate) fn arg(mut self, arg: impl Into<OsString>) -> Self {
+    pub fn arg(mut self, arg: impl Into<OsString>) -> Self {
         self.args.push(arg.into());
         self
     }
@@ -100,7 +100,7 @@ impl CommandSpec {
     /// string and splitting it again loses the boundary of any argument
     /// containing a space, and forwarded arguments (`jails mvn -- ...`) are
     /// exactly where that happens.
-    pub(crate) fn args<I, S>(mut self, args: I) -> Self
+    pub fn args<I, S>(mut self, args: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
@@ -110,42 +110,38 @@ impl CommandSpec {
         self
     }
 
-    pub(crate) fn current_dir(mut self, dir: impl AsRef<Path>) -> Self {
+    pub fn current_dir(mut self, dir: impl AsRef<Path>) -> Self {
         self.cwd = Some(dir.as_ref().to_path_buf());
         self
     }
 
-    pub(crate) fn env(mut self, key: impl Into<OsString>, value: impl Into<OsString>) -> Self {
+    pub fn env(mut self, key: impl Into<OsString>, value: impl Into<OsString>) -> Self {
         self.env.push((key.into(), value.into()));
         self
     }
 
     /// An environment variable whose *value* must never appear in debug
     /// output. `PGPASSWORD` is passed to psql this way.
-    pub(crate) fn secret_env(
-        mut self,
-        key: impl Into<OsString>,
-        value: impl Into<OsString>,
-    ) -> Self {
+    pub fn secret_env(mut self, key: impl Into<OsString>, value: impl Into<OsString>) -> Self {
         let key = key.into();
         self.secret_env.push(key.clone());
         self.env.push((key, value.into()));
         self
     }
 
-    pub(crate) fn stdin(mut self, input: impl Into<Vec<u8>>) -> Self {
+    pub fn stdin(mut self, input: impl Into<Vec<u8>>) -> Self {
         self.stdin = Some(input.into());
         self
     }
 
-    pub(crate) fn output(mut self, mode: OutputMode) -> Self {
+    pub fn output(mut self, mode: OutputMode) -> Self {
         self.output = mode;
         self
     }
 
     /// The line `--debug` prints. Secret values are replaced, never shown;
     /// the name is still printed so the reader knows it was set.
-    pub(crate) fn render(&self) -> String {
+    pub fn render(&self) -> String {
         let mut out = String::from("+ ");
         for (key, value) in &self.env {
             let shown = if self.secret_env.contains(key) || is_always_secret(key) {
@@ -200,14 +196,14 @@ fn is_always_secret(key: &OsStr) -> bool {
 
 /// What a finished child left behind.
 #[derive(Debug)]
-pub(crate) struct Done {
+pub struct Done {
     pub status: ExitStatus,
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
 }
 
 impl Done {
-    pub(crate) fn stdout_string(&self) -> String {
+    pub fn stdout_string(&self) -> String {
         String::from_utf8_lossy(&self.stdout).into_owned()
     }
 }
@@ -223,7 +219,7 @@ impl Done {
 /// stdout and stderr are piped rather than inherited, because a daemon writing
 /// into the terminal of whichever command happened to start it is output
 /// nobody can attribute. The caller reads them to explain a start-up failure.
-pub(crate) fn spawn(spec: &CommandSpec, diagnostics: Diagnostics) -> Result<Child> {
+pub fn spawn(spec: &CommandSpec, diagnostics: Diagnostics) -> Result<Child> {
     if diagnostics == Diagnostics::Debug {
         eprintln!("{}", spec.render());
     }
@@ -240,7 +236,7 @@ pub(crate) fn spawn(spec: &CommandSpec, diagnostics: Diagnostics) -> Result<Chil
 /// Returns the outcome rather than deciding what a non-zero exit means --
 /// `doctor` treats one as a finding, `run` treats one as a failure, and that
 /// is the caller's judgement.
-pub(crate) fn run(spec: &CommandSpec, diagnostics: Diagnostics) -> Result<Done> {
+pub fn run(spec: &CommandSpec, diagnostics: Diagnostics) -> Result<Done> {
     if diagnostics == Diagnostics::Debug {
         eprintln!("{}", spec.render());
     }
@@ -336,7 +332,7 @@ pub(crate) fn run(spec: &CommandSpec, diagnostics: Diagnostics) -> Result<Done> 
 }
 
 /// Run, and treat a non-zero exit as an error naming the program.
-pub(crate) fn run_checked(spec: &CommandSpec, diagnostics: Diagnostics) -> Result<Done> {
+pub fn run_checked(spec: &CommandSpec, diagnostics: Diagnostics) -> Result<Done> {
     let done = run(spec, diagnostics)?;
     if !done.status.success() {
         let program = spec.program.to_string_lossy();
@@ -349,7 +345,7 @@ pub(crate) fn run_checked(spec: &CommandSpec, diagnostics: Diagnostics) -> Resul
 ///
 /// The one implementation. `run.rs`, `compose.rs` and `project.rs` each had
 /// their own, which is how the mvnd naming drifted between them.
-pub(crate) fn on_path(bin: &str) -> bool {
+pub fn on_path(bin: &str) -> bool {
     let Some(paths) = std::env::var_os("PATH") else {
         return false;
     };
@@ -358,7 +354,7 @@ pub(crate) fn on_path(bin: &str) -> bool {
 
 /// The lookup over an explicit list of directories, so it can be tested
 /// without touching the process environment.
-pub(crate) fn on_path_in(bin: &str, dirs: impl Iterator<Item = PathBuf>) -> bool {
+pub fn on_path_in(bin: &str, dirs: impl Iterator<Item = PathBuf>) -> bool {
     dirs.into_iter().any(|dir| dir.join(bin).is_file())
 }
 
@@ -369,7 +365,7 @@ pub(crate) fn on_path_in(bin: &str, dirs: impl Iterator<Item = PathBuf>) -> bool
 /// `compose.rs` fell back to the standalone binary while `doctor.rs`
 /// hardcoded `docker`, so on a machine with only `docker-compose` installed
 /// `jails start` worked and `doctor` reported Docker missing.
-pub(crate) fn compose_program() -> Option<(&'static str, &'static [&'static str])> {
+pub fn compose_program() -> Option<(&'static str, &'static [&'static str])> {
     if on_path("docker") {
         Some(("docker", &["compose"]))
     } else if on_path("docker-compose") {
@@ -381,7 +377,7 @@ pub(crate) fn compose_program() -> Option<(&'static str, &'static [&'static str]
 
 /// A `CommandSpec` for a compose subcommand, or `None` when neither form is
 /// installed.
-pub(crate) fn compose_spec<I, S>(args: I) -> Option<CommandSpec>
+pub fn compose_spec<I, S>(args: I) -> Option<CommandSpec>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
@@ -395,7 +391,7 @@ where
 /// `docker-compose` is not a Docker CLI, so on a standalone-only machine
 /// there is nothing to probe with and callers should say so rather than
 /// report a failure that means "not installed".
-pub(crate) fn docker_program() -> Option<&'static str> {
+pub fn docker_program() -> Option<&'static str> {
     on_path("docker").then_some("docker")
 }
 

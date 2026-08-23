@@ -7,13 +7,14 @@
 
 mod manifest;
 mod reconcile;
+use jails_support::apply;
 use manifest::*;
 use reconcile::*;
 
-use crate::Result;
 use crate::add::Capability;
 use crate::generate::{self, ArtifactKind};
 use clap::{Subcommand, ValueEnum};
+use jails_support::Result;
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -380,7 +381,7 @@ fn init(root: &Path, requested: Option<&Path>, pretend: bool) -> Result<()> {
         fs::create_dir_all(parent)
             .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
     }
-    crate::apply::put(
+    apply::put(
         &path,
         "# Generic application intent. Add capabilities, then one [[generate]] table per slice.\n\
          schema = 1\n\

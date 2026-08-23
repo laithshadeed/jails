@@ -14,8 +14,8 @@
 //!
 //! See `sql.rs` for the SQL/JDBC projection of the same spec.
 
-use crate::Result;
 use crate::spec::paths::main_dir;
+use jails_support::Result;
 use std::fs;
 use std::path::Path;
 

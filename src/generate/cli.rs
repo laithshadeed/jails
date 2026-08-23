@@ -8,6 +8,7 @@
 //! project calling a class that is gone.
 
 use super::*;
+use jails_support::apply;
 
 // ---- command: a CLI subcommand for `new-cli` projects, which otherwise get
 // a Hello World `main` and no pattern for growing past it. ----
@@ -344,7 +345,7 @@ pub(super) fn register_command(
         return Ok(());
     };
 
-    crate::apply::put(dispatcher, spliced)?;
+    apply::put(dispatcher, spliced)?;
     println!("registered {command_class} in {}", dispatcher.display());
     Ok(())
 }
@@ -505,7 +506,7 @@ pub(super) fn unregister_command(root: &Path, name: &str) -> Result<()> {
         let Some(unspliced) = unsplice_registration(&source, &command_class) else {
             continue;
         };
-        crate::apply::put(&dispatcher, unspliced)?;
+        apply::put(&dispatcher, unspliced)?;
         println!("unregistered {command_class} from {}", dispatcher.display());
     }
     Ok(())

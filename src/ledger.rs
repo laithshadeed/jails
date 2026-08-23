@@ -36,7 +36,8 @@
 //! `/`-normalised, and appear one per line inside their array. A reviewer reads
 //! the same diff they read before.
 
-use crate::Result;
+use jails_support::Result;
+use jails_support::apply;
 use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
@@ -390,7 +391,7 @@ fn elements(inner: &str) -> Vec<String> {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn save(root: &Path, ledger: &Ledger) -> Result<()> {
-    crate::apply::atomically(root.join(LEDGER), render(ledger))
+    apply::atomically(root.join(LEDGER), render(ledger))
 }
 
 fn render(ledger: &Ledger) -> String {

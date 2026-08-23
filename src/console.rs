@@ -6,10 +6,10 @@
 //! has no equivalent -- but it is the closest thing that does not invent
 //! a framework.
 
-use crate::Result;
 use crate::compose;
 use crate::generate::find_project_root;
 use crate::run;
+use jails_support::Result;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;

@@ -25,7 +25,7 @@
 //! `add` is **not** exempted -- it splices a pom, and a capability that half
 //! installs is worse than one that refuses.
 
-use crate::Result;
+use jails_support::Result;
 use std::path::Path;
 
 /// What builds this directory.

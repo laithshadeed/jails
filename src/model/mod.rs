@@ -10,10 +10,10 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::Result;
 use crate::compose::Service as ComposeService;
 use crate::config::Config;
 use crate::pom::{self, Dependency, Flavor};
+use jails_support::Result;
 
 /// One file a recipe intends to create.
 ///

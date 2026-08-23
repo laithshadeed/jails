@@ -11,6 +11,7 @@
 //! generated class.
 
 use super::*;
+use jails_support::{apply, codemod};
 
 // ---------------------------------------------------------------------------
 // `generate job` -- scheduled work.
@@ -82,14 +83,14 @@ pub(crate) fn install_durable_job_test_properties(
     project: &crate::model::Project,
     name: &str,
     dry_run: bool,
-) -> crate::Result<bool> {
+) -> jails_support::Result<bool> {
     let root = project.root();
     let property = crate::sql::snake_case(name).replace('_', "-");
     let initial_delay = format!("jobs.{property}.initial-delay=PT1H");
     let max_attempts = format!("jobs.{property}.max-attempts=2");
     let expected = format!("{initial_delay}\n{max_attempts}\n");
     let marker = format!("durable-job-{property}");
-    let marked = crate::codemod::Marked::new(&marker);
+    let marked = codemod::Marked::new(&marker);
     let path = root.join(DURABLE_JOB_TEST_PROPERTIES);
     let existing = if path.exists() {
         std::fs::read_to_string(&path)
@@ -128,7 +129,7 @@ pub(crate) fn install_durable_job_test_properties(
     } else {
         format!("{existing}\n{block}")
     };
-    crate::apply::put(&path, next)?;
+    apply::put(&path, next)?;
     println!("set {initial_delay}");
     println!("set {max_attempts}");
     Ok(true)
@@ -140,7 +141,7 @@ pub(crate) fn uninstall_durable_job_test_properties(
     project: &crate::model::Project,
     name: &str,
     dry_run: bool,
-) -> crate::Result<bool> {
+) -> jails_support::Result<bool> {
     let property = crate::sql::snake_case(name).replace('_', "-");
     let marker = format!("durable-job-{property}");
     let path = project.root().join(DURABLE_JOB_TEST_PROPERTIES);
@@ -149,7 +150,7 @@ pub(crate) fn uninstall_durable_job_test_properties(
     }
     let existing = std::fs::read_to_string(&path)
         .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
-    let Some(next) = crate::codemod::Marked::new(&marker).strip_from(&existing) else {
+    let Some(next) = codemod::Marked::new(&marker).strip_from(&existing) else {
         return Ok(false);
     };
 
@@ -161,7 +162,7 @@ pub(crate) fn uninstall_durable_job_test_properties(
         std::fs::remove_file(&path)
             .map_err(|error| format!("failed to remove {}: {error}", path.display()))?;
     } else {
-        crate::apply::put(&path, next)?;
+        apply::put(&path, next)?;
     }
     println!("unset jobs.{property}.* in {DURABLE_JOB_TEST_PROPERTIES}");
     Ok(true)
@@ -180,7 +181,7 @@ pub(crate) fn durable_job_files(
     usecase: &str,
     target: &str,
     fields: &[crate::generate::Field],
-) -> crate::Result<Vec<Artifact>> {
+) -> jails_support::Result<Vec<Artifact>> {
     let root: &Path = slice.project().root();
     let jobs: &str = &slice.placed(Layer::Jobs);
     let web: &str = &slice.owned(Layer::Web);

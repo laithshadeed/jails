@@ -12,8 +12,9 @@
 //! generated integration tests for months that `mvn verify` never ran, and
 //! `--pretend` named two files where the real run wrote three.
 
-use crate::Result;
 use crate::model::{Artifact, Change, Project};
+use jails_support::Result;
+use jails_support::apply;
 use std::path::Path;
 
 /// Whether this change writes an integration test and therefore needs the
@@ -80,7 +81,7 @@ pub(crate) fn ensure_dependency(root: &Path, dep: &crate::pom::Dependency) -> Re
     let pom = crate::pom::read(root)?;
     match crate::pom::add_dependency(&pom, dep)? {
         Some(updated) => {
-            crate::apply::put_named(root.join("pom.xml"), updated, "pom.xml")?;
+            apply::put_named(root.join("pom.xml"), updated, "pom.xml")?;
             println!("     dep {}:{}", dep.group_id, dep.artifact_id);
             Ok(())
         }
@@ -113,7 +114,7 @@ pub(crate) fn apply_build_change(root: &Path, pom: &str, change: &Change) -> Res
         }
     }
     if changed {
-        crate::apply::put_named(root.join("pom.xml"), updated, "pom.xml")?;
+        apply::put_named(root.join("pom.xml"), updated, "pom.xml")?;
     }
     Ok(())
 }
@@ -145,7 +146,7 @@ pub(crate) fn write_new_file(root: &Path, path: &Path, contents: &str) -> Result
     } else {
         contents.to_string()
     };
-    crate::apply::create(path, &contents)
+    apply::create(path, &contents)
 }
 
 /// Collapse the blank lines a template leaves behind when an optional section
@@ -240,7 +241,7 @@ pub(crate) fn ensure_package_info(root: &Path, class_path: &Path) -> Result<()> 
     let Some(pkg) = package_of_dir(root, dir) else {
         return Ok(());
     };
-    crate::apply::put(&info, package_info_java(&pkg))?;
+    apply::put(&info, package_info_java(&pkg))?;
     Ok(())
 }
 

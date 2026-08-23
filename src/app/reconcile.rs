@@ -13,6 +13,7 @@
 //! not pick, and that is the reader's hand-edited code half the time.
 
 use super::*;
+use jails_support::apply;
 
 /// A scratch tree that removes itself, so a failed merge leaves nothing behind.
 struct Scratch(PathBuf);
@@ -187,7 +188,7 @@ pub(super) fn reconcile_intent(
     for action in actions {
         match action {
             MergeAction::Write(path, contents) => {
-                crate::apply::put_bytes(&path, contents)?;
+                apply::put_bytes(&path, contents)?;
                 println!(
                     "  merge    {}",
                     path.strip_prefix(root).unwrap_or(&path).display()

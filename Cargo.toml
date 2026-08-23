@@ -1,16 +1,28 @@
-[package]
-name = "jails"
+[workspace]
+members = ["crates/*"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
-clap = { version = "4.6.4", features = ["derive"] }
-clap_complete = "4.6.7"
-
-[lints.clippy]
+# One place for the lint policy, so a new crate cannot quietly opt out of it.
+[workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
 
 # The generator functions genuinely take name/fields/package/pretend/... and
 # splitting 21 of them into parameter structs is the refactor in plan.md §6,
 # not a prerequisite for having linting on. Revisit when that lands.
 too_many_arguments = "allow"
+
+[package]
+name = "jails"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+clap = { version = "4.6.4", features = ["derive"] }
+clap_complete = "4.6.7"
+jails-support = { path = "crates/jails-support" }
+
+[lints]
+workspace = true

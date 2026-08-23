@@ -14,8 +14,8 @@
 
 use std::path::Path;
 
-use crate::Result;
 use crate::model::{Artifact, Change, Layer, Slice};
+use jails_support::Result;
 
 mod auth;
 mod containers;

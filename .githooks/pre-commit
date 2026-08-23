@@ -11,15 +11,15 @@
 # the staged tree in a temp dir costs more than it catches here.
 set -e
 
-echo "pre-commit: cargo fmt --check"
-if ! cargo fmt --check >/dev/null 2>&1; then
+echo "pre-commit: cargo fmt --all --check"
+if ! cargo fmt --all --check >/dev/null 2>&1; then
     echo "  FAIL: formatting differs."
-    echo "  fix: cargo fmt"
+    echo "  fix: cargo fmt --all"
     exit 1
 fi
 
-echo "pre-commit: cargo clippy --all-targets"
-if ! cargo clippy --all-targets --quiet 2>&1; then
+echo "pre-commit: cargo clippy --workspace --all-targets"
+if ! cargo clippy --workspace --all-targets --quiet 2>&1; then
     echo "  FAIL: clippy found problems (clippy::all is deny -- see Cargo.toml [lints])."
     echo "  fix: cargo clippy --fix --all-targets, or address them by hand"
     exit 1

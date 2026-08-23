@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cd /home/laith/code/jails && { cargo build -q && cargo test -q && cargo install --path . -q; } >/tmp/jails-stop-hook.log 2>&1 || echo '{\"systemMessage\": \"jails: cargo build/test/install failed after this turn -- see /tmp/jails-stop-hook.log\"}'",
+            "command": "cd /home/laith/code/jails && { cargo build --workspace -q && cargo test --workspace -q && cargo install --path . -q; } >/tmp/jails-stop-hook.log 2>&1 || echo '{\"systemMessage\": \"jails: cargo build/test/install failed after this turn -- see /tmp/jails-stop-hook.log\"}'",
             "timeout": 120,
             "statusMessage": "cargo build && test && install (jails)"
           }

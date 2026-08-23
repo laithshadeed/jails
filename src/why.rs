@@ -16,13 +16,14 @@
 //! reported as unrecognised. Guessing at a cause is worse than silence,
 //! because a wrong explanation costs more time than no explanation.
 
+use jails_support::json;
 use std::io::{IsTerminal, Read};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use crate::Result;
 use crate::generate::find_project_root;
 use crate::pom;
+use jails_support::Result;
 
 /// One recognised failure.
 struct Diagnosis {
@@ -516,13 +517,13 @@ fn diagnoses_json(found: &[Diagnosis]) -> String {
             let fixes = diagnosis
                 .fixes
                 .iter()
-                .map(|fix| crate::json::string(fix))
+                .map(|fix| json::string(fix))
                 .collect::<Vec<_>>()
                 .join(",");
             format!(
                 "{{\"headline\":{},\"because\":{},\"fixes\":[{}]}}",
-                crate::json::string(&diagnosis.headline),
-                crate::json::string(&diagnosis.because),
+                json::string(&diagnosis.headline),
+                json::string(&diagnosis.because),
                 fixes
             )
         })
@@ -653,7 +654,7 @@ fn run_and_capture(debug: bool) -> Result<String> {
         // preserve it.
         .stderr(Stdio::piped());
     if debug {
-        crate::debug_cmd(&cmd);
+        jails_support::debug_cmd(&cmd);
     }
 
     println!("jails why: starting the app to see how it fails (Ctrl-C once it has)...");

@@ -22,11 +22,12 @@
 //!
 //! Nothing is written until the whole plan has been shown and confirmed.
 
+use jails_support::apply;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
-use crate::Result;
 use crate::generate::find_project_root;
+use jails_support::Result;
 
 /// One file the rename touches.
 struct Edit {
@@ -112,7 +113,7 @@ pub fn rename(old: &str, new: &str, dry_run: bool, force: bool) -> Result<()> {
     // rewritten contents in unmoved files at least still describe one
     // consistent state.
     for edit in &edits {
-        crate::apply::put(&edit.path, &edit.updated)?;
+        apply::put(&edit.path, &edit.updated)?;
     }
     for edit in &edits {
         if edit.path == edit.destination {
