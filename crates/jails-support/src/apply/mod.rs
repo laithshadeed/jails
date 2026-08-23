@@ -132,6 +132,20 @@ pub fn put_outside_project(path: impl AsRef<Path>, contents: impl AsRef<str>) ->
         .map_err(|error| format!("failed to write {}: {error}", path.display()))
 }
 
+/// Write a file into a scratch tree jails owns for the duration of one run.
+///
+/// A fifth verb rather than reusing `put_bytes`, for the same reason
+/// `put_outside_project` exists: the caller's belief about what is there is
+/// different. A scratch tree is jails' own, created empty moments earlier and
+/// removed when the run ends, so there is nothing to preserve and nothing to
+/// collide with — and nothing that edits a *project* should reach for this.
+pub fn put_in_scratch(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> Result<()> {
+    let path = path.as_ref();
+    ensure_parent(path)?;
+    fs::write(path, contents)
+        .map_err(|error| format!("failed to write {}: {error}", path.display()))
+}
+
 /// Write via a temporary file and a rename.
 ///
 /// For the bookkeeping under `.jails/`, where a half-written ledger is worse

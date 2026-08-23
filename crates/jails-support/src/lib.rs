@@ -13,6 +13,7 @@ pub mod codec;
 pub mod codemod;
 pub mod json;
 pub mod process;
+pub mod runner;
 pub mod scratch;
 
 /// Every fallible jails operation returns a message a human can act on.

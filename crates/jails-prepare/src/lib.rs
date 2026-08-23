@@ -13,6 +13,7 @@ pub mod operation;
 pub mod pipeline;
 pub mod prepare;
 pub mod report;
+pub mod sandbox;
 pub mod tool;
 
 pub(crate) use jails_support::Result;

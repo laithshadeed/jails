@@ -592,6 +592,7 @@ const LAYERS: &[(&str, usize)] = &[
     // jails-support: no jails concepts at all -- writing, running, encoding.
     ("apply", 0),
     ("process", 0),
+    ("runner", 0),
     ("scratch", 0),
     ("codec", 0),
     ("codemod", 0),
@@ -647,6 +648,7 @@ const LAYERS: &[(&str, usize)] = &[
     ("pipeline", 5),
     ("prepare", 5),
     ("report", 5),
+    ("sandbox", 5),
     ("tool", 5),
     // jails-tooling: commands that drive a toolchain or report on a project.
     ("run", 6),

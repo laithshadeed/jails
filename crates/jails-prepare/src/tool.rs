@@ -187,6 +187,61 @@ impl ToolFingerprint {
     }
 }
 
+/// One tool invocation as preparation will actually make it.
+///
+/// The fingerprint is the execution policy and the args are what will be
+/// passed; `canonical_args_sha256` ties them together. §R3.3: *"there is no
+/// duplicate timeout/scope/input authority on `ToolSpec`"* — everything about
+/// how the tool may run lives in the identity, so a caller cannot widen a
+/// scope or a timeout by building a different spec around the same identity.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ToolSpec {
+    pub fingerprint: ToolFingerprint,
+    pub args: Vec<String>,
+}
+
+impl ToolSpec {
+    /// Build one, deriving the argument hash from the arguments themselves so
+    /// the two cannot be given separately and disagree.
+    pub fn new(identity: ToolIdentityFingerprint, args: Vec<String>) -> Result<Self> {
+        identity.validate()?;
+        let canonical_args_sha256 = canonical_args(&args)?;
+        Ok(Self {
+            fingerprint: ToolFingerprint {
+                identity,
+                canonical_args_sha256,
+            },
+            args,
+        })
+    }
+
+    /// A spec whose recorded hash does not cover its own arguments would let a
+    /// journal replay a different command than the one the identity names.
+    pub fn validate(&self) -> Result<()> {
+        self.fingerprint.identity.validate()?;
+        if self.fingerprint.canonical_args_sha256 != canonical_args(&self.args)? {
+            return Err(format!(
+                "{}'s recorded argument hash does not cover its arguments",
+                self.fingerprint.identity.key.tool
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// `SHA256("JAILS-TOOL-ARGS-1" || encode(args))`.
+pub fn canonical_args(args: &[String]) -> Result<ObjectId> {
+    let mut encoder = Encoder::new();
+    encoder.count(args.len())?;
+    for arg in args {
+        encoder.string(arg)?;
+    }
+    Ok(ObjectId::from_bytes(jails_support::codec::domain_hash(
+        "JAILS-TOOL-ARGS-1",
+        &encoder.finish()?,
+    )))
+}
+
 /// One argv part, as a shape rather than as text.
 ///
 /// `OperationLabel` is the part that cannot be a literal: it contains the
@@ -462,6 +517,29 @@ pub(crate) mod tests {
             .validate()
             .is_ok()
         );
+    }
+
+    /// The hash and the arguments are one fact recorded twice, and this is
+    /// the check that keeps them one fact.
+    #[test]
+    fn a_spec_whose_hash_does_not_cover_its_arguments_is_refused() {
+        let mut spec = ToolSpec::new(
+            identity("spotless"),
+            vec!["spotless:apply".to_string(), "--offline".to_string()],
+        )
+        .unwrap();
+        spec.validate().unwrap();
+        spec.args.push("--also-this".to_string());
+        assert!(spec.validate().unwrap_err().contains("does not cover"));
+    }
+
+    #[test]
+    fn argument_hashing_distinguishes_a_split_from_a_join() {
+        // "a b" as one argument and as two must not hash the same, or a
+        // journal could replay a differently split command line.
+        let one = canonical_args(&["a b".to_string()]).unwrap();
+        let two = canonical_args(&["a".to_string(), "b".to_string()]).unwrap();
+        assert_ne!(one, two);
     }
 
     #[test]
