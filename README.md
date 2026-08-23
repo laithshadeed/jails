@@ -546,7 +546,8 @@ it already draws for hand-written properties inside a jails-owned block.
   actually reaches something that routes it. `--no-build` skips straight to
   running whatever's already in `target/`. `--watch` (Spring Boot + devtools
   only) recompiles on every source change and lets devtools restart the
-  already-running app — no manual restarts.
+  already-running app — no manual restarts. In an editor with a Java language
+  server you do not need it; see [the save-and-reload loop](#the-save-and-reload-loop).
 - `jails fmt` — reformat in place (Spotless); `jails check` — format check +
   compile + tests (`mvn clean verify`). Both need `jails add format`. The
   `clean` is load-bearing: Maven's incremental compile leaves deleted tests
@@ -555,6 +556,48 @@ it already draws for hand-written properties inside a jails-owned block.
 
 `generate`, `destroy`, `add` and `remove` all take `--package <sub>` to override where
 the code lands; `--package ''` writes straight into the base package.
+
+## The save-and-reload loop
+
+There is no `jails dev`, and there deliberately isn't going to be one: on a
+machine with a Java language server the loop already exists, and jails ships
+both halves of it.
+
+**Measured, not assumed.** A fresh project with no `target/` at all, opened in
+Neovim and left alone, ends up with `target/classes/**.class` and
+`target/test-classes/**.class` written by jdt.ls — with no Maven run. Eclipse's
+m2e connector points the output folder at Maven's own, so the language server
+that is already compiling your file for diagnostics is compiling it *to the
+directory the running application is watching*.
+
+The other half is `spring-boot-devtools`, which `jails new` puts in by default
+and which polls the classpath and restarts when a class changes. So:
+
+```
+:w  ->  jdt.ls writes target/classes/...  ->  devtools restarts
+```
+
+`jails new` also writes `src/main/resources/META-INF/spring-devtools.properties`
+with a 200 ms poll and a 50 ms quiet period. Boot's defaults are 1 s and 400 ms,
+which is up to **1.4 s of waiting after a save before the restart even begins**.
+They are `defaults.` entries, so anything you set yourself still wins, and they
+apply only when devtools is active locally — never in a packaged jar, never in
+tests.
+
+**Every way this breaks is silent**, which is why `jails doctor` has a `reload`
+check rather than jails having a supervisor. It reports the three settings whose
+wrong value costs nothing at startup and simply means saving a file does
+nothing: no `spring-boot-devtools` at all, `spring.devtools.restart.enabled=false`,
+and `spring.devtools.restart.trigger-file` — the last being the one that reads
+as "hot reload is broken here", because a recompiled class *is* seen and then
+deliberately ignored until that one file is touched.
+
+Two things the loop does not survive, and no amount of tuning changes it:
+changing a record component, a `sealed` hierarchy, an annotation or a method
+signature is a **restart**, not a swap. jails' domain layer is records, so every
+edit there is a restart — that is devtools working, not failing. And `jails
+check` stays `mvn clean verify`: an incremental compile cannot see that a
+deleted method left a stale caller.
 
 ## Declarative applications: `jails app`
 

@@ -200,6 +200,7 @@ fn run_checks(project: &Project) -> Vec<Check> {
     checks.extend(management_checks(project));
     checks.extend(cors_checks(project));
     checks.extend(virtual_thread_checks(root));
+    checks.extend(hot_reload_checks(project));
     checks.extend(port_checks(root));
     checks.extend(capability_drift_checks(project));
     checks.extend(template_override_checks());
@@ -783,6 +784,77 @@ mod tests {
         assert!(checks[1].detail.contains("jdk.VirtualThreadPinned"));
         assert!(!checks[1].detail.contains("tracePinnedThreads"));
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// Every way the editor-save loop breaks is silent, so each is pinned.
+    ///
+    /// `plan.md` §19.5 is answered by measurement: jdt.ls writes into the
+    /// project's own `target/classes` with no Maven run, so the loop exists
+    /// and only its switches can be wrong.
+    #[test]
+    fn hot_reload_checks_catch_every_silent_way_the_save_loop_dies() {
+        let base = std::env::temp_dir().join(format!("jails-doctor-hot-{}", std::process::id()));
+        let boot = "<project><parent><groupId>org.springframework.boot</groupId>\
+             <artifactId>spring-boot-starter-parent</artifactId></parent>{deps}</project>";
+        let devtools = "<dependencies><dependency>\
+             <groupId>org.springframework.boot</groupId>\
+             <artifactId>spring-boot-devtools</artifactId></dependency></dependencies>";
+
+        // A plain Maven project has no devtools loop to be wrong about.
+        let plain = base.join("plain");
+        assert!(hot_reload_checks(&project_with_pom(&plain, "<project></project>")).is_empty());
+
+        // Boot without devtools: the editor compiles, nothing notices.
+        let bare = base.join("bare");
+        let checks = hot_reload_checks(&project_with_pom(&bare, &boot.replace("{deps}", "")));
+        assert_eq!(checks[0].status, Status::Warn);
+        assert!(checks[0].fix.contains("spring-boot-devtools"));
+
+        // Restarts switched off is the one that deserves a Fail: the
+        // dependency is present, so everything *looks* wired up.
+        let off = base.join("off");
+        let project = project_with_pom(&off, &boot.replace("{deps}", devtools));
+        write_properties(&off, "spring.devtools.restart.enabled=false\n");
+        let checks = hot_reload_checks(&project);
+        assert_eq!(checks[0].status, Status::Fail);
+        assert!(!checks[0].fix.is_empty());
+
+        // A trigger file means a saved class is seen and deliberately ignored.
+        let trigger = base.join("trigger");
+        let project = project_with_pom(&trigger, &boot.replace("{deps}", devtools));
+        write_properties(&trigger, "spring.devtools.restart.trigger-file=.reload\n");
+        let checks = hot_reload_checks(&project);
+        assert_eq!(checks[0].status, Status::Warn);
+        assert!(checks[0].detail.contains(".reload"));
+
+        // Devtools untuned still works -- it just waits up to 1.4s per save.
+        let slow = base.join("slow");
+        let project = project_with_pom(&slow, &boot.replace("{deps}", devtools));
+        let checks = hot_reload_checks(&project);
+        assert_eq!(checks[0].status, Status::Warn);
+        assert!(checks[0].detail.contains("1.4s"));
+
+        // What `jails new` produces, and the only arrangement that is Ok.
+        let tuned = base.join("tuned");
+        let project = project_with_pom(&tuned, &boot.replace("{deps}", devtools));
+        let meta = tuned.join("src/main/resources/META-INF");
+        std::fs::create_dir_all(&meta).unwrap();
+        std::fs::write(
+            meta.join("spring-devtools.properties"),
+            "defaults.spring.devtools.restart.poll-interval=200ms\n",
+        )
+        .unwrap();
+        let checks = hot_reload_checks(&project);
+        assert_eq!(checks[0].status, Status::Ok);
+        assert!(checks[0].detail.contains("target/classes"));
+
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    fn write_properties(root: &Path, body: &str) {
+        let resources = root.join("src/main/resources");
+        std::fs::create_dir_all(&resources).unwrap();
+        std::fs::write(resources.join("application.properties"), body).unwrap();
     }
 
     #[test]

@@ -281,11 +281,25 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // tool and stops reporting on a pom that is not there. Not
                 // optional -- fifteen greens over a build jails cannot see is
                 // §8.9's failure in a new disguise.
-                ceiling: 1340,
+                //
+                // 1340 -> 1404 for `hot_reload_checks`, and this is the rise
+                // the §8.0.1 audit predicted would be legitimate. plan.md
+                // §19.5 measured that jdt.ls writes `.class` files into
+                // `target/classes` with no Maven run, which killed the `jails
+                // dev` supervisor (§10.3, item 14) outright: both halves of
+                // the loop already shipped. What did not exist was any way to
+                // learn it is broken, and every way it breaks is silent --
+                // `restart.enabled=false`, or a `restart.trigger-file` that
+                // makes a recompiled class be seen and deliberately ignored.
+                // Nothing in `add::plan_for` carries that; devtools is not a
+                // jails capability at all. So this is a check that *replaces*
+                // a feature, which is the cheapest direction this gate can
+                // move in even while the number rises.
+                ceiling: 1404,
                 // Withdrawn, not reached. abstract.md §8.0.1 audits all ten
                 // checks: none is a re-encoded dependency fact, so the 700
                 // measured a saving that is not there. Ratchet against growth.
-                target: 1340,
+                target: 1404,
                 why: "Feature Envy at module scale: doctor re-derives by reading the project \
                       back off disk the facts `add/*` already own, and the drift between them \
                       is a class nothing catches.",

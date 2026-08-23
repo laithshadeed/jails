@@ -661,3 +661,103 @@ pub(super) fn virtual_thread_checks(root: &Path) -> Vec<Check> {
     }
     checks
 }
+
+/// Whether a save in the editor actually reaches the running application.
+///
+/// `plan.md` §19.5 asked where jdt.ls writes `.class` files here, because
+/// §10.3's whole `jails dev` supervisor was conditional on the answer. It is
+/// **measured now**, not assumed: a fresh `jails new-cli` project with no
+/// `target/` at all, opened headless in nvim and left alone until class files
+/// appeared, produced `target/classes/**.class` and
+/// `target/test-classes/**.class` with **no Maven run**. m2e points Eclipse's
+/// output folder at Maven's own, which is the premise §10.3 needed.
+///
+/// So the loop already exists, and jails already ships both halves of it:
+/// jdt.ls compiles on `:w`, devtools polls the classpath and restarts, and
+/// `jails new` writes `META-INF/spring-devtools.properties` to cut Boot's
+/// 1 s + 400 ms of waiting down to 200 ms + 50 ms. Nothing here needs a file
+/// watcher, a `javac` invocation or a JDWP client.
+///
+/// What was missing was not machinery but a way to find out it is broken --
+/// and every way it breaks is **silent**. Each check below is a property
+/// whose wrong value costs nothing at startup and simply means saving a file
+/// does nothing, which reads as "hot reload doesn't work here" rather than as
+/// a setting somebody chose.
+pub(super) fn hot_reload_checks(project: &Project) -> Vec<Check> {
+    let pom_text = project.pom();
+    if !pom::has_dependency(
+        pom_text,
+        "org.springframework.boot",
+        "spring-boot-starter-parent",
+    ) && !pom::has_dependency(
+        pom_text,
+        "org.springframework.boot",
+        "spring-boot-starter-web",
+    ) {
+        return Vec::new();
+    }
+    let root = project.root();
+    let mut checks = Vec::new();
+
+    if !pom::has_dependency(pom_text, "org.springframework.boot", "spring-boot-devtools") {
+        checks.push(
+            Check::new(
+                Status::Warn,
+                "reload",
+                "no spring-boot-devtools: the editor recompiles into target/classes on save, but the running application never picks it up",
+            )
+            .fix("add org.springframework.boot:spring-boot-devtools with <optional>true</optional>"),
+        );
+        return checks;
+    }
+
+    let properties =
+        std::fs::read_to_string(root.join("src/main/resources/application.properties"))
+            .unwrap_or_default();
+
+    if property_value(&properties, "spring.devtools.restart.enabled") == Some("false") {
+        checks.push(
+            Check::new(
+                Status::Fail,
+                "reload",
+                "spring.devtools.restart.enabled=false: devtools is a dependency but restarts are switched off, so saving a file changes nothing",
+            )
+            .fix("remove spring.devtools.restart.enabled from src/main/resources/application.properties"),
+        );
+    } else if let Some(trigger) =
+        property_value(&properties, "spring.devtools.restart.trigger-file")
+    {
+        // The trap this exists for: with a trigger file set, a recompiled
+        // class is *seen* and deliberately ignored until that one file is
+        // touched. Nothing logs the decision, so the loop looks dead.
+        checks.push(
+            Check::new(
+                Status::Warn,
+                "reload",
+                format!(
+                    "spring.devtools.restart.trigger-file={trigger}: a saved class will not restart the application until that file is touched"
+                ),
+            )
+            .fix(format!("touch {trigger} after a save, or remove the property")),
+        );
+    } else {
+        let tuned = root.join("src/main/resources/META-INF/spring-devtools.properties");
+        let tuned_text = std::fs::read_to_string(&tuned).unwrap_or_default();
+        checks.push(if tuned_text.contains("restart.poll-interval") {
+            Check::new(
+                Status::Ok,
+                "reload",
+                "save in the editor recompiles into target/classes and devtools restarts (polling tuned to 200ms/50ms)",
+            )
+        } else {
+            Check::new(
+                Status::Warn,
+                "reload",
+                "devtools is using Boot's 1s poll and 400ms quiet period, so a save waits up to 1.4s before the restart even begins",
+            )
+            .fix("jails new writes src/main/resources/META-INF/spring-devtools.properties with defaults.spring.devtools.restart.poll-interval=200ms and quiet-period=50ms")
+        });
+    }
+
+    checks
+}
