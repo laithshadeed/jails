@@ -234,6 +234,20 @@ pub fn load(root: &Path) -> Result<Ledger> {
     }
 }
 
+/// What to say about a store this binary is too old to read.
+///
+/// The honest answer is that there is no way back. Migration to schema 2 is
+/// one-way and atomic; a receipt records the old bytes for audit, not as a
+/// downgrade format. Emitting a lossy projection of the old schema would give
+/// somebody a file that looks like their state and is not.
+fn newer_schema(schema: &str) -> String {
+    format!(
+        "this project's jails state is schema {schema}, and this binary reads the schema before \
+         it.\n       fix: use a newer jails. There is no downgrade: to go back, restore the \
+         project *and* `.jails` together from one snapshot taken before the migration."
+    )
+}
+
 /// Name the failure and what to do about it, rather than the raw `io::Error`.
 ///
 /// `doctor`'s rule: a report a reader cannot act on costs more than no report.
@@ -332,6 +346,15 @@ fn parse(source: &str) -> std::result::Result<Ledger, String> {
         } else {
             match key {
                 "version" => ledger.version = string(value, number)?,
+                // plan.md §R6.7: a newer store must be refused *before* any
+                // ledger-aware mutation, and refused with the truth — there
+                // is no downgrade. Falling through to "unknown key" would be
+                // technically a refusal and practically useless: the reader
+                // would go looking for a typo.
+                // The raw value, not a parsed string: a newer schema may
+                // spell it as a bare integer, and failing on *how* it is
+                // written would hide what it says.
+                "schema" => return Err(newer_schema(value.trim())),
                 _ => return Err(format!("line {number}: unknown key `{key}`")),
             }
         }
@@ -623,6 +646,27 @@ pub fn entry_mut<'a>(ledger: &'a mut Ledger, key: EntityKey<'_>) -> &'a mut Appl
 
 #[cfg(test)]
 mod tests {
+
+    /// plan.md §R6.7. A store from a newer jails must be refused before any
+    /// ledger-aware mutation, and refused with the truth: migration is
+    /// one-way, so the fix is a newer binary or a whole-snapshot restore.
+    /// Falling through to "unknown key `schema`" would send the reader
+    /// looking for a typo.
+    #[test]
+    fn a_store_from_a_newer_jails_is_refused_and_says_there_is_no_way_back() {
+        let error = parse("version = \"0.1.0\"\nschema = 2\n").unwrap_err();
+        assert!(error.contains("schema 2"), "{error}");
+        assert!(error.contains("no downgrade"), "{error}");
+        assert!(error.contains("restore the project"), "{error}");
+        assert!(!error.contains("unknown key"), "{error}");
+    }
+
+    /// And it refuses *before* anything is believed about the contents: a
+    /// half-read newer store is worse than an unread one.
+    #[test]
+    fn a_newer_store_yields_no_partial_reading() {
+        assert!(parse("schema = 3\n[[applied]]\nrecipe = \"record\"\n").is_err());
+    }
     use super::*;
 
     fn sample() -> Ledger {
@@ -776,8 +820,9 @@ mod tests {
         fs::write(&path, "version = \"0.1.0\"\nschema = 2\n").unwrap();
         let error = load(&root).unwrap_err();
         assert!(
-            error.contains("unknown key `schema`"),
-            "a ledger from a newer jails is refused, not half-read: {error}"
+            error.contains("no downgrade"),
+            "a ledger from a newer jails is refused with the truth, not with `unknown key`: \
+             {error}"
         );
 
         fs::remove_dir_all(&root).unwrap();
