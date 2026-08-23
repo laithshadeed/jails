@@ -87,6 +87,9 @@ const ALLOWED: &[AllowedConcept] = &[
             // The commit point *is* the ledger write; the executor cannot
             // describe its own protocol without naming it.
             "crates/jails-commit/src/execute.rs",
+            // Recovery classifies the ledger first: it is what says whether
+            // the commit point was crossed.
+            "crates/jails-commit/src/recover.rs",
             "src/app.rs",
             // The typed shadow reads the schema-1 store's rows to build its
             // observed side, so it names the module they live in.

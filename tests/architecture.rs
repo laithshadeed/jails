@@ -664,6 +664,7 @@ const LAYERS: &[(&str, usize)] = &[
     ("execute", 6),
     ("journal", 6),
     ("outcome", 6),
+    ("recover", 6),
     ("store", 6),
     // jails-tooling: commands that drive a toolchain or report on a project.
     ("run", 7),

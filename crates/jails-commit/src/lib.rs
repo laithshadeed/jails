@@ -10,6 +10,7 @@
 pub mod execute;
 pub mod journal;
 pub mod outcome;
+pub mod recover;
 pub mod store;
 
 pub(crate) use jails_support::Result;
