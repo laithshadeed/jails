@@ -1468,6 +1468,7 @@ fn verified_spring_toolboxes(path: &str) -> &'static SpringToolboxes {
                     "{args:?} failed in the core Spring toolbox"
                 );
             }
+
             mark_toolchain_dir_generated(&core);
         }
 
@@ -1721,6 +1722,15 @@ fn verified_app_unit_fixtures(path: &str) -> &'static Vec<(&'static str, std::pa
 fn verified_app_fixtures(path: &str) -> &'static Vec<(&'static str, std::path::PathBuf)> {
     static VERIFIED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     VERIFIED.get_or_init(|| {
+        let suite_started = std::time::Instant::now();
+        let profile_stage = |stage: &str| {
+            if std::env::var_os("JAILS_TEST_PROFILE").is_some() {
+                eprintln!(
+                    "JAILS_TEST_PROFILE app_stage={stage} elapsed_ms={}",
+                    suite_started.elapsed().as_millis()
+                );
+            }
+        };
         let names = SPRING_APP_MANIFESTS
             .iter()
             .map(|(name, _)| *name)
@@ -1731,15 +1741,19 @@ fn verified_app_fixtures(path: &str) -> &'static Vec<(&'static str, std::path::P
             AppSuiteServices::start(&names, services_launched, postgres_ready)
         });
         let generated = generated_app_fixtures(path);
+        profile_stage("fixtures-ready");
         let endpoints = launch_ready.recv().unwrap();
+        profile_stage("containers-launched");
         let image_build = std::thread::spawn(|| verified_app_images(generated));
 
         // Compile and execute Surefire while PostgreSQL/Kafka are starting.
         // Failsafe follows once both real services are ready, so every test
         // still runs exactly once without a skip flag or selector.
         verified_app_unit_fixtures(path);
+        profile_stage("surefire-complete");
         wait_for_postgres.recv().unwrap();
         let services = service_start.join().unwrap();
+        profile_stage("services-ready");
         std::thread::scope(|scope| {
             for (name, root) in generated {
                 scope.spawn(move || {
@@ -1756,8 +1770,11 @@ fn verified_app_fixtures(path: &str) -> &'static Vec<(&'static str, std::path::P
                 });
             }
         });
+        profile_stage("failsafe-complete");
         drop(services);
+        profile_stage("services-stopped");
         image_build.join().unwrap();
+        profile_stage("images-complete");
     });
     generated_app_fixtures(path)
 }
@@ -1844,31 +1861,36 @@ fn verified_app_images(fixtures: &'static Vec<(&'static str, std::path::PathBuf)
                 );
             }
         }
-        std::thread::scope(|scope| {
-            for (name, root) in fixtures {
-                scope.spawn(move || {
-                    let image = format!("jails-dogfood-{name}:test");
-                    let status = real_docker_cmd(root)
-                        .args(["build", "--tag", &image, "."])
-                        .status()
-                        .unwrap();
-                    assert!(
-                        status.success(),
-                        "{name} failed its generated OCI image build"
-                    );
-                    let inspect = std::process::Command::new("docker")
-                        .args(["image", "inspect", &image, "--format", "{{.Config.User}}"])
-                        .output()
-                        .unwrap();
-                    assert!(inspect.status.success(), "could not inspect {image}");
-                    assert_eq!(
-                        String::from_utf8_lossy(&inspect.stdout).trim(),
-                        "10001:10001",
-                        "{name} image did not retain the non-root runtime user"
-                    );
-                });
-            }
-        });
+        // Podman serialises parts of its rootless storage graph internally.
+        // Three client processes made three cache-only builds take about six
+        // seconds each, versus roughly 1.2 seconds apiece in sequence. This
+        // loop still builds and inspects every image, while the whole image
+        // phase remains overlapped with the Maven application gate.
+        for (name, root) in fixtures {
+            let image = format!("jails-dogfood-{name}:test");
+            let status = real_docker_cmd(root)
+                // Required FROM images were inspected/pulled above. Podman's
+                // default `--pull=missing` can still wait for registry
+                // resolution before accepting its local copy; make this
+                // deliberately cached build local-only.
+                .args(["build", "--pull=never", "--tag", &image, "."])
+                .status()
+                .unwrap();
+            assert!(
+                status.success(),
+                "{name} failed its generated OCI image build"
+            );
+            let inspect = std::process::Command::new("docker")
+                .args(["image", "inspect", &image, "--format", "{{.Config.User}}"])
+                .output()
+                .unwrap();
+            assert!(inspect.status.success(), "could not inspect {image}");
+            assert_eq!(
+                String::from_utf8_lossy(&inspect.stdout).trim(),
+                "10001:10001",
+                "{name} image did not retain the non-root runtime user"
+            );
+        }
     });
 }
 

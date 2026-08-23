@@ -14,13 +14,16 @@ warm working tree with Maven dependencies already present locally.
 ### Revisions and machine
 
 The original baseline is commit
-`1bf7c42612e636b65064c7c2dd43a6975aab33f9`; the completed implementation is
-`de75b76c30f22ec978b55dab7d598ebdec549ce4`. Use a separate Git worktree when
-comparing them so checkout does not disturb local changes:
+`1bf7c42612e636b65064c7c2dd43a6975aab33f9`; the first optimization checkpoint
+is `de75b76c30f22ec978b55dab7d598ebdec549ce4`. Later measurements in this file
+name their exact command and cache state; for the controller-test checkpoint,
+the reproducible revision is the commit containing this paragraph. Record it
+with `git rev-parse HEAD`. Use a separate Git worktree when comparing revisions
+so checkout does not disturb local changes:
 
 ```sh
 git worktree add /tmp/jails-baseline 1bf7c42612e636b65064c7c2dd43a6975aab33f9
-git worktree add /tmp/jails-optimized de75b76c30f22ec978b55dab7d598ebdec549ce4
+git worktree add /tmp/jails-optimized <revision-under-test>
 ```
 
 The measurements came from this host:
@@ -149,12 +152,38 @@ to fail after doing its measured work, which is why that table records both
 17.25 seconds and `failed`. The failure itself is part of the diagnosis, not a
 passing benchmark result.
 
-To recover libtest's apparent in-suite durations, add `--report-time` to the
-full CLI run:
+Stable libtest rejects `--report-time`; it is a nightly-only option requiring
+`-Z unstable-options`. Do not use it for the stable reproduction. This test
+harness instead has opt-in subprocess timestamps. `--nocapture` is required so
+libtest writes the profiler's stderr records to the log:
 
 ```sh
-env -u JAVA_TOOL_OPTIONS -u MAVEN_OPTS cargo test --test cli -- --report-time \
-  > /tmp/jails-cli-per-test.log 2>&1
+JAILS_TEST_PROFILE=1 /usr/bin/time -v -o /tmp/jails-cli-profile.time \
+  env -u JAVA_TOOL_OPTIONS -u MAVEN_OPTS cargo test --test cli -- --nocapture \
+  > /tmp/jails-cli-profile.log 2>&1
+
+rg 'JAILS_TEST_PROFILE' /tmp/jails-cli-profile.log \
+  > /tmp/jails-cli-profile.events
+```
+
+Every subprocess event reports `start_ms`, `run_start_ms`, `end_ms`,
+`queue_ms`, `run_ms`, working directory, and the complete command. Times are
+milliseconds from the CLI test process's shared profiler epoch. `queue_ms` is
+time waiting for a toolchain permit; `run_ms` is time inside the child process.
+Application-gate milestones additionally report fixture readiness, container
+launch, Surefire completion, service readiness, Failsafe completion, service
+shutdown, and image completion. This is how the critical path below was
+reconstructed; it is not inferred from libtest's misleading waiter times.
+
+The toolchain limit is six unless overridden. To reproduce the controlled
+eight-permit comparison, set the override explicitly and record it with the
+result:
+
+```sh
+JAILS_TEST_MAX_TOOLCHAIN_PROCESSES=8 JAILS_TEST_PROFILE=1 \
+  /usr/bin/time -v -o /tmp/jails-cli-cap8.time \
+  cargo test --test cli -- --nocapture \
+  > /tmp/jails-cli-cap8.log 2>&1
 ```
 
 The historical 147.94- and 83.29-second rows were working-tree checkpoints
@@ -213,7 +242,7 @@ keep='^(add_kafka_and_generate_event_compile_against_real_spring|add_json_on_a_s
 mapfile -t all_tests < <(
   cargo test --test cli -- --list | sed -n 's/: test$//p'
 )
-args=(--test-threads=4 --report-time)
+args=(--test-threads=4)
 for test in "${all_tests[@]}"; do
   if [[ ! "$test" =~ $keep ]]; then
     args+=(--skip "$test")
@@ -231,9 +260,9 @@ errors, and skipped tests. Search the benchmark command and diff for selectors
 or skip mechanisms:
 
 ```sh
-grep -E 'test result:' /tmp/jails-full.log
+rg 'test result:' /tmp/jails-full.log
 git diff 1bf7c42612e636b65064c7c2dd43a6975aab33f9..HEAD -- \
-  | grep -E '@Disabled|#\[ignore\]|DskipTests|Dtest='
+  | rg '@Disabled|#\[ignore\]|DskipTests|Dtest='
 ```
 
 The second command should print nothing newly added by this optimization.
@@ -530,3 +559,95 @@ Experiments deliberately not retained:
 
 Those changes were reverted; they are recorded here to prevent repeating
 profiling paths that made the complete suite slower.
+
+## Controller-test checkpoint and the current 45-second run
+
+The next checkpoint keeps the two generated security slice tests as
+`@WebMvcTest`, because they are specifically proving Spring Security wiring.
+Generated resource, use-case, query, and transition controller tests do not
+need an application context: they now construct the controller with the same
+fake or mock dependency and use `MockMvcTester.of`. Every generated JUnit test
+method and assertion remains present. The golden outputs changed with the
+templates, and the three proof applications—including their scoped controller
+constructors—compile and execute the generated tests.
+
+Podman supplied the other retained improvement. A fully cached `docker build`
+using Podman's default `--pull=missing` took 66.25 seconds while consuming only
+0.64 user and 0.88 system CPU seconds. The same build with `--pull=never` took
+1.19 seconds. The harness already inspects every `FROM` image and pulls a
+missing image before building, so its builds now use `--pull=never`. The three
+cache-only image builds run sequentially because parallel Podman clients
+serialize on rootless container storage and each become slower; the image
+phase as a whole still overlaps Maven execution. Reproduce that diagnosis on
+one warm generated application with:
+
+```sh
+app=target/jails-e2e-cache/proof-apps/payments-gateway
+(cd "$app" && /usr/bin/time -v -o /tmp/podman-pull-missing.time \
+  docker build --tag jails-pull-missing:test . \
+  > /tmp/podman-pull-missing.log 2>&1)
+(cd "$app" && /usr/bin/time -v -o /tmp/podman-pull-never.time \
+  docker build --pull=never --tag jails-pull-never:test . \
+  > /tmp/podman-pull-never.log 2>&1)
+rg 'Elapsed|User time|System time|Maximum resident' \
+  /tmp/podman-pull-missing.time /tmp/podman-pull-never.time
+```
+
+The exact current acceptance command was:
+
+```sh
+/usr/bin/time -v -o /tmp/jails-user-full-cargo-test-rerun.time cargo test
+```
+
+It ran after a changed `jails` executable invalidated the generated-project
+cache. It passed every Rust test binary and ended with 160/160 CLI tests, zero
+failed, ignored, or filtered CLI tests. GNU `time` recorded 44.90 seconds wall,
+223.41 user seconds, 49.69 system seconds, 721,896 KiB maximum RSS, 13 major
+faults, 1,284,112 voluntary context switches, and 270,211 involuntary context
+switches. This is the reproducible source of the reported “45 seconds”; it is
+not a rounded sum of selected tests.
+
+A cache-warm, timestamped CLI-only run at the explicitly stated eight-process
+limit took 33.75 seconds wall (33.69 seconds reported by libtest), 209.57 user
+seconds, 45.18 system seconds, and 715,596 KiB maximum RSS. Its critical path
+was:
+
+| Absolute interval | Work on the critical path |
+| --- | --- |
+| 0.0–15.8 s | three cached proof-app Surefire runs, concurrent with the three Spring toolboxes |
+| 8.1–21.5 s | shared Kafka/PostgreSQL launch and three isolated database creations |
+| 9.2–18.2 s | three sequential, local-only OCI image builds, overlapped with Maven |
+| 21.5–33.1 s | three concurrent real Failsafe runs against shared PostgreSQL and Kafka |
+| by 27.9 s | the remaining `testd`/affected-test work had already completed |
+
+The decisive resource signal is CPU and scheduling contention, not disk,
+external network, or active swap I/O: that warm CLI run accumulated 254.75 CPU
+seconds in 33.75 wall seconds, 219,082 involuntary context switches, only 16
+major faults, and its profiler recorded almost no permit queue time at a limit
+of eight. The proof-app Failsafe processes themselves each expanded from about
+10.4 seconds when isolated to 11.5–11.7 seconds under full-suite contention.
+Once they started at 21.5 seconds, they alone determined the end of the CLI
+binary. Maven dependencies and container images were local, so external
+network transfer was absent from this path.
+
+The generated-application gate alone, warm and at the same explicit cap, took
+22.02 seconds wall. Its stage timestamps were 0.47 seconds to launch the two
+containers, 10.92 seconds to complete all three Surefire processes, 21.32
+seconds to complete all three Failsafe processes, and 21.51 seconds to stop
+services and join the already-finished image work. These events can be
+reproduced with:
+
+```sh
+JAILS_TEST_MAX_TOOLCHAIN_PROCESSES=8 JAILS_TEST_PROFILE=1 \
+  /usr/bin/time -v -o /tmp/jails-app-profile.time \
+  cargo test --test cli \
+  app_manifests_pass_the_full_generated_verification_gate -- --exact --nocapture \
+  > /tmp/jails-app-profile.log 2>&1
+rg 'JAILS_TEST_PROFILE|test result:' /tmp/jails-app-profile.log
+```
+
+The sub-30-second goal is therefore still **not achieved** for plain,
+unfiltered `cargo test`. The next optimization must shorten or safely overlap
+the real Failsafe/Maven tail without deleting, disabling, ignoring, or
+filtering any acceptance test. The focused commands above are diagnostic only;
+the unfiltered acceptance command remains `cargo test`.

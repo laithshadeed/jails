@@ -393,11 +393,6 @@ impl Project {
         crate::generate::spring_boot_major_of(&self.pom)
     }
 
-    /// `@WebMvcTest`'s package, which Boot 4 moved with no back-compat shim.
-    pub(crate) fn webmvc_test_import(&self) -> &'static str {
-        crate::generate::webmvc_test_import_for(self.boot_major())
-    }
-
     /// `@AutoConfigureMockMvc`'s package, moved in the same Boot 4 change.
     pub(crate) fn mockmvc_autoconfigure_import(&self) -> &'static str {
         crate::generate::mockmvc_autoconfigure_import_for(self.boot_major())

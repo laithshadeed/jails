@@ -53,13 +53,7 @@ pub(super) fn scope_test_parts(
             "{}import org.springframework.mock.env.MockEnvironment;\n",
             crate::generate::import_of(web, security, "ScopeAuthorizer")
         ),
-        r#"
-        @Bean
-        ScopeAuthorizer scopeAuthorizer() {
-            return new ScopeAuthorizer(new MockEnvironment());
-        }
-"#
-        .to_string(),
+        ",\n            new ScopeAuthorizer(new MockEnvironment())".to_string(),
     )
 }
 
@@ -554,7 +548,6 @@ fn usecase_controller_test_java(
     let service: &str = &slice.placed(Layer::Service);
     let web: &str = &slice.placed(Layer::Web);
     let domain: &str = &slice.owned(Layer::Domain);
-    let webmvc_test_import: &str = slice.project().webmvc_test_import();
     let target_fields: &[crate::generate::Field] = &target.fields;
     let target: &str = &target.name;
     let json = fields
@@ -592,7 +585,7 @@ fn usecase_controller_test_java(
         ),
         None => ("", String::new()),
     };
-    let (scope_import, scope_bean) = scope_test_parts(security, web, fields);
+    let (scope_import, scope_argument) = scope_test_parts(security, web, fields);
     crate::template::render(
         crate::template::template!("spring/usecase_controller_test_java.java"),
         &[
@@ -603,13 +596,12 @@ fn usecase_controller_test_java(
             ("scope_import", &*scope_import),
             ("imports", &*imports),
             ("disabled_import", disabled_import),
-            ("webmvc_test_import", webmvc_test_import),
             ("name", name),
             ("disabled", &*disabled),
             ("json", &*json),
             ("target", target),
             ("target_args", &*target_args),
-            ("scope_bean", &*scope_bean),
+            ("scope_argument", &*scope_argument),
         ],
     )
 }

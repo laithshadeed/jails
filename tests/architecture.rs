@@ -367,7 +367,7 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // and `security.rs` left, and what remains is the shared
                 // preconditions plus the three small capabilities that have no
                 // second reader.
-                ceiling: 673,
+                ceiling: 666,
                 target: 2500,
                 why: "Logical cohesion: one file for everything sharing the `require_spring` \
                       precondition. abstract.md §6.2 says turning that precondition into data \
@@ -388,7 +388,7 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // relocated, and the next monolith was already the one
                 // abstract.md §3.2 calls Ousterhout's named anti-pattern
                 // verbatim: parse -> dispatch -> write -> side effects.
-                ceiling: 673,
+                ceiling: 666,
                 target: 700,
                 why: "The row above can be satisfied by *moving* a monolith rather than \
                       decomposing one, so this asks the question the split is actually for: \

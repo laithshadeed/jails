@@ -370,7 +370,6 @@ fn query_controller_test_java(
     let service: &str = &slice.placed(Layer::Service);
     let web: &str = &slice.placed(Layer::Web);
     let domain: &str = &slice.owned(Layer::Domain);
-    let webmvc_test_import: &str = slice.project().webmvc_test_import();
     let target_fields: &[crate::generate::Field] = &resource.fields;
     let target: &str = &resource.name;
     let json = fields
@@ -404,7 +403,7 @@ fn query_controller_test_java(
     } else {
         ""
     };
-    let (scope_import, scope_bean) = scope_test_parts(security, web, fields);
+    let (scope_import, scope_argument) = scope_test_parts(security, web, fields);
     crate::template::render(
         crate::template::template!("spring/query_controller_test_java.java"),
         &[
@@ -414,13 +413,12 @@ fn query_controller_test_java(
             ("scope_import", &*scope_import),
             ("imports", &*imports),
             ("disabled_import", disabled_import),
-            ("webmvc_test_import", webmvc_test_import),
             ("name", name),
             ("annotation", annotation),
             ("json", &*json),
             ("target", target),
             ("target_args", &*target_args),
-            ("scope_bean", &*scope_bean),
+            ("scope_argument", &*scope_argument),
         ],
     )
 }

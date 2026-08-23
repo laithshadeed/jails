@@ -612,18 +612,80 @@ impl ToolchainCommand {
     }
 
     pub fn status(&mut self) -> io::Result<ExitStatus> {
+        let description = profile_command_description(&self.inner);
+        let queued_at = Instant::now();
         let _permit = ToolchainPermit::acquire();
-        self.inner.status()
+        let queue_time = queued_at.elapsed();
+        let started_at = Instant::now();
+        let result = self.inner.status();
+        report_profiled_command(description, "status", queue_time, started_at.elapsed());
+        result
     }
 
     pub fn output(&mut self) -> io::Result<Output> {
+        let description = profile_command_description(&self.inner);
+        let queued_at = Instant::now();
         let _permit = ToolchainPermit::acquire();
-        self.inner.output()
+        let queue_time = queued_at.elapsed();
+        let started_at = Instant::now();
+        let result = self.inner.output();
+        report_profiled_command(description, "output", queue_time, started_at.elapsed());
+        result
     }
 }
 
-const MAX_TOOLCHAIN_PROCESSES: usize = 6;
+fn profile_command_description(command: &Command) -> Option<String> {
+    std::env::var_os("JAILS_TEST_PROFILE").map(|_| {
+        let _ = test_profile_epoch();
+        let cwd = command
+            .get_current_dir()
+            .map_or_else(|| ".".into(), |path| path.display().to_string());
+        let program = command.get_program().to_string_lossy();
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!("cwd={cwd} command={program} {args}")
+    })
+}
+
+fn report_profiled_command(
+    description: Option<String>,
+    operation: &str,
+    queue_time: Duration,
+    run_time: Duration,
+) {
+    if let Some(description) = description {
+        let end_ms = test_profile_epoch().elapsed().as_millis();
+        let run_ms = run_time.as_millis();
+        let queue_ms = queue_time.as_millis();
+        let run_start_ms = end_ms.saturating_sub(run_ms);
+        let start_ms = run_start_ms.saturating_sub(queue_ms);
+        eprintln!(
+            "JAILS_TEST_PROFILE operation={operation} start_ms={start_ms} run_start_ms={run_start_ms} end_ms={end_ms} queue_ms={queue_ms} run_ms={run_ms} {description}"
+        );
+    }
+}
+
+fn test_profile_epoch() -> &'static Instant {
+    static EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    EPOCH.get_or_init(Instant::now)
+}
+
+const DEFAULT_MAX_TOOLCHAIN_PROCESSES: usize = 6;
 static TOOLCHAIN_PROCESSES: (Mutex<usize>, Condvar) = (Mutex::new(0), Condvar::new());
+
+fn max_toolchain_processes() -> usize {
+    static MAXIMUM: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *MAXIMUM.get_or_init(|| {
+        std::env::var("JAILS_TEST_MAX_TOOLCHAIN_PROCESSES")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(DEFAULT_MAX_TOOLCHAIN_PROCESSES)
+    })
+}
 
 struct ToolchainPermit;
 
@@ -633,7 +695,7 @@ impl ToolchainPermit {
         let mut count = active
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        while *count >= MAX_TOOLCHAIN_PROCESSES {
+        while *count >= max_toolchain_processes() {
             count = available
                 .wait(count)
                 .unwrap_or_else(|poisoned| poisoned.into_inner());

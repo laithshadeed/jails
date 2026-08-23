@@ -2,24 +2,25 @@ package com.example.demo.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.mock;
 
 import com.example.demo.service.PayoutService;
 import java.util.List;
 import java.util.Optional;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
 
-@WebMvcTest(PayoutController.class)
 class PayoutControllerTest {
 
-    @Autowired
+    private PayoutService service;
     private MockMvcTester mvc;
 
-    @MockitoBean
-    private PayoutService service;
+    @BeforeEach
+    void setUp() {
+        service = mock(PayoutService.class);
+        mvc = MockMvcTester.of(new PayoutController(service));
+    }
 
     @Test
     void anEmptyCollectionIsAnEmptyArray() {

@@ -9,19 +9,18 @@ import com.example.demo.service.ChangePayoutStatusUseCase;
 import java.time.Instant;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
 
-@WebMvcTest(ChangePayoutStatusController.class)
-@Import(ChangePayoutStatusControllerTest.Config.class)
 class ChangePayoutStatusControllerTest {
 
-    @Autowired private MockMvcTester mvc;
+    private final MockMvcTester mvc = MockMvcTester.of(new ChangePayoutStatusController(
+            command -> new Payout(
+                    UUID.fromString("00000000-0000-0000-0000-000000000001"),
+                    1L,
+                    PayoutStatus.values()[0],
+                    1L,
+                    Instant.parse("2024-01-01T00:00:00Z"))));
 
     @Test
     void putExecutesTheTransition() {
@@ -37,16 +36,4 @@ class ChangePayoutStatusControllerTest {
                 .hasStatusOk();
     }
 
-    @TestConfiguration(proxyBeanMethods = false)
-    static class Config {
-        @Bean
-        ChangePayoutStatusUseCase useCase() {
-            return command -> new Payout(
-                    UUID.fromString("00000000-0000-0000-0000-000000000001"),
-                    1L,
-                    PayoutStatus.values()[0],
-                    1L,
-                    Instant.parse("2024-01-01T00:00:00Z"));
-        }
-    }
 }

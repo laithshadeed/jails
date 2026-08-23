@@ -656,13 +656,14 @@ fn scoped_resource_controller_java(
     )
 }
 
-/// The controller's test: a web-layer slice with the service replaced.
+/// The controller's test: a standalone MVC harness with the service replaced.
 ///
-/// `@WebMvcTest` starts the web layer and nothing else -- no database, no
-/// component scan of the whole application -- so it runs in a fraction of
-/// the time a `@SpringBootTest` takes and fails for reasons that are about
-/// HTTP. The service is a `@MockitoBean`, which is the current spelling:
-/// `@MockBean` no longer exists in Spring Boot 4.
+/// `MockMvcTester.of` installs the real Spring MVC mappings, argument
+/// conversion, response conversion, and exception handling around this exact
+/// controller without starting a Boot application context per generated
+/// resource. Security configuration and full-context behavior retain their
+/// dedicated Spring tests; this companion test stays focused on HTTP and uses
+/// a fresh Mockito service for every method.
 pub(crate) fn resource_controller_test_java(
     slice: &Slice,
     name: &str,
@@ -671,7 +672,6 @@ pub(crate) fn resource_controller_test_java(
 ) -> String {
     let security: &str = slice.base();
     let pkg: &str = &slice.placed(Layer::Web);
-    let webmvc_test_import: &str = slice.project().webmvc_test_import();
     if fields.iter().any(|field| field.constraints.scoped) {
         let guard_import = crate::generate::import_of(pkg, security, "ScopeAuthorizer");
         return crate::template::render(
@@ -680,19 +680,13 @@ pub(crate) fn resource_controller_test_java(
                 ("pkg", pkg),
                 ("extra", extra),
                 ("guard_import", &*guard_import),
-                ("webmvc_test_import", webmvc_test_import),
                 ("name", name),
             ],
         );
     }
     crate::template::render(
         crate::template::template!("spring/resource_controller_test_java.java"),
-        &[
-            ("pkg", pkg),
-            ("extra", extra),
-            ("webmvc_test_import", webmvc_test_import),
-            ("name", name),
-        ],
+        &[("pkg", pkg), ("extra", extra), ("name", name)],
     )
 }
 

@@ -279,23 +279,6 @@ fn shallowest_java_file(dir: &Path) -> Option<PathBuf> {
     best.map(|(_, path)| path)
 }
 
-/// Spring Boot 4 moved `@AutoConfigureMockMvc` from
-/// `org.springframework.boot.test.autoconfigure.web.servlet` to
-/// `org.springframework.boot.webmvc.test.autoconfigure` with no back-compat
-/// shim, so the scaffolded controller test needs to import the right one.
-/// `@WebMvcTest` moved in Spring Boot 4 the same way `@AutoConfigureMockMvc`
-/// did, and for the same reason -- the web slice became its own module.
-/// `@WebMvcTest`'s package, which Boot 4 moved with no back-compat shim.
-///
-/// Reached through [`crate::model::Project::webmvc_test_import`]: the Boot
-/// major is a project fact, resolved once, not something a renderer re-reads
-/// off disk.
-pub(crate) fn webmvc_test_import_for(boot_major: u32) -> &'static str {
-    const LEGACY: &str = "org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest";
-    const CURRENT: &str = "org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest";
-    if boot_major >= 4 { CURRENT } else { LEGACY }
-}
-
 /// The Spring Boot major version from the parent pom, defaulting to 3 when it
 /// cannot be read -- the conservative choice, since the pre-4 package names
 /// still exist as deprecated aliases in some builds while the 4 ones simply
