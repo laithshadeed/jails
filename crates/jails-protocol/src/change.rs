@@ -21,7 +21,7 @@
 use crate::Result;
 use crate::edit::{FactDelta, SemanticEdit, SemanticPrecondition};
 use crate::render::{DesiredFile, ManagedPath};
-use crate::resource::{DesiredResource, ResourceOwner};
+use crate::resource::{DesiredResource, ResourceKey, ResourceOwner};
 use jails_support::codec::{Decoder, Encoder};
 use std::collections::BTreeSet;
 
@@ -110,6 +110,21 @@ pub struct DesiredChange {
     pub files: Vec<DesiredFile>,
     pub edits: Vec<SemanticEdit>,
     pub absences: Vec<ManagedPath>,
+    /// Resources this owner takes responsibility for **if they are already
+    /// there**, and never creates.
+    ///
+    /// A capability that has moved artifacts -- `add json` went from Jackson 2
+    /// to Jackson 3 -- has to be able to take the old ones with it when it
+    /// goes, or `remove json` leaves the 2.x line beside the 3.x one, which is
+    /// the two-majors failure the move was for. The old coordinates are not
+    /// *desired*: nothing writes them, and a project that never had them stays
+    /// without them. They are claims, so that removal covers them.
+    ///
+    /// This is deliberately not "assert these are absent". Asserting absence
+    /// at install time would delete a dependency the reader may still be using
+    /// during a migration they did not ask jails to finish, and it would do it
+    /// under the name of adding something.
+    pub adopted: Vec<ResourceKey>,
     pub preconditions: Vec<SemanticPrecondition>,
     pub fact_delta: FactDelta,
 }
@@ -130,6 +145,7 @@ impl DesiredChange {
             files: Vec::new(),
             edits: Vec::new(),
             absences: Vec::new(),
+            adopted: Vec::new(),
             preconditions: Vec::new(),
             fact_delta: FactDelta::default(),
         }
@@ -166,6 +182,17 @@ impl DesiredChange {
                 ));
             }
         }
+        for key in &self.adopted {
+            if keys.contains(key) {
+                return Err(format!(
+                    "resource {key:?} is both written and adopted in one change; a claim on \
+                     something this change also renders is just a claim"
+                ));
+            }
+            if !keys.insert(key) {
+                return Err(format!("resource {key:?} is adopted twice in one change"));
+            }
+        }
         for edit in &self.edits {
             edit.validate()?;
         }
@@ -179,6 +206,7 @@ impl DesiredChange {
         encode_all(encoder, &self.files, DesiredFile::encode)?;
         encode_all(encoder, &self.edits, SemanticEdit::encode)?;
         encode_all(encoder, &self.absences, ManagedPath::encode)?;
+        encode_all(encoder, &self.adopted, ResourceKey::encode)?;
         encode_all(encoder, &self.preconditions, SemanticPrecondition::encode)?;
         self.fact_delta.encode(encoder)
     }
@@ -190,6 +218,7 @@ impl DesiredChange {
             files: decode_all(decoder, DesiredFile::decode)?,
             edits: decode_all(decoder, SemanticEdit::decode)?,
             absences: decode_all(decoder, ManagedPath::decode)?,
+            adopted: decode_all(decoder, ResourceKey::decode)?,
             preconditions: decode_all(decoder, SemanticPrecondition::decode)?,
             fact_delta: FactDelta::decode(decoder)?,
         };
@@ -229,7 +258,7 @@ pub(crate) mod tests {
     use crate::entity::{EntityId, IntentId, Recipe};
     use crate::identity::{Name, Package, ProjectPath};
     use crate::render::{DesiredBody, DesiredFile, ManagedPath};
-    use crate::resource::{ResourceKey, ResourceValue};
+    use crate::resource::ResourceValue;
 
     pub(crate) fn intent(name: &str) -> IntentId {
         IntentId::new(

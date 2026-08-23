@@ -18,14 +18,13 @@
 //!
 //! ## What it deliberately refuses
 //!
-//! Two contributions have no home in the closed protocol yet: a Spring test
-//! import, and the legacy dependencies a capability supersedes. Both are
-//! *refused by name* rather than dropped. A translator that silently loses a
-//! contribution produces a desired state that is missing something no test
-//! asked about — and the first symptom is a project that compiles and does not
-//! start, which is exactly the failure the whole ownership model exists to
-//! stop. §R6.3's row for `add::test_wiring` is where the missing variant is
-//! designed; until it exists, this says so.
+//! One contribution has no home in the closed protocol yet: a Spring test
+//! import. It is *refused by name* rather than dropped. A translator that
+//! silently loses a contribution produces a desired state that is missing
+//! something no test asked about — and the first symptom is a project that
+//! compiles and does not start, which is exactly the failure the whole
+//! ownership model exists to stop. §R6.3's row for `add::test_wiring` is where
+//! the missing variant is designed; until it exists, this says so.
 //!
 //! ## Ownership, not authorship
 //!
@@ -152,6 +151,20 @@ pub fn contribution(
             resource: Some(key),
         });
     }
+    // Superseded artifacts are claimed, never written. See
+    // `DesiredChange::adopted` for why asserting their absence here would be
+    // the wrong verb for a command called `add`.
+    for dependency in &change.legacy_deps {
+        let (key, _) = dependency_resource(dependency)?;
+        if desired.resources.iter().any(|held| held.key == key) {
+            return Err(format!(
+                "this capability both installs and supersedes {key:?}"
+            ));
+        }
+        if !desired.adopted.contains(&key) {
+            desired.adopted.push(key);
+        }
+    }
     Ok(desired)
 }
 
@@ -165,16 +178,6 @@ fn refuse_untranslated(change: &Change) -> Result<()> {
              import would leave every `@SpringBootTest` in the project without a DataSource, \
              which fails at run time and not at plan time.",
             import.fqcn()
-        ));
-    }
-    if let Some(dependency) = change.legacy_deps.first() {
-        return Err(format!(
-            "this capability supersedes {}:{}, and a superseded dependency is an absence this \
-             translation does not yet express.\n       \
-             fix: keep this capability on the V1 path. Claiming the new dependency without \
-             retiring the old one leaves both on the classpath, which is the two-Jackson-majors \
-             failure jails' own doctor reports.",
-            dependency.group_id, dependency.artifact_id
         ));
     }
     Ok(())
@@ -508,13 +511,28 @@ mod tests {
     }
 
     #[test]
-    fn a_superseded_dependency_is_refused_by_name_rather_than_dropped() {
+    fn a_superseded_dependency_is_claimed_but_never_written() {
         let change = Change {
             legacy_deps: vec![dependency()],
             ..Change::default()
         };
+        let desired = contribution(&owner(), &change, &project().1).unwrap();
+        assert!(
+            desired.resources.is_empty() && desired.edits.is_empty(),
+            "nothing installs a superseded artifact"
+        );
+        assert_eq!(desired.adopted.len(), 1, "but removal has to cover it");
+    }
+
+    #[test]
+    fn installing_and_superseding_one_artifact_is_refused() {
+        let change = Change {
+            deps: vec![dependency()],
+            legacy_deps: vec![dependency()],
+            ..Change::default()
+        };
         let message = contribution(&owner(), &change, &project().1).unwrap_err();
-        assert!(message.contains("org.postgresql:postgresql"), "{message}");
+        assert!(message.contains("installs and supersedes"), "{message}");
     }
 
     #[test]

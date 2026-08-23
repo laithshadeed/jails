@@ -34,8 +34,6 @@ enum Verdict {
     Translates,
     /// Contributes a Spring test import (plan.md §R6.3, `add::test_wiring`).
     NeedsTestWiring,
-    /// Supersedes an older dependency, which is an absence, not a claim.
-    NeedsSupersedes,
     /// The capability refuses to plan against this fixture because the fixture
     /// does not meet its precondition — no HTTP routes to load-test, no
     /// actuator to probe. Nothing to do with the translation.
@@ -55,7 +53,7 @@ const BOARD: &[(&str, Verdict)] = &[
     ("fake", Verdict::Translates),
     ("format", Verdict::Translates),
     ("http", Verdict::Translates),
-    ("json", Verdict::NeedsSupersedes),
+    ("json", Verdict::Translates),
     // Needs actuator before it can plan probes and burn-rate alerts.
     ("k8s", Verdict::PreconditionUnmet),
     ("kafka", Verdict::Translates),
@@ -88,7 +86,6 @@ fn verdict(capability: Capability, project: &Project) -> Verdict {
     match desire::contribution(&owner(capability), &change, project) {
         Ok(_) => Verdict::Translates,
         Err(message) if message.contains("Spring test import") => Verdict::NeedsTestWiring,
-        Err(message) if message.contains("supersedes") => Verdict::NeedsSupersedes,
         Err(message) => panic!(
             "{} refused for an unlisted reason: {message}",
             capability.label()
