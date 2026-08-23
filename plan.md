@@ -1321,10 +1321,10 @@ yet — which is a healthier list than the one it replaces.
 | — | **`abstract.md` rung 8 — one ledger** — **done.** `src/ledger.rs` and `.jails/ledger.toml` replace `app-state-v1`, `intents/*`, `models/*`, `files` and `version`. Identity is `(recipe, name, package)`, everything else content, so §9.7's edited-`fields` case is an update to a known entity rather than a new intent against existing files. `generate` and `app apply` write disjoint columns of one row through `ledger::entry_mut`. Goldens went from 98 bookkeeping files to 21, and `the_goldens_still_hold_the_properties_that_matter` fails if a third file or a subdirectory appears | §11.2 | M | A B C D |
 | ~~9~~ | ~~**§6.6 Tier 2** — template overrides~~ — **done.** `.jails/templates/<name>` beats `~/.config/jails/templates/<name>` beats the `include_str!` default; all 107 template sites go through one `template!` macro so no generator has to opt in. `doctor` reports every active override by name with the reason (not golden-tested). An override is held to the built-in's **placeholder set** — a mismatch is an error naming the reader's file, not a panic naming jails' | §6.6 | S | — |
 | ~~10~~ | ~~`jails new <name> --app <manifest>`~~ — **done.** `new` and `new-cli` both take `--app`, seeding `.jails/app.toml` and applying it against the project just created. Verified on App D: one command from an empty directory to `mvn clean verify` green. Needed `add::add_in`, `add::preflight_in` and `ResolvedIntent::apply_to` so nothing in the apply path reads the process CWD | §11 | S | A B C D |
-| 11 | **§6.2 F** — one descriptor per kind; `[golden]` a required key | §6 | L | — |
+| 11 | **§6.2 F** — one descriptor per kind. **Most of what it was going to buy has since been bought another way, and the headline property is already enforced**: `[golden]` was to make it "impossible to add a kind without a snapshot test", and `every_kind_and_capability_has_a_golden_scenario` does that today — verified by deleting the `search` scenario, which failed with *"1 thing(s) jails can generate have no golden scenario: kind `search`"*. `destroy`'s paths are derived from the generator now (rungs 4–5), which cannot drift from it at all, where a descriptor still could; the Lua lists are gone, deleted by `commands --json`. What is left unique to F is generating the `ArtifactKind` enum, clap aliases, `--help` and the README table from one file — real, but a `build.rs` and a week for the smaller half of the original case | §6 | L, and re-price it first | — |
 | ~~12~~ | ~~§12 marker widening + `jails adopt`~~ — **done.** `src/build.rs` names the build tool without reading it; `find_project_root` takes any recognised marker, nearest wins; ten Maven-inherent commands refuse through `require_maven` naming what still works; `generate` states which shape a missing pom chose and which dependencies it could not splice; `doctor` leads with the real build tool instead of reporting on an absent pom. `jails adopt` writes `[layout]` from a closed synonym table, reports what it does not recognise, refuses to pick between two candidates, and never touches `[project] capabilities` | §12 | M | — |
-| 13 | `jails testd` + `--affected` | §10.2 | L | — |
-| 14 | `jails dev` v1 | §10.3 | L | — |
+| 13 | `jails testd` + `--affected`. **This is the one latency item that can still pay**, and §19.1's measurement is why: `--fast` matched mvnd rather than beating it, and what is left in both is ~0.6 s of cold `java`. Only a resident JVM removes that floor. `src/launcher.rs` is the substrate — selector translation, cached test classpath, staleness gate — so what remains is the daemon and the socket. §19.2 (the cost of a fresh `URLClassLoader` per run) is still unmeasured and should be taken first | §10.2 | L | — |
+| 14 | `jails dev` v1. **Blocked on a fact, not on effort**: §19.5 asks where jdt.ls writes `.class` files here, and if m2e already points them at `target/classes` then devtools is already watching them and `jails dev` is a README paragraph plus a `doctor` check rather than a supervisor. The partial answer is in §19.5 — the jdt.ls workspace holds no `.class` files, which is consistent with that — and the one-minute check that settles it is written down there | §10.3 | L | — |
 | ~~15~~ | ~~`add sse`~~ (§13.2), ~~`g auth`~~, ~~`g webhook`~~, ~~`g search`~~ and ~~`add mail`~~ (§13.3) — **all shipped.** What is left in §13.3 is the "build the first time a project needs one" row: `add flags`, `add shedlock`, `add storage`, `add arch`, `add nullcheck`, none of which a proof app has demanded | §13 | done | B C |
 | 16 | ~~`codemod.rs`~~ **shipped** — narrower than proposed and the narrowing is the finding (§11): the primitives share a *format*, not an implementation, and that format had five owners. `src/apply/` remains the single write path. What is left is the atomic whole-manifest `ChangeSet` on top, which is the part §11's own sequence puts last and calls "if it still earns its keep" | §11 | S remaining | A B C |
 
@@ -1444,7 +1444,21 @@ read-only and instant, so folding them would cost the property that makes
 4. `postgres:17` with reuse under podman, and whether `withReuse(true)`
    disturbs `@ServiceConnection`.
 5. Where jdt.ls writes `.class` files here — **§10.3's "the loop already
-   exists" finding pivots on it.**
+   exists" finding pivots on it.** *Partially answered, not settled.* The one
+   jdt.ls workspace on this machine
+   (`~/.cache/jdtls/jdtls-*/.metadata/.plugins/org.eclipse.core.resources/.projects/`)
+   holds **no `.class` files at all**, which is consistent with m2e directing
+   output to the project's own `target/classes` rather than into the workspace
+   — the premise §10.3 needs. It is not conclusive, because the only project
+   ever imported there has since been deleted, so there is no `target/` left to
+   look at.
+
+   **The one-minute check that would settle it**, and it has to be run by hand:
+   open a `jails new` project in nvim, wait for jdt.ls to import it, touch a
+   method body, `:w`, then `ls -la target/classes`. A `.class` newer than the
+   last Maven run means the loop already exists and `jails run --hot` is a
+   README paragraph plus a `doctor` check. Until then item 14 stays open on a
+   fact, not on effort.
 6. p99 for App C under the §5.5 k6 profile, before any performance claim.
    **`jails bench` now exists to take it** (§17 item 5b) and the k6 script has
    carried `p(95)<500, p(99)<1000` thresholds since `add loadtest` shipped —
