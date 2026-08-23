@@ -1116,7 +1116,7 @@ to avoid pinning.
 |---|---|---|
 | ~~**`g idempotency`**~~ — **shipped** | A `@unique` column gives one-row-per-key but **not the retained result**; a retry got a 409 instead of the original response. Four outcomes now: first call runs it, a matching retry replays the stored response, the same key with a *different* request is refused, and a retry while the first attempt is in flight is told to retry rather than handed a null body | C |
 | ~~**`g auth`**~~ — **shipped** | Both confirmed in `deps/`: zero occurrences of `JwtEncoder` in all of Boot, and `JwtTimestampValidator.allowEmptyExpiryClaim = true` by default. The generated config undoes the second in one line, and `a_token_with_no_expiry_is_refused` is what keeps it — verified by deleting the line, which fails that test and only that test | B, C |
-| **`g webhook`** (inbound; `http-sink` is outbound) | Signature over **raw bytes**, `MessageDigest.isEqual`, Stripe's 300 s tolerance | B |
+| ~~**`g webhook`**~~ — **shipped** | All three, plus a fourth the sketch did not name: the timestamp is checked in **both** directions and is **inside** the signature. Rejecting only stale timestamps leaves a far-future one accepted -- the same replay window with its sign flipped -- and a timestamp outside the signed bytes is a header anyone in the middle can rewrite. Seven generated tests, all passing against real Maven. `http-sink`'s `webhook` alias became `outbound`, since the name means the receiving end far more often | B |
 | **`add mail`** | Boot 4's `-test` twin convention; the IT reads mail back over POP3 as Boot's own test does | B |
 | **`g search`** | A `generated always as (…) stored` `tsvector` — *generated*, because a trigger someone forgets on UPDATE is the silent failure | B |
 | **`add flags`, `add shedlock`, `add storage`, `add arch`, `add nullcheck`** | Build the first time a project needs one. `add shedlock`: two instances fire the 02:00 job, customers get two emails, nothing logs an error | — |
@@ -1311,7 +1311,7 @@ yet — which is a healthier list than the one it replaces.
 | ~~12~~ | ~~§12 marker widening + `jails adopt`~~ — **done.** `src/build.rs` names the build tool without reading it; `find_project_root` takes any recognised marker, nearest wins; ten Maven-inherent commands refuse through `require_maven` naming what still works; `generate` states which shape a missing pom chose and which dependencies it could not splice; `doctor` leads with the real build tool instead of reporting on an absent pom. `jails adopt` writes `[layout]` from a closed synonym table, reports what it does not recognise, refuses to pick between two candidates, and never touches `[project] capabilities` | §12 | M | — |
 | 13 | `jails testd` + `--affected` | §10.2 | L | — |
 | 14 | `jails dev` v1 | §10.3 | L | — |
-| 15 | ~~`add sse`~~ (§13.2) and ~~`g auth`~~ (§13.3) **shipped**; `g webhook`, `add mail`, `g search` still open | §13 | M each | B C |
+| 15 | ~~`add sse`~~ (§13.2), ~~`g auth`~~ and ~~`g webhook`~~ (§13.3) **shipped**; `add mail` and `g search` still open | §13 | M each | B C |
 | 16 | Atomic whole-manifest `ChangeSet`; `codemod.rs`. **Half done**: `src/apply/` is the single write path (`fs::write` banned elsewhere); what is left is collecting the *splice* primitives under named operations, and the atomic `ChangeSet` on top | §11 | M | A B C |
 
 Item 1 is the only one with a broken user-visible case behind it, so it is

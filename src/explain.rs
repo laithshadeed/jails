@@ -240,6 +240,30 @@ const EXPLANATIONS: &[Explanation] = &[
                encoder and decoder are beans nothing consumes.",
     },
     Explanation {
+        kind: ArtifactKind::Webhook,
+        summary: "An inbound webhook endpoint you can believe: raw bytes, constant time, bounded window.",
+        body: "The inbound counterpart to `http-sink`, and every one of its failure modes is a \
+               rejection or an acceptance that should have gone the other way, showing up as an \
+               error nowhere.\n\n\
+               **Signed over the raw bytes.** Two JSON documents can mean the same thing and \
+               hash differently -- key order, whitespace, `1.0` against `1`. A verifier that \
+               binds the body to a record and re-serialises to check rejects good deliveries, \
+               intermittently, depending on the sender's formatting. The controller takes \
+               `@RequestBody byte[]`, which reads like a shortcut and is the whole design.\n\n\
+               **Compared with `MessageDigest.isEqual`.** `Arrays.equals` returns at the first \
+               differing byte, so how long a rejection takes says how much of the signature was \
+               right -- and a signature can be recovered a byte at a time from that.\n\n\
+               **The timestamp is checked in both directions, and it is inside the \
+               signature.** Five minutes, which is Stripe's tolerance. Rejecting only stale \
+               timestamps leaves a far-future one accepted, the same replay window with its \
+               sign flipped; leaving the timestamp out of the signed bytes makes it a header \
+               anyone in the middle can rewrite, at which point there is no window at all.\n\n\
+               The endpoint answers 200 before doing the work. Senders retry on anything else \
+               and time out in seconds, so a handler that processes inline is retried while it \
+               is still running and the same event arrives twice. Hand it to `g durable-job`, \
+               or make it idempotent with `g idempotency`.",
+    },
+    Explanation {
         kind: ArtifactKind::Migration,
         summary: "An empty, correctly numbered Flyway migration.",
         body: "Numbered numerically rather than lexically: `V10` sorts before `V9` as a string, \

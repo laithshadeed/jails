@@ -6202,3 +6202,38 @@ fn generate_auth_refuses_without_the_security_capability() {
     assert!(!output.status.success());
     assert!(stderr.contains("jails add security"), "{stderr}");
 }
+
+/// `plan.md` §13.3's `g webhook`. Seven tests, and each is one of the ways an
+/// inbound webhook is normally trusted when it should not be — or rejected
+/// when it should not be, which is the failure mode nobody predicts.
+#[test]
+fn generate_webhook_produces_tests_that_run_and_pass() {
+    if !real_mvn_available() {
+        skip("mvn not found on PATH");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let root = temp_dir("real-webhook");
+    write_spring_fixture(&root);
+
+    let status = jails_cmd_with_path(&root, &path)
+        .args(["generate", "webhook", "Provider"])
+        .status()
+        .unwrap();
+    assert!(status.success(), "generate webhook failed");
+
+    let output = jails_cmd_with_path(&root, &path)
+        .args(["test", "ProviderVerifierTest"])
+        .output()
+        .unwrap();
+    let report = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.status.success(), "{report}");
+    assert!(
+        report.contains("Tests run: 7"),
+        "all seven verifier tests must actually run: {report}"
+    );
+}

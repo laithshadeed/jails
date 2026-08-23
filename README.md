@@ -310,6 +310,22 @@ it already draws for hand-written properties inside a jails-owned block.
   either order both leave `prometheus` exposed. The generated test scrapes the
   live endpoint rather than the registry, since a missing registry is not an
   error — it is a 404 nobody notices for days.
+- `jails g webhook <Name>` (alias `hook`) — an inbound webhook endpoint you
+  can believe. Three details, and each is a way this is normally got wrong.
+  **The signature is over the raw bytes**: two JSON documents can mean the same
+  thing and hash differently (key order, whitespace, `1.0` against `1`), so a
+  verifier that binds the body and re-serialises to check rejects good
+  deliveries — intermittently, depending on the sender's formatting. The
+  controller takes `@RequestBody byte[]`, which reads like a shortcut and is the
+  whole design. **The comparison is `MessageDigest.isEqual`**, because
+  `Arrays.equals` returns at the first differing byte and how long a rejection
+  takes then says how much of the signature was right. **The timestamp is
+  checked in both directions and is inside the signature** — five minutes,
+  Stripe's tolerance; rejecting only stale timestamps leaves a far-future one
+  accepted, and leaving the timestamp out of the signed bytes makes it a header
+  anyone in the middle can rewrite. The endpoint answers 200 before doing the
+  work, because senders retry on anything else and time out in seconds. The
+  outbound half is `g http-sink` (whose `webhook` alias is now `outbound`).
 - `jails g auth <Name>` (alias `jwt`) — this service issuing its own tokens,
   and the default that has to be undone. **Spring Boot auto-configures no
   `JwtEncoder`** — there is not one occurrence of the type in the whole of

@@ -301,6 +301,12 @@ pub const SCENARIOS: &[Scenario] = &[
         steps: &[&["add", "security", "--no-start"], &["g", "auth", "Api"]],
     },
     Scenario {
+        name: "webhook",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[&["g", "webhook", "Provider"]],
+    },
+    Scenario {
         name: "cap-sse",
         fixture: Fixture::Spring,
         seed: &[],

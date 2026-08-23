@@ -103,7 +103,11 @@ pub enum ArtifactKind {
     /// `--on` names the use case and `--yields` its typed event. Delivery uses
     /// the event id as an idempotency key and inherits the outbox's leases,
     /// bounded retries, and terminal diagnostics.
-    #[value(name = "http-sink", alias = "webhook")]
+    // `webhook` was an alias here until the inbound kind existed. It is not
+    // wrong -- this *sends* one -- but it is ambiguous now, and "webhook"
+    // means the endpoint that receives Stripe's far more often than the client
+    // that posts yours. `outbound` says which half without the ambiguity.
+    #[value(name = "http-sink", alias = "outbound")]
     HttpSink,
     /// At-most-once execution with a *retained result*: a scoped receipt keyed
     /// by request hash, so a retry replays the first response instead of being
@@ -115,6 +119,10 @@ pub enum ArtifactKind {
     /// which every default configuration accepts. Needs `jails add security`.
     #[value(alias = "jwt")]
     Auth,
+    /// An inbound webhook endpoint whose signature is checked over the raw
+    /// request bytes, in constant time, with a bounded timestamp window
+    #[value(alias = "hook")]
+    Webhook,
     /// PostgreSQL-backed, leased, bounded-retry work that invokes an existing
     /// generated create use case. `--on` names the use case and `--yields`
     /// names its resource; fields include the stable resource `id`.
@@ -831,6 +839,18 @@ fn artifacts_for(
                 );
             }
             crate::spring::auth_files(&crate::model::Slice::new(project, package), name)?
+        }
+        ArtifactKind::Webhook => {
+            require_spring_project(project, "webhook")?;
+            if !fields.is_empty() || strategy_on.is_some() || strategy_yields.is_some() {
+                return Err(
+                    "webhook takes only a name; the payload is whatever the sender posts, \
+                     and binding it before the signature is checked is the bug this kind \
+                     exists to avoid"
+                        .to_string(),
+                );
+            }
+            crate::spring::webhook_files(&crate::model::Slice::new(project, package), name)?
         }
         ArtifactKind::HttpSink => {
             require_spring_project(project, "http-sink")?;

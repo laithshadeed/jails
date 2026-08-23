@@ -24,6 +24,7 @@ mod query;
 mod schema;
 mod sse;
 mod transition;
+mod webhook;
 mod workflow;
 pub(crate) use auth::*;
 pub(crate) use durable::*;
@@ -32,6 +33,7 @@ pub(crate) use query::*;
 pub(crate) use schema::*;
 pub(crate) use sse::*;
 pub(crate) use transition::*;
+pub(crate) use webhook::*;
 pub(crate) use workflow::*;
 // Production code here reaches the project through `Slice`; only the renderer
 // fixtures build one directly.
