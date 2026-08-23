@@ -89,6 +89,11 @@ const ALLOWED_LEFTOVER: &[(&str, &str, &str)] = &[
         "properties live in marked blocks that `remove <capability>` unsplices",
     ),
     (
+        "durable-job",
+        "src/test/resources/config/application.properties",
+        "a shared test property source; destroy unsplices only this durable job's marked block",
+    ),
+    (
         "",
         "TestcontainersConfig.java",
         "installed by `add db`, shared by every @SpringBootTest in the project",

@@ -343,7 +343,31 @@ pub(crate) fn sample_in_package(
     if let Some(direct) = sample_value(field, root, pkg) {
         return Some((direct, Vec::new()));
     }
-    owned_record_sample(root, pkg, &field.java_type, 3)
+    let sealed_source =
+        fs::read_to_string(main_dir(root, pkg).join(format!("{}.java", field.java_type))).ok();
+    sealed_source
+        .as_deref()
+        .and_then(|source| owned_sealed_sample(source, &field.java_type))
+        .or_else(|| owned_record_sample(root, pkg, &field.java_type, 3))
+}
+
+/// Construct the first zero-component variant of a sealed type Jails wrote.
+///
+/// This is not a guess about business meaning: the expression is only a
+/// non-null, type-correct sample used while testing the enclosing value's own
+/// validation. A hand-written sealed hierarchy whose variants carry state is
+/// still refused, because no honest component values can be inferred.
+fn owned_sealed_sample(source: &str, type_name: &str) -> Option<(String, Vec<&'static str>)> {
+    let info = crate::java::type_info(source)?;
+    if info.name != type_name {
+        return None;
+    }
+    let source = crate::java::blanked(source);
+    let variant = info
+        .supertypes
+        .into_iter()
+        .find(|variant| source.contains(&format!("record {variant}() implements {type_name}")))?;
+    Some((format!("new {type_name}.{variant}()"), Vec::new()))
 }
 
 /// Build `new Type(a, b)` from the record on disk, recursively.

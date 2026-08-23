@@ -186,14 +186,22 @@ pub(crate) fn scaffold_artifacts_from_fields(
                 ),
                 // The record was just written from these same fields, so the
                 // adapter and the type it maps cannot disagree.
-                &crate::sql::columns(parsed, slice.project(), &domain, &lower_first(name)),
+                &columns,
                 &domain,
             ),
         },
         Artifact {
             kind: "JDBC adapter integration test",
             path: test_dir(root, &adapters).join(format!("Jdbc{name}RepositoryIT.java")),
-            contents: jdbc_repository_test(&adapters, name),
+            contents: jdbc_repository_test_for(
+                slice.project(),
+                &adapters,
+                &domain,
+                &repository,
+                name,
+                parsed,
+                &columns,
+            ),
         },
         Artifact {
             kind: "in-memory adapter",

@@ -421,6 +421,7 @@ pub(crate) fn artifacts_for(
             // otherwise the record on disk, otherwise a refusal that names
             // the fix. A TODO-shaped adapter silently loses data.
             let (record_fields, _) = fields_from_spec_or_record(&root, &domain, name, fields)?;
+            let columns = crate::sql::columns(&record_fields, project, &domain, &lower_first(name));
 
             // A repository of a type that does not exist is meaningless, and
             // the port would not compile. Rather than fail, lay down the
@@ -464,14 +465,22 @@ pub(crate) fn artifacts_for(
                         import_of(&adapters, &domain, name),
                         import_of(&adapters, &app, &format!("{name}Repository"))
                     ),
-                    &crate::sql::columns(&record_fields, project, &domain, &lower_first(name)),
+                    &columns,
                     &domain,
                 ),
             });
             artifacts.push(Artifact {
                 kind: "JDBC adapter integration test",
                 path: test_dir(&root, &adapters).join(format!("Jdbc{name}RepositoryIT.java")),
-                contents: jdbc_repository_test(&adapters, name),
+                contents: jdbc_repository_test_for(
+                    project,
+                    &adapters,
+                    &domain,
+                    &app,
+                    name,
+                    &record_fields,
+                    &columns,
+                ),
             });
             artifacts
         }

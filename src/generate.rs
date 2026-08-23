@@ -561,6 +561,9 @@ pub(crate) fn generate_in_project(
         for artifact in &change.files {
             println!("would create {} {}", artifact.kind, artifact.path.display());
         }
+        if matches!(kind, ArtifactKind::DurableJob) {
+            crate::spring::install_durable_job_test_properties(project, &name, true)?;
+        }
         if matches!(kind, ArtifactKind::Command) {
             println!("would register {name} in the project's command dispatcher");
         }
@@ -576,6 +579,9 @@ pub(crate) fn generate_in_project(
         println!();
         println!("--pretend: nothing was written.");
         return Ok(());
+    }
+    if matches!(kind, ArtifactKind::DurableJob) {
+        crate::spring::install_durable_job_test_properties(project, &name, false)?;
     }
     let mut written = Vec::new();
     for artifact in &change.files {
@@ -1186,6 +1192,27 @@ mod tests {
             "duplicate after capitalising"
         );
         assert!(parse_variants(&["not a name".to_string()]).is_err());
+    }
+
+    #[test]
+    fn a_generated_zero_component_sealed_variant_is_a_complete_sample() {
+        let root = scratch("sealed-sample");
+        let pkg = "com.example.demo.domain";
+        let main = main_dir(&root, pkg);
+        fs::create_dir_all(&main).unwrap();
+        fs::write(
+            main.join("Outcome.java"),
+            sealed_java(pkg, "Outcome", &["Accepted".into(), "Rejected".into()]),
+        )
+        .unwrap();
+        let field = parse_fields(&["result:Outcome".to_string()])
+            .unwrap()
+            .remove(0);
+
+        let (sample, imports) = sample_in_package(&field, &root, pkg).unwrap();
+
+        assert_eq!(sample, "new Outcome.Accepted()");
+        assert!(imports.is_empty());
     }
 
     #[test]

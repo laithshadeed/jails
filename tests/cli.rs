@@ -1274,6 +1274,47 @@ const SPRING_APP_MANIFESTS: &[(&str, &str)] = &[
     ),
 ];
 
+const PROOF_APP_CACHE_SCHEMA: &str = "proof-apps:v2:shared-demo-actuator-prometheus-context";
+
+/// Finish only the concrete toolbox proof after the generic generators have
+/// written their intentionally honest TODOs.
+fn overlay_plain_toolbox_completions(root: &Path) {
+    const FILES: &[&str] = &[
+        "src/main/java/com/example/demo/MoneyMoved.java",
+        "src/main/java/com/example/demo/domain/Tally.java",
+        "src/main/java/com/example/demo/domain/Transaction.java",
+        "src/main/java/com/example/demo/domain/DomesticEligibility.java",
+        "src/main/java/com/example/demo/domain/ExactReferenceMatchRule.java",
+        "src/main/java/com/example/demo/domain/AmountAndDateMatchRule.java",
+        "src/main/java/com/example/demo/domain/FuzzyMemoMatchRule.java",
+        "src/test/java/com/example/demo/MoneyMovedTest.java",
+        "src/test/java/com/example/demo/domain/TallyTest.java",
+        "src/test/java/com/example/demo/domain/DomesticEligibilityTest.java",
+        "src/test/java/com/example/demo/domain/ExactReferenceMatchRuleTest.java",
+        "src/test/java/com/example/demo/domain/AmountAndDateMatchRuleTest.java",
+        "src/test/java/com/example/demo/domain/FuzzyMemoMatchRuleTest.java",
+        "src/test/java/com/example/demo/BriefTest.java",
+        "src/test/java/com/example/demo/CheckoutIT.java",
+    ];
+    let fixtures = Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/plain-toolbox-completions"
+    ));
+
+    for relative in FILES {
+        let source = fixtures.join(relative);
+        let destination = root.join(relative);
+        fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        fs::copy(&source, &destination).unwrap_or_else(|error| {
+            panic!(
+                "failed to overlay {} onto {}: {error}",
+                source.display(),
+                destination.display()
+            )
+        });
+    }
+}
+
 /// One real plain-Maven verification for every plain capability and generator
 /// branch exercised below. The focused Rust tests still generate their own
 /// projects and assert their exact semantics; sharing only this compile/test
@@ -1298,7 +1339,13 @@ fn verified_plain_toolbox(path: &str) -> &'static std::path::PathBuf {
         }
         for args in [
             &["g", "class", "MoneyMoved"][..],
-            &["g", "record", "Tally", "hits:int", "total:long"][..],
+            &[
+                "g",
+                "record",
+                "Tally",
+                "hits:int@nonnegative",
+                "total:long@nonnegative",
+            ][..],
             &["g", "enum", "Currency", "GBP", "EUR"][..],
             &[
                 "g",
@@ -1384,6 +1431,8 @@ fn verified_plain_toolbox(path: &str) -> &'static std::path::PathBuf {
             .unwrap();
         assert!(status.success(), "generate Greet failed in plain toolbox");
 
+        overlay_plain_toolbox_completions(&root);
+
         let status = jails_cmd_with_path(&root, path)
             .arg("check")
             .status()
@@ -1391,6 +1440,30 @@ fn verified_plain_toolbox(path: &str) -> &'static std::path::PathBuf {
         assert!(
             status.success(),
             "the shared plain toolbox failed clean verify"
+        );
+        let surefire = maven_report_summary(&root, "surefire-reports");
+        assert_eq!(
+            surefire,
+            MavenReportSummary {
+                reports: 29,
+                tests: 89,
+                failures: 0,
+                errors: 0,
+                skipped: 0,
+            },
+            "the plain toolbox must execute every Surefire test"
+        );
+        let failsafe = maven_report_summary(&root, "failsafe-reports");
+        assert_eq!(
+            failsafe,
+            MavenReportSummary {
+                reports: 1,
+                tests: 1,
+                failures: 0,
+                errors: 0,
+                skipped: 0,
+            },
+            "the plain toolbox must execute CheckoutIT"
         );
         root
     })
@@ -1640,12 +1713,23 @@ fn generated_app_fixtures(path: &str) -> &'static Vec<(&'static str, std::path::
     static GENERATED: std::sync::OnceLock<Vec<(&'static str, std::path::PathBuf)>> =
         std::sync::OnceLock::new();
     GENERATED.get_or_init(|| {
-        let (parent, fresh) = cached_toolchain_dir("proof-apps");
+        let cache_salt = SPRING_APP_MANIFESTS.iter().fold(
+            PROOF_APP_CACHE_SCHEMA.to_string(),
+            |mut salt, (name, manifest)| {
+                salt.push_str(&format!("\n{name}:{}\n{manifest}", manifest.len()));
+                salt
+            },
+        );
+        let (parent, fresh) = cached_toolchain_dir_with_salt("proof-apps", &cache_salt);
         if !fresh {
-            return SPRING_APP_MANIFESTS
+            let generated: Vec<_> = SPRING_APP_MANIFESTS
                 .iter()
                 .map(|(name, _)| (*name, parent.join(name)))
                 .collect();
+            for (_, root) in &generated {
+                validate_proof_app_shared_context(root);
+            }
+            return generated;
         }
         let mut generated = Vec::new();
         std::thread::scope(|scope| {
@@ -1679,6 +1763,9 @@ fn generated_app_fixtures(path: &str) -> &'static Vec<(&'static str, std::path::
                 generated.push(handle.join().unwrap());
             }
         });
+        for (_, root) in &generated {
+            align_proof_app_smoke_context(root);
+        }
         mark_toolchain_dir_generated(&parent);
         generated
     })
@@ -1699,6 +1786,65 @@ fn add_app_unit_test_database(root: &Path) {
         "generated app POM has no dependencies"
     );
     fs::write(pom_path, pom.replacen(marker, &format!("{H2}{marker}"), 1)).unwrap();
+}
+
+fn align_proof_app_smoke_context(project: &Path) {
+    const BARE: &str = "@SpringBootTest\nclass DemoApplicationTests";
+
+    for (file, class_name) in [
+        ("ActuatorEndpointsTest.java", "ActuatorEndpointsTest"),
+        ("PrometheusScrapeTest.java", "PrometheusScrapeTest"),
+    ] {
+        assert_proof_app_context_source(project, file, class_name);
+    }
+
+    let test = project.join("src/test/java/com/example/demo/DemoApplicationTests.java");
+    let source = fs::read_to_string(&test).unwrap();
+    let shared = format!("{PROOF_APP_SHARED_SPRING_BOOT_TEST}\nclass DemoApplicationTests");
+    if !source.contains(&shared) {
+        assert!(
+            source.contains(BARE),
+            "proof-app smoke test no longer has the expected Spring context annotation: {source}"
+        );
+        fs::write(&test, source.replacen(BARE, &shared, 1)).unwrap();
+    }
+    assert_proof_app_context_source(project, "DemoApplicationTests.java", "DemoApplicationTests");
+}
+
+const PROOF_APP_SHARED_SPRING_BOOT_TEST: &str = r#"@SpringBootTest(
+        webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+        properties = {
+            "management.server.port=0",
+            "app.security.dev.username=prometheus-probe",
+            "app.security.dev.password=prometheus-probe"
+        })"#;
+
+fn validate_proof_app_shared_context(project: &Path) {
+    for (file, class_name) in [
+        ("DemoApplicationTests.java", "DemoApplicationTests"),
+        ("ActuatorEndpointsTest.java", "ActuatorEndpointsTest"),
+        ("PrometheusScrapeTest.java", "PrometheusScrapeTest"),
+    ] {
+        assert_proof_app_context_source(project, file, class_name);
+    }
+}
+
+fn assert_proof_app_context_source(project: &Path, file: &str, class_name: &str) {
+    let test_dir = project.join("src/test/java/com/example/demo");
+    let source = fs::read_to_string(test_dir.join(file)).unwrap();
+    let class_marker = format!("class {class_name}");
+    let class_start = source
+        .find(&class_marker)
+        .unwrap_or_else(|| panic!("{file} has no {class_marker}: {source}"));
+    let annotations = &source[..class_start];
+    let context_start = annotations
+        .rfind("@Import(")
+        .unwrap_or_else(|| panic!("{file} has no context import: {source}"));
+    assert_eq!(
+        annotations[context_start..].trim_end(),
+        format!("@Import(TestcontainersConfig.class)\n{PROOF_APP_SHARED_SPRING_BOOT_TEST}"),
+        "{file} drifted from the proof application's shared Spring context"
+    );
 }
 
 fn verified_app_unit_fixtures(path: &str) -> &'static Vec<(&'static str, std::path::PathBuf)> {
@@ -1771,6 +1917,21 @@ fn verified_app_fixtures(path: &str) -> &'static Vec<(&'static str, std::path::P
             }
         });
         profile_stage("failsafe-complete");
+        let mut reports = MavenReportSummary::default();
+        for (_, root) in generated {
+            reports.add(maven_report_summary(root, "failsafe-reports"));
+        }
+        assert_eq!(
+            reports,
+            MavenReportSummary {
+                reports: 47,
+                tests: 70,
+                failures: 0,
+                errors: 0,
+                skipped: 0,
+            },
+            "the proof applications must execute every Failsafe test"
+        );
         drop(services);
         profile_stage("services-stopped");
         image_build.join().unwrap();
@@ -4084,10 +4245,10 @@ fn generators_compose_through_user_owned_field_types() {
         "every component is fabricable now, so nothing should be disabled: {test}"
     );
 
-    // A type jails owns but cannot construct is still an honest refusal: a
-    // sealed interface has no constructor to call and jails will not pick one
-    // of its variants for you, so the test is emitted whole and disabled
-    // naming the component rather than guessing.
+    // A generated sealed interface has no constructor, but its generated
+    // variants are zero-component records. Any one is a valid non-null sample
+    // for testing Stamped's own validation, so Jails can construct it without
+    // guessing at business data.
     let status = jails_cmd_with_path(&root, &path)
         .args(["generate", "sealed", "outcome", "Accepted", "Rejected"])
         .status()
@@ -4107,9 +4268,10 @@ fn generators_compose_through_user_owned_field_types() {
     let stamped =
         fs::read_to_string(root.join("src/test/java/com/example/gym/domain/StampedTest.java"))
             .unwrap();
+    assert!(stamped.contains("new Outcome.Accepted()"), "{stamped}");
     assert!(
-        stamped.contains("@Disabled") && stamped.contains("result"),
-        "an unfabricable component must disable the test and name itself: {stamped}"
+        !stamped.contains("@Disabled"),
+        "a generated zero-component variant is a complete sample: {stamped}"
     );
 
     let verified = verified_plain_toolbox(&path);

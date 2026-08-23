@@ -122,6 +122,36 @@ pub(super) fn jdbc_repository_for(
     }
 }
 
+#[derive(Clone, Copy)]
+enum RepositoryKey<'a> {
+    Single(Option<&'a crate::sql::Column>),
+    Composite,
+}
+
+/// The key exposed through the repository port.
+///
+/// A declared single-column primary key wins over naming convention. With no
+/// declaration, `id` and then the first mapped component retain the historical
+/// fallback. A composite key is deliberately not collapsed to one component:
+/// the current `String id` port cannot represent it without lying.
+fn repository_key(columns: &[crate::sql::Column]) -> RepositoryKey<'_> {
+    let declared = columns
+        .iter()
+        .filter(|column| column.constraints.primary_key)
+        .collect::<Vec<_>>();
+    match declared.as_slice() {
+        [key] => RepositoryKey::Single(Some(*key)),
+        [_, _, ..] => RepositoryKey::Composite,
+        [] => RepositoryKey::Single(
+            columns
+                .iter()
+                .filter(|column| column.mapped())
+                .find(|column| column.name == "id")
+                .or_else(|| columns.iter().find(|column| column.mapped())),
+        ),
+    }
+}
+
 /// The Spring flavour of the same adapter, over `JdbcClient` with **named**
 /// parameters.
 ///
@@ -167,7 +197,12 @@ pub(super) fn jdbc_client_repository(
     } else {
         "            *".to_string()
     };
-    let key = mapped.iter().find(|c| c.name == "id").or(mapped.first());
+    let key_choice = repository_key(columns);
+    let composite_key = matches!(key_choice, RepositoryKey::Composite);
+    let key = match key_choice {
+        RepositoryKey::Single(key) => key.filter(|column| column.mapped()),
+        RepositoryKey::Composite => mapped.first().copied(),
+    };
     let id_column = key
         .map(|c| c.name.clone())
         .unwrap_or_else(|| "id".to_string());
@@ -180,12 +215,17 @@ pub(super) fn jdbc_client_repository(
         }
         _ => ":id".to_string(),
     };
-    let key_note = match key {
-        Some(column) if column.name != "id" => format!(
-            " * <p>There is no {{@code id}} component, so lookups are keyed on\n * {{@code {}}} -- change the two lookup statements if the real key is a\n * different or a composite one.\n",
-            column.name
-        ),
-        _ => String::new(),
+    let key_note = if composite_key {
+        " * <p>The declared primary key is composite. The current {@code String id} port cannot\n * represent it, so the two single-key operations fail explicitly until the port is modelled.\n"
+            .to_string()
+    } else {
+        match key {
+            Some(column) if column.name != "id" => format!(
+                " * <p>Repository lookups are keyed on the {{@code {}}} component.\n",
+                column.name
+            ),
+            _ => String::new(),
+        }
     };
     let insert_columns = if derived {
         mapped
@@ -243,6 +283,37 @@ pub(super) fn jdbc_client_repository(
             .join("\n")
     } else {
         format!("                .param(\"id\", {var}.toString())")
+    };
+    let find_by_id_body = if composite_key {
+        "        throw new UnsupportedOperationException(\"findById requires a composite-key repository port\");"
+            .to_string()
+    } else {
+        format!(
+            r#"        Objects.requireNonNull(id, "id is required");
+        return db.sql("""
+                        select %s
+                        from {table}
+                        where {id_column} = {key_placeholder}
+                        """.formatted(COLUMNS))
+                .param("id", id)
+                .query(Jdbc{name}Repository::map)
+                .optional();"#
+        )
+    };
+    let delete_by_id_body = if composite_key {
+        "        throw new UnsupportedOperationException(\"deleteById requires a composite-key repository port\");"
+            .to_string()
+    } else {
+        format!(
+            r#"        Objects.requireNonNull(id, "id is required");
+        return db.sql("""
+                        delete from {table}
+                        where {id_column} = {key_placeholder}
+                        """)
+                .param("id", id)
+                .update()
+                > 0;"#
+        )
     };
 
     let unmapped: Vec<&str> = columns
@@ -304,15 +375,7 @@ public final class Jdbc{name}Repository implements {name}Repository {{
 
     @Override
     public Optional<{name}> findById(String id) {{
-        Objects.requireNonNull(id, "id is required");
-        return db.sql("""
-                        select %s
-                        from {table}
-                        where {id_column} = {key_placeholder}
-                        """.formatted(COLUMNS))
-                .param("id", id)
-                .query(Jdbc{name}Repository::map)
-                .optional();
+{find_by_id_body}
     }}
 
     @Override
@@ -340,14 +403,7 @@ public final class Jdbc{name}Repository implements {name}Repository {{
 
     @Override
     public boolean deleteById(String id) {{
-        Objects.requireNonNull(id, "id is required");
-        return db.sql("""
-                        delete from {table}
-                        where {id_column} = {key_placeholder}
-                        """)
-                .param("id", id)
-                .update()
-                > 0;
+{delete_by_id_body}
     }}
 
     /** Builds a {name} from the current row. */
@@ -389,12 +445,15 @@ pub(super) fn jdbc_repository(
     } else {
         "                *".to_string()
     };
-    // The key `findById`/`deleteById` look up by. An `id` column when there
-    // is one; otherwise the first component, because a record whose
-    // components are its own natural key (the common shape for the value
-    // types jails generates) has no surrogate. The Javadoc says which was
-    // chosen whenever it was not the obvious one.
-    let key = mapped.iter().find(|c| c.name == "id").or(mapped.first());
+    // Use the same declared-key policy as the Spring adapter and its generated
+    // integration test. Three local conventions can otherwise make the test
+    // exercise a different column from the adapter it claims to prove.
+    let key_choice = repository_key(columns);
+    let composite_key = matches!(key_choice, RepositoryKey::Composite);
+    let key = match key_choice {
+        RepositoryKey::Single(key) => key.filter(|column| column.mapped()),
+        RepositoryKey::Composite => mapped.first().copied(),
+    };
     let id_column = key
         .map(|c| c.name.clone())
         .unwrap_or_else(|| "id".to_string());
@@ -407,12 +466,17 @@ pub(super) fn jdbc_repository(
         }
         _ => "?".to_string(),
     };
-    let key_note = match key {
-        Some(column) if column.name != "id" => format!(
-            " * <p>There is no {{@code id}} component, so lookups are keyed on\n              * {{@code {}}} -- change {{@code FIND_BY_ID}} and {{@code DELETE_BY_ID}} if the\n              * real key is a different or a composite one.\n",
-            column.name
-        ),
-        _ => String::new(),
+    let key_note = if composite_key {
+        " * <p>The declared primary key is composite. The current {@code String id} port cannot\n              * represent it, so the two single-key operations fail explicitly until the port is modelled.\n"
+            .to_string()
+    } else {
+        match key {
+            Some(column) if column.name != "id" => format!(
+                " * <p>Repository lookups are keyed on the {{@code {}}} component.\n",
+                column.name
+            ),
+            _ => String::new(),
+        }
     };
     let insert_columns = if derived {
         mapped
@@ -468,6 +532,36 @@ pub(super) fn jdbc_repository(
     } else {
         format!(
             "        throw new UnsupportedOperationException(\"TODO: bind {name} to the insert\");"
+        )
+    };
+    let find_by_id_body = if composite_key {
+        "        throw new UnsupportedOperationException(\"findById requires a composite-key repository port\");"
+            .to_string()
+    } else {
+        format!(
+            r#"        Objects.requireNonNull(id, "id is required");
+        try (var query = connection.prepareStatement(FIND_BY_ID)) {{
+            query.setString(1, id);
+            try (var rows = query.executeQuery()) {{
+                return rows.next() ? Optional.of(map(rows)) : Optional.empty();
+            }}
+        }} catch (SQLException error) {{
+            throw new IllegalStateException("could not read {table} " + id, error);
+        }}"#
+        )
+    };
+    let delete_by_id_body = if composite_key {
+        "        throw new UnsupportedOperationException(\"deleteById requires a composite-key repository port\");"
+            .to_string()
+    } else {
+        format!(
+            r#"        Objects.requireNonNull(id, "id is required");
+        try (var delete = connection.prepareStatement(DELETE_BY_ID)) {{
+            delete.setString(1, id);
+            return delete.executeUpdate() > 0;
+        }} catch (SQLException error) {{
+            throw new IllegalStateException("could not delete from {table} " + id, error);
+        }}"#
         )
     };
 
@@ -551,15 +645,7 @@ public final class Jdbc{name}Repository implements {name}Repository {{
 
     @Override
     public Optional<{name}> findById(String id) {{
-        Objects.requireNonNull(id, "id is required");
-        try (var query = connection.prepareStatement(FIND_BY_ID)) {{
-            query.setString(1, id);
-            try (var rows = query.executeQuery()) {{
-                return rows.next() ? Optional.of(map(rows)) : Optional.empty();
-            }}
-        }} catch (SQLException error) {{
-            throw new IllegalStateException("could not read {table} " + id, error);
-        }}
+{find_by_id_body}
     }}
 
     @Override
@@ -590,13 +676,7 @@ public final class Jdbc{name}Repository implements {name}Repository {{
 
     @Override
     public boolean deleteById(String id) {{
-        Objects.requireNonNull(id, "id is required");
-        try (var delete = connection.prepareStatement(DELETE_BY_ID)) {{
-            delete.setString(1, id);
-            return delete.executeUpdate() > 0;
-        }} catch (SQLException error) {{
-            throw new IllegalStateException("could not delete from {table} " + id, error);
-        }}
+{delete_by_id_body}
     }}
 
     /** Builds a {name} from the current row. */
@@ -613,9 +693,449 @@ public final class Jdbc{name}Repository implements {name}Repository {{
     )
 }
 
+/// The honest fallback used when there is no field model to build and verify.
+///
+/// Kept as the two-argument entry point because the bare-repository unit test
+/// deliberately exercises this case: an integration test must not pretend to
+/// prove a mapper whose columns or record constructor jails cannot know.
 pub(super) fn jdbc_repository_test(pkg: &str, name: &str) -> String {
+    disabled_jdbc_repository_test(
+        pkg,
+        name,
+        "todo: supply repository fields so jails can build a complete round-trip sample",
+    )
+}
+
+/// A transactional PostgreSQL round trip when both sides are fully derived.
+///
+/// `fields` builds the record sample and `columns` is the exact projection the
+/// adapter uses. Requiring every column to be mapped prevents a generated test
+/// from blessing an adapter which silently omitted part of the record. The
+/// Spring/JDBC gate keeps plain projects compilable: they do not have the
+/// annotations or an injectable repository port this test requires.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn jdbc_repository_test_for(
+    project: &crate::model::Project,
+    pkg: &str,
+    domain: &str,
+    repository: &str,
+    name: &str,
+    fields: &[Field],
+    columns: &[crate::sql::Column],
+) -> String {
+    let config_pkg = test_dir(project.root(), project.base())
+        .join("TestcontainersConfig.java")
+        .is_file()
+        .then_some(project.base());
+    jdbc_repository_test_with_wiring(
+        repository_wiring(project),
+        config_pkg,
+        project,
+        pkg,
+        domain,
+        repository,
+        name,
+        fields,
+        columns,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn jdbc_repository_test_with_wiring(
+    wiring: RepositoryWiring,
+    testcontainers_pkg: Option<&str>,
+    project: &crate::model::Project,
+    pkg: &str,
+    domain: &str,
+    repository: &str,
+    name: &str,
+    fields: &[Field],
+    columns: &[crate::sql::Column],
+) -> String {
+    if fields.is_empty() {
+        return jdbc_repository_test(pkg, name);
+    }
+    if columns.len() != fields.len() {
+        return disabled_jdbc_repository_test(
+            pkg,
+            name,
+            "todo: make the repository columns match every record field before enabling this round trip",
+        );
+    }
+
+    let unmapped = fields
+        .iter()
+        .zip(columns)
+        .filter(|(_, column)| !column.mapped())
+        .map(|(field, _)| field.name.as_str())
+        .collect::<Vec<_>>();
+    if !unmapped.is_empty() {
+        return disabled_jdbc_repository_test(
+            pkg,
+            name,
+            &format!(
+                "todo: complete the JDBC mapping for {} before enabling this round trip",
+                unmapped.join(", ")
+            ),
+        );
+    }
+
+    if wiring != RepositoryWiring::JdbcClientBean {
+        return disabled_jdbc_repository_test(
+            pkg,
+            name,
+            "todo: add PostgreSQL with jails add db before enabling this round trip",
+        );
+    }
+    let Some(config_pkg) = testcontainers_pkg else {
+        return disabled_jdbc_repository_test(
+            pkg,
+            name,
+            "todo: generate TestcontainersConfig with jails add db before enabling this round trip",
+        );
+    };
+
+    let key_column = match repository_key(columns) {
+        RepositoryKey::Composite => {
+            return disabled_jdbc_repository_test(
+                pkg,
+                name,
+                "todo: model the composite repository key in the port before enabling this round trip",
+            );
+        }
+        RepositoryKey::Single(Some(key)) => key,
+        RepositoryKey::Single(None) => return jdbc_repository_test(pkg, name),
+    };
+
+    let sampled = fields
+        .iter()
+        .map(|field| sample_in_package(field, project.root(), domain))
+        .collect::<Vec<_>>();
+    let unfabricable = fields
+        .iter()
+        .zip(&sampled)
+        .filter(|(_, sample)| sample.is_none())
+        .map(|(field, _)| field.name.as_str())
+        .collect::<Vec<_>>();
+    if !unfabricable.is_empty() {
+        return disabled_jdbc_repository_test(
+            pkg,
+            name,
+            &format!(
+                "todo: supply a sample for {} -- jails cannot know how to build one",
+                unfabricable.join(", ")
+            ),
+        );
+    }
+
+    let key_index = columns
+        .iter()
+        .position(|column| column.name == key_column.name)
+        .expect("the selected repository key came from this column slice");
+    let key_field = &fields[key_index];
+    if key_field.optionality == Optionality::Nullable {
+        return disabled_jdbc_repository_test(
+            pkg,
+            name,
+            &format!(
+                "todo: choose a required repository key -- {} is optional",
+                key_field.name
+            ),
+        );
+    }
+
+    let mut imports = vec![
+        "org.junit.jupiter.api.Test".to_string(),
+        "org.springframework.beans.factory.annotation.Autowired".to_string(),
+        "org.springframework.boot.test.context.SpringBootTest".to_string(),
+        "org.springframework.transaction.annotation.Transactional".to_string(),
+        "static org.assertj.core.api.Assertions.assertThat".to_string(),
+    ];
+    push_type_import(&mut imports, pkg, domain, name);
+    push_type_import(&mut imports, pkg, repository, &format!("{name}Repository"));
+    for field in fields {
+        imports.extend(field.imports.iter().map(|import| (*import).to_string()));
+        if field.owned {
+            push_type_import(&mut imports, pkg, domain, &field.java_type);
+        }
+    }
+    for (_, needed) in sampled.iter().flatten() {
+        imports.extend(needed.iter().map(|import| (*import).to_string()));
+    }
+    if fields
+        .iter()
+        .any(|field| field.optionality == Optionality::Nullable)
+    {
+        imports.push("java.util.Optional".to_string());
+    }
+
+    imports.push("org.springframework.context.annotation.Import".to_string());
+    push_type_import(&mut imports, pkg, config_pkg, "TestcontainersConfig");
+    let mut annotations = String::from("@Import(TestcontainersConfig.class)\n");
+    annotations.push_str("@SpringBootTest\n@Transactional\n");
+
+    imports.sort();
+    imports.dedup();
+    let imports = imports
+        .iter()
+        .map(|import| format!("import {import};"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+
+    let samples = sampled
+        .iter()
+        .map(|sample| sample.as_ref().unwrap().0.as_str())
+        .collect::<Vec<_>>()
+        .join(",\n                ");
+    let var = lower_first(name);
+    let key = if key_field.owned {
+        format!("{var}.{}().name()", key_field.name)
+    } else {
+        format!("String.valueOf({var}.{}())", key_field.name)
+    };
+    let body = format!(
+        r#"        var {var} = new {name}(
+                {samples});
+        repository.save({var});
+
+        String key = {key};
+        assertThat(repository.findById(key)).contains({var});
+        assertThat(repository.findAll()).contains({var});
+
+        assertThat(repository.deleteById(key)).isTrue();
+        assertThat(repository.findById(key)).isEmpty();"#
+    );
+    let repository_field = format!("    @Autowired private {name}Repository repository;\n");
+
     crate::template::render(
         crate::template::template!("generate/jdbc_repository_test.java"),
-        &[("pkg", pkg), ("name", name)],
+        &[
+            ("pkg", pkg),
+            ("name", name),
+            ("imports", &imports),
+            ("annotations", &annotations),
+            ("repository_field", &repository_field),
+            ("body", &body),
+        ],
     )
+}
+
+fn disabled_jdbc_repository_test(pkg: &str, name: &str, reason: &str) -> String {
+    let imports = "import org.junit.jupiter.api.Disabled;\nimport org.junit.jupiter.api.Test;\n";
+    let annotations = format!("@Disabled(\"{reason}\")\n");
+    let body = format!("        throw new UnsupportedOperationException(\"{reason}\");");
+    crate::template::render(
+        crate::template::template!("generate/jdbc_repository_test.java"),
+        &[
+            ("pkg", pkg),
+            ("name", name),
+            ("imports", imports),
+            ("annotations", &annotations),
+            ("repository_field", ""),
+            ("body", &body),
+        ],
+    )
+}
+
+fn push_type_import(imports: &mut Vec<String>, user: &str, owner: &str, class: &str) {
+    if user != owner {
+        imports.push(format!("{owner}.{class}"));
+    }
+}
+
+#[cfg(test)]
+mod repository_test_generation_tests {
+    use super::*;
+
+    fn mapped_columns(fields: &[Field]) -> Vec<crate::sql::Column> {
+        fields
+            .iter()
+            .map(|field| crate::sql::Column {
+                name: field.name.clone(),
+                sql_type: "text".to_string(),
+                not_null: field.optionality != Optionality::Nullable,
+                read: Some("read".to_string()),
+                write: Some("write".to_string()),
+                java_type: field.java_type.clone(),
+                constraints: field.constraints,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn complete_repository_test_exercises_the_transactional_port_contract() {
+        let (root, project) =
+            crate::spring::scratch_project("complete-repository-test", "<project></project>");
+        let fields = parse_fields(&[
+            "id:uuid".to_string(),
+            "createdAt:instant".to_string(),
+            "nickname:string?".to_string(),
+        ])
+        .unwrap();
+        let columns = mapped_columns(&fields);
+        let source = jdbc_repository_test_with_wiring(
+            RepositoryWiring::JdbcClientBean,
+            Some("com.example.demo"),
+            &project,
+            "com.example.demo.adapters",
+            "com.example.demo.domain",
+            "com.example.demo.app",
+            "Transaction",
+            &fields,
+            &columns,
+        );
+
+        assert!(
+            source.contains("@Import(TestcontainersConfig.class)"),
+            "{source}"
+        );
+        assert!(source.contains("@SpringBootTest"), "{source}");
+        assert!(source.contains("@Transactional"), "{source}");
+        assert!(
+            source.contains("@Autowired private TransactionRepository repository"),
+            "{source}"
+        );
+        assert!(source.contains("UUID.fromString"), "{source}");
+        assert!(source.contains("Instant.parse"), "{source}");
+        assert!(source.contains("Optional.empty()"), "{source}");
+        assert!(source.contains("repository.save(transaction)"), "{source}");
+        assert!(source.contains("repository.findById(key)"), "{source}");
+        assert!(source.contains("repository.findAll()"), "{source}");
+        assert!(source.contains("repository.deleteById(key)"), "{source}");
+        assert!(!source.contains("@Disabled"), "{source}");
+        assert!(
+            !source.contains("UnsupportedOperationException"),
+            "{source}"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn active_repository_test_requires_the_generated_container_config() {
+        let (root, project) =
+            crate::spring::scratch_project("repository-test-no-config", "<project></project>");
+        let fields = parse_fields(&["id:uuid".to_string()]).unwrap();
+        let columns = mapped_columns(&fields);
+
+        let source = jdbc_repository_test_with_wiring(
+            RepositoryWiring::JdbcClientBean,
+            None,
+            &project,
+            "com.example.demo.adapters",
+            "com.example.demo.domain",
+            "com.example.demo.app",
+            "Transaction",
+            &fields,
+            &columns,
+        );
+
+        assert!(source.contains("@Disabled"), "{source}");
+        assert!(source.contains("generate TestcontainersConfig"), "{source}");
+        assert!(!source.contains("@SpringBootTest"), "{source}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_declared_single_column_key_drives_the_adapter_and_round_trip() {
+        let (root, project) =
+            crate::spring::scratch_project("repository-test-declared-key", "<project></project>");
+        let fields = parse_fields(&[
+            "tenant:string".to_string(),
+            "reference:string@pk".to_string(),
+        ])
+        .unwrap();
+        let columns = mapped_columns(&fields);
+
+        let adapter = jdbc_client_repository(
+            "com.example.demo.adapters",
+            "Transaction",
+            "",
+            &columns,
+            "com.example.demo.domain",
+        );
+        let test = jdbc_repository_test_with_wiring(
+            RepositoryWiring::JdbcClientBean,
+            Some("com.example.demo"),
+            &project,
+            "com.example.demo.adapters",
+            "com.example.demo.domain",
+            "com.example.demo.app",
+            "Transaction",
+            &fields,
+            &columns,
+        );
+
+        assert!(adapter.contains("where reference = :id"), "{adapter}");
+        assert!(test.contains("transaction.reference()"), "{test}");
+        assert!(!test.contains("@Disabled"), "{test}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_composite_key_is_refused_until_the_port_can_represent_it() {
+        let (root, project) =
+            crate::spring::scratch_project("repository-test-composite-key", "<project></project>");
+        let fields = parse_fields(&[
+            "tenant:string@pk".to_string(),
+            "reference:string@pk".to_string(),
+        ])
+        .unwrap();
+        let columns = mapped_columns(&fields);
+
+        let adapter = jdbc_client_repository(
+            "com.example.demo.adapters",
+            "Transaction",
+            "",
+            &columns,
+            "com.example.demo.domain",
+        );
+        let test = jdbc_repository_test_with_wiring(
+            RepositoryWiring::JdbcClientBean,
+            Some("com.example.demo"),
+            &project,
+            "com.example.demo.adapters",
+            "com.example.demo.domain",
+            "com.example.demo.app",
+            "Transaction",
+            &fields,
+            &columns,
+        );
+
+        assert!(adapter.contains("findById requires a composite-key repository port"));
+        assert!(adapter.contains("deleteById requires a composite-key repository port"));
+        assert!(test.contains("@Disabled"), "{test}");
+        assert!(
+            test.contains("model the composite repository key"),
+            "{test}"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn incomplete_repository_mapping_stays_honestly_disabled() {
+        let (root, project) =
+            crate::spring::scratch_project("incomplete-repository-test", "<project></project>");
+        let fields =
+            parse_fields(&["id:uuid".to_string(), "owner:UnknownOwner".to_string()]).unwrap();
+        let mut columns = mapped_columns(&fields);
+        columns[1].read = None;
+        let source = jdbc_repository_test_with_wiring(
+            RepositoryWiring::JdbcClientBean,
+            None,
+            &project,
+            "com.example.demo.adapters",
+            "com.example.demo.domain",
+            "com.example.demo.app",
+            "Transaction",
+            &fields,
+            &columns,
+        );
+
+        assert!(source.contains("@Disabled"), "{source}");
+        assert!(source.contains("JDBC mapping for owner"), "{source}");
+        assert!(source.contains("UnsupportedOperationException"), "{source}");
+        assert!(!source.contains("@SpringBootTest"), "{source}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

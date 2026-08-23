@@ -22,7 +22,11 @@ import org.springframework.boot.test.web.server.LocalServerPort;
  */
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-        properties = "management.server.port=0")
+        properties = {
+            "management.server.port=0",
+            "app.security.dev.username=prometheus-probe",
+            "app.security.dev.password=prometheus-probe"
+        })
 class ActuatorEndpointsTest {
 
     @LocalServerPort private int applicationPort;

@@ -7,10 +7,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-{{annotation}}@SpringBootTest(properties = {
-        "jobs.{{property}}.initial-delay=PT1H",
-        "jobs.{{property}}.max-attempts=2"
-})
+{{annotation}}@SpringBootTest
 @org.springframework.transaction.annotation.Transactional
 class {{name}}JobIT {
 

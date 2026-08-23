@@ -1073,6 +1073,26 @@ mod observability_tests {
             "management.endpoints.web.exposure.include=health,prometheus"
         );
     }
+
+    #[test]
+    fn actuator_and_prometheus_share_the_same_spring_context_configuration() {
+        fn spring_boot_test_arguments(source: &str) -> &str {
+            source
+                .split_once("@SpringBootTest(")
+                .unwrap()
+                .1
+                .split_once(")\nclass ")
+                .unwrap()
+                .0
+        }
+
+        let actuator = actuator_test_java("com.example.demo");
+        let prometheus = prometheus_scrape_test_java("com.example.demo");
+        assert_eq!(
+            spring_boot_test_arguments(&actuator),
+            spring_boot_test_arguments(&prometheus)
+        );
+    }
 }
 
 fn prometheus_scrape_test_java(pkg: &str) -> String {

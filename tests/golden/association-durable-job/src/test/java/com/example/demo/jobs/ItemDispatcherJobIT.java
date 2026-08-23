@@ -9,10 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 
-@SpringBootTest(properties = {
-        "jobs.item-dispatcher.initial-delay=PT1H",
-        "jobs.item-dispatcher.max-attempts=2"
-})
+@SpringBootTest
 @org.springframework.transaction.annotation.Transactional
 class ItemDispatcherJobIT {
 

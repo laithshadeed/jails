@@ -8,11 +8,11 @@ import org.junit.jupiter.api.Test;
  * in {@link JdbcNoteRepository}. Keep this as an integration test: mocks
  * cannot prove SQL, constraints, transactions, or row mappings work.
  */
-@Disabled("todo: configure the test database and finish the repository SQL mapping")
+@Disabled("todo: add PostgreSQL with jails add db before enabling this round trip")
 class JdbcNoteRepositoryIT {
 
     @Test
     void roundTripsThroughTheRealDatabase() {
-        throw new UnsupportedOperationException("todo");
+        throw new UnsupportedOperationException("todo: add PostgreSQL with jails add db before enabling this round trip");
     }
 }

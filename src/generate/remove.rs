@@ -125,8 +125,16 @@ pub fn destroy(
         if matches!(kind, ArtifactKind::Command) && !pretend {
             unregister_command(&root, &name)?;
         }
+        let removed_test_properties = if matches!(kind, ArtifactKind::DurableJob) {
+            crate::spring::uninstall_durable_job_test_properties(&project, &name, pretend)?
+        } else {
+            false
+        };
         if !pretend {
             crate::generated_files::forget(&root, &kind_key, &name, package)?;
+        }
+        if removed_test_properties {
+            return Ok(());
         }
         // Two very different situations, and saying "nothing to destroy" over
         // both is how a reader concludes the files are gone when they are not.
@@ -162,6 +170,9 @@ pub fn destroy(
         for p in existing {
             println!("would remove {}", p.display());
         }
+        if matches!(kind, ArtifactKind::DurableJob) {
+            crate::spring::uninstall_durable_job_test_properties(&project, &name, true)?;
+        }
         if matches!(kind, ArtifactKind::Command) {
             println!("would unregister {name}Command from its dispatcher");
         }
@@ -178,6 +189,9 @@ pub fn destroy(
     // failed delete would leave a class nothing dispatches to.
     if matches!(kind, ArtifactKind::Command) {
         unregister_command(&root, &name)?;
+    }
+    if matches!(kind, ArtifactKind::DurableJob) {
+        crate::spring::uninstall_durable_job_test_properties(&project, &name, false)?;
     }
     crate::generated_files::forget(&root, &kind_key, &name, package)?;
     Ok(())

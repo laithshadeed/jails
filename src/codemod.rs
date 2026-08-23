@@ -72,7 +72,7 @@ impl<'a> Marked<'a> {
     /// is damaged, and reporting it as absent would have the next `add` write a
     /// second copy rather than say something is wrong.
     pub(crate) fn present_in(&self, text: &str) -> bool {
-        text.contains(&self.open())
+        exact_line(text, &self.open(), 0).is_some()
     }
 
     /// The block, rendered around `body`, ending in a newline.
@@ -135,15 +135,30 @@ impl<'a> Marked<'a> {
     fn bounds(&self, text: &str) -> Option<(usize, usize)> {
         let open = self.open();
         let close = self.close();
-        let at = text.find(&open)?;
-        let start = text[..at].rfind('\n').map(|i| i + 1).unwrap_or(0);
-        let close_at = text[start..].find(&close)? + start;
-        let mut end = close_at + close.len();
-        if text[end..].starts_with('\n') {
-            end += 1;
-        }
+        let (start, after_open) = exact_line(text, &open, 0)?;
+        let (_, end) = exact_line(text, &close, after_open)?;
         Some((start, end))
     }
+}
+
+/// Byte bounds for one whole line whose contents equal `wanted` exactly.
+///
+/// Marker names are user-derived in a few generators. Substring matching made
+/// `durable-job-email` mistake `durable-job-email-sender` for its own block and
+/// then cut the longer marker in half during destroy. Line equality keeps
+/// prefix-related blocks independent while retaining the trailing newline.
+fn exact_line(text: &str, wanted: &str, from: usize) -> Option<(usize, usize)> {
+    let mut start = from;
+    for line in text.get(from..)?.split_inclusive('\n') {
+        let contents = line.strip_suffix('\n').unwrap_or(line);
+        let contents = contents.strip_suffix('\r').unwrap_or(contents);
+        let end = start + line.len();
+        if contents == wanted {
+            return Some((start, end));
+        }
+        start = end;
+    }
+    None
 }
 
 #[cfg(test)]
@@ -187,6 +202,18 @@ mod tests {
         );
 
         assert_eq!(block.strip_from(&with).as_deref(), Some(before));
+    }
+
+    #[test]
+    fn prefix_related_markers_are_distinct_blocks() {
+        let short = Marked::new("durable-job-email");
+        let long = Marked::new("durable-job-email-sender");
+        let only_long = long.render("jobs.email-sender.initial-delay=PT1H\n");
+
+        assert!(!short.present_in(&only_long));
+        assert!(short.body_in(&only_long).is_none());
+        assert!(short.strip_from(&only_long).is_none());
+        assert_eq!(long.strip_from(&only_long).as_deref(), Some(""));
     }
 
     #[test]

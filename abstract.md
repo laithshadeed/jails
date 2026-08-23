@@ -1,897 +1,1433 @@
-# abstract.md — the abstractions, judged against the design canon
+# abstract.md — the mutation architecture contract
 
-`plan.md` says what to build next. `CLAUDE.md` says what the code is and what
-traps are in it. This file says what the code *should have been*, and is allowed
-to disagree with both.
+`plan.md` says what to change and in what order. This document says what the mutation system is, which
+guarantees it must provide, and which abstractions it must not pretend to have.
 
-It is not a task list. §7 is a ladder, but the point of the document is §2–§5:
-a diagnosis in a vocabulary older than this repo, so the next person can apply
-the same test without rediscovering it.
+This is the **target contract**, not a claim that the current code already satisfies it. The
+audited baseline, queued phases and exact implementation/wire details live in `plan.md`. Any implementation
+choice that weakens this contract requires both documents and their enforcement tests to change together.
 
----
+This is a living contract, not a historical audit. Measurements and delivery status belong in tests and
+`plan.md`; superseded designs belong in git history.
+
+### Legacy citation locator
+
+Source and test comments written against the pre-contract document still cite its old sections. Until those
+callers naturally change, read the citations as these conceptual aliases:
+
+| Earlier citation | Current home |
+|---|---|
+| §2 | Current evidence in §2; design test in §§8–9 |
+| §3, especially §3.2 | Current module evidence in §2; snapshot boundary in §3.1; decomposition rule in §8 |
+| §4.1 | Current `Artifact`/`Change` limit in §2; desired/prepared changes in §§3.3–3.4; removal in §7 |
+| §4.2 | Interpreter gap in §2; shared planning in §4; derived verification in §9 |
+| §4.3 | Snapshot/project boundary in §3.1; planning purity in §4 |
+| §4.4 | Typed identity and references in §3.2 |
+| §4.5 | Ownership boundary in §1; canonical ledger in §6 |
+| §5 | Clone-the-abstraction diagnosis in §2; governing principle in §8 |
+| §6.2 | Current derived behaviour in §2; consequences in §§4, 7, and 9 |
+| §6.3 | Human/machine ownership in §1; ledger semantics in §6 |
+| §7 | Delivery sequence in `plan.md`; architectural destination in §§3–7; gates in §9 |
+| §8 | Wrong-abstraction counterweight in §8; falsification through §9 |
+| §8.0 | Ratchet policy in §9 and `tests/architecture.rs` |
+| §8.0.1 | Current doctor evidence in §2; counter policy in §9 |
+| §8.1 | Current-state evidence in §2; delivery state in `plan.md`; ratchets in §9 |
+| §8.2 | Human manifests in §1; ledger boundary in §6 |
+| §9 | Principles in §8; enforceable contract in §9 |
 
 ## 0. The one sentence
 
-jails is **a function from an intent to a change in a project, plus that
-function's inverse and its verifier.**
+jails turns a typed mutation request and an immutable view of a project into a
+**prepared, recoverable transition** of that project—or one guarded retry of an
+already-recorded external effect.
 
+```text
+load       : (ProjectHandle, HumanSourceSelection, DirectRequest)
+             -> LoadedProject
+resolve    : (&LoadedProject, DirectRequest) -> ResolvedMutation
+plan_all   : (&LoadedProject, ResolvedMutation) -> PlannedTransition
+prepare    : (LoadedProject, CommitPlan, PreparationContext) -> PreparedBundle
+describe   : PreparedBundle.change -> Report
+describe_effect : EffectRetryPlan -> EffectRetryReport       // after = None
+describe_effect_result : (EffectRetryPlan, EffectRunResult) -> EffectRetryReport
+commit     : (ProjectHandle, PreparedBundle) -> Result<CommitResult, CommitError>
+resume_effect : (ProjectHandle, EffectRetryPlan) -> Result<EffectRunResult, EffectRunError>
+recover    : ProjectHandle -> Result<RecoveryOutcome, RecoveryError>
+verify_project : ProjectSnapshot -> [Finding]
 ```
-plan   : (Project, Intent) -> Change      -- pure
-apply  : (Project, Change) -> Report
-revert : (Project, Change) -> Report
-verify : (Project, Change) -> [Finding]
-```
 
-Everything the tool does is one of those four. `g scaffold` is plan+apply.
-`destroy` is plan+revert. `--pretend` is plan+describe. `add` is plan+apply.
-`remove` is plan+revert. `sync` is plan+apply over a recorded set. `doctor` is
-verify. `app apply` is plan+apply over a list.
+`load` owns a staged, ledger-first capture. With no pending conflict it returns
+`LoadedProject::Ready`: captured declaration syntax plus the complete ordinary
+snapshot. With a committed pending conflict it returns the deliberately
+smaller, parse-free `LoadedProject::Pending`. That fast path does not feed a
+marker-bearing POM, `jails.toml`, app manifest or Java source through an
+ordinary parser. It uses the current request-syntax fingerprint and frozen
+desired-input guards to reach only guarded continue or abort. A caller never
+constructs or supplies the final `InputSet`, and no planner may expand it by
+reading live state. `plan.md` defines the exact bootstrap and completeness
+algorithm.
 
-**None of those four exists as a function in `src/`.** There are three apply
-paths, two hand-written reverts, and a verifier that shares no code with
-anything it verifies. Everything below is evidence for that sentence, a
-vocabulary for why it happened, and a target.
+`PlannedTransition` is a closed choice between `Commit(CommitPlan)` and
+`RetryEffect(EffectRetryPlan)`. A `CommitPlan` is exactly one of ordinary
+apply, conflict finalisation, or guarded conflict abort. Only `commit` and
+`recover` mutate managed project files or the ledger. `resume_effect` is the
+executor-owned entrypoint that compare-and-swaps receipt effect state and runs
+one already-recorded external effect; it never plans or changes project files.
+`plan_all` is pure. `prepare` accepts the matching `LoadedProject` variant,
+moves its opaque runtime bindings into the prepared bundle, and may perform
+fallible work only in memory or bounded scratch space. It does not mutate the
+project. `describe` reports the exact operations `commit` will attempt.
 
----
+`destroy` and `remove` are not a generic inverse function. They plan the desired project with an owner claim
+removed. A receipt supports crash recovery, conflict abort and audit; it is not the semantic model of
+uninstall or a universal rollback API.
+`verify_project` covers captured project state. Machine, process, socket and environment probes remain
+separate read-only services; the mutation snapshot must not be stretched into a universal inspection model.
 
-## 1. The canon, and which half of it applies to Rust
+## 1. Scope and ownership
 
-The useful core of object-oriented design is not classes. It is three ideas that
-predate and outlive them:
+This contract governs capability add/remove, artifact generate/destroy, app apply/reconcile, field, factory,
+sync, and related changes to generated code, build files, compose, properties, human configuration, and
+machine state.
 
-**1. Information hiding — Parnas, *On the Criteria To Be Used in Decomposing
-Systems into Modules* (CACM, 1972).** A module is not a step in the process; it
-is a **design decision hidden from everyone else**. Parnas's KWIC example gives
-two decompositions of one program: by processing step (input → circular shift →
-alphabetize → output) and by secret (how lines are stored, how shifts are
-represented). The flowchart decomposition looks natural and is wrong, because a
-change to one decision touches every module.
+Read-only commands may use simpler paths. They must still fail closed when authoritative state cannot be
+read, and a command presented as read-only must not migrate or repair state as a side effect.
 
-**This is the single most important idea for jails, and jails is split both
-ways at once.** §3 shows that the modules named after a *secret* (`pom.rs`,
-`compose.rs`, `java.rs`, `process.rs`, `template.rs`, `config.rs`) are the
-healthy ones, and the modules named after a *step* (`generate.rs`, `add.rs`,
-`doctor.rs`) are the mess. The repo already proved Parnas right and did not
-notice.
+Authority is split by domain; “authoritative” never means “all of these files
+describe the same thing”:
 
-**2. Responsibility-driven design — Wirfs-Brock, *Object Design* (2002).** Ask
-what each part *is responsible for*, and give it one **role stereotype**:
-information holder, structurer, service provider, controller, coordinator,
-interfacer. A part with three stereotypes is three parts.
+1. `jails.toml` and `.jails/app.toml` are human-owned declarations. jails may make explicit surgical edits
+   while preserving unrelated bytes, but must not rewrite them as machine state.
+2. `.jails/ledger.toml` is authoritative for the current logical ownership,
+   provenance and pending-conflict generation. It is not an execution log.
+3. One validated active journal is authoritative for how an incomplete
+   transaction may advance. A retained receipt is authoritative for its
+   immutable prepared history and mutable effect state. Neither is consulted
+   to invent current desired state.
+4. Content-addressed objects are authoritative only for the bytes named by an
+   already-authoritative ledger, journal or receipt reference. Reachability,
+   not directory presence, gives an object meaning.
+5. Project files are shared. Some are wholly generated; others contain managed contributions beside user
+   content. Ownership is recorded per managed resource, not inferred merely from a path.
 
-**3. Encapsulate what varies — GoF (1994), restated by Martin as OCP and by
-Cockburn as ports & adapters.** Find the axis of change and put a value on it.
-jails' axis of change is *the set of recipes*; that axis currently runs straight
-through eight files.
+Legacy formats are compatibility inputs only. There is no permanent dual write. Any compatibility
+projection is derived, transitional, and non-authoritative.
 
-Supporting instruments, each used by name below:
+## 2. What exists now
 
-- **Cohesion / coupling scales — Yourdon & Constantine, *Structured Design*
-  (1979).** Cohesion, worst to best: coincidental, logical, temporal,
-  procedural, communicational, sequential, functional.
-- **Connascence — Page-Jones, *What Every Programmer Should Know About OOD*
-  (1995).** A graded scale of coupling (name < type < meaning < position <
-  algorithm < value < identity) with three rules: minimise total connascence,
-  minimise connascence that **crosses** an encapsulation boundary, maximise
-  connascence **within** one. It is the only vocabulary here that ranks two
-  couplings against each other, which is what a refactor queue needs.
-- **Smells and their named cures — Fowler & Beck, *Refactoring*.** Long
-  Parameter List, Data Clumps, Primitive Obsession, Repeated Switches, Shotgun
-  Surgery, Divergent Change, Feature Envy. Cures: Introduce Parameter Object,
-  Preserve Whole Object, Extract Class, Replace Conditional with Polymorphism.
-- **Deep vs shallow modules, information leakage, temporal decomposition —
-  Ousterhout, *A Philosophy of Software Design* (2018).** A good module has a
-  small interface over a large implementation. **Temporal decomposition** —
-  organising code by the order in which operations happen — is his named
-  anti-pattern, and it is `generate.rs`.
-- **Command with undo, and Interpreter — GoF.** An operation reified as an
-  object that can `execute` and `unexecute`. This is exactly `Change`, and the
-  reason `destroy` is hand-written is that jails has the operation as *code*
-  rather than as an *object*.
-- **The counterweight — Sandi Metz, *The Wrong Abstraction* (2016).**
-  "Duplication is far cheaper than the wrong abstraction." Taken seriously in
-  §8; it is the strongest argument against this document and it has a
-  falsifiable answer.
+The current code has valuable foundations, but none should be described more strongly than it is:
 
-**The half that does not translate.** Rust is not Smalltalk and this is a CLI,
-not a framework. Explicitly rejected: inheritance hierarchies and Template
-Method (use enums and functions); Visitor (Rust's `match` *is* double dispatch);
-Abstract Factory and DI containers (a `Recipe` enum is enough); getter/setter
-objects and mutable object graphs (values and `&`); a `ChangeApplier` class
-(a `Change` value plus a free `apply` is the same thing without the ceremony).
-
-The Rust-native expressions of the ideas that do translate:
-
-| OO idea | Rust form |
-|---|---|
-| Encapsulate what varies | enum + exhaustive `match`, checked by the compiler |
-| Replace Type Code with Polymorphism | data-carrying enum variants, or a table of values |
-| Command with undo | a `Change` value + `apply`/`revert` |
-| Introduce Parameter Object | a struct; the compiler then finds every call site |
-| Make illegal states unrepresentable (Minsky) | `Ref { name, expect: Referent }` instead of `Option<String>` |
-| Parse, don't validate (King) | `plan()` returns `Change` or an error — never a half-applied project |
-| Information hiding | one `mod` per secret, `pub(crate)` as the boundary |
-
----
-
-## 2. The test, applied
-
-*If a concept is real, adding one instance of it is one edit.*
-
-| Concept | Edits to add one | Smell |
+| Foundation | Current truth | Remaining limit |
 |---|---|---|
-| A `why` rule | **1** — a row in `RULES` | — |
-| A field type | 2 (`generate/field.rs`, `sql.rs`) | Divergent Change |
-| A capability | ~4 (enum, `label()`, submodule, `build_plan` arm) | Shotgun Surgery |
-| A `Plan` field | **3, and `doctor` still cannot see it** | Shotgun Surgery |
-| An artifact kind | ~8 (enum, generate arm, `KIND_FILES` row, dep `match`, destroy cases, scenario, Lua lists, README) | Shotgun Surgery + Repeated Switches |
+| `model::Project` | Central resolved project facts and layers | Some planning still rereads live disk |
+| `model::Artifact` | One file shape with eagerly rendered contents | A complete change includes more than files |
+| `model::Change` | Shared add/generate shape and fallible preflight merge | Omits deletes, state, ownership, registration, and effects |
+| `generate::artifacts_for` | Common generation query; `KIND_FILES` is gone | Removal still has fallbacks and direct mutation |
+| `codemod::Marked` | One owner for marked-block syntax | No general semantic-edit model or interpreter |
+| `apply` | Direct write primitives and atomic replacement of one file | Not yet the owner of deletes, copies, mkdir, or mutating tools |
+| `.jails/ledger.toml` | One canonical entity registry | Not a journal, provenance store, or exact merge-base store |
+| Module splits | Focused recipe, app, doctor, add, and Spring modules | File layout alone does not unify mutation flow |
 
-`why.rs` is the only clean one, and it is the only place the concept is **a value
-in a table** rather than **an arm in a `match`**. That is not a coincidence; it
-is Replace-Conditional-with-Polymorphism already done, once, by accident of
-`why` having been written last.
+`Change::merge` is partial and fallible, not a monoid. Add uses its result for preflight and then discards it
+in favour of a separate imperative apply path. Generate writes files, ledger state, command registration,
+and build changes in separate steps; app apply and reconciliation are likewise multi-step.
 
----
+The current meaning of planner “purity” is often only “does not write”. Some planners read live files.
+Legacy migration can happen on a read path, some migration is lossy, and ledger read errors other than
+`NotFound` can be mistaken for empty state. Reconciliation reconstructs an old base with the current
+renderer, which is not exact after templates, tool versions, or relevant project context change.
 
-## 3. `src/` is a mess — the audit, and the one line that explains it
+The target below completes these seams. It does not create a second framework beside the existing types.
 
-35 modules, 33,079 lines. Judged by cohesion (Yourdon–Constantine) and role
-count (Wirfs-Brock). Line counts exclude `mod tests`.
+## 3. The internal model
 
-### 3.1 The healthy modules — each hides exactly one secret
+The names are conceptual. Existing types should evolve into these roles rather than being wrapped forever
+by parallel representations.
 
-| Module | Prod LOC | Secret it hides | Cohesion | Roles |
-|---|---|---|---|---|
-| `process.rs` | 312 | how a tool is found and run, and that secrets are never printed | functional | interfacer |
-| `template.rs` | 119 | how `{{key}}` becomes bytes | functional | service provider |
-| `java.rs` | 604 | `blanked()` — how to scan Java without a parser | functional | service provider |
-| `pom.rs` | 678 | how `pom.xml` is spliced without disturbing comments | functional | interfacer |
-| `compose.rs` | 599 | the same for `compose.yaml` | functional | interfacer |
-| `config.rs` | 424 | the same for `jails.toml`; owner of `LAYERS_IN_ORDER` | functional | information holder |
-| `why.rs` | 744 | log signature → cause, as data | functional | information holder |
-| `sql.rs` | 757 | the field → SQL/JDBC projection | functional | service provider |
+### 3.1 Snapshot and projected view
 
-**Every one of these is a Parnas module**, and every one is fine. They are also
-the modules nobody complains about. This is the repo's own controlled
-experiment, and it already returned a result.
+`ProjectSnapshot` contains every planning input: resolved project root, build kind/flavour, Java release,
+layers and package, parsed build/config/compose/property/source facts, observed ledger state, relevant file
+bytes and existence facts, and frozen resolved template bytes and origins. Its canonical `ReadSet` records
+every file image or absence, every enumerated directory and its sorted entries, and every allowed external
+manifest/template/brief input. It also loads and verifies the complete transitive closure of objects referenced by the ledger;
+planners never read the object store lazily. Those entries become commit preconditions; an optional absent file and an empty
+directory are therefore observable facts rather than gaps in the snapshot.
 
-### 3.2 The unhealthy modules — each is named after a step, not a secret
+Once receipts exist, loading also freezes the bounded retained receipt
+inventory and its directory digest. Effect retry plans use those captured
+records. A pending conflict requires exactly one structurally matching origin
+receipt and loads its abort preimages. Receipt checksum and inventory rows are
+commit preconditions; planners never rescan receipt storage lazily.
+`MachineReceiptDirectoryState` distinguishes an absent receipts directory from
+a present directory with its sorted listing and digest; present-empty is not
+encoded as absence.
 
-| Module | Prod LOC | Cohesion | Roles it plays | Verdict |
-|---|---|---|---|---|
-| `spring.rs` | 6,621 | **logical** — everything sharing the `require_spring` precondition | information holder (dep constants), service provider (39 inline Java bodies), interfacer (`pom::read` mid-render), coordinator (14 `*_files`) | worst module in the repo |
-| `generate.rs` | 3,013 | **temporal** — parse → dispatch → write → side effects | Ousterhout's named anti-pattern, verbatim |
-| `add.rs` | 940 | **procedural** — the apply sequence | holds the one good type (`Plan`) and no interpreter for it |
-| `doctor.rs` | 1,365 | logical | Feature Envy on `add`'s knowledge (§4.2) |
-| `project.rs` | 292 | **coincidental** — the worst rung | see below |
+R4's receipt support is deliberately ordered before ledger-object resolution.
+The loader first validates every retained Complete-journal/receipt pair and its
+entire local prepared manifest. A ledger object then records an exact
+`MachineObjectSource`: prefer the verified global store; during the pre-R5 dark
+period only, fall back to the lowest-`TransactionId` fully validated receipt
+whose manifest and local object set contain it. That chosen global or receipt-
+local location is part of `InputPrecondition::MachineObject`, and commit reopens
+and rehashes that exact source. A missing/corrupt selected source is stale or
+corrupt input even if another copy later appears; execution never switches
+sources after planning. Before receipt validation exists, resolution is global-
+only and no production schema-2 writer is active.
 
-**`project.rs` is the clean specimen.** It contains `ProjectContext` — reactor,
-module, java release, spring_boot, maven command — which is *precisely* the value
-§5 says the codebase needs. It is referenced **nowhere outside its own file**;
-`generate.rs`, `add.rs`, `spring.rs` and `doctor.rs` contain zero mentions. The
-same file also holds `json_string`, a JSON escaper, used by `why.rs`,
-`inspect.rs` and `add/tooling.rs` because there is no `json.rs`.
-
-One module, two unrelated secrets, and the useful one unused. That is
-coincidental cohesion, and it happened because the module was named for a
-**noun in the domain** rather than for **a decision it hides**.
-
-### 3.3 The line that explains the whole mess
-
-> **The modules that hide a file format or a tool are excellent. The modules
-> that own a command are a mess.**
-
-`generate.rs`, `add.rs`, `doctor.rs`, `run.rs`, `new.rs` are decomposed by
-processing step — Parnas's flowchart criterion. `pom.rs`, `compose.rs`,
-`java.rs`, `process.rs` are decomposed by secret. The first group has produced
-every duplication in §4; the second group has produced none.
-
-"`src` is a mess" is therefore not a size problem and not a tidiness problem.
-It is **one wrong decomposition criterion applied to five files.**
-
----
-
-## 4. Five abstractions that went the wrong way
-
-### 4.1 `Vec<Artifact>` is a Command object with the undo amputated
-
-`add` found the right idea; `generate` never got it. `add::Plan` is a value —
-deps, plugins, files, compose, properties, legacy_deps, test-import — computed
-before anything is written. That is why `preflight` can exist and why `remove`
-can be an inverse at all.
-
-`generate` returns `Vec<Artifact>`: *files only*. Everything else a generator
-needs was bolted onto the tail of the write path as statements:
-
-```
-generate.rs:2230   if let Some(dep) = match kind { Dto|Scaffold => …, Client => …, Fetcher => … }
-generate.rs:2269   if matches!(kind, Command) { register_command(…) }
-generate.rs:2279   match kind { Dto|Scaffold => ensure_dependency(…), Event => … }
-generate.rs:1012   ensure_failsafe(root, &artifacts)
-generate.rs:1049   ensure_assertj(root, …)
-```
-
-Those are `Plan.deps`, `Plan.plugins` and a missing `Plan.edits`, written
-longhand, in another module, with no inverse. **A Command object that cannot
-`unexecute` forces you to write the undo separately** — which is exactly
-`KIND_FILES`, a second transcription of the file list.
-
-And there are **four** shapes for "a file to write":
-
-| Shape | Where |
-|---|---|
-| `Artifact { kind: &'static str, path, contents }` | `generate.rs:1120` |
-| `NewFile { path, contents }` | `add.rs:133` |
-| `SpringSlice.files: Vec<(PathBuf, String)>` | `spring.rs:21` |
-| `Vec<(PathBuf, String, &'static str)>` | 14 `*_files` fns in `spring.rs` |
-
-Two of them live in the *same file*. `spring.rs` holds capability slices and
-generator outputs side by side in different shapes — the strongest available
-evidence that they are one concept nobody named.
-
-*Smell:* Divergent Change + Repeated Switches. *Cure:* Extract Class (`Change`)
-+ Command-with-undo.
-
-### 4.2 `Plan` is data with no interpreter — and `doctor` is Feature Envy
-
-`Plan` has 8 fields. Each is handled three times: `add`'s apply, `add`'s
-`if dry_run` branch, `remove`'s inverse. Two independent implementations of one
-traversal plus a mirror that must be kept exact by hand.
-
-`doctor.rs` contains **zero** references to `Plan` or `build_plan`. It is 1,365
-lines re-deriving, by reading the project back off disk, the facts
-`add/database.rs`, `add/messaging.rs` and `add/data.rs` already own: which
-dependency, which property, which test wiring, which compose service.
-
-That is Feature Envy at module scale: `doctor` wants `add`'s knowledge and, being
-unable to hold it, re-implements it. And it means the drift `tests/agreement.rs`
-catches between `generate` and `destroy` has an exact sibling between `add` and
-`doctor` that **nothing catches**, because there is no shared value to compare.
-
-Two symptoms that read as separate bugs and are one:
-
-- `--pretend` and apply are different code, so `--pretend` has been wrong
-  before (`package-info.java`: two files named, three written —
-  `generate.rs:2189-2192`).
-- `dry_run || pretend` appears at **5** call sites in `main.rs`. Two names for
-  one boolean, OR'd at dispatch, because the global flag and the per-command
-  flag reach two different implementations. *Connascence of meaning*, crossing
-  a module boundary — Page-Jones's rule 2 violated in the smallest possible way.
-
-### 4.3 Primitive Obsession and a Data Clump, at scale
-
-**188 function signatures take `root: &Path`.** From that one primitive, the
-same facts are rediscovered:
-
-| Fact | Call sites |
-|---|---|
-| `find_project_root()` | 31 |
-| `pom::read()` | 21 |
-| `pom::has_dependency()` | 19 |
-| `pom::flavor()` | 15 |
-| `fields_from_record()` | 15 |
-| `Config::load()` | 14 |
-| `base_package()` | 12 |
-| `mockmvc_autoconfigure_import()` | 7 |
-| `webmvc_test_import()` | 5 |
-
-There is no `Project` value in use — there is a directory and 188 functions that
-each re-derive what they need. (`ProjectContext` exists and is unused; §3.2.)
-
-The layer packages are the acute case: because `Layers` is not a value, the
-package names travel one at a time, and **16 functions in `spring.rs` take 8–11
-parameters**:
+`LoadedSnapshot` pairs that deterministic value with opaque runtime absolute bindings for allowed external
+inputs. `LoadedProject` keeps ordinary and pending loading impossible to confuse:
 
 ```rust
-usecase_files(root, security, service, web, domain, app, adapters, name, target, fields)
-//            ^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  one value, spelled six times
-durable_job_files(… 11 params)   outbox_files(… 11 params)
-transition_files(… 10 params)    query_files(… 10 params)
+enum LoadedProject {
+    Ready {
+        loaded: LoadedSnapshot,
+        declarations: DeclarationSyntax,
+    },
+    Pending {
+        loaded: LoadedPendingSnapshot,
+    },
+}
+
+enum DesiredInputGuard {
+    Exact { sha256: ObjectId, len: u64 },
+    ProjectedTransactionOutput {
+        path: ProjectPath,
+        sha256: ObjectId,
+        len: u64,
+    },
+    Absent,
+}
 ```
 
-This is a textbook **Data Clump** (the same six values always travel together)
-producing **Long Parameter List** and **connascence of position** at degree 10 —
-the highest-cost coupling in Page-Jones's static ranking, replicated 16 times.
-The cure has a name and has had one since 1999: **Introduce Parameter Object**.
+Loading captures and strictly decodes the ledger before parsing the build,
+human declarations or source facts. If that ledger contains a pending
+conflict, the loader validates the origin receipt and Complete journal, captures
+only the frozen affected paths and desired inputs, and returns `Pending`.
+`RequestSyntaxFingerprint` is derived from current CLI syntax without
+project-derived defaults. Only after it, the manifest source identity and every
+desired-input guard match may pending resolution reuse the stored canonical
+request. `Exact` rehashes independent captured bytes,
+`ProjectedTransactionOutput` is accepted only for a path already guarded by the
+origin transaction, and every relevant absence has an explicit `Absent` row.
+Pending mode may parse a marker-free resolved shared file only to validate its
+frozen semantic slots; it never runs the ordinary bootstrap parsers.
 
-The second-order damage is worse than the ugliness. Because a generator holds
-`root`, it does I/O *while rendering* — `pom::read` inside `usecase_files`,
-`json_sample(root, …)` inside a template renderer. **Rendering is not pure.**
-That is Ousterhout's *information leakage*: the decision "how do I learn a fact
-about this project" is smeared across every renderer instead of hidden behind
-one. And it is precisely why artifacts cannot be lazy, why a path cannot be
-computed without a body, and why `KIND_FILES` had to be typed by hand.
+Only preparation moves runtime bindings into
+`PreparedBundle.commit_context`; planners, reports, fingerprints, journals and
+receipts never see or persist them. `Apply` requires `Ready`, while `Finalise`
+and `Abort` require `Pending`; every other pairing is an invariant violation.
 
-plan.md §6.2 B lists lazy rendering as a *cost* of deriving destroy paths. It is
-not a cost; it is the *cause* of the knot, and it is one Introduce-Parameter-
-Object away.
+A snapshot method never reads the filesystem, environment, clock, or a process. `ProjectHandle` owns the
+root and is used only by loading and execution.
 
-### 4.4 `--on` / `--yields`: a type code that never became a type
+Resolved templates belong only to the snapshot. `PreparationContext` supplies renderer/tool fingerprints,
+bounded tool specifications, and the scratch executor used to materialise bytes. Anything from it that can
+affect output contributes to the prepared fingerprint, but commit never reruns those tools.
 
-From `main.rs:180`:
+Planning several intents uses a `ProjectedProject`: the snapshot plus changes already desired earlier in the
+plan. Intents are resolved in stable topological order and the projected view advances after each. A later
+intent sees a dependency introduced earlier without an intermediate write or fresh disk read.
 
-> For `strategy`, the type each implementation examines. For `usecase`, the
-> existing scaffolded resource the operation creates; for `query`, the
-> scaffolded resource it reads; for `durable-job`, the existing generated use
-> case it invokes. For `command`, the dispatcher to register it in.
+### 3.2 Typed intent and identity
 
-One `Option<String>`, five referents, no type. This is Primitive Obsession in
-its original sense — a domain concept represented by a built-in — and the domain
-concept is **a typed reference from one artifact to another**: the dependency
-edge between intents. That edge would let `usecase --on Note` fail usefully when
-`Note` was never generated, let `destroy Note` warn that a use case points at it,
-and let `app apply` order intents by dependency instead of by file order.
-
-The naming damage is already public. Because the flag was invented for `strategy`
-and reused, the key in `.jails/app.toml` — a **user-facing manifest format** — is
-spelled `strategy_on` on a `usecase`:
-
-```toml
-[[generate]]
-kind = "usecase"
-name = "QueueCrawl"
-strategy_on = "CrawlRun"     # not a strategy
-```
-
-An implementation detail of the first case became schema. In DDD terms the
-*ubiquitous language* broke: the word in the file no longer names the thing.
-That is what "the abstraction went in the wrong direction" looks like from
-outside the codebase.
-
-**The schema half is fixed.** `on` and `yields` are the manifest keys;
-`strategy_on` and `strategy_yields` still parse as deprecated aliases, because
-a user-facing file format that people have already written does not get to
-break. Setting one reference under both spellings is an error rather than
-last-one-wins, and all four proof-app manifests are migrated — which also
-demonstrates the property that matters: the state key is computed from the
-*values*, so renaming the key does not make `app apply` see a new intent.
-What is still open is the typed `Ref { name, expect: Referent }` itself: the
-five referents are still one `Option<String>` interpreted differently per kind,
-so `destroy Note` still cannot warn that a use case points at it.
-
-### 4.5 An anemic ledger, split seven ways — **fixed**
-
-| File | Owner | Says |
-|---|---|---|
-| `jails.toml` `[project] capabilities` | `config.rs` | what the project *has* |
-| `.jails/app.toml` `capabilities` | `app.rs` | what it *should have* |
-| `.jails/app.toml` `[[generate]]` | `app.rs` | intents wanted |
-| ~~`.jails/app-state-v1`~~ | `app.rs` | intents applied, keyed by **full-argument hash** |
-| ~~`.jails/intents/*.files`~~ | `generated_files.rs` | paths per intent, keyed by **kind+name+package** |
-| ~~`.jails/files`~~ | `generated_files.rs` | union of paths |
-| ~~`.jails/models`~~ | `generated_files.rs` | field specs per record |
-| ~~`.jails/version`~~ | `generated_files.rs` | jails version |
-
-The five struck rows are now one `.jails/ledger.toml` (`src/ledger.rs`), and
-every golden scenario's `.jails/` holds at most two files —
-`the_goldens_still_hold_the_properties_that_matter` fails if a third appears or
-a subdirectory grows back. Identity is `(recipe, name, package)`; everything
-else is content. The two writers reach the same row and neither owns the
-other's columns: `generate` sets `files`, `app apply` sets the spec, both
-through `ledger::entry_mut`, so a whole-row replace can no longer erase half of
-it.
-
-Folding them turned up a bug that had been latent in the storage the whole
-time: the array parser split on every comma, so `totals:map<string,double>` —
-a field type jails documents — could not survive a round trip. The old format
-hex-encoded each element precisely to dodge that, and the dodge is why nobody
-had noticed the parser could not do it.
-
-Two capability lists. Two intent registries **keyed differently** — and that
-difference *is* the §9.7 bug rather than a nearby cause. `app-state-v1` keys on
-`kind|name|package|fields|indexes|on|yields`, so editing a `fields` line makes a
-new key; `.jails/intents/` keys on kind+name+package, so it still points at the
-old files. The edited intent arrives as pending, `generate` refuses on files that
-exist, and the two ledgers now disagree about one artifact.
-
-**Identity is (recipe, name, package). Arguments are content, not identity.**
-That is Evans's entity-vs-value-object distinction and nothing more exotic. Get
-that one line right and §9.7 becomes an *update to a known entity* — which is
-exactly the input plan.md §11.1's regenerate-and-3-way-merge needs and currently
-has to reconstruct.
-
----
-
-## 5. Why it happened — the pattern to stop repeating
-
-Every step was locally correct:
-
-1. `generate` came first and only wrote files, so `Vec<Artifact>` was right.
-2. `add` came later, needed more than files, and correctly invented `Plan` — but
-   as a **second** mechanism, because retrofitting `generate` was out of scope.
-3. Generators then grew needs `add` already had, and got them as
-   tail-of-function special cases, because `Plan` lived in the other module and
-   was shaped for capabilities.
-4. `destroy` needed the file list, could not call the generator (impure, §4.3),
-   and got a transcription. `tests/agreement.rs` was written to police the
-   transcription.
-5. `app.rs` sat on both and needed a third notion of applied-ness.
-6. `doctor` needed to check what `add` installs, could not reach `Plan`, and
-   re-encoded it.
-
-The pattern, stated so it is recognisable next time:
-
-> **When a requirement did not fit the abstraction, the abstraction was cloned
-> and a test was added to keep the clones honest.**
-
-Checked duplication beats unchecked duplication — plan.md §6.1 is right about
-that. But it is a holding action, and this is the sixth round. Page-Jones's rule
-2 is the sharp version: `tests/agreement.rs` exists to police **connascence of
-value crossing a module boundary**, and the canonical fix for connascence that
-crosses a boundary is to move it inside one — not to measure it.
-
----
-
-## 6. The target
-
-Seven types. Four already exist under other names; one (`ProjectContext`)
-already exists and is unused.
+Persistent intent identity is canonical and independent of mutable arguments:
 
 ```rust
-// ─── model/ — pure. No I/O, no `root: &Path`, nothing that can fail on disk.
-
-/// Resolved once at the top. Replaces 188 `root: &Path` and ~120 re-reads.
-/// This is `project::ProjectContext` finally being used.
-struct Project {
-    root: PathBuf, base: String, flavor: Flavor, boot: Option<u32>,
-    layers: Layers,                 // config renames already applied
-    pom: String,
-    installed: BTreeSet<Capability>,
-    ledger: Ledger,
-}
-impl Project {
-    fn main(&self, l: Layer, p: Option<&Package>) -> PathBuf;
-    fn test(&self, l: Layer, p: Option<&Package>) -> PathBuf;
-    fn record(&self, ty: &str) -> Option<&[Field]>;   // was fields_from_record(root, …)
+struct IntentId {
+    recipe: Recipe,
+    name: Name,
+    package: Package,
 }
 
-/// Introduce Parameter Object, applied to the six-string data clump.
-struct Layers(/* Layer -> package name */);
-
-/// What the user asked for. Entity identity = (recipe, name, package).
-struct Intent { recipe: Recipe, name: Name, package: Option<Package>, args: Args }
-enum   Recipe { Kind(ArtifactKind), Capability(Capability) }
-struct Args    { fields: Vec<Field>, indexes: Vec<Index>, refs: Refs, timestamps: bool }
-struct Refs    { on: Option<Ref>, yields: Option<Ref> }
-struct Ref     { name: String, expect: Referent }   // Resource|UseCase|Event|Dispatcher|Type
-
-/// The Command object. One shape, replacing Artifact / NewFile / SpringSlice / tuple.
-struct Change {
-    files: Vec<Artifact>, deps: Vec<Dependency>, plugins: Vec<Plugin>,
-    properties: Vec<PropertyBlock>, compose: Vec<ComposeService>,
-    edits: Vec<Edit>, legacy: Vec<Dependency>,   // legacy = revert-only
+enum EntityId {
+    Capability(CapabilityId),
+    Intent(IntentId),
+    ToolFeature(ToolFeature),
 }
-struct Artifact { tree: Tree, layer: Layer, placement: Placement,
-                  file: String, label: &'static str, body: Body }
 
-/// The key move: a body is a recipe for bytes, not bytes. Makes `plan` pure.
-enum Body { Template(&'static str, Bindings), Computed(fn(&Project,&Intent)->Result<String>) }
+enum ResourceOwner {
+    Entity(EntityId),
+    OneShot(OneShotId),
+}
 
-/// plan.md §11's `codemod.rs`, as data instead of scattered functions.
-enum Edit {
-    RegisterCommand { dispatcher: Ref, command: String },
-    ImportTestConfig { class: String },
-    UnionProperty { key: &'static str, values: Vec<&'static str> },  // exposure_include
+enum OwnerId { AppManifest, DirectConfig, DirectCli }
+
+enum ReconcileScope {
+    AppManifest,
+    DirectConfig,
+    DirectEntity(EntityId),
+}
+
+struct DesiredEntity {
+    id: EntityId,
+    spec: EntitySpec,
+    owners: BTreeSet<OwnerId>,
+}
+
+struct DesiredState {
+    scope: ReconcileScope,
+    entities: BTreeMap<EntityId, DesiredEntity>,
+}
+
+struct ResolvedMutation {
+    invocation: InvocationFingerprint,
+    action: ResolvedAction,
+}
+
+enum ResolvedAction {
+    Reconcile(DesiredState),
+    ApplyOneShot { id: OneShotId, spec: OneShotSpec },
+    DestroyCases { id: OneShotId, force: bool },
+    AppInit { target: ProjectPath },
+    Rename { from: JavaType, to: JavaType, force: bool },
+    AdoptLayout,
+    AdoptLegacy { legacy_key: LegacyKey, intent: IntentId,
+                  replace: bool, force: bool },
+    Format { scopes: BTreeSet<ProjectPath> },
+    ContinueConflict,
+    AbortConflict,
+}
+
+enum PlannedTransition {
+    Commit(CommitPlan),
+    RetryEffect(EffectRetryPlan),
+}
+
+enum CommitPlan {
+    Apply(DesiredChangeSet),
+    Finalise(FinalisationPlan),
+    Abort(AbortPlan),
+}
+
+struct DesiredChangeSet {
+    ordered: Vec<DesiredChange>,
+    subject: PlannedSubject,
+    ledger_intent: LedgerIntent,
+}
+
+enum PlannedSubject {
+    Reconcile(DesiredState),
+    ApplyOneShot { id: OneShotId, spec: OneShotSpec },
+    DestroyCases { id: OneShotId, force: bool },
+    AppInit { target: ProjectPath },
+    Rename { from: JavaType, to: JavaType, force: bool },
+    AdoptLayout,
+    AdoptLegacy { legacy_key: LegacyKey, intent: IntentId,
+                  replace: bool, force: bool },
+    Format { scopes: BTreeSet<ProjectPath> },
 }
 ```
 
-Four functions, each written **once**:
+Optional package/name spellings exist only in syntax DTOs. Resolution applies conventions and validates
+them before constructing these types. Recipe arguments remain recipe-specific. `on` and `yields` are typed
+references to compatible managed or captured-existing targets, not one string whose meaning changes by
+recipe. Before preparation the planner rejects duplicate identities, missing or incompatible references,
+and cycles. One-shot field, migration and case operations have
+`OneShotId`/receipts; they are deliberately not persistent desired entities.
+Only cases has a destroy route. App initialisation, rename, adoption and
+formatting are typed maintenance subjects, not fake entities. After the
+pending-conflict gate, exactly one same-invocation eligible interrupted or
+failed effect becomes `RetryEffect` and cannot also produce a fresh project
+transaction. Pending conflict continue/abort becomes
+`Finalise`/`Abort`; ordinary actions cannot reach those prepared kinds.
+
+Manifest aliases may remain at the parser boundary; they do not survive into the typed model. A future
+runtime descriptor must serialise these same types rather than create another recipe schema beside them.
+
+`DesiredState` comes only from the captured human `jails.toml`, the selected
+captured app manifest, and the current direct request. Ledger rows are observed
+state inside `ProjectSnapshot`; they are never translated into declarations.
+The other `ResolvedAction` variants may inspect captured observed state to
+construct guarded transitions, but they do not call that state desire. App
+ownership remains an `AppManifest` ledger claim and is never copied into
+`jails.toml`.
+
+`ResourceKey::HumanConfigCapability(id)` exists if and only if that entity has
+the `DirectConfig` owner. Its sole resource owner is the entity and its value is
+the exact capability spec. `AppManifest` and `DirectCli` owners never emit that
+resource or copy their capability into `jails.toml`; removing `DirectConfig`
+removes only the declaration resource when another owner keeps the entity
+alive. On the first schema-2 transition only, an existing valid `jails.toml`
+whose parsed `DirectConfig` declaration/resource is exact and whose pure editor
+would make no byte change permits a ledger-only authoritative bootstrap: emit
+no `FileOp`, and record the exact live file as base/current with a truthful
+`FormatOwner::HumanConfig`. A mismatch, duplicate, required edit, prior V2
+config ownership or competing managed record follows ordinary collision and
+stored-base rules; this is not general adoption.
+
+That first-V2 authority has one matching resource bootstrap. It applies only
+to the **complete** resource/output closure of an entity declared by captured
+`DirectConfig`, plus `ToolFeature::FastTest` only for the explicit current
+`test --fast` request. Every ID/spec/prerequisite must come from that real
+owner, every semantic key must occur exactly once with the exact desired value,
+no candidate V2 record may have existed, and the complete fresh format-owner
+edit/render must be unchanged byte-for-byte and mode-for-mode. The closure is
+all-or-nothing. Success emits no `FileOp`, creates only the real ownership rows,
+and records exact live base/current images with fresh truthful renderer
+contexts. Partial, unequal, duplicate, post-V2, app-only or legacy-only
+candidates refuse; live coincidence never manufactures an owner.
+
+Desired/observed comparison is scoped replacement. Planning first discards the
+active scope's old observed claim, then inserts that scope's current claim when
+present and retains every outside owner. A sole owner may therefore update its
+spec; multiple current/retained claims may update together only when they agree
+on one canonical spec. An incompatible outside claim refuses with an owner and
+field-level diff. A retained outside owner takes a new spec only from a
+participating captured authoritative source that explicitly declares that same
+identity; otherwise its observed spec remains. Omission outside the active
+scope is never removal.
+
+Capability prerequisites are validation edges, not declarations. Every
+transitive prerequisite must have a real current or retained `OwnerId`; files,
+dependencies and live services do not satisfy the edge, and the planner never
+invents a synthetic owner. Last-owner removal refuses while any retained
+entity depends on that capability.
+
+### 3.3 Desired change
+
+The current `Change` should become an exhaustive desired change:
 
 ```rust
-fn plan(p: &Project, i: &Intent) -> Result<Change>;   // pure; every refusal lives here
-fn apply(p: &Project, c: &Change) -> Result<Report>;
-fn revert(p: &Project, c: &Change) -> Result<Report>;
-fn verify(p: &Project, c: &Change) -> Vec<Finding>;   // doctor
-fn describe(c: &Change) -> Report;                    // --pretend / --dry-run
+struct DesiredChange {
+    attribution: ChangeAttribution,
+    resources: Vec<DesiredResource>,
+    files: Vec<DesiredFile>,
+    edits: Vec<SemanticEdit>,
+    absences: Vec<ManagedPath>,
+    preconditions: Vec<SemanticPrecondition>,
+    fact_delta: FactDelta,
+}
+
+enum ChangeAttribution {
+    Resource(ResourceOwner),
+    Maintenance(MaintenanceAttribution),
+}
+
+enum MaintenanceAttribution {
+    AppInit,
+    Rename,
+    AdoptLayout,
+    AdoptLegacy,
+    Format,
+}
 ```
 
-### 6.1 Give `Change` an algebra
+`SemanticEdit` covers decisions that compose by meaning before becoming bytes: POM dependencies and
+plugins, compose services, property keys, marked source blocks, command registration, and surgical edits to
+human configuration.
 
-`Change` should be a **monoid**: an empty value, and an associative merge that
-deduplicates deps and detects file collisions. Three things then stop being
-features and become consequences:
+`ChangeAttribution::Resource` is limited to an entity or one-shot and may add
+durable resource ownership. `Maintenance` is audit attribution, not a fake
+owner. A subject-specific maintenance planner may transform resources whose
+owners remain real entities/one-shots (for example rename or adoption), or
+guard an explicitly unowned human/shared file such as app initialisation or
+standalone formatting. The maintenance tag itself can never be a contributor.
+Such an unowned file is reported and
+receipted, but creates no `OutputRecord` and is never later deleted by owner
+reconciliation.
 
-- `add db kafka` = fold two Changes → one preflight, one pom write.
-- `app apply` = fold N → **the atomic whole-manifest `ChangeSet` plan.md §11
-  wants** (last item of its §17 queue), for free at position 3 here.
-- Conflict detection = a pure function on the folded value, before any write.
+`AdoptLayout` is a human delta, not ownership adoption. If `jails.toml` already
+has a managed output, its contributors, generated base and renderer remain
+unchanged while only `current` advances to the exact committed postimage. With
+no managed config output, the edit remains unowned and creates no output row or
+`HumanConfigCapability` resource.
 
-This is the composability half of the Composite pattern, which is the half worth
-keeping.
+Every managed output has a `ResourceKey` and owner set. A key may name a whole file or a semantic contribution such
+as a Maven coordinate, compose service, property key, or marked block. Two entities can therefore share a
+dependency without either owning its deletion. `ResourceKey`, not a path or an intent, is the deletion unit.
+Whole-file ownership cannot coexist with semantic contribution ownership at the same path.
 
-### 6.2 What falls out rather than being built
-
-- **`KIND_FILES` deleted** — and not quite the way this section imagined.
-  `destroy` is given a kind and a name, never the arguments, and most
-  generators refuse without them. The insight that made the deletion possible
-  is that **those arguments decide the file contents, not the file names**: so
-  `recomputed_paths` offers each generator a short list of argument *shapes*
-  and keeps the paths of the first it accepts. Seven rows, describing what
-  generators demand, in place of 672 describing what they produce — and a row
-  that goes stale makes a kind stop answering, which `tests/agreement.rs` now
-  fails on by name rather than by count.
-
-  Six kinds still cannot be recomputed (`SILENT_WITHOUT_A_RECORD` in that test
-  names each with the argument no shape can guess). They yield nothing, and
-  `destroy` says so in as many words rather than printing "nothing to destroy"
-  over files that are right there. Under-naming is the safe failure; the table
-  that avoided it drifted, and the test catching the drift was §9's receipt for
-  a decision nobody had made.
-
-  The original sketch: `destroy` = `plan(…).files.map(path)`; bodies are
-  never rendered because `Body` is lazy. plan.md §6.2 B as a consequence, not a
-  project.
-- **`--pretend` cannot disagree with apply** — `describe` and `apply` consume
-  one value. `dry_run` collapses into `pretend`; the 5 `dry_run || pretend`
-  sites go.
-- **`remove` stops being a hand-mirrored 200 lines.** It is `revert`.
-- **`doctor` becomes derived:** for each ledger intent, `plan` it against
-  today's project and report the delta. The ~20 hand-written `*_check` functions
-  shrink to the ones that probe the **environment** (podman socket, JDK, Docker
-  reachability) — which is doctor's real value and which no plan can derive.
-
-  **The deriving half shipped.** `add::plan_for` exposes the pure plan, and
-  `doctor::capability_drift_checks` re-plans every capability `jails.toml`
-  records, reporting any missing dependency, file, property or compose service
-  with `fix: jails sync`. That closes the drift class §4.2 identified as having
-  no test at all. **The shrinking half did not, and the honest reason is that
-  it is not a line-deletion exercise**: the hand-written checks still cover
-  projects with no recorded capability list — someone else's project, which
-  §12 is entirely about — where a derived check has nothing to derive from.
-  Deleting them to reach a line count would trade real coverage for a number,
-  which is the trade §8's own gates exist to refuse.
-- **Drift detection is that same delta**, so plan.md §11.1's regenerate-and-merge
-  gets its "old output" for nothing.
-- **`require_spring` becomes a precondition on `Recipe`**, checked by `plan`
-  against `Project.flavor`. That precondition is the *only* reason `spring.rs`
-  is one 6,621-line file (logical cohesion, §3.2) — turn it into data and the
-  file dissolves along real seams.
-
-### 6.3 One ledger — **shipped**
-
-`src/ledger.rs`. What it actually writes, one `[[applied]]` per entity:
-
-```toml
-version = "0.1.0"
-
-[[applied]]
-recipe = "scaffold"
-name = "CrawlRun"
-package = ""
-fields = ["id:uuid@pk", "seedUrl:uri", "status:CrawlStatus@index"]
-files = [
-  "src/main/java/com/example/demo/domain/CrawlRun.java",
-]
+```text
+try_compose : [DesiredChange] -> Result<DesiredChangeSet, Conflict>
 ```
 
-Two departures from the sketch above. Capabilities are **not** `[[applied]]`
-rows: `jails.toml`'s list is the one the reader edits and `sync` acts on, and
-duplicating it into machine state would recreate §4.5's two-capability-lists
-problem in a new file. And the schema is closed — an unknown key is an error,
-because `destroy` acts on this file and a key jails silently ignored would make
-it delete the wrong set.
+`DesiredChangeSet` also carries one closed `PlannedSubject` identifying the
+ordinary action whose changes it contains. This lets operation identity
+distinguish reconciliation, a one-shot, app initialisation and maintenance
+without accepting an untyped bag of changes. `FinalisationPlan`, `AbortPlan`
+and `EffectRetryPlan` remain separate because their preconditions and allowed
+effects are different.
 
-Identity `(recipe, name, package)`; `fields` is content; `files` is **recorded,
-not recomputed** (plan.md §11.2 stays correct — recompute for `--pretend` where
-nothing exists yet, read the record for `destroy` after an upgrade).
+Composition detects incompatible claims and combines compatible shared contributions. Associativity may be
+tested where meaningful; totality, identity, and a mathematical monoid are not claimed.
 
-`jails.toml` stays the user's hand-editable layout and declared capabilities.
-`.jails/ledger.toml` is jails' bookkeeping and is never hand-edited. That is a
-real boundary, unlike today's seven-way split.
+### 3.4 Prepared change and receipt
 
-### 6.4 The layout: one module per secret
+Preparation lowers semantic edits into exact bytes and guarded operations:
 
-Parnas's criterion, applied deliberately instead of half-accidentally. jails
-generates hexagonal architecture and does not have one; `spring.rs` mixes domain
-knowledge (what a use case *is*), rendering (Java strings) and I/O
-(`pom::read`) in one file.
+```rust
+enum FileImage {
+    Absent,
+    Present { object: ObjectRef, mode: FileMode },
+}
 
+struct GuardedImage {
+    object: ObjectRef,
+    mode: FileMode,
+}
+
+struct PreparedChange {
+    format: u32,
+    operation_identity: OperationIdentityV1,
+    operation_id: OperationId,
+    transaction_id: TransactionId,
+    preparation: PreparationContextFingerprint,
+    input_preconditions: Vec<InputPrecondition>,
+    operations: Vec<FileOp>,
+    directories: Vec<DirectoryOp>,
+    ledger_before: FileImage,
+    ledger_after: FileImage,
+    objects: BTreeMap<ObjectId, Arc<[u8]>>,
+    post_commit: Vec<PostCommitEffect>,
+    kind: PreparedKind,
+}
+
+struct PreparedIdentityV1 {
+    format: u32,
+    operation_identity: OperationIdentityV1,
+    operation_id: OperationId,
+    preparation: PreparationContextFingerprint,
+    input_preconditions: Vec<InputPrecondition>,
+    operations: Vec<FileOp>,
+    directories: Vec<DirectoryOp>,
+    ledger_before: FileImage,
+    ledger_after: FileImage,
+    object_manifest: Vec<ObjectRef>,
+    post_commit: Vec<PostCommitEffect>,
+    kind: PreparedKind,
+}
+
+enum PreparedKind {
+    Apply,
+    Conflict { paths: Vec<ProjectPath> },
+    Finalise { origin: OperationId },
+    Abort { origin: OperationId },
+}
+
+struct OperationIdentityV1 {
+    snapshot: SnapshotFingerprintV1,
+    operation_context: OperationContextFingerprint,
+    invocation: Option<InvocationFingerprint>,
+    proposed_generation: u64,
+    semantics: OperationSemanticsV1,
+}
+
+struct OperationContextFingerprint {
+    schema: u32,
+    tools: Vec<OperationToolFingerprint>,
+}
+
+struct OperationToolFingerprint {
+    identity: ToolIdentityFingerprint,
+    args: Vec<ToolArgTemplate>,
+}
+
+enum ToolArgTemplate {
+    Literal(String),
+    OperationLabel { prefix: String, hex_chars: u8 },
+}
+
+enum OperationTarget {
+    Project(ProjectPath),
+    LegacyMachine(LegacySourcePath),
+}
+
+enum FileOp {
+    Create { path: OperationTarget, after: ObjectRef, mode: FileMode,
+             contributors: BTreeSet<ResourceOwner> },
+    Replace { path: OperationTarget, before: GuardedImage, after: ObjectRef,
+              mode: FileMode, contributors: BTreeSet<ResourceOwner> },
+    Delete { path: OperationTarget, before: GuardedImage,
+             contributors: BTreeSet<ResourceOwner> },
+}
+
+enum DirectoryOp { Create { path: ProjectPath } }
+
+struct PreparedBundle {
+    change: PreparedChange,
+    commit_context: CommitContext, // runtime-only; never persisted/reported
+}
+
+struct CommitContext {
+    project_root: RootIdentity,
+    external_inputs: BTreeMap<ExternalInputId, ExternalBinding>,
+    machine_root: MachineRootBinding,
+}
+
+struct FileReceipt {
+    path: OperationTarget,
+    before: FileImage,
+    after: FileImage,
+    contributors: BTreeSet<ResourceOwner>,
+}
+
+struct AppliedReceipt {
+    operation_id: OperationId,
+    transaction_id: TransactionId,
+    files: Vec<FileReceipt>,
+    directories: Vec<DirectoryReceipt>,
+    ledger_before: FileImage,
+    ledger_after: FileImage,
+    outcome: ApplyOutcome,
+    post_commit: Vec<EffectReceipt>,
+}
+
+enum CommitResult {
+    NoOp,
+    Committed(CommittedResult),
+    CommittedRecoveryRequired(CommittedRecoveryRequired),
+    RecoveredPriorTransaction(RecoveryOutcome),
+}
+
+struct CommittedResult {
+    receipt: AppliedReceipt,
+    effect: CommitEffectOutcome,
+}
+
+enum CommitEffectOutcome {
+    NotApplicable,
+    Succeeded { effect: EffectId },
+    Failed { effect: EffectId },
+    Superseded { effect: EffectId },
+    DeferredError { effect: EffectId, error: CommittedEffectError },
+}
+
+enum CommittedEffectError {
+    StaleInput,
+    CorruptMachineState,
+    ReceiptIo,
+}
+
+struct CommittedRecoveryRequired {
+    operation: OperationId,
+    transaction: TransactionId,
+    outcome: ApplyOutcome,
+    receipt: Option<AppliedReceipt>,
+    stage: PostCommitStage,
+    error: PostCommitRecoveryError,
+}
+
+enum PostCommitStage {
+    JournalCompletion,
+    ReceiptPublication,
+    ReceiptReconciliation,
+}
+
+enum PostCommitRecoveryError {
+    Io,
+    RecoveryBlocked,
+    CorruptMachineState,
+}
+
+enum EffectRunResult {
+    Succeeded(AppliedReceipt),
+    Failed(AppliedReceipt),
+    Superseded(AppliedReceipt),
+    RecoveredPriorTransaction(RecoveryOutcome),
+}
+
+struct RecoveryOutcome {
+    changes: Vec<RecoveryChange>,
+    pending_effects: Vec<RecoverableEffect>,
+}
+
+enum RecoveryChange {
+    Transaction {
+        operation: OperationId,
+        transaction: TransactionId,
+        generation: u64,
+        action: RecoveryTransactionAction,
+    },
+    EffectStateChanged {
+        operation: OperationId,
+        transaction: TransactionId,
+        generation: u64,
+        effect: EffectId,
+        before: EffectState,
+        after: EffectState,
+    },
+}
+
+enum RecoveryTransactionAction {
+    AbandonedPrepared,
+    RolledForwardAndPublished,
+    PublishedCommittedReceipt,
+}
+
+struct RecoverableEffect {
+    operation: OperationId,
+    transaction: TransactionId,
+    generation: u64,
+    effect: EffectId,
+    state: EffectState,
+}
+
+enum EffectState {
+    Deferred,
+    Pending { next_attempt: u32 },
+    Running { attempt: u32 },
+    Succeeded,
+    Failed { attempt: u32, code: EffectFailureCode, summary: String },
+    Superseded { by: Option<OperationId> },
+}
+
+enum EffectFailureCode {
+    Spawn,
+    Timeout,
+    ExitNonzero,
+    InterruptedTwice,
+    Protocol,
+}
+
+enum CommitError {
+    StaleInput,
+    MutationBusy,
+    EffectBusy,
+    RecoveryBlocked,
+    CorruptMachineState,
+    InvalidPrepared,
+    PreActivationIo,
+}
+
+enum EffectRunError {
+    StaleInput,
+    MutationBusy,
+    EffectBusy,
+    RecoveryBlocked,
+    CorruptMachineState,
+    InvalidPlan,
+    ReceiptIo,
+}
+
+enum RecoveryError {
+    MutationBusy,
+    RecoveryBlocked,
+    CorruptMachineState,
+    Io,
+}
 ```
-src/model/     Project, Layers, Intent, Args, Refs, Change, Artifact, Field   — pure
-src/recipes/   plan(): kinds/*, capabilities/* — one file per recipe          — pure
-src/render/    templates + Bindings                                           — pure
-src/apply/     the interpreter + codemod.rs (pom, compose, properties, java)  — the only I/O
-src/inspect/   doctor, why, routes, beans, stats                              — read-only
-src/cli/       clap dispatch                                                  — thin
-src/json.rs    the escaper currently squatting in project.rs
-```
 
-Two rules that keep it honest, both checkable in review:
+`DesiredFile.mode` is the mutation model's only optional mode and expresses
+policy before preparation. `Some` is an explicit permission requirement;
+`None` preserves the captured concrete live mode for a replace and resolves to
+`0o644` for a create. Executable output must request its concrete mode, normally
+`0o755`. Every snapshot/read precondition, stored/live/guarded/prepared/actual
+file image and receipt therefore carries a concrete `FileMode`. Preparation
+resolves the policy once; the executor sets and verifies the exact bits, so
+results are independent of process umask.
 
-1. **One role stereotype per module.** `model` and `recipes` are information
-   holders and service providers; `apply` is the only interfacer. A renderer
-   that reads a file has taken a second role and is wrong.
-2. **`plan` may not touch the filesystem.** Enforceable by the type: `plan`
-   takes `&Project` and returns `Result<Change>`, and `Project` is the *only*
-   window onto disk.
+The first schema-1-to-2 transition is an explicit protocol bridge, not an
+ordinary project edit. `OperationSemanticsV1::Apply` carries
+`Option<LegacyMigrationIdentity>` whose immutable snapshot names every closed
+legacy source as absent or as an exact object/mode, both legacy directory
+listings, and the complete purely translated `LedgerV2Draft`. Preparation and
+durable validation rerun the same legacy translation over those objects and
+require byte-for-value equality with the draft; they do not attempt to parse a
+schema-1 `ledger_before` as schema 2.
 
-plan.md §6.5 proposes splitting `spring.rs` by subject (capability / workflow /
-durable / http). That is a better file list and still the wrong axis: it keeps
-rendering, decisions and I/O interleaved inside each new file. **Split by phase
-first, subject second** — `recipes/kinds/usecase.rs` is then genuinely small,
-because its Java lives in `templates/` and its I/O lives in `apply/`.
+Only that validated migration may use
+`OperationTarget::LegacyMachine`, and only for exact `Delete` operations with
+empty contributors covering every present non-ledger legacy source. The
+schema-1 ledger path is consumed solely by the guarded ledger transition;
+legacy targets are never creates, replacements, renderer outputs, semantic
+resources, conflict paths or directory operations. File receipts and reports
+use the same `OperationTarget` distinction. Every legacy source and directory
+is a read/commit guard. Once schema 2 exists, all old static files must remain
+absent and legacy directories must be absent or present-empty; reintroduced
+children fail closed.
 
----
+`RecoveryOutcome` is a sorted in-memory report of structural changes made by
+one recovery call and nonterminal effects that were reported but not executed.
+`EffectStateChanged` records both allowed structural effect transitions:
+obsolete logical guards become `Superseded`, and an orphaned
+`Running { attempt >= 2 }` becomes `Failed { code: InterruptedTwice, .. }`.
+Every `Running` state is reported; this value is not a durable protocol record.
+`RecoveredPriorTransaction(outcome)` tells the outer driver to reload and
+replan once; it is not the requested operation's success. The typed error enums
+are the only execution-to-command-result boundary: stale input, lock
+contention, blocked/corrupt recovery and pre-activation I/O are not collapsed
+into an ambiguous string or a partial receipt.
 
-## 7. Ladder — each rung ships green, none is a big bang
+Once the ledger commit point is crossed, `commit` returns one of the two
+success-side committed variants, never `CommitError`. `CommittedResult` carries
+the last checksum-validated receipt plus exactly one v1 effect outcome after
+structural completion; `CommittedRecoveryRequired` carries the known committed
+identity/outcome when structural work remains. In `CommittedResult`,
+`DeferredError` means a post-commit guard, corruption or
+receipt-I/O problem prevented recording a trustworthy terminal effect state;
+the returned receipt is explicitly the last validated projection. It is never
+misreported as a pre-commit `CommitError`, and recovery/retry owns the next
+step. V1 permits at most one aggregate executable effect.
 
-The golden suite (38 scenarios, 457 files, `tests/agreement.rs` both ways) is
-the oracle. **No rung may change a golden byte.** That suite is what makes this a
-mechanical exercise instead of a gamble; it should be spent, not admired.
+`CommittedRecoveryRequired` covers failed structural work after the ledger
+commit point: Complete-journal persistence, receipt publication, or older-
+receipt reconciliation before an external effect may start. The known
+operation, transaction and apply outcome are success-side facts, so it is never
+`CommitError`. `receipt = Some` is legal only after that exact linked pair was
+reread and checksum-validated; otherwise no receipt is fabricated. The journal
+and objects remain for recovery, the typed stage and I/O/blocked/corrupt reason
+are reported as a newly committed project, and the driver neither replans nor
+starts an effect in that invocation.
 
-**Status, measured by `tests/architecture.rs` (`cargo test --test architecture
--- --nocapture --test-threads=1` prints the board):** rung 1's `Layers` half is
-**closed** — no `spring.rs` function takes more than five parameters, against 27
-before; its `Project` half is in flight at 148 `root: &Path` against a target of
-40. Rung 2 is **closed** — one `Change`, one `Artifact`, zero ad-hoc
-`(path, body, label)` tuples, zero aliases. Rung 3's flag half is **closed** —
-`--dry-run` is a `visible_alias` of the one global `--pretend` rather than five
-per-command booleans OR'd at dispatch, and it consequently works on every
-command now rather than the four that declared it. Rung 10 is **closed** — all
-39 inline Java bodies are `templates/spring/*.java`, extracted in one pass with
-every one of the 457 golden files byte-identical. Rung 7's **schema half** is
-closed (§4.4); its typed-`Ref` half is not. Rung 11's file split is **closed** — `src/spring/{workflow,durable,http,schema}.rs`
-took `spring.rs` from 6,624 to ~1,900 lines, and `json_string` is rescued into
-`src/json.rs`, ending `project.rs`'s coincidental cohesion. A new gate watches
-the *largest* module, because a split that relocates a monolith satisfies the
-old one; it immediately named `generate.rs`, which §3.2 already calls the
-temporal-decomposition anti-pattern. Rung 6 is **closed** — `src/apply/`
-is the only module that writes, `fs::write` appears nowhere else, and giving
-`create` real meaning surfaced a latent double-write of `package-info.java`
-that a silent overwrite had been hiding.
+Mutation JSON emits exactly one `CommandEnvelope`, and that envelope has
+`recovery: Vec<RecoveryOutcome>`. A `RecoveredPriorTransaction(outcome)` is
+appended in invocation order before the one allowed reload/replan; the fresh
+attempt occupies the ordinary status/report/receipt/error fields. Outcomes are
+never merged or dropped, and an earlier `pending_effects` snapshot is not
+reinterpreted as final state. Implicit observationally clean recovery may be
+omitted, while an explicitly requested recovery retains even an empty outcome.
+Human output prints the same recovery entries before the requested result. If
+authoritative recovery changes state again after the one replan, the command
+returns `RecoveryBlocked` rather than looping and retains the first outcome in
+the envelope. `plan.md` owns the exact public JSON field shapes, enum tags and
+canonical encoding; this abstract fixes only the one-envelope/result semantics
+and must not become a second wire specification.
 
-| # | Rung | Named refactoring | Removes | Cost |
-|---|---|---|---|---|
-| ✅ 1 | Adopt `Project` + `Layers`; thread instead of `root` | Introduce Parameter Object | 188 `root: &Path`; the 8–11-param clump; ~120 re-reads | 2–3 d, mechanical (`Project::root()` keeps old sites alive mid-move) |
-| 2 | One `Change`; delete `Artifact`/`NewFile`/`SpringSlice`/tuple | Extract Class | 4 shapes → 1 | 1 d |
-| 3 | One `apply`/`revert`/`describe`; `Change` monoid | Command with undo | `add`'s dry-run branch; `remove`'s longhand; `dry_run\|\|pretend`; **plan.md §11's ChangeSet** | 1–2 d |
-| ✅ 4 | `artifacts_for` is the query; `generate` is the modifier | Separate Query from Modifier | the reason `KIND_FILES` existed | 1 d |
-| ✅ 5 | `destroy` recomputes from `artifacts_for`; **`KIND_FILES` deleted** (−1,017 lines) | — | plan.md §6.1 copy 2 | 0.5 d, free after 4 |
-| 6 | `Edit` + `apply/codemod.rs` | Replace Conditional with Polymorphism | splices across 5 modules; 29 production `fs::write` sites | 1 d |
-| 7 | Typed `Refs`; `on`/`yields` in `app.toml`, `strategy_on` deprecated alias | Replace Type Code with Subclasses | §4.4 | 1 d |
-| 8 | ✅ One `.jails/ledger.toml`; identity = (recipe,name,package) | Entity vs Value Object | 5 machine-owned state files → 1; **§9.7 fixed structurally** | 1–2 d |
-| 9 | `doctor` derives capability checks from `plan` | Move Method | ~600 lines of re-encoded facts; a whole unchecked drift class | 2 d |
-| 10 | Templates out of `spring.rs` (39 inline bodies, 221 `{{`) | Extract Class | plan.md §6.2 C, now trivial | ongoing |
-| ✅ 11 | Split `src/` by secret (§6.4); rescue `json_string` | Move Module | coincidental cohesion in `project.rs` | 1 d, last on purpose |
+`PreparedIdentityV1.object_manifest` is the exact, sorted result of one shared
+`prepared_object_closure` traversal. Its roots are every `ObjectRef` reachable
+from operations, ledger images, operation identity, preconditions, provenance,
+conflict semantics and effect descriptors; traversal follows only declared
+typed protocol references until raw byte objects. Every manifest member must
+resolve through `PreparedChange.objects`, and extras are invalid. The durable
+validator runs the same closure helper before trusting a journal or receipt.
+Once R5 writing is active, every object reachable from a prospective ledger—
+including bases, templates and render contexts—is promoted and synced in the
+global content-addressed store before that ledger commits; a new ledger may
+never depend only on a transaction/receipt-local copy. Earlier dark-R4 receipts
+remain readable through the exact guarded source fallback above until a later
+successful R5 commit promotes their reachable objects. This is a delivery
+bridge, not a second authority or inline-base alternative. An absent ledger is
+not the hash of invented empty bytes.
 
-Rungs 1–5 are ~6 days and remove the documented bug class. Rung 9 is where the
-compounding shows: it is cheap **only because** 1–5 happened. Rung 11 is last
-because moving files before the types are right just relocates the mess.
+Every R5 GC cycle begins with an all-or-nothing promotion prepass over the full
+object closure of **every retained receipt**, including dark-R4 objects used
+only as file preimages or audit history and never referenced by the ledger. A
+receipt-local copy becomes prunable only after its global copy is synced and
+hash-verified. If any promotion fails, the cycle reports the failure and
+deletes no local or global object; a later cycle retries the entire prepass.
 
-**Where I disagree with plan.md's sequence.** The structural work sits near the
-back of plan.md's §17 queue, and each item is priced as if the others had not
-happened — §6.2 F (descriptors) is a week partly because there is
-no `Change` for a descriptor to describe; §22 (`codemod.rs`, atomic `ChangeSet`)
-is L partly because there is no interpreter to target. Rungs 1–5 re-price 11, 16
-and 22 downward.
+A published receipt directory permanently contains both the immutable Complete
+`journal.bin` and `receipt.bin`. The receipt checksum covers its
+`complete_journal_checksum`, which must equal the sibling journal's record
+checksum; transaction, generation and prepared identity must be byte-identical
+in both records. Loading and recovery accept neither file alone. Retention is a
+deterministic v1 dependency graph: root the latest 32 valid committed receipts
+in each `PreparedKind` discriminant bucket (`Apply`, `Conflict`, `Finalise`,
+`Abort`), the unique pending-origin receipt selected by full immutable
+structural match, and every receipt with an executable `Deferred`, `Pending`,
+`Running` or `Failed` effect. “Latest” sorts by generation and transaction ID,
+never mtime; terminal `Succeeded`/`Superseded` effects add no root.
+`last_operation` is not a transaction locator, and v1 has no administrative
+pin API. Recursively retain every origin of a retained finalise/abort receipt;
+a missing dependency is corruption. Only after that closure may receipts and
+their now-unreachable objects be swept.
 
-They do **not** re-price the authorship debt (`g field` and its neighbours),
-which is orthogonal and was genuinely more urgent. **If only one track can run,
-run that one** — it is the user-visible one, and this document is worth nothing
-next to a tool that makes a model change cheap.
+Directory creation, modes, contributors, effect state and exact before/after
+images remain visible in reports and receipts. The storage protocol exists to
+make interrupted transitions recoverable; it is not an incidental cache.
 
-**That track has since run.** `g field`, `g factory`, `--timestamps` and
-`requests/*.http` shipped in `b8e9be1`..`38c3dc6`, so the argument for deferring
-this document no longer holds: the queue in front of it is now maintainability,
-latency and reach. This ladder is the live sequence, and plan.md §6.4 defers to
-it rather than competing.
+Every user-originated prepared change has
+`operation_identity.invocation = Some(InvocationFingerprint)`;
+recovery-only internal maintenance may use `None` only when it has no external
+effect. Preparation first renders everything that cannot contain an operation
+ID, determines the exact tools it will use, and records typed argv templates.
+The sole placeholder form is `OperationLabel`; arbitrary string substitution
+is forbidden. `OperationId` then hashes the typed request, snapshot, proposed
+next ledger generation, semantic plan, tool identities and those templates.
+Only afterward may preparation substitute the ID into a marker label or tool
+argument. The full expanded argv hashes live in
+`PreparationContextFingerprint`, which contributes to `TransactionId`, not
+back to `OperationId`. No selected tool or argv template may change after the
+operation ID is computed.
 
-**On §6.2 F.** After rungs 1–8, one descriptor per kind stops being a new
-architecture and becomes a serialisation of `Recipe` + `Change`. Do it then or
-not at all — doing it first would freeze today's shape into a file format.
+Ordinary apply and conflict include the closed `PlannedSubject` and
+`LedgerIntent`; finalisation instead includes the complete frozen pending state
+plus resolution images; abort includes the origin receipt identity plus guarded
+restore targets. Each is a new operation. Ledger attribution and conflict
+labels may embed it. Once every after-byte is exact, `TransactionId` hashes the
+immutable prepared identity, including its complete object manifest; no
+after-byte embeds that transaction ID. The exact identity is embedded in both
+journal and receipt, while their mutable execution state has a separate record
+checksum. `AppliedReceipt` is a derived API/report projection, not a second
+durable authority. `ReceiptV1` never crosses the storage boundary as a command
+result. `Report` is derived from `PreparedChange`, never stored beside it.
+Absolute external paths and root identities live only in `CommitContext`;
+durable preconditions contain opaque input IDs and hashes. `project_root` is
+the loader's exact canonical-root device/inode. Commit compares it before
+activation and writes it into the journal; recovery requires the live root,
+runtime binding and journal identity to agree before trusting any path.
+`ApplyOutcome` records only `Applied`, `Conflicted`, `Finalised`, or `Aborted`;
+no-op has no receipt, and external effect failure remains orthogonal in effect
+state and command status.
 
----
+## 4. Planning and preparation
 
-## 8. The strongest argument against this document
+Planning says what the project should contain. Preparation proves that answer can become exact guarded
+operations.
 
-Sandi Metz: *"Duplication is far cheaper than the wrong abstraction."* This
-codebase has been through several hands, and the natural failure mode of a
-document like this one is to propose the sixth wrong abstraction with more
-confidence than the five before it. Three answers, in descending strength:
+The planner consumes only a snapshot and `ResolvedMutation`. For a reconciliation
+it resolves references and stable order, combines owner-local semantic
+contributions, derives desired absence and presence, and advances the projected
+view. For a one-shot or maintenance subject it applies that subject's closed
+rule. For pending continue/abort it validates the pinned conflict and receipt;
+after the pending gate, exactly one same-invocation `Deferred`, `Pending`,
+first-attempt `Running`, or `Failed` effect emits only `RetryEffect`. A
+different invocation never resurrects old external work and may instead commit
+new logical state that supersedes it. Planning performs no live reads, writes,
+printing, subprocesses or incidental policy. Commit plans carry semantic
+`LedgerIntent`, not final ledger bytes. Preparation renders each deferred
+template exactly once and is the sole owner of exact output/provenance and
+ledger postimages.
 
-1. **The unification is not a guess; it is already proven by tests.**
-   `tests/agreement.rs` demonstrates that `generate` and `destroy` agree on
-   every kind, in both directions, today. A test that passes over duplicated
-   logic is evidence that the logic is genuinely one thing. This is the opposite
-   of the speculative case Metz warns about — the abstraction is being *observed*
-   and then named, not invented and then imposed.
-2. **Every rung is byte-checkable and independently revertible.** The golden
-   suite says whether a rung changed behaviour, immediately.
-3. **Each rung has a falsifiable gate.** If it does not hit its number, revert
-   it — the rung was wrong, and finding that out costs a day.
+Before the first project write, preparation performs every foreseeable fallible operation:
 
-| Rung | Gate — revert if not met |
+- render templates and package metadata;
+- parse and splice POM, compose, properties, config, and source blocks;
+- format generated or modified sources in scratch space;
+- construct three-way merges and conflict markers;
+- check confinement, collisions, ownership, case sensitivity, hashes, and ledger version;
+- materialise the complete bytes of every create and replacement.
+
+Prepared-kind validity is semantic, not merely structural. `Apply` has apply
+semantics and no pending conflict before or after. `Conflict` has apply
+semantics, preserves every successful top-level ledger table, and adds exactly
+one pending candidate whose desired-present paths and semantic
+`effect_intents` equal the prepared kind. Its prepared/receipt executable
+effect vector is empty. `Finalise` requires that exact pending candidate and
+its pinned conflict receipt, performs no file operation, promotes the entire
+candidate with resolved current images, and materialises new executable effect
+descriptors from the frozen intents and exact resolutions. `Abort` requires the
+same origin, restores exactly every origin file preimage through guarded
+forward operations, preserves the successful logical tables while clearing
+pending state, and discards the intents without an effect descriptor.
+Preparation, durable decode, commit and recovery all enforce this closed
+matrix.
+
+There is deliberately no lazy `Body::Computed(fn ...)` in a prepared operation. Lazy bodies defer failure
+into commit, weaken exact preview, and make purity unenforceable. Eager `Artifact.contents` is the correct
+existing direction.
+
+`--pretend` follows the same `PlannedTransition` as execution. A `CommitPlan`
+prepares and describes the same `PreparedBundle.change` as apply; an
+`EffectRetryPlan` describes that exact retry directly. It has no separate
+hand-written branch, performs no migration or legacy deletion, changes no
+receipt state, and runs no post-commit effect. Its only uncertainty is a later
+staleness check at commit/resume.
+
+## 5. Execution and failure semantics
+
+No portable filesystem provides a transaction across several files. jails promises a **recoverable commit**,
+not instantaneous multi-file atomicity:
+
+1. Acquire the project mutation lock.
+2. Recover or refuse an earlier incomplete transaction.
+3. Non-blockingly acquire the persistent effect lock before activation; every
+   project commit is fenced from crossing its commit protocol while an external
+   effect is running.
+4. Recheck snapshot, runtime external bindings, ledger, absence conditions, and expected hashes. A prepared
+   no-op performs these checks before it may return `NoOp`.
+5. Durably persist and validate the complete journal, after-images, and required preimages before the first
+   project mutation. Unvalidated staging is not an active transaction and can never precede a project write.
+6. Apply deterministic operations through the mutation executor.
+7. Persist the new ledger as the commit point.
+8. Persist the Complete journal and linked receipt, validate the pair, then
+   atomically publish the intact transaction directory as a receipt.
+9. Reconcile older receipt effect guards against the now-current ledger and
+   durably record any supersession. No external effect starts until journal
+   completion, receipt publication and this structural reconciliation all
+   succeed.
+10. For a clean transition or conflict finalisation, attempt only its newly
+   recorded idempotent post-commit effects and report them separately. A newly
+   conflicted transition records semantic intents but no executable effect.
+
+Recovery validates the canonical root, journal encoding and exact prepared identity, every referenced
+object and the single-active-transaction invariant before trusting any operation. It then classifies the
+ledger first and all affected live paths before making another project mutation. The durable phase matrix
+is closed:
+
+- `Prepared` plus every exact before-state is unactivated staging and is abandoned; `Prepared` plus **any**
+  difference—including an exact after-image—blocks and is never promoted.
+- `Active` plus `ledger_before` and only exact before/after path states rolls forward idempotently.
+- `Active`, `LedgerCommitted`, or `Complete` plus `ledger_after` completes receipt/cleanup only; it does not
+  rewrite project postimages.
+- `LedgerCommitted`/`Complete` plus `ledger_before`, any ledger matching neither image, any unreadable image,
+  or any path matching neither permitted state blocks without another project write.
+
+Multiple active transactions or a corrupt journal/object likewise block without choosing an order or guessing.
+
+Once the ledger records the transaction, recovery never rewrites project
+postimages: it treats the journal as incomplete-transaction authority, completes
+the durable Complete-journal/receipt pair and cleanup. Recovery is structural:
+it never starts a subprocess. It may validate effect guards and atomically mark
+an obsolete effect `Superseded`. While holding the project lock it must acquire
+`effects.lock` non-blockingly before any receipt-state CAS; with that lock, an
+orphaned `Running { attempt >= 2 }` becomes `Failed { code:
+InterruptedTwice, .. }`, and no third automatic attempt exists. If the effect
+lock is busy, recovery leaves the receipt untouched and reports its current
+state. It reports every nonterminal state, including every `Running`. Only
+`plan_all` for the same invocation may construct an `EffectRetryPlan`, and only
+`resume_effect` executes it. A still-running attempt at least 2 means recovery
+could not obtain the effect lock, blocks ordinary planning with `EffectBusy`,
+and is never a subprocess plan. The ledger remains current logical authority; the
+receipt is immutable prepared-history authority plus the one mutable
+effect-state machine; objects supply only referenced bytes. Conflict receipts
+have no executable effects, so structural recovery has no origin effect state
+to rewrite. The persistent effect lock prevents duplicate
+execution while the project lock is released around a long external call and
+also fences every project commit as described above.
+Repeating recovery is safe. Preimages support a new guarded conflict-abort transaction and audit;
+default crash recovery never rolls a validated transaction back. A conflicted journal rolls forward to its prepared marker
+files and `PendingConflict` state—it does not silently abort or finalise the conflict. Mutating commands run
+recovery under the project lock; read-only and pretend commands report incomplete or blocked recovery state
+without changing it.
+
+The executor owns create, replace, delete, rename, copy, directory creation, permissions, and approved
+mutating subprocesses. Create materialises a distinct synced publication inode and exposes it with an
+absence-enforcing hard link; it never hard-links a mutable live file to an immutable receipt/object inode.
+Replace and delete require prepared object identity. Read-only I/O need not be centralised there. Created
+directories are monotonic structural shells and may remain empty after abort; automatic directory deletion
+is deliberately outside this contract.
+
+Formatters run on staged content and their bytes enter `FileOp`. Source registration is a semantic edit, not
+a post-commit effect. Starting a service is a post-commit effect: it cannot join the filesystem transaction,
+and its failure does not pretend committed files rolled back.
+
+The only aggregate runtime descriptor is `ComposeReconcile`. It is emitted at
+most once, only when `no_start == false` and either the complete managed
+service map or committed compose output changes; owner-only/no-op transitions
+emit none. A clean executable descriptor freezes the exact committed compose
+pre/post documents, the complete prior and desired managed-service maps, and
+the exact formerly managed names to stop.
+`stop_services` is prior managed names minus *all* service names present in the
+committed postimage, so a former managed name retained by the user as unmanaged
+is not stopped. Execution
+uses those immutable object bytes—never a fresh live compose document—as the
+explicit `--file`, stops/removes only frozen removed names, then starts the
+complete frozen desired managed set. It never invokes `down` or
+`--remove-orphans`. Clean preparation derives the stop set from the committed
+postimage; conflict preparation cannot do so and freezes only the exact
+preimage plus semantic intent, with no executable descriptor. Finalisation
+derives the postimage/stop set from the marker-free resolution. Clean
+preparation and finalisation both require every stopped name to occur in the
+frozen preimage. If this subset check fails during a pending conflict, the user
+must abort and rerun the original command with `--no-start`; changing the flag
+cannot mutate the frozen invocation. The executor never substitutes the
+generated base or defers a predictable Docker failure, and durable decoding
+repeats the invariant. Immediately before an attempt, the current ledger service
+map and managed output must still match the descriptor; a later committed
+transition makes it `Superseded`, while unrecorded live drift is typed
+`EffectRunError::StaleInput`. Automatic and explicit compose mutation both use
+the same effect lock and explicit project-root/process-input contract.
+
+The external-call handoff releases the project lock but retains `effects.lock`.
+After the subprocess returns, the runner reacquires the project lock
+**blocking** while still holding the effect lock; competing mutators can hold
+the project lock only until their nonblocking effect-lock attempt fails, so
+this is the protocol's sole safe blocking lock acquisition. The runner rereads
+the same receipt first. A checksum/generation/descriptor/expected-state
+mismatch, or a changed project-root identity, causes no receipt rewrite and
+returns typed corruption using the pre-call last-validated receipt projection.
+Only the exact expected receipt under the exact root may revalidate ledger/live
+guards. A guard mismatch at that point is out-of-protocol: compare-and-swap the
+expected `Running` state to `Failed { code: Protocol, .. }`, report corruption,
+and never bless the subprocess as success. Failure to persist and reread the
+terminal state preserves the last validated projection and returns the typed
+receipt-I/O channel; the runner never guesses whether a temporary rename won.
+
+| Failure | Required meaning |
 |---|---|
-| ✅ 1 | **Met, by the gate that measures the disease**: nought undeclared root-taking readers of the pom (`A_FRESH_READ_IS_CORRECT` names the four where a fresh read is correct, with reasons), and no `spring.rs` fn over 5 params. The raw `root: &Path` count is 139 against the original "under 40" — see §8.0 for why that target was set against a measurement that counts containment as disease |
-| ✅ 2 | exactly one struct in `src/` with a `contents`/`body` field |
-| ✅ 3 | `add.rs` loses its `if dry_run` branch; zero `dry_run \|\| pretend` |
-| ✅ 4–5 | `KIND_FILES` and `NO_FILE_TABLE` deleted; `tests/agreement.rs` still green |
-| ✅ 6 | zero `fs::write` outside `src/apply/` |
-| 8 | ✅ **met.** `.jails/` holds 2 files (`the_goldens_still_hold_the_properties_that_matter`); an edited `fields` line round-trips (`app_manifest_merges_an_edited_intent_over_user_changes`) |
-| 9 | ✅ **additive half met** (`capability_drift_checks`); the subtractive half's 700 is **withdrawn** — §8.0.1 audits all ten checks and none is a re-encoded fact. The gate stays a ratchet against growth |
-| ✅ 10–11 | **Met.** No inline Java body left in `spring.rs`, and the largest production module is **688 lines** against the 700 target — down from 2,379. Fourteen splits, each by secret: `generate/{recipes,write,scaffold,remove,closed}`, `spring/{dto,messaging,security,transition,query,outbox,sse,auth,webhook}`, `app/{manifest,reconcile}`, `doctor/{environment,wiring}`, `add/{shrink,test_wiring}`, `run/filter` |
+| Plan or prepare error | Project and machine state unchanged |
+| Stale/refused commit attempt | No managed project leaf, human declaration, ledger, transaction, receipt, migration or content object is created or altered; executor-owned `.jails` coordination shells, fixed machine directories, persistent lock files and diagnostic lock contents may have been bootstrapped |
+| Interrupted commit | Apply the complete phase/ledger/live-image matrix above: discard only `Prepared`/all-before staging; roll forward only eligible `Active` state; finish only after-ledger state; block every unreadable, unknown, neither-ledger or forbidden phase combination |
+| Post-commit effect error after receipt publication | Last checksum-validated receipt identifies committed files and the terminal or deferred effect state |
+| Post-ledger structural error | `CommittedRecoveryRequired` identifies the committed operation/transaction/outcome and exact unfinished stage; a receipt is present only after exact pair validation, and the journal/objects remain for structural recovery |
+| Merge conflict | Journal-committed marker files plus explicit pending state; not an error after unrecorded mutation |
 
-Metz's rule is about *speculative* abstraction. Where a gate is missed, her rule
-wins and the rung goes back.
+The coordination-shell exception applies only after an executor commit/resume
+attempt. Loading, planning, preparation, pretend and read-only inspection
+create none of that machine state. Tests assert these two promises separately;
+“stale input” does not falsely promise that acquiring a persistent lock left no
+filesystem trace.
 
-### 8.0 What the rung-1 gate was measuring, and what it measures now
+A `PreparedKind::Conflict` is not a failed preparation. It contains the
+marker-file operations and a `ledger_after` that preserves every successful
+top-level table—`applied`, `one_shots`, `resources`, `outputs`, and `legacy`—
+byte-for-value while adding `PendingConflict`. The complete prospective state
+lives only in its candidate. It follows the same journal protocol through the
+ledger commit point, returns `ApplyOutcome::Conflicted`, and does not run its
+semantic effect intents; its executable effect vector is empty.
 
-The `root: &Path` count is a proxy, and by now a leaky one: `build.rs` asks
-what builds a directory, `ledger.rs` and `launcher.rs` read files under one,
-`apply/` writes them. Their subject *is* a path, so every honest new module
-pushed the number up and made a target of 40 read as a demand to stop writing
-modules. Two corrections, both from looking at the code rather than the number:
+The ledger permits at most one project-wide pending conflict. While it exists, every ordinary mutation
+refuses; only read-only inspection, finalisation, and guarded abort are allowed. The frozen transaction does
+not regenerate, re-merge, accept a changed manifest, or overwrite a recorded path. While any path fails its
+recorded desired-present rule, still equals its marker image, or still contains
+its recorded conflict-marker form, finalisation refuses without mutation and
+reports every unresolved path. Every conflict path has nonoptional prior and
+desired bases and must exist marker-free; format 1 has no desired-absent
+delete/modify marker protocol.
 
-- **`module_root: &Path` and `workspace_root: &Path` were being counted**, so
-  `project.rs` — which walks a Maven reactor and *must* read each pom on the
-  way — looked like the disease. Fixing the word boundary took the raw count
-  from 149 to 141. That is the third measurement bug this gate has had, after
-  the trailing comma and the `let` binding, and the pattern is worth stating:
-  **a substring is not a token.**
-- **A second gate now measures the disease itself**: a function handed
-  `root: &Path` that goes back to disk for a fact the resolved `Project` is
-  already holding. Six when first measured; then five (`project_release` and
-  `planned_package_infos` ask the `Project`); then four, once the measurement
-  looked at the *argument* rather than the body — `reconcile_intent` loads a
-  `Project` for each of two **scratch copies** of the tree, which is the
-  opposite of envy, since there is no resolved project for those roots.
+Once every recorded path is marker-free, every
+`frozen_nonconflict_postimage` still equals its recorded exact image, and the pinned origin receipt still
+has the expected checksum, an empty executable-effect vector and matching
+semantic intents, rerun performs a journaled
+**finalisation**, not another apply. It hashes the user's resolutions and promotes the complete frozen
+`PendingLedgerState`—entities, one-shots, the global resources/outputs, and legacy rows—while constructing
+resolved output-current images, retaining the prepared desired bases for future three-way merges, and
+removing `PendingConflict`. For every resolved shared-format path it also parses
+the frozen format and proves that each candidate-owned semantic slot occurs
+exactly once with no collision; values may be user-resolved deltas, but slots
+may not be deleted or duplicated while the candidate claims them. Promotion and
+pending-state removal occur in the same ledger commit. Finalisation then
+materialises new executable descriptors from the semantic intents and exact
+resolved postimages; it never copies an origin effect. That invocation does not
+also plan a changed manifest; a later invocation starts from the newly
+finalised snapshot.
 
-  The last four do not want fixing, and that is the finding rather than an
-  excuse. Each reads the pom because the resolved answer is **stale or
-  absent**: `project_at`'s own Javadoc forbids caching, because `app apply`
-  splices the pom between steps; `ensure_dependency` and
-  `ensure_console_launcher` splice *into* it, so they must hold current bytes;
-  `ensure_package_info` is reached from `write_new_file`, whose callers include
-  `new`, which is creating the pom being asked about.
+Aborting validates that same pinned conflict receipt and prepares a new
+`PreparedKind::Abort { origin }` transition. It requires every affected
+path—including clean postimages committed beside marker files—to equal its exact recorded transaction
+postimage. Its forward operations restore file preimages and clear pending state while incrementing ledger
+generation; the old receipt's prepared identity and file result remain
+immutable history. Abort clears the pending semantic intents, while
+finalisation derives a fresh effect only in its own receipt. If any path was edited,
+abort refuses rather than discarding resolution or later user work.
 
-  So the gate counts **undeclared** ones, and `A_FRESH_READ_IS_CORRECT` names
-  the four with their reasons. The test fails in both directions — an
-  undeclared reader, and a declared name no longer found. That is the shape
-  `SILENT_WITHOUT_A_RECORD` and `ALLOWED_LEFTOVER` already use here, and it
-  turns a number nobody can reach into a decision nobody can make silently.
+## 6. Ledger and provenance
 
-**Rung 1 is met by that gate.** The raw count stays as a ratchet, because a
-module that hoards paths is still worth noticing, but its target of 40 was set
-against a measurement that counted `module_root` and every path-subject module,
-and it should not be read as the rung's condition.
+The ledger is a strict, versioned record of machine knowledge, not another intent manifest. Its schema
+version is separate from jails and renderer versions. Loading is strict:
 
-### 8.0.1 Rung 9's subtractive target, audited
+- absent means a new empty ledger;
+- unreadable, corrupt, or unsupported-newer means an actionable error;
+- an older supported schema parses without mutation;
+- migration commits only with a mutating command or an explicit migration.
 
-The ladder priced rung 9 at "~600 lines of re-encoded facts" and set the gate
-at `doctor.rs` under 700. The additive half landed —
-`capability_drift_checks` re-plans every recorded capability through
-`add::plan_for` and reports the delta, which is a drift class nothing caught
-before. The subtractive half then stalled at 1,340, and the reason turns out
-not to be reluctance. **Every check in the module was read, one at a time:**
+Conflict state is separate from successfully applied state:
 
-| Check | What it reports | Derivable from `plan_for`? |
-|---|---|---|
-| `database_checks` | compose service, migration dir and properties agreeing | no — three sources, cross-checked |
-| `test_container_wiring` | whether `@SpringBootTest` classes carry the `@Import` | no — reads test *sources* |
-| `in_memory_adapter_check` | two `@Repository` beans qualifying for one injection point | no — a property of generated code |
-| `jackson_check` | two Jackson **majors** on one classpath | no — an interaction; each alone is fine |
-| `management_checks` | the exposure list two capabilities both own | no — an interaction; last-wins is the bug |
-| `cors_checks` | `@EnableWebMvc` taking over, `/**` without origins | no — source-level misuse |
-| `kafka_check` | client dependency **and** broker service | no — pom against compose |
-| `virtual_thread_checks` | defaults `new` writes, not a capability | no — nothing plans them |
-| `testcontainers_check` | whether a container engine exists to find | no — the machine |
-| `container_reuse_check` | `~/.testcontainers.properties` | no — the machine |
+```rust
+struct PendingConflict {
+    operation: OperationId,
+    generation: u64,
+    invocation: InvocationFingerprint,
+    resume_display: String,
+    desired_inputs: Vec<FrozenDesiredInput>,
+    candidate: PendingLedgerState,
+    paths: Vec<PendingConflictPath>,
+    frozen_nonconflict_postimages: Vec<FrozenPath>,
+    effect_intents: Vec<DeferredEffectIntent>,
+}
 
-**Nothing in it is a re-encoded dependency fact.** The two that were misfiled
-have moved to `doctor/environment.rs`, where asking the machine belongs.
+struct PendingLedgerState {
+    applied: Vec<AppliedEntity>,
+    one_shots: Vec<OneShotReceipt>,
+    resources: Vec<ResourceRecord>,
+    outputs: Vec<PendingOutput>,
+    legacy: Vec<LegacyEntry>,
+}
 
-So the 700 is measuring a saving that is not there, and §6.2 predicted exactly
-this in its own words: what survives derivation is "the checks that probe the
-environment". Deleting any row above to reach a number would trade a coverage
-class for a smaller integer, which is the trade this document exists to argue
-against. Rung 9's honest status is **additive half done, subtractive half not
-applicable**, and the gate stays as a ratchet against *growth* rather than a
-target to reach.
+struct LiveFileImage {
+    sha256: ObjectId,
+    len: u64,
+    mode: FileMode,
+}
 
-### 8.1 Rung 1 is in flight, and its gate is moving the wrong way
+struct StoredFileImage {
+    object: ObjectRef,
+    mode: FileMode,
+}
 
-Recorded 2026-08-22, after `7e92586` ("Unify project and change planning")
-landed `src/model/mod.rs` — `Project`, `Layers`, `Layer`, `Change`, `Artifact`,
-410 lines of exactly the right types. By the same grep this document used:
+struct PendingOutput {
+    path: ProjectPath,
+    contributors: BTreeSet<ResourceOwner>,
+    current: PendingCurrent,
+    base: StoredFileImage,
+    renderer: RendererStamp,
+}
 
-| | `ae63145` | `38c3dc6` | `7e92586` | worktree | now |
-|---|---|---|---|---|---|
-| `root: &Path` | 161 | 190 | 191 | **195** | **148** |
+enum PendingCurrent {
+    Exact(LiveFileImage),
+    ResolveFromLive,
+}
 
-The gate is *188 → under 40*, and `spring.rs` had 27 functions over five
-parameters (see the correction below); it now has **none**. The types were added **beside** the primitive rather than instead of
-it. Mid-rung that is exactly what a two-to-three-day mechanical refactor looks
-like on day one, and `Project::root()` keeping old sites alive is the stated
-plan — **so this is not yet a missed gate.** It is a missed *measurement*: the
-number rose 21% across four commits and nothing said so.
+struct PendingConflictPath {
+    path: ProjectPath,
+    prior_base: StoredFileImage,
+    desired_base: StoredFileImage,
+    marker_image: StoredFileImage,
+    markers: MarkerTokens,
+    hunk_count: u32,
+}
+```
 
-**The fix is the one this repo has already proved twice: make the gate a
-ratchet, not a table.** `tests/genericity.rs` moved the vocabulary problem after
-prose did not, and it moved it by putting a failure in the build. A
-`tests/architecture.rs` that fails when `root: &Path` rises above a recorded
-ceiling, and when any `spring.rs` function exceeds N parameters, is an
-afternoon, converts all eleven gates here into eleven ratchets, and makes a rung
-impossible to half-finish and forget. It is also §9's own rule — *"the edit
-count is the number to watch on every change"* — in the only form that gets
-watched.
+A conflicted commit leaves all five successful top-level tables unchanged. The
+pending record contains the complete candidate ledger state, including
+entities, one-shots, one global resource table and desired output bases. A
+pending output that needs human resolution has no invented current image;
+finalisation learns its hash, length and mode from the marker-free live file.
+Its path records and exact marker grammar make finalisation independent of the
+current renderer. Its invocation fingerprint excludes presentation text and,
+with frozen desired inputs, permits continue or abort only from the same
+canonical command and unchanged human inputs. Frozen clean postimages protect
+every file changed by the aggregate commit. Loading requires exactly one
+retained receipt whose operation/generation, prepared conflict paths,
+marker/clean postimages and candidate state structurally equal the pending
+record, whose executable effect vector is empty and whose semantic intents
+match. The resulting finalise/abort plan pins that receipt's
+transaction and record checksum; discovery by operation/generation alone is
+forbidden. This avoids embedding a self-referential transaction hash in ledger
+bytes. That receipt retains project preimages.
 
-**That test now exists**, and it bites in *both* directions: a number rising
-above its ceiling fails, and a number falling below it also fails, demanding the
-new value be recorded in the same change. An unrecorded improvement is the thing
-that let §8.1 happen, so it is treated as a defect rather than as a bonus.
-Raising a ceiling is permitted once per rise, with the reason written beside it
-— which is how the one honest regression so far (rung 1 trading parameter-list
-lines for named bindings) is on the record instead of invisible.
+The ledger has a monotonic generation and last `OperationId`. Applied entities
+record declaration owners and complete specs; one canonical top-level
+`ResourceRecord` exists per `ResourceKey`, and one canonical `OutputRecord`
+exists per project path. Resource/output contributor sets connect those global
+rows to entities and one-shots. They are never duplicated under each applied
+row. `LegacyEntry` uses a closed machine `LegacySourcePath`, never a
+project-mutation path that could target the current ledger. Explicit legacy
+spec presence distinguishes a legitimate zero-argument intent from a path-only
+legacy record; incomplete path-only rows remain `LegacyEntry` until explicit
+adoption. Applied rows do not have a competing
+conflict flag: the sole conflict authority is the optional project-wide
+`PendingConflict`, while all last-successful top-level tables remain unchanged.
 
-**Two of this document's own numbers were wrong, and the test is how that was
-found.** The parameter counts here — *"16 functions in `spring.rs` take 8–11
-parameters"*, *"38 functions over five parameters"*, *"the worst take nine"*
-(plan.md §21.1) — were all measured by counting commas and adding one, which
-overstates every wrapped signature by exactly one, because Rust permits a
-trailing comma and every multi-line signature here has one. The true starting
-count was 27, not 38. It is the worst shape of measurement error: consistent
-enough across the corpus to look right, and wrong in the same direction every
-time. `top_level_commas` counts non-empty segments now, with a unit test
-pinning both spellings.
+The authoritative old merge base is a content-addressed object beneath ledger
+ownership, never inline bytes and never output regenerated by the current
+binary. Every base/template/context object referenced by a committed ledger is
+synced and hash-verified before that ledger commit. Without an exact base, a
+renderer or relevant-context change causes safe refusal rather than a guessed merge.
 
-Second, the gates were being measured over test code as well as production
-code, which made a fixture writing a scratch `pom.xml` count as an `fs::write`
-to be eliminated and a test helper taking `root: &Path` count as the primitive
-being propagated. §3 already says line counts exclude `mod tests`; every gate
-means the same thing, and all of them now blank `#[cfg(test)]` bodies first.
-That correction alone moved `fs::write outside apply` from a reported 107 to a
-real 40.
+`RendererStamp.context_object` contains one canonical `RendererContextV1`,
+including the exact renderer and a closed subject:
 
-### 8.2 One open question — **answered: `jails.toml` stays out**
+```rust
+enum RenderedSubjectContext {
+    Entity { id: EntityId, spec: EntitySpec },
+    OneShot { id: OneShotId, spec: OneShotSpec },
+}
+```
 
-§6.3 folds `app-state-v1`, `intents/*`, `files`, `models`, `version` **and
-`jails.toml`'s capability list** into a single `.jails/ledger.toml`. Seven files
-to one is right for the six that are machine-owned. The seventh is not: plan.md
-§11.2 argues, from `openapi-generator`'s `FILES`, that a sorted,
-separator-normalised, one-path-per-line list earns its place precisely because
-it is **diffable and not derived** — and `jails.toml` is a file people edit by
-hand, which `CLAUDE.md` protects with byte-preserving splices for that reason.
-Merging hand-owned configuration with machine-owned state is the one move in
-§6 that trades a property away rather than removing duplication. Either keep
-`jails.toml` out of the ledger, or say why the trade is worth it.
+Recipe, capability and tool-feature renderers require the matching entity
+identity/spec; a one-shot renderer requires the matching field, migration or
+cases identity/spec; aggregate format renderers require no subject. The
+renderer ID, subject discriminants and repeated identity fields must agree.
+No renderer may omit its subject or smuggle that durable provenance through an
+untyped template-binding map.
 
-**Resolved: `jails.toml` stays out, and so does `.jails/app.toml`.** The line
-is not machine-owned versus hand-owned *state*; it is who is allowed to write
-the file. Both of those are files people edit, and `CLAUDE.md`'s rule that an
-edit must be surgical and leave every other byte alone only holds for a file
-jails does not rewrite wholesale. `ledger.toml` is rewritten wholesale on every
-recorded intent, sorted, because that is what makes it deterministic across
-machines — which is exactly the property a hand-edited file must not have. So
-the fold is five files to one, not seven, and the ledger carries a header
-saying which two files are the reader's.
+Migration preserves legacy input until the new ledger is durably committed.
+Ambiguous package, ownership or field information is never invented. Exact
+adoption selects one stable `LegacyKey` plus explicit manifest and intent. Plain
+adoption is legal only when current bytes and mode exactly match a freshly
+rendered candidate, so its `RendererStamp` is truthful; a mismatch requires the
+guarded `--replace --force` route. Separate spec/path rows are retired only by
+explicit key after the already-applied identity, spec, owner and output-path set
+are proven equal—never by a heuristic join. Lossless cases migrate and lossy
+cases stop with instructions. A read-only command never deletes legacy state. Production mutation dispatch switches from
+schema 1 to schema 2 atomically only after every mutator supports V2; command-
+by-command schema activation and dual write are both forbidden.
 
----
+The ledger commits after project file operations because it describes the committed project. The journal
+bridges the crash window; a second registry does not.
 
-## 9. The two rules to carry forward
+## 7. Reconciliation, removal, and conflict abort
 
-plan.md §6.3 already has the right rule for the output, and it is unchanged:
+App apply computes one desired graph. Manifest order is not dependency order; stable topological planning and
+the projected project make dependent intents deterministic.
+
+Reconciliation compares the exact recorded base, the user's current bytes, and newly prepared bytes. Clean
+replacement, disjoint edits, conflicts, creations, and deletions are explicit cases. Retaining the original
+base makes the same rules valid across renderer upgrades. After a clean merge,
+the recorded current image becomes the actual merged live bytes, but the stored
+base advances to the exact newly generated bytes—not the merge result. User
+edits therefore remain a delta from the newest generator output instead of
+being silently absorbed into the next base. Content and file mode are both
+part of each image; incompatible concurrent mode changes refuse because marker
+files cannot represent a mode conflict.
+
+Removal is scoped forward planning. The active `ReconcileScope` relinquishes only its own `OwnerId` claim;
+absence from one manifest or direct request cannot erase another manifest/config/direct claim:
+
+1. Remove the active scope's owner claim from the entity.
+2. Reject while any retained desired entity still has a typed dependency on
+   the removed entity. There is no implicit cascade flag in this contract.
+   Independently absent entities are ordered reverse-topologically and removed
+   together.
+3. Remove the entity row if and only if its own `OwnerId` set is empty; another resource owner does not keep a
+   declaration alive.
+4. Independently recompute each shared resource and output contributor set.
+5. Retain each resource/output with any contributor; plan its semantic absence only when its own set empties.
+6. Prepare the transition to the remaining desired state and delete only ownerless outputs whose guarded
+   current image satisfies the reconciliation policy.
+
+This replaces hand-maintained inverse algorithms. Forced removal of drifted generated content is an explicit
+destructive choice, and its receipt says what was discarded.
+
+Field one-shots are durable active overlays on their managed target, applied in
+canonical `OneShotId` order every time that target is rendered. Their lifecycle
+is `OneShotLifecycle::Field { target_coupled, append_only }`, with disjoint
+resource sets, and their state is exactly `Active` or
+`RetiredTargetRemoved`. Removing the target, after the normal retained-dependant check, retires each active field,
+removes only its target-coupled contributions and preserves append-only
+migrations/history. Recreating the target does not silently reactivate an old
+field. An explicit identical field command may reactivate its target-coupled
+resources without allocating a second forward migration; the same ID with a
+different spec refuses. Migration and cases one-shots never use this retired
+field state.
+
+A cases import has a stable `CasesReceiptId` derived only from its canonical
+`OneShotId::Cases { source }`, not mutable content, path output or transaction.
+`destroy cases` selects exactly that one-shot either from an existing source or
+from the printed receipt ID, so a moved/deleted external source never triggers
+path guessing. A same-source import may refresh its source hash and output by
+stored-base reconciliation, but its output path is immutable; a changed path
+requires explicit destroy then generate.
+
+`test --fast` is ordinary desired ownership of
+`EntityId::ToolFeature(FastTest)` by `DirectCli`, not an imperative dependency
+side channel. `remove fast-test [--force]` removes exactly that owner through
+the same scoped, prerequisite and stored-base rules; it does not masquerade as
+a capability or delete a drifted shared POM without the explicit force policy.
+
+There is no universal receipt rollback command. Conflict abort is the one
+supported inverse workflow because its pending ledger and pinned receipt freeze
+the exact scope; it still becomes a new guarded forward transaction and refuses
+after any affected postimage drift. Schema downgrade requires restoring the
+whole project and `.jails` from one pre-migration VCS/backup snapshot.
+
+## 8. Design principles and rejected abstractions
 
 > **Model the output, not the process.**
-
-This file adds the one that would have prevented all five failures in §4, and it
-is Parnas's 1972 criterion with jails' own evidence attached:
-
-> **Decompose by secret, not by step.** A module named for a command
-> (`generate`, `add`, `doctor`) accretes every concern that command touches. A
-> module named for a hidden decision (`pom`, `compose`, `process`, `java`) stays
-> small for a decade. jails contains both experiments and they have already
-> returned their result.
-
-And the operational corollary, which is measurable and therefore enforceable in
-review:
-
-> **Adding one instance of a concept should be one edit.** When it is not, the
-> concept is not modelled — it is spelled out. `why.rs` is one edit. Everything
-> in §2's table that is not should become one, and the edit count is the number
-> to watch on every change.
 >
-> When a requirement does not fit an abstraction, **widen the abstraction or
-> delete it — do not clone it and write a test to keep the clones in step.** A
-> test that polices duplication is a receipt for a decision not yet made.
-> `tests/agreement.rs` is an excellent test, and its existence is the strongest
-> single argument for deleting the thing it tests.
+> **Prepare completely; mutate once; recover explicitly.**
+>
+> **One authoritative mutation owner and one authoritative machine ledger.**
+>
+> **Adding one recipe or resource extends one typed model, not parallel switches and tables.**
+
+Modules should hide stable decisions and ownership boundaries. File-format modules are good examples; thin
+command coordinators are also legitimate. The successful subject-oriented splits show that “phase first” is
+not universal. Cohesion and change isolation matter more than whether a filename is a noun or verb.
+
+The system needs no inheritance, visitor, dependency-injection container, mutable object graph, or class per
+operation. Rust enums, values, exhaustive matches, and narrow functions suffice. A Rust `match` is dispatch,
+not “double dispatch”.
+
+Explicitly rejected:
+
+- calling a fallible partial merge a monoid, or calling preflight atomicity;
+- lazy generated bodies inside commit;
+- universal `revert(Project, Change)` for semantic removal;
+- regenerating an old merge base with a new renderer;
+- merging human manifests into machine ledger state;
+- permanent compatibility ledgers or dual writes;
+- runtime descriptors that duplicate compile-time recipe types;
+- centralising every read merely because writes need one owner;
+- line-count or role-stereotype targets used as substitutes for design evidence.
+
+Duplication is cheaper than a speculative abstraction. Require an observed shared model, a narrow interface,
+and behavioural tests. Widen an existing type when it fits; add a competing type only for genuinely different
+semantics.
+
+## 9. Verification contract
+
+The architecture is complete only when tests demonstrate:
+
+- golden output remains byte-stable unless a deliberate user-visible change updates it;
+- planning and pretend leave project and machine state unchanged, including on legacy projects;
+- planners perform no undeclared filesystem, environment, clock, or process reads outside snapshot loading;
+- every managed-project mutation routes through the executor, including deletes, copies, directory operations,
+  permissions, and managed mutating subprocesses; every other production writer has one named external or
+  derived classification and ordering rule;
+- describe and commit consume the same prepared operations; effect-retry
+  describe and `resume_effect` consume the same guarded retry plan; a second
+  clean apply is idempotent;
+- mutation JSON emits one envelope whose ordered recovery outcomes survive the
+  single reload/replan and whose remaining fields describe only the requested
+  fresh result;
+- duplicate identity, missing/incompatible references, reverse manifest order, and cycles are deterministic;
+- scoped spec replacement permits a sole/agreed owner update, preserves every
+  outside claim, refuses incompatible owner specs, and never creates a
+  synthetic capability-prerequisite owner;
+- human-config capability resources exist exactly for `DirectConfig`; manifest
+  and CLI owners never copy declarations into `jails.toml`; the one first-V2
+  exact bootstrap is ledger-only; complete exact DirectConfig resource closures
+  and only the explicit current FastTest may bootstrap all-or-nothing; and `AdoptLayout` preserves a managed
+  output's contributors/base/renderer while advancing only `current`;
+- unreadable, corrupt, and newer ledger schemas fail closed;
+- ledger-first loading reaches a pending conflict even when the POM,
+  `jails.toml`, manifest or Java source contains markers; request syntax,
+  manifest source and `Exact`/`ProjectedTransactionOutput`/`Absent` guards are
+  all required before the frozen request is reused;
+- zero-argument specs remain distinct from path-only legacy records;
+- failure injection at each commit boundary obeys the complete phase matrix: only `Active` with the ledger
+  before and exact before/after path states rolls forward, while every forbidden/unreadable combination
+  blocks without further writes;
+- a merely `Prepared` journal is discarded only when every image is before and is otherwise never activated;
+  conflict abort is a new transaction that
+  refuses after affected postimage drift, and shared contributions survive removal of one owner;
+- stored-base reconciliation covers clean, disjoint, conflicting, added,
+  deleted, mode-divergent and renderer-upgrade cases, including base advancement
+  to desired rather than merged bytes;
+- every captured/prepared/recovered image has a concrete mode; unset desired
+  policy preserves replace mode or creates `0644`, executable output is
+  explicit, and executor results are umask-independent;
+- schema-1 migration reruns exact translation, targets only closed legacy
+  machine deletes with empty contributors, consumes the old ledger through the
+  ledger transition, and refuses before deleting any source when identity,
+  listing or translated draft differs;
+- exact legacy adoption requires the named key/manifest/intent and either an
+  exact fresh-render match or explicit guarded replacement;
+- active field overlays survive target re-render, target removal retires only
+  target-coupled contributions, append-only history survives, and explicit
+  identical reactivation creates no second migration; stable cases receipt
+  selection works after source deletion; fast-test add/remove uses ordinary
+  desired ownership;
+- the prepared object manifest equals the exact typed reference closure with no
+  missing or extra object; each retained receipt validates with its linked
+  Complete journal before receipt-local fallback can be selected; the chosen
+  global/lowest-receipt source is commit-guarded; R5 promotes every new ledger
+  object globally before commit and promotes every retained receipt's full
+  preimage/audit closure before any GC deletion, with failure deleting nothing;
+  receipt-directory absence is distinct from present-empty; and v1 retention uses the four 32-receipt
+  buckets, full pending-origin match, nonterminal effects and recursive
+  finalise/abort dependencies before object collection;
+- conflicted apply journal-commits marker images while retaining all five
+  successful top-level tables unchanged and recording complete pending global
+  ledger state, including one-shots;
+- while any marker remains, any frozen clean postimage differs, or desired input changed, resolution leaves
+  tree and ledger untouched; only complete recorded resolution journal-finalises the entire frozen pending
+  ledger state, validates every candidate-owned shared-format slot exactly
+  once, and materialises new effects from semantic intents and exact resolved
+  postimages; zero/multiple or
+  structurally mismatched origin receipts refuse before activation;
+- conflict abort restores guarded file preimages at a new ledger generation, leaves only declared monotonic
+  empty directories, clears intents, and refuses after any affected-file edit;
+- structural recovery never runs a subprocess; only one same-invocation
+  eligible effect becomes a retry plan, every `Running` state is reported,
+  attempt 2 or greater becomes `InterruptedTwice` only under `effects.lock`,
+  and lock contention leaves it unchanged and blocks ordinary planning;
+- clean/finalised `ComposeReconcile` derives its stop set from frozen documents
+  without `down` or orphan removal; conflict preparation freezes only preimage
+  and intent, and a pending subset failure requires abort then rerun with
+  `--no-start`;
+- `effects.lock` fences every project commit from an executing effect; after a
+  call the runner retains it while blocking for the project lock, rewrites no
+  mismatched receipt/root, and records `Failed(Protocol)` only from the exact
+  expected receipt when post-call guards are impossible;
+- stale/refused executor attempts preserve all managed and transactional
+  leaves while allowing only the documented coordination-shell/lock bootstrap;
+  plan, prepare and pretend remain machine-state-free.
+
+Static architecture ratchets inspect production code only. They inventory file/directory/permission mutation
+APIs and process launch sites, require executor ownership or an explicit external/derived classification,
+and permit zero unclassified production sites. Their numbers and ceilings live in
+`tests/architecture.rs`, not here. A counter is evidence, not design, and may be withdrawn when its proxy no
+longer measures the intended property.
+
+The final test is conceptual: there is one route from `ResolvedMutation` to a
+closed `PlannedTransition`, one commit branch from typed plan to exact prepared
+operations to recoverable transition, and one bounded same-invocation
+effect-retry branch to
+`resume_effect`. Preview, apply, reconciliation, removal, doctor, and state
+recording may observe different parts of those routes; they must not recreate
+them.

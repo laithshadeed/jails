@@ -47,6 +47,13 @@ pub fn temp_dir(label: &str) -> PathBuf {
 /// Any product or harness change rebuilds this executable and invalidates the
 /// generated tree before it can be trusted.
 pub fn cached_toolchain_dir(label: &str) -> (PathBuf, bool) {
+    cached_toolchain_dir_with_salt(label, "")
+}
+
+/// A persistent toolchain directory whose validity also depends on harness
+/// inputs which are compiled into this integration-test binary rather than
+/// the `jails` executable itself (for example proof-application manifests).
+pub fn cached_toolchain_dir_with_salt(label: &str, salt: &str) -> (PathBuf, bool) {
     const CACHE_SCHEMA: u32 = 1;
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("target/jails-e2e-cache")
@@ -59,7 +66,18 @@ pub fn cached_toolchain_dir(label: &str) -> (PathBuf, bool) {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let stamp = format!("{CACHE_SCHEMA}:{}:{modified}\n", metadata.len());
+    let stamp = if salt.is_empty() {
+        // Preserve the existing stamp for callers which depend only on the
+        // product executable, so adding salted caches does not cold-rebuild
+        // every unrelated persistent fixture.
+        format!("{CACHE_SCHEMA}:{}:{modified}\n", metadata.len())
+    } else {
+        format!(
+            "{CACHE_SCHEMA}:{}:{modified}:{:016x}\n",
+            metadata.len(),
+            stable_cache_salt(salt)
+        )
+    };
     let marker = root.join(".jails-generated-stamp");
     if root.join(".jails-generated-ready").is_file()
         && fs::read_to_string(&marker).is_ok_and(|existing| existing == stamp)
@@ -72,6 +90,15 @@ pub fn cached_toolchain_dir(label: &str) -> (PathBuf, bool) {
     fs::create_dir_all(&root).unwrap();
     fs::write(marker, stamp).unwrap();
     (root, true)
+}
+
+fn stable_cache_salt(value: &str) -> u64 {
+    // FNV-1a is sufficient here: this is cache invalidation, not an identity
+    // or security boundary, and its explicit algorithm stays stable across
+    // Rust releases unlike an implementation-selected standard hasher.
+    value.bytes().fold(0xcbf29ce484222325, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
+    })
 }
 
 pub fn mark_toolchain_dir_generated(root: &Path) {
@@ -167,6 +194,64 @@ fn set_executable(path: &Path) {
 
 pub fn read_log(log: &Path) -> String {
     fs::read_to_string(log).unwrap_or_default()
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct MavenReportSummary {
+    pub reports: usize,
+    pub tests: usize,
+    pub failures: usize,
+    pub errors: usize,
+    pub skipped: usize,
+}
+
+impl MavenReportSummary {
+    pub fn add(&mut self, other: Self) {
+        self.reports += other.reports;
+        self.tests += other.tests;
+        self.failures += other.failures;
+        self.errors += other.errors;
+        self.skipped += other.skipped;
+    }
+}
+
+/// Totals from Maven's per-class XML reports, excluding summary metadata.
+///
+/// Failsafe and Surefire use the same `testsuite` attributes. Reading those
+/// reports is the coverage gate for the real generated projects: a successful
+/// Maven exit alone also describes a run that selected or skipped nothing.
+pub fn maven_report_summary(root: &Path, report_dir: &str) -> MavenReportSummary {
+    let reports = root.join("target").join(report_dir);
+    let mut summary = MavenReportSummary::default();
+    for entry in fs::read_dir(&reports)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", reports.display()))
+        .flatten()
+    {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !name.starts_with("TEST-") || !name.ends_with(".xml") {
+            continue;
+        }
+        let xml = fs::read_to_string(entry.path()).unwrap();
+        let suite = xml
+            .lines()
+            .find(|line| line.contains("<testsuite"))
+            .unwrap_or_else(|| panic!("{} has no testsuite element", entry.path().display()));
+        summary.reports += 1;
+        summary.tests += xml_attribute(suite, "tests", &entry.path());
+        summary.failures += xml_attribute(suite, "failures", &entry.path());
+        summary.errors += xml_attribute(suite, "errors", &entry.path());
+        summary.skipped += xml_attribute(suite, "skipped", &entry.path());
+    }
+    summary
+}
+
+fn xml_attribute(line: &str, name: &str, report: &Path) -> usize {
+    let prefix = format!("{name}=\"");
+    line.split_once(&prefix)
+        .and_then(|(_, rest)| rest.split_once('"'))
+        .and_then(|(value, _)| value.parse().ok())
+        .unwrap_or_else(|| panic!("{} has no numeric {name} attribute", report.display()))
 }
 
 /// Set `JAILS_REQUIRE_TOOLCHAIN=1` to turn every "skipping: ..." into a
@@ -268,7 +353,9 @@ pub fn jails_cmd_with_path(cwd: &Path, path: &str) -> ToolchainCommand {
 /// back in explicitly and supplies a broker through `@ServiceConnection`, so
 /// this removes accidental localhost traffic without omitting that test.
 const REAL_MAVEN_ARGS: &str = "-ntp -Dspring.main.banner-mode=off \
-    -Dlogging.level.root=WARN -Dspring.kafka.listener.auto-startup=false";
+    -Dlogging.level.root=WARN -Dspring.kafka.listener.auto-startup=false \
+    -Dspring.datasource.hikari.maximum-pool-size=2 \
+    -Dspring.datasource.hikari.minimum-idle=0";
 
 /// Startup policy for the deliberately short-lived JVMs in this test suite.
 ///
@@ -442,6 +529,12 @@ impl AppSuiteServices {
                         "-e".to_string(),
                         "KAFKA_NODE_ID=1".to_string(),
                         "-e".to_string(),
+                        // The image defaults to a 1 GiB initial heap. This
+                        // suite exchanges only a handful of records, so that
+                        // reservation adds startup and GC pressure without
+                        // exercising a production-relevant capacity boundary.
+                        "KAFKA_HEAP_OPTS=-Xms128m -Xmx256m".to_string(),
+                        "-e".to_string(),
                         "KAFKA_PROCESS_ROLES=broker,controller".to_string(),
                         "-e".to_string(),
                         "KAFKA_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093".to_string(),
@@ -502,7 +595,7 @@ impl ContainerGuard {
         let mut command = real_docker_cmd(Path::new("."));
         command.args(["run", "-d", "--rm", "--name", &name]);
         command.args(args);
-        let output = command.output().unwrap();
+        let output = command.infrastructure_start_output().unwrap();
         assert!(
             output.status.success(),
             "could not start {name}: {}{}",
@@ -614,7 +707,7 @@ impl ToolchainCommand {
     pub fn status(&mut self) -> io::Result<ExitStatus> {
         let description = profile_command_description(&self.inner);
         let queued_at = Instant::now();
-        let _permit = ToolchainPermit::acquire();
+        let _permit = TOOLCHAIN_PROCESSES.acquire(max_toolchain_processes());
         let queue_time = queued_at.elapsed();
         let started_at = Instant::now();
         let result = self.inner.status();
@@ -623,13 +716,31 @@ impl ToolchainCommand {
     }
 
     pub fn output(&mut self) -> io::Result<Output> {
+        self.output_with_permit(&TOOLCHAIN_PROCESSES, max_toolchain_processes())
+    }
+
+    /// Run the short `docker run` phase without waiting behind Maven jobs.
+    ///
+    /// This is deliberately private and used only by `ContainerGuard::start`;
+    /// readiness probes and every other Docker command keep using the ordinary
+    /// toolchain pool.
+    fn infrastructure_start_output(&mut self) -> io::Result<Output> {
+        self.output_with_permit(
+            &INFRASTRUCTURE_START_PROCESSES,
+            MAX_INFRASTRUCTURE_START_PROCESSES,
+        )
+    }
+
+    fn output_with_permit(&mut self, pool: &PermitPool, maximum: usize) -> io::Result<Output> {
         let description = profile_command_description(&self.inner);
         let queued_at = Instant::now();
-        let _permit = ToolchainPermit::acquire();
+        let permit = pool.acquire(maximum);
         let queue_time = queued_at.elapsed();
         let started_at = Instant::now();
         let result = self.inner.output();
-        report_profiled_command(description, "output", queue_time, started_at.elapsed());
+        let run_time = started_at.elapsed();
+        drop(permit);
+        report_profiled_command(description, "output", queue_time, run_time);
         result
     }
 }
@@ -674,7 +785,9 @@ fn test_profile_epoch() -> &'static Instant {
 }
 
 const DEFAULT_MAX_TOOLCHAIN_PROCESSES: usize = 6;
-static TOOLCHAIN_PROCESSES: (Mutex<usize>, Condvar) = (Mutex::new(0), Condvar::new());
+const MAX_INFRASTRUCTURE_START_PROCESSES: usize = 2;
+static TOOLCHAIN_PROCESSES: PermitPool = PermitPool::new();
+static INFRASTRUCTURE_START_PROCESSES: PermitPool = PermitPool::new();
 
 fn max_toolchain_processes() -> usize {
     static MAXIMUM: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
@@ -687,32 +800,61 @@ fn max_toolchain_processes() -> usize {
     })
 }
 
-struct ToolchainPermit;
+struct PermitPool {
+    active: Mutex<usize>,
+    available: Condvar,
+}
 
-impl ToolchainPermit {
-    fn acquire() -> Self {
-        let (active, available) = &TOOLCHAIN_PROCESSES;
-        let mut count = active
+impl PermitPool {
+    const fn new() -> Self {
+        Self {
+            active: Mutex::new(0),
+            available: Condvar::new(),
+        }
+    }
+
+    fn acquire(&self, maximum: usize) -> ProcessPermit<'_> {
+        let mut count = self
+            .active
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        while *count >= max_toolchain_processes() {
-            count = available
+        while *count >= maximum {
+            count = self
+                .available
                 .wait(count)
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
         }
         *count += 1;
-        Self
+        ProcessPermit { pool: self }
+    }
+
+    #[cfg(test)]
+    fn try_acquire(&self, maximum: usize) -> Option<ProcessPermit<'_>> {
+        let mut count = self
+            .active
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if *count >= maximum {
+            return None;
+        }
+        *count += 1;
+        Some(ProcessPermit { pool: self })
     }
 }
 
-impl Drop for ToolchainPermit {
+struct ProcessPermit<'a> {
+    pool: &'a PermitPool,
+}
+
+impl Drop for ProcessPermit<'_> {
     fn drop(&mut self) {
-        let (active, available) = &TOOLCHAIN_PROCESSES;
-        let mut count = active
+        let mut count = self
+            .pool
+            .active
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         *count -= 1;
-        available.notify_one();
+        self.pool.available.notify_one();
     }
 }
 
@@ -826,4 +968,55 @@ pub fn write_plain_fixture(root: &Path) {
         "package com.example.demo;\n\npublic class DemoApplication {}\n",
     )
     .unwrap();
+}
+
+#[cfg(test)]
+mod permit_pool_tests {
+    use super::{
+        INFRASTRUCTURE_START_PROCESSES, MAX_INFRASTRUCTURE_START_PROCESSES, PermitPool,
+        TOOLCHAIN_PROCESSES,
+    };
+
+    #[test]
+    fn infrastructure_start_pool_has_two_reusable_permits() {
+        assert_eq!(MAX_INFRASTRUCTURE_START_PROCESSES, 2);
+        let pool = PermitPool::new();
+        let first = pool
+            .try_acquire(MAX_INFRASTRUCTURE_START_PROCESSES)
+            .unwrap();
+        let second = pool
+            .try_acquire(MAX_INFRASTRUCTURE_START_PROCESSES)
+            .unwrap();
+
+        assert!(
+            pool.try_acquire(MAX_INFRASTRUCTURE_START_PROCESSES)
+                .is_none()
+        );
+        drop(first);
+        let replacement = pool
+            .try_acquire(MAX_INFRASTRUCTURE_START_PROCESSES)
+            .unwrap();
+
+        drop(second);
+        drop(replacement);
+        assert!(
+            pool.try_acquire(MAX_INFRASTRUCTURE_START_PROCESSES)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn infrastructure_start_pool_is_separate_from_toolchain_pool() {
+        assert!(!std::ptr::eq(
+            &TOOLCHAIN_PROCESSES,
+            &INFRASTRUCTURE_START_PROCESSES
+        ));
+
+        let toolchain = PermitPool::new();
+        let infrastructure = PermitPool::new();
+        let _toolchain_permit = toolchain.acquire(1);
+
+        assert!(toolchain.try_acquire(1).is_none());
+        assert!(infrastructure.try_acquire(1).is_some());
+    }
 }

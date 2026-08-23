@@ -226,8 +226,12 @@ mod tests {
 
     fn scratch() -> PathBuf {
         let root = std::env::temp_dir().join(format!(
-            "jails-provenance-{}-{}",
+            "jails-provenance-{}-{}-{}",
             std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(&root).unwrap();

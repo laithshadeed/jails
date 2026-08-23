@@ -32,10 +32,15 @@ name = "Entry"
 fields = ["reference:string!", "postedAt:date", "amount:Money", "memo:string?"]
 
 [[generate]]
+kind = "record"
+name = "MatchCandidate"
+fields = ["left:Entry", "right:Entry"]
+
+[[generate]]
 kind = "strategy"
 name = "MatchRule"
 fields = ["ExactReference", "AmountAndDate", "FuzzyMemo"]
-on = "Entry"
+on = "MatchCandidate"
 yields = "MatchOutcome"
 
 [[generate]]
