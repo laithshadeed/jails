@@ -726,6 +726,50 @@ const LAYERS: &[(&str, usize)] = &[
     ("main", 8),
 ];
 
+/// Every module that starts a process, and which R6.6 row it is.
+///
+/// plan.md §R6.6 fixes the classification "so 'one writer' is not
+/// overclaimed": a subprocess can change a project as surely as a write can,
+/// and the filesystem gate says nothing about it. `mvn` writes `target/`;
+/// `docker compose up` starts a service; `git merge-file` produces bytes a
+/// transaction commits. Each is fine — *once somebody has said which it is*.
+///
+/// The test below fails when a module starts a process and is not named here,
+/// which is the audit §R6.6 asks for expressed as a ratchet rather than a
+/// list somebody re-derives.
+const SUBPROCESS_CLASSIFICATION: &[(&str, &str)] = &[
+    // Derived build processes. They may write `target/` and dependency
+    // caches, which are excluded from the snapshot and the store, and they
+    // run without the project lock after any required commit.
+    ("run", "derived build process"),
+    ("maven", "derived build process"),
+    ("launcher", "derived build process"),
+    ("why", "derived build process"),
+    ("testd", "derived build process"),
+    ("affected", "derived build process"),
+    // External runtime effects. A commit records the desired project files
+    // first; reconciling the runtime is an idempotent receipt effect.
+    ("compose", "external runtime effect"),
+    ("kafka", "external runtime effect"),
+    ("migrate", "external runtime effect"),
+    ("bench", "external runtime effect"),
+    // Read-only clients and probes. Outside both locks, and they claim no
+    // filesystem rollback.
+    ("console", "read-only client"),
+    ("doctor", "read-only probe"),
+    // Bootstrap, outside any project transaction: these run before a project
+    // exists (§R6.5), inside a scratch tree that is published atomically.
+    ("new", "new-project bootstrap"),
+    // Transaction input. R5.3 invokes Git through the bounded scratch
+    // executor and commits its exact output; it is not a renderer and not an
+    // effect. `app::reconcile` is the module that does it today.
+    ("app", "transaction input"),
+    // The executor's own runner and tool resolver.
+    ("process", "the one executor"),
+    ("runner", "the one executor"),
+    ("sandbox", "the one executor"),
+];
+
 /// `src/spring/durable.rs` -> `spring`; `src/ledger.rs` -> `ledger`.
 fn module_of(path: &Path) -> Option<String> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -742,6 +786,51 @@ fn module_of(path: &Path) -> Option<String> {
         return None;
     }
     Some(first.strip_suffix(".rs").unwrap_or(first).to_string())
+}
+
+/// §R6.6: "The audit must leave no unclassified production mutation."
+///
+/// A subprocess changes things a write gate cannot see. This fails when a
+/// module starts one and nobody has said which row it belongs to — and it
+/// fails the other way too, when a classified module stops starting
+/// processes, because a classification nobody prunes claims more than it
+/// describes.
+#[test]
+fn every_module_that_starts_a_process_is_classified() {
+    let src = sources();
+    let mut starts: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for file in &src {
+        // Both spellings: a direct `Command::new`, and the shared
+        // `CommandSpec` executor that most callers rightly use instead.
+        // Counting only one would classify half the surface.
+        let spawns = ["Command::new", "CommandSpec", "process::run", "runner::run"]
+            .iter()
+            .any(|spelling| file.production.contains(spelling));
+        if spawns && let Some(module) = module_of(&file.path) {
+            starts.insert(module);
+        }
+    }
+    let classified: std::collections::BTreeSet<String> = SUBPROCESS_CLASSIFICATION
+        .iter()
+        .map(|(name, _)| (*name).to_string())
+        .collect();
+
+    let unclassified: Vec<&String> = starts.difference(&classified).collect();
+    assert!(
+        unclassified.is_empty(),
+        "\n\n{unclassified:?} start a subprocess and are not in \
+         SUBPROCESS_CLASSIFICATION.\n\
+         plan.md §R6.6 fixes the rows: derived build process, external runtime effect, \
+         read-only client/probe, new-project bootstrap, transaction input, or the one \
+         executor. Say which, so `one writer` is not overclaimed.\n"
+    );
+
+    let stale: Vec<&String> = classified.difference(&starts).collect();
+    assert!(
+        stale.is_empty(),
+        "\n\n{stale:?} are classified as starting a subprocess and no longer do.\n\
+         Take them out -- a classification nobody prunes claims more than it describes.\n"
+    );
 }
 
 #[test]
