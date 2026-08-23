@@ -28,6 +28,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use clap::ValueEnum;
 use jails_commit::execute::{self, LockedProject, ProjectHandle};
 use jails_commit::outcome::{CommitError, CommitResult};
 use jails_prepare::desire;
@@ -73,7 +74,7 @@ pub fn install(project: &Project, capability: Capability) -> Result<CommitResult
     let request = Request {
         scope: ReconcileScope::DirectConfig,
         declared: declared_capabilities(&observed(project)?, Some(entity))?,
-        change: desired,
+        changes: vec![desired],
     };
     commit(
         project,
@@ -81,6 +82,87 @@ pub fn install(project: &Project, capability: Capability) -> Result<CommitResult
         &declaration(project, &change)?,
         "jails add",
     )
+}
+
+/// Make the project match the capability list in `jails.toml`.
+///
+/// One transition, not a loop of installs: everything the manifest names and
+/// nothing it does not, decided in one reconciliation. A capability listed but
+/// not installed arrives; one installed but no longer listed leaves; and the
+/// two happen together or not at all, which is what stops a half-applied sync
+/// from leaving a project neither state.
+///
+/// The manifest is the authority here, not the store. That is the whole point
+/// of `sync`: somebody edited the list, and this is how the project catches up.
+pub fn sync(project: &Project) -> Result<CommitResult> {
+    let store = observed(project)?;
+    let mut declared = BTreeMap::new();
+    let mut changes = Vec::new();
+    let mut reads = capture::capability_reads()?;
+    for label in project.capabilities() {
+        // The manifest stores `Capability::label()` spellings, never clap
+        // aliases -- CLAUDE.md's rule, so that one capability cannot be listed
+        // twice under two names. An unknown one is an error rather than a
+        // skipped line: silently ignoring it would make `sync` report success
+        // over a project it did not finish.
+        let capability = Capability::value_variants()
+            .iter()
+            .copied()
+            .find(|candidate| candidate.label() == label)
+            .ok_or_else(|| {
+                format!(
+                    "`{label}` in jails.toml is not a capability this jails knows.\n       fix: \
+                     run `jails commands --json` for the list, or use a newer jails."
+                )
+            })?;
+        let id = CapabilityId {
+            kind: capability,
+            instance: CapabilityInstance::Singleton,
+        };
+        let owner = ResourceOwner::Entity(EntityId::Capability(id.clone()));
+        declared.insert(
+            EntityId::Capability(id.clone()),
+            DesiredEntity {
+                id: EntityId::Capability(id.clone()),
+                spec: EntitySpec::Capability(CapabilitySpec { placement: None }),
+                owners: BTreeSet::from([OwnerId::DirectConfig]),
+            },
+        );
+        // Already recorded means already installed, and re-planning it would
+        // ask the recipe to describe a project it has already changed.
+        if store.ledger.as_ref().is_some_and(|ledger| {
+            ledger
+                .applied
+                .iter()
+                .any(|row| row.id == EntityId::Capability(id.clone()))
+        }) {
+            continue;
+        }
+        let change =
+            with_test_support(project, jails_generate::add::plan_for(capability, project)?);
+        let mut desired = desire::contribution(&owner, &change, project)?;
+        record_capability(&mut desired, &owner, &id)?;
+        for artifact in &change.files {
+            reads = reads.file(relative(project, &artifact.path)?);
+        }
+        changes.push(desired);
+    }
+    for row in store
+        .ledger
+        .iter()
+        .flat_map(|ledger| ledger.resources.iter())
+    {
+        if let ResourceKey::WholeFile(path) = &row.key {
+            reads = reads.file(path.clone());
+        }
+    }
+
+    let request = Request {
+        scope: ReconcileScope::DirectConfig,
+        declared,
+        changes,
+    };
+    commit(project, request, &reads, "jails sync")
 }
 
 /// Take one capability back out.
@@ -120,7 +202,7 @@ pub fn remove(project: &Project, capability: Capability) -> Result<CommitResult>
         // the claims it stops making, which is what makes `remove` the exact
         // inverse of `add` rather than a second hand-written description of
         // what `add` did.
-        change: DesiredChange::owned_by(owner.clone()),
+        changes: Vec::new(),
     };
     commit(project, request, &retiring(&store, &owner)?, "jails remove")
 }
@@ -159,7 +241,7 @@ pub fn generate(
     let request = Request {
         scope: ReconcileScope::DirectEntity(EntityId::Intent(id)),
         declared: BTreeMap::from([(entity.id.clone(), entity)]),
-        change: desired,
+        changes: vec![desired],
     };
     commit(
         project,
@@ -364,7 +446,9 @@ struct Request {
     /// What this scope declares. Empty is a real declaration: it says this
     /// scope wants nothing, which is how a removal is expressed.
     declared: BTreeMap<EntityId, DesiredEntity>,
-    change: DesiredChange,
+    /// One per entity that has something to install. A `sync` that brings two
+    /// capabilities in has two, and they commit together or not at all.
+    changes: Vec<DesiredChange>,
 }
 
 impl Request {
@@ -413,11 +497,12 @@ impl Request {
             .map(|id| ResourceOwner::Entity(id.clone()))
             .collect();
 
-        // Which resources this removal leaves unowned. Computed here only to
-        // decide what has to come *out of the files*; the store derives the
+        // Which resources this transition leaves unowned. Computed here only
+        // to decide what has to come *out of the files*; the store derives the
         // same answer from `entities_removed`, so the two cannot disagree
         // about which rows survive.
-        let mut change = self.change;
+        let mut changes = self.changes;
+        let mut retirement: BTreeMap<ResourceOwner, DesiredChange> = BTreeMap::new();
         for row in recorded
             .map(|store| store.resources.as_slice())
             .unwrap_or(&[])
@@ -425,6 +510,18 @@ impl Request {
             if row.owners.iter().any(|owner| !gone.contains(owner)) {
                 continue;
             }
+            // Charged to one of the owners that is leaving, because that is
+            // what a change *is* here: work an owner is responsible for. A
+            // maintenance attribution would be a lie about who asked, and the
+            // change set refuses it under this subject for exactly that
+            // reason. The lowest owner is picked so two runs of one removal
+            // produce the same transaction.
+            let Some(owner) = row.owners.iter().next().cloned() else {
+                continue;
+            };
+            let change = retirement
+                .entry(owner.clone())
+                .or_insert_with(|| DesiredChange::owned_by(owner));
             match &row.key {
                 // A whole file leaves as an absence rather than an edit: the
                 // executor guards the preimage it deletes, which an edit
@@ -439,11 +536,23 @@ impl Request {
                 }),
             }
         }
+        changes.extend(retirement.into_values());
 
-        // Exactly the claims this request makes, and no more. The intent
-        // speaks for one scope, and `require_intent_matches` holds it to
-        // saying the same thing the changes do.
-        let resources_after = change.resources.clone();
+        // Exactly the claims these changes make, merged the way the projection
+        // merges them: one row per key, owners unioned. `require_intent_
+        // matches` holds the intent to saying the same thing the changes do.
+        let mut merged: BTreeMap<ResourceKey, DesiredResource> = BTreeMap::new();
+        for change in &changes {
+            for desired in &change.resources {
+                match merged.get_mut(&desired.key) {
+                    Some(row) => row.owners.extend(desired.owners.iter().cloned()),
+                    None => {
+                        merged.insert(desired.key.clone(), desired.clone());
+                    }
+                }
+            }
+        }
+        let resources_after: Vec<DesiredResource> = merged.into_values().collect();
 
         let set = DesiredChangeSet {
             ledger_intent: LedgerIntent {
@@ -454,7 +563,7 @@ impl Request {
                 entities_removed: reconciled.removed,
                 legacy_after: Vec::new(),
             },
-            ordered: vec![change],
+            ordered: changes,
             subject: PlannedSubject::Reconcile(DesiredState::new(self.scope, self.declared)?),
         };
         set.validate()?;

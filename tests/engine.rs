@@ -422,3 +422,71 @@ fn removing_what_was_never_installed_is_refused() {
     assert!(error.contains("not recorded as installed"), "{error}");
     assert!(error.contains("fix:"), "{error}");
 }
+
+/// `sync` makes the project match the list, in one transition.
+///
+/// Both directions at once: a capability the manifest names arrives, and one
+/// it no longer names leaves. Doing it as a loop of installs and removes would
+/// leave a project in neither state if it stopped halfway.
+#[test]
+fn sync_brings_the_project_to_the_list_in_the_manifest() {
+    let root = common::temp_dir("engine-sync");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_spring_fixture(&root);
+
+    jails_engine::route::install(&Project::load(&root).unwrap(), Capability::Actuator).unwrap();
+    let file = root.join("src/test/java/com/example/demo/ActuatorEndpointsTest.java");
+    assert!(file.is_file());
+
+    // The reader edits the list: actuator out, cache in.
+    jails_support::apply::put(
+        root.join("jails.toml"),
+        "[project]\ncapabilities = [\"cache\"]\n",
+    )
+    .unwrap();
+
+    jails_engine::route::sync(&Project::load(&root).unwrap()).unwrap();
+
+    let pom = std::fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(
+        pom.contains("spring-boot-starter-cache"),
+        "the capability the manifest names arrived:\n{pom}"
+    );
+    assert!(
+        !pom.contains("spring-boot-starter-actuator"),
+        "and the one it dropped left:\n{pom}"
+    );
+    assert!(!file.exists(), "including the file it owned");
+
+    let store = jails_commit::store::Store::at(&root)
+        .observe()
+        .unwrap()
+        .ledger
+        .unwrap();
+    assert_eq!(store.applied.len(), 1, "{:?}", store.applied);
+    assert_eq!(
+        store.generation, 2,
+        "one commit for the whole sync, not one per capability"
+    );
+}
+
+/// A manifest naming something this binary does not know is an error.
+///
+/// It is caught when the project is resolved rather than when `sync` runs,
+/// which is the better place: every command that reads `jails.toml` gets the
+/// same refusal, and none of them plans against a list it half understood.
+#[test]
+fn a_manifest_naming_an_unknown_capability_is_refused_before_anything_plans() {
+    let root = common::temp_dir("engine-sync-unknown");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_spring_fixture(&root);
+    jails_support::apply::put(
+        root.join("jails.toml"),
+        "[project]\ncapabilities = [\"telepathy\"]\n",
+    )
+    .unwrap();
+
+    let error = Project::load(&root).unwrap_err();
+    assert!(error.contains("telepathy"), "{error}");
+    assert!(error.contains("Known:"), "{error}");
+}
