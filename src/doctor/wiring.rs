@@ -12,7 +12,7 @@
 //! for every test. Those are interaction facts no plan carries, and
 //! `abstract.md` §6.2 says exactly that.
 
-use super::environment::{podman_socket, reusable_containers, reuse_enabled, tcp_reachable};
+use super::environment::tcp_reachable;
 use super::{Check, Status};
 use crate::compose;
 use crate::model::Project;
@@ -363,95 +363,6 @@ pub(super) fn in_memory_adapter_check(project: &Project) -> Option<Check> {
              jails destroy repo <Name> && jails g repo <Name> <fields...>",
         ),
     )
-}
-
-/// Is container reuse switched on for this machine, and is anything piling up
-/// because of it?
-///
-/// Reuse is the largest single saving available to a suite that starts
-/// PostgreSQL, and it is **not** what jails generates -- see
-/// `TestcontainersConfig`'s Javadoc for why: the reuse key is a hash of the
-/// container's configuration, nothing in that configuration identifies the
-/// project, so two applications on the same image share one database and
-/// Flyway refuses to start against the other one's migration history.
-///
-/// So this check does not push anyone towards it. What it does is report the
-/// machine flag honestly, and count what reuse has left behind -- a reused
-/// container is deliberately not registered with Ryuk, so nothing else will
-/// ever mention it.
-pub(super) fn container_reuse_check(pom_text: &str) -> Vec<Check> {
-    if !pom_text.contains("org.testcontainers") {
-        return vec![Check::new(Status::Skip, "container reuse", "not in use")];
-    }
-    if !reuse_enabled() {
-        return vec![Check::new(
-            Status::Skip,
-            "container reuse",
-            "off for this machine; generated container configs do not ask for it",
-        )];
-    }
-    let kept = reusable_containers();
-    let detail = match kept {
-        0 => "enabled for this machine; nothing kept".to_string(),
-        1 => "enabled for this machine; 1 container kept between runs".to_string(),
-        n => format!("enabled for this machine; {n} containers kept between runs"),
-    };
-    // Not a failure at any count: they are *supposed* to survive. Past a
-    // couple, though, they are the residue of runs nobody is coming back to,
-    // and nothing else reports them.
-    let mut check = Check::new(Status::Ok, "container reuse", detail);
-    if kept > 2 {
-        check = Check::new(
-            Status::Warn,
-            "container reuse",
-            format!("{kept} reusable containers are still up, and nothing reaps them"),
-        )
-        .fix("docker rm -f $(docker ps -aq --filter label=org.testcontainers.hash)");
-    }
-    vec![check]
-}
-
-pub(super) fn testcontainers_check(pom_text: &str) -> Check {
-    // Matched on the groupId alone, not on artifact ids: Testcontainers 2.0
-    // renamed every module (`postgresql` -> `testcontainers-postgresql`),
-    // and a check that silently stops applying after a dependency bump is
-    // worse than no check.
-    let uses = pom_text.contains("org.testcontainers");
-    if !uses {
-        return Check::new(Status::Skip, "testcontainers", "not in use");
-    }
-    if let Some(host) = std::env::var_os("DOCKER_HOST") {
-        return Check::new(
-            Status::Ok,
-            "testcontainers",
-            format!("DOCKER_HOST={}", host.to_string_lossy()),
-        );
-    }
-    if Path::new("/var/run/docker.sock").exists() {
-        return Check::new(
-            Status::Ok,
-            "testcontainers",
-            "/var/run/docker.sock is present",
-        );
-    }
-    if let Some(socket) = podman_socket() {
-        return Check::new(
-            Status::Fail,
-            "testcontainers",
-            "no DOCKER_HOST and no /var/run/docker.sock, but a rootless podman socket exists -- \
-             tests will fail with \"Could not find a valid Docker environment\"",
-        )
-        .fix(format!(
-            "export DOCKER_HOST=unix://{} (and TESTCONTAINERS_RYUK_DISABLED=true for rootless podman)",
-            socket.display()
-        ));
-    }
-    Check::new(
-        Status::Fail,
-        "testcontainers",
-        "no DOCKER_HOST, no /var/run/docker.sock, no podman socket -- no container engine for tests to use",
-    )
-    .fix("start Docker, or `systemctl --user start podman.socket` and export DOCKER_HOST")
 }
 
 pub(super) fn kafka_check(project: &Project) -> Check {

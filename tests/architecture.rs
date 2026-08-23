@@ -76,7 +76,7 @@ fn gates() -> Vec<(Ratchet, usize)> {
         ),
         (
             Ratchet {
-                name: "root-taking functions that re-derive a project fact",
+                name: "undeclared root-taking readers of the pom",
                 rung: "1 — Introduce Parameter Object (`Project`)",
                 // The row above counts every `root: &Path`, and by now that
                 // includes modules whose whole subject *is* a path --
@@ -86,19 +86,27 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // time one is added, which makes its target of 40 read as a
                 // demand to stop writing modules.
                 //
-                // This is the disease itself, in abstract.md §2's own words:
-                // a function handed a primitive that then goes back to disk
-                // for a fact the resolved `Project` is already holding.
-                // Exempted below are the functions that exist *to* do that --
-                // the constructors, `base_package` itself, and `new`, which
-                // runs before any project exists to resolve.
-                ceiling: 5,
+                // So this is the disease itself, in abstract.md §2's words: a
+                // function handed a primitive that goes back to disk for a
+                // fact the resolved `Project` already holds. It measures the
+                // *undeclared* ones, because the four that survive are each a
+                // case where reading again is correct and a `Project` would be
+                // wrong -- see `A_FRESH_READ_IS_CORRECT`. Nought means every
+                // one of them is a decision somebody wrote down.
+                ceiling: 0,
                 target: 0,
                 why: "Feature Envy on `Project`: a second read of the pom for a fact the \
                       caller already resolved, which is how two answers to one question \
                       appear in one run.",
             },
-            rederivers(&src).len(),
+            rederivers(&src)
+                .into_iter()
+                .filter(|(_, name)| {
+                    !A_FRESH_READ_IS_CORRECT
+                        .iter()
+                        .any(|(declared, _)| declared == name)
+                })
+                .count(),
         ),
         (
             Ratchet {
@@ -257,10 +265,11 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // capability slices. The row below guards against the obvious
                 // way to cheat this one -- moving a monolith rather than
                 // decomposing it.
-                // +2 for `mod sse; pub(crate) use sse::*;` -- a new capability
-                // whose body went into its own module rather than into here,
-                // which is the behaviour these two gates are asking for.
-                ceiling: 1268,
+                // 1,268 -> 688 when rung 11 finished: `dto.rs`, `messaging.rs`
+                // and `security.rs` left, and what remains is the shared
+                // preconditions plus the three small capabilities that have no
+                // second reader.
+                ceiling: 688,
                 target: 2500,
                 why: "Logical cohesion: one file for everything sharing the `require_spring` \
                       precondition. abstract.md §6.2 says turning that precondition into data \
@@ -281,7 +290,7 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // relocated, and the next monolith was already the one
                 // abstract.md §3.2 calls Ousterhout's named anti-pattern
                 // verbatim: parse -> dispatch -> write -> side effects.
-                ceiling: 1268,
+                ceiling: 688,
                 target: 700,
                 why: "The row above can be satisfied by *moving* a monolith rather than \
                       decomposing one, so this asks the question the split is actually for: \
@@ -360,6 +369,37 @@ fn the_abstract_md_ladder_gates_are_ratchets_that_only_move_down() {
 }
 
 /// Every gate that has reached its target should stay at it.
+/// The declared list must name exactly the readers that are really there.
+///
+/// Both directions. A name that has gone means the function was fixed or
+/// renamed and the reason is now permission for nothing; a reader that is not
+/// named is one nobody decided about.
+#[test]
+fn every_fresh_read_of_the_pom_is_a_decision_somebody_wrote_down() {
+    let src = sources();
+    let found: std::collections::BTreeSet<String> =
+        rederivers(&src).into_iter().map(|(_, name)| name).collect();
+    let declared: std::collections::BTreeSet<String> = A_FRESH_READ_IS_CORRECT
+        .iter()
+        .map(|(name, _)| (*name).to_string())
+        .collect();
+
+    assert_eq!(
+        found, declared,
+        "\n\nA root-taking function reads the pom for a fact a resolved `Project` holds.\n\
+         Either pass it the `Project` -- which is rung 1 -- or, if reading again is \
+         genuinely correct, add it to A_FRESH_READ_IS_CORRECT with the reason.\n\
+         A name in the list that is no longer found has to come out: a reason nobody \
+         needs is permission nobody asked for."
+    );
+    assert!(
+        A_FRESH_READ_IS_CORRECT
+            .iter()
+            .all(|(_, why)| why.len() > 40),
+        "every reason has to say why a `Project` would be wrong, not merely that it is allowed"
+    );
+}
+
 #[test]
 fn a_gate_that_reached_its_target_is_never_reopened() {
     for (gate, actual) in gates() {
@@ -596,6 +636,39 @@ fn root_path_parameters(src: &[Source]) -> usize {
         .sum()
 }
 
+/// Root-taking pom readers where reading again is the *correct* behaviour, and
+/// passing the caller's `Project` would be the bug.
+///
+/// The distinction rung 1 is actually about: envy is asking the disk for a fact
+/// somebody already resolved. These four ask the disk because the resolved
+/// answer is **stale or absent** -- jails has been splicing the pom in the same
+/// run, or there is no project yet. Declared rather than counted, because a
+/// number nobody can reach is a gate nobody reads; the pattern is
+/// `SILENT_WITHOUT_A_RECORD`'s, and a stale entry here fails the test below the
+/// same way.
+const A_FRESH_READ_IS_CORRECT: &[(&str, &str)] = &[
+    (
+        "project_at",
+        "its own Javadoc forbids caching: `app apply` splices the pom and rewrites \
+         jails.toml between steps, so step N+1 planning against step N's snapshot is \
+         exactly the staleness bug this avoids",
+    ),
+    (
+        "ensure_dependency",
+        "it splices into the pom, so it must hold the current bytes -- an earlier \
+         dependency added in the same run is not in any copy taken before it",
+    ),
+    (
+        "ensure_console_launcher",
+        "the same: it checks for and splices `junit-platform-console`",
+    ),
+    (
+        "ensure_package_info",
+        "reached from `write_new_file`, whose nine callers include `new` -- which is \
+         creating the very pom this asks about, so there is no project to have resolved",
+    ),
+];
+
 /// Functions that exist *to* turn a path into project facts, so re-deriving is
 /// their whole job rather than envy of someone else's.
 ///
@@ -615,14 +688,16 @@ const DERIVATION_IS_THE_JOB: &[&str] = &[
 /// `(file, function)` for every `root: &Path` function that goes back to disk
 /// for something a resolved `Project` already holds.
 fn rederivers(src: &[Source]) -> Vec<(String, String)> {
+    // Applied to `root` specifically. Without the argument this counted
+    // `reconcile_intent`, which loads a `Project` for each of two *scratch*
+    // copies of the tree -- the opposite of envy, since there is no resolved
+    // project for those roots to have been passed.
     const FACTS: &[&str] = &[
-        "pom::read",
-        "base_package(",
-        "Project::load",
-        "Project::inspect",
-        "Config::load",
-        "pom::flavor",
-        "release_level",
+        "pom::read(root)",
+        "base_package(root)",
+        "Project::load(root)",
+        "Project::inspect(root)",
+        "Config::load(root)",
     ];
     let mut found = Vec::new();
     for file in src {

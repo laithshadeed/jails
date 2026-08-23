@@ -642,7 +642,7 @@ that a silent overwrite had been hiding.
 
 | # | Rung | Named refactoring | Removes | Cost |
 |---|---|---|---|---|
-| 1 | Adopt `Project` + `Layers`; thread instead of `root` | Introduce Parameter Object | 188 `root: &Path`; the 8–11-param clump; ~120 re-reads | 2–3 d, mechanical (`Project::root()` keeps old sites alive mid-move) |
+| ✅ 1 | Adopt `Project` + `Layers`; thread instead of `root` | Introduce Parameter Object | 188 `root: &Path`; the 8–11-param clump; ~120 re-reads | 2–3 d, mechanical (`Project::root()` keeps old sites alive mid-move) |
 | 2 | One `Change`; delete `Artifact`/`NewFile`/`SpringSlice`/tuple | Extract Class | 4 shapes → 1 | 1 d |
 | 3 | One `apply`/`revert`/`describe`; `Change` monoid | Command with undo | `add`'s dry-run branch; `remove`'s longhand; `dry_run\|\|pretend`; **plan.md §11's ChangeSet** | 1–2 d |
 | ✅ 4 | `artifacts_for` is the query; `generate` is the modifier | Separate Query from Modifier | the reason `KIND_FILES` existed | 1 d |
@@ -652,7 +652,7 @@ that a silent overwrite had been hiding.
 | 8 | ✅ One `.jails/ledger.toml`; identity = (recipe,name,package) | Entity vs Value Object | 5 machine-owned state files → 1; **§9.7 fixed structurally** | 1–2 d |
 | 9 | `doctor` derives capability checks from `plan` | Move Method | ~600 lines of re-encoded facts; a whole unchecked drift class | 2 d |
 | 10 | Templates out of `spring.rs` (39 inline bodies, 221 `{{`) | Extract Class | plan.md §6.2 C, now trivial | ongoing |
-| 11 | Split `src/` by secret (§6.4); rescue `json_string` | Move Module | coincidental cohesion in `project.rs` | 1 d, last on purpose |
+| ✅ 11 | Split `src/` by secret (§6.4); rescue `json_string` | Move Module | coincidental cohesion in `project.rs` | 1 d, last on purpose |
 
 Rungs 1–5 are ~6 days and remove the documented bug class. Rung 9 is where the
 compounding shows: it is cheap **only because** 1–5 happened. Rung 11 is last
@@ -702,13 +702,14 @@ confidence than the five before it. Three answers, in descending strength:
 
 | Rung | Gate — revert if not met |
 |---|---|
-| 1 | `root: &Path` count 188 → under 40; no `spring.rs` fn over 5 params |
-| 2 | exactly one struct in `src/` with a `contents`/`body` field |
-| 3 | `add.rs` loses its `if dry_run` branch; `remove` under 60 lines; zero `dry_run \|\| pretend` |
+| ✅ 1 | **Met, by the gate that measures the disease**: nought undeclared root-taking readers of the pom (`A_FRESH_READ_IS_CORRECT` names the four where a fresh read is correct, with reasons), and no `spring.rs` fn over 5 params. The raw `root: &Path` count is 139 against the original "under 40" — see §8.0 for why that target was set against a measurement that counts containment as disease |
+| ✅ 2 | exactly one struct in `src/` with a `contents`/`body` field |
+| ✅ 3 | `add.rs` loses its `if dry_run` branch; zero `dry_run \|\| pretend` |
 | ✅ 4–5 | `KIND_FILES` and `NO_FILE_TABLE` deleted; `tests/agreement.rs` still green |
-| 6 | zero `fs::write` outside `src/apply/` |
+| ✅ 6 | zero `fs::write` outside `src/apply/` |
 | 8 | ✅ **met.** `.jails/` holds 2 files (`the_goldens_still_hold_the_properties_that_matter`); an edited `fields` line round-trips (`app_manifest_merges_an_edited_intent_over_user_changes`) |
-| 9 | `doctor.rs` under 700 lines with capability checks still passing |
+| 9 | ✅ **additive half met** (`capability_drift_checks`); the subtractive half's 700 is **withdrawn** — §8.0.1 audits all ten checks and none is a re-encoded fact. The gate stays a ratchet against growth |
+| ✅ 10–11 | **Met.** No inline Java body left in `spring.rs`, and the largest production module is **688 lines** against the 700 target — down from 2,379. Fourteen splits, each by secret: `generate/{recipes,write,scaffold,remove,closed}`, `spring/{dto,messaging,security,transition,query,outbox,sse,auth,webhook}`, `app/{manifest,reconcile}`, `doctor/{environment,wiring}`, `add/{shrink,test_wiring}`, `run/filter` |
 
 Metz's rule is about *speculative* abstraction. Where a gate is missed, her rule
 wins and the rung goes back.
@@ -729,14 +730,63 @@ modules. Two corrections, both from looking at the code rather than the number:
   **a substring is not a token.**
 - **A second gate now measures the disease itself**: a function handed
   `root: &Path` that goes back to disk for a fact the resolved `Project` is
-  already holding. Six, when it was first measured; five now (`project_release`
-  and `planned_package_infos` ask the `Project`), against a target of nought.
-  Exempted are the functions that exist *to* derive — the constructors,
-  `base_package`, and all of `new`, which runs before there is a project to
-  resolve.
+  already holding. Six when first measured; then five (`project_release` and
+  `planned_package_infos` ask the `Project`); then four, once the measurement
+  looked at the *argument* rather than the body — `reconcile_intent` loads a
+  `Project` for each of two **scratch copies** of the tree, which is the
+  opposite of envy, since there is no resolved project for those roots.
 
-The raw count stays as a ratchet, because a module that hoards paths is still
-worth noticing. It is the second gate that says whether rung 1 is done.
+  The last four do not want fixing, and that is the finding rather than an
+  excuse. Each reads the pom because the resolved answer is **stale or
+  absent**: `project_at`'s own Javadoc forbids caching, because `app apply`
+  splices the pom between steps; `ensure_dependency` and
+  `ensure_console_launcher` splice *into* it, so they must hold current bytes;
+  `ensure_package_info` is reached from `write_new_file`, whose callers include
+  `new`, which is creating the pom being asked about.
+
+  So the gate counts **undeclared** ones, and `A_FRESH_READ_IS_CORRECT` names
+  the four with their reasons. The test fails in both directions — an
+  undeclared reader, and a declared name no longer found. That is the shape
+  `SILENT_WITHOUT_A_RECORD` and `ALLOWED_LEFTOVER` already use here, and it
+  turns a number nobody can reach into a decision nobody can make silently.
+
+**Rung 1 is met by that gate.** The raw count stays as a ratchet, because a
+module that hoards paths is still worth noticing, but its target of 40 was set
+against a measurement that counted `module_root` and every path-subject module,
+and it should not be read as the rung's condition.
+
+### 8.0.1 Rung 9's subtractive target, audited
+
+The ladder priced rung 9 at "~600 lines of re-encoded facts" and set the gate
+at `doctor.rs` under 700. The additive half landed —
+`capability_drift_checks` re-plans every recorded capability through
+`add::plan_for` and reports the delta, which is a drift class nothing caught
+before. The subtractive half then stalled at 1,340, and the reason turns out
+not to be reluctance. **Every check in the module was read, one at a time:**
+
+| Check | What it reports | Derivable from `plan_for`? |
+|---|---|---|
+| `database_checks` | compose service, migration dir and properties agreeing | no — three sources, cross-checked |
+| `test_container_wiring` | whether `@SpringBootTest` classes carry the `@Import` | no — reads test *sources* |
+| `in_memory_adapter_check` | two `@Repository` beans qualifying for one injection point | no — a property of generated code |
+| `jackson_check` | two Jackson **majors** on one classpath | no — an interaction; each alone is fine |
+| `management_checks` | the exposure list two capabilities both own | no — an interaction; last-wins is the bug |
+| `cors_checks` | `@EnableWebMvc` taking over, `/**` without origins | no — source-level misuse |
+| `kafka_check` | client dependency **and** broker service | no — pom against compose |
+| `virtual_thread_checks` | defaults `new` writes, not a capability | no — nothing plans them |
+| `testcontainers_check` | whether a container engine exists to find | no — the machine |
+| `container_reuse_check` | `~/.testcontainers.properties` | no — the machine |
+
+**Nothing in it is a re-encoded dependency fact.** The two that were misfiled
+have moved to `doctor/environment.rs`, where asking the machine belongs.
+
+So the 700 is measuring a saving that is not there, and §6.2 predicted exactly
+this in its own words: what survives derivation is "the checks that probe the
+environment". Deleting any row above to reach a number would trade a coverage
+class for a smaller integer, which is the trade this document exists to argue
+against. Rung 9's honest status is **additive half done, subtractive half not
+applicable**, and the gate stays as a ratchet against *growth* rather than a
+target to reach.
 
 ### 8.1 Rung 1 is in flight, and its gate is moving the wrong way
 
