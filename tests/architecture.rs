@@ -611,6 +611,7 @@ const LAYERS: &[(&str, usize)] = &[
     ("entity", 3),
     ("identity", 3),
     ("provenance", 3),
+    ("request", 3),
     // jails-project: the resolved project and everything jails records about it.
     ("pom", 4),
     ("maven", 4),
