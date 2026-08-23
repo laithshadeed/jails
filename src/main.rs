@@ -2,6 +2,7 @@ mod add;
 mod adopt;
 mod app;
 mod apply;
+mod bench;
 mod build;
 mod codemod;
 mod commands;
@@ -290,6 +291,22 @@ enum Command {
     Stop {
         #[arg(num_args = 0..)]
         services: Vec<Runtime>,
+    },
+    /// Run the k6 load test (`jails add loadtest`) and report what it measured
+    ///
+    /// jails does not parse k6's output: k6 prints p95 and p99 itself and its
+    /// own thresholds decide pass or fail. What jails adds is the profile,
+    /// stated before the run so the number is reproducible.
+    Bench {
+        /// Concurrent virtual users
+        #[arg(long, default_value_t = 10)]
+        vus: usize,
+        /// How long to hold that load, in k6's notation (30s, 2m)
+        #[arg(long, default_value = "30s")]
+        duration: String,
+        /// Also write k6's machine-readable summary here
+        #[arg(long, value_name = "FILE")]
+        export: Option<String>,
     },
     /// Write a [layout] table matching where this project already keeps things
     ///
@@ -630,6 +647,18 @@ fn main() -> std::process::ExitCode {
         Command::Start { services } => compose::start(&services, debug),
         Command::Stop { services } => compose::stop_cmd(&services, debug),
         Command::Adopt => adopt::adopt(pretend),
+        Command::Bench {
+            vus,
+            duration,
+            export,
+        } => bench::bench(
+            bench::Profile {
+                vus,
+                duration,
+                export,
+            },
+            debug,
+        ),
         Command::Doctor { json } => doctor::doctor(json),
         Command::Why { log, json } => why::why(log.as_deref(), debug, json),
         Command::Stats { json } => inspect::stats(json),

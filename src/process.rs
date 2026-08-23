@@ -313,7 +313,6 @@ pub(crate) fn run(spec: &CommandSpec, diagnostics: Diagnostics) -> Result<Done> 
 }
 
 /// Run, and treat a non-zero exit as an error naming the program.
-#[cfg(test)]
 pub(crate) fn run_checked(spec: &CommandSpec, diagnostics: Diagnostics) -> Result<Done> {
     let done = run(spec, diagnostics)?;
     if !done.status.success() {

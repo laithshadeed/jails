@@ -6373,3 +6373,77 @@ fn add_mail_produces_a_project_that_compiles() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+/// `plan.md` §17 item 5b. k6 is not installed here, so what is checked is the
+/// two refusals and the command jails would run — the tier-2 shape, which is
+/// the honest one when the tool under test is absent.
+#[test]
+fn bench_refuses_without_a_load_test_and_without_k6() {
+    let root = temp_dir("bench");
+    write_spring_fixture(&root);
+
+    let output = jails_cmd(&root, None).arg("bench").output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(stderr.contains("jails add loadtest"), "{stderr}");
+
+    // `add loadtest` derives its route list from the project, so there has to
+    // be a route.
+    let status = jails_cmd(&root, None)
+        .args(["generate", "controller", "Health"])
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let status = jails_cmd(&root, None)
+        .args(["add", "loadtest", "--no-start"])
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    // A PATH with no k6 on it, whatever this machine happens to have.
+    let empty = root.join("no-tools");
+    fs::create_dir_all(&empty).unwrap();
+    let output = jails_cmd(&root, Some(&empty))
+        .arg("bench")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(stderr.contains("k6 is not on PATH"), "{stderr}");
+    assert!(stderr.contains("mise use -g k6"), "{stderr}");
+}
+
+/// The profile is printed before the run, because a latency number without the
+/// load that produced it is not a measurement.
+#[test]
+fn bench_states_the_profile_it_is_about_to_run() {
+    let root = temp_dir("bench-profile");
+    write_spring_fixture(&root);
+    let status = jails_cmd(&root, None)
+        .args(["generate", "controller", "Health"])
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let status = jails_cmd(&root, None)
+        .args(["add", "loadtest", "--no-start"])
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    let tools = root.join("tools");
+    write_fake_maven(&tools, &["k6"], &root.join("k6.log"));
+
+    let output = jails_cmd(&root, Some(&tools))
+        .args(["bench", "--vus", "40", "--duration", "2m"])
+        .output()
+        .unwrap();
+    let report = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        report.contains("40 virtual users for 2m"),
+        "the profile has to be stated: {report}"
+    );
+
+    let argv = fs::read_to_string(root.join("k6.log")).unwrap();
+    assert!(argv.contains("run"), "{argv}");
+    assert!(argv.contains("load-tests/load-test.js"), "{argv}");
+}

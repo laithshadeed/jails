@@ -878,6 +878,13 @@ require('jails').setup({ terminal_height = 12 })
 The plugin shells out to the real `jails` on PATH and deliberately
 reimplements none of its project-generation logic.
 
+- `jails bench [--vus N] [--duration 30s] [--export FILE]` — runs the k6 load
+  test `jails add loadtest` wrote, stating the profile first so the number is
+  reproducible. jails does not parse k6's output: k6 prints p95 and p99 itself
+  and its own thresholds (`http_req_failed rate<0.01`,
+  `http_req_duration p(95)<500, p(99)<1000`) decide pass or fail. Refuses
+  without a load test, and without k6 on PATH.
+
 ## A codebase jails did not create
 
 Most of jails never touches Maven — `routes`, `beans`, `stats`, `notes`,

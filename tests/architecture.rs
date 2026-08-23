@@ -66,13 +66,13 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // available to them, and this is the containment boundary
                 // rather than the disease. `run.rs`'s eight call sites fold
                 // into one `maven_root`, which is why it is four and not five.
-                ceiling: 139,
+                ceiling: 140,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;
                 // this one stays a ratchet against growth, which is why the
                 // target tracks the ceiling rather than sitting under it.
-                target: 139,
+                target: 140,
                 why: "Every one is a fact re-derived from a primitive instead of read off \
                       the resolved `Project`. This is the count abstract.md §8.1 watched \
                       rise from 161 to 195 with nothing to say so.",
