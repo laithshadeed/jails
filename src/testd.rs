@@ -46,10 +46,28 @@ const END: u8 = 4;
 
 /// How long a daemon waits for work before exiting.
 ///
-/// A daemon that outlives the session it was started for is a JVM holding half
-/// a gigabyte for a directory nobody has open. Thirty minutes is longer than
-/// any edit-test gap and far shorter than a working day.
-const IDLE_SECONDS: u64 = 1800;
+/// A daemon that outlives the session it was started for is a JVM holding a
+/// couple of hundred megabytes for a directory nobody has open. Ten minutes is
+/// far longer than any edit-test gap and short enough that a forgotten daemon
+/// is gone before it is noticed. It was thirty, which was long enough for two
+/// to be left running on this machine and be taken for a leak.
+const IDLE_SECONDS: u64 = 600;
+
+/// What the daemon is allowed to take.
+///
+/// **Measured, and the reason this exists.** A `java` with no `-Xmx` sizes its
+/// max heap at a quarter of physical RAM -- 8 GB here -- and leaves metaspace
+/// unbounded. That is a reasonable default for an application somebody
+/// launched and is watching, and the wrong one for a background process they
+/// did not, especially when there is one per project.
+///
+/// The numbers are not guesses. After 26 consecutive runs the daemon held
+/// 13 MB of live heap, 23 MB of metaspace and exactly **4** classloaders --
+/// the per-run ones are collected, so there is no growth to leave room for.
+/// These caps are roughly 20x the measured live set: headroom for a project
+/// far larger than any measured here, while still being a ceiling.
+const HEAP_LIMIT: &str = "-Xmx512m";
+const METASPACE_LIMIT: &str = "-XX:MaxMetaspaceSize=256m";
 
 /// How long to wait for a daemon to bind its socket before giving up on it.
 const START_TIMEOUT: Duration = Duration::from_secs(90);
@@ -214,6 +232,8 @@ fn ensure_running(
     }
 
     let spec = CommandSpec::new("java")
+        .arg(HEAP_LIMIT)
+        .arg(METASPACE_LIMIT)
         .arg("-cp")
         .arg(&dependencies)
         .arg(&source)
