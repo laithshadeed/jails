@@ -72,6 +72,9 @@ const ALLOWED: &[AllowedConcept] = &[
             // and its semantics carry the intent for it.
             "crates/jails-prepare/src/prepare.rs",
             "crates/jails-prepare/src/operation.rs",
+            // Preparation guards the ledger generation the plan was computed
+            // against, and renders the image the commit will write.
+            "crates/jails-prepare/src/pipeline.rs",
             "src/app.rs",
             // The typed shadow reads the schema-1 store's rows to build its
             // observed side, so it names the module they live in.

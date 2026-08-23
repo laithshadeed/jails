@@ -31,7 +31,8 @@
 use crate::Result;
 use crate::conflict::FileMode;
 use crate::entity::ExternalPathId;
-use crate::identity::{ObjectId, ProjectPath, TemplateId, TransactionId};
+use crate::identity::{ObjectId, ObjectRef, ProjectPath, TemplateId, TemplateKey, TransactionId};
+use crate::provenance::TemplateOrigin;
 use jails_support::codec::{self, Decoder, Encoder, ordered};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -486,6 +487,79 @@ impl CanonicalRoot {
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+/// One template as the snapshot froze it.
+///
+/// §R2.1 freezes built-in/project/user origin **once**. A planner that
+/// re-resolved a template would let the same run render one file from a
+/// built-in and another from an override that appeared in between, and the
+/// only record of which was used would be the bytes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedTemplate {
+    pub id: TemplateId,
+    pub origin: TemplateOrigin,
+    pub source: Arc<str>,
+    pub source_object: ObjectRef,
+    pub required_keys: BTreeSet<TemplateKey>,
+}
+
+impl ResolvedTemplate {
+    /// Freeze one template, deriving its object identity from its own bytes.
+    pub fn capture(
+        id: TemplateId,
+        origin: TemplateOrigin,
+        source: &str,
+        required_keys: BTreeSet<TemplateKey>,
+    ) -> Self {
+        Self {
+            id,
+            origin,
+            source: Arc::from(source),
+            source_object: ObjectRef::new(
+                ObjectId::from_bytes(codec::sha256(source.as_bytes())),
+                source.len() as u64,
+            ),
+            required_keys,
+        }
+    }
+}
+
+/// Every template this run may render, resolved once.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct TemplateStore {
+    templates: BTreeMap<TemplateId, ResolvedTemplate>,
+}
+
+impl TemplateStore {
+    pub fn new(templates: Vec<ResolvedTemplate>) -> Result<Self> {
+        let mut map = BTreeMap::new();
+        for template in templates {
+            if map.insert(template.id.clone(), template.clone()).is_some() {
+                return Err(format!(
+                    "template `{}` was resolved twice; its origin is frozen once per run",
+                    template.id
+                ));
+            }
+        }
+        Ok(Self { templates: map })
+    }
+
+    /// An unresolved template is an error for the same reason an undeclared
+    /// read is: the run would render from bytes nothing recorded.
+    pub fn resolve(&self, id: &TemplateId) -> Result<&ResolvedTemplate> {
+        self.templates.get(id).ok_or_else(|| {
+            format!(
+                "template `{id}` was not resolved, so this run may not render it.\n       fix: \
+                 declare it in the snapshot; its origin is frozen once so two files cannot \
+                 render from two different versions of it."
+            )
+        })
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &ResolvedTemplate> {
+        self.templates.values()
     }
 }
 

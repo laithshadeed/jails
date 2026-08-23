@@ -221,6 +221,24 @@ fn collect(base: &Path, dir: &Path, found: &mut BTreeMap<String, Override>) {
 /// user could: silently shipping `{{nmae}}` inside a generated class is the
 /// one outcome worth being loud about.
 pub fn render(template: impl AsRef<str>, values: &[(&str, &str)]) -> String {
+    match try_render(template, values) {
+        Ok(rendered) => rendered,
+        Err(error) => panic!("{error}"),
+    }
+}
+
+/// The same substitution, for a template jails did not write.
+///
+/// `render` panics because its templates are jails' own and a missing key is
+/// a programming error the golden target catches. A template that came off
+/// disk — a project or user override — is the reader's file, and reporting
+/// jails' bug for their typo would be the wrong error entirely. plan.md §R3.2
+/// puts template materialisation inside preparation, where a refusal has to
+/// be a value rather than an abort.
+pub fn try_render(
+    template: impl AsRef<str>,
+    values: &[(&str, &str)],
+) -> std::result::Result<String, String> {
     let template = template.as_ref();
     // Checked against the *template*, never the result. A rendered value may
     // legitimately contain anything -- it is data by then -- and scanning the
@@ -228,18 +246,20 @@ pub fn render(template: impl AsRef<str>, values: &[(&str, &str)]) -> String {
     // missing nothing extra.
     let required = placeholders(template);
     for key in &required {
-        assert!(
-            values.iter().any(|(k, _)| k == key),
-            "template placeholder {{{{{key}}}}} was not supplied (given: {})",
-            supplied(values)
-        );
+        if !values.iter().any(|(k, _)| k == key) {
+            return Err(format!(
+                "template placeholder {{{{{key}}}}} was not supplied (given: {})",
+                supplied(values)
+            ));
+        }
     }
     for (key, _) in values {
-        assert!(
-            required.iter().any(|k| k == key),
-            "value `{key}` is not used by this template (it needs: {})",
-            required.join(", ")
-        );
+        if !required.iter().any(|k| k == key) {
+            return Err(format!(
+                "value `{key}` is not used by this template (it needs: {})",
+                required.join(", ")
+            ));
+        }
     }
 
     let mut out = String::with_capacity(template.len());
@@ -247,12 +267,12 @@ pub fn render(template: impl AsRef<str>, values: &[(&str, &str)]) -> String {
     while let Some(at) = rest.find("{{") {
         out.push_str(&rest[..at]);
         let after = &rest[at + 2..];
-        let end = after.find("}}").unwrap_or_else(|| {
-            panic!(
+        let Some(end) = after.find("}}") else {
+            return Err(format!(
                 "unterminated template placeholder near `{}`",
                 &after[..after.len().min(30)]
-            )
-        });
+            ));
+        };
         let key = &after[..end];
         let value = values
             .iter()
@@ -263,7 +283,7 @@ pub fn render(template: impl AsRef<str>, values: &[(&str, &str)]) -> String {
         rest = &after[end + 2..];
     }
     out.push_str(rest);
-    out
+    Ok(out)
 }
 
 /// The distinct placeholder names a template uses, in first-seen order.

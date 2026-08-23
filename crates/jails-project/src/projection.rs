@@ -44,7 +44,7 @@ use jails_protocol::edit::SemanticEdit;
 use jails_protocol::fact::{FactKind, FactSourceState, ProjectFact, ProjectFactKey, ProjectFacts};
 use jails_protocol::identity::{ObjectId, Package, ProjectPath};
 use jails_protocol::render::DesiredBody;
-use jails_protocol::resource::{ProjectedResource, ResourceKey, ResourceValue};
+use jails_protocol::resource::{ProjectedResource, ResourceKey, ResourceOwner, ResourceValue};
 use jails_protocol::snapshot::{Captured, ProjectSnapshot, SnapshotFile};
 use jails_spec::build::Build;
 use jails_support::Result;
@@ -130,6 +130,28 @@ impl ProjectedProject {
 
     pub fn resources(&self) -> &BTreeMap<ResourceKey, ProjectedResource> {
         &self.resources
+    }
+
+    /// Every path this projection has touched, in path order.
+    pub fn overlay(&self) -> impl Iterator<Item = (&ProjectPath, &ProjectedEntry)> {
+        self.overlay.iter()
+    }
+
+    pub fn entry(&self, path: &ProjectPath) -> Option<&ProjectedEntry> {
+        self.overlay.get(path)
+    }
+
+    /// Who is charged with a path.
+    ///
+    /// Derived from the resource rows rather than recorded per file: a whole
+    /// file's owners *are* its `WholeFile` resource's owners, and keeping a
+    /// second copy beside the overlay is how the two come to disagree about
+    /// whose removal deletes it.
+    pub fn contributors(&self, path: &ProjectPath) -> BTreeSet<ResourceOwner> {
+        self.resources
+            .get(&ResourceKey::WholeFile(path.clone()))
+            .map(|resource| resource.owners.clone())
+            .unwrap_or_default()
     }
 
     /// Record that a fact kind was parsed from a path, so a later change to
@@ -227,7 +249,7 @@ impl ProjectedProject {
         &mut self,
         key: ResourceKey,
         value: &ResourceValue,
-        owners: &BTreeSet<jails_protocol::resource::ResourceOwner>,
+        owners: &BTreeSet<ResourceOwner>,
     ) -> Result<()> {
         value.agrees_with(&key)?;
         match self.resources.get_mut(&key) {

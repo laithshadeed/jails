@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+jails-java = { path = "../jails-java" }
 jails-project = { path = "../jails-project" }
 jails-protocol = { path = "../jails-protocol" }
 jails-spec = { path = "../jails-spec" }
