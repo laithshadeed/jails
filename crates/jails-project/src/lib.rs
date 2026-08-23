@@ -26,6 +26,8 @@ pub mod maven;
 pub mod model;
 pub mod pom;
 pub mod project;
+pub mod projection;
+pub mod properties;
 
 // The lower crates, re-exported so every module in this one keeps saying
 // `crate::…` wherever it ships. Only this block knows which crate a module

@@ -631,6 +631,8 @@ const LAYERS: &[(&str, usize)] = &[
     ("compose", 4),
     ("model", 4),
     ("project", 4),
+    ("projection", 4),
+    ("properties", 4),
     ("ledger", 4),
     ("generated_files", 4),
     ("inspect", 4),

@@ -49,6 +49,16 @@ pub enum Flavor {
     PlainMaven,
 }
 
+/// A dependency by borrowed parts, which is all the splice needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DependencyRef<'a> {
+    pub group_id: &'a str,
+    pub artifact_id: &'a str,
+    pub version: Option<&'a str>,
+    pub scope: Option<&'a str>,
+    pub optional: bool,
+}
+
 /// A dependency to splice in. `version: None` means the version is supplied by
 /// dependency management (Spring Boot's parent pom), which is how we avoid
 /// baking stale version pins into the binary.
@@ -70,6 +80,19 @@ pub struct Dependency {
 /// missing`, and every goal fails, including `validate`. That is plan.md
 /// §8.1, and it is the reason nothing versionless may be spliced into a plain
 /// project.
+impl Dependency {
+    /// This dependency as borrowed parts.
+    pub fn borrowed(&self) -> DependencyRef<'_> {
+        DependencyRef {
+            group_id: self.group_id,
+            artifact_id: self.artifact_id,
+            version: self.version,
+            scope: self.scope,
+            optional: self.optional,
+        }
+    }
+}
+
 pub fn assertj(flavor: Flavor) -> Dependency {
     Dependency {
         group_id: "org.assertj",
@@ -354,7 +377,7 @@ fn line_indent(xml: &str, offset: usize) -> Option<&str> {
         .then_some(prefix)
 }
 
-fn render_dependency(dep: &Dependency, indent: &str) -> String {
+fn render_dependency(dep: DependencyRef<'_>, indent: &str) -> String {
     let mut out = String::new();
     out.push_str(&format!("{indent}<dependency>\n"));
     out.push_str(&format!(
@@ -382,6 +405,17 @@ fn render_dependency(dep: &Dependency, indent: &str) -> String {
 /// the dependency is already declared -- `add` is idempotent, so re-running it
 /// reports "already present" instead of writing a duplicate.
 pub fn add_dependency(pom: &str, dep: &Dependency) -> Result<Option<String>> {
+    add_dependency_ref(pom, dep.borrowed())
+}
+
+/// The same splice from borrowed parts.
+///
+/// [`Dependency`]'s fields are `&'static str` because every one of them is a
+/// literal in this binary. A dependency that came off the wire is not, and the
+/// splice does not care — so the borrowed form is what the splice actually
+/// takes, and the `'static` struct delegates to it. One splice, two callers,
+/// no second renderer to drift.
+pub fn add_dependency_ref(pom: &str, dep: DependencyRef<'_>) -> Result<Option<String>> {
     if has_dependency(pom, dep.group_id, dep.artifact_id) {
         return Ok(None);
     }

@@ -300,20 +300,52 @@ fn edit_capabilities(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(e) => return Err(format!("failed to read {}: {e}", path.display())),
     };
+    match edited_capabilities(&text, change)? {
+        Some(updated) => crate::apply::put(&path, updated),
+        None => Ok(()),
+    }
+}
 
-    let mut labels = Config::parse(&text)
+/// The same edit as text, for a caller holding the bytes rather than a root.
+///
+/// `None` means the change was already true. This is the splice; the two
+/// root-taking functions above are the file half of it, so a projection and a
+/// write cannot disagree about what the file becomes.
+pub fn edited_capabilities(
+    text: &str,
+    change: impl FnOnce(&mut Vec<String>) -> bool,
+) -> Result<Option<String>, String> {
+    let mut labels = Config::parse(text)
         .map_err(|e| format!("{FILE}: {e}"))?
         .capabilities;
     if !change(&mut labels) {
-        return Ok(());
+        return Ok(None);
     }
-
     let rendered = format!("{CAPABILITIES_KEY} = {}", render_string_array(&labels));
-    let updated = match replace_capabilities_line(&text, &rendered) {
+    Ok(Some(match replace_capabilities_line(text, &rendered) {
         Some(updated) => updated,
-        None => append_project_table(&text, &rendered),
-    };
-    crate::apply::put(&path, updated)
+        None => append_project_table(text, &rendered),
+    }))
+}
+
+/// Add one capability label to this text, or `None` when it is already there.
+pub fn with_capability(text: &str, label: &str) -> Result<Option<String>, String> {
+    edited_capabilities(text, |labels| {
+        if labels.iter().any(|l| l == label) {
+            return false;
+        }
+        labels.push(label.to_string());
+        true
+    })
+}
+
+/// Take one capability label back out.
+pub fn without_capability(text: &str, label: &str) -> Result<Option<String>, String> {
+    edited_capabilities(text, |labels| {
+        let before = labels.len();
+        labels.retain(|l| l != label);
+        labels.len() != before
+    })
 }
 
 /// Swap the existing `capabilities = [...]` line in place, keeping its
@@ -382,19 +414,23 @@ pub fn record_layout(root: &Path, layer: &str, directory: &str) -> Result<(), St
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(e) => return Err(format!("failed to read {}: {e}", path.display())),
     };
+    crate::apply::put(&path, with_layout(&text, layer, directory)?)
+}
+
+/// The same layout edit as text. See [`edited_capabilities`] for why the
+/// splice and the write are separate.
+pub fn with_layout(text: &str, layer: &str, directory: &str) -> Result<String, String> {
     if !is_layer(layer) {
         return Err(format!(
             "`{layer}` is not a layer. Known layers: {}",
             layer_names().join(", ")
         ));
     }
-
     let rendered = format!("{layer} = \"{directory}\"");
-    let updated = match replace_layout_line(&text, layer, &rendered) {
+    Ok(match replace_layout_line(text, layer, &rendered) {
         Some(updated) => updated,
-        None => insert_into_layout_table(&text, &rendered),
-    };
-    crate::apply::put(&path, updated)
+        None => insert_into_layout_table(text, &rendered),
+    })
 }
 
 /// Swap an existing `<layer> = "..."` inside `[layout]`, keeping its position.

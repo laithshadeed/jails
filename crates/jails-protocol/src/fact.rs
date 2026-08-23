@@ -307,10 +307,15 @@ impl ProjectFact {
 }
 
 /// Every fact a planner may consult, with its sources' presence.
+///
+/// A value is stored **with the input it was parsed from**. That is what lets
+/// a changed or deleted file invalidate exactly its own facts: without it,
+/// deleting a POM would leave its dependency facts in place and every later
+/// decision would be made against a file that no longer exists.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ProjectFacts {
     sources: BTreeMap<FactKind, FactSourceState>,
-    values: BTreeMap<ProjectFactKey, ProjectFact>,
+    values: BTreeMap<ProjectFactKey, (FactKind, ProjectFact)>,
 }
 
 impl ProjectFacts {
@@ -324,30 +329,51 @@ impl ProjectFacts {
 
     /// Refuses a mismatched pair and a duplicate key. §R2.1: *"duplicate keys
     /// reject"* — a second value for one key is two answers to one question.
-    pub fn record(&mut self, key: ProjectFactKey, fact: ProjectFact) -> Result<()> {
+    pub fn record(
+        &mut self,
+        source: FactKind,
+        key: ProjectFactKey,
+        fact: ProjectFact,
+    ) -> Result<()> {
         fact.agrees_with(&key)?;
-        if let Some(existing) = self.values.get(&key) {
-            if existing == &fact {
+        if let Some((existing_source, existing)) = self.values.get(&key) {
+            if existing == &fact && existing_source == &source {
                 return Ok(());
             }
             return Err(format!(
                 "project fact key {key:?} already holds a different value"
             ));
         }
-        self.values.insert(key, fact);
+        self.values.insert(key, (source, fact));
         Ok(())
     }
 
+    /// Forget exactly one fact, for a delta that removes it.
+    pub fn invalidate_key(&mut self, key: &ProjectFactKey) {
+        self.values.remove(key);
+    }
+
+    /// Forget everything one input said. Called when that input changed or
+    /// went away, before it is reparsed.
+    pub fn invalidate(&mut self, source: &FactKind) {
+        self.values.retain(|_, (from, _)| from != source);
+    }
+
     pub fn get(&self, key: &ProjectFactKey) -> Option<&ProjectFact> {
-        self.values.get(key)
+        self.values.get(key).map(|(_, fact)| fact)
+    }
+
+    /// Which input a fact came from.
+    pub fn source_of(&self, key: &ProjectFactKey) -> Option<&FactKind> {
+        self.values.get(key).map(|(source, _)| source)
     }
 
     pub fn source(&self, kind: &FactKind) -> Option<FactSourceState> {
         self.sources.get(kind).copied()
     }
 
-    pub fn values(&self) -> &BTreeMap<ProjectFactKey, ProjectFact> {
-        &self.values
+    pub fn values(&self) -> impl Iterator<Item = (&ProjectFactKey, &ProjectFact)> {
+        self.values.iter().map(|(key, (_, fact))| (key, fact))
     }
 
     pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
@@ -359,7 +385,17 @@ impl ProjectFacts {
             kind.encode(encoder)?;
             state.encode(encoder)?;
         }
-        encode_fact_map(encoder, &self.values)
+        encoder.count(self.values.len())?;
+        let mut previous: Option<&ProjectFactKey> = None;
+        for (key, (source, fact)) in &self.values {
+            ordered(previous, key)?;
+            previous = Some(key);
+            fact.agrees_with(key)?;
+            key.encode(encoder)?;
+            source.encode(encoder)?;
+            fact.encode(encoder)?;
+        }
+        Ok(())
     }
 
     pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
@@ -372,13 +408,24 @@ impl ProjectFacts {
             previous = Some(kind.clone());
             sources.insert(kind, FactSourceState::decode(decoder)?);
         }
-        Ok(Self {
-            sources,
-            values: decode_fact_map(decoder)?,
-        })
+        let count = decoder.count()?;
+        let mut values = BTreeMap::new();
+        let mut previous: Option<ProjectFactKey> = None;
+        for _ in 0..count {
+            let key = ProjectFactKey::decode(decoder)?;
+            ordered(previous.as_ref(), &key)?;
+            previous = Some(key.clone());
+            let source = FactKind::decode(decoder)?;
+            let fact = ProjectFact::decode(decoder)?;
+            fact.agrees_with(&key)?;
+            values.insert(key, (source, fact));
+        }
+        Ok(Self { sources, values })
     }
 }
 
+/// The delta form: a plain key-to-fact map, with no source. A delta is what
+/// a recipe *declares*; where it came from is the recipe, not an input file.
 pub fn encode_fact_map(
     encoder: &mut Encoder,
     values: &BTreeMap<ProjectFactKey, ProjectFact>,
@@ -759,6 +806,7 @@ mod tests {
         facts.observe(FactKind::Compose, FactSourceState::Absent);
         facts
             .record(
+                FactKind::Pom,
                 ProjectFactKey::MavenDependency(coordinate("org.postgresql", "postgresql")),
                 ProjectFact::MavenDependency(crate::resource::DependencySpec::managed(coordinate(
                     "org.postgresql",
@@ -768,6 +816,7 @@ mod tests {
             .unwrap();
         facts
             .record(
+                FactKind::Pom,
                 ProjectFactKey::MavenPlugin(coordinate(
                     DEFAULT_PLUGIN_GROUP,
                     "maven-failsafe-plugin",
@@ -786,6 +835,7 @@ mod tests {
             .unwrap();
         facts
             .record(
+                FactKind::JavaSource(path("src/main/java/com/example/demo/domain/Note.java")),
                 ProjectFactKey::JavaType(java("com.example.demo.domain.Note")),
                 ProjectFact::JavaType(JavaTypeFact {
                     source: path("src/main/java/com/example/demo/domain/Note.java"),
@@ -829,6 +879,7 @@ mod tests {
         let mut facts = ProjectFacts::new();
         let error = facts
             .record(
+                FactKind::Compose,
                 ProjectFactKey::ComposeService(ServiceName::parse("db").unwrap()),
                 ProjectFact::CommandRegistration,
             )
@@ -846,13 +897,25 @@ mod tests {
             key: PropertyKey::parse("spring.datasource.url").unwrap(),
         };
         facts
-            .record(key.clone(), ProjectFact::Property("jdbc:one".to_string()))
+            .record(
+                FactKind::Properties(path("src/main/resources/application.properties")),
+                key.clone(),
+                ProjectFact::Property("jdbc:one".to_string()),
+            )
             .unwrap();
         facts
-            .record(key.clone(), ProjectFact::Property("jdbc:one".to_string()))
+            .record(
+                FactKind::Properties(path("src/main/resources/application.properties")),
+                key.clone(),
+                ProjectFact::Property("jdbc:one".to_string()),
+            )
             .expect("an identical re-observation is not a conflict");
         let error = facts
-            .record(key, ProjectFact::Property("jdbc:two".to_string()))
+            .record(
+                FactKind::Properties(path("src/main/resources/application.properties")),
+                key,
+                ProjectFact::Property("jdbc:two".to_string()),
+            )
             .unwrap_err();
         assert!(error.contains("already holds a different value"), "{error}");
     }
@@ -868,6 +931,47 @@ mod tests {
         let mut encoder = Encoder::new();
         let error = expression.encode(&mut encoder, 0).unwrap_err();
         assert!(error.contains("closed, not unbounded"), "{error}");
+    }
+
+    /// Without this a deleted POM would leave its dependency facts in place
+    /// and every later decision would be made against a file that is gone.
+    #[test]
+    fn invalidating_one_input_leaves_every_other_input_untouched() {
+        let mut facts = ProjectFacts::new();
+        let properties = FactKind::Properties(path("src/main/resources/application.properties"));
+        facts
+            .record(
+                FactKind::Pom,
+                ProjectFactKey::MavenDependency(coordinate("org.postgresql", "postgresql")),
+                ProjectFact::MavenDependency(crate::resource::DependencySpec::managed(coordinate(
+                    "org.postgresql",
+                    "postgresql",
+                ))),
+            )
+            .unwrap();
+        facts
+            .record(
+                properties.clone(),
+                ProjectFactKey::Property {
+                    path: path("src/main/resources/application.properties"),
+                    key: PropertyKey::parse("server.port").unwrap(),
+                },
+                ProjectFact::Property("8080".to_string()),
+            )
+            .unwrap();
+
+        facts.invalidate(&properties);
+
+        assert_eq!(facts.values().count(), 1);
+        assert_eq!(
+            facts
+                .source_of(&ProjectFactKey::MavenDependency(coordinate(
+                    "org.postgresql",
+                    "postgresql"
+                )))
+                .cloned(),
+            Some(FactKind::Pom)
+        );
     }
 
     #[test]

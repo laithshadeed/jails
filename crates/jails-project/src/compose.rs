@@ -53,6 +53,27 @@ pub struct Service {
     pub volume: Option<&'static str>,
 }
 
+/// A service by borrowed parts, which is all the splice needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ServiceRef<'a> {
+    pub name: &'a str,
+    pub marker: &'a str,
+    pub body: &'a str,
+    pub volume: Option<&'a str>,
+}
+
+impl Service {
+    /// This service as borrowed parts.
+    pub fn borrowed(&self) -> ServiceRef<'_> {
+        ServiceRef {
+            name: self.name,
+            marker: self.marker,
+            body: self.body,
+            volume: self.volume,
+        }
+    }
+}
+
 /// Mailpit: an SMTP sink with a web inbox, for development.
 ///
 /// The same image the integration test starts, so what you read in the browser
@@ -231,7 +252,7 @@ fn block(marker: &str) -> crate::codemod::Marked<'_> {
     crate::codemod::Marked::indented(marker, "  ")
 }
 
-fn marked_block(svc: &Service) -> String {
+fn marked_block(svc: ServiceRef<'_>) -> String {
     // `svc.body` already carries its own two-space nesting under the service
     // name, so it is rendered as-is beneath a line the block indents.
     let mut inner = format!("{}:\n", svc.name);
@@ -247,6 +268,10 @@ fn marked_volume(name: &str, marker: &str) -> String {
 }
 
 pub fn has_service(text: &str, svc: &Service) -> bool {
+    has_service_ref(text, svc.borrowed())
+}
+
+pub fn has_service_ref(text: &str, svc: ServiceRef<'_>) -> bool {
     block(svc.marker).present_in(text)
         || text
             .lines()
@@ -255,7 +280,14 @@ pub fn has_service(text: &str, svc: &Service) -> bool {
 
 /// Splice `svc` into `text`. `Ok(None)` when it is already there.
 pub fn add_service(text: &str, svc: &Service) -> Option<String> {
-    if !text.trim().is_empty() && has_service(text, svc) {
+    add_service_ref(text, svc.borrowed())
+}
+
+/// The same splice from borrowed parts, for a service that did not come from
+/// a literal in this binary. One splice, two callers — see
+/// `pom::add_dependency_ref` for the same reason.
+pub fn add_service_ref(text: &str, svc: ServiceRef<'_>) -> Option<String> {
+    if !text.trim().is_empty() && has_service_ref(text, svc) {
         return None;
     }
     if text.trim().is_empty() {
@@ -268,12 +300,12 @@ pub fn add_service(text: &str, svc: &Service) -> Option<String> {
     Some(out)
 }
 
-fn render_new(services: &[&Service]) -> String {
+fn render_new(services: &[ServiceRef<'_>]) -> String {
     let mut out = String::from(HEADER);
     out.push_str("services:\n");
     let mut volumes: Vec<(&str, &str)> = Vec::new();
     for svc in services {
-        out.push_str(&marked_block(svc));
+        out.push_str(&marked_block(*svc));
         if let Some(volume) = svc.volume {
             volumes.push((volume, svc.marker));
         }
