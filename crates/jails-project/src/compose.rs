@@ -376,6 +376,16 @@ fn ensure_volume(text: &str, name: &str, marker: &str) -> String {
 /// have no services left (caller should delete it), `None` when the service
 /// was not there.
 pub fn remove_service(text: &str, svc: &Service) -> Option<String> {
+    remove_service_ref(text, svc.borrowed())
+}
+
+/// The same removal, from parts the caller owns.
+///
+/// A service being retired is named by a *recorded* resource rather than by
+/// one of this module's constants, so its marker and volume arrive as runtime
+/// strings. Leaking them to fit `Service`'s `&'static str` fields would be a
+/// memory leak in the name of a type signature.
+pub fn remove_service_ref(text: &str, svc: ServiceRef<'_>) -> Option<String> {
     let stripped = strip_marked(text, svc.marker)?;
     let stripped = if svc.volume.is_some() {
         strip_marked(&stripped, svc.marker).unwrap_or(stripped)

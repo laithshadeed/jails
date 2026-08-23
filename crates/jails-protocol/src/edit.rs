@@ -61,6 +61,20 @@ pub enum SemanticEdit {
         layer: Layer,
         directory: String,
     },
+    /// Take a resource back out of the file that holds it.
+    ///
+    /// The inverse of whichever edit installed it, and one variant rather than
+    /// eight because the *key* already says which file and which element: a
+    /// dependency is unspliced from the POM, a property line is removed, a
+    /// compose service and its marked block come out, a capability leaves the
+    /// manifest. Removal carries no value, and that is the point -- what to
+    /// take out is decided by identity, not by comparing the bytes that are
+    /// there against the bytes jails would have written. A reader who edited
+    /// the line still gets it removed, because they asked for the thing that
+    /// owns it to go.
+    Retire {
+        key: ResourceKey,
+    },
 }
 
 impl SemanticEdit {
@@ -74,6 +88,7 @@ impl SemanticEdit {
             Self::CommandRegistration { .. } => 5,
             Self::HumanConfigCapability { .. } => 6,
             Self::HumanConfigLayout { .. } => 7,
+            Self::Retire { .. } => 8,
         }
     }
 
@@ -86,7 +101,8 @@ impl SemanticEdit {
             | Self::Property { key, .. }
             | Self::MarkedBlock { key, .. }
             | Self::CommandRegistration { key, .. }
-            | Self::HumanConfigCapability { key, .. } => Some(key),
+            | Self::HumanConfigCapability { key, .. }
+            | Self::Retire { key } => Some(key),
             Self::HumanConfigLayout { .. } => None,
         }
     }
@@ -106,6 +122,9 @@ impl SemanticEdit {
             Self::HumanConfigLayout { directory, .. } => {
                 return validate_layout_directory(directory);
             }
+            // Any key at all: a retirement is filed under the resource it
+            // removes, whatever kind that is.
+            Self::Retire { .. } => return Ok(()),
         };
         let Some(key) = self.key() else {
             return Ok(());
@@ -143,6 +162,7 @@ impl SemanticEdit {
                 key.encode(encoder)?;
                 encoder.string(body)
             }
+            Self::Retire { key } => key.encode(encoder),
             Self::CommandRegistration { key, command } => {
                 key.encode(encoder)?;
                 command.encode(encoder)
@@ -175,6 +195,9 @@ impl SemanticEdit {
             3 => Self::Property {
                 key: ResourceKey::decode(decoder)?,
                 value: PropertySetting::decode(decoder)?,
+            },
+            8 => Self::Retire {
+                key: ResourceKey::decode(decoder)?,
             },
             4 => Self::MarkedBlock {
                 key: ResourceKey::decode(decoder)?,

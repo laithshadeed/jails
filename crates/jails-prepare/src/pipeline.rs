@@ -551,6 +551,9 @@ fn record_store(
             None => store.applied.push(applied),
         }
     }
+    store
+        .applied
+        .retain(|row| !intent.entities_removed.contains(&row.id));
     store.applied.sort_by(|a, b| a.id.cmp(&b.id));
 
     for desired in &intent.resources_after {
@@ -562,6 +565,10 @@ fn record_store(
             // Owners union rather than replace: two capabilities wanting one
             // dependency both own it, and a request that stated only its own
             // claim must not erase the other's.
+            // Owners union rather than replace. An intent states the claims
+            // *this request* makes, which is all a scope may speak for; the
+            // other owners of a shared dependency are none of its business,
+            // and replacing the set would drop them.
             Some(row) => {
                 row.owners.extend(desired.owners.iter().cloned());
                 row.value = desired.value.clone();
@@ -575,6 +582,16 @@ fn record_store(
                 }),
         }
     }
+    // Derived, never declared: a resource is owned, so a resource whose last
+    // owner just left has lost its last owner. A second list saying which
+    // resources to delete could disagree with the first about the same fact.
+    for id in &intent.entities_removed {
+        let owner = jails_protocol::resource::ResourceOwner::Entity(id.clone());
+        for row in &mut store.resources {
+            row.owners.remove(&owner);
+        }
+    }
+    store.resources.retain(|row| !row.owners.is_empty());
     store.resources.sort_by(|a, b| a.key.cmp(&b.key));
 
     for desired in &intent.one_shots_after {
@@ -906,6 +923,7 @@ mod tests {
                     )
                     .unwrap(),
                 ],
+                entities_removed: Vec::new(),
                 legacy_after: Vec::new(),
             },
         }

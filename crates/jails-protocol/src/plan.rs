@@ -33,6 +33,20 @@ pub struct LedgerIntent {
     pub entities_after: Vec<DesiredAppliedEntity>,
     pub one_shots_after: Vec<DesiredOneShotReceipt>,
     pub resources_after: Vec<DesiredResource>,
+    /// Entities this transition takes out of the store.
+    ///
+    /// Removal has to be *said* rather than implied. A request speaks for one
+    /// scope, so an entity missing from `entities_after` means "this request
+    /// has nothing to say about it" -- silence, not deletion. Without this
+    /// list, expressing a removal would mean sending the complete state of the
+    /// whole store with one request's scope, and every request could then
+    /// delete everything it had not heard of.
+    ///
+    /// Resources need no such list: a resource is owned, so a resource whose
+    /// last owner is on this list has lost its last owner, and that is
+    /// derivable rather than declarable. Two lists that could disagree about
+    /// the same fact is exactly the drift this schema exists to remove.
+    pub entities_removed: Vec<EntityId>,
     pub legacy_after: Vec<LegacyEntry>,
 }
 
@@ -90,6 +104,7 @@ impl LedgerIntent {
             DesiredOneShotReceipt::encode,
         )?;
         encode_all(encoder, &self.resources_after, DesiredResource::encode)?;
+        encode_all(encoder, &self.entities_removed, |id, e| id.encode(e))?;
         encoder.count(self.legacy_after.len())?;
         for entry in &self.legacy_after {
             entry.encode(encoder)?;
@@ -102,6 +117,7 @@ impl LedgerIntent {
         let entities_after = decode_all(decoder, DesiredAppliedEntity::decode)?;
         let one_shots_after = decode_all(decoder, DesiredOneShotReceipt::decode)?;
         let resources_after = decode_all(decoder, DesiredResource::decode)?;
+        let entities_removed = decode_all(decoder, EntityId::decode)?;
         let count = decoder.count()?;
         let mut legacy_after = Vec::new();
         for _ in 0..count {
@@ -112,6 +128,7 @@ impl LedgerIntent {
             entities_after,
             one_shots_after,
             resources_after,
+            entities_removed,
             legacy_after,
         };
         intent.validate()?;
@@ -457,6 +474,7 @@ pub(crate) mod tests {
                 entities_after: Vec::new(),
                 one_shots_after: Vec::new(),
                 resources_after: Vec::new(),
+                entities_removed: Vec::new(),
                 legacy_after: Vec::new(),
             },
         }
@@ -528,6 +546,7 @@ pub(crate) mod tests {
             entities_after: vec![row.clone(), row],
             one_shots_after: Vec::new(),
             resources_after: Vec::new(),
+            entities_removed: Vec::new(),
             legacy_after: Vec::new(),
         };
         assert!(

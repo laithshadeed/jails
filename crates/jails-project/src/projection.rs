@@ -73,6 +73,8 @@ pub struct ProjectedProject {
     base: Arc<ProjectSnapshot>,
     overlay: BTreeMap<ProjectPath, ProjectedEntry>,
     resources: BTreeMap<ResourceKey, ProjectedResource>,
+    /// What the store already recorded, read only by retirement.
+    recorded: BTreeMap<ResourceKey, ResourceValue>,
     facts: ProjectFacts,
     build: Build,
     base_package: Package,
@@ -100,6 +102,7 @@ impl ProjectedProject {
             base,
             overlay: BTreeMap::new(),
             resources: BTreeMap::new(),
+            recorded: BTreeMap::new(),
             facts: ProjectFacts::new(),
             build,
             base_package,
@@ -127,6 +130,20 @@ impl ProjectedProject {
 
     pub fn facts(&self) -> &ProjectFacts {
         &self.facts
+    }
+
+    /// Seed the resources the store already records.
+    ///
+    /// Kept apart from `resources`, which means "what the changes applied to
+    /// this projection claim" and is checked against the ledger intent. These
+    /// are what the store *already says*, and exactly one thing reads them:
+    /// retirement. Which marker wraps a compose block, and whether it declared
+    /// a volume, are facts about how the resource was installed, and they live
+    /// in the store rather than in the request that removes it.
+    pub fn record(&mut self, rows: &[jails_protocol::resource::ResourceRecord]) {
+        for row in rows {
+            self.recorded.insert(row.key.clone(), row.value.clone());
+        }
     }
 
     pub fn resources(&self) -> &BTreeMap<ResourceKey, ProjectedResource> {
@@ -376,6 +393,7 @@ impl ProjectedProject {
                 }
                 Ok(Some(path))
             }
+            SemanticEdit::Retire { key } => self.retire(key),
             SemanticEdit::HumanConfigLayout { layer, directory } => {
                 let path = human_config_path()?;
                 let text = self.text(&path)?.unwrap_or_default();
@@ -410,6 +428,101 @@ impl ProjectedProject {
     /// neither: the same recipe would then produce two different files
     /// depending on which engine ran it, and the difference is invisible until
     /// `jails add format` fails `mvn verify` on a freshly generated project.
+    /// Take one resource back out of the file that holds it.
+    ///
+    /// Keyed removal, never a byte comparison: the caller asked for the thing
+    /// that owns this line to go, so the line goes even if somebody edited it.
+    /// A `WholeFile` key is not handled here -- a file an entity owns is
+    /// removed as an absence in the change, where the executor can guard the
+    /// preimage it is deleting.
+    fn retire(&mut self, key: &ResourceKey) -> Result<Option<ProjectPath>> {
+        match key {
+            ResourceKey::MavenDependency(coordinate) => {
+                let path = pom_path()?;
+                let text = self.required_text(&path)?;
+                let without = pom::remove_dependency(
+                    &text,
+                    coordinate.group_id.as_str(),
+                    coordinate.artifact_id.as_str(),
+                )?;
+                self.write_text(&path, without.unwrap_or(text));
+                Ok(Some(path))
+            }
+            ResourceKey::MavenPlugin(coordinate) => {
+                let path = pom_path()?;
+                let text = self.required_text(&path)?;
+                let without = pom::remove_plugin(&text, coordinate.artifact_id.as_str())?;
+                self.write_text(&path, without.unwrap_or(text));
+                Ok(Some(path))
+            }
+            ResourceKey::ComposeService(name) => {
+                let path = compose_path()?;
+                let Some(text) = self.text(&path)? else {
+                    return Ok(None);
+                };
+                // Which marker wraps the block, and whether it declared a
+                // volume, are facts about how it was *installed*. They are
+                // read back off the recorded resource rather than guessed:
+                // guessing the marker would strip nothing and leave a service
+                // the project no longer wants, quietly.
+                let Some(ResourceValue::ComposeService(spec)) = self.recorded.get(key) else {
+                    return Err(format!(
+                        "{key:?} is not a recorded compose service, so there is nothing to say \
+                         which marker wraps it"
+                    ));
+                };
+                let volume = spec.volumes.iter().next().map(|volume| volume.as_str());
+                let removed = crate::compose::remove_service_ref(
+                    &text,
+                    crate::compose::ServiceRef {
+                        name: name.as_str(),
+                        marker: spec.marker.as_str(),
+                        body: "",
+                        volume,
+                    },
+                );
+                match removed {
+                    Some(without) => self.write_text(&path, without),
+                    None => return Ok(None),
+                }
+                Ok(Some(path))
+            }
+            ResourceKey::Property { path, key } => {
+                let Some(text) = self.text(path)? else {
+                    return Ok(None);
+                };
+                self.write_text(path, properties::remove(&text, key.as_str()));
+                Ok(Some(path.clone()))
+            }
+            ResourceKey::MarkedBlock { path, marker } => {
+                let Some(text) = self.text(path)? else {
+                    return Ok(None);
+                };
+                let marked = Marked::new(marker.as_str());
+                match marked.strip_from(&text) {
+                    Some(without) => self.write_text(path, without),
+                    None => return Ok(None),
+                }
+                Ok(Some(path.clone()))
+            }
+            ResourceKey::HumanConfigCapability(id) => {
+                let path = human_config_path()?;
+                let Some(text) = self.text(&path)? else {
+                    return Ok(None);
+                };
+                if let Some(without) = crate::config::without_capability(&text, id.kind.label())? {
+                    self.write_text(&path, without);
+                }
+                Ok(Some(path))
+            }
+            ResourceKey::CommandRegistration { .. } | ResourceKey::WholeFile(_) => Err(format!(
+                "{key:?} is not retired by an edit.\n       fix: a whole file leaves as an \
+                 absence, and a command registration as a rewrite of the dispatcher, both of \
+                 which the executor can guard."
+            )),
+        }
+    }
+
     fn write_text(&mut self, path: &ProjectPath, text: String) {
         self.place(path, text.into_bytes(), default_mode());
     }

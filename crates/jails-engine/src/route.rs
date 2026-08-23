@@ -31,7 +31,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use jails_commit::execute::{self, LockedProject, ProjectHandle};
 use jails_commit::outcome::{CommitError, CommitResult};
 use jails_prepare::desire;
-use jails_prepare::pipeline::{self, PreparationContext};
+use jails_prepare::pipeline::{self, ObservedStore, PreparationContext};
 use jails_project::capture::{self, ReadDeclaration};
 use jails_project::model::{Change, Project};
 use jails_protocol::bootstrap::Bootstrap;
@@ -42,8 +42,9 @@ use jails_protocol::entity::{
     CapabilityId, CapabilityInstance, CapabilitySpec, EntityId, EntitySpec, IntentId, OwnerId,
 };
 use jails_protocol::identity::{JavaType, Name, Package, ProjectPath};
-use jails_protocol::ownership::{DesiredEntity, DesiredState, ReconcileScope};
+use jails_protocol::ownership::{DesiredEntity, DesiredState, ObservedEntity, ReconcileScope};
 use jails_protocol::plan::{DesiredAppliedEntity, DesiredChangeSet, LedgerIntent, PlannedSubject};
+use jails_protocol::render::ManagedPath;
 use jails_protocol::resource::{DesiredResource, ResourceKey, ResourceOwner, ResourceValue};
 use jails_protocol::snapshot::{MachineRootPresence, TemplateStore};
 use jails_protocol::transition::CommitPlan;
@@ -71,7 +72,7 @@ pub fn install(project: &Project, capability: Capability) -> Result<CommitResult
     };
     let request = Request {
         scope: ReconcileScope::DirectConfig,
-        entity,
+        declared: declared_capabilities(&observed(project)?, Some(entity))?,
         change: desired,
     };
     commit(
@@ -80,6 +81,48 @@ pub fn install(project: &Project, capability: Capability) -> Result<CommitResult
         &declaration(project, &change)?,
         "jails add",
     )
+}
+
+/// Take one capability back out.
+///
+/// The exact inverse of [`install`], and it is not a mirrored undo: the
+/// request simply stops declaring the capability, and reconciliation works out
+/// what that means. A dependency two capabilities wanted stays, because the
+/// other one still claims it. A file only this capability owned becomes an
+/// absence. The line in `jails.toml` goes, because it was a resource this
+/// entity owned like any other.
+pub fn remove(project: &Project, capability: Capability) -> Result<CommitResult> {
+    let id = CapabilityId {
+        kind: capability,
+        instance: CapabilityInstance::Singleton,
+    };
+    let entity = EntityId::Capability(id);
+    let store = observed(project)?;
+    if !store
+        .ledger
+        .as_ref()
+        .is_some_and(|ledger| ledger.applied.iter().any(|row| row.id == entity))
+    {
+        return Err(format!(
+            "`{}` is not recorded as installed in this project.\n       fix: `jails doctor` says \
+             what is installed. Removing something the store never recorded would mean guessing \
+             which lines to take out of files jails does not own.",
+            capability.label()
+        ));
+    }
+    let mut declared = declared_capabilities(&store, None)?;
+    declared.remove(&entity);
+    let owner = ResourceOwner::Entity(entity.clone());
+    let request = Request {
+        scope: ReconcileScope::DirectConfig,
+        declared,
+        // Nothing is *written* by a removal. Everything it does falls out of
+        // the claims it stops making, which is what makes `remove` the exact
+        // inverse of `add` rather than a second hand-written description of
+        // what `add` did.
+        change: DesiredChange::owned_by(owner.clone()),
+    };
+    commit(project, request, &retiring(&store, &owner)?, "jails remove")
 }
 
 /// Generate one persistent artifact through the transaction protocol.
@@ -115,7 +158,7 @@ pub fn generate(
     };
     let request = Request {
         scope: ReconcileScope::DirectEntity(EntityId::Intent(id)),
-        entity,
+        declared: BTreeMap::from([(entity.id.clone(), entity)]),
         change: desired,
     };
     commit(
@@ -244,47 +287,175 @@ fn record_capability(
     Ok(())
 }
 
+/// What a removal is allowed to read: the format owners, plus every file this
+/// owner is about to give up.
+///
+/// A file is deleted against a *guarded preimage*, and the guard is only
+/// meaningful if the file was captured. Declaring the ones that are leaving --
+/// rather than every file jails has ever written -- keeps the preconditions to
+/// what this request actually depends on, so an unrelated generated file
+/// changing does not make the removal refuse.
+fn retiring(store: &ObservedStore, owner: &ResourceOwner) -> Result<ReadDeclaration> {
+    let mut declaration = capture::capability_reads()?;
+    for row in store
+        .ledger
+        .iter()
+        .flat_map(|ledger| ledger.resources.iter())
+    {
+        if let ResourceKey::WholeFile(path) = &row.key
+            && row.owners.iter().all(|held| held == owner)
+        {
+            declaration = declaration.file(path.clone());
+        }
+    }
+    Ok(declaration)
+}
+
+/// The store as it is, read once per command.
+fn observed(project: &Project) -> Result<ObservedStore> {
+    jails_commit::store::Store::at(project.root()).observe()
+}
+
+/// Every capability `jails.toml`'s scope currently declares, with `changed`
+/// applied to it.
+///
+/// `DirectConfig` speaks for the *whole* capability list, so a request that
+/// declared only the capability it is installing would be saying every other
+/// capability is no longer wanted -- and the reconciler would dutifully
+/// retire them. Passing `None` for `changed` is how a removal says one is
+/// gone.
+fn declared_capabilities(
+    observed: &ObservedStore,
+    changed: Option<DesiredEntity>,
+) -> Result<BTreeMap<EntityId, DesiredEntity>> {
+    let mut declared = BTreeMap::new();
+    if let Some(store) = &observed.ledger {
+        for row in &store.applied {
+            if !matches!(row.id, EntityId::Capability(_))
+                || !row.owners.contains(&OwnerId::DirectConfig)
+            {
+                continue;
+            }
+            declared.insert(
+                row.id.clone(),
+                DesiredEntity {
+                    id: row.id.clone(),
+                    spec: row.version.spec.clone(),
+                    owners: BTreeSet::from([OwnerId::DirectConfig]),
+                },
+            );
+        }
+    }
+    if let Some(entity) = changed {
+        declared.insert(entity.id.clone(), entity);
+    }
+    Ok(declared)
+}
+
 /// One request, before it is measured against the store.
 ///
-/// Deliberately not a `DesiredChangeSet` yet: that value carries the
-/// generation the plan was computed against, and there is exactly one place
-/// that may decide it -- the read of the store in [`commit`]. A field filled
-/// with a placeholder here and corrected there is two authorities on the same
-/// number, and the executor refuses when they disagree.
+/// Deliberately not a `DesiredChangeSet` yet. That value states what the store
+/// looks like afterwards, and afterwards is a function of what is there now --
+/// which exactly one place may read (see [`commit`]). A field filled with a
+/// placeholder here and corrected there is two authorities on one number, and
+/// the executor refuses when they disagree.
 struct Request {
     scope: ReconcileScope,
-    entity: DesiredEntity,
+    /// What this scope declares. Empty is a real declaration: it says this
+    /// scope wants nothing, which is how a removal is expressed.
+    declared: BTreeMap<EntityId, DesiredEntity>,
     change: DesiredChange,
 }
 
 impl Request {
-    /// Everything this request wants, as the complete state of the scope it
-    /// speaks for.
+    /// Measure this request against the store, and say what the store becomes.
     ///
-    /// A scope may only ever add or remove *its own* claim, so the intent
-    /// carries this entity and the resources charged to it, and says nothing
-    /// about anybody else's. What survives from other owners is decided when
-    /// the store is updated, not here.
-    fn against(self, generation: u64) -> Result<DesiredChangeSet> {
-        let applied = DesiredAppliedEntity {
-            id: self.entity.id.clone(),
-            owners: self.entity.owners.clone(),
-            spec: self.entity.spec.clone(),
-        };
-        let state = DesiredState::new(
-            self.scope,
-            BTreeMap::from([(self.entity.id.clone(), self.entity)]),
-        )?;
+    /// The reconciliation is [`jails_protocol::ownership::reconcile`]'s, not a
+    /// second copy of it: a scope may only add or remove *its own* claim, an
+    /// owner outside the scope is carried forward untouched, and an entity
+    /// whose last owner leaves is removed. What is left here is projecting
+    /// that answer onto the resource rows -- a resource loses the owners whose
+    /// entities went, and a resource nobody claims any more is retired.
+    fn against(self, observed: &ObservedStore) -> Result<DesiredChangeSet> {
+        let recorded = observed.ledger.as_ref();
+        let applied: BTreeMap<EntityId, ObservedEntity> = recorded
+            .map(|store| {
+                store
+                    .applied
+                    .iter()
+                    .map(|row| {
+                        (
+                            row.id.clone(),
+                            ObservedEntity {
+                                spec: row.version.spec.clone(),
+                                owners: row.owners.clone(),
+                            },
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let reconciled =
+            jails_protocol::ownership::reconcile(&self.scope, &self.declared, &applied, &[])?;
+
+        let entities_after = reconciled
+            .entities
+            .iter()
+            .map(|(id, entity)| DesiredAppliedEntity {
+                id: id.clone(),
+                owners: entity.owners.clone(),
+                spec: entity.spec.clone(),
+            })
+            .collect();
+        let gone: BTreeSet<ResourceOwner> = reconciled
+            .removed
+            .iter()
+            .map(|id| ResourceOwner::Entity(id.clone()))
+            .collect();
+
+        // Which resources this removal leaves unowned. Computed here only to
+        // decide what has to come *out of the files*; the store derives the
+        // same answer from `entities_removed`, so the two cannot disagree
+        // about which rows survive.
+        let mut change = self.change;
+        for row in recorded
+            .map(|store| store.resources.as_slice())
+            .unwrap_or(&[])
+        {
+            if row.owners.iter().any(|owner| !gone.contains(owner)) {
+                continue;
+            }
+            match &row.key {
+                // A whole file leaves as an absence rather than an edit: the
+                // executor guards the preimage it deletes, which an edit
+                // cannot do.
+                ResourceKey::WholeFile(path) => change.absences.push(ManagedPath {
+                    path: path.clone(),
+                    resource: row.key.clone(),
+                    force: false,
+                }),
+                _ => change.edits.push(SemanticEdit::Retire {
+                    key: row.key.clone(),
+                }),
+            }
+        }
+
+        // Exactly the claims this request makes, and no more. The intent
+        // speaks for one scope, and `require_intent_matches` holds it to
+        // saying the same thing the changes do.
+        let resources_after = change.resources.clone();
+
         let set = DesiredChangeSet {
             ledger_intent: LedgerIntent {
-                generation_before: generation,
-                entities_after: vec![applied],
+                generation_before: observed.generation(),
+                entities_after,
                 one_shots_after: Vec::new(),
-                resources_after: self.change.resources.clone(),
+                resources_after,
+                entities_removed: reconciled.removed,
                 legacy_after: Vec::new(),
             },
-            ordered: vec![self.change],
-            subject: PlannedSubject::Reconcile(state),
+            ordered: vec![change],
+            subject: PlannedSubject::Reconcile(DesiredState::new(self.scope, self.declared)?),
         };
         set.validate()?;
         Ok(set)
@@ -331,12 +502,15 @@ fn commit(
     declaration: &ReadDeclaration,
     description: &str,
 ) -> Result<CommitResult> {
-    let (snapshot, projection) = capture::projected(project, declaration)?;
+    let (snapshot, mut projection) = capture::projected(project, declaration)?;
     // Read once, and let the same value decide the generation the plan claims
     // and the image the commit guards under the lock. Reading them apart is
     // how a plan comes to be written against a store that moved in between.
-    let observed = jails_commit::store::Store::at(project.root()).observe()?;
-    let set = request.against(observed.generation())?;
+    let observed = observed(project)?;
+    if let Some(store) = &observed.ledger {
+        projection.record(&store.resources);
+    }
+    let set = request.against(&observed)?;
     let root = capture::canonical_root(project.root())?;
     let machine = if project.root().join(".jails").is_dir() {
         MachineRootPresence::Present

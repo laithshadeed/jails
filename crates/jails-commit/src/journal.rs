@@ -719,6 +719,7 @@ mod tests {
                     entities_after: Vec::new(),
                     one_shots_after: Vec::new(),
                     resources_after: Vec::new(),
+                    entities_removed: Vec::new(),
                     legacy_after: Vec::new(),
                 },
                 migration: None,

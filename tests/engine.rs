@@ -343,3 +343,82 @@ fn installing_a_capability_twice_leaves_the_store_where_it_was() {
         "and the generation does not move for a run that did nothing"
     );
 }
+
+/// `remove` is the inverse of `install`, worked out rather than mirrored.
+#[test]
+fn removing_a_capability_takes_back_exactly_what_it_installed() {
+    let root = common::temp_dir("engine-remove");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_spring_fixture(&root);
+    let before = std::fs::read_to_string(root.join("pom.xml")).unwrap();
+
+    jails_engine::route::install(&Project::load(&root).unwrap(), Capability::Actuator).unwrap();
+    let file = root.join("src/test/java/com/example/demo/ActuatorEndpointsTest.java");
+    assert!(file.is_file());
+
+    jails_engine::route::remove(&Project::load(&root).unwrap(), Capability::Actuator).unwrap();
+
+    let pom = std::fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(
+        !pom.contains("spring-boot-starter-actuator"),
+        "the dependency it claimed is gone:\n{pom}"
+    );
+    assert!(!file.exists(), "and so is the file only it owned");
+    let properties =
+        std::fs::read_to_string(root.join("src/main/resources/application.properties"))
+            .unwrap_or_default();
+    assert!(
+        jails_project::properties::get(&properties, "management.server.port").is_none(),
+        "and the properties it set:\n{properties}"
+    );
+    let manifest = std::fs::read_to_string(root.join("jails.toml")).unwrap_or_default();
+    assert!(
+        !manifest.contains("actuator"),
+        "and its line in the manifest"
+    );
+
+    let store = jails_commit::store::Store::at(&root)
+        .observe()
+        .unwrap()
+        .ledger
+        .unwrap();
+    assert!(store.applied.is_empty(), "{:?}", store.applied);
+    assert!(store.resources.is_empty(), "{:?}", store.resources);
+    let _ = before;
+}
+
+/// A resource two capabilities want survives one of them leaving.
+///
+/// This is the whole reason a dependency is a resource with an owner set
+/// rather than a line somebody spliced: `remove` takes away a claim, and the
+/// line goes only when the last claim does.
+#[test]
+fn a_shared_claim_survives_one_owner_leaving() {
+    let root = common::temp_dir("engine-shared");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_spring_fixture(&root);
+
+    // Both of these want `spring-boot-starter-actuator`.
+    jails_engine::route::install(&Project::load(&root).unwrap(), Capability::Actuator).unwrap();
+    jails_engine::route::install(&Project::load(&root).unwrap(), Capability::Observability)
+        .unwrap();
+    jails_engine::route::remove(&Project::load(&root).unwrap(), Capability::Observability).unwrap();
+
+    let pom = std::fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(
+        pom.contains("spring-boot-starter-actuator"),
+        "actuator still claims it:\n{pom}"
+    );
+}
+
+/// Removing something the store never recorded is refused, not guessed at.
+#[test]
+fn removing_what_was_never_installed_is_refused() {
+    let root = common::temp_dir("engine-remove-absent");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_spring_fixture(&root);
+    let error = jails_engine::route::remove(&Project::load(&root).unwrap(), Capability::Actuator)
+        .unwrap_err();
+    assert!(error.contains("not recorded as installed"), "{error}");
+    assert!(error.contains("fix:"), "{error}");
+}
