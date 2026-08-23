@@ -565,7 +565,7 @@ pub fn write(root: &Path, text: &str) -> Result<()> {
     let path = path(root);
     if text.is_empty() {
         if path.is_file() {
-            std::fs::remove_file(&path)
+            jails_support::apply::remove(&path)
                 .map_err(|e| format!("failed to remove {}: {e}", path.display()))?;
         }
         return Ok(());

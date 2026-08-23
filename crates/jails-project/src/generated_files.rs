@@ -50,9 +50,11 @@ impl Read {
     fn retire(&self) {
         for path in &self.legacy {
             let _ = if path.is_dir() {
-                fs::remove_dir_all(path)
+                // A pre-ledger `.jails/` subdirectory jails created and
+                // nothing else writes into.
+                jails_support::apply::remove_managed_tree(path)
             } else {
-                fs::remove_file(path)
+                jails_support::apply::remove(path)
             };
         }
     }

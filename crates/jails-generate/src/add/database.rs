@@ -314,8 +314,7 @@ pub(super) fn install_capability_properties(
         return Ok(true);
     }
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
+        jails_support::apply::ensure_directory(parent)?;
     }
     crate::apply::put(&path, next)?;
     for line in lines {
@@ -431,7 +430,7 @@ pub(super) fn remove_capability_properties(root: &Path, label: &str) -> Result<(
     if out.trim().is_empty() {
         // The file existed only for this block; leaving an empty file behind
         // is litter.
-        let _ = fs::remove_file(&path);
+        let _ = jails_support::apply::remove(&path);
         println!("  removed {}", rel(root, &path));
         return Ok(());
     }
@@ -488,8 +487,7 @@ pub(super) fn install_db_properties(root: &Path, dry_run: bool) -> Result<bool> 
         return Ok(true);
     }
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
+        jails_support::apply::ensure_directory(parent)?;
     }
     crate::apply::put(&path, next)?;
     println!("  properties  {}", rel(root, &path));
@@ -507,7 +505,7 @@ pub(super) fn uninstall_db_properties(root: &Path) -> Result<()> {
         return Ok(());
     };
     if next.trim().is_empty() {
-        fs::remove_file(&path).map_err(|e| format!("failed to remove {}: {e}", path.display()))?;
+        jails_support::apply::remove(&path)?;
         println!("  delete  {}", rel(root, &path));
     } else {
         crate::apply::put(&path, next)?;
@@ -523,7 +521,7 @@ pub(super) fn delete_maven_output(root: &Path, src: &Path) {
         return;
     };
     if out.exists() {
-        let _ = fs::remove_file(&out);
+        let _ = jails_support::apply::remove(&out);
     }
 }
 

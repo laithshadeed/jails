@@ -158,7 +158,7 @@ pub fn uninstall_durable_job_test_properties(
         return Ok(true);
     }
     if next.is_empty() {
-        std::fs::remove_file(&path)
+        jails_support::apply::remove(&path)
             .map_err(|error| format!("failed to remove {}: {error}", path.display()))?;
     } else {
         crate::apply::put(&path, next)?;

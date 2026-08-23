@@ -1378,7 +1378,7 @@ fn write_sites_outside_apply(src: &[Source]) -> usize {
 /// project through other names, so the gate read green over exactly the
 /// surface R6 has to migrate.
 /// Where the count stands today. Lowered by each migrated surface.
-const MUTATION_CEILING: usize = 43;
+const MUTATION_CEILING: usize = 0;
 
 const MUTATION_APIS: &[&str] = &[
     "fs::write",
@@ -1400,10 +1400,29 @@ fn mutation_sites(src: &[Source], apis: &[&str]) -> usize {
         .filter(|file| !owns_writing(&file.path))
         .map(|file| {
             apis.iter()
-                .map(|api| file.production.matches(api).count())
+                .map(|api| whole_calls(&file.production, api))
                 .sum::<usize>()
         })
         .sum()
+}
+
+/// Count a call name, not a prefix of one.
+///
+/// `fs::create_dir_all` contains `fs::create_dir`, and `fs::remove_dir_all`
+/// contains `fs::remove_dir`, so a substring count reports every such call
+/// twice. A gate that inflates its own number is a gate whose progress cannot
+/// be read.
+fn whole_calls(source: &str, name: &str) -> usize {
+    source
+        .match_indices(name)
+        .filter(|(at, _)| {
+            source[at + name.len()..]
+                .chars()
+                .next()
+                .map(|next| !next.is_alphanumeric() && next != '_')
+                .unwrap_or(true)
+        })
+        .count()
 }
 
 /// The modules whose *subject* is changing the filesystem.

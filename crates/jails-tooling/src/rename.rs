@@ -118,7 +118,7 @@ pub fn rename(old: &str, new: &str, dry_run: bool, force: bool) -> Result<()> {
         if edit.path == edit.destination {
             continue;
         }
-        std::fs::rename(&edit.path, &edit.destination).map_err(|e| {
+        jails_support::apply::move_file(&edit.path, &edit.destination).map_err(|e| {
             format!(
                 "failed to move {} to {}: {e}",
                 edit.path.display(),

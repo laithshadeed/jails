@@ -175,9 +175,9 @@ fn new_offline(
         return Ok(());
     }
 
-    fs::create_dir_all(&source)
+    jails_support::apply::ensure_directory(&source)
         .map_err(|error| format!("failed to create {}: {error}", source.display()))?;
-    fs::create_dir_all(&tests)
+    jails_support::apply::ensure_directory(&tests)
         .map_err(|error| format!("failed to create {}: {error}", tests.display()))?;
     let dependencies = offline_dependencies(deps)?;
     crate::apply::put_named(
@@ -314,7 +314,7 @@ fn write_devtools_defaults(root: &Path) -> Result<()> {
         return Ok(());
     }
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
+        jails_support::apply::ensure_directory(parent)
             .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
     }
     crate::apply::put(&path, DEVTOOLS_DEFAULTS)
@@ -436,7 +436,7 @@ fn write_default_properties(root: &Path) -> Result<()> {
     next.push('\n');
     next.push_str(&addition);
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
+        jails_support::apply::ensure_directory(parent)
             .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
     }
     crate::apply::put(&path, next)
@@ -519,9 +519,9 @@ pub fn new_cli(name: &str, java: &str, git: bool, debug: bool, pretend: bool) ->
         return Ok(());
     }
 
-    fs::create_dir_all(&src_dir)
+    jails_support::apply::ensure_directory(&src_dir)
         .map_err(|e| format!("failed to create {}: {e}", src_dir.display()))?;
-    fs::create_dir_all(&test_dir)
+    jails_support::apply::ensure_directory(&test_dir)
         .map_err(|e| format!("failed to create {}: {e}", test_dir.display()))?;
 
     crate::apply::put_named(
@@ -571,7 +571,7 @@ pub fn new_cli(name: &str, java: &str, git: bool, debug: bool, pretend: bool) ->
 /// a `.gitkeep` -- otherwise the folder vanishes on the first clone.
 fn write_fixtures_dir(root: &Path) -> Result<()> {
     let dir = root.join("src/test/resources/fixtures");
-    fs::create_dir_all(&dir).map_err(|e| format!("failed to create {}: {e}", dir.display()))?;
+    jails_support::apply::ensure_directory(&dir)?;
     crate::apply::put(dir.join(".gitkeep"), "")?;
     Ok(())
 }

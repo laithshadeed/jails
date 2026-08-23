@@ -36,6 +36,31 @@
 //!
 //! A caller that cannot say which of the four it means does not yet know what
 //! it is doing, which is the point of making it choose.
+//!
+//! ## Removing, and why it took so long to get a verb
+//!
+//! For a long time this module could only write, so every caller that had to
+//! *remove* something reached for `fs::remove_file` directly — twenty-nine
+//! sites across generators, capabilities, `rename` and `app apply`. plan.md
+//! §R6.4 is what forced the count to be taken: the gate banned one spelling
+//! and read green while a dozen other calls mutated projects through other
+//! names.
+//!
+//! The verbs below close that. They are not conveniences; each carries the
+//! same kind of belief the writing verbs do:
+//!
+//! - [`remove`] — jails wrote this file and is taking it back. Absence is
+//!   success, because `destroy` after a manual delete is not an error.
+//! - [`remove_managed_directory`] — a directory jails created and nothing
+//!   else has claimed. Refuses a symlink outright.
+//! - [`ensure_directory`] — the parent chain for something about to be
+//!   written, made explicit at the call site rather than implied.
+//! - [`move_file`] — a rename within one project, where the destination is
+//!   expected to be free.
+//!
+//! What is deliberately *not* here is a recursive delete of anything a user
+//! might own. `remove_managed_directory` removes one empty directory, and a
+//! caller that wants more has to say so path by path.
 
 use crate::Result;
 use std::fs;
@@ -144,6 +169,112 @@ pub fn put_in_scratch(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> Res
     ensure_parent(path)?;
     fs::write(path, contents)
         .map_err(|error| format!("failed to write {}: {error}", path.display()))
+}
+
+/// Remove a file jails wrote.
+///
+/// An absent file is success. `destroy` after somebody deleted the file by
+/// hand is not an error — the requested state is "not there", and it is not
+/// there. Reporting a failure would make the ordinary cleanup path noisy and
+/// teach people to ignore it.
+pub fn remove(path: impl AsRef<Path>) -> Result<()> {
+    let path = path.as_ref();
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("failed to remove {}: {error}", path.display())),
+    }
+}
+
+/// Remove a directory jails created, if it is empty.
+///
+/// Non-recursive on purpose. A recursive delete of a project directory is one
+/// mistyped path away from removing work nobody can recover, and the cases
+/// that need it are cases where the caller can name what it is removing.
+/// A directory that still has contents is left alone and reported as removed
+/// *nothing*, because something else is using it.
+pub fn remove_managed_directory(path: impl AsRef<Path>) -> Result<bool> {
+    let path = path.as_ref();
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(format!("failed to stat {}: {error}", path.display())),
+    };
+    if metadata.is_symlink() {
+        return Err(format!(
+            "{} is a symlink.\n       fix: jails removes directories it created, and a symlink \
+             here points at something it did not.",
+            path.display()
+        ));
+    }
+    match fs::remove_dir(path) {
+        Ok(()) => Ok(true),
+        // Still in use by something else. Leaving it is the safe answer.
+        Err(error)
+            if error.kind() == std::io::ErrorKind::DirectoryNotEmpty
+                || error.raw_os_error() == Some(39) =>
+        {
+            Ok(false)
+        }
+        Err(error) => Err(format!("failed to remove {}: {error}", path.display())),
+    }
+}
+
+/// Remove a whole tree jails owns end to end.
+///
+/// Deliberately long, like [`put_outside_project`]: this is for a scratch or
+/// machine tree jails created and no user file lives in. Nothing that removes
+/// part of a *project* should reach for it.
+pub fn remove_managed_tree(path: impl AsRef<Path>) -> Result<()> {
+    let path = path.as_ref();
+    match fs::remove_dir_all(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("failed to remove {}: {error}", path.display())),
+    }
+}
+
+/// Create a directory and its parents.
+///
+/// Explicit at the call site rather than implied by a write, because a
+/// generator that creates a package directory and then fails still created
+/// it, and a reader tracing what a command touched should see that.
+pub fn ensure_directory(path: impl AsRef<Path>) -> Result<()> {
+    let path = path.as_ref();
+    fs::create_dir_all(path)
+        .map_err(|error| format!("failed to create {}: {error}", path.display()))
+}
+
+/// Move a file within the project.
+///
+/// The destination's parents are created, because a rename that moves a type
+/// into a package that does not exist yet is ordinary.
+pub fn move_file(from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<()> {
+    let (from, to) = (from.as_ref(), to.as_ref());
+    ensure_parent(to)?;
+    fs::rename(from, to).map_err(|error| {
+        format!(
+            "failed to move {} to {}: {error}",
+            from.display(),
+            to.display()
+        )
+    })
+}
+
+/// Copy a file into a tree jails owns for the duration of one run.
+///
+/// Named for its destination rather than its action: copying *into a project*
+/// is a write and belongs to the verbs above; this is for scratch.
+pub fn copy_into_scratch(from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<u64> {
+    let (from, to) = (from.as_ref(), to.as_ref());
+    ensure_parent(to)?;
+    fs::copy(from, to).map_err(|error| {
+        format!(
+            "failed to copy {} to {}: {error}",
+            from.display(),
+            to.display()
+        )
+    })
 }
 
 /// Write via a temporary file and a rename.

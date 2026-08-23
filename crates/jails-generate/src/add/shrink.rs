@@ -229,7 +229,7 @@ pub fn remove(
     }
 
     for path in existing_files {
-        std::fs::remove_file(path)
+        jails_support::apply::remove(path)
             .map_err(|e| format!("failed to remove {}: {e}", path.display()))?;
         println!("  delete  {}", rel(&root, path));
         delete_maven_output(&root, path);

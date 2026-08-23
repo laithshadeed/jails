@@ -73,7 +73,7 @@ pub(super) fn reconcile_intent(
         for copy in [&old_root, &new_root] {
             let path = copy.join(relative);
             if path.is_file() {
-                fs::remove_file(&path)
+                jails_support::apply::remove(&path)
                     .map_err(|error| format!("failed to remove {}: {error}", path.display()))?;
             }
         }
@@ -182,7 +182,7 @@ pub(super) fn reconcile_intent(
                 );
             }
             MergeAction::Delete(path) => {
-                fs::remove_file(&path)
+                jails_support::apply::remove(&path)
                     .map_err(|error| format!("failed to remove {}: {error}", path.display()))?;
                 println!(
                     "  delete   {}",
@@ -246,7 +246,7 @@ pub(super) fn intent_relative_paths(
 }
 
 pub(super) fn copy_project(from: &Path, to: &Path) -> Result<()> {
-    fs::create_dir_all(to)
+    jails_support::apply::ensure_directory(to)
         .map_err(|error| format!("failed to create {}: {error}", to.display()))?;
     let entries = fs::read_dir(from)
         .map_err(|error| format!("failed to read {}: {error}", from.display()))?;
@@ -263,7 +263,7 @@ pub(super) fn copy_project(from: &Path, to: &Path) -> Result<()> {
         if source.is_dir() {
             copy_project(&source, &destination)?;
         } else if source.is_file() {
-            fs::copy(&source, &destination).map_err(|error| {
+            jails_support::apply::copy_into_scratch(&source, &destination).map_err(|error| {
                 format!(
                     "failed to copy {} to {}: {error}",
                     source.display(),

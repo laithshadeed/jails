@@ -182,7 +182,7 @@ pub fn destroy(
     }
 
     for p in existing {
-        fs::remove_file(p).map_err(|e| format!("failed to remove {}: {e}", p.display()))?;
+        jails_support::apply::remove(p)?;
         println!("removed {}", p.display());
     }
     // After the files, not before: an unregistration that succeeded over a

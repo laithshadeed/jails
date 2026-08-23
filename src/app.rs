@@ -391,8 +391,7 @@ fn init(root: &Path, requested: Option<&Path>, pretend: bool) -> Result<()> {
         return Ok(());
     }
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
+        jails_support::apply::ensure_directory(parent)?;
     }
     crate::apply::put(
         &path,
@@ -681,8 +680,7 @@ fn migrate_app_state(root: &Path, into: &mut crate::ledger::Ledger) -> Result<bo
         let recipe = intent.recipe();
         intent.record_onto(crate::ledger::entry_mut(into, intent.key(&recipe)));
     }
-    fs::remove_file(&path)
-        .map_err(|error| format!("failed to remove {}: {error}", path.display()))?;
+    jails_support::apply::remove(&path)?;
     Ok(true)
 }
 

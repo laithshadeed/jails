@@ -97,7 +97,7 @@ pub(super) fn remove_legacy_spring_factories(root: &Path) -> Result<bool> {
         return Ok(false);
     };
     if next.trim().is_empty() {
-        fs::remove_file(&path).map_err(|e| format!("failed to remove {}: {e}", path.display()))?;
+        jails_support::apply::remove(&path)?;
         println!("  delete  {} (superseded by @Import)", rel(root, &path));
     } else {
         crate::apply::put(&path, next)?;
@@ -121,7 +121,7 @@ pub(super) fn uninstall_postgres_test_initializer(
         return Ok(());
     };
     if next.trim().is_empty() {
-        fs::remove_file(&path).map_err(|e| format!("failed to remove {}: {e}", path.display()))?;
+        jails_support::apply::remove(&path)?;
         println!("  delete  {}", rel(root, &path));
     } else {
         crate::apply::put(&path, next)?;
