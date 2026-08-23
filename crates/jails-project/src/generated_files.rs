@@ -195,8 +195,11 @@ pub fn record(
     }
     let mut state = read(root)?;
     state.ledger.version = env!("CARGO_PKG_VERSION").to_string();
-    ledger::entry_mut(&mut state.ledger, kind, name, package).files =
-        relative.into_iter().collect();
+    ledger::entry_mut(
+        &mut state.ledger,
+        ledger::EntityKey::new(kind, name, package),
+    )
+    .files = relative.into_iter().collect();
     ledger::save(root, &state.ledger)?;
     state.retire();
     Ok(())
@@ -212,7 +215,7 @@ pub fn paths(
     let Some(entry) = current
         .applied
         .iter()
-        .find(|entry| entry.is(kind, name, package))
+        .find(|entry| entry.is(ledger::EntityKey::new(kind, name, package)))
     else {
         return Ok(None);
     };
@@ -230,7 +233,7 @@ pub fn forget(root: &Path, kind: &str, name: &str, package: Option<&str>) -> Res
     state
         .ledger
         .applied
-        .retain(|entry| !entry.is(kind, name, package));
+        .retain(|entry| !entry.is(ledger::EntityKey::new(kind, name, package)));
     if state.ledger.applied.len() != before || !state.legacy.is_empty() {
         ledger::save(root, &state.ledger)?;
         state.retire();

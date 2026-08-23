@@ -112,10 +112,79 @@ pub struct Applied {
     pub files: Vec<String>,
 }
 
+/// One entity's identity, as a value rather than three loose strings.
+///
+/// plan.md R1.5 step 3: *"Split identity from spec and replace string keys in
+/// app/ledger lookups."* The signature this replaces was
+/// `is(recipe, name, package)` — three same-typed parameters in a row, which
+/// `abstract.md` §2 lists as Long Parameter List at its worst: two of them
+/// swapped by mistake still compiles and still finds *a* row.
+///
+/// `package` is resolved here, never `Option`: the empty string is the base
+/// package, which is a real answer. That is the same distinction
+/// `jails_protocol::entity::IntentId` makes, and this type is the schema-1
+/// store's borrowed view of it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EntityKey<'a> {
+    pub recipe: &'a str,
+    pub name: &'a str,
+    /// Resolved: `""` is the base package.
+    pub package: &'a str,
+}
+
+impl<'a> EntityKey<'a> {
+    pub fn new(recipe: &'a str, name: &'a str, package: Option<&'a str>) -> Self {
+        Self {
+            recipe,
+            name,
+            package: package.unwrap_or_default(),
+        }
+    }
+}
+
+impl std::fmt::Display for EntityKey<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.package.is_empty() {
+            write!(f, "{} {}", self.recipe, self.name)
+        } else {
+            write!(f, "{} {} in {}", self.recipe, self.name, self.package)
+        }
+    }
+}
+
 impl Applied {
-    /// Two records are the same entity when these three agree.
-    pub fn is(&self, recipe: &str, name: &str, package: Option<&str>) -> bool {
-        self.recipe == recipe && self.name == name && self.package == package.unwrap_or_default()
+    /// This row's identity.
+    pub fn key(&self) -> EntityKey<'_> {
+        EntityKey {
+            recipe: &self.recipe,
+            name: &self.name,
+            package: &self.package,
+        }
+    }
+
+    /// Two records are the same entity when their keys agree.
+    pub fn is(&self, key: EntityKey<'_>) -> bool {
+        self.key() == key
+    }
+
+    /// This row's identity as the typed protocol value.
+    ///
+    /// Fallible on purpose, and **not** used on the load path: a schema-1
+    /// ledger may hold a row whose name or package predates the validation
+    /// `jails_protocol` applies, and refusing to load it would strand
+    /// `destroy` on exactly the projects with the most history. R1 is
+    /// plan-and-shadow only, so this is the bridge the typed comparison reads
+    /// through while the imperative writer keeps working from `key`.
+    pub fn typed_id(&self) -> Result<jails_protocol::entity::IntentId> {
+        use clap::ValueEnum;
+        use jails_protocol::identity::{Name, Package};
+        let recipe = jails_spec::spec::kind::ArtifactKind::from_str(&self.recipe, false)
+            .map_err(|_| format!("ledger row names an unknown recipe `{}`", self.recipe))?;
+        Ok(jails_protocol::entity::IntentId::new(
+            recipe,
+            Name::parse(&self.name)?,
+            Package::parse(&self.package)?,
+        ))
     }
 
     /// Mark this row as one `app apply` owns the spec of.
@@ -518,23 +587,15 @@ pub fn absolute(root: &Path, relative: &str) -> Result<PathBuf> {
 /// and `app apply` recording the spec it was built from -- and neither owns the
 /// other's columns. Replacing the row wholesale is how one of them silently
 /// erases the other, so both come through here and set only their own fields.
-pub fn entry_mut<'a>(
-    ledger: &'a mut Ledger,
-    recipe: &str,
-    name: &str,
-    package: Option<&str>,
-) -> &'a mut Applied {
-    let position = ledger
-        .applied
-        .iter()
-        .position(|entry| entry.is(recipe, name, package));
+pub fn entry_mut<'a>(ledger: &'a mut Ledger, key: EntityKey<'_>) -> &'a mut Applied {
+    let position = ledger.applied.iter().position(|entry| entry.is(key));
     match position {
         Some(index) => &mut ledger.applied[index],
         None => {
             ledger.applied.push(Applied {
-                recipe: recipe.to_string(),
-                name: name.to_string(),
-                package: package.unwrap_or_default().to_string(),
+                recipe: key.recipe.to_string(),
+                name: key.name.to_string(),
+                package: key.package.to_string(),
                 // A row jails is creating now genuinely has no spec. `app
                 // apply` calls `claim_spec` when it is the one asking; a row
                 // `generate` created keeps this and is never mistaken for an
@@ -606,7 +667,10 @@ mod tests {
         let mut edited = first.clone();
         edited.fields = vec!["id:uuid@pk".to_string()];
 
-        assert!(edited.is("scaffold", "Note", None), "still the same entity");
+        assert!(
+            edited.is(EntityKey::new("scaffold", "Note", None)),
+            "still the same entity"
+        );
         assert_ne!(
             first.fields, edited.fields,
             "but its content changed, which is what a merge needs to know"

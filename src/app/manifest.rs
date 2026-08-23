@@ -172,10 +172,23 @@ pub(super) fn parse_manifest(text: &str) -> Result<(Manifest, Vec<ResolvedIntent
             manifest.schema
         ));
     }
-    let mut keys = HashSet::new();
+    // On identity, not on identity-plus-content. Keyed on both, a manifest
+    // declaring one entity twice with *different* fields was accepted and both
+    // entries applied -- the second silently overwriting the first's row.
+    // R1.2's gate: duplicate identity refuses before any write.
+    let mut seen = HashSet::new();
     for intent in &resolved {
-        if !keys.insert(intent.key()) {
-            return Err(format!("duplicate intent: {}", intent.label()));
+        let recipe = intent.recipe();
+        let key = intent.key(&recipe);
+        if !seen.insert((
+            key.recipe.to_string(),
+            key.name.to_string(),
+            key.package.to_string(),
+        )) {
+            return Err(format!(
+                "`{key}` is declared twice.\n       fix: one entity has one declaration; give \
+                 the second a different name or package, or merge the two."
+            ));
         }
     }
     Ok((manifest, resolved))
@@ -262,4 +275,58 @@ pub(super) fn string_array(value: &str, line: usize, key: &str) -> Result<Vec<St
         at += 1;
     }
     Ok(values)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One entity, two declarations, different fields.
+    ///
+    /// The duplicate check keyed on identity *plus content*, so this was
+    /// accepted and both entries applied — the second silently overwriting the
+    /// first's recorded row. Verified against the previous binary, which planned
+    /// `pending generate record Note a:string` and
+    /// `pending generate record Note b:int` from this exact manifest.
+    #[test]
+    fn one_entity_declared_twice_with_different_content_refuses() {
+        let error = parse_manifest(
+            "schema = 1\n\n\
+             [[generate]]\nkind = \"record\"\nname = \"Note\"\nfields = [\"a:string\"]\n\n\
+             [[generate]]\nkind = \"record\"\nname = \"Note\"\nfields = [\"b:int\"]\n",
+        )
+        .unwrap_err();
+        assert!(error.contains("declared twice"), "{error}");
+        assert!(
+            error.contains("record Note"),
+            "the message names it: {error}"
+        );
+    }
+
+    /// The same name in a different package is a different entity, and must
+    /// still be allowed.
+    #[test]
+    fn the_same_name_in_another_package_is_not_a_duplicate() {
+        assert!(
+            parse_manifest(
+                "schema = 1\n\n\
+                 [[generate]]\nkind = \"record\"\nname = \"Note\"\npackage = \"a\"\n\n\
+                 [[generate]]\nkind = \"record\"\nname = \"Note\"\npackage = \"b\"\n",
+            )
+            .is_ok()
+        );
+    }
+
+    /// And a different recipe for the same name is a different entity too.
+    #[test]
+    fn a_different_recipe_for_the_same_name_is_not_a_duplicate() {
+        assert!(
+            parse_manifest(
+                "schema = 1\n\n\
+                 [[generate]]\nkind = \"record\"\nname = \"Note\"\n\n\
+                 [[generate]]\nkind = \"value\"\nname = \"Note\"\n",
+            )
+            .is_ok()
+        );
+    }
 }

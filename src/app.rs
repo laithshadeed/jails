@@ -115,7 +115,16 @@ struct ResolvedIntent {
 }
 
 impl ResolvedIntent {
-    fn key(&self) -> String {
+    #[cfg(test)]
+    /// Identity **and** content, as one string.
+    ///
+    /// Named for what it is. It was called `key`, and being used as one is the
+    /// defect plan.md R1 names first: a key that mixes identity with content
+    /// cannot answer "is this the same entity?", so the manifest's duplicate
+    /// check accepted one entity declared twice with different fields and
+    /// applied both, the second overwriting the first's row. Identity alone is
+    /// [`ResolvedIntent::key`]; this stays only for whole-intent equivalence.
+    fn fingerprint(&self) -> String {
         format!(
             "{}|{}|{}|{}|{}|{}|{}|{}",
             self.kind
@@ -171,6 +180,14 @@ impl ResolvedIntent {
             .expect("every ArtifactKind has a clap value")
             .get_name()
             .to_string()
+    }
+
+    /// This intent's identity, and only its identity.
+    ///
+    /// The recipe label is an owned `String` the caller holds for the call, so
+    /// the key borrows rather than allocating a fourth copy of it.
+    fn key<'a>(&'a self, recipe: &'a str) -> crate::ledger::EntityKey<'a> {
+        crate::ledger::EntityKey::new(recipe, &self.name, self.package.as_deref())
     }
 
     /// Whether a ledger row was built from this exact intent.
@@ -285,7 +302,7 @@ impl AppState {
         self.ledger
             .applied
             .iter()
-            .find(|entry| entry.is(&recipe, &intent.name, intent.package.as_deref()))
+            .find(|entry| entry.is(intent.key(&recipe)))
     }
 
     fn is_applied(&self, intent: &ResolvedIntent) -> bool {
@@ -331,12 +348,8 @@ impl AppState {
     fn record(&mut self, root: &Path, intent: &ResolvedIntent) -> Result<()> {
         let mut current = crate::ledger::load(root)?;
         current.version = env!("CARGO_PKG_VERSION").to_string();
-        intent.record_onto(crate::ledger::entry_mut(
-            &mut current,
-            &intent.recipe(),
-            &intent.name,
-            intent.package.as_deref(),
-        ));
+        let recipe = intent.recipe();
+        intent.record_onto(crate::ledger::entry_mut(&mut current, intent.key(&recipe)));
         crate::ledger::save(root, &current)?;
         self.ledger = current;
         Ok(())
@@ -620,12 +633,8 @@ fn migrate_app_state(root: &Path, into: &mut crate::ledger::Ledger) -> Result<bo
     }
 
     for intent in &intents {
-        intent.record_onto(crate::ledger::entry_mut(
-            into,
-            &intent.recipe(),
-            &intent.name,
-            intent.package.as_deref(),
-        ));
+        let recipe = intent.recipe();
+        intent.record_onto(crate::ledger::entry_mut(into, intent.key(&recipe)));
     }
     fs::remove_file(&path)
         .map_err(|error| format!("failed to remove {}: {error}", path.display()))?;
@@ -668,7 +677,7 @@ mod tests {
         // Identical intents, so identical state keys: renaming the key in a
         // manifest must not make `app apply` see a new intent and refuse on
         // files that already exist.
-        assert_eq!(new_intents[0].key(), old_intents[0].key());
+        assert_eq!(new_intents[0].fingerprint(), old_intents[0].fingerprint());
     }
 
     #[test]

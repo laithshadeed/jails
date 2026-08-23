@@ -8,6 +8,7 @@ edition.workspace = true
 clap = { version = "4.6.4", features = ["derive"] }
 jails-support = { path = "../jails-support" }
 jails-java = { path = "../jails-java" }
+jails-protocol = { path = "../jails-protocol" }
 jails-spec = { path = "../jails-spec" }
 
 [lints]
