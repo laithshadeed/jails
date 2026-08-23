@@ -399,6 +399,34 @@ pub fn unhex(text: &str) -> Result<[u8; DIGEST_BYTES]> {
     Ok(out)
 }
 
+/// Lowercase hex for an arbitrary byte string. Presentation only, like
+/// [`hex`], but for payloads rather than fixed-width digests.
+pub fn hex_bytes(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(char::from_digit((byte >> 4) as u32, 16).expect("a nibble is a hex digit"));
+        out.push(char::from_digit((byte & 0x0f) as u32, 16).expect("a nibble is a hex digit"));
+    }
+    out
+}
+
+/// The inverse of [`hex_bytes`]. Odd length and uppercase both reject, so one
+/// byte string has exactly one spelling.
+pub fn unhex_bytes(text: &str) -> Result<Vec<u8>> {
+    if !text.len().is_multiple_of(2) {
+        return Err(format!(
+            "hex has an odd length ({}); every byte is two characters",
+            text.len()
+        ));
+    }
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(text.len() / 2);
+    for pair in bytes.chunks_exact(2) {
+        out.push((nibble(pair[0])? << 4) | nibble(pair[1])?);
+    }
+    Ok(out)
+}
+
 fn nibble(byte: u8) -> Result<u8> {
     match byte {
         b'0'..=b'9' => Ok(byte - b'0'),

@@ -12,6 +12,7 @@
 
 pub mod declaration;
 pub mod entity;
+pub mod envelope;
 pub mod identity;
 
 pub(crate) use jails_support::Result;

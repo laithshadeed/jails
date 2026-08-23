@@ -56,6 +56,9 @@ const ALLOWED: &[AllowedConcept] = &[
             // `ProjectPath` must refuse `.jails/ledger.toml` by name, and the
             // test that proves it has to spell the path it is refusing.
             "crates/jails-protocol/src/identity.rs",
+            // The schema-2 envelope is the ledger file format; its constants
+            // and messages name the thing they describe.
+            "crates/jails-protocol/src/envelope.rs",
             "src/app.rs",
             "crates/jails-generate/src/generate/remove.rs",
             "src/main.rs",
