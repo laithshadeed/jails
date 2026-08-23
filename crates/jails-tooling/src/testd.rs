@@ -72,7 +72,7 @@ const METASPACE_LIMIT: &str = "-XX:MaxMetaspaceSize=256m";
 /// How long to wait for a daemon to bind its socket before giving up on it.
 const START_TIMEOUT: Duration = Duration::from_secs(90);
 
-pub(crate) enum Action {
+pub enum Action {
     /// Run the tests this filter selects, starting a daemon if needed.
     Run(Option<String>),
     /// Run only the tests reachable from what has changed in the working tree.
@@ -83,7 +83,7 @@ pub(crate) enum Action {
     Status,
 }
 
-pub(crate) fn testd(action: Action, debug: bool) -> Result<()> {
+pub fn testd(action: Action, debug: bool) -> Result<()> {
     let project = Project::discover()?;
     build::require_maven(project.build(), "testd")?;
     let root = project.root();
@@ -329,7 +329,10 @@ fn split_reply(buffer: &[u8]) -> Result<(String, i32)> {
 /// built from the previous source -- the failure that would cause is a
 /// protocol mismatch, which reads as a hang rather than as an error.
 fn daemon_source() -> Result<PathBuf> {
-    const SOURCE: &str = include_str!("../templates/testd/JailsTestDaemon.java");
+    const SOURCE: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../templates/testd/JailsTestDaemon.java"
+    ));
     let dir = cache_dir()?.join(env!("CARGO_PKG_VERSION"));
     std::fs::create_dir_all(&dir)
         .map_err(|error| format!("failed to create {}: {error}", dir.display()))?;

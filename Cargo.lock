@@ -130,6 +130,7 @@ dependencies = [
  "jails-project",
  "jails-spec",
  "jails-support",
+ "jails-tooling",
 ]
 
 [[package]]
@@ -172,6 +173,18 @@ dependencies = [
 [[package]]
 name = "jails-support"
 version = "0.1.0"
+
+[[package]]
+name = "jails-tooling"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "jails-generate",
+ "jails-java",
+ "jails-project",
+ "jails-spec",
+ "jails-support",
+]
 
 [[package]]
 name = "once_cell_polyfill"

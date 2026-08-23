@@ -381,7 +381,7 @@ const EXPLANATIONS: &[Explanation] = &[
 ];
 
 /// The explanation for one kind, or a refusal listing what is explained.
-pub(crate) fn explain(kind: ArtifactKind) -> Result<()> {
+pub fn explain(kind: ArtifactKind) -> Result<()> {
     let entry = EXPLANATIONS
         .iter()
         .find(|entry| entry.kind == kind)

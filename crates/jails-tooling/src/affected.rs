@@ -30,7 +30,7 @@ use crate::process::{CommandSpec, Diagnostics, OutputMode};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 
-pub(crate) enum Selection {
+pub enum Selection {
     /// These test classes, by fully qualified name.
     Tests(Vec<String>),
     /// Everything, because of this.
@@ -40,7 +40,7 @@ pub(crate) enum Selection {
 }
 
 /// The test classes reachable from what has changed in the working tree.
-pub(crate) fn select(root: &Path, debug: bool) -> Selection {
+pub fn select(root: &Path, debug: bool) -> Selection {
     let changed = match changed_sources(root, debug) {
         Ok(changed) if changed.is_empty() => return Selection::Nothing,
         Ok(changed) => changed,

@@ -1,35 +1,22 @@
 use jails_support::Result;
 
-// The lower crates, re-exported so every module in this package keeps saying
-// `crate::java` and `crate::template`. A facade at the root rather than an
-// import line in forty files: the paths a reader already knows stay correct,
-// and the crate boundary is enforced by Cargo either way.
+// The lower crates, re-exported so `adopt`, `app` and `new` keep saying
+// `crate::ledger` and `crate::template`. A facade at the root rather than an
+// import line in every file: the paths a reader already knows stay correct,
+// and Cargo enforces the boundary either way.
 pub(crate) use jails_generate::{add, generate};
-pub(crate) use jails_java::{classfile, java, template};
+pub(crate) use jails_java::template;
 pub(crate) use jails_project::{
-    compose, config, generated_files, inspect, ledger, maven, model, pom, project,
+    compose, config, generated_files, inspect, ledger, model, pom, project,
 };
-pub(crate) use jails_spec::build;
-pub(crate) use jails_support::{apply, json, process};
+pub(crate) use jails_support::apply;
+pub(crate) use jails_tooling::{
+    bench, commands, console, doctor, explain, kafka, lint, migrate, rename, run, source, testd,
+    why,
+};
 mod adopt;
-mod affected;
 mod app;
-mod bench;
-mod commands;
-mod console;
-mod doctor;
-mod explain;
-mod kafka;
-mod launcher;
-mod lint;
-mod migrate;
 mod new;
-mod rename;
-mod run;
-mod source;
-mod surefire;
-mod testd;
-mod why;
 
 use add::Capability;
 use clap::{CommandFactory, Parser, Subcommand};
@@ -759,7 +746,7 @@ fn main() -> std::process::ExitCode {
         }
         Command::Setup {} => doctor::setup(pretend),
         Command::Explain { kind } => explain::explain(kind),
-        Command::Commands { json } => commands::commands(json),
+        Command::Commands { json } => commands::commands(Cli::command(), json),
         Command::Completion { shell } => {
             clap_complete::generate(shell, &mut Cli::command(), "jails", &mut std::io::stdout());
             Ok(())
@@ -777,4 +764,39 @@ fn main() -> std::process::ExitCode {
         return std::process::ExitCode::FAILURE;
     }
     std::process::ExitCode::SUCCESS
+}
+
+/// These two assert against jails' *real* CLI, so they live with it.
+///
+/// They used to sit in `commands.rs` and reach for `crate::Cli`, which was one
+/// layer above that module — invisible while everything was one crate, and a
+/// cycle the moment the tooling became one. `commands` takes the
+/// `clap::Command` as an argument now and exposes its two walkers, so the
+/// property being tested is unchanged: this is the command that parses the
+/// arguments, not a fixture resembling it.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jails_tooling::commands;
+
+    #[test]
+    fn visible_aliases_are_carried_because_completion_cannot_see_hidden_ones() {
+        let command = Cli::command();
+        let subs = commands::subcommands(&command);
+        let generate = subs
+            .iter()
+            .find(|entry| entry.name == "generate")
+            .expect("generate is a subcommand");
+        assert!(
+            generate.aliases.iter().any(|alias| alias == "g"),
+            "{:?}",
+            generate.aliases
+        );
+    }
+
+    #[test]
+    fn the_global_pretend_flag_and_its_alias_reach_the_option_list() {
+        let flags = commands::options(&Cli::command());
+        assert!(flags.contains(&"--pretend".to_string()), "{flags:?}");
+    }
 }

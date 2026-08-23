@@ -23,7 +23,7 @@ fn maven_root(command: &str) -> Result<PathBuf> {
 mod filter;
 use filter::*;
 
-pub(crate) fn find_on_path(bin: &str) -> bool {
+pub fn find_on_path(bin: &str) -> bool {
     crate::process::on_path(bin)
 }
 
@@ -35,7 +35,7 @@ pub(crate) fn find_on_path(bin: &str) -> bool {
 /// spawning and exit-status handling happen in one place -- the executor
 /// prints *and then runs*, which is the property that was violated where each
 /// site decided for itself.
-pub(crate) fn run_inherited(mut cmd: Command, debug: bool) -> Result<()> {
+pub fn run_inherited(mut cmd: Command, debug: bool) -> Result<()> {
     let is_maven = is_maven_program(cmd.get_program());
     if is_maven {
         forced_color(&mut cmd);

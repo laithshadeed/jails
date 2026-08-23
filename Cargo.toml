@@ -20,6 +20,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+jails-tooling = { path = "crates/jails-tooling" }
 jails-generate = { path = "crates/jails-generate" }
 jails-project = { path = "crates/jails-project" }
 jails-spec = { path = "crates/jails-spec" }

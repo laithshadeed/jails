@@ -19,17 +19,17 @@
 //! second list to keep in step, which is the whole point -- adding a kind is
 //! one edit, and this output follows.
 
-use clap::{Command, CommandFactory, ValueEnum};
+use clap::{Command, ValueEnum};
 use jails_support::Result;
 
 /// One name the CLI accepts, with whatever else it answers to.
-struct Name {
-    name: String,
-    aliases: Vec<String>,
-    about: String,
+pub struct Name {
+    pub name: String,
+    pub aliases: Vec<String>,
+    pub about: String,
     /// The long flags this name accepts. Empty for kinds and capabilities,
     /// which are argument *values* rather than subcommands.
-    options: Vec<String>,
+    pub options: Vec<String>,
 }
 
 fn names_of<T: ValueEnum>() -> Vec<Name> {
@@ -74,7 +74,7 @@ fn global_flags(root: &Command) -> Vec<String> {
         .collect()
 }
 
-fn subcommands(command: &Command) -> Vec<Name> {
+pub fn subcommands(command: &Command) -> Vec<Name> {
     command
         .get_subcommands()
         .filter(|sub| !sub.is_hide_set())
@@ -101,7 +101,7 @@ fn subcommands(command: &Command) -> Vec<Name> {
 }
 
 /// Long flags, including the global ones, which is what a completer needs.
-fn options(command: &Command) -> Vec<String> {
+pub fn options(command: &Command) -> Vec<String> {
     let mut flags = long_flags(command);
     for sub in command.get_subcommands().filter(|sub| !sub.is_hide_set()) {
         flags.extend(long_flags(sub));
@@ -137,8 +137,14 @@ fn render_names(label: &str, names: &[Name]) -> String {
     format!("  \"{label}\": [\n{}\n  ]", rows.join(",\n"))
 }
 
-pub(crate) fn commands(json: bool) -> Result<()> {
-    let command = crate::Cli::command();
+/// The CLI is handed in rather than reached for.
+///
+/// This module used to name the binary's own `Cli` type, which is one layer
+/// above it -- fine while everything was one crate, and a cycle the moment the
+/// tooling became one. Taking the `clap::Command` as an argument keeps the
+/// property that matters: there is still no second list, because what arrives
+/// here is the very command that parsed the arguments.
+pub fn commands(command: Command, json: bool) -> Result<()> {
     let subs = subcommands(&command);
     let kinds = names_of::<crate::generate::ArtifactKind>();
     let capabilities = names_of::<crate::add::Capability>();
@@ -193,26 +199,5 @@ mod tests {
             listed.iter().map(|e| &e.name).collect::<Vec<_>>()
         );
         assert!(listed.len() > 20, "only {} kinds listed", listed.len());
-    }
-
-    #[test]
-    fn visible_aliases_are_carried_because_completion_cannot_see_hidden_ones() {
-        let command = crate::Cli::command();
-        let subs = subcommands(&command);
-        let generate = subs
-            .iter()
-            .find(|entry| entry.name == "generate")
-            .expect("generate is a subcommand");
-        assert!(
-            generate.aliases.iter().any(|alias| alias == "g"),
-            "{:?}",
-            generate.aliases
-        );
-    }
-
-    #[test]
-    fn the_global_pretend_flag_and_its_alias_reach_the_option_list() {
-        let flags = options(&crate::Cli::command());
-        assert!(flags.contains(&"--pretend".to_string()), "{flags:?}");
     }
 }

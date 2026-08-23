@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 
 /// One `<testcase>` from a report.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Case {
+pub struct Case {
     pub class: String,
     pub method: String,
     /// Seconds, as Surefire recorded them.
@@ -28,7 +28,7 @@ pub(crate) struct Case {
 
 impl Case {
     /// The filter that reruns exactly this test.
-    pub(crate) fn selector(&self) -> String {
+    pub fn selector(&self) -> String {
         format!("{}#{}", short_class(&self.class), self.method)
     }
 }
@@ -47,7 +47,7 @@ fn short_class(class: &str) -> &str {
 /// reader's: `jails test --failed` after a `verify` should offer to rerun the
 /// integration test that failed, not silently ignore it because it was
 /// Failsafe's.
-pub(crate) fn cases(root: &Path) -> Vec<Case> {
+pub fn cases(root: &Path) -> Vec<Case> {
     let mut found = Vec::new();
     for dir in ["target/surefire-reports", "target/failsafe-reports"] {
         for path in xml_reports(&root.join(dir)) {
@@ -62,7 +62,7 @@ pub(crate) fn cases(root: &Path) -> Vec<Case> {
 
 /// Which tests failed last time, as rerun selectors, deduplicated and in a
 /// stable order.
-pub(crate) fn failed_selectors(root: &Path) -> Vec<String> {
+pub fn failed_selectors(root: &Path) -> Vec<String> {
     let mut selectors: Vec<String> = cases(root)
         .into_iter()
         .filter(|case| case.failed)
@@ -74,7 +74,7 @@ pub(crate) fn failed_selectors(root: &Path) -> Vec<String> {
 }
 
 /// The `count` slowest cases, slowest first.
-pub(crate) fn slowest(root: &Path, count: usize) -> Vec<Case> {
+pub fn slowest(root: &Path, count: usize) -> Vec<Case> {
     let mut all = cases(root);
     // Descending by time. `total_cmp` rather than `partial_cmp().unwrap()`:
     // a malformed `time` attribute parses to NaN, and a comparator that
@@ -98,7 +98,7 @@ fn xml_reports(dir: &Path) -> Vec<PathBuf> {
 }
 
 /// Pull every `<testcase>` out of one report.
-pub(crate) fn parse(xml: &str) -> Vec<Case> {
+pub fn parse(xml: &str) -> Vec<Case> {
     let mut found = Vec::new();
     let mut rest = xml;
     while let Some(at) = rest.find("<testcase ") {
