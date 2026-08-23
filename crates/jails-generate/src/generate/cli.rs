@@ -455,7 +455,7 @@ pub(super) fn splice_registration(
     with_import.push('\n');
     with_import.push_str(import);
     with_import.push_str(&out[package_end..]);
-    Some(jails_java::imports::normalize_imports(&with_import))
+    Some(jails_java::tidy::normalize_imports(&with_import))
 }
 
 /// The exact inverse of `splice_registration`: take the dispatch line for

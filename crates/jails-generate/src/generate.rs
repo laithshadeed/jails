@@ -93,6 +93,102 @@ pub fn generate_with_timestamps(
         pretend,
     )
 }
+/// What a persistent `generate` intends, computed without writing anything.
+///
+/// plan.md §R6.2 turns a generator into an `IntentSpec` that becomes a
+/// `DesiredChange` -- "the same direct-owner semantics as an equivalent
+/// manifest row" -- and that is only possible if the intent can be computed
+/// separately from being carried out. This is that half: it renders every
+/// artifact, plans the `package-info.java` files, and adds the dependencies
+/// and plugins the emitted code needs, and it touches nothing.
+///
+/// The one-shot kinds are not here. `field`, `migration` and `cases` each have
+/// their own policy row in §R6.2 -- an active overlay, a serial allocation, a
+/// source-hash receipt -- and folding them into the persistent path is what
+/// made an edited `fields` line arrive as a new intent against files that
+/// already existed.
+pub fn plan_recipe(
+    project: &Project,
+    kind: ArtifactKind,
+    name: &str,
+    fields: &[String],
+    package: Option<&str>,
+    indexes: &[String],
+    strategy_on: Option<&str>,
+    strategy_yields: Option<&str>,
+) -> Result<Change> {
+    if matches!(
+        kind,
+        ArtifactKind::Field | ArtifactKind::Cases | ArtifactKind::Migration
+    ) {
+        return Err(format!(
+            "`{}` is a one-shot, not a persistent artifact, so it has no recipe plan.\n       \
+             fix: plan it through its own policy -- an overlay, a serial allocation or a \
+             source-hash receipt. See plan.md §R6.2.",
+            format!("{kind:?}").to_lowercase()
+        ));
+    }
+    let root = project.root().to_path_buf();
+    let name = strip_redundant_suffix(kind, &capitalize(name));
+    let artifacts = artifacts_for(
+        project,
+        &Recipe {
+            kind,
+            name: &name,
+            fields,
+            indexes,
+            strategy_on,
+            strategy_yields,
+        },
+        package,
+    )?;
+
+    // Every write this command performs, in one list, before any of it is
+    // previewed or applied. `package-info.java` used to be created as a side
+    // effect of writing a class, so `--pretend` named two files and the real
+    // run wrote three.
+    let mut artifacts = artifacts;
+    let mut planned = planned_package_infos(&root, project.pom(), &artifacts);
+    if !planned.is_empty() {
+        planned.append(&mut artifacts);
+        artifacts = planned;
+    }
+
+    let mut change = Change {
+        files: artifacts,
+        ..Change::default()
+    };
+    if writes_a_test(&change.files)
+        && !crate::pom::has_dependency(project.pom(), "org.assertj", "assertj-core")
+        && !project.pom().contains("spring-boot-starter-test")
+        && !project.pom().contains("spring-boot-starter-webmvc-test")
+    {
+        change.deps.push(crate::pom::assertj(project.flavor()));
+    }
+    match kind {
+        ArtifactKind::Dto | ArtifactKind::Scaffold => change
+            .deps
+            .push(*crate::spring::validation_dependency(project.flavor())),
+        ArtifactKind::Client => change.deps.push(crate::spring::RESTCLIENT_STARTER),
+        ArtifactKind::Fetcher => change.deps.extend([
+            crate::spring::APACHE_HTTPCLIENT,
+            crate::spring::ACTUATOR_STARTER,
+        ]),
+        ArtifactKind::Event => change.deps.extend([
+            crate::spring::TESTCONTAINERS_KAFKA,
+            crate::spring::SPRING_TESTCONTAINERS,
+        ]),
+        _ => {}
+    }
+    if writes_an_it(&change.files) {
+        change.plugins.push((
+            crate::spring::FAILSAFE_ARTIFACT,
+            crate::spring::failsafe_plugin(project.flavor()).to_string(),
+        ));
+    }
+
+    Ok(change)
+}
 
 /// Generate against an explicitly resolved project.
 ///
@@ -171,62 +267,16 @@ pub fn generate_in_project(
     }
 
     let name = strip_redundant_suffix(kind, &capitalize(name));
-    let artifacts = artifacts_for(
+    let change = plan_recipe(
         project,
-        &Recipe {
-            kind,
-            name: &name,
-            fields,
-            indexes,
-            strategy_on,
-            strategy_yields,
-        },
+        kind,
+        &name,
+        fields,
         package,
+        indexes,
+        strategy_on,
+        strategy_yields,
     )?;
-
-    // Every write this command performs, in one list, before any of it is
-    // previewed or applied. `package-info.java` used to be created as a side
-    // effect of writing a class, so `--pretend` named two files and the real
-    // run wrote three.
-    let mut artifacts = artifacts;
-    let mut planned = planned_package_infos(&root, project.pom(), &artifacts);
-    if !planned.is_empty() {
-        planned.append(&mut artifacts);
-        artifacts = planned;
-    }
-
-    let mut change = Change {
-        files: artifacts,
-        ..Change::default()
-    };
-    if writes_a_test(&change.files)
-        && !crate::pom::has_dependency(project.pom(), "org.assertj", "assertj-core")
-        && !project.pom().contains("spring-boot-starter-test")
-        && !project.pom().contains("spring-boot-starter-webmvc-test")
-    {
-        change.deps.push(crate::pom::assertj(project.flavor()));
-    }
-    match kind {
-        ArtifactKind::Dto | ArtifactKind::Scaffold => change
-            .deps
-            .push(*crate::spring::validation_dependency(project.flavor())),
-        ArtifactKind::Client => change.deps.push(crate::spring::RESTCLIENT_STARTER),
-        ArtifactKind::Fetcher => change.deps.extend([
-            crate::spring::APACHE_HTTPCLIENT,
-            crate::spring::ACTUATOR_STARTER,
-        ]),
-        ArtifactKind::Event => change.deps.extend([
-            crate::spring::TESTCONTAINERS_KAFKA,
-            crate::spring::SPRING_TESTCONTAINERS,
-        ]),
-        _ => {}
-    }
-    if writes_an_it(&change.files) {
-        change.plugins.push((
-            crate::spring::FAILSAFE_ARTIFACT,
-            crate::spring::failsafe_plugin(project.flavor()).to_string(),
-        ));
-    }
 
     for artifact in &change.files {
         if artifact.path.exists()

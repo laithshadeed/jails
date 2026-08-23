@@ -265,7 +265,7 @@ pub fn add_in(
         if file.path.exists() {
             if should_replace_postgres_test_config(&file.path) {
                 let contents = if file.path.extension().is_some_and(|e| e == "java") {
-                    jails_java::imports::normalize_imports(&file.contents)
+                    jails_java::tidy::normalize_imports(&file.contents)
                 } else {
                     file.contents.clone()
                 };

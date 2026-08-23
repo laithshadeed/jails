@@ -417,13 +417,16 @@ impl ProjectedProject {
     /// The one place bytes become a projected file.
     ///
     /// Both callers go through it -- a whole file a change renders, and a
-    /// surgical edit to a file somebody else owns -- so the Java import rule
-    /// cannot apply to one and not the other. Non-UTF-8 bytes are placed
+    /// surgical edit to a file somebody else owns -- so the Java write-time
+    /// rules cannot apply to one and not the other. Non-UTF-8 bytes are placed
     /// untouched: a `.java` file that is not text is already wrong, and
     /// guessing at its encoding would corrupt it further.
     fn place(&mut self, path: &ProjectPath, bytes: Vec<u8>, mode: FileMode) {
         let bytes = match (path.as_str().ends_with(".java"), String::from_utf8(bytes)) {
-            (true, Ok(text)) => jails_java::imports::normalize_imports(&text).into_bytes(),
+            (true, Ok(text)) => {
+                jails_java::tidy::tidy_blank_lines(&jails_java::tidy::normalize_imports(&text))
+                    .into_bytes()
+            }
             (false, Ok(text)) => text.into_bytes(),
             (_, Err(error)) => error.into_bytes(),
         };

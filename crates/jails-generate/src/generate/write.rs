@@ -141,54 +141,11 @@ pub fn write_new_file(root: &Path, path: &Path, contents: &str) -> Result<()> {
     }
     let contents = if path.extension().is_some_and(|e| e == "java") {
         ensure_package_info(root, path)?;
-        tidy_blank_lines(&jails_java::imports::normalize_imports(contents))
+        jails_java::tidy::tidy_blank_lines(&jails_java::tidy::normalize_imports(contents))
     } else {
         contents.to_string()
     };
     crate::apply::create(path, &contents)
-}
-
-/// Collapse the blank lines a template leaves behind when an optional section
-/// renders empty, and end the file with exactly one newline.
-///
-/// Here for the same reason `normalize_imports` is: **palantir-java-format
-/// removes both**, so leaving them in means `add format` -- which jails
-/// installs itself -- fails `jails check` on a project whose every line jails
-/// wrote. That is not hypothetical. It is what App D (`examples/ledger-cli`)
-/// hit on its first gate run, in four files, because it is the first proof
-/// application to ask for `format` at all: `class NoteTest {` followed by two
-/// blank lines wherever the sample block was omitted, and a
-/// `package-info.java` ending on a blank line after its import.
-///
-/// Fixing it in each template is the rule-twenty-templates-must-remember that
-/// this write path exists to avoid.
-///
-/// **Text blocks are left alone.** A `"""` block is the one Java literal that
-/// can span lines, so a blank line inside one is data -- SQL, JSON, an
-/// expected message -- and collapsing it would change what the program says.
-/// Counting the delimiters is enough to know which side of one a line is on.
-pub fn tidy_blank_lines(source: &str) -> String {
-    let mut out = String::with_capacity(source.len());
-    let mut in_text_block = false;
-    let mut previous_blank = false;
-    for line in source.lines() {
-        let blank = line.trim().is_empty();
-        if !in_text_block && blank && previous_blank {
-            continue;
-        }
-        out.push_str(line);
-        out.push('\n');
-        if line.matches("\"\"\"").count() % 2 == 1 {
-            in_text_block = !in_text_block;
-        }
-        previous_blank = blank && !in_text_block;
-    }
-    // A file that ends on a blank line is the same violation at the bottom.
-    let trimmed = out.trim_end_matches('\n');
-    if trimmed.is_empty() {
-        return String::new();
-    }
-    format!("{trimmed}\n")
 }
 
 /// Give a package a null-marked `package-info.java` the first time jails puts

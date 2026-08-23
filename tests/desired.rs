@@ -15,6 +15,8 @@
 
 mod common;
 
+use common::scenarios;
+
 use clap::ValueEnum;
 use jails_prepare::desire;
 use jails_project::model::Project;
@@ -259,6 +261,178 @@ fn what_v2_desires_is_what_v1_installs() {
         "only {compared} capabilities were actually compared; the check is not covering the surface"
     );
     println!("capabilities compared V1 against V2: {compared}");
+}
+
+/// One `g` invocation from the scenario table, as arguments a planner takes.
+#[derive(Debug, Default)]
+struct Invocation {
+    fields: Vec<String>,
+    indexes: Vec<String>,
+    package: Option<String>,
+    on: Option<String>,
+    yields: Option<String>,
+    timestamps: bool,
+}
+
+/// Read a scenario step rather than restating it.
+///
+/// CLAUDE.md's rule for this table is that a new kind adds a `Scenario` and
+/// not a fourth list, so this parity check reads the same steps the golden
+/// snapshots and the destroy-agreement check read. A flag it does not know is
+/// a reason to skip the step, never to guess at it.
+fn invocation(step: &[&str]) -> Option<Invocation> {
+    let mut parsed = Invocation::default();
+    let mut rest = step[3..].iter();
+    while let Some(argument) = rest.next() {
+        match *argument {
+            "--timestamps" => parsed.timestamps = true,
+            "--package" => parsed.package = Some((*rest.next()?).to_string()),
+            "--on" => parsed.on = Some((*rest.next()?).to_string()),
+            "--yields" => parsed.yields = Some((*rest.next()?).to_string()),
+            "--index" => parsed.indexes.push((*rest.next()?).to_string()),
+            other if other.starts_with('-') => return None,
+            other => parsed.fields.push(other.to_string()),
+        }
+    }
+    Some(parsed)
+}
+
+/// The same parity question for persistent generators.
+///
+/// plan.md §R6.2's generator row wants "golden parity for every persistent
+/// `ArtifactKind`" before the switch, and this is the half that can be checked
+/// without an executor: what the V1 command writes to disk and what the V2
+/// desired change projects have to be the same bytes at the same paths.
+///
+/// Single-step scenarios only. A scenario that installs a capability first is
+/// asking a question about two engines interacting, which is a later step.
+#[test]
+fn what_v2_desires_is_what_v1_generates() {
+    let mut compared: Vec<&str> = Vec::new();
+    let mut skipped: Vec<String> = Vec::new();
+    for scenario in scenarios::SCENARIOS {
+        // The last step is the one under comparison; everything before it is
+        // set-up and is run identically in both projects, through the same
+        // binary. That keeps the question narrow -- do the two engines produce
+        // the same bytes for *this* generate -- rather than turning every
+        // scenario into a test of two engines interacting.
+        let Some((step, prerequisites)) = scenario.steps.split_last() else {
+            continue;
+        };
+        if !matches!(step.first(), Some(&"g") | Some(&"generate")) {
+            continue;
+        }
+        let Ok(kind) = jails_spec::spec::kind::ArtifactKind::from_str(step[1], true) else {
+            skipped.push(format!("{}: `{}` is an alias", scenario.name, step[1]));
+            continue;
+        };
+        let Some(invocation) = invocation(step) else {
+            skipped.push(format!("{}: unrecognised flag", scenario.name));
+            continue;
+        };
+
+        let v1 = common::temp_dir(&format!("gen-parity-v1-{}", scenario.name));
+        let v2 = common::temp_dir(&format!("gen-parity-v2-{}", scenario.name));
+        for root in [&v1, &v2] {
+            std::fs::create_dir_all(root).unwrap();
+            match scenario.fixture {
+                scenarios::Fixture::Plain => common::write_plain_fixture(root),
+                scenarios::Fixture::Spring => common::write_spring_fixture(root),
+            }
+            for (path, contents) in scenario.seed {
+                jails_support::apply::put(root.join(path), *contents).unwrap();
+            }
+        }
+        for earlier in prerequisites {
+            for root in [&v1, &v2] {
+                scenarios::run_step(root, scenario.name, earlier);
+            }
+        }
+        scenarios::run_step(&v1, scenario.name, step);
+
+        let planned = Project::load(&v2).unwrap();
+        let change = match jails_generate::generate::plan_recipe(
+            &planned,
+            kind,
+            step[2],
+            &invocation.fields,
+            invocation.package.as_deref(),
+            &invocation.indexes,
+            invocation.on.as_deref(),
+            invocation.yields.as_deref(),
+        ) {
+            Ok(change) => change,
+            Err(why) => {
+                skipped.push(format!("{}: {why}", scenario.name));
+                continue;
+            }
+        };
+        let owner = ResourceOwner::Entity(EntityId::Intent(jails_protocol::entity::IntentId {
+            recipe: kind,
+            name: jails_protocol::identity::Name::parse(
+                &jails_generate::generate::strip_redundant_suffix(
+                    kind,
+                    &jails_spec::spec::field::capitalize(step[2]),
+                ),
+            )
+            .unwrap(),
+            // The conventional home, resolved: an intent identity never
+            // carries "wherever the convention puts it".
+            package: jails_protocol::identity::Package::parse(planned.base()).unwrap(),
+        }));
+        let desired = desire::contribution(&owner, &change, &planned).unwrap();
+
+        let mut declaration = reads();
+        for artifact in &change.files {
+            let relative = artifact.path.strip_prefix(&v2).unwrap();
+            declaration = declaration.file(
+                jails_protocol::identity::ProjectPath::parse(relative.to_str().unwrap()).unwrap(),
+            );
+        }
+        let (_snapshot, mut projection) =
+            jails_project::capture::projected(&planned, &declaration).unwrap();
+        projection.advance(&desired).unwrap();
+
+        for artifact in &change.files {
+            let relative = artifact.path.strip_prefix(&v2).unwrap();
+            let key =
+                jails_protocol::identity::ProjectPath::parse(relative.to_str().unwrap()).unwrap();
+            let projected = match projection.entry(&key) {
+                Some(jails_project::projection::ProjectedEntry::File(file)) => {
+                    String::from_utf8_lossy(&file.bytes).into_owned()
+                }
+                other => panic!(
+                    "{}: {relative:?} is {other:?} in the projection",
+                    scenario.name
+                ),
+            };
+            let written = std::fs::read_to_string(v1.join(relative)).unwrap_or_else(|error| {
+                panic!(
+                    "{}: V1 did not write {}: {error}",
+                    scenario.name,
+                    relative.display()
+                )
+            });
+            assert_eq!(
+                projected,
+                written,
+                "{}: {} differs between the two engines",
+                scenario.name,
+                relative.display()
+            );
+        }
+        compared.push(scenario.name);
+    }
+
+    println!("generator scenarios compared: {}", compared.len());
+    for note in &skipped {
+        println!("  skipped {note}");
+    }
+    assert!(
+        compared.len() >= 20,
+        "only {} generator scenarios were compared, which is not the surface: {compared:?}",
+        compared.len()
+    );
 }
 
 /// The board is a measurement, so it has to say how far along it is.

@@ -276,7 +276,7 @@ pub(super) fn splice_spring_boot_test_import(
         with_import.push_str(&out[package_end..]);
         out = with_import;
     }
-    Some(jails_java::imports::normalize_imports(&out))
+    Some(jails_java::tidy::normalize_imports(&out))
 }
 
 pub(super) fn unsplice_spring_boot_test_import(
@@ -320,5 +320,5 @@ pub(super) fn unsplice_spring_boot_test_import(
     if source.ends_with('\n') {
         out.push('\n');
     }
-    Some(jails_java::imports::normalize_imports(&out))
+    Some(jails_java::tidy::normalize_imports(&out))
 }
