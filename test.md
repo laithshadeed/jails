@@ -9,6 +9,235 @@ memory contention.
 This document records the August 2026 profiling session. The baseline was a
 warm working tree with Maven dependencies already present locally.
 
+## Reproducing the measurements
+
+### Revisions and machine
+
+The original baseline is commit
+`1bf7c42612e636b65064c7c2dd43a6975aab33f9`; the completed implementation is
+`de75b76c30f22ec978b55dab7d598ebdec549ce4`. Use a separate Git worktree when
+comparing them so checkout does not disturb local changes:
+
+```sh
+git worktree add /tmp/jails-baseline 1bf7c42612e636b65064c7c2dd43a6975aab33f9
+git worktree add /tmp/jails-optimized de75b76c30f22ec978b55dab7d598ebdec549ce4
+```
+
+The measurements came from this host:
+
+- Linux 7.1.3-201.fc44.x86_64;
+- AMD Ryzen 7 PRO 6850U, 8 cores / 16 hardware threads;
+- 30 GiB RAM and 8 GiB zram swap;
+- Rust 1.97.1 and Cargo 1.97.1;
+- Maven 3.9.16 and OpenJDK 26.0.2;
+- Podman 5.8.4 through its Docker-compatible CLI.
+
+Record the comparison host before each run. These commands need no root
+access:
+
+```sh
+date -Is
+git rev-parse HEAD
+uname -srmo
+lscpu | grep -E 'Model name|^CPU\(s\):|Thread|Core|Socket'
+free -h
+uptime
+rustc --version
+cargo --version
+mvn --version
+podman --version
+```
+
+Do not compare a quiet run with one performed while another Cargo, Maven, Java,
+Podman, or image-build job is active. Record `uptime`, `free -h`, and the first
+five `vmstat` samples even if the machine appears idle. In particular, a full
+swap allocation is not proof of active swapping; the `si` and `so` columns in
+`vmstat` determine whether pages are moving during the test.
+
+### Warm-up and cache definitions
+
+All reported baseline numbers are dependency-warm: the Cargo registry, Maven
+local repository, container images, and Rust build artifacts were already
+present. They are not first-clone or first-download measurements. Do not delete
+`~/.cargo`, `~/.m2`, or the container image store before reproducing them.
+
+The optimized checkout also has a generated-project cache at
+`target/jails-e2e-cache`. "Cold cache" means that directory is absent at the
+start of a run. "Warm cache" means one identical test run has completed at the
+same commit, leaving generated sources and Maven `target` directories there.
+Tests and Maven are still executed on a warm run; only unchanged generation
+and compilation products are reused.
+
+Prime a warm optimized measurement once, then measure the second invocation:
+
+```sh
+env -u JAVA_TOOL_OPTIONS -u MAVEN_OPTS cargo test --test cli
+env -u JAVA_TOOL_OPTIONS -u MAVEN_OPTS cargo test --test cli
+```
+
+To obtain a cold-cache sample without deleting an existing cache, move it to a
+unique temporary path, run the test once, then move the new cache aside and
+restore the original. Do not use the same temporary name if it already exists:
+
+```sh
+mv target/jails-e2e-cache /tmp/jails-e2e-cache.saved
+env -u JAVA_TOOL_OPTIONS -u MAVEN_OPTS cargo test --test cli
+mv target/jails-e2e-cache /tmp/jails-e2e-cache.cold-result
+mv /tmp/jails-e2e-cache.saved target/jails-e2e-cache
+```
+
+If the cache does not exist yet, omit the first and last `mv`. Changing or
+rebuilding the `jails` executable invalidates the generated-project cache, so
+always perform the warm-up after switching revisions.
+
+### Timing commands
+
+GNU `time` supplied wall time, aggregate user/system CPU, context switches,
+page faults, and maximum RSS. Redirect test output so terminal rendering is
+not part of the result. Run from the selected worktree root:
+
+```sh
+/usr/bin/time -v -o /tmp/jails-full.time \
+  env -u JAVA_TOOL_OPTIONS -u MAVEN_OPTS cargo test \
+  > /tmp/jails-full.log 2>&1
+
+/usr/bin/time -v -o /tmp/jails-cli.time \
+  env -u JAVA_TOOL_OPTIONS -u MAVEN_OPTS cargo test --test cli \
+  > /tmp/jails-cli.log 2>&1
+
+/usr/bin/time -v -o /tmp/jails-app.time \
+  env -u JAVA_TOOL_OPTIONS -u MAVEN_OPTS cargo test --test cli \
+  app_manifests_pass_the_full_generated_verification_gate -- --exact \
+  > /tmp/jails-app.log 2>&1
+```
+
+The 159.36-second baseline is `/tmp/jails-full.time`; the 156.89-second CLI
+row is the duration reported by libtest in `/tmp/jails-full.log`. The 38.54
+and 27.69-second optimized results are GNU `time` elapsed wall values from the
+second, cache-warm CLI and application commands respectively. Extract the
+comparable fields with:
+
+```sh
+grep -E 'Elapsed|User time|System time|Maximum resident|context switches|Major' \
+  /tmp/jails-full.time /tmp/jails-cli.time /tmp/jails-app.time
+grep -E 'test result:|Finished' /tmp/jails-full.log /tmp/jails-cli.log \
+  /tmp/jails-app.log
+```
+
+Reproduce the isolated rows in the representative-profile table with the same
+GNU `time` wrapper and one exact libtest filter at a time:
+
+```sh
+for test in \
+  add_kafka_and_generate_event_compile_against_real_spring \
+  add_json_on_a_spring_project_defers_to_the_parents_version_and_compiles \
+  add_observability_serves_a_prometheus_scrape \
+  add_redis_wires_a_ttl_enforcing_store_and_a_compose_service \
+  add_db_installs_postgres_flyway_and_testcontainers_without_an_orm \
+  ledger_cli_manifest_builds_without_spring
+do
+  /usr/bin/time -v -o "/tmp/${test}.time" \
+    env -u JAVA_TOOL_OPTIONS -u MAVEN_OPTS cargo test --test cli \
+    "$test" -- --exact > "/tmp/${test}.log" 2>&1
+done
+```
+
+The first four names correspond to the Kafka, JSON, observability, and Redis
+rows; the fifth is the database regression and the sixth initializes the
+shared plain toolbox. On the baseline revision the database command is expected
+to fail after doing its measured work, which is why that table records both
+17.25 seconds and `failed`. The failure itself is part of the diagnosis, not a
+passing benchmark result.
+
+To recover libtest's apparent in-suite durations, add `--report-time` to the
+full CLI run:
+
+```sh
+env -u JAVA_TOOL_OPTIONS -u MAVEN_OPTS cargo test --test cli -- --report-time \
+  > /tmp/jails-cli-per-test.log 2>&1
+```
+
+The historical 147.94- and 83.29-second rows were working-tree checkpoints
+during this investigation, not commits. Their implementation boundaries are
+described below, but they cannot be reconstructed byte-for-byte from Git and
+should be treated as diagnostic waypoints. The two committed endpoints above
+are the reproducible before/after comparison.
+
+Wall time varies with host load, thermal state, filesystem cache, and container
+storage. The values in this document are single observed trials, not statistical
+estimates. For a new benchmark, run three measured warm trials, retain all
+three logs, and report minimum/median/maximum; use the minimum only when
+comparing with the "best complete warm result" below.
+
+### CPU, scheduling, memory, and I/O profiles
+
+Run the samplers in separate terminals while executing one of the timing
+commands above:
+
+```sh
+vmstat -w 1 > /tmp/jails-vmstat.log
+iostat -xz 1 > /tmp/jails-iostat.log
+pidstat -durwt 1 > /tmp/jails-pidstat.log
+```
+
+Stop each sampler with Ctrl-C immediately after the test. `vmstat` supplies
+run-queue, swap-in/out, CPU wait, and context-switch samples. `iostat` supplies
+device utilisation and latency. `pidstat` identifies the Maven, Java, Rust,
+and container processes responsible for CPU, I/O, memory pressure, and
+scheduler waits.
+
+For the hardware-counter comparison, run the same command under `perf stat`.
+For example:
+
+```sh
+perf stat -d -o /tmp/jails-app.perf -- \
+  env -u JAVA_TOOL_OPTIONS -u MAVEN_OPTS cargo test --test cli \
+  app_manifests_pass_the_full_generated_verification_gate -- --exact
+```
+
+Use `perf stat -d` for every side of a comparison; a normal timed run and a
+`perf` run are not directly comparable because counter collection adds some
+overhead. The task-clock, context-switch, CPU-migration, cycle, instruction,
+IPC, and cache-miss fields support the CPU/scheduling conclusions below. The
+`vmstat` `si`/`so` fields support the swap conclusion, and `iostat` `%util` and
+`await` support the disk-I/O conclusion.
+
+The controlled four-test contention profile used one libtest process and four
+test threads, so the harness's process permit was shared exactly as it is in a
+complete run. The following Bash snippet selects only those four tests for
+profiling. Its skip arguments are measurement instrumentation only; no result
+from this subset is used as proof that the complete suite passes.
+
+```bash
+keep='^(add_kafka_and_generate_event_compile_against_real_spring|add_json_on_a_spring_project_defers_to_the_parents_version_and_compiles|add_observability_serves_a_prometheus_scrape|add_redis_wires_a_ttl_enforcing_store_and_a_compose_service)$'
+mapfile -t all_tests < <(
+  cargo test --test cli -- --list | sed -n 's/: test$//p'
+)
+args=(--test-threads=4 --report-time)
+for test in "${all_tests[@]}"; do
+  if [[ ! "$test" =~ $keep ]]; then
+    args+=(--skip "$test")
+  fi
+done
+perf stat -d -o /tmp/jails-four-way.perf -- \
+  env -u JAVA_TOOL_OPTIONS -u MAVEN_OPTS cargo test --test cli -- \
+  "${args[@]}"
+```
+
+Finally, verify that the measured run did not silently omit tests. The logs
+must end in passing Cargo/libtest summaries, and the generated Surefire XML is
+also checked by the Rust harness for exact test totals with zero failures,
+errors, and skipped tests. Search the benchmark command and diff for selectors
+or skip mechanisms:
+
+```sh
+grep -E 'test result:' /tmp/jails-full.log
+git diff 1bf7c42612e636b65064c7c2dd43a6975aab33f9..HEAD -- \
+  | grep -E '@Disabled|#\[ignore\]|DskipTests|Dtest='
+```
+
+The second command should print nothing newly added by this optimization.
+
 ## Baseline
 
 | Work | Wall time |
