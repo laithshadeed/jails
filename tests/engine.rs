@@ -93,3 +93,124 @@ fn a_refusal_before_the_lock_leaves_the_project_untouched() {
         "nothing was written, and no machine directory was created"
     );
 }
+
+/// The same route, for a persistent generator.
+///
+/// One entity rather than the capability list, and the identity is
+/// `(recipe, name, resolved package)` -- which is what makes an edited field
+/// list an update to a known artifact rather than a new one landing on files
+/// that already exist.
+#[test]
+fn a_record_generates_through_the_transaction_protocol() {
+    let root = common::temp_dir("engine-generate");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+    let project = Project::load(&root).unwrap();
+
+    jails_engine::route::generate(
+        &project,
+        jails_spec::spec::kind::ArtifactKind::Record,
+        "Note",
+        &["title:string!".to_string(), "at:instant".to_string()],
+        None,
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+
+    let record = root.join("src/main/java/com/example/demo/domain/Note.java");
+    let test = root.join("src/test/java/com/example/demo/domain/NoteTest.java");
+    assert!(record.is_file(), "the record is on disk");
+    assert!(test.is_file(), "and its companion test");
+    let source = std::fs::read_to_string(&record).unwrap();
+    assert!(source.contains("record Note("), "{source}");
+    assert!(
+        std::fs::read_to_string(root.join("pom.xml"))
+            .unwrap()
+            .contains("assertj-core"),
+        "the generated test has something to assert with"
+    );
+}
+
+/// Two runs of one request are one artifact, not two.
+///
+/// V1 refuses the second with "already exists". V2 reports a no-op, and that
+/// is the specified behaviour rather than an accident: plan.md §R6.2 lists
+/// "repeat no-op" as one of the states the generator route has to reach,
+/// because a request whose desired state already holds has nothing to do. The
+/// answer is truthful *because* it is decided after the precondition recheck
+/// under the lock rather than from a stat before it.
+#[test]
+fn generating_the_same_record_twice_is_one_artifact_and_a_no_op() {
+    let root = common::temp_dir("engine-generate-twice");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+    let generate = || {
+        jails_engine::route::generate(
+            &Project::load(&root).unwrap(),
+            jails_spec::spec::kind::ArtifactKind::Record,
+            "Note",
+            &["title:string!".to_string()],
+            None,
+            &[],
+            None,
+            None,
+        )
+    };
+    assert!(matches!(
+        generate().unwrap(),
+        jails_commit::outcome::CommitResult::Committed(_)
+    ));
+    assert!(
+        matches!(
+            generate().unwrap(),
+            jails_commit::outcome::CommitResult::NoOp
+        ),
+        "the second run has nothing to do"
+    );
+}
+
+/// A file somebody else wrote at a path this request wants is not this
+/// request's to overwrite.
+#[test]
+fn a_file_the_request_does_not_own_is_not_overwritten() {
+    let root = common::temp_dir("engine-generate-unowned");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+    let mine = "// written by hand, and not by jails\n";
+    jails_support::apply::put(
+        root.join("src/main/java/com/example/demo/domain/Note.java"),
+        mine,
+    )
+    .unwrap();
+
+    let outcome = jails_engine::route::generate(
+        &Project::load(&root).unwrap(),
+        jails_spec::spec::kind::ArtifactKind::Record,
+        "Note",
+        &["title:string!".to_string()],
+        None,
+        &[],
+        None,
+        None,
+    );
+
+    let error = outcome.unwrap_err();
+    assert!(
+        error.contains("jails did not write it") && error.contains("jails adopt"),
+        "the refusal names the way to take it over deliberately: {error}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("src/main/java/com/example/demo/domain/Note.java"))
+            .unwrap(),
+        mine,
+        "and the bytes the reader wrote are still there"
+    );
+    assert!(
+        !root
+            .join("src/test/java/com/example/demo/domain/NoteTest.java")
+            .exists(),
+        "a refusal before the lock writes none of the request, not most of it"
+    );
+}

@@ -36,17 +36,18 @@ use jails_project::capture::{self, ReadDeclaration};
 use jails_project::model::{Change, Project};
 use jails_protocol::bootstrap::Bootstrap;
 use jails_protocol::change::DesiredChange;
+use jails_protocol::declaration::{FieldSpec, IndexSpec, IntentSpec};
 use jails_protocol::edit::SemanticEdit;
 use jails_protocol::entity::{
-    CapabilityId, CapabilityInstance, CapabilitySpec, EntityId, EntitySpec, OwnerId,
+    CapabilityId, CapabilityInstance, CapabilitySpec, EntityId, EntitySpec, IntentId, OwnerId,
 };
-use jails_protocol::identity::ProjectPath;
+use jails_protocol::identity::{JavaType, Name, Package, ProjectPath};
 use jails_protocol::ownership::{DesiredEntity, DesiredState, ReconcileScope};
 use jails_protocol::plan::{DesiredAppliedEntity, DesiredChangeSet, LedgerIntent, PlannedSubject};
 use jails_protocol::resource::{DesiredResource, ResourceKey, ResourceOwner, ResourceValue};
 use jails_protocol::snapshot::{MachineRootPresence, TemplateStore};
 use jails_protocol::transition::CommitPlan;
-use jails_spec::spec::kind::Capability;
+use jails_spec::spec::kind::{ArtifactKind, Capability};
 use jails_support::Result;
 
 /// Install one capability through the transaction protocol.
@@ -70,6 +71,106 @@ pub fn install(project: &Project, capability: Capability) -> Result<CommitResult
     };
     let set = change_set(ReconcileScope::DirectConfig, entity, desired)?;
     commit(project, set, &declaration(project, &change)?, "jails add")
+}
+
+/// Generate one persistent artifact through the transaction protocol.
+///
+/// The direct counterpart of `generate_in_project`, and the subject is one
+/// entity rather than the capability list: `ReconcileScope::DirectEntity` is
+/// "exactly one direct `generate`/`destroy` request", so this route may add or
+/// remove its own claim and says nothing about anybody else's.
+#[allow(clippy::too_many_arguments)]
+pub fn generate(
+    project: &Project,
+    kind: ArtifactKind,
+    name: &str,
+    fields: &[String],
+    package: Option<&str>,
+    indexes: &[String],
+    on: Option<&str>,
+    yields: Option<&str>,
+) -> Result<CommitResult> {
+    let change = with_test_support(
+        project,
+        jails_generate::generate::plan_recipe(
+            project, kind, name, fields, package, indexes, on, yields,
+        )?,
+    );
+    let id = intent(project, kind, name, package, fields, indexes, on, yields)?;
+    let owner = ResourceOwner::Entity(EntityId::Intent(id.clone()));
+    let desired = desire::contribution(&owner, &change, project)?;
+    let entity = DesiredEntity {
+        id: EntityId::Intent(id.clone()),
+        spec: EntitySpec::Intent(spec(project, fields, indexes, on, yields)?),
+        owners: BTreeSet::from([OwnerId::DirectCli]),
+    };
+    let set = change_set(
+        ReconcileScope::DirectEntity(EntityId::Intent(id)),
+        entity,
+        desired,
+    )?;
+    commit(
+        project,
+        set,
+        &declaration(project, &change)?,
+        "jails generate",
+    )
+}
+
+/// `(recipe, name, resolved package)` — the identity everything about this
+/// artifact is filed under.
+///
+/// The package is resolved rather than optional: two rows for one artifact,
+/// one saying "wherever the convention puts it" and one naming the package it
+/// went to, are two authorities for one identity.
+#[allow(clippy::too_many_arguments)]
+fn intent(
+    project: &Project,
+    kind: ArtifactKind,
+    name: &str,
+    package: Option<&str>,
+    _fields: &[String],
+    _indexes: &[String],
+    _on: Option<&str>,
+    _yields: Option<&str>,
+) -> Result<IntentId> {
+    Ok(IntentId {
+        recipe: kind,
+        name: Name::parse(&jails_generate::generate::strip_redundant_suffix(
+            kind,
+            &jails_spec::spec::field::capitalize(name),
+        ))?,
+        package: Package::parse(&project.package_named("", package))?,
+    })
+}
+
+/// What the artifact was asked for, as the content of its identity.
+fn spec(
+    project: &Project,
+    fields: &[String],
+    indexes: &[String],
+    on: Option<&str>,
+    yields: Option<&str>,
+) -> Result<IntentSpec> {
+    let base = Package::parse(project.base())?;
+    let mut parsed = Vec::new();
+    for token in fields {
+        parsed.push(FieldSpec::parse(token, &base)?);
+    }
+    let mut declared = Vec::new();
+    for index in indexes {
+        declared.push(IndexSpec::parse(index, &parsed)?);
+    }
+    Ok(IntentSpec {
+        fields: parsed,
+        indexes: declared,
+        // `--timestamps` is expanded into fields before a recipe ever sees it,
+        // so by the time there is a spec the two extra components are ordinary
+        // ones. Recording it again would make one request two facts.
+        timestamps: false,
+        on: on.map(JavaType::parse).transpose()?,
+        yields: yields.map(JavaType::parse).transpose()?,
+    })
 }
 
 /// The two things the write path adds to any change that writes tests.

@@ -390,6 +390,29 @@ fn diff(
                 if object.id == file.sha256 && mode == file.mode {
                     continue;
                 }
+                // An *owned output* -- a file some entity claims, as opposed
+                // to a shared file this change merely edits -- goes through
+                // R5.3's reconciliation, which is where "jails did not write
+                // this" is decided. Without this the preparation happily
+                // planned a replace over a file somebody had written by hand,
+                // and the receipt recorded the entity as its contributor.
+                //
+                // `prior` is `None` until applied outputs are read back from
+                // the ledger. That makes an update to jails' own earlier
+                // output refuse rather than replace, which is the safe
+                // direction to be wrong in while the plumbing lands.
+                if !contributors.is_empty() {
+                    let live = FileImage::Present {
+                        object: ObjectRef::new(file.sha256, file.len),
+                        mode: file.mode,
+                    };
+                    let desired = FileImage::Present { object, mode };
+                    match crate::reconcile::reconcile(path, None, live, desired)? {
+                        crate::reconcile::Decision::Refuse(why) => return Err(why),
+                        crate::reconcile::Decision::Nothing => continue,
+                        _ => {}
+                    }
+                }
                 operations.push(FileOp::Replace {
                     path: OperationTarget::Project(path.clone()),
                     before: GuardedImage {
@@ -618,6 +641,24 @@ mod tests {
     }
 
     /// A change that writes one file, and the intent that agrees with it.
+    /// A change that writes a shared file without claiming it.
+    ///
+    /// The distinction matters since R5.3's reconciliation reached the diff: a
+    /// path an entity *owns* and finds already occupied is refused, because
+    /// jails did not write those bytes. A `pom.xml` is not owned by anybody --
+    /// it is edited -- so the properties below are stated about one of those.
+    fn edit_one(at: &str, body: &[u8]) -> DesiredChangeSet {
+        let mut set = write_one(at, body);
+        for change in &mut set.ordered {
+            change.resources.clear();
+            for file in &mut change.files {
+                file.resource = None;
+            }
+        }
+        set.ledger_intent.resources_after.clear();
+        set
+    }
+
     fn write_one(at: &str, body: &[u8]) -> DesiredChangeSet {
         let key = ResourceKey::WholeFile(path(at));
         let mut change = DesiredChange::owned_by(owner("Note"));
@@ -710,7 +751,7 @@ mod tests {
     #[test]
     fn changed_bytes_become_a_replace_that_guards_the_preimage() {
         let base = snapshot(&[("pom.xml", "<project/>")], &[]);
-        let bundle = run(base, write_one("pom.xml", b"<project></project>"), 3).unwrap();
+        let bundle = run(base, edit_one("pom.xml", b"<project></project>"), 3).unwrap();
         let FileOp::Replace { before, .. } = &bundle.change.operations[0] else {
             panic!("expected a replace");
         };
@@ -856,12 +897,7 @@ mod tests {
     #[test]
     fn every_declared_input_becomes_a_precondition() {
         let base = snapshot(&[("pom.xml", "<project/>")], &["compose.yaml"]);
-        let bundle = run(
-            base.clone(),
-            write_one("pom.xml", b"<project></project>"),
-            3,
-        )
-        .unwrap();
+        let bundle = run(base.clone(), edit_one("pom.xml", b"<project></project>"), 3).unwrap();
         let paths: BTreeSet<String> = bundle
             .change
             .input_preconditions
