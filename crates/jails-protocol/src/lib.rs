@@ -20,5 +20,6 @@ pub mod ownership;
 pub mod provenance;
 pub mod recipe;
 pub mod request;
+pub mod snapshot;
 
 pub(crate) use jails_support::Result;
