@@ -6337,3 +6337,39 @@ fn generate_search_refuses_a_component_it_cannot_index() {
         assert!(stderr.contains(expected), "{args:?}: {stderr}");
     }
 }
+
+/// `plan.md` §13.3's `add mail`. The generated IT starts a container, so only
+/// compilation is checked here — but that is the part that catches the Boot 4
+/// API changes, and the IT's shape is copied from Boot's own.
+#[test]
+fn add_mail_produces_a_project_that_compiles() {
+    if !real_mvn_available() {
+        skip("mvn not found on PATH");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let root = temp_dir("real-mail");
+    write_spring_fixture(&root);
+
+    let output = jails_cmd_with_path(&root, &path)
+        .args(["add", "mail", "--no-start"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let output = jails_cmd_with_path(&root, &path)
+        .args(["mvn", "--", "-q", "test-compile"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

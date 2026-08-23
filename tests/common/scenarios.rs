@@ -324,6 +324,12 @@ pub const SCENARIOS: &[Scenario] = &[
         steps: &[&["g", "webhook", "Provider"]],
     },
     Scenario {
+        name: "cap-mail",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[&["add", "mail", "--no-start"]],
+    },
+    Scenario {
         name: "cap-sse",
         fixture: Fixture::Spring,
         seed: &[],

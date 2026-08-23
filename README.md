@@ -351,6 +351,19 @@ it already draws for hand-written properties inside a jails-owned block.
   line and no other test notices. The key is symmetric and read from
   configuration; two services that verify each other's tokens want a key pair
   and a published JWK set, never one shared secret. Needs `jails add security`.
+- `jails add|a mail` (alias `smtp`) — sending, a Mailpit compose service, and
+  an integration test that **reads the message back over POP3**. That last part
+  is the point: a mail test that checks `send()` did not throw proves almost
+  nothing, since a wrong From, a wrong recipient, an empty subject and a message
+  the server silently drops all pass it. The shape is copied from Spring Boot's
+  own `MailSenderAutoConfigurationIntegrationTests`. Two defaults are made
+  explicit: `spring.mail.host` is set, because unset it falls back to
+  `localhost:25` and a misconfigured deployment then fails at the first send
+  rather than at startup; and the From address is one configured value, because
+  a per-call-site literal drifts and the one that drifts is the one a receiving
+  server rejects for failing SPF. There is no `@ServiceConnection` for mail in
+  Boot 4, so the test binds host and port with `@DynamicPropertySource` — which
+  is why it does not look like `add db`'s.
 - `jails add|a sse` (alias `events`) — Server-Sent Events, and the five details
   this design gets wrong. The emitter timeout is `-1L`, not `Long.MAX_VALUE`:
   it reaches `AsyncContext.setTimeout`, where the Servlet spec reads zero or

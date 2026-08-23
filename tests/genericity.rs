@@ -38,6 +38,14 @@ const ALLOWED: &[AllowedConcept] = &[
         reason: "RFC 9309 names robots.txt; this is a web standard, not showcase-domain vocabulary",
     },
     AllowedConcept {
+        word: "inbox",
+        files: &["templates/spring/mailer_it_java.java"],
+        reason: "POP3's own folder name -- `store.getFolder(\"inbox\")` is the protocol, not \
+                 App B's domain, and Spring Boot's own mail integration test spells it the \
+                 same way. The variable holding it is called `folder`, so this is the one \
+                 occurrence: the string the protocol requires",
+    },
+    AllowedConcept {
         word: "ledger",
         files: &[
             "src/ledger.rs",

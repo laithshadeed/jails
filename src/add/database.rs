@@ -8,6 +8,7 @@
 
 use super::test_wiring::remove_jails_db_block;
 use super::*;
+use crate::spring::TESTCONTAINERS_JUNIT;
 
 // ---------------------------------------------------------------------------
 // db -- PostgreSQL, Flyway, and real integration tests; deliberately no ORM
@@ -84,13 +85,6 @@ pub(super) const FLYWAY_POSTGRES_PINNED: Dependency = Dependency {
 pub(super) const TESTCONTAINERS_POSTGRES: Dependency = Dependency {
     group_id: "org.testcontainers",
     artifact_id: "testcontainers-postgresql",
-    version: Some("2.0.5"),
-    scope: Some("test"),
-    optional: false,
-};
-pub(super) const TESTCONTAINERS_JUNIT: Dependency = Dependency {
-    group_id: "org.testcontainers",
-    artifact_id: "testcontainers-junit-jupiter",
     version: Some("2.0.5"),
     scope: Some("test"),
     optional: false,

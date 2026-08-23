@@ -18,9 +18,11 @@ use crate::Result;
 use crate::model::{Artifact, Change, Layer, Slice};
 
 mod auth;
+mod containers;
 mod dto;
 mod durable;
 mod http;
+mod mail;
 mod messaging;
 mod outbox;
 mod query;
@@ -32,9 +34,11 @@ mod transition;
 mod webhook;
 mod workflow;
 pub(crate) use auth::*;
+pub(crate) use containers::*;
 pub(crate) use dto::*;
 pub(crate) use durable::*;
 pub(crate) use http::*;
+pub(crate) use mail::*;
 pub(crate) use messaging::*;
 pub(crate) use outbox::*;
 pub(crate) use query::*;
@@ -433,25 +437,6 @@ fn cache_test_java(pkg: &str) -> String {
         &[("pkg", pkg)],
     )
 }
-
-/// Boot's Testcontainers integration, needed for `@ServiceConnection`.
-pub(crate) const SPRING_TESTCONTAINERS: Dependency = Dependency {
-    group_id: "org.springframework.boot",
-    artifact_id: "spring-boot-testcontainers",
-    version: None,
-    scope: Some("test"),
-    optional: false,
-};
-
-/// Testcontainers' Kafka module. Named the 2.x way (`testcontainers-kafka`),
-/// matching the postgres module `add db` already pins.
-pub(crate) const TESTCONTAINERS_KAFKA: Dependency = Dependency {
-    group_id: "org.testcontainers",
-    artifact_id: "testcontainers-kafka",
-    version: Some("2.0.5"),
-    scope: Some("test"),
-    optional: false,
-};
 
 #[cfg(test)]
 mod event_tests {
@@ -879,18 +864,6 @@ pub(crate) const REDIS_STARTER: Dependency = Dependency {
     artifact_id: "spring-boot-starter-data-redis",
     version: None,
     scope: None,
-    optional: false,
-};
-
-/// Testcontainers' generic container, which is what Boot's Redis
-/// `@ServiceConnection` factory matches on: it accepts any
-/// `GenericContainer` whose image is one of the Redis images, rather than a
-/// dedicated Redis container type.
-pub(crate) const TESTCONTAINERS_CORE: Dependency = Dependency {
-    group_id: "org.testcontainers",
-    artifact_id: "testcontainers",
-    version: Some("2.0.5"),
-    scope: Some("test"),
     optional: false,
 };
 

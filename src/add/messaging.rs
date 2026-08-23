@@ -7,6 +7,7 @@
 //! generated one for a guessed name is worse than none.
 
 use super::*;
+use crate::spring::TESTCONTAINERS_JUNIT;
 
 // ---------------------------------------------------------------------------
 // kafka

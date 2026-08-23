@@ -53,6 +53,26 @@ pub struct Service {
     pub volume: Option<&'static str>,
 }
 
+/// Mailpit: an SMTP sink with a web inbox, for development.
+///
+/// The same image the integration test starts, so what you read in the browser
+/// at :8025 and what the test reads over POP3 are the same server.
+pub const MAILPIT: Service = Service {
+    name: "mailpit",
+    marker: "mail",
+    body: r#"    image: axllent/mailpit:v1.21
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+      MP_POP3_AUTH: user:pass
+    ports:
+      - "1025:1025"
+      - "1110:1110"
+      - "8025:8025"
+"#,
+    volume: None,
+};
+
 pub const POSTGRES: Service = Service {
     name: "postgres",
     marker: "db",

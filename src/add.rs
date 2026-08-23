@@ -95,6 +95,10 @@ pub enum Capability {
     /// and a heartbeat that cannot stall the rest of the scheduler
     #[value(alias = "events")]
     Sse,
+    /// Sending mail, a Mailpit compose service, and an integration test that
+    /// reads the message back over POP3 rather than trusting `send()`
+    #[value(alias = "smtp")]
+    Mail,
     /// Redis: a TTL-enforcing key/value wrapper, a compose service, and a
     /// real-container integration test
     Redis,
@@ -131,6 +135,7 @@ impl Capability {
             Capability::Security => "security",
             Capability::Cors => "cors",
             Capability::Sse => "sse",
+            Capability::Mail => "mail",
             Capability::Redis => "redis",
             Capability::Observability => "observability",
             Capability::Toxiproxy => "toxiproxy",
@@ -570,6 +575,7 @@ fn build_plan(
         }
         Capability::Cors => spring_slice_plan(&slice, "cors", crate::spring::cors_slice),
         Capability::Sse => spring_slice_plan(&slice, "sse", crate::spring::sse_slice),
+        Capability::Mail => spring_slice_plan(&slice, "mail", crate::spring::mail_slice),
         Capability::Observability => {
             spring_slice_plan(&slice, "observability", crate::spring::observability_slice)
         }
