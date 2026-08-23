@@ -35,8 +35,9 @@ use jails_project::projection::{ProjectedEntry, ProjectedProject};
 use jails_protocol::bootstrap::LoadedProject;
 use jails_protocol::change::DesiredChange;
 use jails_protocol::conflict::{FileImage, FileMode};
+use jails_protocol::envelope::LedgerV2;
 use jails_protocol::identity::{ObjectId, ObjectRef, ProjectPath, TemplateKey};
-use jails_protocol::plan::PlannedSubject;
+use jails_protocol::plan::{LedgerIntent, PlannedSubject};
 use jails_protocol::render::{DesiredBody, TemplateValue};
 use jails_protocol::resource::ResourceOwner;
 use jails_protocol::snapshot::{Captured, ProjectSnapshot, ReadSet, TemplateStore};
@@ -46,6 +47,46 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 /// The machine-side inputs preparation needs and the plan does not carry.
+/// The store as this run read it.
+///
+/// Two halves that must agree: the *file* image the commit will guard against
+/// under the lock, and the value that was decoded from it. An absent file with
+/// a decoded store, or the reverse, would let a plan be written against a
+/// store nobody saw.
+#[derive(Clone, Debug)]
+pub struct ObservedStore {
+    pub image: FileImage,
+    pub ledger: Option<LedgerV2>,
+}
+
+impl Default for ObservedStore {
+    /// A project with no store yet, which is where every project starts.
+    fn default() -> Self {
+        Self {
+            image: FileImage::Absent,
+            ledger: None,
+        }
+    }
+}
+
+impl ObservedStore {
+    /// The generation a plan computed against this store must claim.
+    pub fn generation(&self) -> u64 {
+        self.ledger.as_ref().map_or(0, |ledger| ledger.generation)
+    }
+
+    fn validate(&self) -> Result<()> {
+        match (&self.image, &self.ledger) {
+            (FileImage::Absent, None) | (FileImage::Present { .. }, Some(_)) => Ok(()),
+            _ => Err(
+                "the observed store's file and its decoded value disagree about whether it \
+                 exists"
+                    .to_string(),
+            ),
+        }
+    }
+}
+
 pub struct PreparationContext {
     /// Everything the plan was allowed to read.
     pub read_set: ReadSet,
@@ -53,6 +94,8 @@ pub struct PreparationContext {
     pub templates: TemplateStore,
     /// The generation the ledger was observed at.
     pub observed_generation: u64,
+    /// The store this plan was computed against, and the file it came from.
+    pub observed_store: ObservedStore,
     /// The tools this operation intends to run. Frozen at step 5; empty when
     /// no formatter or merge is selected.
     pub operation_context: OperationContextFingerprint,
@@ -430,6 +473,138 @@ fn diff(
     Ok((operations, objects))
 }
 
+/// Whether a computed store says anything the observed one did not.
+///
+/// Only the rows are compared. `written_by`, `generation` and
+/// `last_operation` change on every commit by construction, so including them
+/// would make every store differ from itself.
+fn unchanged(store: &LedgerV2, observed: &Option<LedgerV2>) -> bool {
+    let Some(observed) = observed else {
+        return store.applied.is_empty()
+            && store.one_shots.is_empty()
+            && store.resources.is_empty()
+            && store.outputs.is_empty()
+            && store.legacy.is_empty()
+            && store.pending_conflict.is_none();
+    };
+    store.applied == observed.applied
+        && store.one_shots == observed.one_shots
+        && store.resources == observed.resources
+        && store.outputs == observed.outputs
+        && store.legacy == observed.legacy
+        && store.pending_conflict == observed.pending_conflict
+}
+
+/// The store this transition will leave behind.
+///
+/// An *update* of what was observed, never a fresh construction: a row this
+/// request says nothing about -- another capability's dependency, an entity it
+/// has never heard of -- survives untouched. Rebuilding the store from one
+/// request's intent would quietly delete everything the request did not
+/// mention, which is the opposite of what a scope means.
+///
+/// `outputs` is deliberately not written here. §R1.4's `OutputRecord` carries
+/// a `RendererStamp`, and this route's bytes arrive already rendered by a
+/// recipe that never produced one. An output row with an invented stamp would
+/// claim provenance that did not happen, and provenance is what R5.2's upgrade
+/// path reads to decide whether a template moved. It lands with that stamp.
+fn record_store(
+    observed: &ObservedStore,
+    intent: &LedgerIntent,
+    operation: jails_protocol::identity::OperationId,
+    generation: u64,
+) -> Result<LedgerV2> {
+    observed.validate()?;
+    let mut store = observed.ledger.clone().unwrap_or_else(|| LedgerV2 {
+        written_by: String::new(),
+        generation: 0,
+        last_operation: None,
+        applied: Vec::new(),
+        one_shots: Vec::new(),
+        resources: Vec::new(),
+        outputs: Vec::new(),
+        legacy: Vec::new(),
+        pending_conflict: None,
+    });
+    store.written_by = env!("CARGO_PKG_VERSION").to_string();
+    store.generation = generation;
+    store.last_operation = Some(operation);
+
+    for entity in &intent.entities_after {
+        let applied = jails_protocol::record::AppliedEntity {
+            id: entity.id.clone(),
+            owners: entity.owners.clone(),
+            version: jails_protocol::record::AppliedVersion {
+                spec: entity.spec.clone(),
+                operation,
+            },
+        };
+        match store.applied.iter_mut().find(|row| row.id == applied.id) {
+            // An entity whose owners and spec are unchanged keeps the
+            // operation that applied it. Stamping the current one would say a
+            // transition happened to it when none did, and the store would
+            // then differ from itself on every repeat -- which is exactly how
+            // "already set up" stops being reachable.
+            Some(row)
+                if row.owners == applied.owners && row.version.spec == applied.version.spec => {}
+            Some(row) => *row = applied,
+            None => store.applied.push(applied),
+        }
+    }
+    store.applied.sort_by(|a, b| a.id.cmp(&b.id));
+
+    for desired in &intent.resources_after {
+        match store
+            .resources
+            .iter_mut()
+            .find(|row| row.key == desired.key)
+        {
+            // Owners union rather than replace: two capabilities wanting one
+            // dependency both own it, and a request that stated only its own
+            // claim must not erase the other's.
+            Some(row) => {
+                row.owners.extend(desired.owners.iter().cloned());
+                row.value = desired.value.clone();
+            }
+            None => store
+                .resources
+                .push(jails_protocol::resource::ResourceRecord {
+                    key: desired.key.clone(),
+                    owners: desired.owners.clone(),
+                    value: desired.value.clone(),
+                }),
+        }
+    }
+    store.resources.sort_by(|a, b| a.key.cmp(&b.key));
+
+    for desired in &intent.one_shots_after {
+        let receipt = jails_protocol::record::OneShotReceipt {
+            id: desired.id.clone(),
+            spec: desired.spec.clone(),
+            state: desired.state,
+            lifecycle: desired.lifecycle.clone(),
+            operation,
+        };
+        match store.one_shots.iter_mut().find(|row| row.id == receipt.id) {
+            // Same rule as an entity: a receipt whose content is unchanged
+            // keeps the operation that wrote it.
+            Some(row)
+                if row.spec == receipt.spec
+                    && row.state == receipt.state
+                    && row.lifecycle == receipt.lifecycle => {}
+            Some(row) => *row = receipt,
+            None => store.one_shots.push(receipt),
+        }
+    }
+    store.one_shots.sort_by(|a, b| a.id.cmp(&b.id));
+
+    // Sorted by the encoder's own rule rather than by a second one here: the
+    // legacy key is private to the envelope, and a copy of the ordering would
+    // be a second authority on what canonical means.
+    store.legacy = intent.legacy_after.clone();
+    Ok(store)
+}
+
 fn intern(objects: &mut ObjectBundle, body: Vec<u8>) -> ObjectRef {
     let id = ObjectId::from_bytes(sha256(&body));
     let len = body.len() as u64;
@@ -507,12 +682,37 @@ fn assemble(
         input_preconditions: context.read_set.inputs().to_vec(),
         operations,
         directories,
-        ledger_before: FileImage::Absent,
+        ledger_before: context.observed_store.image,
         ledger_after: FileImage::Absent,
         objects,
         post_commit: Vec::new(),
         kind,
     };
+    if let OperationSemanticsV1::Apply(apply) = &change.operation_identity.semantics {
+        let store = record_store(
+            &context.observed_store,
+            &apply.ledger_intent,
+            change.operation_id,
+            change.operation_identity.proposed_generation,
+        )?;
+        // A store whose rows are all unchanged is not rewritten. Bumping the
+        // generation and stamping a new operation id for a run that did
+        // nothing would make every `--pretend`-shaped repeat look like a
+        // transition, and `is_no_op` -- which is what the caller reports as
+        // "already set up" -- would never be true again.
+        if unchanged(&store, &context.observed_store.ledger)
+            && change.operations.is_empty()
+            && change.directories.is_empty()
+        {
+            change.ledger_after = change.ledger_before;
+        } else {
+            let bytes = store.render()?.into_bytes();
+            change.ledger_after = FileImage::Present {
+                object: intern(&mut change.objects, bytes),
+                mode: default_mode(),
+            };
+        }
+    }
     change.transaction_id = change.identity()?.transaction_id()?;
     change.validate()?;
     Ok(PreparedBundle {
@@ -617,6 +817,12 @@ mod tests {
             read_set: read_set(base),
             templates,
             observed_generation: generation,
+            // These tests are about the diff, not about the store, so they
+            // plan against a project that has had no transition. The
+            // generation they claim is passed separately on purpose: it is
+            // what lets `applying_against_a_moved_store_is_refused` state its
+            // property without building a whole ledger file.
+            observed_store: ObservedStore::default(),
             operation_context: OperationContextFingerprint::default(),
             preparation: PreparationContextFingerprint::default(),
         }
@@ -743,11 +949,40 @@ mod tests {
 
     /// Equal bytes *and* mode emit no operation. A file with the right bytes
     /// and the wrong mode is not the file that was meant.
+    ///
+    /// It is still a transition, though, and that is not a contradiction: this
+    /// request claims a resource the store has never recorded, and a claim
+    /// nobody wrote down is a claim `remove` cannot honour. The no-op case is
+    /// the one below it -- same bytes *and* nothing new to say.
     #[test]
-    fn writing_the_bytes_that_are_already_there_emits_nothing() {
+    fn writing_the_bytes_that_are_already_there_emits_no_file_operation() {
         let base = snapshot(&[("pom.xml", "<project/>")], &[]);
         let bundle = run(base, write_one("pom.xml", b"<project/>"), 3).unwrap();
         assert!(bundle.change.operations.is_empty());
+        assert!(
+            !bundle.change.is_no_op(),
+            "the resource claim is new, so the store moves"
+        );
+    }
+
+    /// A request that changes no bytes *and* records nothing new writes
+    /// nothing at all -- not even a generation bump.
+    ///
+    /// Rewriting the store for a run that did nothing would make every repeat
+    /// look like a transition, and "already set up -- nothing to do" would
+    /// never be true again.
+    #[test]
+    fn a_request_with_nothing_to_say_is_a_no_op() {
+        let base = snapshot(&[("pom.xml", "<project/>")], &[]);
+        let mut set = write_one("pom.xml", b"<project/>");
+        set.ledger_intent.resources_after.clear();
+        for change in &mut set.ordered {
+            change.resources.clear();
+            for file in &mut change.files {
+                file.resource = None;
+            }
+        }
+        let bundle = run(base, set, 3).unwrap();
         assert!(bundle.change.is_no_op());
     }
 

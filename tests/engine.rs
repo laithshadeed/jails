@@ -274,3 +274,72 @@ fn a_capability_install_converges_from_every_failpoint() {
         jails_commit::fault::POINTS.len()
     );
 }
+
+/// What the store says after a transition, and after a second one.
+///
+/// The point of recording at all: a capability installs, its dependency and
+/// its file are claimed by it, and a *different* capability installed
+/// afterwards leaves the first one's rows exactly where they were. A store
+/// rebuilt from one request's intent would quietly delete everything that
+/// request did not mention.
+#[test]
+fn each_transition_records_what_it_claimed_and_leaves_the_rest_alone() {
+    let root = common::temp_dir("engine-store");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_spring_fixture(&root);
+
+    jails_engine::route::install(&Project::load(&root).unwrap(), Capability::Actuator).unwrap();
+    let store = jails_commit::store::Store::at(&root).observe().unwrap();
+    let first = store.ledger.clone().unwrap();
+    assert_eq!(first.generation, 1);
+    assert!(
+        first
+            .applied
+            .iter()
+            .any(|entity| format!("{:?}", entity.id).contains("Actuator")),
+        "the capability is recorded: {:?}",
+        first.applied
+    );
+    let actuator_rows = first.resources.len();
+    assert!(actuator_rows > 0, "and so are the resources it claimed");
+
+    jails_engine::route::install(&Project::load(&root).unwrap(), Capability::Cache).unwrap();
+    let second = jails_commit::store::Store::at(&root)
+        .observe()
+        .unwrap()
+        .ledger
+        .unwrap();
+    assert_eq!(second.generation, 2, "one increment per commit");
+    assert_eq!(second.applied.len(), 2);
+    for row in &first.resources {
+        assert!(
+            second.resources.iter().any(|later| later.key == row.key),
+            "the first capability's claim survived the second install: {:?}",
+            row.key
+        );
+    }
+}
+
+/// Installing the same capability twice is one row and one transition.
+#[test]
+fn installing_a_capability_twice_leaves_the_store_where_it_was() {
+    let root = common::temp_dir("engine-store-repeat");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_spring_fixture(&root);
+
+    jails_engine::route::install(&Project::load(&root).unwrap(), Capability::Actuator).unwrap();
+    let before = jails_commit::store::Store::at(&root).observe().unwrap();
+    let outcome =
+        jails_engine::route::install(&Project::load(&root).unwrap(), Capability::Actuator).unwrap();
+    let after = jails_commit::store::Store::at(&root).observe().unwrap();
+
+    assert!(
+        matches!(outcome, jails_commit::outcome::CommitResult::NoOp),
+        "the second install has nothing to do, got {outcome:?}"
+    );
+    assert_eq!(
+        before.ledger.unwrap().generation,
+        after.ledger.unwrap().generation,
+        "and the generation does not move for a run that did nothing"
+    );
+}

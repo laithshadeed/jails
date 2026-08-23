@@ -39,6 +39,43 @@ pub struct Store {
 }
 
 impl Store {
+    /// The store as it is on disk, for a plan to compute against.
+    ///
+    /// Both halves at once -- the file image the commit will guard under the
+    /// lock, and the value decoded from it -- because reading them separately
+    /// is how a plan comes to be written against a store that changed between
+    /// the two reads.
+    ///
+    /// A store that cannot be decoded is an error and never an absence: an
+    /// absent store means "this project has had no transition", and treating a
+    /// corrupt one that way would start a fresh history over the top of a real
+    /// one.
+    pub fn observe(&self) -> Result<jails_prepare::pipeline::ObservedStore> {
+        let path = self.root().join("ledger.toml");
+        let source = match std::fs::read_to_string(&path) {
+            Ok(source) => source,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(jails_prepare::pipeline::ObservedStore::default());
+            }
+            Err(error) => return Err(format!("failed to read {}: {error}", path.display())),
+        };
+        let ledger = jails_protocol::envelope::LedgerV2::parse_file(&source)?;
+        let metadata = std::fs::metadata(&path)
+            .map_err(|error| format!("failed to stat {}: {error}", path.display()))?;
+        Ok(jails_prepare::pipeline::ObservedStore {
+            image: jails_protocol::conflict::FileImage::Present {
+                object: jails_protocol::identity::ObjectRef::new(
+                    jails_protocol::identity::ObjectId::from_bytes(jails_support::codec::sha256(
+                        source.as_bytes(),
+                    )),
+                    source.len() as u64,
+                ),
+                mode: file_mode(&metadata)?,
+            },
+            ledger: Some(ledger),
+        })
+    }
+
     /// The store under a project root. Creates nothing.
     pub fn at(project_root: &Path) -> Self {
         Self {
@@ -313,6 +350,19 @@ fn device_of(path: &Path) -> Result<u64> {
     std::fs::metadata(path)
         .map(|metadata| metadata.dev())
         .map_err(|error| format!("could not stat {}: {error}", path.display()))
+}
+
+#[cfg(unix)]
+fn file_mode(metadata: &std::fs::Metadata) -> Result<jails_protocol::conflict::FileMode> {
+    use std::os::unix::fs::PermissionsExt;
+    jails_protocol::conflict::FileMode::new(
+        metadata.permissions().mode() & jails_protocol::conflict::FileMode::PERMITTED,
+    )
+}
+
+#[cfg(not(unix))]
+fn file_mode(_metadata: &std::fs::Metadata) -> Result<jails_protocol::conflict::FileMode> {
+    jails_protocol::conflict::FileMode::new(0o644)
 }
 
 #[cfg(test)]

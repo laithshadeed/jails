@@ -69,8 +69,17 @@ pub fn install(project: &Project, capability: Capability) -> Result<CommitResult
         spec: EntitySpec::Capability(CapabilitySpec { placement: None }),
         owners: BTreeSet::from([OwnerId::DirectConfig]),
     };
-    let set = change_set(ReconcileScope::DirectConfig, entity, desired)?;
-    commit(project, set, &declaration(project, &change)?, "jails add")
+    let request = Request {
+        scope: ReconcileScope::DirectConfig,
+        entity,
+        change: desired,
+    };
+    commit(
+        project,
+        request,
+        &declaration(project, &change)?,
+        "jails add",
+    )
 }
 
 /// Generate one persistent artifact through the transaction protocol.
@@ -104,14 +113,14 @@ pub fn generate(
         spec: EntitySpec::Intent(spec(project, fields, indexes, on, yields)?),
         owners: BTreeSet::from([OwnerId::DirectCli]),
     };
-    let set = change_set(
-        ReconcileScope::DirectEntity(EntityId::Intent(id)),
+    let request = Request {
+        scope: ReconcileScope::DirectEntity(EntityId::Intent(id)),
         entity,
-        desired,
-    )?;
+        change: desired,
+    };
     commit(
         project,
-        set,
+        request,
         &declaration(project, &change)?,
         "jails generate",
     )
@@ -235,40 +244,51 @@ fn record_capability(
     Ok(())
 }
 
-/// Everything one request wants, as the complete state of the scope it speaks
-/// for.
+/// One request, before it is measured against the store.
 ///
-/// A scope may only ever add or remove *its own* claim, so the ledger intent
-/// carries this entity and the resources this change charges to it, and says
-/// nothing about anybody else's.
-fn change_set(
+/// Deliberately not a `DesiredChangeSet` yet: that value carries the
+/// generation the plan was computed against, and there is exactly one place
+/// that may decide it -- the read of the store in [`commit`]. A field filled
+/// with a placeholder here and corrected there is two authorities on the same
+/// number, and the executor refuses when they disagree.
+struct Request {
     scope: ReconcileScope,
     entity: DesiredEntity,
     change: DesiredChange,
-) -> Result<DesiredChangeSet> {
-    let applied = DesiredAppliedEntity {
-        id: entity.id.clone(),
-        owners: entity.owners.clone(),
-        spec: entity.spec.clone(),
-    };
-    let state = DesiredState::new(scope, BTreeMap::from([(entity.id.clone(), entity)]))?;
-    let set = DesiredChangeSet {
-        ledger_intent: LedgerIntent {
-            // A first transition against a store that does not exist yet is
-            // generation zero, and the executor rechecks it under the lock:
-            // a plan computed against a store that has since moved on is
-            // refused rather than applied to a state it never saw.
-            generation_before: 0,
-            entities_after: vec![applied],
-            one_shots_after: Vec::new(),
-            resources_after: change.resources.clone(),
-            legacy_after: Vec::new(),
-        },
-        ordered: vec![change],
-        subject: PlannedSubject::Reconcile(state),
-    };
-    set.validate()?;
-    Ok(set)
+}
+
+impl Request {
+    /// Everything this request wants, as the complete state of the scope it
+    /// speaks for.
+    ///
+    /// A scope may only ever add or remove *its own* claim, so the intent
+    /// carries this entity and the resources charged to it, and says nothing
+    /// about anybody else's. What survives from other owners is decided when
+    /// the store is updated, not here.
+    fn against(self, generation: u64) -> Result<DesiredChangeSet> {
+        let applied = DesiredAppliedEntity {
+            id: self.entity.id.clone(),
+            owners: self.entity.owners.clone(),
+            spec: self.entity.spec.clone(),
+        };
+        let state = DesiredState::new(
+            self.scope,
+            BTreeMap::from([(self.entity.id.clone(), self.entity)]),
+        )?;
+        let set = DesiredChangeSet {
+            ledger_intent: LedgerIntent {
+                generation_before: generation,
+                entities_after: vec![applied],
+                one_shots_after: Vec::new(),
+                resources_after: self.change.resources.clone(),
+                legacy_after: Vec::new(),
+            },
+            ordered: vec![self.change],
+            subject: PlannedSubject::Reconcile(state),
+        };
+        set.validate()?;
+        Ok(set)
+    }
 }
 
 /// What this request is allowed to read: the format owners, plus every file it
@@ -307,11 +327,16 @@ fn relative(project: &Project, path: &std::path::Path) -> Result<ProjectPath> {
 /// Steps 3 and 5 to 7: capture, prepare, lock, commit.
 fn commit(
     project: &Project,
-    set: DesiredChangeSet,
+    request: Request,
     declaration: &ReadDeclaration,
     description: &str,
 ) -> Result<CommitResult> {
     let (snapshot, projection) = capture::projected(project, declaration)?;
+    // Read once, and let the same value decide the generation the plan claims
+    // and the image the commit guards under the lock. Reading them apart is
+    // how a plan comes to be written against a store that moved in between.
+    let observed = jails_commit::store::Store::at(project.root()).observe()?;
+    let set = request.against(observed.generation())?;
     let root = capture::canonical_root(project.root())?;
     let machine = if project.root().join(".jails").is_dir() {
         MachineRootPresence::Present
@@ -328,7 +353,8 @@ fn commit(
         // the honest value, and `TemplateStore::resolve` refuses anything
         // that tries to render from bytes nothing recorded.
         templates: TemplateStore::new(Vec::new())?,
-        observed_generation: 0,
+        observed_generation: observed.generation(),
+        observed_store: observed,
         operation_context: Default::default(),
         preparation: Default::default(),
     };
