@@ -10,5 +10,6 @@
 //! structural stays in the generator layer and arrives already rendered.
 
 pub mod classfile;
+pub mod imports;
 pub mod java;
 pub mod template;

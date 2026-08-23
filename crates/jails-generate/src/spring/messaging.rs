@@ -263,7 +263,7 @@ fn event_java(pkg: &str, domain: &str, name: &str, fields: &[crate::generate::Fi
         let package = format!("package {pkg};\n");
         let replacement = format!("{package}\n{}\n", imports.join("\n"));
         source = source.replacen(&package, &replacement, 1);
-        source = crate::generate::normalize_imports(&source);
+        source = jails_java::imports::normalize_imports(&source);
     }
     source.replace(
         &format!(" * An immutable {event} value."),

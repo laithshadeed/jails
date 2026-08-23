@@ -326,7 +326,7 @@ fn durable_work_java(slice: &Slice, name: &str, fields: &[crate::generate::Field
     if !imports.is_empty() {
         let package = format!("package {pkg};\n");
         source = source.replacen(&package, &format!("{package}\n{}\n", imports.join("\n")), 1);
-        source = crate::generate::normalize_imports(&source);
+        source = jails_java::imports::normalize_imports(&source);
     }
     source.replace(
         &format!(" * An immutable {class} value."),

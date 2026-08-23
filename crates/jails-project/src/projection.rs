@@ -40,6 +40,7 @@
 use crate::pom::{self, DependencyRef, Flavor};
 use crate::properties;
 use jails_protocol::change::DesiredChange;
+use jails_protocol::conflict::FileMode;
 use jails_protocol::edit::SemanticEdit;
 use jails_protocol::fact::{FactKind, FactSourceState, ProjectFact, ProjectFactKey, ProjectFacts};
 use jails_protocol::identity::{ObjectId, Package, ProjectPath};
@@ -204,17 +205,22 @@ impl ProjectedProject {
 
         // 2. Files. Materialised bytes enter as bytes; a render stays deferred.
         for file in &change.files {
-            let entry = match &file.body {
-                DesiredBody::Bytes(bytes) => ProjectedEntry::File(SnapshotFile::capture(
+            match &file.body {
+                DesiredBody::Bytes(bytes) => self.place(
+                    &file.path,
                     bytes.to_vec(),
                     file.mode.unwrap_or(default_mode()),
-                )),
-                DesiredBody::Render { .. } => ProjectedEntry::Deferred {
-                    body: file.body.clone(),
-                    facts: change.fact_delta.clone(),
-                },
-            };
-            self.overlay.insert(file.path.clone(), entry);
+                ),
+                DesiredBody::Render { .. } => {
+                    self.overlay.insert(
+                        file.path.clone(),
+                        ProjectedEntry::Deferred {
+                            body: file.body.clone(),
+                            facts: change.fact_delta.clone(),
+                        },
+                    );
+                }
+            }
             touched.insert(file.path.clone());
         }
 
@@ -395,10 +401,35 @@ impl ProjectedProject {
         })
     }
 
+    /// Put bytes at a path, applying the one write-time rule about Java.
+    ///
+    /// Import order is normalised here rather than in the twenty templates
+    /// that would otherwise each have to remember it -- CLAUDE.md's rule, and
+    /// the direct write path has applied it for as long as there has been one.
+    /// Applying it on only one of the two paths is worse than applying it on
+    /// neither: the same recipe would then produce two different files
+    /// depending on which engine ran it, and the difference is invisible until
+    /// `jails add format` fails `mvn verify` on a freshly generated project.
     fn write_text(&mut self, path: &ProjectPath, text: String) {
+        self.place(path, text.into_bytes(), default_mode());
+    }
+
+    /// The one place bytes become a projected file.
+    ///
+    /// Both callers go through it -- a whole file a change renders, and a
+    /// surgical edit to a file somebody else owns -- so the Java import rule
+    /// cannot apply to one and not the other. Non-UTF-8 bytes are placed
+    /// untouched: a `.java` file that is not text is already wrong, and
+    /// guessing at its encoding would corrupt it further.
+    fn place(&mut self, path: &ProjectPath, bytes: Vec<u8>, mode: FileMode) {
+        let bytes = match (path.as_str().ends_with(".java"), String::from_utf8(bytes)) {
+            (true, Ok(text)) => jails_java::imports::normalize_imports(&text).into_bytes(),
+            (false, Ok(text)) => text.into_bytes(),
+            (_, Err(error)) => error.into_bytes(),
+        };
         self.overlay.insert(
             path.clone(),
-            ProjectedEntry::File(SnapshotFile::capture(text.into_bytes(), default_mode())),
+            ProjectedEntry::File(SnapshotFile::capture(bytes, mode)),
         );
     }
 

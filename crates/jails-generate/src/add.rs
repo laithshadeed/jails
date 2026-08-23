@@ -17,9 +17,7 @@
 //! completion description.
 
 use crate::compose::{self, Service as ComposeService};
-use crate::generate::{
-    base_package, import_of, main_dir, normalize_imports, package_of, test_dir, write_new_file,
-};
+use crate::generate::{base_package, import_of, main_dir, package_of, test_dir, write_new_file};
 use crate::model::{Artifact, Change, Layer, Project, Slice, SpringTestImport};
 use crate::pom::{self, Dependency, Flavor, MIN_RELEASE, TARGET_RELEASE};
 use jails_support::Result;
@@ -267,7 +265,7 @@ pub fn add_in(
         if file.path.exists() {
             if should_replace_postgres_test_config(&file.path) {
                 let contents = if file.path.extension().is_some_and(|e| e == "java") {
-                    normalize_imports(&file.contents)
+                    jails_java::imports::normalize_imports(&file.contents)
                 } else {
                     file.contents.clone()
                 };

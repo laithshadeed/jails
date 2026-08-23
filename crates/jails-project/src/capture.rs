@@ -31,8 +31,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use crate::model::Project;
+use crate::projection::ProjectedProject;
 use jails_protocol::conflict::FileMode;
-use jails_protocol::identity::ProjectPath;
+use jails_protocol::identity::{Package, ProjectPath};
 use jails_protocol::snapshot::{CanonicalRoot, ProjectSnapshot, SnapshotFile};
 use jails_support::Result;
 
@@ -98,6 +100,58 @@ pub fn capture(root: &CanonicalRoot, declaration: &ReadDeclaration) -> Result<Pr
         directories.insert(path.clone(), list(&resolve(at, path), path)?);
     }
     ProjectSnapshot::new(root.clone(), files, absences, directories)
+}
+
+/// Everything a capability plan is allowed to look at.
+///
+/// One list, in one place, because a read set assembled per capability is a
+/// read set that differs between the plan and the recheck. The four files here
+/// are the format owners a capability contributes to: the POM, the compose
+/// file, the application properties and the manifest that records what is
+/// installed.
+pub fn capability_reads() -> Result<ReadDeclaration> {
+    Ok(ReadDeclaration::new()
+        .file(ProjectPath::parse("pom.xml")?)
+        .file(ProjectPath::parse("compose.yaml")?)
+        .file(ProjectPath::parse(
+            "src/main/resources/application.properties",
+        )?)
+        .file(ProjectPath::parse("jails.toml")?))
+}
+
+/// Capture a project and open a projection over it.
+///
+/// The two steps belong together: a projection is *defined* as an overlay on
+/// one capture, and a caller that could pair a projection with a different
+/// snapshot than the one it was opened on would be planning against two
+/// readings of the same project.
+pub fn projected(
+    project: &Project,
+    declaration: &ReadDeclaration,
+) -> Result<(std::sync::Arc<ProjectSnapshot>, ProjectedProject)> {
+    let root = canonical_root(project.root())?;
+    let snapshot = std::sync::Arc::new(capture(&root, declaration)?);
+    let projection = ProjectedProject::new(
+        snapshot.clone(),
+        project.build(),
+        Package::parse(project.base())?,
+        // A project whose POM states no release is planned against the one
+        // jails targets. Guessing lower would silently generate for a language
+        // level the project never asked for; there is no third option, because
+        // a renderer has to be told something. `TARGET_RELEASE` is the
+        // spelling that goes into a POM, so it is parsed rather than restated.
+        match project.java_release() {
+            Some(release) => release,
+            None => crate::pom::TARGET_RELEASE.parse::<u32>().map_err(|_| {
+                format!(
+                    "jails' own target release `{}` is not a number",
+                    crate::pom::TARGET_RELEASE
+                )
+            })?,
+        },
+        Some(project.flavor()),
+    );
+    Ok((snapshot, projection))
 }
 
 /// The root as one string two runs from different directories agree on.

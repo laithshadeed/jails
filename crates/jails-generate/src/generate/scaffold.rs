@@ -570,7 +570,7 @@ pub fn prepared_artifact_contents(path: &Path, contents: &str) -> String {
         .extension()
         .is_some_and(|extension| extension == "java")
     {
-        tidy_blank_lines(&normalize_imports(contents))
+        tidy_blank_lines(&jails_java::imports::normalize_imports(contents))
     } else {
         contents.to_string()
     }
