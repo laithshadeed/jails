@@ -80,14 +80,9 @@ mod tests {
     /// version is what runs.
     #[test]
     fn the_project_wrapper_is_preferred_over_path() {
-        let dir = std::env::temp_dir().join(format!(
-            "jails-maven-binary-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(&dir).unwrap();
-
+        let dir = jails_support::scratch::ScratchDir::in_temp("jails-maven-binary")
+            .unwrap()
+            .keep();
         // No wrapper: falls back to something on PATH, never to a wrapper path.
         assert!(!binary(&dir).starts_with(&dir));
 

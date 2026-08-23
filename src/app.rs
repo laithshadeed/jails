@@ -762,9 +762,9 @@ mod tests {
             strategy_yields: Some("Output".to_string()),
         };
 
-        let root = std::env::temp_dir().join(format!("jails-app-state-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).unwrap();
+        let root = crate::scratch::ScratchDir::in_temp("jails-app-state")
+            .unwrap()
+            .keep();
         let mut state = read_state(&root).unwrap();
         state.record(&root, &intent).unwrap();
 
@@ -779,7 +779,9 @@ mod tests {
     /// A project written by an older jails keeps its history.
     #[test]
     fn a_pre_ledger_app_state_is_folded_in_rather_than_ignored() {
-        let root = std::env::temp_dir().join(format!("jails-app-legacy-{}", std::process::id()));
+        let root = crate::scratch::ScratchDir::in_temp("jails-app-legacy")
+            .unwrap()
+            .keep();
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join(".jails")).unwrap();
         // schema=1: kind|name|package|fields|timestamps|indexes|on|yields

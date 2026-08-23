@@ -712,16 +712,9 @@ mod tests {
     }
 
     fn scratch(tag: &str) -> PathBuf {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let root = std::env::temp_dir().join(format!(
-            "jails-ledger-{tag}-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).unwrap();
-        root
+        jails_support::scratch::ScratchDir::in_temp(&format!("jails-ledger-{tag}"))
+            .unwrap()
+            .keep()
     }
 
     /// `map<string,double>` is a documented field type, and a naive

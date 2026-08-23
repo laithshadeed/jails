@@ -665,14 +665,9 @@ mod tests {
     /// the capability through `add::plan_for` and diffs.
     #[test]
     fn a_recorded_capability_missing_its_own_output_is_reported() {
-        let root = std::env::temp_dir().join(format!(
-            "jails-doctor-drift-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let root = jails_support::scratch::ScratchDir::in_temp("jails-doctor-drift")
+            .unwrap()
+            .keep();
         std::fs::create_dir_all(root.join("src/main/java/com/example/demo")).unwrap();
         std::fs::write(
             root.join("src/main/java/com/example/demo/App.java"),
@@ -702,14 +697,9 @@ mod tests {
     /// not create.
     #[test]
     fn recording_no_capabilities_is_reported_as_nothing_to_do() {
-        let root = std::env::temp_dir().join(format!(
-            "jails-doctor-nodrift-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let root = jails_support::scratch::ScratchDir::in_temp("jails-doctor-nodrift")
+            .unwrap()
+            .keep();
         let project = project_with_pom(&root, "<project></project>");
         let checks = capability_drift_checks(&project);
         assert_eq!(checks.len(), 1);
@@ -731,14 +721,9 @@ mod tests {
 
     #[test]
     fn cors_checks_flag_mvc_takeover_and_a_global_mapping_without_origins() {
-        let root = std::env::temp_dir().join(format!(
-            "jails-doctor-cors-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let root = jails_support::scratch::ScratchDir::in_temp("jails-doctor-cors")
+            .unwrap()
+            .keep();
         let source = root.join("src/main/java/com/example/WebConfig.java");
         std::fs::create_dir_all(source.parent().unwrap()).unwrap();
         std::fs::write(
@@ -758,8 +743,9 @@ mod tests {
 
     #[test]
     fn virtual_thread_checks_find_scheduler_exit_and_jfr_pinning_traps() {
-        let root =
-            std::env::temp_dir().join(format!("jails-doctor-virtual-{}", std::process::id()));
+        let root = jails_support::scratch::ScratchDir::in_temp("jails-doctor-virtual")
+            .unwrap()
+            .keep();
         let resources = root.join("src/main/resources");
         let source = root.join("src/main/java/com/example/Jobs.java");
         std::fs::create_dir_all(&resources).unwrap();
@@ -791,7 +777,9 @@ mod tests {
     /// and only its switches can be wrong.
     #[test]
     fn hot_reload_checks_catch_every_silent_way_the_save_loop_dies() {
-        let base = std::env::temp_dir().join(format!("jails-doctor-hot-{}", std::process::id()));
+        let base = jails_support::scratch::ScratchDir::in_temp("jails-doctor-hot")
+            .unwrap()
+            .keep();
         let boot = "<project><parent><groupId>org.springframework.boot</groupId>\
              <artifactId>spring-boot-starter-parent</artifactId></parent>{deps}</project>";
         let devtools = "<dependencies><dependency>\
@@ -916,8 +904,9 @@ volumes:
 
     #[test]
     fn management_checks_flag_public_dangerous_and_dependency_liveness_endpoints() {
-        let root =
-            std::env::temp_dir().join(format!("jails-doctor-management-{}", std::process::id()));
+        let root = jails_support::scratch::ScratchDir::in_temp("jails-doctor-management")
+            .unwrap()
+            .keep();
         let resources = root.join("src/main/resources");
         std::fs::create_dir_all(&resources).unwrap();
         std::fs::write(
@@ -941,10 +930,9 @@ volumes:
 
     #[test]
     fn generated_management_defaults_are_all_clear() {
-        let root = std::env::temp_dir().join(format!(
-            "jails-doctor-management-clear-{}",
-            std::process::id()
-        ));
+        let root = jails_support::scratch::ScratchDir::in_temp("jails-doctor-management-clear")
+            .unwrap()
+            .keep();
         let resources = root.join("src/main/resources");
         std::fs::create_dir_all(&resources).unwrap();
         std::fs::write(
@@ -964,7 +952,9 @@ volumes:
     /// the bean serving every request is a HashMap that empties on restart.
     #[test]
     fn an_in_memory_repository_bean_beside_a_datasource_is_a_failure() {
-        let root = std::env::temp_dir().join(format!("jails-inmem-check-{}", std::process::id()));
+        let root = jails_support::scratch::ScratchDir::in_temp("jails-inmem-check")
+            .unwrap()
+            .keep();
         let pkg = root.join("src/main/java/com/example/demo/adapters");
         std::fs::create_dir_all(&pkg).unwrap();
         std::fs::write(

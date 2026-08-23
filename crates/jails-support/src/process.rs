@@ -506,9 +506,12 @@ mod tests {
 
     #[test]
     fn on_path_in_finds_an_executable_in_one_of_the_dirs() {
-        let dir = std::env::temp_dir().join(format!("jails-on-path-{}", std::process::id()));
-        let other =
-            std::env::temp_dir().join(format!("jails-on-path-other-{}", std::process::id()));
+        let dir = crate::scratch::ScratchDir::in_temp("jails-on-path")
+            .unwrap()
+            .keep();
+        let other = crate::scratch::ScratchDir::in_temp("jails-on-path-other")
+            .unwrap()
+            .keep();
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::create_dir_all(&other).unwrap();
         std::fs::write(dir.join("mvnd"), "").unwrap();

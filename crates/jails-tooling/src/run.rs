@@ -842,16 +842,9 @@ mod tests {
     use super::*;
 
     fn scratch(label: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "jails-run-test-{label}-{}-{:?}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&dir).unwrap();
-        dir
+        jails_support::scratch::ScratchDir::in_temp(&format!("jails-run-test-{label}"))
+            .unwrap()
+            .keep()
     }
 
     #[test]

@@ -366,16 +366,9 @@ mod tests {
     use super::*;
 
     fn fixture_dir(label: &str) -> PathBuf {
-        let root = env::temp_dir().join(format!(
-            "jails-project-{label}-{}-{:?}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&root).unwrap();
-        root
+        jails_support::scratch::ScratchDir::in_temp(&format!("jails-project-{label}"))
+            .unwrap()
+            .keep()
     }
 
     fn write_pom(root: &Path, body: &str) {

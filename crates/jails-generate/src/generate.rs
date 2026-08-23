@@ -537,16 +537,9 @@ mod tests {
     use jails_support::CWD_LOCK;
 
     fn scratch(label: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "jails-generate-test-{label}-{}-{:?}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&dir).unwrap();
-        dir
+        jails_support::scratch::ScratchDir::in_temp(&format!("jails-generate-test-{label}"))
+            .unwrap()
+            .keep()
     }
 
     /// The invariant that keeps a scaffold able to *start*: exactly one

@@ -670,14 +670,9 @@ mod tests {
     }
 
     fn manifest_dir(label: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "jails-manifest-{label}-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        fs::remove_dir_all(&dir).ok();
-        fs::create_dir_all(&dir).unwrap();
-        dir
+        jails_support::scratch::ScratchDir::in_temp(&format!("jails-manifest-{label}"))
+            .unwrap()
+            .keep()
     }
 
     #[test]
@@ -744,8 +739,9 @@ mod tests {
 
     #[test]
     fn a_missing_file_is_not_an_error() {
-        let dir = std::env::temp_dir().join(format!("jails-config-absent-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = jails_support::scratch::ScratchDir::in_temp("jails-config-absent")
+            .unwrap()
+            .keep();
         assert_eq!(Config::load(&dir).unwrap(), Config::default());
         fs::remove_dir_all(&dir).ok();
     }

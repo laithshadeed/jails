@@ -519,16 +519,11 @@ impl<'a> Slice<'a> {
 mod tests {
     use super::*;
     use std::fs;
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    static NEXT: AtomicU64 = AtomicU64::new(0);
 
     fn fixture() -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "jails-model-project-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
+        let root = jails_support::scratch::ScratchDir::in_temp("jails-model-project")
+            .unwrap()
+            .keep();
         fs::create_dir_all(root.join("src/main/java/com/example/demo")).unwrap();
         fs::write(
             root.join("pom.xml"),

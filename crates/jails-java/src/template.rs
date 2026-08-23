@@ -371,7 +371,9 @@ mod tests {
     /// `templates/`.
     #[test]
     fn a_project_override_wins_over_the_machine_one() {
-        let base = std::env::temp_dir().join(format!("jails-tpl-{}", std::process::id()));
+        let base = jails_support::scratch::ScratchDir::in_temp("jails-tpl")
+            .unwrap()
+            .keep();
         let _ = std::fs::remove_dir_all(&base);
         let machine = base.join("machine/jails/templates/spring");
         let project = base.join("proj/.jails/templates/spring");

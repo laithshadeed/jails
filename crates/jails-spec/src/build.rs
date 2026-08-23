@@ -111,10 +111,9 @@ mod tests {
     use std::fs;
 
     fn scratch(tag: &str) -> std::path::PathBuf {
-        let root = std::env::temp_dir().join(format!("jails-build-{tag}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).unwrap();
-        root
+        jails_support::scratch::ScratchDir::in_temp(&format!("jails-build-{tag}"))
+            .unwrap()
+            .keep()
     }
 
     #[test]

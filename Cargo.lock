@@ -213,6 +213,9 @@ dependencies = [
 [[package]]
 name = "jails-support"
 version = "0.1.0"
+dependencies = [
+ "tempfile",
+]
 
 [[package]]
 name = "jails-tooling"

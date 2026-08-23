@@ -261,7 +261,9 @@ mod tests {
 
     #[test]
     fn a_renamed_directory_becomes_a_layout_entry_and_an_unknown_one_does_not() {
-        let root = std::env::temp_dir().join(format!("jails-adopt-{}", std::process::id()));
+        let root = crate::scratch::ScratchDir::in_temp("jails-adopt")
+            .unwrap()
+            .keep();
         let _ = std::fs::remove_dir_all(&root);
         for dir in ["controllers", "persistence", "domain", "util"] {
             std::fs::create_dir_all(root.join(dir)).unwrap();

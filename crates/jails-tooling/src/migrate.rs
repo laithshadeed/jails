@@ -214,8 +214,9 @@ mod tests {
     /// and may not even work.
     #[test]
     fn migrations_are_ordered_numerically_not_lexically() {
-        let dir = std::env::temp_dir().join(format!("jails-migrate-order-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = jails_support::scratch::ScratchDir::in_temp("jails-migrate-order")
+            .unwrap()
+            .keep();
         for name in ["V9__nine.sql", "V10__ten.sql", "V1__one.sql"] {
             std::fs::write(dir.join(name), "select 1;").unwrap();
         }

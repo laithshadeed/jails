@@ -312,10 +312,9 @@ mod tests {
     use std::fs;
 
     fn scratch(tag: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!("jails-fast-{tag}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).unwrap();
-        root
+        jails_support::scratch::ScratchDir::in_temp(&format!("jails-fast-{tag}"))
+            .unwrap()
+            .keep()
     }
 
     /// The bug this pins: "no class files" must not read as "nothing is

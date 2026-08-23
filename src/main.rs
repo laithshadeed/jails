@@ -9,7 +9,7 @@ pub(crate) use jails_java::template;
 pub(crate) use jails_project::{
     compose, config, generated_files, inspect, ledger, model, pom, project,
 };
-pub(crate) use jails_support::apply;
+pub(crate) use jails_support::{apply, scratch};
 pub(crate) use jails_tooling::{
     bench, commands, console, doctor, explain, kafka, lint, migrate, rename, run, source, testd,
     why,

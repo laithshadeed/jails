@@ -15,14 +15,6 @@
 use super::*;
 
 /// A scratch tree that removes itself, so a failed merge leaves nothing behind.
-struct Scratch(PathBuf);
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
-}
-
 /// Regenerate an applied intent on both sides and merge only the generator's
 /// delta over the user's working tree. Every merge result is computed before
 /// the first real file is written.
@@ -63,16 +55,12 @@ pub(super) fn reconcile_intent(
                 )
             })?;
 
-    let unique = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|error| format!("system clock is before the Unix epoch: {error}"))?
-        .as_nanos();
-    let scratch = Scratch(std::env::temp_dir().join(format!(
-        "jails-intent-merge-{}-{unique}",
-        std::process::id()
-    )));
-    let old_root = scratch.0.join("old");
-    let new_root = scratch.0.join("new");
+    // Exclusively created rather than named from a pid and a clock reading:
+    // two of those collide, and a merge that regenerated into somebody else's
+    // scratch tree would produce a delta against the wrong base.
+    let scratch = crate::scratch::ScratchDir::in_temp("jails-intent-merge")?;
+    let old_root = scratch.path().join("old");
+    let new_root = scratch.path().join("new");
     copy_project(root, &old_root)?;
     copy_project(root, &new_root)?;
     for path in &recorded {

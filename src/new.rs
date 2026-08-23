@@ -62,9 +62,11 @@ pub fn new(
         return new_offline(name, deps, java, git, debug, pretend);
     }
 
-    let tmp = std::env::temp_dir().join(format!("jails-new-{}-{}", name, std::process::id()));
-    fs::create_dir_all(&tmp).map_err(|e| format!("failed to create temp dir: {e}"))?;
-    let zip_path = tmp.join("starter.zip");
+    // Exclusively created, and removed by its guard on every path out of this
+    // function -- including the two early returns below, which previously each
+    // had to remember a `remove_dir_all` of their own.
+    let tmp = crate::scratch::ScratchDir::in_temp(&format!("jails-new-{name}"))?;
+    let zip_path = tmp.path().join("starter.zip");
 
     // Explicit future/EA choices may be newer than Initializr advertises.
     // Bootstrap with the newest version it accepts, then set the generated
@@ -93,7 +95,6 @@ pub fn new(
         .map_err(|e| format!("failed to run curl: {e}"))?;
 
     if !status.success() {
-        let _ = fs::remove_dir_all(&tmp);
         return Err(
             "starter.zip request failed.\n       fix: retry when start.spring.io is reachable, or run the same command with `--offline`."
                 .to_string(),
@@ -109,11 +110,10 @@ pub fn new(
         .status()
         .map_err(|e| format!("failed to run unzip: {e}"))?;
 
-    let _ = fs::remove_dir_all(&tmp);
-
     if !status.success() {
         return Err("failed to extract starter.zip".to_string());
     }
+    tmp.close()?;
 
     if initializer_java != java {
         set_java_release(Path::new(name), initializer_java, java)?;
@@ -774,16 +774,9 @@ mod tests {
     use std::path::PathBuf;
 
     fn scratch(label: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "jails-new-test-{label}-{}-{:?}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&dir).unwrap();
-        dir
+        crate::scratch::ScratchDir::in_temp(&format!("jails-new-test-{label}"))
+            .unwrap()
+            .keep()
     }
 
     #[test]

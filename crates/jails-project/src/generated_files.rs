@@ -277,22 +277,10 @@ pub fn model_fields(root: &Path, name: &str, package: Option<&str>) -> Result<Op
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-
     fn scratch() -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "jails-provenance-{}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&root).unwrap();
-        root
+        jails_support::scratch::ScratchDir::in_temp("jails-provenance")
+            .unwrap()
+            .keep()
     }
 
     #[test]

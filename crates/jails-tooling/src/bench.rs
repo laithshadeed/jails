@@ -102,9 +102,9 @@ mod tests {
 
     #[test]
     fn a_project_with_no_load_test_is_not_benchable() {
-        let root = std::env::temp_dir().join(format!("jails-bench-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).unwrap();
+        let root = jails_support::scratch::ScratchDir::in_temp("jails-bench")
+            .unwrap()
+            .keep();
         assert!(!has_load_test(&root));
 
         std::fs::create_dir_all(root.join("load-tests")).unwrap();

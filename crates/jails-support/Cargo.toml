@@ -3,5 +3,13 @@ name = "jails-support"
 version.workspace = true
 edition.workspace = true
 
+[dependencies]
+# plan.md §3.2: atomic, random, cross-platform exclusive directory creation and
+# owned cleanup. A normal dependency rather than a dev one, because
+# reconciliation and R3 preparation need the guard in production -- and
+# reimplementing OS randomness and Windows deletion semantics is not this
+# project's work.
+tempfile = "3.27"
+
 [lints]
 workspace = true

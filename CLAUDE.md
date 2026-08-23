@@ -1054,6 +1054,38 @@ fails with `URI with undefined scheme`, a message that says nothing about a
 missing module. `spring-boot-starter-webmvc` does not bring it in; serving
 HTTP and calling it are separate concerns.
 
+## Scratch directories are reserved, never named
+
+`jails_support::scratch::ScratchDir` is the only thing that creates one, and
+`production_scratch_directories_are_exclusively_created` in
+`tests/architecture.rs` fails on an `env::temp_dir()` anywhere in production.
+
+The pattern it replaces was `env::temp_dir().join(pid + timestamp)` followed by
+`create_dir_all`, which is not exclusive in **either** half: two callers can
+read the same nanosecond, and `create_dir_all`'s whole contract is that an
+existing directory counts as success. Both halves failed together about once in
+five full-workspace runs — one test was handed another's tree and `jails g cli
+Admin` refused over files it had not written. In `app/reconcile.rs` the same
+collision would have merged a regenerated intent against somebody else's base.
+
+Three rules, each load-bearing:
+
+- **Never claim a directory that already exists.** `reserve` asks the OS for a
+  fresh one. Reaching for `create_dir_all` to "make sure" the scratch root is
+  there reintroduces the bug.
+- **`Drop` removes only what `tempfile` returned**, never a hand-assembled
+  path, so a guard cannot delete a directory it did not create.
+- **Cleanup failure is reported on the explicit path.** `Drop` cannot return an
+  error, so success paths call `close()`; a panic still cleans up silently,
+  which is the right trade when the process is already failing.
+
+`keep()` hands the directory over for recovery storage — and for test fixtures,
+which outlive the test on purpose so a failure can be inspected.
+
+`tempfile` is a normal dependency of `jails-support`, not a dev one, because
+reconciliation needs the guard in production. It is the only third-party crate
+here besides clap.
+
 ## Testing philosophy
 
 Three tiers, don't blur them:

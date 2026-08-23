@@ -544,6 +544,7 @@ const LAYERS: &[(&str, usize)] = &[
     // jails-support: no jails concepts at all -- writing, running, encoding.
     ("apply", 0),
     ("process", 0),
+    ("scratch", 0),
     ("codemod", 0),
     ("json", 0),
     // jails-java: reading Java and rendering templates into it.
@@ -634,6 +635,38 @@ fn every_fresh_read_of_the_pom_is_a_decision_somebody_wrote_down() {
             .iter()
             .all(|(_, why)| why.len() > 40),
         "every reason has to say why a `Project` would be wrong, not merely that it is allowed"
+    );
+}
+
+/// Production scratch trees go through `ScratchDir`, which is the only thing
+/// that creates one exclusively.
+///
+/// plan.md §3.2. `env::temp_dir().join(pid + timestamp)` followed by
+/// `create_dir_all` is not exclusive in either half: two callers can read the
+/// same clock, and `create_dir_all` treats "it already exists" as success. That
+/// handed one test another's tree, and in `app/reconcile.rs` it would have
+/// merged a regenerated intent against somebody else's base.
+///
+/// Test modules are exempt only because `Source::production` blanks them, and
+/// they are being converted separately; a production site has no exemption.
+#[test]
+fn production_scratch_directories_are_exclusively_created() {
+    let mut offenders = Vec::new();
+    for file in sources() {
+        if file.path.ends_with("scratch.rs") {
+            continue;
+        }
+        if file.production.contains("env::temp_dir()") {
+            offenders.push(file.path.display().to_string());
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "these production sites name a scratch directory instead of reserving one:\n  {}\n\n\
+         Use `jails_support::scratch::ScratchDir`. A pid and a timestamp are not \
+         unique, and `create_dir_all` succeeds on a directory that is already \
+         someone else's.",
+        offenders.join("\n  ")
     );
 }
 

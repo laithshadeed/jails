@@ -616,14 +616,9 @@ mod usecase_tests {
     use super::*;
 
     fn scratch(tag: &str) -> std::path::PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "jails-usecase-{tag}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let root = jails_support::scratch::ScratchDir::in_temp(&format!("jails-usecase-{tag}"))
+            .unwrap()
+            .keep();
         std::fs::create_dir_all(root.join("src/main/java/com/example/demo/domain")).unwrap();
         // `Project::load` is the one window onto disk these recipes get, so a
         // fixture has to be a real project: a pom to read the flavour and the
@@ -776,14 +771,9 @@ mod query_tests {
     use super::*;
 
     fn scratch(tag: &str) -> std::path::PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "jails-query-{tag}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let root = jails_support::scratch::ScratchDir::in_temp(&format!("jails-query-{tag}"))
+            .unwrap()
+            .keep();
         std::fs::create_dir_all(root.join("src/main/java/com/example/demo/domain")).unwrap();
         // `Project::load` is the one window onto disk these recipes get, so a
         // fixture has to be a real project: a pom to read the flavour and the

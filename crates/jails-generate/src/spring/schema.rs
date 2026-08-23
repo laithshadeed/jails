@@ -499,13 +499,9 @@ pub fn http_sink_files(
 /// where these tests used to spell them by hand.
 #[cfg(test)]
 pub fn scratch_project(tag: &str, pom: &str) -> (std::path::PathBuf, Project) {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "jails-spring-{tag}-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
+    let root = jails_support::scratch::ScratchDir::in_temp(&format!("jails-spring-{tag}"))
+        .unwrap()
+        .keep();
     std::fs::create_dir_all(root.join("src/main/java/com/example/demo")).unwrap();
     std::fs::write(root.join("pom.xml"), pom).unwrap();
     std::fs::write(
@@ -550,14 +546,9 @@ mod association_and_http_sink_tests {
 
     #[test]
     fn association_reuses_primary_and_prior_composite_unique_keys() {
-        let root = std::env::temp_dir().join(format!(
-            "jails-association-existing-keys-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let root = jails_support::scratch::ScratchDir::in_temp("jails-association-existing-keys")
+            .unwrap()
+            .keep();
         let migrations = root.join("src/main/resources/db/migration");
         std::fs::create_dir_all(&migrations).unwrap();
         std::fs::write(
@@ -587,14 +578,9 @@ mod association_and_http_sink_tests {
 
     #[test]
     fn disabled_http_sink_contract_keeps_constructor_arity_for_unknown_values() {
-        let root = std::env::temp_dir().join(format!(
-            "jails-http-sink-unknown-sample-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let root = jails_support::scratch::ScratchDir::in_temp("jails-http-sink-unknown-sample")
+            .unwrap()
+            .keep();
         for package in ["jobs", "messaging", "adapters"] {
             std::fs::create_dir_all(root.join(format!("src/main/java/com/example/demo/{package}")))
                 .unwrap();
@@ -647,14 +633,9 @@ mod durable_job_tests {
     use super::*;
 
     fn fixture(tag: &str) -> std::path::PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "jails-durable-job-{tag}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let root = jails_support::scratch::ScratchDir::in_temp(&format!("jails-durable-job-{tag}"))
+            .unwrap()
+            .keep();
         for package in ["domain", "service"] {
             std::fs::create_dir_all(root.join(format!("src/main/java/com/example/demo/{package}")))
                 .unwrap();
