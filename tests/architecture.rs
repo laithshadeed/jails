@@ -275,6 +275,30 @@ fn gates() -> Vec<(Ratchet, usize)> {
         ),
         (
             Ratchet {
+                name: "filesystem mutation sites outside the write layer",
+                rung: "R6.4 — every mutation through the executor",
+                // Measured for the first time here. plan.md §R6.4 names the
+                // surfaces that must move -- `app`, `new`, `rename`,
+                // `compose`, `generated_files`, `generate::remove`,
+                // `add::shrink`, `add::database`, `add::test_wiring`, `testd`
+                // and `console` -- and this is what makes the migration
+                // countable rather than a list somebody ticks off. Each
+                // migrated surface lowers it; the ceiling comes down with it.
+                //
+                // It is deliberately not zero yet: R6 step 1 lands the
+                // executor dark, and nothing has been rerouted. A gate that
+                // demanded zero today would have to be suppressed, and a
+                // suppressed gate measures nothing.
+                ceiling: MUTATION_CEILING,
+                target: 0,
+                why: "The narrow `fs::write` gate read green while a dozen other calls mutated \
+                      the project through other names -- which is exactly the surface R6 has to \
+                      migrate, and exactly what a gate measuring one spelling could not see.",
+            },
+            mutation_sites(&src, MUTATION_APIS),
+        ),
+        (
+            Ratchet {
                 name: "`doctor` module lines (target withdrawn — §8.0.1)",
                 rung: "9 — Move Method (`doctor` derives from `plan`)",
                 // Rose 1123 -> 1140 while rung 1 ran (every check that took
@@ -1341,15 +1365,69 @@ fn type_aliases(src: &[Source]) -> usize {
 }
 
 fn write_sites_outside_apply(src: &[Source]) -> usize {
+    mutation_sites(src, &["fs::write"])
+}
+
+/// Every API that changes the filesystem, wherever it is spelled.
+///
+/// plan.md §R6.4: the gate "currently bans only literal `fs::write`; it must
+/// expand to `write`, `OpenOptions` write modes, `remove_file/remove_dir`,
+/// `copy`, `rename`, hard links, directory creation, permissions and mutating
+/// subprocesses." The reason the narrow version was not enough is visible in
+/// the count: `fs::write` was at zero while a dozen other calls mutated the
+/// project through other names, so the gate read green over exactly the
+/// surface R6 has to migrate.
+/// Where the count stands today. Lowered by each migrated surface.
+const MUTATION_CEILING: usize = 43;
+
+const MUTATION_APIS: &[&str] = &[
+    "fs::write",
+    "fs::remove_file",
+    "fs::remove_dir",
+    "fs::remove_dir_all",
+    "fs::copy",
+    "fs::rename",
+    "fs::hard_link",
+    "fs::create_dir",
+    "fs::create_dir_all",
+    "fs::set_permissions",
+    "set_len(",
+    "create_new(true)",
+];
+
+fn mutation_sites(src: &[Source], apis: &[&str]) -> usize {
     src.iter()
-        .filter(|file| {
-            !file
-                .path
-                .components()
-                .any(|part| part.as_os_str() == "apply")
+        .filter(|file| !owns_writing(&file.path))
+        .map(|file| {
+            apis.iter()
+                .map(|api| file.production.matches(api).count())
+                .sum::<usize>()
         })
-        .map(|file| file.production.matches("fs::write").count())
         .sum()
+}
+
+/// The modules whose *subject* is changing the filesystem.
+///
+/// `apply` is the project's write layer. `store`, `journal` and `execute` are
+/// the executor's: R4's whole point is that a commit publishes bytes through
+/// a protocol, and that protocol is made of exactly these calls. `scratch`
+/// and `sandbox` own trees jails creates and destroys within one run.
+fn owns_writing(path: &Path) -> bool {
+    let owns = [
+        "apply",
+        "store.rs",
+        "journal.rs",
+        "execute.rs",
+        "scratch.rs",
+        "sandbox.rs",
+        "recover.rs",
+        "gc.rs",
+        "lock.rs",
+    ];
+    path.components().any(|part| part.as_os_str() == "apply")
+        || owns
+            .iter()
+            .any(|name| path.file_name().map(|file| file == *name).unwrap_or(false))
 }
 
 fn inline_java_bodies(src: &[Source]) -> usize {
