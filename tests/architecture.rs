@@ -684,6 +684,7 @@ const LAYERS: &[(&str, usize)] = &[
     ("add", 5),
     // jails-prepare: turning desire into an exact executable transition.
     ("command", 5),
+    ("desire", 5),
     ("migration", 5),
     ("operation", 5),
     ("pipeline", 5),

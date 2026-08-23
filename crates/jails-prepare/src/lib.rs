@@ -9,6 +9,7 @@
 //! commits an operation; R4 adds the executor that does.
 
 pub mod command;
+pub mod desire;
 pub mod migration;
 pub mod operation;
 pub mod pipeline;

@@ -103,6 +103,14 @@ impl Lock {
     }
 }
 
+/// How long a `EWOULDBLOCK` has to persist before it counts as contention.
+///
+/// Not a wait for the lock, and not a retry loop around a busy resource: this
+/// is how long it takes a *released* lock to actually look released when the
+/// process is also spawning children. See `contend`.
+const SETTLE: std::time::Duration = std::time::Duration::from_millis(50);
+const SETTLE_STEP: std::time::Duration = std::time::Duration::from_millis(2);
+
 /// Take the lock, and say what happened in the caller's vocabulary.
 ///
 /// The distinction this draws is not pedantry. `flock` reports three
@@ -114,19 +122,44 @@ impl Lock {
 /// processes and their `SIGCHLD` arrives on whichever thread the kernel picks.
 /// An interrupted attempt is retried, since nothing about it says the lock is
 /// taken.
+///
+/// ## Why `EWOULDBLOCK` is not immediately believed either
+///
+/// A lock lives on the *open file description*, and `fork` duplicates every
+/// one of them. So while jails is starting a child — a formatter, Maven, a
+/// compose command — the child briefly holds a copy of whatever the parent has
+/// open, until `exec` drops it through `O_CLOEXEC`. In that window a lock the
+/// holder has already released still reads as held.
+///
+/// This was measured, not deduced: the released-lock test failed roughly one
+/// run in eight under the full suite and never once when run alone, and single
+/// -threading the suite made it disappear entirely. The other thread was
+/// spawning processes.
+///
+/// Fifty milliseconds is far longer than a `fork`/`exec` and far shorter than
+/// anything a person reads as a hang, so it separates the two cases without
+/// reintroducing the invisible wait plan.md §R4.1 rejects. Real contention
+/// still costs the caller 50 ms and then reports who holds it; it never waits
+/// for the holder to finish.
 fn contend(file: &File, path: &Path) -> std::result::Result<(), Contention> {
+    let deadline = std::time::Instant::now() + SETTLE;
     loop {
-        return match file.try_lock_exclusive() {
-            Ok(()) => Ok(()),
+        match file.try_lock_exclusive() {
+            Ok(()) => return Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                Err(Contention::Held(read_best_effort(path)))
+                if std::time::Instant::now() >= deadline {
+                    return Err(Contention::Held(read_best_effort(path)));
+                }
+                std::thread::sleep(SETTLE_STEP);
             }
-            Err(error) => Err(Contention::Refused(format!(
-                "could not lock {}: {error}",
-                path.display()
-            ))),
-        };
+            Err(error) => {
+                return Err(Contention::Refused(format!(
+                    "could not lock {}: {error}",
+                    path.display()
+                )));
+            }
+        }
     }
 }
 
@@ -242,6 +275,29 @@ mod tests {
             let _held = Lock::acquire(&path, "one").unwrap();
         }
         Lock::acquire(&path, "two").unwrap();
+        scratch.close().unwrap();
+    }
+
+    /// Contention is reported, not waited out.
+    ///
+    /// The settle window in `contend` buys a released lock time to look
+    /// released; it must never turn into a queue. A holder that keeps the lock
+    /// for a whole second still gets an answer in a small fraction of it.
+    #[test]
+    fn a_held_lock_is_refused_promptly_rather_than_queued_behind_its_holder() {
+        let scratch = ScratchDir::in_temp("jails-lock-prompt").unwrap();
+        let path = scratch.path().join("lock");
+        let _held = Lock::acquire(&path, "one").unwrap();
+
+        let started = std::time::Instant::now();
+        let error = Lock::acquire(&path, "two").unwrap_err();
+        let waited = started.elapsed();
+
+        assert!(matches!(error, Contention::Held(_)), "{error}");
+        assert!(
+            waited < std::time::Duration::from_millis(500),
+            "refusing took {waited:?}, which is a queue rather than an answer"
+        );
         scratch.close().unwrap();
     }
 
