@@ -22,7 +22,8 @@
 //! it just never reaches this layer.
 
 use crate::Result;
-use crate::identity::{Name, Package};
+use crate::declaration::{FieldSpec, IntentSpec};
+use crate::identity::{JavaType, ManagedVersion, Name, ObjectId, Package, ProjectPath};
 use jails_spec::spec::kind::{ArtifactKind, Capability};
 use jails_support::codec::{self, Decoder, Encoder};
 
@@ -308,6 +309,386 @@ impl OwnerId {
             2 => Ok(Self::DirectCli),
             other => Err(format!("unknown owner tag {other}")),
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// What an entity was declared to be
+// ---------------------------------------------------------------------------
+
+/// A capability's mutable content. Only placement, and only for the singleton
+/// class that has one — named identity already carries its package.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct CapabilitySpec {
+    pub placement: Option<Package>,
+}
+
+impl CapabilitySpec {
+    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        encoder.option(self.placement.as_ref(), |e, package| package.encode(e))
+    }
+
+    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(Self {
+            placement: decoder.option(Package::decode)?,
+        })
+    }
+}
+
+/// A tool feature's content: the pinned console version it installs.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ToolFeatureSpec {
+    pub console_version: ManagedVersion,
+}
+
+impl ToolFeatureSpec {
+    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        self.console_version.encode(encoder)
+    }
+
+    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(Self {
+            console_version: ManagedVersion::decode(decoder)?,
+        })
+    }
+}
+
+/// The content half of an entity. Its discriminant must match its identity's —
+/// enforced by [`EntitySpec::matches`] wherever the two are paired.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EntitySpec {
+    Capability(CapabilitySpec),
+    Intent(IntentSpec),
+    ToolFeature(ToolFeatureSpec),
+}
+
+impl EntitySpec {
+    /// Whether this content belongs to that identity.
+    ///
+    /// plan.md §R3.1 requires this same discriminant equality *"wherever
+    /// ID/spec values pair"* — desired entity, applied entity, renderer
+    /// context, pending candidate. A matching outer Rust shape is not
+    /// sufficient: `EntityId::Capability` beside `EntitySpec::Intent` type-
+    /// checks and means nothing.
+    pub fn matches(&self, id: &EntityId) -> bool {
+        matches!(
+            (id, self),
+            (EntityId::Capability(_), Self::Capability(_))
+                | (EntityId::Intent(_), Self::Intent(_))
+                | (EntityId::ToolFeature(_), Self::ToolFeature(_))
+        )
+    }
+
+    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        match self {
+            Self::Capability(spec) => {
+                encoder.tag(0);
+                spec.encode(encoder)
+            }
+            Self::Intent(spec) => {
+                encoder.tag(1);
+                spec.encode(encoder)
+            }
+            Self::ToolFeature(spec) => {
+                encoder.tag(2);
+                spec.encode(encoder)
+            }
+        }
+    }
+
+    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(match decoder.tag()? {
+            0 => Self::Capability(CapabilitySpec::decode(decoder)?),
+            1 => Self::Intent(IntentSpec::decode(decoder)?),
+            2 => Self::ToolFeature(ToolFeatureSpec::decode(decoder)?),
+            other => return Err(format!("unknown entity spec tag {other}")),
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// One-shots
+// ---------------------------------------------------------------------------
+
+/// What a one-shot field evolution is applied to.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+pub enum TypeTargetId {
+    Managed(IntentId),
+    /// A stable fully qualified name. The bytes live in the spec and read set,
+    /// never here: a type jails did not generate can move file without
+    /// becoming a different type.
+    Existing(JavaType),
+}
+
+impl TypeTargetId {
+    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        match self {
+            Self::Managed(id) => {
+                encoder.tag(0);
+                id.encode(encoder)
+            }
+            Self::Existing(ty) => {
+                encoder.tag(1);
+                ty.encode(encoder)
+            }
+        }
+    }
+
+    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(match decoder.tag()? {
+            0 => Self::Managed(IntentId::decode(decoder)?),
+            1 => Self::Existing(JavaType::decode(decoder)?),
+            other => return Err(format!("unknown type target tag {other}")),
+        })
+    }
+}
+
+/// The stable identity of a file supplied to a one-shot import.
+///
+/// An external file is identified by the hash of its *canonical absolute
+/// path*, never by the spelling the user typed. A symlink and its target are
+/// one identity; a moved file is a new one even with identical bytes. The
+/// absolute string itself stays in runtime bindings and never reaches the
+/// ledger, because it means nothing on another machine.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+pub enum SourceInputId {
+    Project(ProjectPath),
+    External { path_id: ExternalPathId },
+}
+
+/// `SHA256("JAILS-EXTERNAL-PATH-1" || encode(canonical_utf8_path))`.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+pub struct ExternalPathId(ObjectId);
+
+impl ExternalPathId {
+    /// The one constructor. Every user of an external path identity calls
+    /// this; rehashing a display string independently would give the same file
+    /// two identities.
+    pub fn of_canonical_path(canonical_utf8_path: &str) -> Result<Self> {
+        if !canonical_utf8_path.starts_with('/') {
+            return Err(format!(
+                "`{canonical_utf8_path}` is not a canonical absolute path.\n       fix: resolve \
+                 the path before taking its identity, so a symlink and its target agree."
+            ));
+        }
+        let mut encoder = Encoder::new();
+        encoder.string(canonical_utf8_path)?;
+        Ok(Self(ObjectId::from_bytes(codec::domain_hash(
+            "JAILS-EXTERNAL-PATH-1",
+            &encoder.finish()?,
+        ))))
+    }
+
+    pub fn object(&self) -> ObjectId {
+        self.0
+    }
+}
+
+impl SourceInputId {
+    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        match self {
+            Self::Project(path) => {
+                encoder.tag(0);
+                path.encode(encoder)
+            }
+            Self::External { path_id } => {
+                encoder.tag(1);
+                path_id.0.encode(encoder);
+                Ok(())
+            }
+        }
+    }
+
+    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(match decoder.tag()? {
+            0 => Self::Project(ProjectPath::decode(decoder)?),
+            1 => Self::External {
+                path_id: ExternalPathId(ObjectId::decode(decoder)?),
+            },
+            other => return Err(format!("unknown source input tag {other}")),
+        })
+    }
+}
+
+/// A one-shot operation's identity: stable across a re-run of the same thing.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+pub enum OneShotId {
+    Field { target: TypeTargetId, field: Name },
+    Migration { path: ProjectPath },
+    Cases { source: SourceInputId },
+}
+
+impl OneShotId {
+    fn tag(&self) -> u8 {
+        match self {
+            Self::Field { .. } => 0,
+            Self::Migration { .. } => 1,
+            Self::Cases { .. } => 2,
+        }
+    }
+
+    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        encoder.tag(self.tag());
+        match self {
+            Self::Field { target, field } => {
+                target.encode(encoder)?;
+                field.encode(encoder)
+            }
+            Self::Migration { path } => path.encode(encoder),
+            Self::Cases { source } => source.encode(encoder),
+        }
+    }
+
+    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(match decoder.tag()? {
+            0 => Self::Field {
+                target: TypeTargetId::decode(decoder)?,
+                field: Name::decode(decoder)?,
+            },
+            1 => Self::Migration {
+                path: ProjectPath::decode(decoder)?,
+            },
+            2 => Self::Cases {
+                source: SourceInputId::decode(decoder)?,
+            },
+            other => return Err(format!("unknown one-shot id tag {other}")),
+        })
+    }
+}
+
+/// `SHA256("JAILS-CASES-RECEIPT-1" || encode(OneShotId::Cases { source }))`.
+///
+/// Deliberately excludes source content, output path, receipt operation and
+/// every mutable field, so it stays stable across a same-source refresh. That
+/// is what makes `destroy cases --receipt <id>` work after the source file has
+/// been deleted or moved.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+pub struct CasesReceiptId(ObjectId);
+
+impl CasesReceiptId {
+    pub fn of(id: &OneShotId) -> Result<Self> {
+        if !matches!(id, OneShotId::Cases { .. }) {
+            return Err("a cases receipt id is only defined for a cases one-shot".to_string());
+        }
+        let mut encoder = Encoder::new();
+        id.encode(&mut encoder)?;
+        Ok(Self(ObjectId::from_bytes(codec::domain_hash(
+            "JAILS-CASES-RECEIPT-1",
+            &encoder.finish()?,
+        ))))
+    }
+
+    /// Exactly 64 lowercase hex characters, and rendering what was parsed is
+    /// byte-identical.
+    pub fn parse_hex(text: &str) -> Result<Self> {
+        ObjectId::parse_hex(text).map(Self)
+    }
+
+    pub fn to_hex(&self) -> String {
+        self.0.to_hex()
+    }
+}
+
+/// The content half of a one-shot.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum OneShotSpec {
+    Field {
+        target: TypeTargetId,
+        field: FieldSpec,
+    },
+    Migration {
+        description: String,
+        allocated_version: u64,
+        path: ProjectPath,
+        body: ObjectId,
+    },
+    Cases {
+        source: SourceInputId,
+        source_sha256: ObjectId,
+        output: ProjectPath,
+    },
+}
+
+impl OneShotSpec {
+    fn tag(&self) -> u8 {
+        match self {
+            Self::Field { .. } => 0,
+            Self::Migration { .. } => 1,
+            Self::Cases { .. } => 2,
+        }
+    }
+
+    /// Whether this content belongs to that identity — discriminants equal
+    /// **and** every repeated identity field agreeing.
+    ///
+    /// The repeated fields are the subtle half. A `Cases` spec carries its own
+    /// `source`, and a spec whose source disagreed with its ID would make the
+    /// derived `CasesReceiptId` name a row it does not describe.
+    pub fn matches(&self, id: &OneShotId) -> bool {
+        match (id, self) {
+            (
+                OneShotId::Field { target, field },
+                Self::Field {
+                    target: t,
+                    field: f,
+                },
+            ) => target == t && field == &f.name,
+            (OneShotId::Migration { path }, Self::Migration { path: p, .. }) => path == p,
+            (OneShotId::Cases { source }, Self::Cases { source: s, .. }) => source == s,
+            _ => false,
+        }
+    }
+
+    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        encoder.tag(self.tag());
+        match self {
+            Self::Field { target, field } => {
+                target.encode(encoder)?;
+                field.encode(encoder)
+            }
+            Self::Migration {
+                description,
+                allocated_version,
+                path,
+                body,
+            } => {
+                encoder.string(description)?;
+                encoder.u64(*allocated_version);
+                path.encode(encoder)?;
+                body.encode(encoder);
+                Ok(())
+            }
+            Self::Cases {
+                source,
+                source_sha256,
+                output,
+            } => {
+                source.encode(encoder)?;
+                source_sha256.encode(encoder);
+                output.encode(encoder)
+            }
+        }
+    }
+
+    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(match decoder.tag()? {
+            0 => Self::Field {
+                target: TypeTargetId::decode(decoder)?,
+                field: FieldSpec::decode(decoder)?,
+            },
+            1 => Self::Migration {
+                description: decoder.string()?,
+                allocated_version: decoder.u64()?,
+                path: ProjectPath::decode(decoder)?,
+                body: ObjectId::decode(decoder)?,
+            },
+            2 => Self::Cases {
+                source: SourceInputId::decode(decoder)?,
+                source_sha256: ObjectId::decode(decoder)?,
+                output: ProjectPath::decode(decoder)?,
+            },
+            other => return Err(format!("unknown one-shot spec tag {other}")),
+        })
     }
 }
 

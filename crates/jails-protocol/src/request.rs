@@ -30,7 +30,11 @@
 //! same one.
 
 use crate::Result;
-use crate::identity::ObjectId;
+use crate::entity::{
+    CapabilityId, CapabilityInstance, CapabilitySpec, EntityId, EntitySpec, OneShotId, OneShotSpec,
+    ToolFeature,
+};
+use crate::identity::{JavaType, ObjectId, ProjectPath};
 use jails_support::codec::{self, Decoder, Encoder, ordered};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -195,6 +199,216 @@ fn reject_dashes(value: &str) -> Result<()> {
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// The canonical request
+// ---------------------------------------------------------------------------
+
+/// One capability declaration, identity and content together.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CanonicalCapability {
+    pub id: CapabilityId,
+    pub spec: CapabilitySpec,
+}
+
+/// What `generate` was asked to produce.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CanonicalGenerateRequest {
+    Entity { id: EntityId, spec: EntitySpec },
+    OneShot { id: OneShotId, spec: OneShotSpec },
+}
+
+/// What a `destroy` names.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ChangeSubject {
+    Entity(EntityId),
+    OneShot(OneShotId),
+}
+
+/// Every mutation the CLI can express, after aliases and defaults.
+///
+/// The constructors below enforce plan.md §R3.1's closed admissibility matrix.
+/// That matrix exists because *a matching outer Rust shape is not sufficient*:
+/// `EntityId::Capability` paired with `EntitySpec::Intent` type-checks and is
+/// meaningless, and a `Cases` spec whose source disagreed with its ID would
+/// make the derived receipt name a row it does not describe. Checking at
+/// construction means no downstream stage has to re-check, and none of them
+/// can forget.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CanonicalMutationRequest {
+    Add {
+        capabilities: Vec<CanonicalCapability>,
+        no_start: bool,
+    },
+    Remove {
+        capabilities: Vec<CanonicalCapability>,
+        force: bool,
+        no_start: bool,
+    },
+    Sync {
+        no_start: bool,
+    },
+    Generate(CanonicalGenerateRequest),
+    Destroy {
+        subject: ChangeSubject,
+        force: bool,
+    },
+    AppInit {
+        target: ProjectPath,
+    },
+    AppApply {
+        no_start: bool,
+    },
+    Rename {
+        from: JavaType,
+        to: JavaType,
+        force: bool,
+    },
+    AdoptLayout,
+    FastTest,
+    Format {
+        scopes: BTreeSet<ProjectPath>,
+    },
+    RemoveToolFeature {
+        feature: ToolFeature,
+        force: bool,
+    },
+}
+
+impl CanonicalMutationRequest {
+    /// `add` / `remove`: a non-empty, sorted, duplicate-free capability list.
+    ///
+    /// Empty rejects rather than succeeding as a no-op, because `jails add`
+    /// with nothing to add is a mistake the user should hear about.
+    pub fn capabilities(rows: Vec<CanonicalCapability>) -> Result<Vec<CanonicalCapability>> {
+        if rows.is_empty() {
+            return Err("no capability named.\n       fix: name at least one.".to_string());
+        }
+        let mut previous: Option<&CapabilityId> = None;
+        for row in &rows {
+            ordered(previous, &row.id)?;
+            previous = Some(&row.id);
+            // A singleton's placement lives in its spec; a named instance
+            // already carries its package in its identity, so a spec that also
+            // carried one would be a second authority for the same fact.
+            if matches!(row.id.instance, CapabilityInstance::Named { .. })
+                && row.spec.placement.is_some()
+            {
+                return Err(format!(
+                    "`{}` carries its package in its identity, so its spec may not also name \
+                     one",
+                    row.id.kind.label()
+                ));
+            }
+        }
+        Ok(rows)
+    }
+
+    /// `generate <kind>`: a persistent intent, never a capability or tool
+    /// feature — those have their own requests.
+    pub fn generate_entity(id: EntityId, spec: EntitySpec) -> Result<Self> {
+        if !matches!(id, EntityId::Intent(_)) {
+            return Err(
+                "`generate` produces a persistent intent.\n       fix: a capability is `jails \
+                 add`, and the fast-test feature is `jails test --fast`."
+                    .to_string(),
+            );
+        }
+        if !spec.matches(&id) {
+            return Err(
+                "this generate request pairs an identity and a spec of different kinds".to_string(),
+            );
+        }
+        Ok(Self::Generate(CanonicalGenerateRequest::Entity {
+            id,
+            spec,
+        }))
+    }
+
+    /// `generate field|migration|cases`: discriminants equal and every
+    /// repeated identity field agreeing.
+    pub fn generate_one_shot(id: OneShotId, spec: OneShotSpec) -> Result<Self> {
+        if !spec.matches(&id) {
+            return Err(
+                "this one-shot request pairs an identity and a spec that disagree.\n       fix: \
+                 their kinds and their repeated target, path or source must be the same value."
+                    .to_string(),
+            );
+        }
+        Ok(Self::Generate(CanonicalGenerateRequest::OneShot {
+            id,
+            spec,
+        }))
+    }
+
+    /// `destroy <kind> <name>`: a persistent intent only.
+    pub fn destroy_entity(id: EntityId, force: bool) -> Result<Self> {
+        if !matches!(id, EntityId::Intent(_)) {
+            return Err(
+                "`destroy` removes a persistent intent.\n       fix: a capability is `jails \
+                 remove`, and the fast-test feature is `jails remove fast-test`."
+                    .to_string(),
+            );
+        }
+        Ok(Self::Destroy {
+            subject: ChangeSubject::Entity(id),
+            force,
+        })
+    }
+
+    /// `destroy cases`: the only one-shot with a destroy route.
+    ///
+    /// A field or migration has none by design — a field cannot be un-added
+    /// from a record whose other overlays depend on it, and a migration is
+    /// append-only because the database has already run it.
+    pub fn destroy_one_shot(id: OneShotId, force: bool) -> Result<Self> {
+        match id {
+            OneShotId::Cases { .. } => Ok(Self::Destroy {
+                subject: ChangeSubject::OneShot(id),
+                force,
+            }),
+            OneShotId::Field { .. } => Err(
+                "a field has no destroy route.\n       fix: a later render reapplies every \
+                 active overlay, so removing one in isolation would leave the others \
+                 inconsistent."
+                    .to_string(),
+            ),
+            OneShotId::Migration { .. } => Err(
+                "a migration is append-only.\n       fix: the database has already run it; \
+                 write a forward migration instead."
+                    .to_string(),
+            ),
+        }
+    }
+
+    /// `remove fast-test`: exactly the one feature that exists.
+    ///
+    /// A future feature needs a protocol and CLI addition rather than falling
+    /// through here, which is why this takes the value and still checks it.
+    pub fn remove_tool_feature(feature: ToolFeature, force: bool) -> Result<Self> {
+        match feature {
+            ToolFeature::FastTest => Ok(Self::RemoveToolFeature { feature, force }),
+        }
+    }
+
+    /// Which variant this is, for the fixed request tags.
+    pub fn tag(&self) -> u8 {
+        match self {
+            Self::Add { .. } => 0,
+            Self::Remove { .. } => 1,
+            Self::Sync { .. } => 2,
+            Self::Generate(_) => 3,
+            Self::Destroy { .. } => 4,
+            Self::AppInit { .. } => 5,
+            Self::AppApply { .. } => 6,
+            Self::Rename { .. } => 7,
+            Self::AdoptLayout => 8,
+            Self::FastTest => 10,
+            Self::Format { .. } => 11,
+            Self::RemoveToolFeature { .. } => 12,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -356,5 +570,289 @@ mod tests {
             one.fingerprint().unwrap().object().as_bytes(),
             &codec::domain_hash("JAILS-REQUEST-SYNTAX-1", &encoded)
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // The closed admissibility matrix
+    // -----------------------------------------------------------------------
+
+    use crate::declaration::IntentSpec;
+    use crate::entity::{CasesReceiptId, Recipe, SourceInputId, TypeTargetId};
+    use crate::identity::{Name, Package};
+
+    fn intent_id() -> EntityId {
+        EntityId::Intent(crate::entity::IntentId::new(
+            Recipe::Record,
+            Name::parse("Note").unwrap(),
+            Package::base(),
+        ))
+    }
+
+    fn capability_id(kind: jails_spec::spec::kind::Capability) -> CapabilityId {
+        CapabilityId::resolve(kind, None, None).unwrap()
+    }
+
+    /// A matching outer Rust shape is not sufficient: `EntityId::Capability`
+    /// beside `EntitySpec::Intent` type-checks and means nothing.
+    #[test]
+    fn an_identity_and_spec_of_different_kinds_reject() {
+        assert!(
+            CanonicalMutationRequest::generate_entity(
+                intent_id(),
+                EntitySpec::Intent(IntentSpec::default())
+            )
+            .is_ok()
+        );
+
+        let mismatched = CanonicalMutationRequest::generate_entity(
+            intent_id(),
+            EntitySpec::Capability(CapabilitySpec::default()),
+        )
+        .unwrap_err();
+        assert!(mismatched.contains("different kinds"), "{mismatched}");
+    }
+
+    /// `generate` produces a persistent intent. A capability is `jails add`,
+    /// and each says so rather than failing obscurely later.
+    #[test]
+    fn generate_refuses_a_capability_or_tool_feature() {
+        for id in [
+            EntityId::Capability(capability_id(jails_spec::spec::kind::Capability::Db)),
+            EntityId::ToolFeature(ToolFeature::FastTest),
+        ] {
+            let error = CanonicalMutationRequest::generate_entity(
+                id,
+                EntitySpec::Intent(IntentSpec::default()),
+            )
+            .unwrap_err();
+            assert!(error.contains("persistent intent"), "{error}");
+            assert!(error.contains("fix:"), "{error}");
+        }
+    }
+
+    #[test]
+    fn destroy_refuses_a_capability_or_tool_feature() {
+        assert!(CanonicalMutationRequest::destroy_entity(intent_id(), false).is_ok());
+        for id in [
+            EntityId::Capability(capability_id(jails_spec::spec::kind::Capability::Db)),
+            EntityId::ToolFeature(ToolFeature::FastTest),
+        ] {
+            let error = CanonicalMutationRequest::destroy_entity(id, false).unwrap_err();
+            assert!(error.contains("jails remove"), "{error}");
+        }
+    }
+
+    /// Cases is the only one-shot with a destroy route, and the other two say
+    /// why rather than reporting a bare refusal.
+    #[test]
+    fn only_a_cases_one_shot_can_be_destroyed() {
+        let cases = OneShotId::Cases {
+            source: SourceInputId::Project(ProjectPath::parse("docs/cases.md").unwrap()),
+        };
+        assert!(CanonicalMutationRequest::destroy_one_shot(cases, false).is_ok());
+
+        let field = OneShotId::Field {
+            target: TypeTargetId::Existing(JavaType::parse("com.example.Note").unwrap()),
+            field: Name::parse("title").unwrap(),
+        };
+        let error = CanonicalMutationRequest::destroy_one_shot(field, false).unwrap_err();
+        assert!(error.contains("reapplies every"), "{error}");
+
+        let migration = OneShotId::Migration {
+            path: ProjectPath::parse("src/main/resources/db/migration/V1__x.sql").unwrap(),
+        };
+        let error = CanonicalMutationRequest::destroy_one_shot(migration, false).unwrap_err();
+        assert!(error.contains("append-only"), "{error}");
+    }
+
+    /// A spec whose repeated identity field disagrees with its ID would make
+    /// the derived receipt name a row it does not describe.
+    #[test]
+    fn a_one_shot_spec_must_agree_with_its_identity_field_by_field() {
+        let source = SourceInputId::Project(ProjectPath::parse("docs/cases.md").unwrap());
+        let other = SourceInputId::Project(ProjectPath::parse("docs/elsewhere.md").unwrap());
+        let output = ProjectPath::parse("src/test/java/CasesTest.java").unwrap();
+        let digest = ObjectId::from_bytes(codec::sha256(b"body"));
+
+        assert!(
+            CanonicalMutationRequest::generate_one_shot(
+                OneShotId::Cases {
+                    source: source.clone()
+                },
+                OneShotSpec::Cases {
+                    source: source.clone(),
+                    source_sha256: digest,
+                    output: output.clone(),
+                },
+            )
+            .is_ok()
+        );
+
+        let error = CanonicalMutationRequest::generate_one_shot(
+            OneShotId::Cases {
+                source: source.clone(),
+            },
+            OneShotSpec::Cases {
+                source: other,
+                source_sha256: digest,
+                output,
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("disagree"), "{error}");
+    }
+
+    #[test]
+    fn a_one_shot_of_the_wrong_kind_rejects() {
+        let error = CanonicalMutationRequest::generate_one_shot(
+            OneShotId::Migration {
+                path: ProjectPath::parse("db/V1__x.sql").unwrap(),
+            },
+            OneShotSpec::Cases {
+                source: SourceInputId::Project(ProjectPath::parse("docs/cases.md").unwrap()),
+                source_sha256: ObjectId::from_bytes(codec::sha256(b"x")),
+                output: ProjectPath::parse("out.java").unwrap(),
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("disagree"), "{error}");
+    }
+
+    /// `jails add` with nothing to add is a mistake the user should hear
+    /// about, not a silent success.
+    #[test]
+    fn a_capability_list_must_be_nonempty_sorted_and_unique() {
+        let db = CanonicalCapability {
+            id: capability_id(jails_spec::spec::kind::Capability::Db),
+            spec: CapabilitySpec::default(),
+        };
+        let kafka = CanonicalCapability {
+            id: capability_id(jails_spec::spec::kind::Capability::Kafka),
+            spec: CapabilitySpec::default(),
+        };
+
+        assert!(CanonicalMutationRequest::capabilities(vec![]).is_err());
+        assert!(
+            CanonicalMutationRequest::capabilities(vec![db.clone(), kafka.clone()]).is_ok(),
+            "db sorts before kafka"
+        );
+        assert!(CanonicalMutationRequest::capabilities(vec![kafka, db.clone()]).is_err());
+        assert!(CanonicalMutationRequest::capabilities(vec![db.clone(), db]).is_err());
+    }
+
+    /// A named instance already carries its package in its identity, so a spec
+    /// that also named one would be a second authority for the same fact.
+    #[test]
+    fn a_named_capability_may_not_repeat_its_package_in_its_spec() {
+        let id = CapabilityId::resolve(
+            jails_spec::spec::kind::Capability::Csv,
+            Some(&Name::parse("Dataset").unwrap()),
+            Some(&Package::parse("io.example").unwrap()),
+        )
+        .unwrap();
+        let error = CanonicalMutationRequest::capabilities(vec![CanonicalCapability {
+            id,
+            spec: CapabilitySpec {
+                placement: Some(Package::parse("io.example").unwrap()),
+            },
+        }])
+        .unwrap_err();
+        assert!(error.contains("may not also name one"), "{error}");
+    }
+
+    /// The receipt id excludes content, output and operation, so it survives a
+    /// same-source refresh — which is what makes `--receipt` work after the
+    /// source file is gone.
+    #[test]
+    fn a_cases_receipt_id_is_stable_across_a_refresh() {
+        let source = SourceInputId::Project(ProjectPath::parse("docs/cases.md").unwrap());
+        let id = OneShotId::Cases {
+            source: source.clone(),
+        };
+        let first = CasesReceiptId::of(&id).unwrap();
+        let again = CasesReceiptId::of(&OneShotId::Cases { source }).unwrap();
+        assert_eq!(first, again);
+
+        let elsewhere = CasesReceiptId::of(&OneShotId::Cases {
+            source: SourceInputId::Project(ProjectPath::parse("docs/other.md").unwrap()),
+        })
+        .unwrap();
+        assert_ne!(first, elsewhere);
+
+        // 64 lowercase hex, parsed back byte-identically.
+        let text = first.to_hex();
+        assert_eq!(text.len(), 64);
+        assert_eq!(CasesReceiptId::parse_hex(&text).unwrap(), first);
+        assert!(CasesReceiptId::parse_hex(&text.to_uppercase()).is_err());
+
+        // Only defined for a cases one-shot.
+        assert!(
+            CasesReceiptId::of(&OneShotId::Migration {
+                path: ProjectPath::parse("db/V1__x.sql").unwrap()
+            })
+            .is_err()
+        );
+    }
+
+    /// A symlink and its target are one identity; a moved file is a new one
+    /// even with identical bytes.
+    #[test]
+    fn an_external_path_identity_is_of_the_canonical_path() {
+        let one = crate::entity::ExternalPathId::of_canonical_path("/srv/briefs/a.md").unwrap();
+        let same = crate::entity::ExternalPathId::of_canonical_path("/srv/briefs/a.md").unwrap();
+        let moved = crate::entity::ExternalPathId::of_canonical_path("/srv/other/a.md").unwrap();
+        assert_eq!(one, same);
+        assert_ne!(one, moved);
+
+        // A relative path has not been canonicalised, and taking its identity
+        // would give the same file different ids from different directories.
+        let error = crate::entity::ExternalPathId::of_canonical_path("briefs/a.md").unwrap_err();
+        assert!(error.contains("canonical absolute path"), "{error}");
+    }
+
+    /// A future tool feature needs a protocol and CLI addition rather than
+    /// falling through.
+    #[test]
+    fn removing_a_tool_feature_names_exactly_the_one_that_exists() {
+        assert!(
+            CanonicalMutationRequest::remove_tool_feature(ToolFeature::FastTest, false).is_ok()
+        );
+    }
+
+    /// The request tags are fixed by the RFC and may never be reused.
+    #[test]
+    fn request_tags_match_the_specified_numbers() {
+        let path = || ProjectPath::parse("x.txt").unwrap();
+        let cases: [(CanonicalMutationRequest, u8); 8] = [
+            (CanonicalMutationRequest::Sync { no_start: false }, 2),
+            (CanonicalMutationRequest::AppInit { target: path() }, 5),
+            (CanonicalMutationRequest::AppApply { no_start: false }, 6),
+            (CanonicalMutationRequest::AdoptLayout, 8),
+            (CanonicalMutationRequest::FastTest, 10),
+            (
+                CanonicalMutationRequest::Format {
+                    scopes: BTreeSet::new(),
+                },
+                11,
+            ),
+            (
+                CanonicalMutationRequest::RemoveToolFeature {
+                    feature: ToolFeature::FastTest,
+                    force: false,
+                },
+                12,
+            ),
+            (
+                CanonicalMutationRequest::Rename {
+                    from: JavaType::parse("A").unwrap(),
+                    to: JavaType::parse("B").unwrap(),
+                    force: false,
+                },
+                7,
+            ),
+        ];
+        for (request, tag) in cases {
+            assert_eq!(request.tag(), tag, "{request:?}");
+        }
     }
 }
