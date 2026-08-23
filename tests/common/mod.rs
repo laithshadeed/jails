@@ -308,11 +308,14 @@ pub fn real_docker_available() -> bool {
         .unwrap_or(false)
 }
 
-/// Kept in step with `pom::TARGET_RELEASE` by
-/// `target_release_matches_the_binary` in tests/cli.rs -- the integration
-/// tests compile against the binary, not the library, so the constant cannot
-/// simply be imported.
-pub const TARGET_RELEASE: &str = "25";
+/// The real constant, not a copy of it.
+///
+/// This was a hand-maintained duplicate guarded by a test that read
+/// `src/pom.rs` as text, because integration tests linked against a binary and
+/// a binary exports nothing. `pom` is a library crate now, so the duplicate and
+/// its guard are both gone -- which is the workspace split paying for itself in
+/// the place CLAUDE.md warns about most: one fact kept in two places.
+pub use jails_project::pom::TARGET_RELEASE;
 
 fn real_path_dirs() -> impl Iterator<Item = PathBuf> {
     std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())

@@ -3602,19 +3602,6 @@ fn add_csv_produces_a_project_that_compiles_and_passes_tests() {
     );
 }
 
-/// tests/common/mod.rs cannot import `pom::TARGET_RELEASE` (integration tests
-/// link against the binary, not a library), so it keeps its own copy. This
-/// makes the duplication safe.
-#[test]
-fn target_release_matches_the_binary() {
-    let source = fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/pom.rs")).unwrap();
-    let declared = format!(r#"pub const TARGET_RELEASE: &str = "{TARGET_RELEASE}";"#);
-    assert!(
-        source.contains(&declared),
-        "src/pom.rs no longer declares TARGET_RELEASE = {TARGET_RELEASE}"
-    );
-}
-
 #[test]
 fn add_sqlite_writes_a_first_migration_and_both_classes() {
     let root = temp_dir("add-sqlite-files");

@@ -47,7 +47,7 @@ use std::path::Path;
 use crate::spec::layout;
 
 /// The file, at the project root next to `pom.xml`.
-pub(crate) const FILE: &str = "jails.toml";
+pub const FILE: &str = "jails.toml";
 
 /// Every layer name a project may rename, and the default it replaces.
 ///
@@ -64,7 +64,7 @@ pub(crate) const FILE: &str = "jails.toml";
 /// (`cli`, `messaging`) were never counted at all. A second list of the same
 /// thing is how that happens, so the validation list below is derived from
 /// this one rather than written out again.
-pub(crate) const LAYERS_IN_ORDER: &[(&str, &str)] = &[
+pub const LAYERS_IN_ORDER: &[(&str, &str)] = &[
     (layout::DOMAIN, "Domain"),
     (layout::APP, "Ports"),
     (layout::SERVICE, "Services"),
@@ -99,7 +99,7 @@ const CAPABILITIES_KEY: &str = "capabilities";
 /// of projects never have one, and `Config::default()` behaving exactly like
 /// today's hardcoded layout is what keeps this change from touching them.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub(crate) struct Config {
+pub struct Config {
     layout: HashMap<String, String>,
     /// Capability labels, in the order the file lists them. Validated against
     /// the real `Capability` set at parse time, so a typo is an error naming
@@ -109,7 +109,7 @@ pub(crate) struct Config {
 
 impl Config {
     /// Read `jails.toml` from a project root. Absent file -> defaults.
-    pub(crate) fn load(root: &Path) -> Result<Self, String> {
+    pub fn load(root: &Path) -> Result<Self, String> {
         let path = root.join(FILE);
         let text = match fs::read_to_string(&path) {
             Ok(text) => text,
@@ -125,7 +125,7 @@ impl Config {
     /// every artifact, so a layer that is renamed is renamed everywhere --
     /// including in `destroy`, which resolves its paths through the same
     /// closure and would otherwise strand files.
-    pub(crate) fn layer<'a>(&'a self, default: &'a str) -> &'a str {
+    pub fn layer<'a>(&'a self, default: &'a str) -> &'a str {
         self.layout
             .get(default)
             .map(String::as_str)
@@ -138,7 +138,7 @@ impl Config {
     /// The one place anything reporting *per layer* should get its list, so a
     /// renamed layer is renamed there too rather than falling into a
     /// catch-all bucket.
-    pub(crate) fn layers(&self) -> Vec<(String, &'static str)> {
+    pub fn layers(&self) -> Vec<(String, &'static str)> {
         LAYERS_IN_ORDER
             .iter()
             .map(|(name, label)| (self.layer(name).to_string(), *label))
@@ -147,7 +147,7 @@ impl Config {
 
     /// Canonical layer key and its configured package, in the same stable
     /// order the CLI and editor integrations consume.
-    pub(crate) fn layout_entries(&self) -> Vec<(&'static str, String)> {
+    pub fn layout_entries(&self) -> Vec<(&'static str, String)> {
         LAYERS_IN_ORDER
             .iter()
             .map(|(name, _)| (*name, self.layer(name).to_string()))
@@ -155,7 +155,7 @@ impl Config {
     }
 
     /// The capabilities this project declares, in file order.
-    pub(crate) fn capabilities(&self) -> &[String] {
+    pub fn capabilities(&self) -> &[String] {
         &self.capabilities
     }
 
@@ -250,7 +250,7 @@ impl Config {
 /// `[layout]` table, key order -- is left byte-for-byte alone, for the same
 /// reason `pom.rs` splices rather than round-trips: this is a file people
 /// edit.
-pub(crate) fn record_capability(root: &Path, label: &str) -> Result<(), String> {
+pub fn record_capability(root: &Path, label: &str) -> Result<(), String> {
     edit_capabilities(root, |labels| {
         if labels.iter().any(|l| l == label) {
             return false;
@@ -263,7 +263,7 @@ pub(crate) fn record_capability(root: &Path, label: &str) -> Result<(), String> 
 /// Take a capability back out, for `remove`. The exact inverse of
 /// `record_capability`: leaving it listed would have the next `sync` put back
 /// what you just removed.
-pub(crate) fn forget_capability(root: &Path, label: &str) -> Result<(), String> {
+pub fn forget_capability(root: &Path, label: &str) -> Result<(), String> {
     edit_capabilities(root, |labels| {
         let before = labels.len();
         labels.retain(|l| l != label);
@@ -358,7 +358,7 @@ fn append_project_table(text: &str, rendered: &str) -> String {
 /// so everything else in it -- comments, key order, `[project]` -- is left
 /// byte-for-byte alone. `jails adopt` is the only caller, and it deliberately
 /// cannot reach `[project] capabilities` from here.
-pub(crate) fn record_layout(root: &Path, layer: &str, directory: &str) -> Result<(), String> {
+pub fn record_layout(root: &Path, layer: &str, directory: &str) -> Result<(), String> {
     let path = root.join(FILE);
     let text = match fs::read_to_string(&path) {
         Ok(text) => text,

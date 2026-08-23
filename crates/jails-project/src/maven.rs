@@ -32,7 +32,7 @@ fn mvnd_binary() -> &'static str {
 /// The one place this is decided. `project.rs` reports it, `run.rs` executes
 /// it, and the two disagreeing is how you get a tool that describes a build it
 /// does not run.
-pub(crate) fn binary(root: &Path) -> PathBuf {
+pub fn binary(root: &Path) -> PathBuf {
     let wrapper = root.join(if cfg!(windows) { "mvnw.cmd" } else { "mvnw" });
     if wrapper.is_file() {
         return wrapper;
@@ -50,7 +50,7 @@ pub(crate) fn binary(root: &Path) -> PathBuf {
 /// runs the real formatter once rather than trying to emit pre-wrapped Java.
 /// A machine without Maven simply gets `false` and a note: failing the capability
 /// over a cosmetic pass would be worse than an unformatted tree.
-pub(crate) fn format_quietly(root: &Path) -> bool {
+pub fn format_quietly(root: &Path) -> bool {
     Command::new(binary(root))
         .args(["-q", "spotless:apply"])
         .current_dir(root)

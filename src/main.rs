@@ -5,6 +5,9 @@ use jails_support::Result;
 // import line in forty files: the paths a reader already knows stay correct,
 // and the crate boundary is enforced by Cargo either way.
 pub(crate) use jails_java::{classfile, java, template};
+pub(crate) use jails_project::{
+    compose, config, generated_files, inspect, ledger, maven, model, pom, project,
+};
 pub(crate) use jails_spec::{build, spec};
 pub(crate) use jails_support::{apply, codemod, json, process};
 mod add;
@@ -13,24 +16,15 @@ mod affected;
 mod app;
 mod bench;
 mod commands;
-mod compose;
-mod config;
 mod console;
 mod doctor;
 mod explain;
 mod generate;
-mod generated_files;
-mod inspect;
 mod kafka;
 mod launcher;
-mod ledger;
 mod lint;
-mod maven;
 mod migrate;
-mod model;
 mod new;
-mod pom;
-mod project;
 mod rename;
 mod run;
 mod source;

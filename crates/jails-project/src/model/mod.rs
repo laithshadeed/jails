@@ -21,14 +21,14 @@ use jails_support::Result;
 /// it to `Body` after every producer uses this one shape; doing both migrations
 /// at once would make a behavioral regression harder to localise.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Artifact {
-    pub(crate) kind: &'static str,
-    pub(crate) path: PathBuf,
-    pub(crate) contents: String,
+pub struct Artifact {
+    pub kind: &'static str,
+    pub path: PathBuf,
+    pub contents: String,
 }
 
 impl Artifact {
-    pub(crate) fn rendered(path: PathBuf, contents: String) -> Self {
+    pub fn rendered(path: PathBuf, contents: String) -> Self {
         Self {
             kind: "capability file",
             path,
@@ -39,13 +39,13 @@ impl Artifact {
 
 /// A test-classpath import owned by a capability change.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct SpringTestImport {
-    pub(crate) pkg: String,
-    pub(crate) class: &'static str,
+pub struct SpringTestImport {
+    pub pkg: String,
+    pub class: &'static str,
 }
 
 impl SpringTestImport {
-    pub(crate) fn fqcn(&self) -> String {
+    pub fn fqcn(&self) -> String {
         format!("{}.{}", self.pkg, self.class)
     }
 }
@@ -56,14 +56,14 @@ impl SpringTestImport {
 /// initially use the file subset and then migrate their dependency/codemod
 /// tails into the same value.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct Change {
-    pub(crate) deps: Vec<Dependency>,
-    pub(crate) plugins: Vec<(&'static str, String)>,
-    pub(crate) files: Vec<Artifact>,
-    pub(crate) compose: Vec<ComposeService>,
-    pub(crate) properties: Vec<String>,
-    pub(crate) legacy_deps: Vec<Dependency>,
-    pub(crate) spring_test_import: Option<SpringTestImport>,
+pub struct Change {
+    pub deps: Vec<Dependency>,
+    pub plugins: Vec<(&'static str, String)>,
+    pub files: Vec<Artifact>,
+    pub compose: Vec<ComposeService>,
+    pub properties: Vec<String>,
+    pub legacy_deps: Vec<Dependency>,
+    pub spring_test_import: Option<SpringTestImport>,
 }
 
 impl Change {
@@ -72,7 +72,7 @@ impl Change {
     /// Equal contributions collapse; two different contributions claiming
     /// the same identity are rejected before either reaches disk. This is the
     /// algebra used by multi-capability and whole-manifest planning.
-    pub(crate) fn merge(mut self, other: Self) -> Result<Self> {
+    pub fn merge(mut self, other: Self) -> Result<Self> {
         for dep in other.deps {
             match self.deps.iter().find(|current| {
                 current.group_id == dep.group_id && current.artifact_id == dep.artifact_id
@@ -153,7 +153,7 @@ impl Change {
 
 /// The conventional package roles understood by jails.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum Layer {
+pub enum Layer {
     Domain,
     App,
     Service,
@@ -182,7 +182,7 @@ impl Layer {
         Self::Testkit,
     ];
 
-    pub(crate) const fn key(self) -> &'static str {
+    pub const fn key(self) -> &'static str {
         use crate::spec::layout;
         match self {
             Self::Domain => layout::DOMAIN,
@@ -202,7 +202,7 @@ impl Layer {
 
 /// Layer package names with every `jails.toml` override already applied.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Layers {
+pub struct Layers {
     packages: BTreeMap<String, String>,
 }
 
@@ -222,14 +222,14 @@ impl Layers {
     }
 
     /// Resolve a typed conventional layer.
-    pub(crate) fn get(&self, layer: Layer) -> &str {
+    pub fn get(&self, layer: Layer) -> &str {
         self.named(layer.key())
     }
 
     /// Transitional adapter for recipe code still expressed with the public
     /// layer key strings. Keeping it here makes the configuration decision a
     /// secret of `Layers` while those call sites move to [`Layer`].
-    pub(crate) fn named<'a>(&'a self, default: &'a str) -> &'a str {
+    pub fn named<'a>(&'a self, default: &'a str) -> &'a str {
         self.packages
             .get(default)
             .map(String::as_str)
@@ -238,14 +238,14 @@ impl Layers {
 
     /// Compatibility spelling while renderer call sites move from `Config`
     /// to this resolved value.
-    pub(crate) fn layer<'a>(&'a self, default: &'a str) -> &'a str {
+    pub fn layer<'a>(&'a self, default: &'a str) -> &'a str {
         self.named(default)
     }
 }
 
 /// One immutable snapshot of the project facts every recipe needs.
 #[derive(Clone, Debug)]
-pub(crate) struct Project {
+pub struct Project {
     root: PathBuf,
     base: String,
     flavor: Flavor,
@@ -258,7 +258,7 @@ pub(crate) struct Project {
 
 impl Project {
     /// Resolve project facts exactly once from a known Maven module root.
-    pub(crate) fn load(root: &Path) -> Result<Self> {
+    pub fn load(root: &Path) -> Result<Self> {
         // Every command that writes resolves a project first, so this is the
         // one place template overrides have to be pointed at a root -- and no
         // generator has to remember to do it.
@@ -299,7 +299,7 @@ impl Project {
     /// a file into a package jails had to guess is the failure this
     /// distinction exists to prevent. Anything that *writes* must not reach
     /// for this constructor.
-    pub(crate) fn inspect(root: &Path) -> Result<Self> {
+    pub fn inspect(root: &Path) -> Result<Self> {
         crate::template::install(root);
         let pom = pom::read(root).unwrap_or_default();
         let config = Config::load(root)?;
@@ -316,50 +316,50 @@ impl Project {
     }
 
     /// Discover the containing Maven module and resolve it once.
-    pub(crate) fn discover() -> Result<Self> {
+    pub fn discover() -> Result<Self> {
         Self::load(&crate::spec::find_project_root()?)
     }
 
-    pub(crate) fn root(&self) -> &Path {
+    pub fn root(&self) -> &Path {
         &self.root
     }
 
     /// What builds this project. `plan.md` §12.
-    pub(crate) fn build(&self) -> crate::build::Build {
+    pub fn build(&self) -> crate::build::Build {
         self.build
     }
 
     /// Refuse a command that cannot work without Maven, naming what still can.
-    pub(crate) fn require_maven(&self, command: &str) -> Result<()> {
+    pub fn require_maven(&self, command: &str) -> Result<()> {
         crate::build::require_maven(self.build, command)
     }
 
-    pub(crate) fn base(&self) -> &str {
+    pub fn base(&self) -> &str {
         &self.base
     }
 
-    pub(crate) fn flavor(&self) -> Flavor {
+    pub fn flavor(&self) -> Flavor {
         self.flavor
     }
 
-    pub(crate) fn java_release(&self) -> Option<u32> {
+    pub fn java_release(&self) -> Option<u32> {
         self.java_release
     }
 
-    pub(crate) fn pom(&self) -> &str {
+    pub fn pom(&self) -> &str {
         &self.pom
     }
 
-    pub(crate) fn layers(&self) -> &Layers {
+    pub fn layers(&self) -> &Layers {
         &self.layers
     }
 
-    pub(crate) fn capabilities(&self) -> &[String] {
+    pub fn capabilities(&self) -> &[String] {
         &self.installed
     }
 
     /// Resolve a package override, or the configured conventional layer.
-    pub(crate) fn package(&self, layer: Layer, package: Option<&str>) -> String {
+    pub fn package(&self, layer: Layer, package: Option<&str>) -> String {
         crate::spec::subpackage(
             &self.base,
             package.unwrap_or_else(|| self.layers.get(layer)),
@@ -367,7 +367,7 @@ impl Project {
     }
 
     /// Transitional string-key form for recipes not yet moved to [`Layer`].
-    pub(crate) fn package_named(&self, default: &str, package: Option<&str>) -> String {
+    pub fn package_named(&self, default: &str, package: Option<&str>) -> String {
         crate::spec::subpackage(&self.base, package.unwrap_or(self.layers.named(default)))
     }
 
@@ -376,25 +376,25 @@ impl Project {
     /// Reads the cached pom. A renderer asking this question used to call
     /// `pom::read` mid-render, which is what made rendering impure and so made
     /// a path impossible to compute without a body.
-    pub(crate) fn has_dependency(&self, group_id: &str, artifact_id: &str) -> bool {
+    pub fn has_dependency(&self, group_id: &str, artifact_id: &str) -> bool {
         pom::has_dependency(&self.pom, group_id, artifact_id)
     }
 
     /// True once `add db` has put the JDBC starter on the classpath, which is
     /// the fact that decides transaction boundaries and adapter shape.
-    pub(crate) fn has_jdbc(&self) -> bool {
+    pub fn has_jdbc(&self) -> bool {
         self.has_dependency("org.springframework.boot", "spring-boot-starter-jdbc")
     }
 
     /// The Spring Boot major version, defaulting to 3 when the parent cannot
     /// be read -- the conservative choice, since pre-4 package names still
     /// exist as deprecated aliases while the 4 ones simply do not exist before 4.
-    pub(crate) fn boot_major(&self) -> u32 {
+    pub fn boot_major(&self) -> u32 {
         crate::pom::spring_boot_major_of(&self.pom)
     }
 
     /// `@AutoConfigureMockMvc`'s package, moved in the same Boot 4 change.
-    pub(crate) fn mockmvc_autoconfigure_import(&self) -> &'static str {
+    pub fn mockmvc_autoconfigure_import(&self) -> &'static str {
         crate::pom::mockmvc_autoconfigure_import_for(self.boot_major())
     }
 
@@ -404,25 +404,25 @@ impl Project {
     /// disagreed about failure. `Project` owns the one window onto disk, so
     /// the recipes above it stay pure. Recipes reach it through
     /// `spring::Slice::record`, which knows which layer owns the resource.
-    pub(crate) fn record_in(&self, package: &str, ty: &str) -> Option<Vec<crate::spec::Field>> {
+    pub fn record_in(&self, package: &str, ty: &str) -> Option<Vec<crate::spec::Field>> {
         crate::spec::fields_from_record(&self.root, package, ty)
     }
 
-    pub(crate) fn main(&self, layer: Layer, package: Option<&str>) -> PathBuf {
+    pub fn main(&self, layer: Layer, package: Option<&str>) -> PathBuf {
         crate::spec::main_dir(&self.root, &self.package(layer, package))
     }
 
-    pub(crate) fn test(&self, layer: Layer, package: Option<&str>) -> PathBuf {
+    pub fn test(&self, layer: Layer, package: Option<&str>) -> PathBuf {
         crate::spec::test_dir(&self.root, &self.package(layer, package))
     }
 
     /// Main/test source roots for a package already resolved by the caller.
     /// Transitional, for recipes mid-move off the layer strings.
-    pub(crate) fn main_in(&self, package: &str) -> PathBuf {
+    pub fn main_in(&self, package: &str) -> PathBuf {
         crate::spec::main_dir(&self.root, package)
     }
 
-    pub(crate) fn test_in(&self, package: &str) -> PathBuf {
+    pub fn test_in(&self, package: &str) -> PathBuf {
         crate::spec::test_dir(&self.root, package)
     }
 }
@@ -440,18 +440,18 @@ impl Project {
 ///
 /// One value carries the project, the override, and the rule.
 #[derive(Clone, Copy)]
-pub(crate) struct Slice<'a> {
+pub struct Slice<'a> {
     project: &'a Project,
     package: Option<&'a str>,
 }
 
 impl<'a> Slice<'a> {
-    pub(crate) fn new(project: &'a Project, package: Option<&'a str>) -> Self {
+    pub fn new(project: &'a Project, package: Option<&'a str>) -> Self {
         Self { project, package }
     }
 
     /// The package this slice's own classes go in, honouring `--package`.
-    pub(crate) fn placed(&self, layer: Layer) -> String {
+    pub fn placed(&self, layer: Layer) -> String {
         self.project.package(layer, self.package)
     }
 
@@ -459,17 +459,17 @@ impl<'a> Slice<'a> {
     ///
     /// This is where an already-generated resource lives, and it is a
     /// different question from where this slice's classes go.
-    pub(crate) fn owned(&self, layer: Layer) -> String {
+    pub fn owned(&self, layer: Layer) -> String {
         self.project.package(layer, None)
     }
 
     /// The application's base package, which is where `add security` writes
     /// `ScopeAuthorizer`.
-    pub(crate) fn base(&self) -> &'a str {
+    pub fn base(&self) -> &'a str {
         self.project.base()
     }
 
-    pub(crate) fn project(&self) -> &'a Project {
+    pub fn project(&self) -> &'a Project {
         self.project
     }
 
@@ -478,39 +478,39 @@ impl<'a> Slice<'a> {
     /// Capabilities that write one configuration class per application
     /// (`actuator`, `security`, `cors`, `observability`) live here rather than
     /// in a layer: there is one of each, and it belongs beside the app.
-    pub(crate) fn root_package(&self) -> String {
+    pub fn root_package(&self) -> String {
         self.project.package_named("", self.package)
     }
 
     /// The `--package` override itself, for the few helpers that still key
     /// recorded state on it rather than on a resolved package.
-    pub(crate) fn override_package(&self) -> Option<&'a str> {
+    pub fn override_package(&self) -> Option<&'a str> {
         self.package
     }
 
     /// The components of an already-generated record in its conventional home.
-    pub(crate) fn record(&self, layer: Layer, ty: &str) -> Option<Vec<crate::spec::Field>> {
+    pub fn record(&self, layer: Layer, ty: &str) -> Option<Vec<crate::spec::Field>> {
         self.project.record_in(&self.owned(layer), ty)
     }
 
     /// Source roots for this slice's own classes in a layer.
-    pub(crate) fn main(&self, layer: Layer) -> PathBuf {
+    pub fn main(&self, layer: Layer) -> PathBuf {
         self.project.main(layer, self.package)
     }
 
-    pub(crate) fn test(&self, layer: Layer) -> PathBuf {
+    pub fn test(&self, layer: Layer) -> PathBuf {
         self.project.test(layer, self.package)
     }
 
     /// The project root, for the apply-side helpers that genuinely address
     /// the filesystem rather than plan against it.
-    pub(crate) fn root(&self) -> &'a Path {
+    pub fn root(&self) -> &'a Path {
         self.project.root()
     }
 
     /// The project's build flavour, which decides versioned-vs-managed
     /// dependencies and therefore whether a spliced pom is readable at all.
-    pub(crate) fn flavor(&self) -> Flavor {
+    pub fn flavor(&self) -> Flavor {
         self.project.flavor()
     }
 }

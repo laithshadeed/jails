@@ -45,11 +45,11 @@ const LEDGER: &str = ".jails/ledger.toml";
 
 /// Everything jails has applied to one project.
 #[derive(Debug, Default, PartialEq, Eq)]
-pub(crate) struct Ledger {
+pub struct Ledger {
     /// The jails that last wrote this ledger.
-    pub(crate) version: String,
-    pub(crate) applied: Vec<Applied>,
-    pub(crate) models: Vec<Model>,
+    pub version: String,
+    pub applied: Vec<Applied>,
+    pub models: Vec<Model>,
 }
 
 impl Ledger {
@@ -59,7 +59,7 @@ impl Ledger {
     /// `load` reaches this on `NotFound` and on nothing else. Every other read
     /// failure is an error, because an empty ledger is a *claim* -- that jails
     /// owns nothing here -- and a permission error is not evidence for it.
-    pub(crate) fn empty() -> Self {
+    pub fn empty() -> Self {
         Ledger {
             version: env!("CARGO_PKG_VERSION").to_string(),
             ..Ledger::default()
@@ -77,7 +77,7 @@ impl Ledger {
 /// been emptied -- so presence is data now, written by whichever writer owns
 /// the spec column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SpecPresence {
+pub enum SpecPresence {
     /// An `app` manifest intent. True even when every argument is defaulted.
     Present,
     /// A direct `generate` row: paths, and no spec was ever offered.
@@ -91,30 +91,30 @@ pub(crate) enum SpecPresence {
 
 /// One intent, recorded once. Identity is `(recipe, name, package)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Applied {
-    pub(crate) recipe: String,
-    pub(crate) name: String,
+pub struct Applied {
+    pub recipe: String,
+    pub name: String,
     /// The `--package` override, or empty for the conventional layer.
-    pub(crate) package: String,
+    pub package: String,
     /// Whether a spec was recorded, as data rather than as a guess.
-    pub(crate) spec: SpecPresence,
+    pub spec: SpecPresence,
     /// Content, not identity: this is what the entity currently says.
-    pub(crate) fields: Vec<String>,
-    pub(crate) indexes: Vec<String>,
-    pub(crate) on: String,
-    pub(crate) yields: String,
-    pub(crate) timestamps: bool,
+    pub fields: Vec<String>,
+    pub indexes: Vec<String>,
+    pub on: String,
+    pub yields: String,
+    pub timestamps: bool,
     /// The paths this intent wrote, sorted and `/`-normalised.
     ///
     /// Recorded rather than recomputed. `plan.md` §11.2: after a jails upgrade
     /// a recomputed path gives you today's answer for yesterday's file, and
     /// `destroy` would then strand what it claimed to delete.
-    pub(crate) files: Vec<String>,
+    pub files: Vec<String>,
 }
 
 impl Applied {
     /// Two records are the same entity when these three agree.
-    pub(crate) fn is(&self, recipe: &str, name: &str, package: Option<&str>) -> bool {
+    pub fn is(&self, recipe: &str, name: &str, package: Option<&str>) -> bool {
         self.recipe == recipe && self.name == name && self.package == package.unwrap_or_default()
     }
 
@@ -122,7 +122,7 @@ impl Applied {
     ///
     /// Unconditional: a manifest intent with no arguments at all is still a
     /// manifest intent, and that is exactly the case content could not express.
-    pub(crate) fn claim_spec(&mut self) {
+    pub fn claim_spec(&mut self) {
         self.spec = SpecPresence::Present;
     }
 }
@@ -130,10 +130,10 @@ impl Applied {
 /// A field spec recorded so a later generator can build from the model rather
 /// than making the reader retype it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Model {
-    pub(crate) name: String,
-    pub(crate) package: String,
-    pub(crate) fields: Vec<String>,
+pub struct Model {
+    pub name: String,
+    pub package: String,
+    pub fields: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -148,7 +148,7 @@ pub(crate) struct Model {
 /// in this project -- so `destroy` would report there is nothing to delete over
 /// files that are right there, and a write would overwrite the only record of
 /// what jails owns. Only `NotFound` is evidence for that claim.
-pub(crate) fn load(root: &Path) -> Result<Ledger> {
+pub fn load(root: &Path) -> Result<Ledger> {
     let path = root.join(LEDGER);
     match fs::read_to_string(&path) {
         Ok(source) => parse(&source).map_err(|error| format!("{}: {error}", path.display())),
@@ -389,7 +389,7 @@ fn elements(inner: &str) -> Vec<String> {
 // Writing
 // ---------------------------------------------------------------------------
 
-pub(crate) fn save(root: &Path, ledger: &Ledger) -> Result<()> {
+pub fn save(root: &Path, ledger: &Ledger) -> Result<()> {
     crate::apply::atomically(root.join(LEDGER), render(ledger))
 }
 
@@ -471,7 +471,7 @@ fn quoted_array(values: &[String]) -> String {
 // ---------------------------------------------------------------------------
 
 /// A project-relative, `/`-separated path, refusing anything that escapes.
-pub(crate) fn relative(root: &Path, path: &Path) -> Result<String> {
+pub fn relative(root: &Path, path: &Path) -> Result<String> {
     let relative = path.strip_prefix(root).map_err(|_| {
         format!(
             "generated path {} escapes project root {}",
@@ -498,7 +498,7 @@ pub(crate) fn relative(root: &Path, path: &Path) -> Result<String> {
     Ok(parts.join("/"))
 }
 
-pub(crate) fn absolute(root: &Path, relative: &str) -> Result<PathBuf> {
+pub fn absolute(root: &Path, relative: &str) -> Result<PathBuf> {
     let path = Path::new(relative);
     if path.as_os_str().is_empty()
         || path
@@ -518,7 +518,7 @@ pub(crate) fn absolute(root: &Path, relative: &str) -> Result<PathBuf> {
 /// and `app apply` recording the spec it was built from -- and neither owns the
 /// other's columns. Replacing the row wholesale is how one of them silently
 /// erases the other, so both come through here and set only their own fields.
-pub(crate) fn entry_mut<'a>(
+pub fn entry_mut<'a>(
     ledger: &'a mut Ledger,
     recipe: &str,
     name: &str,

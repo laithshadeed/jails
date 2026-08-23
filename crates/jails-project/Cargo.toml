@@ -1,0 +1,14 @@
+[package]
+name = "jails-project"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+# `compose::Runtime` is a `ValueEnum`, same completion rule as `Capability`.
+clap = { version = "4.6.4", features = ["derive"] }
+jails-support = { path = "../jails-support" }
+jails-java = { path = "../jails-java" }
+jails-spec = { path = "../jails-spec" }
+
+[lints]
+workspace = true

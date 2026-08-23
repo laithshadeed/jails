@@ -692,7 +692,7 @@ fn indent_block(body: &str, indent: &str) -> String {
 ///
 /// `Project` caches the pom once; re-reading it per renderer is exactly the
 /// information leakage abstract.md §4.3 names.
-pub(crate) fn spring_boot_major_of(pom: &str) -> u32 {
+pub fn spring_boot_major_of(pom: &str) -> u32 {
     let Some(idx) = pom.find("spring-boot-starter-parent") else {
         return 3;
     };
@@ -714,7 +714,7 @@ pub(crate) fn spring_boot_major_of(pom: &str) -> u32 {
 ///
 /// Reached through [`crate::model::Project::mockmvc_autoconfigure_import`],
 /// for the same reason as its `@WebMvcTest` sibling above.
-pub(crate) fn mockmvc_autoconfigure_import_for(boot_major: u32) -> &'static str {
+pub fn mockmvc_autoconfigure_import_for(boot_major: u32) -> &'static str {
     const LEGACY: &str =
         "org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc";
     const CURRENT: &str = "org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc";

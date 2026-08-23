@@ -126,6 +126,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "jails-java",
+ "jails-project",
  "jails-spec",
  "jails-support",
 ]
@@ -134,6 +135,16 @@ dependencies = [
 name = "jails-java"
 version = "0.1.0"
 dependencies = [
+ "jails-support",
+]
+
+[[package]]
+name = "jails-project"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "jails-java",
+ "jails-spec",
  "jails-support",
 ]
 

@@ -1137,13 +1137,28 @@ fn top_level_commas(inner: &str) -> usize {
     params + usize::from(segment_has_content)
 }
 
+/// A declaration of `keyword`, at any visibility.
+///
+/// Spelling the visibilities out cost a gate its sight: the workspace split
+/// turned `pub(crate) struct` into `pub struct` inside a moved crate, and a
+/// scanner matching only the first two spellings reported zero — an improvement
+/// that had not happened, over code it could no longer see.
+fn is_item(line: &str, keyword: &str) -> bool {
+    let rest = line
+        .strip_prefix("pub(crate) ")
+        .or_else(|| line.strip_prefix("pub(super) "))
+        .or_else(|| line.strip_prefix("pub "))
+        .unwrap_or(line);
+    rest.starts_with(keyword) && rest[keyword.len()..].starts_with(' ')
+}
+
 fn body_carrying_structs(src: &[Source]) -> usize {
     let mut found = 0;
     for file in src {
         let mut in_struct = false;
         for line in file.production.lines() {
             let trimmed = line.trim();
-            if trimmed.starts_with("struct ") || trimmed.starts_with("pub(crate) struct ") {
+            if is_item(trimmed, "struct") {
                 in_struct = trimmed.ends_with('{');
                 continue;
             }
@@ -1181,7 +1196,7 @@ fn type_aliases(src: &[Source]) -> usize {
                 .lines()
                 .filter(|line| {
                     let line = line.trim();
-                    line.starts_with("type ") || line.starts_with("pub(crate) type ")
+                    is_item(line, "type")
                 })
                 .filter(|line| line.contains("= Change;") || line.contains("= Artifact;"))
                 .count()

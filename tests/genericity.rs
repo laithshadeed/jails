@@ -48,8 +48,11 @@ const ALLOWED: &[AllowedConcept] = &[
     AllowedConcept {
         word: "ledger",
         files: &[
-            "src/ledger.rs",
-            "src/generated_files.rs",
+            "crates/jails-project/src/ledger.rs",
+            "crates/jails-project/src/generated_files.rs",
+            // The crate root has to declare `pub mod ledger;` and say what it
+            // is for. Same word, same reason, one level up.
+            "crates/jails-project/src/lib.rs",
             "src/app.rs",
             "src/generate/remove.rs",
             "src/main.rs",
@@ -84,8 +87,23 @@ fn core_generation_stays_free_of_showcase_vocabulary() {
             "an allowed concept must name its exact implementation files"
         );
     }
-    for scope in ["src", "templates"] {
-        for path in source_files(&root.join(scope)) {
+    // Every crate, not only the binary's own `src/`. A scanner that walked one
+    // package would have reported a clean sweep over five crates it never read,
+    // which is the same failure as a skipped tier-3 test: green, and meaningless.
+    let mut scopes = vec![root.join("src"), root.join("templates")];
+    let crates = root.join("crates");
+    if crates.is_dir() {
+        let mut members: Vec<PathBuf> = fs::read_dir(&crates)
+            .expect("failed to read crates/")
+            .map(|entry| entry.expect("failed to read a crates/ entry").path())
+            .collect();
+        members.sort();
+        scopes.extend(members.into_iter().map(|member| member.join("src")));
+    }
+    let mut scanned = 0;
+    for scope in scopes {
+        for path in source_files(&scope) {
+            scanned += 1;
             let relative = path.strip_prefix(root).unwrap();
             let source = fs::read_to_string(&path).unwrap();
             let visible = without_comments(&source);
@@ -116,6 +134,11 @@ fn core_generation_stays_free_of_showcase_vocabulary() {
             }
         }
     }
+    assert!(
+        scanned > 60,
+        "the genericity sweep read only {scanned} files -- it has lost track of \
+         where the code lives, and a clean result would mean nothing"
+    );
     for ((allowed, used), files) in ALLOWED.iter().zip(used_allowances).zip(&used_files) {
         assert!(
             used,

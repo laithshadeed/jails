@@ -20,11 +20,17 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+jails-project = { path = "crates/jails-project" }
 jails-spec = { path = "crates/jails-spec" }
 jails-java = { path = "crates/jails-java" }
 clap = { version = "4.6.4", features = ["derive"] }
 clap_complete = "4.6.7"
 jails-support = { path = "crates/jails-support" }
+
+[dev-dependencies]
+# The integration tests assert against jails' own constants -- `TARGET_RELEASE`
+# among them -- rather than keeping copies of them in the fixtures.
+jails-project = { path = "crates/jails-project" }
 
 [lints]
 workspace = true

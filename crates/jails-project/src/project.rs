@@ -249,7 +249,7 @@ fn read_pom(root: &Path) -> Result<String> {
 
 /// The module's own artifactId, ignoring the parent's -- which is why the
 /// `<parent>` block is dropped before looking.
-pub(crate) fn artifact_id(xml: &str) -> Option<String> {
+pub fn artifact_id(xml: &str) -> Option<String> {
     let xml = without_comments(xml);
     let xml = without_first_block(&xml, "parent");
     element_values(&xml, "artifactId").into_iter().next()
@@ -297,7 +297,7 @@ fn maven_command(workspace_root: &Path) -> PathBuf {
 }
 
 #[cfg(test)]
-pub(crate) fn maven_command_for_tests(workspace_root: &Path) -> PathBuf {
+pub fn maven_command_for_tests(workspace_root: &Path) -> PathBuf {
     maven_command(workspace_root)
 }
 

@@ -23,7 +23,7 @@ use jails_support::Result;
 
 /// One HTTP route: verb, path, and the method behind it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct Route {
+pub struct Route {
     pub path: String,
     pub verb: String,
     pub handler: String,
@@ -71,7 +71,7 @@ pub fn routes(json: bool) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn collect_routes(root: &Path) -> Vec<Route> {
+pub fn collect_routes(root: &Path) -> Vec<Route> {
     let src = root.join("src/main/java");
     let mut found = Vec::new();
     for path in crate::java::source_files(&src) {
@@ -236,7 +236,7 @@ fn routes_json(routes: &[Route]) -> String {
 
 /// One registered component and what its constructor asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Bean {
+pub struct Bean {
     pub stereotype: String,
     pub type_name: String,
     pub source: String,
@@ -372,7 +372,7 @@ pub fn beans(pattern: Option<&str>, json: bool) -> Result<()> {
 /// Every bean in the project, plus the set of type names the project
 /// declares at all (needed to tell "your own type, unregistered" apart from
 /// "something Spring provides").
-pub(crate) fn collect_beans(root: &Path) -> (Vec<Bean>, BTreeSet<String>) {
+pub fn collect_beans(root: &Path) -> (Vec<Bean>, BTreeSet<String>) {
     let src = root.join("src/main/java");
     let mut beans = Vec::new();
     let mut project_types = BTreeSet::new();
@@ -395,7 +395,7 @@ pub(crate) fn collect_beans(root: &Path) -> (Vec<Bean>, BTreeSet<String>) {
 /// bean, but `InMemoryRewardRepository implements RewardRepository` is -- and
 /// so is `JdbcRewardRepository`, which is exactly how a project ends up with
 /// two candidates for one injection point.
-pub(crate) fn providers(beans: &[Bean]) -> BTreeMap<String, Vec<String>> {
+pub fn providers(beans: &[Bean]) -> BTreeMap<String, Vec<String>> {
     let mut index: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut primary: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for bean in beans {
@@ -513,7 +513,7 @@ fn line_of(source: &str, needle: &str) -> usize {
 
 /// A path relative to the project root when possible -- absolute paths make
 /// the output unusable in a narrow terminal split.
-pub(crate) fn relative(root: &Path, path: &Path) -> String {
+pub fn relative(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
         .unwrap_or(path)
         .to_string_lossy()
@@ -838,7 +838,7 @@ fn contains_package(segments: &[String], package: &str) -> bool {
 
 /// A `TODO`/`FIXME`-style marker and where it is.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Note {
+pub struct Note {
     pub tag: String,
     pub file: String,
     pub line: usize,
@@ -892,7 +892,7 @@ pub fn notes(tag: Option<&str>, json: bool) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn collect_notes(root: &Path, only: Option<&str>) -> Vec<Note> {
+pub fn collect_notes(root: &Path, only: Option<&str>) -> Vec<Note> {
     let mut found = Vec::new();
     for dir in ["src/main/java", "src/test/java"] {
         for path in crate::java::source_files(&root.join(dir)) {

@@ -182,7 +182,7 @@ fn read_lines(path: &Path) -> Result<Vec<String>> {
 /// `app apply` writes the *spec* on the same row. Replacing the row here would
 /// erase it, and the erasure would look exactly like a manifest whose fields
 /// line had been emptied -- so this sets `files` and nothing else.
-pub(crate) fn record(
+pub fn record(
     root: &Path,
     kind: &str,
     name: &str,
@@ -202,7 +202,7 @@ pub(crate) fn record(
     Ok(())
 }
 
-pub(crate) fn paths(
+pub fn paths(
     root: &Path,
     kind: &str,
     name: &str,
@@ -224,7 +224,7 @@ pub(crate) fn paths(
         .map(Some)
 }
 
-pub(crate) fn forget(root: &Path, kind: &str, name: &str, package: Option<&str>) -> Result<()> {
+pub fn forget(root: &Path, kind: &str, name: &str, package: Option<&str>) -> Result<()> {
     let mut state = read(root)?;
     let before = state.ledger.applied.len();
     state
@@ -238,7 +238,7 @@ pub(crate) fn forget(root: &Path, kind: &str, name: &str, package: Option<&str>)
     Ok(())
 }
 
-pub(crate) fn record_model(
+pub fn record_model(
     root: &Path,
     name: &str,
     package: Option<&str>,
@@ -265,11 +265,7 @@ pub(crate) fn record_model(
     Ok(())
 }
 
-pub(crate) fn model_fields(
-    root: &Path,
-    name: &str,
-    package: Option<&str>,
-) -> Result<Option<Vec<String>>> {
+pub fn model_fields(root: &Path, name: &str, package: Option<&str>) -> Result<Option<Vec<String>>> {
     let current = read(root)?.ledger;
     Ok(current
         .models
