@@ -17,6 +17,7 @@ pub mod entity;
 pub mod envelope;
 pub mod identity;
 pub mod provenance;
+pub mod recipe;
 pub mod request;
 
 pub(crate) use jails_support::Result;
