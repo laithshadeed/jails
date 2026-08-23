@@ -27,7 +27,7 @@ use super::*;
 
 #[cfg(test)]
 pub(super) fn spring_factories_block(fqcn: &str) -> String {
-    format!("# jails:db\n{SPRING_FACTORIES_KEY}={fqcn}\n# /jails:db\n")
+    crate::codemod::Marked::new("db").render(&format!("{SPRING_FACTORIES_KEY}={fqcn}\n"))
 }
 
 /// Import the container config into every `@SpringBootTest` in the project.
@@ -131,33 +131,24 @@ pub(super) fn uninstall_postgres_test_initializer(
 }
 
 pub(super) fn remove_jails_db_block(source: &str, fqcn: &str) -> Option<String> {
-    if !source.contains(fqcn) && !source.contains("# jails:db") {
-        return None;
-    }
-    let mut out = String::new();
-    let mut skipping = false;
-    let mut changed = false;
-    for line in source.lines() {
-        let trimmed = line.trim();
-        if trimmed == "# jails:db" {
-            skipping = true;
-            changed = true;
-            continue;
-        }
-        if skipping {
-            if trimmed == "# /jails:db" {
-                skipping = false;
-            }
-            continue;
-        }
-        if trimmed.contains(fqcn) {
-            changed = true;
+    let marked = crate::codemod::Marked::new("db");
+    // Two removals, and both are needed: the block jails wrote, and any bare
+    // line naming the initializer that an older jails left unmarked. A file
+    // that has one and not the other still registers the initializer, and a
+    // second container then starts for every test.
+    let stripped = marked.strip_from(source);
+    let text = stripped.clone().unwrap_or_else(|| source.to_string());
+    let mut out = String::with_capacity(text.len());
+    let mut dropped_a_line = false;
+    for line in text.lines() {
+        if line.trim().contains(fqcn) {
+            dropped_a_line = true;
             continue;
         }
         out.push_str(line);
         out.push('\n');
     }
-    changed.then_some(out)
+    (stripped.is_some() || dropped_a_line).then_some(out)
 }
 
 /// Drop `@Import(PostgresContainerConfig)` left by earlier jails versions.

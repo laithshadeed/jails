@@ -48,7 +48,7 @@ fn gates() -> Vec<(Ratchet, usize)> {
     vec![
         (
             Ratchet {
-                name: "`root: &Path` parameters",
+                name: "`root: &Path` parameters (target withdrawn — §8.0)",
                 rung: "1 — Introduce Parameter Object (`Project`)",
                 // 142 -> 144 was a measurement correction, not a regression:
                 // the `&std::path::Path` spelling was never being counted.
@@ -67,7 +67,12 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // rather than the disease. `run.rs`'s eight call sites fold
                 // into one `maven_root`, which is why it is four and not five.
                 ceiling: 139,
-                target: 40,
+                // Withdrawn, not reached. abstract.md §8.0: the count includes
+                // modules whose subject *is* a path, so 40 read as a demand to
+                // stop writing modules. The row below is rung 1's condition;
+                // this one stays a ratchet against growth, which is why the
+                // target tracks the ceiling rather than sitting under it.
+                target: 139,
                 why: "Every one is a fact re-derived from a primitive instead of read off \
                       the resolved `Project`. This is the count abstract.md §8.1 watched \
                       rise from 161 to 195 with nothing to say so.",
@@ -183,6 +188,31 @@ fn gates() -> Vec<(Ratchet, usize)> {
         ),
         (
             Ratchet {
+                name: "`# jails:` block literals outside `codemod.rs`",
+                rung: "16 — collect the splice primitives (plan.md §11)",
+                // `compose.rs`, `add.rs`, `add/database.rs`,
+                // `add/test_wiring.rs` and `doctor.rs` each built and parsed
+                // the marked-block format with their own `format!`. Five
+                // owners of one format is `process.rs` before it was
+                // extracted, with the same consequence waiting: a change to
+                // the markers, or to the rule about the trailing newline, has
+                // to be made in five places and will be made in four.
+                ceiling: 0,
+                target: 0,
+                why: "The marked block is how jails edits a file the reader owns, and it is \
+                      what makes `remove` the exact inverse of `add`. A second implementation \
+                      of it is a second answer to what `remove db` deletes.",
+            },
+            src.iter()
+                .filter(|file| !file.path.ends_with("codemod.rs"))
+                .map(|file| {
+                    file.production.matches("# jails:").count()
+                        + file.production.matches("# /jails:").count()
+                })
+                .sum(),
+        ),
+        (
+            Ratchet {
                 name: "`fs::write` sites outside the apply layer",
                 rung: "6 — `Edit` + `apply/codemod.rs`",
                 ceiling: 0,
@@ -195,7 +225,7 @@ fn gates() -> Vec<(Ratchet, usize)> {
         ),
         (
             Ratchet {
-                name: "`doctor.rs` production lines",
+                name: "`doctor` module lines (target withdrawn — §8.0.1)",
                 rung: "9 — Move Method (`doctor` derives from `plan`)",
                 // Rose 1123 -> 1140 while rung 1 ran (every check that took
                 // `(root, pom_text)` now takes one `Project`), then 1140 ->
@@ -229,7 +259,10 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // optional -- fifteen greens over a build jails cannot see is
                 // §8.9's failure in a new disguise.
                 ceiling: 1340,
-                target: 700,
+                // Withdrawn, not reached. abstract.md §8.0.1 audits all ten
+                // checks: none is a re-encoded dependency fact, so the 700
+                // measured a saving that is not there. Ratchet against growth.
+                target: 1340,
                 why: "Feature Envy at module scale: doctor re-derives by reading the project \
                       back off disk the facts `add/*` already own, and the drift between them \
                       is a class nothing catches.",

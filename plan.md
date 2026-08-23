@@ -936,11 +936,25 @@ believes is already there* rather than leaving it to convention. Naming the
 belief immediately paid: `create` surfaced a latent double-write of
 `package-info.java` that the old silent overwrite had hidden.
 
-**`src/codemod.rs`** — collect the splice primitives (`pom::add_dependency`,
-compose blocks, property blocks, `register_command`,
-`install_test_container_import`, the `@Import` merger, the `jails.toml`
-one-liner) under named operations. Same extraction as `process.rs`; pays on
-every capability and is a prerequisite for §6.2 option F.
+**`src/codemod.rs` — shipped**, and narrower than proposed, which is the
+finding. The primitives listed here do not share an implementation: a pom
+splice, a dispatcher registration and an `@Import` merge have nothing in common
+below the surface. What they *did* share was one format with **five owners** —
+`compose.rs`, `add.rs`, `add/database.rs`, `add/test_wiring.rs` and `doctor.rs`
+each built and parsed `# jails:<marker>` … `# /jails:<marker>` with their own
+`format!`, which is `process.rs` before extraction and with the same
+consequence waiting.
+
+So `codemod.rs` owns the marked block and nothing else: render, present-in,
+body-in, strip-from. `tests/architecture.rs` fails on a `# jails:` literal
+outside it, so a sixth owner cannot appear quietly. There is deliberately no
+`replace`, because nothing needs one — Metz's rule about speculative
+abstraction applies to a vocabulary as much as to a type.
+
+The rest of the list stays where it is. `pom::add_dependency` belongs with the
+pom, `register_command` with the dispatcher it knows the shape of. Collecting
+them by *what they are called from* rather than by what they know would be the
+temporal decomposition `abstract.md` §3.2 names.
 
 **`new --offline` shipped** — `templates/new/offline_{pom.xml,application,application_test}`
 vendored via `include_str!`, behind an explicit flag, so a start.spring.io
@@ -1312,7 +1326,7 @@ yet — which is a healthier list than the one it replaces.
 | 13 | `jails testd` + `--affected` | §10.2 | L | — |
 | 14 | `jails dev` v1 | §10.3 | L | — |
 | 15 | ~~`add sse`~~ (§13.2), ~~`g auth`~~ and ~~`g webhook`~~ (§13.3) **shipped**; `add mail` and `g search` still open | §13 | M each | B C |
-| 16 | Atomic whole-manifest `ChangeSet`; `codemod.rs`. **Half done**: `src/apply/` is the single write path (`fs::write` banned elsewhere); what is left is collecting the *splice* primitives under named operations, and the atomic `ChangeSet` on top | §11 | M | A B C |
+| 16 | ~~`codemod.rs`~~ **shipped** — narrower than proposed and the narrowing is the finding (§11): the primitives share a *format*, not an implementation, and that format had five owners. `src/apply/` remains the single write path. What is left is the atomic whole-manifest `ChangeSet` on top, which is the part §11's own sequence puts last and calls "if it still earns its keep" | §11 | S remaining | A B C |
 
 Item 1 is the only one with a broken user-visible case behind it, so it is
 first. Items 2–3 are the maintainability debt, and item 2 got worse in this

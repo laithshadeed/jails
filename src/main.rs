@@ -3,6 +3,7 @@ mod adopt;
 mod app;
 mod apply;
 mod build;
+mod codemod;
 mod commands;
 mod compose;
 mod config;

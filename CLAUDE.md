@@ -178,6 +178,16 @@ to build next and why. Do not add proposals here.
   migrations in an order nobody has tested.
 - `src/pom.rs` — flavor and release-level detection, plus a comment-preserving
   dependency/plugin splice and unsplice. `TARGET_RELEASE` lives here.
+- `src/codemod.rs` — **the marked block, and only that**: `# jails:<marker>`
+  … `# /jails:<marker>`, which is how jails edits a file the reader owns and
+  what makes `remove` the exact inverse of `add`. It had five owners
+  (`compose.rs`, `add.rs`, `add/database.rs`, `add/test_wiring.rs`,
+  `doctor.rs`) each with its own `format!`; `tests/architecture.rs` now fails
+  on a `# jails:` literal outside this module, so a sixth cannot appear
+  quietly. `Marked::indented` exists because a marker at column zero inside a
+  YAML mapping is a parse error rather than a misplaced comment. There is no
+  `replace` — nothing needs one, and `remove` then `add` is the path `sync`
+  takes.
 - `src/compose.rs` — the other user-owned file jails edits: `compose.yaml`.
   Marked service blocks so `add db` and `add kafka` stack, and `remove` can
   take one service out without touching the other. Also `start`/`stop`

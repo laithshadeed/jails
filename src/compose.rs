@@ -204,21 +204,30 @@ fn line_offset(text: &str, line_idx: usize) -> Option<usize> {
     None
 }
 
+/// The block format lives in `codemod.rs`; the two-space indent is this
+/// file's, because a marker at column zero inside a YAML mapping is a parse
+/// error rather than a comment in the wrong place.
+fn block(marker: &str) -> crate::codemod::Marked<'_> {
+    crate::codemod::Marked::indented(marker, "  ")
+}
+
 fn marked_block(svc: &Service) -> String {
-    format!(
-        "  # jails:{marker}\n  {name}:\n{body}  # /jails:{marker}\n",
-        marker = svc.marker,
-        name = svc.name,
-        body = svc.body
-    )
+    // `svc.body` already carries its own two-space nesting under the service
+    // name, so it is rendered as-is beneath a line the block indents.
+    let mut inner = format!("{}:\n", svc.name);
+    for line in svc.body.lines() {
+        inner.push_str(line.strip_prefix("  ").unwrap_or(line));
+        inner.push('\n');
+    }
+    block(svc.marker).render(&inner)
 }
 
 fn marked_volume(name: &str, marker: &str) -> String {
-    format!("  # jails:{marker}\n  {name}:\n  # /jails:{marker}\n")
+    block(marker).render(&format!("{name}:\n"))
 }
 
 pub fn has_service(text: &str, svc: &Service) -> bool {
-    text.contains(&format!("# jails:{}", svc.marker))
+    block(svc.marker).present_in(text)
         || text
             .lines()
             .any(|line| line.trim_end() == format!("  {}:", svc.name))
@@ -303,7 +312,7 @@ fn next_top_level_after(text: &str, header_line: usize) -> Option<usize> {
 }
 
 fn ensure_volume(text: &str, name: &str, marker: &str) -> String {
-    if text.contains(&format!("# jails:{marker}"))
+    if block(marker).present_in(text)
         && section_body(text, "volumes").contains(&format!("  {name}:"))
     {
         return text.to_string();
@@ -329,19 +338,7 @@ pub fn remove_service(text: &str, svc: &Service) -> Option<String> {
 }
 
 fn strip_marked(text: &str, marker: &str) -> Option<String> {
-    let open = format!("# jails:{marker}");
-    let close = format!("# /jails:{marker}");
-    let start = text.find(&open)?;
-    let start = text[..start].rfind('\n').map(|i| i + 1).unwrap_or(0);
-    let close_at = text[start..].find(&close)? + start;
-    let mut end = close_at + close.len();
-    if text[end..].starts_with('\n') {
-        end += 1;
-    }
-    let mut out = String::with_capacity(text.len() - (end - start));
-    out.push_str(&text[..start]);
-    out.push_str(&text[end..]);
-    Some(out)
+    block(marker).strip_from(text)
 }
 
 fn drop_empty_section(text: &str, key: &str) -> String {

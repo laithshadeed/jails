@@ -302,12 +302,12 @@ pub(super) fn install_capability_properties(
     } else {
         String::new()
     };
-    let marker = format!("# jails:{label}");
-    if existing.contains(&marker) {
+    let marked = crate::codemod::Marked::new(label);
+    if marked.present_in(&existing) {
         println!("  exists  {}", rel(root, &path));
         return Ok(false);
     }
-    let block = format!("{marker}\n{}\n# /jails:{label}\n", lines.join("\n"));
+    let block = marked.render(&format!("{}\n", lines.join("\n")));
     let next = if existing.trim().is_empty() {
         block
     } else {
@@ -348,30 +348,15 @@ pub(super) fn install_capability_properties(
 /// Comments and blank lines are ignored: a comment inside the block is
 /// usually jails' own explanation of the property below it.
 pub(super) fn unowned_properties(existing: &str, label: &str, owned: &[String]) -> Vec<String> {
-    let open = format!("# jails:{label}");
-    let close = format!("# /jails:{label}");
-    let mut found = Vec::new();
-    let mut inside = false;
-    for line in existing.lines() {
-        let trimmed = line.trim();
-        if trimmed == open {
-            inside = true;
-            continue;
-        }
-        if !inside {
-            continue;
-        }
-        if trimmed == close {
-            break;
-        }
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        if !owned.iter().any(|p| p.trim() == trimmed) {
-            found.push(trimmed.to_string());
-        }
-    }
-    found
+    let Some(body) = crate::codemod::Marked::new(label).body_in(existing) else {
+        return Vec::new();
+    };
+    body.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .filter(|line| !owned.iter().any(|owned| owned.trim() == *line))
+        .map(str::to_owned)
+        .collect()
 }
 
 /// Warn about hand-written properties inside the block about to be deleted.
@@ -446,28 +431,9 @@ pub(super) fn remove_capability_properties(root: &Path, label: &str) -> Result<(
     let Ok(existing) = fs::read_to_string(&path) else {
         return Ok(());
     };
-    let open = format!("# jails:{label}");
-    let close = format!("# /jails:{label}");
-    if !existing.contains(&open) {
+    let Some(out) = crate::codemod::Marked::new(label).strip_from(&existing) else {
         return Ok(());
-    }
-    let mut out = String::new();
-    let mut skipping = false;
-    for line in existing.lines() {
-        let trimmed = line.trim();
-        if trimmed == open {
-            skipping = true;
-            continue;
-        }
-        if skipping {
-            if trimmed == close {
-                skipping = false;
-            }
-            continue;
-        }
-        out.push_str(line);
-        out.push('\n');
-    }
+    };
     if out.trim().is_empty() {
         // The file existed only for this block; leaving an empty file behind
         // is litter.
