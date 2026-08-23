@@ -87,7 +87,13 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // five rises here are directory-walkers, which is the pattern
                 // §8.0 predicted would keep the raw count away from zero and
                 // is why the target was withdrawn rather than chased.
-                ceiling: 145,
+                //
+                // 145 -> 146 for `ProjectHandle::at`, which is the executor's
+                // constructor: the one place a path becomes the resolved
+                // handle every commit step then takes. That is the cure this
+                // rung asks for, not the disease -- nothing downstream of it
+                // sees a `&Path` at all.
+                ceiling: 146,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;
@@ -655,7 +661,9 @@ const LAYERS: &[(&str, usize)] = &[
     ("serialize", 5),
     ("tool", 5),
     // jails-commit: making a prepared transaction durable, and recovering one.
+    ("execute", 6),
     ("journal", 6),
+    ("outcome", 6),
     ("store", 6),
     // jails-tooling: commands that drive a toolchain or report on a project.
     ("run", 7),

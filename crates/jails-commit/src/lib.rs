@@ -7,7 +7,9 @@
 //! executor small: there is one direction to finish in, and a recovered
 //! journal either has everything it needs to finish or was never valid.
 
+pub mod execute;
 pub mod journal;
+pub mod outcome;
 pub mod store;
 
 pub(crate) use jails_support::Result;

@@ -84,6 +84,9 @@ const ALLOWED: &[AllowedConcept] = &[
             // A journal names the ledger-committed phase, which is the point
             // after which recovery must roll forward rather than back.
             "crates/jails-commit/src/journal.rs",
+            // The commit point *is* the ledger write; the executor cannot
+            // describe its own protocol without naming it.
+            "crates/jails-commit/src/execute.rs",
             "src/app.rs",
             // The typed shadow reads the schema-1 store's rows to build its
             // observed side, so it names the module they live in.
