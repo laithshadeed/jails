@@ -545,6 +545,7 @@ const LAYERS: &[(&str, usize)] = &[
     ("apply", 0),
     ("process", 0),
     ("scratch", 0),
+    ("codec", 0),
     ("codemod", 0),
     ("json", 0),
     // jails-java: reading Java and rendering templates into it.
