@@ -106,7 +106,7 @@ pub(super) fn kafka_plan(slice: &Slice) -> Result<Change> {
                 TESTCONTAINERS_JUNIT,
                 AWAITILITY,
             ],
-            crate::spring::kafka_files(root, pkg),
+            crate::spring::kafka_files(root, pkg, &base_package(root)?),
         ),
         Flavor::PlainMaven => (vec![KAFKA_CLIENTS], Vec::new()),
     };

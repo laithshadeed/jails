@@ -2,7 +2,7 @@ package com.example.demo.messaging;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.time.Duration;
+import com.example.demo.KafkaTestcontainersConfig;
 import java.time.Instant;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -11,12 +11,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.kafka.annotation.KafkaListener;
-import org.testcontainers.kafka.KafkaContainer;
 
 /**
  * Publishes through a real broker and waits for it to come back.
@@ -33,8 +29,11 @@ import org.testcontainers.kafka.KafkaContainer;
  * one run in five. Waiting on a latch with a timeout either observes the
  * message or fails saying so.
  */
-@SpringBootTest(properties = "spring.kafka.consumer.properties.group.protocol=classic")
-@Import(MessageReceivedMessagingIT.Containers.class)
+@SpringBootTest(properties = {
+    "spring.kafka.consumer.properties.group.protocol=classic",
+    "spring.kafka.listener.auto-startup=true"
+})
+@Import({ KafkaTestcontainersConfig.class, MessageReceivedMessagingIT.ProbeConfiguration.class })
 class MessageReceivedMessagingIT {
 
     @Autowired
@@ -82,16 +81,10 @@ class MessageReceivedMessagingIT {
         }
     }
 
-    @TestConfiguration(proxyBeanMethods = false)
-    static class Containers {
+    @org.springframework.boot.test.context.TestConfiguration(proxyBeanMethods = false)
+    static class ProbeConfiguration {
 
-        @Bean
-        @ServiceConnection
-        KafkaContainer kafka() {
-            return new KafkaContainer("apache/kafka:4.1.0").withStartupTimeout(Duration.ofMinutes(2));
-        }
-
-        @Bean
+        @org.springframework.context.annotation.Bean
         Probe probe() {
             return new Probe();
         }

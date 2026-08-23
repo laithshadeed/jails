@@ -299,6 +299,7 @@ fn outbox_it_java(
     let service: &str = &slice.placed(Layer::Service);
     let domain: &str = &slice.owned(Layer::Domain);
     let app: &str = &slice.owned(Layer::App);
+    let base: String = slice.root_package();
     let samples = fields
         .iter()
         .map(|field| crate::generate::sample_value(field, root, domain))
@@ -309,6 +310,8 @@ fn outbox_it_java(
     let usecase_import = crate::generate::import_of(pkg, service, &format!("{usecase}UseCase"));
     let target_import = crate::generate::import_of(pkg, domain, target);
     let repo_import = crate::generate::import_of(pkg, app, &format!("{target}Repository"));
+    let kafka_testcontainers_import =
+        crate::generate::import_of(pkg, &base, KAFKA_TESTCONTAINERS_CONFIG);
     let imports = java_literal_imports(fields, domain)
         .into_iter()
         .map(|import| format!("import {import};\n"))
@@ -331,6 +334,8 @@ fn outbox_it_java(
             ("usecase_import", &*usecase_import),
             ("target_import", &*target_import),
             ("repo_import", &*repo_import),
+            ("kafka_testcontainers_import", &*kafka_testcontainers_import),
+            ("KAFKA_TESTCONTAINERS_CONFIG", KAFKA_TESTCONTAINERS_CONFIG),
             ("imports", &*imports),
             ("disabled_import", disabled_import),
             ("annotation", annotation),

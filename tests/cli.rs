@@ -661,24 +661,9 @@ fn generate_idempotency_produces_tests_that_run_and_pass() {
             .success()
     );
 
-    let output = std::process::Command::new("mvn")
-        .current_dir(&root)
-        .env("PATH", real_path_without_mvnd())
-        .args([
-            "-o",
-            "-q",
-            "-Dtest=RequestGuardTest",
-            "-DfailIfNoTests=true",
-            "test",
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "the generated guard test must compile and pass:\n{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let path = real_path_without_mvnd();
+    let verified = verified_spring_db_toolbox(&path);
+    assert_surefire_test_count(verified, "RequestGuardTest", 5);
 }
 
 #[test]
@@ -1260,11 +1245,12 @@ fn generated_http_sink_delivers_typed_json_with_a_stable_idempotency_key() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let status = real_maven_cmd(&root, &path)
-        .args(["-q", "-Dtest=ProviderHttpOutboxSinkTest", "test"])
-        .status()
+    let support = verified_app_unit_fixtures(&path)
+        .iter()
+        .find(|(name, _)| *name == "support-inbox")
+        .map(|(_, root)| root)
         .unwrap();
-    assert!(status.success(), "generated HTTP provider contract failed");
+    assert_surefire_test_count(support, "ProviderHttpOutboxSinkTest", 1);
 }
 
 /// The proof applications, as (name, manifest). One list, read by both gates
@@ -1410,6 +1396,240 @@ fn verified_plain_toolbox(path: &str) -> &'static std::path::PathBuf {
     })
 }
 
+/// Two concurrent Spring/JUnit executions for the focused capability and
+/// generator tests.
+/// Each Rust test still creates its own fixture and checks the exact files it
+/// asked jails to write; these toolboxes are the shared proof that the same
+/// generated branches compile and that every Surefire test actually runs.
+///
+/// The split is semantic, not a test filter: security/Redis/mail change the
+/// actuator health result, and SSE plus a job deliberately produce separate
+/// SchedulingConfig classes which would collide in one artificial app. Every
+/// generated test in both valid projects runs, and their Maven lifecycles
+/// overlap.
+struct SpringToolboxes {
+    core: std::path::PathBuf,
+    services: std::path::PathBuf,
+}
+
+fn verified_spring_toolboxes(path: &str) -> &'static SpringToolboxes {
+    static VERIFIED: std::sync::OnceLock<SpringToolboxes> = std::sync::OnceLock::new();
+    VERIFIED.get_or_init(|| {
+        let (core, core_fresh) = cached_toolchain_dir("spring-core-toolbox");
+        let (services, services_fresh) = cached_toolchain_dir("spring-services-toolbox");
+
+        if core_fresh {
+            write_spring_fixture(&core);
+            for capability in ["api", "cache", "actuator", "observability", "json", "sse"] {
+                let status = jails_cmd_with_path(&core, path)
+                    .args(["add", capability, "--no-start"])
+                    .status()
+                    .unwrap();
+                assert!(
+                    status.success(),
+                    "add {capability} failed in the core Spring toolbox"
+                );
+            }
+            for args in [
+                &[
+                    "generate",
+                    "scaffold",
+                    "Post",
+                    "title:string",
+                    "body:text",
+                    "published:boolean",
+                ][..],
+                &["generate", "controller", "Health"][..],
+                &["generate", "service", "Billing"][..],
+                &[
+                    "generate",
+                    "record",
+                    "Tag",
+                    "name:string",
+                    "createdAt:datetime",
+                ][..],
+                &[
+                    "generate",
+                    "record",
+                    "Payout",
+                    "id:uuid",
+                    "amount:long",
+                    "note:string?",
+                ][..],
+                &["generate", "dto", "Payout"][..],
+                &["generate", "client", "Billing"][..],
+            ] {
+                let status = jails_cmd_with_path(&core, path)
+                    .args(args)
+                    .status()
+                    .unwrap();
+                assert!(
+                    status.success(),
+                    "{args:?} failed in the core Spring toolbox"
+                );
+            }
+            mark_toolchain_dir_generated(&core);
+        }
+
+        if services_fresh {
+            write_spring_fixture(&services);
+            for capability in ["kafka", "security", "redis", "mail"] {
+                let status = jails_cmd_with_path(&services, path)
+                    .args(["add", capability, "--no-start"])
+                    .status()
+                    .unwrap();
+                assert!(
+                    status.success(),
+                    "add {capability} failed in the services Spring toolbox"
+                );
+            }
+            for args in [
+                &[
+                    "generate",
+                    "event",
+                    "PayoutSettled",
+                    "id:uuid",
+                    "payoutId:uuid",
+                    "amount:decimal",
+                    "occurredAt:instant",
+                ][..],
+                &["generate", "auth", "Api"][..],
+                &["generate", "webhook", "Provider"][..],
+                &["generate", "job", "Sweep"][..],
+            ] {
+                let status = jails_cmd_with_path(&services, path)
+                    .args(args)
+                    .status()
+                    .unwrap();
+                assert!(
+                    status.success(),
+                    "{args:?} failed in the services Spring toolbox"
+                );
+            }
+            mark_toolchain_dir_generated(&services);
+        }
+
+        std::thread::scope(|scope| {
+            let core_test = scope.spawn(|| {
+                real_maven_cmd(&core, path)
+                    .args(["-q", "test"])
+                    .status()
+                    .unwrap()
+            });
+            let services_test = scope.spawn(|| {
+                real_maven_cmd(&services, path)
+                    .args([
+                        "-q",
+                        "-Dapp.auth.secret=0123456789abcdef0123456789abcdef",
+                        "-Dapp.provider.secret=toolbox-provider-secret",
+                        "test",
+                    ])
+                    .status()
+                    .unwrap()
+            });
+            assert!(
+                core_test.join().unwrap().success(),
+                "the core Spring toolbox failed mvn test"
+            );
+            assert!(
+                services_test.join().unwrap().success(),
+                "the services Spring toolbox failed mvn test"
+            );
+        });
+        SpringToolboxes { core, services }
+    })
+}
+
+fn verified_spring_toolbox(path: &str) -> &'static std::path::PathBuf {
+    &verified_spring_toolboxes(path).core
+}
+
+fn verified_spring_services_toolbox(path: &str) -> &'static std::path::PathBuf {
+    &verified_spring_toolboxes(path).services
+}
+
+/// Shared compile-and-unit-test proof for generators which require the JDBC
+/// capability. The dedicated `add_db_on_spring_makes_context_loads_pass` test
+/// still exercises the generated Testcontainers default against PostgreSQL;
+/// this toolbox uses H2 for the branches whose original contract was only
+/// javac/Surefire, avoiding three more Maven JVMs and containers.
+fn verified_spring_db_toolbox(path: &str) -> &'static std::path::PathBuf {
+    static VERIFIED: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    VERIFIED.get_or_init(|| {
+        let (root, fresh) = cached_toolchain_dir("spring-db-toolbox");
+        if fresh {
+            write_spring_fixture(&root);
+            let status = jails_cmd_with_path(&root, path)
+                .args(["add", "db", "--no-start"])
+                .status()
+                .unwrap();
+            assert!(status.success(), "add db failed in the JDBC toolbox");
+
+            for args in [
+                &["generate", "enum", "Currency", "GBP", "USD"][..],
+                &[
+                    "generate",
+                    "scaffold",
+                    "Payout",
+                    "id:uuid",
+                    "amount:bigdecimal",
+                    "currency:Currency",
+                    "paidAt:instant",
+                    "note:string?",
+                ][..],
+                &["generate", "idempotency", "Request"][..],
+                &[
+                    "generate",
+                    "scaffold",
+                    "Article",
+                    "id:uuid@pk",
+                    "title:string!",
+                    "body:string",
+                ][..],
+                &["generate", "search", "Article", "title", "body"][..],
+            ] {
+                let status = jails_cmd_with_path(&root, path)
+                    .args(args)
+                    .status()
+                    .unwrap();
+                assert!(status.success(), "{args:?} failed in the JDBC toolbox");
+            }
+
+            add_app_unit_test_database(&root);
+            mark_toolchain_dir_generated(&root);
+        }
+        let mut command = real_maven_cmd(&root, path);
+        configure_app_unit_maven(&mut command, "db-toolbox");
+        let status = command.args(["-q", "test"]).status().unwrap();
+        assert!(status.success(), "the shared JDBC toolbox failed mvn test");
+        root
+    })
+}
+
+fn assert_surefire_test_count(root: &Path, class_name: &str, expected: usize) {
+    let reports = root.join("target/surefire-reports");
+    let report = fs::read_dir(&reports)
+        .unwrap()
+        .filter_map(Result::ok)
+        .find(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            name.starts_with("TEST-") && name.contains(class_name) && name.ends_with(".xml")
+        })
+        .unwrap_or_else(|| panic!("{class_name} did not produce a Surefire XML report"));
+    let xml = fs::read_to_string(report.path()).unwrap();
+    assert!(
+        xml.contains(&format!("tests=\"{expected}\"")),
+        "{class_name} did not run exactly {expected} tests: {xml}"
+    );
+    assert!(xml.contains("failures=\"0\""), "{class_name} failed: {xml}");
+    assert!(xml.contains("errors=\"0\""), "{class_name} errored: {xml}");
+    assert!(
+        xml.contains("skipped=\"0\""),
+        "{class_name} skipped a test: {xml}"
+    );
+}
+
 /// Generate each proof application exactly once per `cargo test` process.
 /// Compilation and execution happen in `verified_app_fixtures`: Maven's
 /// `verify` lifecycle already includes compile and test-compile, so running a
@@ -1419,13 +1639,22 @@ fn generated_app_fixtures(path: &str) -> &'static Vec<(&'static str, std::path::
     static GENERATED: std::sync::OnceLock<Vec<(&'static str, std::path::PathBuf)>> =
         std::sync::OnceLock::new();
     GENERATED.get_or_init(|| {
+        let (parent, fresh) = cached_toolchain_dir("proof-apps");
+        if !fresh {
+            return SPRING_APP_MANIFESTS
+                .iter()
+                .map(|(name, _)| (*name, parent.join(name)))
+                .collect();
+        }
         let mut generated = Vec::new();
         std::thread::scope(|scope| {
             let handles: Vec<_> = SPRING_APP_MANIFESTS
                 .iter()
                 .map(|&(name, manifest)| {
+                    let parent = &parent;
                     scope.spawn(move || {
-                        let root = temp_dir(&format!("app-manifest-verified-{name}"));
+                        let root = parent.join(name);
+                        fs::create_dir_all(&root).unwrap();
                         write_spring_fixture(&root);
                         fs::create_dir_all(root.join(".jails")).unwrap();
                         fs::write(root.join(".jails/app.toml"), manifest).unwrap();
@@ -1440,6 +1669,7 @@ fn generated_app_fixtures(path: &str) -> &'static Vec<(&'static str, std::path::
                             String::from_utf8_lossy(&output.stdout),
                             String::from_utf8_lossy(&output.stderr)
                         );
+                        add_app_unit_test_database(&root);
                         (name, root)
                     })
                 })
@@ -1448,30 +1678,88 @@ fn generated_app_fixtures(path: &str) -> &'static Vec<(&'static str, std::path::
                 generated.push(handle.join().unwrap());
             }
         });
+        mark_toolchain_dir_generated(&parent);
         generated
     })
 }
 
-fn verified_app_fixtures(path: &str) -> &'static Vec<(&'static str, std::path::PathBuf)> {
+fn add_app_unit_test_database(root: &Path) {
+    const H2: &str = r#"        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>test</scope>
+        </dependency>
+"#;
+    let pom_path = root.join("pom.xml");
+    let pom = fs::read_to_string(&pom_path).unwrap();
+    let marker = "    </dependencies>\n";
+    assert!(
+        pom.contains(marker),
+        "generated app POM has no dependencies"
+    );
+    fs::write(pom_path, pom.replacen(marker, &format!("{H2}{marker}"), 1)).unwrap();
+}
+
+fn verified_app_unit_fixtures(path: &str) -> &'static Vec<(&'static str, std::path::PathBuf)> {
     static VERIFIED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     let generated = generated_app_fixtures(path);
     VERIFIED.get_or_init(|| {
         std::thread::scope(|scope| {
             for (name, root) in generated {
                 scope.spawn(move || {
-                    let status = real_maven_cmd(root, path)
-                        .args(["-q", "verify"])
-                        .status()
-                        .unwrap();
-                    assert!(
-                        status.success(),
-                        "{name} failed its generated Maven verification"
-                    );
+                    let mut command = real_maven_cmd(root, path);
+                    configure_app_unit_maven(&mut command, name);
+                    let status = command.args(["-q", "test"]).status().unwrap();
+                    assert!(status.success(), "{name} failed its Surefire tests");
                 });
             }
         });
     });
     generated
+}
+
+fn verified_app_fixtures(path: &str) -> &'static Vec<(&'static str, std::path::PathBuf)> {
+    static VERIFIED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    VERIFIED.get_or_init(|| {
+        let names = SPRING_APP_MANIFESTS
+            .iter()
+            .map(|(name, _)| *name)
+            .collect::<Vec<_>>();
+        let (services_launched, launch_ready) = std::sync::mpsc::channel();
+        let (postgres_ready, wait_for_postgres) = std::sync::mpsc::channel();
+        let service_start = std::thread::spawn(move || {
+            AppSuiteServices::start(&names, services_launched, postgres_ready)
+        });
+        let generated = generated_app_fixtures(path);
+        let endpoints = launch_ready.recv().unwrap();
+        let image_build = std::thread::spawn(|| verified_app_images(generated));
+
+        // Compile and execute Surefire while PostgreSQL/Kafka are starting.
+        // Failsafe follows once both real services are ready, so every test
+        // still runs exactly once without a skip flag or selector.
+        verified_app_unit_fixtures(path);
+        wait_for_postgres.recv().unwrap();
+        let services = service_start.join().unwrap();
+        std::thread::scope(|scope| {
+            for (name, root) in generated {
+                scope.spawn(move || {
+                    let mut command = real_maven_cmd(root, path);
+                    endpoints.configure_maven(&mut command, name);
+                    let status = command
+                        .args(["-q", "failsafe:integration-test", "failsafe:verify"])
+                        .status()
+                        .unwrap();
+                    assert!(
+                        status.success(),
+                        "{name} failed its Failsafe integration tests"
+                    );
+                });
+            }
+        });
+        drop(services);
+        image_build.join().unwrap();
+    });
+    generated_app_fixtures(path)
 }
 
 #[test]
@@ -1488,7 +1776,7 @@ fn app_manifests_compile_without_manual_source_edits() {
     // `verify` contains compile and test-compile and is therefore stronger
     // than the old preliminary lifecycle. Both Rust tests share this exact
     // execution through the OnceLock above; no generated test is omitted.
-    let verified = verified_app_fixtures(&path);
+    let verified = verified_app_unit_fixtures(&path);
     assert_eq!(verified.len(), SPRING_APP_MANIFESTS.len());
     for (name, root) in verified {
         assert!(
@@ -1518,64 +1806,69 @@ fn app_manifests_pass_the_full_generated_verification_gate() {
     }
     let path = real_path_without_mvnd();
     let fixtures = verified_app_fixtures(&path);
+    verified_app_images(fixtures);
+}
 
-    // Podman does not single-flight concurrent pulls: three `docker build
-    // --pull` calls downloaded the same Maven and Temurin layers three times,
-    // consuming a gigabyte of memory without increasing coverage. Resolve
-    // every generated FROM image once, then let the still-parallel builds use
-    // the local content-addressed image store.
-    let mut base_images = std::collections::BTreeSet::new();
-    for (_, root) in fixtures {
-        let dockerfile = fs::read_to_string(root.join("Dockerfile")).unwrap();
-        for line in dockerfile.lines().filter(|line| line.starts_with("FROM ")) {
-            if let Some(image) = line.split_whitespace().nth(1) {
-                base_images.insert(image.to_string());
+fn verified_app_images(fixtures: &'static Vec<(&'static str, std::path::PathBuf)>) {
+    static VERIFIED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    VERIFIED.get_or_init(|| {
+        // Podman does not single-flight concurrent pulls: three `docker build
+        // --pull` calls downloaded the same Maven and Temurin layers three times,
+        // consuming a gigabyte of memory without increasing coverage. Resolve
+        // every generated FROM image once, then let the still-parallel builds use
+        // the local content-addressed image store.
+        let mut base_images = std::collections::BTreeSet::new();
+        for (_, root) in fixtures {
+            let dockerfile = fs::read_to_string(root.join("Dockerfile")).unwrap();
+            for line in dockerfile.lines().filter(|line| line.starts_with("FROM ")) {
+                if let Some(image) = line.split_whitespace().nth(1) {
+                    base_images.insert(image.to_string());
+                }
             }
         }
-    }
-    for image in base_images {
-        let present = std::process::Command::new("docker")
-            .args(["image", "inspect", &image])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|status| status.success());
-        if !present {
-            let status = std::process::Command::new("docker")
-                .args(["pull", &image])
+        for image in base_images {
+            let present = std::process::Command::new("docker")
+                .args(["image", "inspect", &image])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
                 .status()
-                .unwrap();
-            assert!(
-                status.success(),
-                "could not pull generated base image {image}"
-            );
-        }
-    }
-    std::thread::scope(|scope| {
-        for (name, root) in fixtures {
-            scope.spawn(move || {
-                let image = format!("jails-dogfood-{name}:test");
-                let status = std::process::Command::new("docker")
-                    .current_dir(root)
-                    .args(["build", "--tag", &image, "."])
+                .is_ok_and(|status| status.success());
+            if !present {
+                let status = real_docker_cmd(Path::new("."))
+                    .args(["pull", &image])
                     .status()
                     .unwrap();
                 assert!(
                     status.success(),
-                    "{name} failed its generated OCI image build"
+                    "could not pull generated base image {image}"
                 );
-                let inspect = std::process::Command::new("docker")
-                    .args(["image", "inspect", &image, "--format", "{{.Config.User}}"])
-                    .output()
-                    .unwrap();
-                assert!(inspect.status.success(), "could not inspect {image}");
-                assert_eq!(
-                    String::from_utf8_lossy(&inspect.stdout).trim(),
-                    "10001:10001",
-                    "{name} image did not retain the non-root runtime user"
-                );
-            });
+            }
         }
+        std::thread::scope(|scope| {
+            for (name, root) in fixtures {
+                scope.spawn(move || {
+                    let image = format!("jails-dogfood-{name}:test");
+                    let status = real_docker_cmd(root)
+                        .args(["build", "--tag", &image, "."])
+                        .status()
+                        .unwrap();
+                    assert!(
+                        status.success(),
+                        "{name} failed its generated OCI image build"
+                    );
+                    let inspect = std::process::Command::new("docker")
+                        .args(["image", "inspect", &image, "--format", "{{.Config.User}}"])
+                        .output()
+                        .unwrap();
+                    assert!(inspect.status.success(), "could not inspect {image}");
+                    assert_eq!(
+                        String::from_utf8_lossy(&inspect.stdout).trim(),
+                        "10001:10001",
+                        "{name} image did not retain the non-root runtime user"
+                    );
+                });
+            }
+        });
     });
 }
 
@@ -2670,13 +2963,12 @@ fn generate_scaffold_produces_a_project_that_compiles_and_passes_tests() {
         .unwrap();
     assert!(status.success());
 
-    let status = jails_cmd_with_path(&root, &path)
-        .arg("test")
-        .status()
-        .unwrap();
+    let verified = verified_spring_toolbox(&path);
     assert!(
-        status.success(),
-        "mvn test failed for a freshly scaffolded Post resource"
+        verified
+            .join("target/test-classes/com/example/demo/web/PostControllerTest.class")
+            .is_file(),
+        "the shared Spring toolbox did not compile the scaffold tests"
     );
 }
 
@@ -2711,14 +3003,17 @@ fn standalone_generators_companion_tests_compile_and_pass() {
         assert!(status.success(), "{args:?} failed");
     }
 
-    let status = jails_cmd_with_path(&root, &path)
-        .arg("test")
-        .status()
-        .unwrap();
-    assert!(
-        status.success(),
-        "mvn test failed for the standalone-generated companion tests"
-    );
+    let verified = verified_spring_toolbox(&path);
+    for class in [
+        "com/example/demo/web/HealthControllerTest.class",
+        "com/example/demo/service/BillingServiceTest.class",
+        "com/example/demo/domain/TagTest.class",
+    ] {
+        assert!(
+            verified.join("target/test-classes").join(class).is_file(),
+            "the Spring toolbox did not compile {class}"
+        );
+    }
 }
 
 /// `record`, `command` and `class` are the plain-Java kinds, so the bar for
@@ -3375,12 +3670,10 @@ public final class InMemoryThingRepository {}
     )
     .unwrap();
 
-    let status = jails_cmd_with_path(&root, &path)
-        .args(["add", "db", "--no-start"])
-        .status()
-        .unwrap();
-    assert!(status.success(), "add db failed");
-
+    // `add db` wires every @SpringBootTest that exists when the capability is
+    // reconciled. Put this cross-package test in place first: creating it
+    // afterwards accidentally made the regression depend on a developer
+    // PostgreSQL listening on localhost:5432.
     let api = root.join("src/test/java/com/example/demo/api");
     fs::create_dir_all(&api).unwrap();
     fs::write(
@@ -3401,12 +3694,28 @@ class ExtraSliceTest {
     .unwrap();
 
     let status = jails_cmd_with_path(&root, &path)
+        .args(["add", "db", "--no-start"])
+        .status()
+        .unwrap();
+    assert!(status.success(), "add db failed");
+
+    let extra = fs::read_to_string(api.join("ExtraSliceTest.java")).unwrap();
+    assert!(
+        extra.contains("@Import(TestcontainersConfig.class)"),
+        "cross-package SpringBootTest was not wired: {extra}"
+    );
+    assert!(
+        extra.contains("import com.example.demo.TestcontainersConfig;"),
+        "cross-package config import is missing: {extra}"
+    );
+
+    let status = jails_cmd_with_path(&root, &path)
         .arg("test")
         .status()
         .unwrap();
     assert!(
         status.success(),
-        "mvn test failed after `jails add db` on a Spring project (every @SpringBootTest needs the initializer)"
+        "mvn test failed after `jails add db` on a Spring project (every existing @SpringBootTest needs the imported container config)"
     );
 }
 
@@ -3904,14 +4213,8 @@ fn add_json_on_a_spring_project_defers_to_the_parents_version_and_compiles() {
         "should defer to the parent's managed version"
     );
 
-    let status = jails_cmd_with_path(&root, &path)
-        .arg("test")
-        .status()
-        .unwrap();
-    assert!(
-        status.success(),
-        "mvn test failed after `jails add json` on a Spring project"
-    );
+    let verified = verified_spring_toolbox(&path);
+    assert!(verified.join("target/test-classes").is_dir());
 }
 
 // ---- observation and refactoring commands (doctor / routes / beans /
@@ -4296,13 +4599,12 @@ fn a_scaffold_with_database_types_compiles_including_its_derived_jdbc_adapter() 
         "{request}"
     );
 
-    let status = jails_cmd_with_path(&root, &path)
-        .arg("test")
-        .status()
-        .unwrap();
+    let verified = verified_spring_db_toolbox(&path);
     assert!(
-        status.success(),
-        "mvn test failed for a scaffold whose JDBC adapter jails derived"
+        verified
+            .join("target/classes/com/example/demo/adapters/JdbcPayoutRepository.class")
+            .is_file(),
+        "the shared JDBC toolbox did not compile the derived adapter"
     );
 }
 
@@ -4591,11 +4893,8 @@ fn add_api_generates_problem_detail_handling_that_compiles_and_passes() {
     let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
     assert!(pom.contains("spring-boot-starter-validation"), "{pom}");
 
-    let status = jails_cmd_with_path(&root, &path)
-        .arg("test")
-        .status()
-        .unwrap();
-    assert!(status.success(), "mvn test failed after `jails add api`");
+    let verified = verified_spring_toolbox(&path);
+    assert!(verified.join("target/test-classes").is_dir());
 }
 
 #[test]
@@ -4622,11 +4921,8 @@ fn add_cache_switches_caching_on_and_proves_it() {
     assert!(properties.contains("maximumSize="), "{properties}");
     assert!(properties.contains("# jails:cache"), "{properties}");
 
-    let status = jails_cmd_with_path(&root, &path)
-        .arg("test")
-        .status()
-        .unwrap();
-    assert!(status.success(), "mvn test failed after `jails add cache`");
+    let verified = verified_spring_toolbox(&path);
+    assert!(verified.join("target/test-classes").is_dir());
 }
 
 #[test]
@@ -4661,14 +4957,8 @@ fn add_actuator_exposes_health_and_nothing_dangerous() {
     // `*` publishes heapdump and the resolved environment; never generate it.
     assert!(!properties.contains("include=*"), "{properties}");
 
-    let status = jails_cmd_with_path(&root, &path)
-        .arg("test")
-        .status()
-        .unwrap();
-    assert!(
-        status.success(),
-        "mvn test failed after `jails add actuator`"
-    );
+    let verified = verified_spring_toolbox(&path);
+    assert!(verified.join("target/test-classes").is_dir());
 }
 
 #[test]
@@ -4702,17 +4992,10 @@ fn add_observability_serves_a_prometheus_scrape() {
     assert!(properties.contains("management.server.tomcat.accesslog.prefix=stdout"));
     assert!(!properties.contains("include=*"), "{properties}");
 
-    let status = jails_cmd_with_path(&root, &path)
-        .arg("test")
-        .status()
-        .unwrap();
-    assert!(
-        status.success(),
-        "mvn test failed after `jails add observability`"
-    );
+    let verified = verified_spring_toolbox(&path);
     // The generated PrometheusScrapeTest is what proves the endpoint serves;
     // a green run with that class never loaded would prove nothing.
-    let surefire = fs::read_dir(root.join("target/surefire-reports"))
+    let surefire = fs::read_dir(verified.join("target/surefire-reports"))
         .unwrap()
         .filter_map(|e| e.ok())
         .any(|e| {
@@ -4894,14 +5177,8 @@ fn generate_dto_client_and_job_compile_and_pass_against_real_spring() {
     // An exception escaping a @Scheduled method cancels every future run.
     assert!(job.contains("catch (RuntimeException"), "{job}");
 
-    let status = jails_cmd_with_path(&root, &path)
-        .arg("test")
-        .status()
-        .unwrap();
-    assert!(
-        status.success(),
-        "mvn test failed for generated dto/client/job"
-    );
+    let verified = verified_spring_toolbox(&path);
+    assert!(verified.join("target/test-classes").is_dir());
 }
 
 #[test]
@@ -5075,11 +5352,13 @@ fn add_kafka_and_generate_event_compile_against_real_spring() {
     );
 
     // `test` runs Surefire only, so the IT is compiled but not executed.
-    let status = jails_cmd_with_path(&root, &path)
-        .arg("test")
-        .status()
-        .unwrap();
-    assert!(status.success(), "mvn test failed for the kafka slice");
+    let verified = verified_spring_services_toolbox(&path);
+    assert!(
+        verified
+            .join("target/test-classes/com/example/demo/messaging/PayoutSettledMessagingIT.class")
+            .is_file(),
+        "the shared Spring toolbox did not compile the Kafka integration test"
+    );
 }
 
 #[test]
@@ -5124,14 +5403,8 @@ fn add_security_writes_an_explicit_chain_that_denies_by_default() {
     assert!(config.contains("/management/health/**"), "{config}");
     assert!(!config.contains("/management/**"), "{config}");
 
-    let status = jails_cmd_with_path(&root, &path)
-        .arg("test")
-        .status()
-        .unwrap();
-    assert!(
-        status.success(),
-        "mvn test failed after `jails add security`"
-    );
+    let verified = verified_spring_services_toolbox(&path);
+    assert!(verified.join("target/test-classes").is_dir());
 }
 
 #[test]
@@ -5170,11 +5443,13 @@ fn add_redis_wires_a_ttl_enforcing_store_and_a_compose_service() {
 
     // The IT compiles here; it is run by `verify`, not `test`, because it
     // starts a container.
-    let status = jails_cmd_with_path(&root, &path)
-        .arg("test")
-        .status()
-        .unwrap();
-    assert!(status.success(), "mvn test failed after `jails add redis`");
+    let verified = verified_spring_services_toolbox(&path);
+    assert!(
+        verified
+            .join("target/test-classes/com/example/demo/adapters/KeyValueStoreIT.class")
+            .is_file(),
+        "the shared Spring toolbox did not compile the Redis integration test"
+    );
 }
 
 #[test]
@@ -6193,10 +6468,8 @@ fn testd_refuses_stale_classes_and_sees_a_recompile_after_it_started() {
     )
     .unwrap();
 
-    let compiled = std::process::Command::new("mvn")
+    let compiled = real_maven_cmd(&root, &path)
         .args(["-q", "-o", "test-compile"])
-        .current_dir(&root)
-        .env("PATH", &path)
         .status();
     if !matches!(compiled, Ok(status) if status.success()) {
         let _ = jails_cmd_with_path(&root, &path)
@@ -6320,10 +6593,8 @@ fn testd_affected_selects_transitively_and_widens_when_it_cannot_know() {
         "package com.example.demo;\n\npublic record Money(long amount) {\n    // edited\n}\n",
     )
     .unwrap();
-    let compiled = std::process::Command::new("mvn")
+    let compiled = real_maven_cmd(&root, &path)
         .args(["-q", "-o", "test-compile"])
-        .current_dir(&root)
-        .env("PATH", &path)
         .status();
     if !matches!(compiled, Ok(status) if status.success()) {
         skip("offline Maven could not recompile the fixture");
@@ -6376,23 +6647,8 @@ fn add_sse_produces_tests_that_run_and_pass() {
         .unwrap();
     assert!(status.success(), "add sse failed");
 
-    let output = jails_cmd_with_path(&root, &path)
-        .args(["test", "EventHubTest"])
-        .output()
-        .unwrap();
-    let report = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(output.status.success(), "{report}");
-    // A green build that ran nothing is the failure this guards: Surefire
-    // reports success over zero tests, which is exactly what a misnamed test
-    // class produces.
-    assert!(
-        report.contains("Tests run: 4"),
-        "all four hub tests must actually run: {report}"
-    );
+    let verified = verified_spring_toolbox(&path);
+    assert_surefire_test_count(verified, "EventHubTest", 4);
 }
 
 /// `plan.md` §13.3's `g auth`. Both claims behind it are behavioural, so a
@@ -6422,20 +6678,8 @@ fn generate_auth_produces_tests_that_run_and_pass() {
         .unwrap();
     assert!(status.success(), "generate auth failed");
 
-    let output = jails_cmd_with_path(&root, &path)
-        .args(["test", "ApiTokensTest"])
-        .output()
-        .unwrap();
-    let report = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(output.status.success(), "{report}");
-    assert!(
-        report.contains("Tests run: 4"),
-        "all four token tests must actually run: {report}"
-    );
+    let verified = verified_spring_services_toolbox(&path);
+    assert_surefire_test_count(verified, "ApiTokensTest", 4);
 }
 
 /// Without Spring Security there is no filter chain to read the token, so the
@@ -6473,20 +6717,8 @@ fn generate_webhook_produces_tests_that_run_and_pass() {
         .unwrap();
     assert!(status.success(), "generate webhook failed");
 
-    let output = jails_cmd_with_path(&root, &path)
-        .args(["test", "ProviderVerifierTest"])
-        .output()
-        .unwrap();
-    let report = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(output.status.success(), "{report}");
-    assert!(
-        report.contains("Tests run: 7"),
-        "all seven verifier tests must actually run: {report}"
-    );
+    let verified = verified_spring_services_toolbox(&path);
+    assert_surefire_test_count(verified, "ProviderVerifierTest", 7);
 }
 
 /// `plan.md` §13.3's `g search`. The generated column is the whole point, and
@@ -6527,15 +6759,12 @@ fn generate_search_produces_a_project_that_compiles() {
         );
     }
 
-    let output = jails_cmd_with_path(&root, &path)
-        .args(["mvn", "--", "-q", "test-compile"])
-        .output()
-        .unwrap();
+    let verified = verified_spring_db_toolbox(&path);
     assert!(
-        output.status.success(),
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+        verified
+            .join("target/classes/com/example/demo/adapters/JdbcArticleRepository.class")
+            .is_file(),
+        "the shared JDBC toolbox did not compile the search adapter"
     );
 }
 
@@ -6613,15 +6842,12 @@ fn add_mail_produces_a_project_that_compiles() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let output = jails_cmd_with_path(&root, &path)
-        .args(["mvn", "--", "-q", "test-compile"])
-        .output()
-        .unwrap();
+    let verified = verified_spring_services_toolbox(&path);
     assert!(
-        output.status.success(),
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+        verified
+            .join("target/test-classes/com/example/demo/MailerIT.class")
+            .is_file(),
+        "the shared Spring services toolbox did not compile the mail integration test"
     );
 }
 

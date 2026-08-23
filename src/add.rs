@@ -1182,6 +1182,17 @@ class TransactionMessagingIT {}
             "{:?}",
             spring.properties
         );
+        let testcontainers = spring
+            .files
+            .iter()
+            .find(|file| file.path.ends_with("KafkaTestcontainersConfig.java"))
+            .expect("Spring Kafka should include an importable broker fixture");
+        assert!(testcontainers.contents.contains("@ServiceConnection"));
+        assert!(testcontainers.contents.contains("class ProcessKafka"));
+        assert!(
+            testcontainers.contents.contains("public void stop()"),
+            "the broker must survive across importing contexts in one Failsafe JVM"
+        );
 
         let (_plain_root, plain_project) = plain_project("kafka-plan-plain");
         let plain = kafka_plan(&Slice::new(&plain_project, None)).unwrap();

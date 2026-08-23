@@ -13,6 +13,8 @@
 
 use super::*;
 
+pub(crate) const KAFKA_TESTCONTAINERS_CONFIG: &str = "KafkaTestcontainersConfig";
+
 /// The Spring Kafka properties that make publish-and-consume actually work.
 ///
 /// Every one of these is a thing people discover by losing an afternoon:
@@ -147,8 +149,23 @@ fn kafka_config_test_java(pkg: &str) -> String {
     )
 }
 
+/// A broker shared by only the integration tests that import it.
+///
+/// Keeping this separate from the event-specific test lets an outbox IT and a
+/// messaging IT use the same dynamic broker in one Failsafe JVM. Registering
+/// it globally would make every unrelated `@SpringBootTest` start Kafka.
+fn kafka_testcontainers_config_java(pkg: &str) -> String {
+    crate::template::render(
+        crate::template::template!("spring/kafka_testcontainers_config_java.java"),
+        &[
+            ("pkg", pkg),
+            ("KAFKA_TESTCONTAINERS_CONFIG", KAFKA_TESTCONTAINERS_CONFIG),
+        ],
+    )
+}
+
 /// The files `add kafka` writes on a Spring project.
-pub(crate) fn kafka_files(root: &Path, pkg: &str) -> Vec<Artifact> {
+pub(crate) fn kafka_files(root: &Path, pkg: &str, base: &str) -> Vec<Artifact> {
     vec![
         Artifact {
             kind: "kafka config",
@@ -164,6 +181,12 @@ pub(crate) fn kafka_files(root: &Path, pkg: &str) -> Vec<Artifact> {
             kind: "kafka config test",
             path: crate::generate::test_dir(root, pkg).join("KafkaConfigTest.java"),
             contents: kafka_config_test_java(pkg),
+        },
+        Artifact {
+            kind: "Kafka testcontainers config",
+            path: crate::generate::test_dir(root, base)
+                .join(format!("{KAFKA_TESTCONTAINERS_CONFIG}.java")),
+            contents: kafka_testcontainers_config_java(base),
         },
     ]
 }
@@ -274,6 +297,7 @@ fn messaging_it_java(
 ) -> String {
     let root: &Path = slice.project().root();
     let pkg: &str = &slice.placed(Layer::Messaging);
+    let base: String = slice.root_package();
     let domain: &str = &slice.placed(Layer::Domain);
     let (event_imports, disabled_import, disabled, event_args, expected_id) = if fields.is_empty() {
         (
@@ -360,6 +384,11 @@ fn messaging_it_java(
             ("event_imports", &event_imports),
             ("disabled_import", &disabled_import),
             ("disabled", &disabled),
+            (
+                "kafka_testcontainers_import",
+                &crate::generate::import_of(pkg, &base, KAFKA_TESTCONTAINERS_CONFIG),
+            ),
+            ("KAFKA_TESTCONTAINERS_CONFIG", KAFKA_TESTCONTAINERS_CONFIG),
             ("event_args", &event_args),
             ("expected_id", &expected_id),
         ],

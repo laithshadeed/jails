@@ -2,6 +2,7 @@ package com.example.demo.jobs;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.example.demo.KafkaTestcontainersConfig;
 import com.example.demo.app.MessageRepository;
 import com.example.demo.domain.Message;
 import com.example.demo.service.ReceiveMessageCommand;
@@ -10,7 +11,9 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 
+@Import(KafkaTestcontainersConfig.class)
 @SpringBootTest(properties = {
         "outbox.receive-message.initial-delay=PT1H",
         "outbox.receive-message.max-attempts=2"

@@ -1,12 +1,14 @@
 package {{pkg}};
 
-{{command_import}}{{usecase_import}}{{target_import}}{{repo_import}}{{imports}}{{disabled_import}}import org.junit.jupiter.api.Test;
+{{command_import}}{{usecase_import}}{{target_import}}{{repo_import}}{{kafka_testcontainers_import}}{{imports}}{{disabled_import}}import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-{{annotation}}@SpringBootTest(properties = {
+{{annotation}}@Import({{KAFKA_TESTCONTAINERS_CONFIG}}.class)
+@SpringBootTest(properties = {
         "outbox.{{property}}.initial-delay=PT1H",
         "outbox.{{property}}.max-attempts=2"
 })

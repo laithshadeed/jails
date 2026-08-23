@@ -5,9 +5,11 @@ pub mod scenarios;
 use std::ffi::OsStr;
 use std::fs;
 use std::io;
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Output, Stdio};
 use std::sync::{Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 pub fn bin() -> &'static str {
     env!("CARGO_BIN_EXE_jails")
@@ -37,6 +39,43 @@ pub fn temp_dir(label: &str) -> PathBuf {
     ));
     fs::create_dir_all(&dir).unwrap();
     dir
+}
+
+/// A persistent generated-project directory keyed to this integration-test
+/// executable. Maven may reuse unchanged javac output across `cargo test`
+/// invocations, while every Java test is still executed on every invocation.
+/// Any product or harness change rebuilds this executable and invalidates the
+/// generated tree before it can be trusted.
+pub fn cached_toolchain_dir(label: &str) -> (PathBuf, bool) {
+    const CACHE_SCHEMA: u32 = 1;
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target/jails-e2e-cache")
+        .join(label);
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_jails"));
+    let metadata = fs::metadata(executable).unwrap();
+    let modified = metadata
+        .modified()
+        .unwrap()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let stamp = format!("{CACHE_SCHEMA}:{}:{modified}\n", metadata.len());
+    let marker = root.join(".jails-generated-stamp");
+    if root.join(".jails-generated-ready").is_file()
+        && fs::read_to_string(&marker).is_ok_and(|existing| existing == stamp)
+    {
+        return (root, false);
+    }
+    if root.exists() {
+        fs::remove_dir_all(&root).unwrap();
+    }
+    fs::create_dir_all(&root).unwrap();
+    fs::write(marker, stamp).unwrap();
+    (root, true)
+}
+
+pub fn mark_toolchain_dir_generated(root: &Path) {
+    fs::write(root.join(".jails-generated-ready"), "ready\n").unwrap();
 }
 
 /// How old a fixture has to be before it is rubbish rather than evidence.
@@ -216,8 +255,27 @@ pub fn jails_cmd_with_path(cwd: &Path, path: &str) -> ToolchainCommand {
     let mut cmd = Command::new(bin());
     cmd.current_dir(cwd);
     cmd.env("PATH", path);
+    cmd.env("MAVEN_ARGS", REAL_MAVEN_ARGS);
+    cmd.env("JAVA_TOOL_OPTIONS", REAL_JAVA_TOOL_OPTIONS);
     ToolchainCommand::new(cmd)
 }
+
+/// Settings for real generated-project Maven runs.
+///
+/// Most Spring contexts in the proof applications do not exercise messaging.
+/// Starting their Kafka listeners makes them reconnect to the production
+/// Compose address until the context shuts down. The real messaging IT opts
+/// back in explicitly and supplies a broker through `@ServiceConnection`, so
+/// this removes accidental localhost traffic without omitting that test.
+const REAL_MAVEN_ARGS: &str = "-ntp -Dspring.main.banner-mode=off \
+    -Dlogging.level.root=WARN -Dspring.kafka.listener.auto-startup=false";
+
+/// Startup policy for the deliberately short-lived JVMs in this test suite.
+///
+/// These processes compile a small generated project, run a small test set,
+/// and exit. Spending CPU and memory on a throughput collector and fully
+/// optimised tiered compilation costs more than it can repay in that lifetime.
+const REAL_JAVA_TOOL_OPTIONS: &str = "-XX:+UseSerialGC -XX:TieredStopAtLevel=1";
 
 /// A real Maven process with test output tuned for a parent Rust harness.
 ///
@@ -228,11 +286,296 @@ pub fn real_maven_cmd(cwd: &Path, path: &str) -> ToolchainCommand {
     let mut cmd = Command::new("mvn");
     cmd.current_dir(cwd);
     cmd.env("PATH", path);
-    cmd.env(
-        "MAVEN_ARGS",
-        "-ntp -Dspring.main.banner-mode=off -Dlogging.level.root=WARN",
-    );
+    cmd.env("MAVEN_ARGS", REAL_MAVEN_ARGS);
+    cmd.env("JAVA_TOOL_OPTIONS", REAL_JAVA_TOOL_OPTIONS);
     ToolchainCommand::new(cmd)
+}
+
+/// A Docker-compatible command which shares the generated-project process
+/// budget with Maven, javac, Surefire and Testcontainers.
+pub fn real_docker_cmd(cwd: &Path) -> ToolchainCommand {
+    let mut cmd = Command::new("docker");
+    cmd.current_dir(cwd);
+    ToolchainCommand::new(cmd)
+}
+
+/// PostgreSQL and Kafka shared by the complete generated-application gate.
+///
+/// The generated Testcontainers beans remain enabled by default. This harness
+/// opts out of those per-Maven-JVM beans and gives every application its own
+/// database on one suite-scoped PostgreSQL plus one suite-scoped Kafka broker.
+/// The exact containers are removed by `Drop`, including during unwinding.
+pub struct AppSuiteServices {
+    postgres: ContainerGuard,
+    kafka: ContainerGuard,
+}
+
+#[derive(Clone, Copy)]
+pub struct AppSuiteEndpoints {
+    postgres_port: u16,
+    kafka_port: u16,
+}
+
+impl AppSuiteEndpoints {
+    pub fn configure_maven(&self, command: &mut ToolchainCommand, app_name: &str) {
+        command.args([
+            "-Djails.testcontainers.postgres.enabled=false".to_string(),
+            "-Djails.testcontainers.kafka.enabled=false".to_string(),
+            format!(
+                "-Dspring.datasource.url=jdbc:postgresql://127.0.0.1:{}/{}",
+                self.postgres_port,
+                database_name(app_name)
+            ),
+            "-Dspring.datasource.username=postgres".to_string(),
+            "-Dspring.datasource.password=postgres".to_string(),
+            "-Dspring.datasource.hikari.maximum-pool-size=2".to_string(),
+            "-Dspring.datasource.hikari.minimum-idle=0".to_string(),
+            format!(
+                "-Dspring.kafka.bootstrap-servers=127.0.0.1:{}",
+                self.kafka_port
+            ),
+            format!("-Dspring.kafka.consumer.group-id=jails-{app_name}"),
+        ]);
+    }
+}
+
+pub fn configure_app_unit_maven(command: &mut ToolchainCommand, app_name: &str) {
+    command.args([
+        "-Djails.testcontainers.postgres.enabled=false".to_string(),
+        "-Djails.testcontainers.kafka.enabled=false".to_string(),
+        format!(
+            "-Dspring.datasource.url=jdbc:h2:mem:jails_{};MODE=PostgreSQL;DB_CLOSE_DELAY=-1",
+            app_name.replace('-', "_")
+        ),
+        "-Dspring.datasource.username=sa".to_string(),
+        "-Dspring.datasource.password=".to_string(),
+        "-Dspring.datasource.hikari.connection-test-query=SELECT 1".to_string(),
+        "-Dspring.datasource.hikari.connection-init-sql=SELECT 1".to_string(),
+        "-Dspring.flyway.enabled=false".to_string(),
+        "-Dspring.kafka.bootstrap-servers=127.0.0.1:1".to_string(),
+        "-Djunit.jupiter.execution.parallel.enabled=true".to_string(),
+        "-Djunit.jupiter.execution.parallel.mode.default=same_thread".to_string(),
+        "-Djunit.jupiter.execution.parallel.mode.classes.default=concurrent".to_string(),
+        "-Djunit.jupiter.execution.parallel.config.strategy=fixed".to_string(),
+        "-Djunit.jupiter.execution.parallel.config.fixed.parallelism=2".to_string(),
+    ]);
+}
+
+impl AppSuiteServices {
+    pub fn start(
+        app_names: &[&str],
+        launched: std::sync::mpsc::Sender<AppSuiteEndpoints>,
+        postgres_ready: std::sync::mpsc::Sender<()>,
+    ) -> Self {
+        let nonce = format!(
+            "{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let postgres_port = reserve_loopback_port();
+        let kafka_port = reserve_loopback_port();
+        let endpoints = AppSuiteEndpoints {
+            postgres_port,
+            kafka_port,
+        };
+        let databases = app_names
+            .iter()
+            .map(|name| database_name(name))
+            .collect::<Vec<_>>();
+        let postgres_nonce = nonce.clone();
+        let kafka_nonce = nonce;
+        let launch_barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+        let (postgres, kafka) = std::thread::scope(|scope| {
+            let postgres_barrier = std::sync::Arc::clone(&launch_barrier);
+            let postgres = scope.spawn(move || {
+                let postgres = ContainerGuard::start(
+                    format!("jails-suite-postgres-{postgres_nonce}"),
+                    &[
+                        "-p".to_string(),
+                        format!("127.0.0.1:{postgres_port}:5432"),
+                        "-e".to_string(),
+                        "POSTGRES_USER=postgres".to_string(),
+                        "-e".to_string(),
+                        "POSTGRES_PASSWORD=postgres".to_string(),
+                        "postgres:17-alpine".to_string(),
+                    ],
+                );
+                postgres_barrier.wait();
+                wait_for_postgres(&postgres.name);
+                for database in databases {
+                    let deadline = Instant::now() + Duration::from_secs(5);
+                    loop {
+                        let status = real_docker_cmd(Path::new("."))
+                            .args([
+                                "exec",
+                                &postgres.name,
+                                "createdb",
+                                "-U",
+                                "postgres",
+                                &database,
+                            ])
+                            .status()
+                            .unwrap();
+                        if status.success() {
+                            break;
+                        }
+                        assert!(
+                            Instant::now() < deadline,
+                            "could not create suite database {database}"
+                        );
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                }
+                postgres_ready.send(()).unwrap();
+                postgres
+            });
+            let kafka_barrier = std::sync::Arc::clone(&launch_barrier);
+            let kafka = scope.spawn(move || {
+                let kafka = ContainerGuard::start(
+                    format!("jails-suite-kafka-{kafka_nonce}"),
+                    &[
+                        "-p".to_string(),
+                        format!("127.0.0.1:{kafka_port}:9092"),
+                        "-e".to_string(),
+                        "KAFKA_NODE_ID=1".to_string(),
+                        "-e".to_string(),
+                        "KAFKA_PROCESS_ROLES=broker,controller".to_string(),
+                        "-e".to_string(),
+                        "KAFKA_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093".to_string(),
+                        "-e".to_string(),
+                        format!(
+                            "KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://127.0.0.1:{kafka_port}"
+                        ),
+                        "-e".to_string(),
+                        "KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER".to_string(),
+                        "-e".to_string(),
+                        "KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+                            .to_string(),
+                        "-e".to_string(),
+                        "KAFKA_CONTROLLER_QUORUM_VOTERS=1@localhost:9093".to_string(),
+                        "-e".to_string(),
+                        "KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1".to_string(),
+                        "-e".to_string(),
+                        "KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0".to_string(),
+                        "-e".to_string(),
+                        "KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1".to_string(),
+                        "-e".to_string(),
+                        "KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1".to_string(),
+                        "apache/kafka:4.1.0".to_string(),
+                    ],
+                );
+                kafka_barrier.wait();
+                wait_for_log(&kafka.name, "Kafka Server started", Duration::from_secs(45));
+                kafka
+            });
+            launch_barrier.wait();
+            launched.send(endpoints).unwrap();
+            (postgres.join().unwrap(), kafka.join().unwrap())
+        });
+
+        Self { postgres, kafka }
+    }
+}
+
+impl Drop for AppSuiteServices {
+    fn drop(&mut self) {
+        // Kafka and PostgreSQL can each take several seconds to stop. They are
+        // independent exact-name removals, so reap them concurrently and wait
+        // for both; the suite leaves no service behind without serialising two
+        // shutdown grace periods onto its critical path.
+        std::thread::scope(|scope| {
+            scope.spawn(|| self.postgres.remove());
+            scope.spawn(|| self.kafka.remove());
+        });
+    }
+}
+
+struct ContainerGuard {
+    name: String,
+}
+
+impl ContainerGuard {
+    fn start(name: String, args: &[String]) -> Self {
+        let mut command = real_docker_cmd(Path::new("."));
+        command.args(["run", "-d", "--rm", "--name", &name]);
+        command.args(args);
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success(),
+            "could not start {name}: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Self { name }
+    }
+
+    fn remove(&mut self) {
+        if self.name.is_empty() {
+            return;
+        }
+        let name = std::mem::take(&mut self.name);
+        let _ = Command::new("docker")
+            .args(["kill", &name])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
+impl Drop for ContainerGuard {
+    fn drop(&mut self) {
+        self.remove();
+    }
+}
+
+fn reserve_loopback_port() -> u16 {
+    TcpListener::bind(("127.0.0.1", 0))
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+fn database_name(app_name: &str) -> String {
+    format!("jails_{}", app_name.replace('-', "_"))
+}
+
+fn wait_for_postgres(container: &str) {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let ready = Command::new("docker")
+            .args(["exec", container, "pg_isready", "-U", "postgres"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success());
+        if ready {
+            return;
+        }
+        assert!(Instant::now() < deadline, "PostgreSQL did not become ready");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn wait_for_log(container: &str, marker: &str, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let output = Command::new("docker").args(["logs", container]).output();
+        if output.is_ok_and(|output| {
+            String::from_utf8_lossy(&output.stdout).contains(marker)
+                || String::from_utf8_lossy(&output.stderr).contains(marker)
+        }) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{container} did not become ready"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 /// A process which may enter Maven, javac, Surefire or Testcontainers.
@@ -241,9 +584,10 @@ pub fn real_maven_cmd(cwd: &Path, path: &str) -> ToolchainCommand {
 /// starts Maven, which starts javac and another JVM, and some of those JVMs
 /// start containers. Letting sixteen such trees run at once made each
 /// otherwise seven-second build take 40--75 seconds and eventually made a
-/// Kafka container exit during startup. Four process trees keep this machine
-/// busy without turning parallelism into contention. Pure Rust tests and
-/// fake-toolchain commands do not use this wrapper and remain fully parallel.
+/// Kafka container exit during startup. Six process trees let the three-app
+/// gate and consolidated focused suites overlap without returning to the
+/// original sixteen-way fan-out. Pure Rust tests and fake-toolchain commands
+/// do not use this wrapper and remain fully parallel.
 pub struct ToolchainCommand {
     inner: Command,
 }
@@ -278,7 +622,7 @@ impl ToolchainCommand {
     }
 }
 
-const MAX_TOOLCHAIN_PROCESSES: usize = 4;
+const MAX_TOOLCHAIN_PROCESSES: usize = 6;
 static TOOLCHAIN_PROCESSES: (Mutex<usize>, Condvar) = (Mutex::new(0), Condvar::new());
 
 struct ToolchainPermit;
