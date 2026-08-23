@@ -17,6 +17,7 @@
 //! its client from the same route list, and a command layer above the
 //! generators could not be reached from there.
 
+pub mod compat;
 pub mod compose;
 pub mod config;
 pub mod generated_files;

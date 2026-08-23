@@ -44,7 +44,7 @@ use std::path::{Component, Path, PathBuf};
 const LEDGER: &str = ".jails/ledger.toml";
 
 /// Everything jails has applied to one project.
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Ledger {
     /// The jails that last wrote this ledger.
     pub version: String,
@@ -59,6 +59,14 @@ impl Ledger {
     /// `load` reaches this on `NotFound` and on nothing else. Every other read
     /// failure is an error, because an empty ledger is a *claim* -- that jails
     /// owns nothing here -- and a permission error is not evidence for it.
+    /// Whether this ledger records anything at all.
+    ///
+    /// Not the same question as "is there a ledger file": a project may hold
+    /// an empty store, and the two are told apart by the file's presence.
+    pub fn is_empty(&self) -> bool {
+        self.applied.is_empty() && self.models.is_empty()
+    }
+
     pub fn empty() -> Self {
         Ledger {
             version: env!("CARGO_PKG_VERSION").to_string(),

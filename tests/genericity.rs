@@ -50,6 +50,9 @@ const ALLOWED: &[AllowedConcept] = &[
         files: &[
             "crates/jails-project/src/ledger.rs",
             "crates/jails-project/src/generated_files.rs",
+            // The read-only machine-state facade classifies the ledger file
+            // and the legacy sources a migration will retire.
+            "crates/jails-project/src/compat.rs",
             // The crate root has to declare `pub mod ledger;` and say what it
             // is for. Same word, same reason, one level up.
             "crates/jails-project/src/lib.rs",

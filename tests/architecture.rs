@@ -88,12 +88,18 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // §8.0 predicted would keep the raw count away from zero and
                 // is why the target was withdrawn rather than chased.
                 //
+                // 146 -> 147 for `compat::read`, which is the read-only
+                // machine-state facade: it answers "what state is at this
+                // path" *before* a `Project` exists, which is the same
+                // category as `build::detect` above and the thing
+                // `Project::load` itself needs first.
+                //
                 // 145 -> 146 for `ProjectHandle::at`, which is the executor's
                 // constructor: the one place a path becomes the resolved
                 // handle every commit step then takes. That is the cure this
                 // rung asks for, not the disease -- nothing downstream of it
                 // sees a `&Path` at all.
-                ceiling: 146,
+                ceiling: 147,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;
@@ -662,6 +668,7 @@ const LAYERS: &[(&str, usize)] = &[
     ("pom", 4),
     ("maven", 4),
     ("config", 4),
+    ("compat", 4),
     ("compose", 4),
     ("model", 4),
     ("project", 4),
