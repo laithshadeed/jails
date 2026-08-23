@@ -861,7 +861,8 @@ Estimated 0.35–0.6 s vs 2.57 s — **unverified; measure first** (§19.1).
 `ToolProvider.getSystemJavaCompiler()` and the `"junit"` provider over a unix
 socket. Compile in-process (74–166 ms warm), run via
 `LauncherFactory.openSession()` (9–13 ms warm), fresh `URLClassLoader` per run.
-**That classloader cost is the one unmeasured piece** (§19.2).
+**That classloader cost is measured** (§19.2): 0.04 ms to construct, ~0.5 ms per test class to
+populate, against the 0.6 s of cold `java` it removes. Not the obstacle.
 
 **Step 3, `--affected`** — a reverse-dependency index from `.class` constant
 pools: ~120 lines (skip entries by tag width — `CONSTANT_Long`/`Double` take
@@ -1338,7 +1339,7 @@ yet — which is a healthier list than the one it replaces.
 | ~~10~~ | ~~`jails new <name> --app <manifest>`~~ — **done.** `new` and `new-cli` both take `--app`, seeding `.jails/app.toml` and applying it against the project just created. Verified on App D: one command from an empty directory to `mvn clean verify` green. Needed `add::add_in`, `add::preflight_in` and `ResolvedIntent::apply_to` so nothing in the apply path reads the process CWD | §11 | S | A B C D |
 | 11 | **§6.2 F** — one descriptor per kind. **Most of what it was going to buy has since been bought another way, and the headline property is already enforced**: `[golden]` was to make it "impossible to add a kind without a snapshot test", and `every_kind_and_capability_has_a_golden_scenario` does that today — verified by deleting the `search` scenario, which failed with *"1 thing(s) jails can generate have no golden scenario: kind `search`"*. `destroy`'s paths are derived from the generator now (rungs 4–5), which cannot drift from it at all, where a descriptor still could; the Lua lists are gone, deleted by `commands --json`. What is left unique to F is generating the `ArtifactKind` enum, clap aliases, `--help` and the README table from one file — real, but a `build.rs` and a week for the smaller half of the original case | §6 | L, and re-price it first | — |
 | ~~12~~ | ~~§12 marker widening + `jails adopt`~~ — **done.** `src/build.rs` names the build tool without reading it; `find_project_root` takes any recognised marker, nearest wins; ten Maven-inherent commands refuse through `require_maven` naming what still works; `generate` states which shape a missing pom chose and which dependencies it could not splice; `doctor` leads with the real build tool instead of reporting on an absent pom. `jails adopt` writes `[layout]` from a closed synonym table, reports what it does not recognise, refuses to pick between two candidates, and never touches `[project] capabilities` | §12 | M | — |
-| 13 | `jails testd` + `--affected`. **This is the one latency item that can still pay**, and §19.1's measurement is why: `--fast` matched mvnd rather than beating it, and what is left in both is ~0.6 s of cold `java`. Only a resident JVM removes that floor. `src/launcher.rs` is the substrate — selector translation, cached test classpath, staleness gate — so what remains is the daemon and the socket. §19.2 (the cost of a fresh `URLClassLoader` per run) is still unmeasured and should be taken first | §10.2 | L | — |
+| 13 | `jails testd` + `--affected`. **§19.2 is measured now and clears it**: a fresh `URLClassLoader` per run costs 0.04 ms to construct and ~0.5 ms per test class to populate — 2–12 % of the ~0.6 s cold-`java` floor it buys back, while being the thing that makes a recompiled class visible. The real prize the measurement exposed is warmup: the first JUnit session in a JVM is 464 ms where the warm ones are 20 ms, and a cold `java` pays that every run. `src/launcher.rs` is the substrate — selector translation, cached test classpath, staleness gate — so what remains is the daemon and the socket | §10.2 | L | — |
 | ~~14~~ | ~~`jails dev` v1.~~ **Answered by measurement and therefore not built.** §19.5 asked where jdt.ls writes `.class` files; it writes them into the project's own `target/classes` with no Maven run, and `jails new` has been installing devtools *and* tuning its poll interval all along. So both halves of the loop already shipped and the supervisor §10.3 describes would have been a third party to a conversation two programs were already having. What shipped instead is the README's save-and-reload section and `doctor`'s `reload` check — because the machinery existed and the **diagnosis** did not, and every way this loop breaks is silent | §10.3 | L→S | C |
 | ~~15~~ | ~~`add sse`~~ (§13.2), ~~`g auth`~~, ~~`g webhook`~~, ~~`g search`~~ and ~~`add mail`~~ (§13.3) — **all shipped.** What is left in §13.3 is the "build the first time a project needs one" row: `add flags`, `add shedlock`, `add storage`, `add arch`, `add nullcheck`, none of which a proof app has demanded | §13 | done | B C |
 | 16 | ~~`codemod.rs`~~ **shipped** — narrower than proposed and the narrowing is the finding (§11): the primitives share a *format*, not an implementation, and that format had five owners. `src/apply/` remains the single write path. What is left is the atomic whole-manifest `ChangeSet` on top, which is the part §11's own sequence puts last and calls "if it still earns its keep" | §11 | S remaining | A B C |
@@ -1452,7 +1453,36 @@ read-only and instant, so folding them would cost the property that makes
      itself.
 
    The resident-JVM band (est. 50–150 ms) is still unmeasured.
-2. The cost of a fresh `URLClassLoader` per `testd` run.
+2. ~~The cost of a fresh `URLClassLoader` per `testd` run.~~ **Measured. It is
+   not the obstacle, and the loader itself is free.** A resident JVM, a
+   `jails new-cli` project, 30 iterations, two sizes:
+
+   | | 21 test classes | 151 test classes |
+   |---|---|---|
+   | A construct the `URLClassLoader` | 0.04 ms | 0.04 ms |
+   | B load every test class through it | 2.1 ms | 12.8 ms |
+   | C JUnit session, **fresh** loader | 20.3 ms | 82.6 ms |
+   | S JUnit session, **shared** loader | 6.6 ms | 11.8 ms |
+   | **C − S, the price of freshness** | **13.7 ms** | **70.9 ms** |
+
+   All medians. The premium is roughly linear at **~0.5 ms per test class**,
+   and it is class loading and verification — constructing the loader is
+   0.04 ms at both sizes, so the thing the question named is not the thing
+   that costs.
+
+   **The arithmetic that decides item 13 therefore holds.** §19.1 measured the
+   floor at ~0.6 s of cold `java`, and a fresh loader gives that back for
+   2 % of it on a small project and 12 % on a 151-class one — while being
+   exactly what makes a recompiled class visible, which is the correctness the
+   daemon exists to preserve. `--affected` shrinks it further, because a run
+   over a subset loads only that subset.
+
+   **The larger finding is the first iteration**, which is not in the table
+   because it is not a median: 464 ms at 21 classes and 758 ms at 151, against
+   20 ms and 83 ms warm. That is engine and JIT warmup, an order of magnitude
+   more than the classloader, and it is precisely what a resident JVM
+   amortises and a cold `java` pays every single time. The case for `testd` is
+   that number, not the launcher's.
 3. How many distinct Spring contexts the proof apps build (`missCount` under
    `org.springframework.test.context.cache=DEBUG`). At 293 s and 123 tests
    **this is the highest-value measurement in the list.**
