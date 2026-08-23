@@ -16,6 +16,7 @@ pub mod effect;
 pub mod entity;
 pub mod envelope;
 pub mod identity;
+pub mod ownership;
 pub mod provenance;
 pub mod recipe;
 pub mod request;

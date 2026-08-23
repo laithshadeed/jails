@@ -611,6 +611,7 @@ const LAYERS: &[(&str, usize)] = &[
     ("envelope", 3),
     ("entity", 3),
     ("identity", 3),
+    ("ownership", 3),
     ("provenance", 3),
     ("recipe", 3),
     ("request", 3),
