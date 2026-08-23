@@ -59,6 +59,9 @@ const ALLOWED: &[AllowedConcept] = &[
             // The schema-2 envelope is the ledger file format; its constants
             // and messages name the thing they describe.
             "crates/jails-protocol/src/envelope.rs",
+            // Bootstrap order is *defined* by reading the ledger first, so it
+            // cannot be described without naming it.
+            "crates/jails-protocol/src/bootstrap.rs",
             "src/app.rs",
             // The typed shadow reads the schema-1 store's rows to build its
             // observed side, so it names the module they live in.

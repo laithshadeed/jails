@@ -420,6 +420,52 @@ pub struct LedgerV2 {
     pub last_operation: Option<OperationId>,
     pub applied: Vec<AppliedEntity>,
     pub legacy: Vec<LegacyEntry>,
+    /// A reconciliation that stopped with conflicts still in the tree.
+    ///
+    /// Its presence is what makes the ordinary bootstrap parsers unsafe: a
+    /// committed conflict may deliberately have left markers in the POM, the
+    /// human config, the manifest or a source file.
+    pub pending_conflict: Option<PendingMarker>,
+}
+
+/// Enough of a stored conflict to decide how to bootstrap and whether a rerun
+/// is the same command.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingMarker {
+    pub operation: OperationId,
+    pub generation: u64,
+    /// The request that stalled, so a resume can prove it is the same one
+    /// without parsing marker-bearing project files to find out.
+    pub request_syntax: crate::request::RequestSyntaxFingerprint,
+    /// Presentation only, and excluded from every identity: a reworded message
+    /// must not make a stored conflict unrecognisable.
+    pub resume_display: String,
+}
+
+impl PendingMarker {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        self.operation.encode(encoder);
+        if self.generation == 0 {
+            return Err("a pending conflict records generation zero".to_string());
+        }
+        encoder.u64(self.generation);
+        self.request_syntax.encode(encoder);
+        encoder.string(&self.resume_display)
+    }
+
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        let operation = OperationId::decode(decoder)?;
+        let generation = decoder.u64()?;
+        if generation == 0 {
+            return Err("a pending conflict records generation zero".to_string());
+        }
+        Ok(Self {
+            operation,
+            generation,
+            request_syntax: crate::request::RequestSyntaxFingerprint::decode(decoder)?,
+            resume_display: decoder.string()?,
+        })
+    }
 }
 
 impl LedgerV2 {
@@ -451,6 +497,7 @@ impl LedgerV2 {
             previous = Some(entry.key());
             entry.encode(&mut encoder)?;
         }
+        encoder.option(self.pending_conflict.as_ref(), |e, marker| marker.encode(e))?;
         encoder.finish()
     }
 
@@ -478,6 +525,7 @@ impl LedgerV2 {
             }
             legacy.push(entry);
         }
+        let pending_conflict = decoder.option(PendingMarker::decode)?;
         decoder.finish()?;
         Ok(Self {
             written_by,
@@ -485,6 +533,7 @@ impl LedgerV2 {
             last_operation,
             applied,
             legacy,
+            pending_conflict,
         })
     }
 
@@ -640,6 +689,7 @@ pub fn migrate_schema1(written_by: &str, rows: &[Schema1Row]) -> Result<LedgerV2
         last_operation: None,
         applied,
         legacy,
+        pending_conflict: None,
     })
 }
 
@@ -841,6 +891,7 @@ mod tests {
             last_operation: Some(OperationId::from_bytes(jails_support::codec::sha256(b"x"))),
             applied: vec![intent("Alpha", &["a:string"]), intent("Beta", &["b:int"])],
             legacy: vec![],
+            pending_conflict: None,
         };
         let source = ledger.render().unwrap();
         assert_eq!(LedgerV2::parse_file(&source).unwrap(), ledger);
@@ -887,6 +938,7 @@ mod tests {
             last_operation: None,
             applied: vec![intent("Beta", &[]), intent("Alpha", &[])],
             legacy: vec![],
+            pending_conflict: None,
         };
         assert!(
             ledger
@@ -917,6 +969,7 @@ mod tests {
                 intent("NoFields", &[]),
             ],
             legacy: vec![],
+            pending_conflict: None,
         };
         let models = ledger.models();
         assert_eq!(models.len(), 2, "a spec with no fields is not a model");
