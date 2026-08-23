@@ -24,11 +24,10 @@
 //! unsplice puts it back exactly as it was.
 
 use super::*;
-use jails_support::{apply, codemod};
 
 #[cfg(test)]
 pub(super) fn spring_factories_block(fqcn: &str) -> String {
-    codemod::Marked::new("db").render(&format!("{SPRING_FACTORIES_KEY}={fqcn}\n"))
+    crate::codemod::Marked::new("db").render(&format!("{SPRING_FACTORIES_KEY}={fqcn}\n"))
 }
 
 /// Import the container config into every `@SpringBootTest` in the project.
@@ -72,7 +71,7 @@ pub(super) fn install_test_container_import(
             changed = true;
             continue;
         }
-        apply::put(&path, next)?;
+        crate::apply::put(&path, next)?;
         println!("  import  {} -> {}", cfg.class, rel(root, &path));
         changed = true;
     }
@@ -101,7 +100,7 @@ pub(super) fn remove_legacy_spring_factories(root: &Path) -> Result<bool> {
         fs::remove_file(&path).map_err(|e| format!("failed to remove {}: {e}", path.display()))?;
         println!("  delete  {} (superseded by @Import)", rel(root, &path));
     } else {
-        apply::put(&path, next)?;
+        crate::apply::put(&path, next)?;
         println!("  unsplice  {}", rel(root, &path));
     }
     Ok(true)
@@ -125,14 +124,14 @@ pub(super) fn uninstall_postgres_test_initializer(
         fs::remove_file(&path).map_err(|e| format!("failed to remove {}: {e}", path.display()))?;
         println!("  delete  {}", rel(root, &path));
     } else {
-        apply::put(&path, next)?;
+        crate::apply::put(&path, next)?;
         println!("  unsplice  {}", rel(root, &path));
     }
     Ok(())
 }
 
 pub(super) fn remove_jails_db_block(source: &str, fqcn: &str) -> Option<String> {
-    let marked = codemod::Marked::new("db");
+    let marked = crate::codemod::Marked::new("db");
     // Two removals, and both are needed: the block jails wrote, and any bare
     // line naming the initializer that an older jails left unmarked. A file
     // that has one and not the other still registers the initializer, and a
@@ -167,7 +166,7 @@ pub(super) fn strip_legacy_postgres_imports(root: &Path, cfg: &SpringTestImport)
         let Some(next) = unsplice_spring_boot_test_import(&source, cfg.class, &extra) else {
             continue;
         };
-        apply::put(&path, next)?;
+        crate::apply::put(&path, next)?;
         println!("  unsplice  {} from {}", cfg.class, rel(root, &path));
         changed = true;
     }

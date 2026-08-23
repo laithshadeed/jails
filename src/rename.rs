@@ -22,7 +22,6 @@
 //!
 //! Nothing is written until the whole plan has been shown and confirmed.
 
-use jails_support::apply;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -113,7 +112,7 @@ pub fn rename(old: &str, new: &str, dry_run: bool, force: bool) -> Result<()> {
     // rewritten contents in unmoved files at least still describe one
     // consistent state.
     for edit in &edits {
-        apply::put(&edit.path, &edit.updated)?;
+        crate::apply::put(&edit.path, &edit.updated)?;
     }
     for edit in &edits {
         if edit.path == edit.destination {

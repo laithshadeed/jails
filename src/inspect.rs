@@ -17,10 +17,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use crate::java::{self, Target};
+use crate::java::Target;
 use crate::spec::find_project_root;
 use jails_support::Result;
-use jails_support::json;
 
 /// One HTTP route: verb, path, and the method behind it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -75,7 +74,7 @@ pub fn routes(json: bool) -> Result<()> {
 pub(crate) fn collect_routes(root: &Path) -> Vec<Route> {
     let src = root.join("src/main/java");
     let mut found = Vec::new();
-    for path in java::source_files(&src) {
+    for path in crate::java::source_files(&src) {
         let Ok(source) = std::fs::read_to_string(&path) else {
             continue;
         };
@@ -88,8 +87,8 @@ pub(crate) fn collect_routes(root: &Path) -> Vec<Route> {
 }
 
 fn file_routes(source: &str, label: &str) -> Vec<Route> {
-    let annotations = java::annotations(source);
-    let info = java::type_info(source);
+    let annotations = crate::java::annotations(source);
+    let info = crate::java::type_info(source);
     let type_name = info
         .as_ref()
         .map(|i| i.name.clone())
@@ -137,7 +136,7 @@ fn file_routes(source: &str, label: &str) -> Vec<Route> {
         .iter()
         .find(|a| a.name == "RequestMapping" && matches!(a.target, Target::Type(_)))
         .and_then(|a| {
-            java::annotation_string(&a.args).or_else(|| {
+            crate::java::annotation_string(&a.args).or_else(|| {
                 a.args
                     .contains("PATH")
                     .then(|| path_constant(source))
@@ -159,7 +158,7 @@ fn file_routes(source: &str, label: &str) -> Vec<Route> {
             } else {
                 continue;
             };
-        let suffix = java::annotation_string(&annotation.args).unwrap_or_default();
+        let suffix = crate::java::annotation_string(&annotation.args).unwrap_or_default();
         found.push(Route {
             path: join_path(&base, &suffix),
             verb,
@@ -185,13 +184,13 @@ fn request_mapping_verb(args: &str) -> String {
 /// The value of a `public static final String PATH = "..."` declaration --
 /// how `generate handler` records the path it serves.
 fn path_constant(source: &str) -> Option<String> {
-    let text = java::blanked(source);
+    let text = crate::java::blanked(source);
     let at = text.find("String PATH")?;
     let eq = text[at..].find('=')? + at;
     // Not annotation_string(): that one reads Spring's `path =`/`value =`
     // attribute grammar and refuses a bare literal that follows an `=`,
     // which is exactly the shape of a constant initialiser.
-    java::first_string(source.get(eq..)?)
+    crate::java::first_string(source.get(eq..)?)
 }
 
 fn join_path(base: &str, suffix: &str) -> String {
@@ -224,10 +223,10 @@ fn routes_json(routes: &[Route]) -> String {
         .map(|r| {
             format!(
                 r#"{{"verb":{},"path":{},"handler":{},"source":{},"line":{}}}"#,
-                json::string(&r.verb),
-                json::string(&r.path),
-                json::string(&r.handler),
-                json::string(&r.source),
+                crate::json::string(&r.verb),
+                crate::json::string(&r.path),
+                crate::json::string(&r.handler),
+                crate::json::string(&r.source),
                 r.line
             )
         })
@@ -377,12 +376,12 @@ pub(crate) fn collect_beans(root: &Path) -> (Vec<Bean>, BTreeSet<String>) {
     let src = root.join("src/main/java");
     let mut beans = Vec::new();
     let mut project_types = BTreeSet::new();
-    for path in java::source_files(&src) {
+    for path in crate::java::source_files(&src) {
         let Ok(source) = std::fs::read_to_string(&path) else {
             continue;
         };
         let label = relative(root, &path);
-        if let Some(info) = java::type_info(&source) {
+        if let Some(info) = crate::java::type_info(&source) {
             project_types.insert(info.name.clone());
         }
         beans.extend(file_beans(&source, &label));
@@ -426,8 +425,8 @@ pub(crate) fn providers(beans: &[Bean]) -> BTreeMap<String, Vec<String>> {
 }
 
 fn file_beans(source: &str, label: &str) -> Vec<Bean> {
-    let annotations = java::annotations(source);
-    let Some(info) = java::type_info(source) else {
+    let annotations = crate::java::annotations(source);
+    let Some(info) = crate::java::type_info(source) else {
         return Vec::new();
     };
     let mut found = Vec::new();
@@ -461,7 +460,7 @@ fn file_beans(source: &str, label: &str) -> Vec<Bean> {
         let Target::Method { name, returns } = &annotation.target else {
             continue;
         };
-        let returns = java::simple_name(returns);
+        let returns = crate::java::simple_name(returns);
         if returns.is_empty() {
             continue;
         }
@@ -487,15 +486,15 @@ fn beans_json(beans: &[&Bean]) -> String {
             let list = |values: &[String]| {
                 values
                     .iter()
-                    .map(|v| json::string(v))
+                    .map(|v| crate::json::string(v))
                     .collect::<Vec<_>>()
                     .join(",")
             };
             format!(
                 r#"{{"stereotype":{},"type":{},"source":{},"line":{},"needs":[{}],"provides":[{}]}}"#,
-                json::string(&b.stereotype),
-                json::string(&b.type_name),
-                json::string(&b.source),
+                crate::json::string(&b.stereotype),
+                crate::json::string(&b.type_name),
+                crate::json::string(&b.source),
                 b.line,
                 list(&b.needs),
                 list(&b.provides)
@@ -736,14 +735,12 @@ pub fn stats(json: bool) -> Result<()> {
 /// needs a layer that went to zero to still be there. That is the one place
 /// the two renderings legitimately differ, and it is worth saying out loud.
 fn stats_json(main: &[LayerStats], test: &[LayerStats]) -> Result<()> {
-    use jails_support::json;
-
     let render = |rows: &[LayerStats]| {
         rows.iter()
             .map(|row| {
                 format!(
                     "      {{\"layer\": {}, \"files\": {}, \"lines\": {}, \"code\": {}}}",
-                    json::string(row.label),
+                    crate::json::string(row.label),
                     row.files,
                     row.lines,
                     row.code
@@ -783,7 +780,7 @@ fn collect_stats(src: &Path, layers: &[(String, &'static str)]) -> Vec<LayerStat
         code: 0,
     });
 
-    for path in java::source_files(src) {
+    for path in crate::java::source_files(src) {
         let Ok(source) = std::fs::read_to_string(&path) else {
             continue;
         };
@@ -857,16 +854,15 @@ pub fn notes(tag: Option<&str>, json: bool) -> Result<()> {
     let found = collect_notes(&root, tag);
 
     if json {
-        use jails_support::json;
         let rows: Vec<String> = found
             .iter()
             .map(|note| {
                 format!(
                     "    {{\"tag\": {}, \"file\": {}, \"line\": {}, \"text\": {}}}",
-                    json::string(&note.tag),
-                    json::string(&note.file),
+                    crate::json::string(&note.tag),
+                    crate::json::string(&note.file),
                     note.line,
-                    json::string(&note.text)
+                    crate::json::string(&note.text)
                 )
             })
             .collect();
@@ -899,7 +895,7 @@ pub fn notes(tag: Option<&str>, json: bool) -> Result<()> {
 pub(crate) fn collect_notes(root: &Path, only: Option<&str>) -> Vec<Note> {
     let mut found = Vec::new();
     for dir in ["src/main/java", "src/test/java"] {
-        for path in java::source_files(&root.join(dir)) {
+        for path in crate::java::source_files(&root.join(dir)) {
             let Ok(source) = std::fs::read_to_string(&path) else {
                 continue;
             };
@@ -917,7 +913,7 @@ fn file_notes(source: &str, label: &str, only: Option<&str>) -> Vec<Note> {
     // Literals blanked, comments kept: a note lives in a comment, and the
     // word appearing inside a string ("TODO" in a message, or in a SQL text
     // block) is not work anyone signed up for.
-    let scanned = java::without_literals(source);
+    let scanned = crate::java::without_literals(source);
     let mut found = Vec::new();
     for (index, (line, raw)) in scanned.lines().zip(source.lines()).enumerate() {
         for tag in NOTE_TAGS {

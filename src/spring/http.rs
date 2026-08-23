@@ -53,14 +53,14 @@ pub(crate) fn client_files(slice: &Slice, name: &str) -> Vec<Artifact> {
 fn client_interface_java(pkg: &str, name: &str) -> String {
     let path = format!("/{}", crate::sql::table_name(name).replace('_', "-"));
     crate::template::render(
-        crate::template::template!("spring/client_interface_java.java"),
+        crate::template_here!("spring/client_interface_java.java"),
         &[("pkg", pkg), ("name", name), ("path", &*path)],
     )
 }
 
 fn client_config_java(pkg: &str, group: &str) -> String {
     crate::template::render(
-        crate::template::template!("spring/client_config_java.java"),
+        crate::template_here!("spring/client_config_java.java"),
         &[("pkg", pkg), ("group", group)],
     )
 }
@@ -68,7 +68,7 @@ fn client_config_java(pkg: &str, group: &str) -> String {
 fn client_test_java(pkg: &str, name: &str, group: &str) -> String {
     let path = format!("/{}", crate::sql::table_name(name).replace('_', "-"));
     crate::template::render(
-        crate::template::template!("spring/client_test_java.java"),
+        crate::template_here!("spring/client_test_java.java"),
         &[
             ("pkg", pkg),
             ("name", name),
@@ -93,7 +93,7 @@ pub(crate) fn fetcher_files(slice: &Slice, name: &str) -> Vec<Artifact> {
             kind: "safe fetch port",
             path: main.join(format!("{name}Fetcher.java")),
             contents: crate::template::render(
-                crate::template::template!("spring/fetcher_port_java.java"),
+                crate::template_here!("spring/fetcher_port_java.java"),
                 &[("pkg", pkg), ("name", name)],
             ),
         },
@@ -101,7 +101,7 @@ pub(crate) fn fetcher_files(slice: &Slice, name: &str) -> Vec<Artifact> {
             kind: "safe fetch adapter",
             path: main.join(format!("Safe{name}Fetcher.java")),
             contents: crate::template::render(
-                crate::template::template!("spring/safe_fetcher_java.java"),
+                crate::template_here!("spring/safe_fetcher_java.java"),
                 &[("pkg", pkg), ("name", name), ("property", &property)],
             ),
         },
@@ -109,7 +109,7 @@ pub(crate) fn fetcher_files(slice: &Slice, name: &str) -> Vec<Artifact> {
             kind: "safe fetch adversarial test",
             path: test.join(format!("Safe{name}FetcherTest.java")),
             contents: crate::template::render(
-                crate::template::template!("spring/safe_fetcher_test_java.java"),
+                crate::template_here!("spring/safe_fetcher_test_java.java"),
                 &[("pkg", pkg), ("name", name)],
             ),
         },
@@ -160,7 +160,7 @@ pub(crate) fn http_workflow_files(
             kind: "bounded HTTP workflow",
             path: main_jobs.join(format!("{name}Workflow.java")),
             contents: crate::template::render(
-                crate::template::template!("spring/http_workflow_java.java"),
+                crate::template_here!("spring/http_workflow_java.java"),
                 &[
                     ("pkg", jobs),
                     ("clients", clients),
@@ -175,7 +175,7 @@ pub(crate) fn http_workflow_files(
             kind: "bounded HTTP workflow controller",
             path: main_web.join(format!("{name}WorkflowController.java")),
             contents: crate::template::render(
-                crate::template::template!("spring/http_workflow_controller_java.java"),
+                crate::template_here!("spring/http_workflow_controller_java.java"),
                 &[
                     ("web", web),
                     ("pkg", jobs),
@@ -188,7 +188,7 @@ pub(crate) fn http_workflow_files(
             kind: "bounded HTTP workflow integration test",
             path: test_jobs.join(format!("{name}WorkflowIT.java")),
             contents: crate::template::render(
-                crate::template::template!("spring/http_workflow_it_java.java"),
+                crate::template_here!("spring/http_workflow_it_java.java"),
                 &[
                     ("pkg", jobs),
                     ("clients", clients),

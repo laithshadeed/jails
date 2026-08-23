@@ -1,11 +1,17 @@
 use jails_support::Result;
+
+// The lower crates, re-exported so every module in this package keeps saying
+// `crate::java` and `crate::template`. A facade at the root rather than an
+// import line in forty files: the paths a reader already knows stay correct,
+// and the crate boundary is enforced by Cargo either way.
+pub(crate) use jails_java::{classfile, java, template};
+pub(crate) use jails_support::{apply, codemod, json, process};
 mod add;
 mod adopt;
 mod affected;
 mod app;
 mod bench;
 mod build;
-mod classfile;
 mod commands;
 mod compose;
 mod config;
@@ -15,7 +21,6 @@ mod explain;
 mod generate;
 mod generated_files;
 mod inspect;
-mod java;
 mod kafka;
 mod launcher;
 mod ledger;
@@ -33,7 +38,6 @@ mod spec;
 mod spring;
 mod sql;
 mod surefire;
-mod template;
 mod testd;
 mod why;
 
@@ -43,6 +47,15 @@ use clap_complete::Shell;
 use compose::Runtime;
 use generate::ArtifactKind;
 use std::path::PathBuf;
+
+/// This package's templates live at the repository root. See
+/// [`jails_java::template_at`] for why the root cannot be implicit.
+macro_rules! template_here {
+    ($name:literal) => {
+        jails_java::template_at!(concat!(env!("CARGO_MANIFEST_DIR"), "/templates/"), $name)
+    };
+}
+pub(crate) use template_here;
 
 #[derive(Parser)]
 #[command(
@@ -543,7 +556,7 @@ enum Command {
 
 /// Returns [`ExitCode`] rather than calling [`std::process::exit`].
 ///
-/// `process::exit` terminates without unwinding, so destructors on the
+/// `crate::process::exit` terminates without unwinding, so destructors on the
 /// current stack never run. jails holds real resources while a command is in
 /// flight -- `migrate` creates a scratch database it is responsible for
 /// dropping -- and anything staging a file beside its destination would be in

@@ -34,9 +34,8 @@ use crate::affected;
 use crate::build;
 use crate::launcher;
 use crate::model::Project;
+use crate::process::CommandSpec;
 use jails_support::Result;
-use jails_support::process::CommandSpec;
-use jails_support::{apply, process};
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -242,7 +241,7 @@ fn ensure_running(
         .arg(IDLE_SECONDS.to_string())
         .arg(&outputs)
         .current_dir(root);
-    let mut child = process::spawn(&spec, process::Diagnostics::from_flag(debug))?;
+    let mut child = crate::process::spawn(&spec, crate::process::Diagnostics::from_flag(debug))?;
 
     // Wait for the socket, not for a fixed delay: the first start compiles the
     // daemon source and warms the JUnit engine, which is exactly the cost this
@@ -336,7 +335,7 @@ fn daemon_source() -> Result<PathBuf> {
         .map_err(|error| format!("failed to create {}: {error}", dir.display()))?;
     let path = dir.join("JailsTestDaemon.java");
     if std::fs::read_to_string(&path).ok().as_deref() != Some(SOURCE) {
-        apply::put_outside_project(&path, SOURCE)?;
+        crate::apply::put_outside_project(&path, SOURCE)?;
     }
     Ok(path)
 }

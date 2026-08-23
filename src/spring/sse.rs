@@ -70,14 +70,14 @@ pub(crate) fn sse_slice(slice: &Slice) -> Change {
 
 fn sse_hub_java(pkg: &str, name: &str) -> String {
     crate::template::render(
-        crate::template::template!("spring/sse_hub_java.java"),
+        crate::template_here!("spring/sse_hub_java.java"),
         &[("pkg", pkg), ("name", name)],
     )
 }
 
 fn sse_controller_java(web: &str, name: &str, hub_import: &str) -> String {
     crate::template::render(
-        crate::template::template!("spring/sse_controller_java.java"),
+        crate::template_here!("spring/sse_controller_java.java"),
         &[
             ("web", web),
             ("name", name),
@@ -89,7 +89,7 @@ fn sse_controller_java(web: &str, name: &str, hub_import: &str) -> String {
 
 fn sse_hub_test_java(pkg: &str, name: &str) -> String {
     crate::template::render(
-        crate::template::template!("spring/sse_hub_test_java.java"),
+        crate::template_here!("spring/sse_hub_test_java.java"),
         &[("pkg", pkg), ("name", name)],
     )
 }

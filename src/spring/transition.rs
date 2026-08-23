@@ -151,7 +151,7 @@ fn transition_port_java(slice: &Slice, name: &str, target: &str) -> String {
     let domain: &str = &slice.owned(Layer::Domain);
     let target_import = crate::generate::import_of(pkg, domain, target);
     crate::template::render(
-        crate::template::template!("spring/transition_port_java.java"),
+        crate::template_here!("spring/transition_port_java.java"),
         &[
             ("pkg", pkg),
             ("target_import", &*target_import),
@@ -262,7 +262,7 @@ fn jdbc_transition_java(
         .join(",\n");
     let table = crate::sql::table_name(target);
     crate::template::render(
-        crate::template::template!("spring/jdbc_transition_java.java"),
+        crate::template_here!("spring/jdbc_transition_java.java"),
         &[
             ("pkg", pkg),
             ("target_import", &*target_import),
@@ -307,7 +307,7 @@ fn transition_controller_java(
         crate::sql::snake_case(name).replace('_', "-")
     );
     crate::template::render(
-        crate::template::template!("spring/transition_controller_java.java"),
+        crate::template_here!("spring/transition_controller_java.java"),
         &[
             ("web", web),
             ("command_import", &*command_import),
@@ -414,7 +414,7 @@ fn jdbc_transition_it_java(
         ""
     };
     crate::template::render(
-        crate::template::template!("spring/jdbc_transition_it_java.java"),
+        crate::template_here!("spring/jdbc_transition_it_java.java"),
         &[
             ("pkg", pkg),
             ("target_import", &*target_import),
@@ -480,7 +480,7 @@ fn transition_controller_test_java(
     };
     let (scope_import, scope_argument) = scope_test_parts(security, web, fields);
     crate::template::render(
-        crate::template::template!("spring/transition_controller_test_java.java"),
+        crate::template_here!("spring/transition_controller_test_java.java"),
         &[
             ("web", web),
             ("command_import", &*command_import),

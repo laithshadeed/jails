@@ -6,7 +6,6 @@
 //! usable Maven just gets a note.
 
 use super::*;
-use jails_support::json;
 
 // ---------------------------------------------------------------------------
 // http
@@ -41,14 +40,14 @@ pub(super) fn http_plan(slice: &Slice, name: Option<&str>) -> Result<Change> {
 
 pub(super) fn http_server_java(pkg: &str, class: &str) -> String {
     crate::template::render(
-        crate::template::template!("add/http_server_java.java"),
+        crate::template_here!("add/http_server_java.java"),
         &[("pkg", pkg), ("class", class)],
     )
 }
 
 pub(super) fn http_server_test_java(pkg: &str, class: &str) -> String {
     crate::template::render(
-        crate::template::template!("add/http_server_test_java.java"),
+        crate::template_here!("add/http_server_test_java.java"),
         &[("pkg", pkg), ("class", class)],
     )
 }
@@ -252,9 +251,9 @@ fn load_api_js(routes: &[crate::inspect::Route]) -> String {
         .map(|route| {
             format!(
                 "  {{ method: {}, path: {}, handler: {} }}",
-                json::string(&route.verb),
-                json::string(&load_path(&route.path)),
-                json::string(&route.handler),
+                crate::json::string(&route.verb),
+                crate::json::string(&load_path(&route.path)),
+                crate::json::string(&route.handler),
             )
         })
         .collect::<Vec<_>>()

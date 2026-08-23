@@ -320,7 +320,7 @@ fn usecase_port_java(slice: &Slice, name: &str, target: &str) -> String {
     let domain: &str = &slice.owned(Layer::Domain);
     let target_import = crate::generate::import_of(pkg, domain, target);
     crate::template::render(
-        crate::template::template!("spring/usecase_port_java.java"),
+        crate::template_here!("spring/usecase_port_java.java"),
         &[
             ("pkg", pkg),
             ("target_import", &*target_import),
@@ -363,7 +363,7 @@ fn usecase_impl_java(
         ("", "")
     };
     crate::template::render(
-        crate::template::template!("spring/usecase_impl_java.java"),
+        crate::template_here!("spring/usecase_impl_java.java"),
         &[
             ("pkg", pkg),
             ("target_import", &*target_import),
@@ -447,7 +447,7 @@ fn usecase_test_java(
     };
     let _ = target_fields;
     crate::template::render(
-        crate::template::template!("spring/usecase_test_java.java"),
+        crate::template_here!("spring/usecase_test_java.java"),
         &[
             ("pkg", pkg),
             ("target_import", &*target_import),
@@ -489,7 +489,7 @@ fn usecase_controller_java(
         scope_checks,
     ) = scope_controller_parts(security, web, fields, "command");
     crate::template::render(
-        crate::template::template!("spring/usecase_controller_java.java"),
+        crate::template_here!("spring/usecase_controller_java.java"),
         &[
             ("web", web),
             ("command_import", &*command_import),
@@ -596,7 +596,7 @@ fn usecase_controller_test_java(
     };
     let (scope_import, scope_argument) = scope_test_parts(security, web, fields);
     crate::template::render(
-        crate::template::template!("spring/usecase_controller_test_java.java"),
+        crate::template_here!("spring/usecase_controller_test_java.java"),
         &[
             ("web", web),
             ("command_import", &*command_import),

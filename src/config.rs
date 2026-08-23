@@ -40,7 +40,6 @@
 //! rewrites the one `capabilities = [...]` line and leaves every other byte
 //! alone, for the same reason `pom.rs` does. This is a file people edit.
 
-use jails_support::apply;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -297,7 +296,7 @@ fn edit_capabilities(
         Some(updated) => updated,
         None => append_project_table(&text, &rendered),
     };
-    apply::put(&path, updated)
+    crate::apply::put(&path, updated)
 }
 
 /// Swap the existing `capabilities = [...]` line in place, keeping its
@@ -378,7 +377,7 @@ pub(crate) fn record_layout(root: &Path, layer: &str, directory: &str) -> Result
         Some(updated) => updated,
         None => insert_into_layout_table(&text, &rendered),
     };
-    apply::put(&path, updated)
+    crate::apply::put(&path, updated)
 }
 
 /// Swap an existing `<layer> = "..."` inside `[layout]`, keeping its position.

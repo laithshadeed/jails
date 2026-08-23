@@ -27,7 +27,6 @@
 //! Migrations are applied in the same order Flyway would use, one statement
 //! batch per file, stopping at the first failure and naming the file.
 
-use jails_support::process;
 use std::path::{Path, PathBuf};
 
 use crate::compose;
@@ -162,7 +161,7 @@ fn version_of(file_name: &str) -> Option<u32> {
 }
 
 fn psql(conn: &compose::PostgresConnect, database: &str, sql: &str, debug: bool) -> Result<()> {
-    use process::{CommandSpec, Diagnostics, OutputMode};
+    use crate::process::{CommandSpec, Diagnostics, OutputMode};
 
     let spec = CommandSpec::new("psql")
         .args([
@@ -192,7 +191,7 @@ fn psql(conn: &compose::PostgresConnect, database: &str, sql: &str, debug: bool)
     // The executor prints and then runs. `--debug` is observability, never a
     // mode that skips the work: a `--debug migrate` that returned early here
     // reported "applied cleanly" over SQL that had not been near a database.
-    let done = process::run(&spec, Diagnostics::from_flag(debug))?;
+    let done = crate::process::run(&spec, Diagnostics::from_flag(debug))?;
     if done.status.success() {
         return Ok(());
     }

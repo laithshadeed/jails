@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 
 /// Every `.java` file under `dir`, sorted, so output is stable across runs
 /// (`read_dir` order is filesystem-dependent and not otherwise sorted).
-pub(crate) fn source_files(dir: &Path) -> Vec<PathBuf> {
+pub fn source_files(dir: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     let mut stack = vec![dir.to_path_buf()];
     while let Some(current) = stack.pop() {
@@ -46,7 +46,7 @@ pub(crate) fn source_files(dir: &Path) -> Vec<PathBuf> {
 
 /// The source with every comment and string/char literal replaced by spaces,
 /// preserving length so byte offsets into the result also index the original.
-pub(crate) fn blanked(source: &str) -> String {
+pub fn blanked(source: &str) -> String {
     masked(source, true)
 }
 
@@ -116,7 +116,7 @@ fn masked(source: &str, comments: bool) -> String {
 /// must read only comments, and must still not be fooled by the word
 /// appearing inside a string literal. Length is preserved either way, so line
 /// and byte offsets still index the original.
-pub(crate) fn without_literals(source: &str) -> String {
+pub fn without_literals(source: &str) -> String {
     masked(source, false)
 }
 
@@ -147,7 +147,7 @@ fn blank_range(out: &mut [u8], start: usize, end: usize) {
 
 /// One annotation and the declaration it sits on.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Annotated {
+pub struct Annotated {
     pub name: String,
     /// One-based source line of the annotation.
     pub line: usize,
@@ -160,7 +160,7 @@ pub(crate) struct Annotated {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Target {
+pub enum Target {
     /// `class`/`record`/`interface`/`enum` -- carries the type's own name.
     Type(String),
     /// A method -- carries its name and its declared return type.
@@ -170,7 +170,7 @@ pub(crate) enum Target {
 }
 
 /// Every annotation in the file, in source order.
-pub(crate) fn annotations(source: &str) -> Vec<Annotated> {
+pub fn annotations(source: &str) -> Vec<Annotated> {
     let text = blanked(source);
     let bytes = text.as_bytes();
     let mut found = Vec::new();
@@ -317,7 +317,7 @@ fn target_at(text: &str, mut at: usize) -> Target {
 /// The single type this file declares: its name, what it extends/implements,
 /// and the parameter types of its widest constructor.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(crate) struct TypeInfo {
+pub struct TypeInfo {
     pub name: String,
     pub package: String,
     pub supertypes: Vec<String>,
@@ -325,7 +325,7 @@ pub(crate) struct TypeInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Param {
+pub struct Param {
     /// The type with generics and package qualifiers stripped -- what bean
     /// wiring compares against.
     pub type_name: String,
@@ -340,7 +340,7 @@ pub(crate) struct Param {
 /// Read the file's top-level type. Nested types are ignored: the first
 /// `class`/`record`/`interface`/`enum` keyword at the outermost level wins,
 /// which for jails-generated code is always the file's namesake.
-pub(crate) fn type_info(source: &str) -> Option<TypeInfo> {
+pub fn type_info(source: &str) -> Option<TypeInfo> {
     let text = blanked(source);
     let package = text
         .lines()
@@ -505,7 +505,7 @@ fn push_param(out: &mut Vec<Param>, text: &str) {
 
 /// `java.util.List<Reward>` -> `List`. Generic arguments and package
 /// qualifiers are noise for every caller here.
-pub(crate) fn simple_name(t: &str) -> String {
+pub fn simple_name(t: &str) -> String {
     let t = t.split('<').next().unwrap_or(t).trim();
     let t = t.rsplit('.').next().unwrap_or(t);
     t.trim().trim_end_matches("...").to_string()
@@ -534,7 +534,7 @@ fn top_level_find(text: &str, needle: &str) -> Option<usize> {
     None
 }
 
-pub(crate) fn skip_space(text: &str, mut at: usize) -> usize {
+pub fn skip_space(text: &str, mut at: usize) -> usize {
     let bytes = text.as_bytes();
     while at < bytes.len() && bytes[at].is_ascii_whitespace() {
         at += 1;
@@ -544,7 +544,7 @@ pub(crate) fn skip_space(text: &str, mut at: usize) -> usize {
 
 /// Offset of the `)` closing the `(` at `open`. Returns the last byte when
 /// the source is unbalanced, so a truncated file cannot panic the caller.
-pub(crate) fn match_paren(text: &str, open: usize) -> usize {
+pub fn match_paren(text: &str, open: usize) -> usize {
     match_delim(text, open, b'(', b')')
 }
 
@@ -573,7 +573,7 @@ fn match_delim(text: &str, open: usize, opener: u8, closer: u8) -> usize {
 /// The first string literal in an annotation's arguments, honouring the
 /// `path =` / `value =` forms Spring accepts. Literals were blanked out of
 /// the scanning copy, so this reads the original argument text.
-pub(crate) fn annotation_string(args: &str) -> Option<String> {
+pub fn annotation_string(args: &str) -> Option<String> {
     for key in ["path = ", "path=", "value = ", "value="] {
         if let Some(at) = args.find(key)
             && let Some(found) = first_string(&args[at + key.len()..])
@@ -593,7 +593,7 @@ pub(crate) fn annotation_string(args: &str) -> Option<String> {
 }
 
 /// The first double-quoted literal in `text`, or None.
-pub(crate) fn first_string(text: &str) -> Option<String> {
+pub fn first_string(text: &str) -> Option<String> {
     let open = text.find('"')?;
     let rest = &text[open + 1..];
     let close = rest.find('"')?;

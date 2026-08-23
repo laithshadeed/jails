@@ -24,7 +24,6 @@
 //! `spring.json.use.type.headers=false` for exactly this reason, and `jails
 //! kafka send` is what makes that setting testable in one line.
 
-use jails_support::process;
 use std::path::Path;
 use std::process::Command;
 
@@ -235,14 +234,14 @@ fn tool(
             // One executor: it prints (when asked) and then runs, delivers
             // stdin, and closes the pipe so the producer sees EOF instead of
             // waiting. `--debug` never decides whether the record is sent.
-            let spec = process::compose_spec(["exec", "-T", SERVICE])
+            let spec = crate::process::compose_spec(["exec", "-T", SERVICE])
                 .ok_or_else(|| "docker compose is not installed".to_string())?
                 .arg(format!("{TOOLS}/{script}"))
                 .args(["--bootstrap-server", BROKER])
                 .args(args)
                 .current_dir(root)
                 .stdin(input.as_bytes().to_vec());
-            let done = process::run(&spec, process::Diagnostics::from_flag(debug))?;
+            let done = crate::process::run(&spec, crate::process::Diagnostics::from_flag(debug))?;
             if done.status.success() {
                 Ok(())
             } else {

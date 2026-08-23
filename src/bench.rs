@@ -25,9 +25,8 @@
 //! §19.6 therefore remains **unmeasured**, and that is stated rather than
 //! quietly implied by the existence of the command.
 
+use crate::process::CommandSpec;
 use jails_support::Result;
-use jails_support::process;
-use jails_support::process::CommandSpec;
 use std::path::Path;
 
 /// Where `add loadtest` puts the script.
@@ -69,12 +68,12 @@ pub fn bench(profile: Profile, debug: bool) -> Result<()> {
         .env("VUS", profile.vus.to_string())
         .env("DURATION", profile.duration.as_str())
         .current_dir(&root);
-    process::run_checked(&spec, process::Diagnostics::from_flag(debug))?;
+    crate::process::run_checked(&spec, crate::process::Diagnostics::from_flag(debug))?;
     Ok(())
 }
 
 fn require_k6() -> Result<()> {
-    if process::on_path("k6") {
+    if crate::process::on_path("k6") {
         return Ok(());
     }
     Err(

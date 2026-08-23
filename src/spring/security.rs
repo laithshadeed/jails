@@ -78,49 +78,49 @@ pub(crate) fn cors_slice(slice: &Slice) -> Change {
 
 fn cors_config_java(pkg: &str) -> String {
     crate::template::render(
-        crate::template::template!("spring/cors_config_java.java"),
+        crate::template_here!("spring/cors_config_java.java"),
         &[("pkg", pkg)],
     )
 }
 
 fn cors_config_test_java(pkg: &str) -> String {
     crate::template::render(
-        crate::template::template!("spring/cors_config_test_java.java"),
+        crate::template_here!("spring/cors_config_test_java.java"),
         &[("pkg", pkg)],
     )
 }
 
 fn security_config_java(pkg: &str) -> String {
     crate::template::render(
-        crate::template::template!("spring/security_config_java.java"),
+        crate::template_here!("spring/security_config_java.java"),
         &[("pkg", pkg)],
     )
 }
 
 fn production_security_config_java(pkg: &str) -> String {
     crate::template::render(
-        crate::template::template!("spring/production_security_config_java.java"),
+        crate::template_here!("spring/production_security_config_java.java"),
         &[("pkg", pkg)],
     )
 }
 
 fn security_test_java(pkg: &str) -> String {
     crate::template::render(
-        crate::template::template!("spring/security_test_java.java"),
+        crate::template_here!("spring/security_test_java.java"),
         &[("pkg", pkg)],
     )
 }
 
 fn scope_authorizer_java(pkg: &str) -> String {
     crate::template::render(
-        crate::template::template!("spring/scope_authorizer_java.java"),
+        crate::template_here!("spring/scope_authorizer_java.java"),
         &[("pkg", pkg)],
     )
 }
 
 fn scope_authorizer_test_java(pkg: &str) -> String {
     crate::template::render(
-        crate::template::template!("spring/scope_authorizer_test_java.java"),
+        crate::template_here!("spring/scope_authorizer_test_java.java"),
         &[("pkg", pkg)],
     )
 }

@@ -323,11 +323,19 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // the board being re-read. No behaviour changed. Recorded as
                 // its own step anyway, because a ceiling quietly absorbing a
                 // second rise is how a ratchet becomes decoration.
-                ceiling: 1411,
+                //
+                // 1411 -> 1410 with the workspace split. `doctor` reaches the
+                // lower crates through the root package's facade re-export
+                // rather than importing each one, so the net is one import
+                // line fewer than before. Recorded in the same change, under
+                // the same rule the 1404 -> 1411 step above was recorded by:
+                // an improvement nobody writes down is one the next rise
+                // silently absorbs.
+                ceiling: 1410,
                 // Withdrawn, not reached. abstract.md §8.0.1 audits all ten
                 // checks: none is a re-encoded dependency fact, so the 700
                 // measured a saving that is not there. Ratchet against growth.
-                target: 1411,
+                target: 1410,
                 why: "Feature Envy at module scale: doctor re-derives by reading the project \
                       back off disk the facts `add/*` already own, and the drift between them \
                       is a class nothing catches.",

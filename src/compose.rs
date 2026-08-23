@@ -14,7 +14,6 @@
 use crate::spec::find_project_root;
 use clap::ValueEnum;
 use jails_support::Result;
-use jails_support::{apply, codemod, process};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -228,8 +227,8 @@ fn line_offset(text: &str, line_idx: usize) -> Option<usize> {
 /// The block format lives in `codemod.rs`; the two-space indent is this
 /// file's, because a marker at column zero inside a YAML mapping is a parse
 /// error rather than a comment in the wrong place.
-fn block(marker: &str) -> codemod::Marked<'_> {
-    codemod::Marked::indented(marker, "  ")
+fn block(marker: &str) -> crate::codemod::Marked<'_> {
+    crate::codemod::Marked::indented(marker, "  ")
 }
 
 fn marked_block(svc: &Service) -> String {
@@ -503,7 +502,7 @@ fn invoke_compose(root: &Path, args: Vec<&str>, debug: bool) -> Result<()> {
 /// only the standalone binary `jails start` worked while `doctor` reported
 /// Docker missing.
 fn compose_command() -> Option<Command> {
-    let (program, prefix) = process::compose_program()?;
+    let (program, prefix) = crate::process::compose_program()?;
     let mut cmd = Command::new(program);
     cmd.args(prefix);
     Some(cmd)
@@ -539,7 +538,7 @@ pub fn write(root: &Path, text: &str) -> Result<()> {
         }
         return Ok(());
     }
-    apply::put(&path, text)
+    crate::apply::put(&path, text)
 }
 
 /// Connection parameters for the compose postgres that `jails add db` wrote.

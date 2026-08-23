@@ -1,7 +1,7 @@
 //! Which tests can the last edit possibly have broken?
 //!
 //! `plan.md` §10.2 step 3. The index is a reverse-dependency map built from
-//! the constant pools already sitting in `target/` -- see [`crate::classfile`]
+//! the constant pools already sitting in `target/` -- see [`classfile`]
 //! for the one question asked of each file -- so nothing has to be compiled,
 //! configured or kept in step by hand.
 //!
@@ -26,8 +26,7 @@
 //! component scan, a resource file, a `application.properties` key. That is
 //! why `jails check` stays `mvn clean verify` and why this is opt-in.
 
-use crate::classfile;
-use jails_support::process::{self, CommandSpec, Diagnostics, OutputMode};
+use crate::process::{CommandSpec, Diagnostics, OutputMode};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 
@@ -88,7 +87,7 @@ impl Graph {
     fn absorb(&mut self, dir: &Path, is_test: bool) {
         for (name, bytes) in class_files(dir) {
             self.owners.insert(name.clone(), is_test);
-            if let Some(types) = classfile::referenced_types(&bytes) {
+            if let Some(types) = crate::classfile::referenced_types(&bytes) {
                 for referenced in types {
                     if referenced != name {
                         self.referrers
@@ -195,7 +194,7 @@ fn changed_sources(root: &Path, debug: bool) -> Result<Vec<PathBuf>, String> {
         .arg("src/test/java")
         .current_dir(root)
         .output(OutputMode::Capture);
-    let done = process::run(&spec, Diagnostics::from_flag(debug))
+    let done = crate::process::run(&spec, Diagnostics::from_flag(debug))
         .map_err(|_| "git is not available, so what changed is unknown".to_string())?;
     if !done.status.success() {
         return Err("this is not a git repository, so what changed is unknown".into());

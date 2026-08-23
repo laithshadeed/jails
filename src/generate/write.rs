@@ -14,7 +14,6 @@
 
 use crate::model::{Artifact, Change, Project};
 use jails_support::Result;
-use jails_support::apply;
 use std::path::Path;
 
 /// Whether this change writes an integration test and therefore needs the
@@ -81,7 +80,7 @@ pub(crate) fn ensure_dependency(root: &Path, dep: &crate::pom::Dependency) -> Re
     let pom = crate::pom::read(root)?;
     match crate::pom::add_dependency(&pom, dep)? {
         Some(updated) => {
-            apply::put_named(root.join("pom.xml"), updated, "pom.xml")?;
+            crate::apply::put_named(root.join("pom.xml"), updated, "pom.xml")?;
             println!("     dep {}:{}", dep.group_id, dep.artifact_id);
             Ok(())
         }
@@ -114,7 +113,7 @@ pub(crate) fn apply_build_change(root: &Path, pom: &str, change: &Change) -> Res
         }
     }
     if changed {
-        apply::put_named(root.join("pom.xml"), updated, "pom.xml")?;
+        crate::apply::put_named(root.join("pom.xml"), updated, "pom.xml")?;
     }
     Ok(())
 }
@@ -130,8 +129,8 @@ pub(crate) fn apply_build_change(root: &Path, pom: &str, change: &Change) -> Res
 /// is why a `new-cli` project's own base package never got the
 /// `package-info.java` every other package gets.
 pub(crate) fn write_new_file(root: &Path, path: &Path, contents: &str) -> Result<()> {
-    // The refusal stays here rather than in `apply::create`, because this is
-    // the one a person reads: it names the three ways forward. `apply::create`
+    // The refusal stays here rather than in `crate::apply::create`, because this is
+    // the one a person reads: it names the three ways forward. `crate::apply::create`
     // repeats the check underneath, which costs nothing and closes the window
     // between the two.
     if path.exists() {
@@ -146,7 +145,7 @@ pub(crate) fn write_new_file(root: &Path, path: &Path, contents: &str) -> Result
     } else {
         contents.to_string()
     };
-    apply::create(path, &contents)
+    crate::apply::create(path, &contents)
 }
 
 /// Collapse the blank lines a template leaves behind when an optional section
@@ -241,7 +240,7 @@ pub(crate) fn ensure_package_info(root: &Path, class_path: &Path) -> Result<()> 
     let Some(pkg) = package_of_dir(root, dir) else {
         return Ok(());
     };
-    apply::put(&info, package_info_java(&pkg))?;
+    crate::apply::put(&info, package_info_java(&pkg))?;
     Ok(())
 }
 

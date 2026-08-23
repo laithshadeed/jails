@@ -17,7 +17,6 @@ use super::wiring::property_value;
 use super::{Check, Status};
 use crate::pom;
 use crate::run;
-use jails_support::process;
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs as _};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -135,8 +134,9 @@ pub(super) fn compose_provider_check(pom_text: &str) -> Option<Check> {
     // provider jails would actually drive. Hardcoding `docker` here meant a
     // machine with only the standalone `docker-compose` had `jails start`
     // working while this said Docker was missing.
-    let spec = process::compose_spec(["version"])?.output(process::OutputMode::Capture);
-    let done = process::run(&spec, process::Diagnostics::Normal).ok()?;
+    let spec =
+        crate::process::compose_spec(["version"])?.output(crate::process::OutputMode::Capture);
+    let done = crate::process::run(&spec, crate::process::Diagnostics::Normal).ok()?;
     Some(classify_compose_provider(&done.stdout_string()))
 }
 
@@ -185,7 +185,7 @@ pub(super) fn classify_compose_provider(banner: &str) -> Check {
 /// against podman's differently-shaped info report and exits 125 -- which
 /// would report a perfectly healthy engine as dead.
 pub(super) fn docker_daemon_running() -> bool {
-    let Some(docker) = process::docker_program() else {
+    let Some(docker) = crate::process::docker_program() else {
         return false;
     };
     Command::new(docker)
@@ -203,7 +203,7 @@ pub(super) fn docker_daemon_running() -> bool {
 /// provider behind podman's `docker` shim) does not accept `--services
 /// --status`. `docker ps --format` works identically on both.
 pub(super) fn running_containers() -> Vec<String> {
-    let Some(docker) = process::docker_program() else {
+    let Some(docker) = crate::process::docker_program() else {
         // Only the standalone `docker-compose` is installed, so there is no
         // Docker CLI to ask. Reporting "nothing running" would be a guess
         // dressed as a fact; an empty list is what callers treat as unknown.
@@ -314,10 +314,10 @@ pub(super) fn reuse_enabled() -> bool {
 /// reason the compose checks avoid Docker-specific spellings: this machine's
 /// `docker` is podman's shim, and both understand this form.
 pub(super) fn reusable_containers() -> usize {
-    let Some(docker) = process::docker_program() else {
+    let Some(docker) = crate::process::docker_program() else {
         return 0;
     };
-    let spec = process::CommandSpec::new(docker)
+    let spec = crate::process::CommandSpec::new(docker)
         .args([
             "ps",
             "-a",
@@ -326,8 +326,8 @@ pub(super) fn reusable_containers() -> usize {
             "--format",
             "{{.Names}}",
         ])
-        .output(process::OutputMode::Capture);
-    match process::run(&spec, process::Diagnostics::Normal) {
+        .output(crate::process::OutputMode::Capture);
+    match crate::process::run(&spec, crate::process::Diagnostics::Normal) {
         Ok(done) if done.status.success() => done
             .stdout_string()
             .lines()

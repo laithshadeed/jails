@@ -14,7 +14,6 @@
 
 use crate::model::{Artifact, Layer, Project};
 use jails_support::Result;
-use jails_support::apply;
 use std::path::Path;
 
 use super::*;
@@ -545,7 +544,7 @@ pub(crate) fn generate_field(
         // jails would have written -- the ownership oracle already refused the
         // rest and printed a snippet. So this is jails replacing its own
         // output, which is what `replace` names.
-        apply::replace(path, contents)?;
+        crate::apply::replace(path, contents)?;
     }
     let mut written = Vec::new();
     if let Some((path, contents)) = migration {

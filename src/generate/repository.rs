@@ -909,7 +909,7 @@ fn jdbc_repository_test_with_wiring(
     let repository_field = format!("    @Autowired private {name}Repository repository;\n");
 
     crate::template::render(
-        crate::template::template!("generate/jdbc_repository_test.java"),
+        crate::template_here!("generate/jdbc_repository_test.java"),
         &[
             ("pkg", pkg),
             ("name", name),
@@ -926,7 +926,7 @@ fn disabled_jdbc_repository_test(pkg: &str, name: &str, reason: &str) -> String 
     let annotations = format!("@Disabled(\"{reason}\")\n");
     let body = format!("        throw new UnsupportedOperationException(\"{reason}\");");
     crate::template::render(
-        crate::template::template!("generate/jdbc_repository_test.java"),
+        crate::template_here!("generate/jdbc_repository_test.java"),
         &[
             ("pkg", pkg),
             ("name", name),

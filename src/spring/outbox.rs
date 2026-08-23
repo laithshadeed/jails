@@ -211,7 +211,7 @@ fn outbox_usecase_java(
         .collect::<Vec<_>>()
         .join(",\n");
     crate::template::render(
-        crate::template::template!("spring/outbox_usecase_java.java"),
+        crate::template_here!("spring/outbox_usecase_java.java"),
         &[
             ("service", service),
             ("target_import", &*target_import),
@@ -239,7 +239,7 @@ fn outbox_store_java(
     let json_import = crate::generate::import_of(pkg, adapters, "Json");
     let event_import = crate::generate::import_of(pkg, messaging, &format!("{event}Event"));
     crate::template::render(
-        crate::template::template!("spring/outbox_store_java.java"),
+        crate::template_here!("spring/outbox_store_java.java"),
         &[
             ("pkg", pkg),
             ("json_import", &*json_import),
@@ -255,7 +255,7 @@ fn outbox_store_java(
 fn outbox_sink_java(pkg: &str, messaging: &str, usecase: &str, event: &str) -> String {
     let event_import = crate::generate::import_of(pkg, messaging, &format!("{event}Event"));
     crate::template::render(
-        crate::template::template!("spring/outbox_sink_java.java"),
+        crate::template_here!("spring/outbox_sink_java.java"),
         &[
             ("pkg", pkg),
             ("event_import", &*event_import),
@@ -269,7 +269,7 @@ fn outbox_kafka_sink_java(pkg: &str, messaging: &str, usecase: &str, event: &str
     let event_import = crate::generate::import_of(pkg, messaging, &format!("{event}Event"));
     let publisher_import = crate::generate::import_of(pkg, messaging, &format!("{event}Publisher"));
     crate::template::render(
-        crate::template::template!("spring/outbox_kafka_sink_java.java"),
+        crate::template_here!("spring/outbox_kafka_sink_java.java"),
         &[
             ("pkg", pkg),
             ("event_import", &*event_import),
@@ -282,7 +282,7 @@ fn outbox_kafka_sink_java(pkg: &str, messaging: &str, usecase: &str, event: &str
 
 fn outbox_worker_java(pkg: &str, usecase: &str, property: &str) -> String {
     crate::template::render(
-        crate::template::template!("spring/outbox_worker_java.java"),
+        crate::template_here!("spring/outbox_worker_java.java"),
         &[("pkg", pkg), ("usecase", usecase), ("property", property)],
     )
 }
@@ -327,7 +327,7 @@ fn outbox_it_java(
         ""
     };
     crate::template::render(
-        crate::template::template!("spring/outbox_it_java.java"),
+        crate::template_here!("spring/outbox_it_java.java"),
         &[
             ("pkg", pkg),
             ("command_import", &*command_import),

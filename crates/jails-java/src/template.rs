@@ -64,28 +64,32 @@ use std::sync::OnceLock;
 static OVERRIDES: OnceLock<BTreeMap<String, Override>> = OnceLock::new();
 
 #[derive(Debug, Clone)]
-pub(crate) struct Override {
-    pub(crate) path: PathBuf,
+pub struct Override {
+    pub path: PathBuf,
     /// Deliberately not `contents`: `tests/architecture.rs` counts that field
     /// name as a file-about-to-be-written, and rung 2's gate is that there is
     /// exactly one such struct. This is a file already *read*.
     text: String,
 }
 
-/// Name a template by its path under `templates/`, resolving any override.
+/// Name a template by its path under a crate's template root, resolving any
+/// override.
 ///
 /// The `include_str!` default is still a compile-time constant, so a project
 /// with no overrides does no file access at all and cannot be made to fail by
 /// a missing template.
-macro_rules! template {
-    ($name:literal) => {
-        $crate::template::resolve(
-            $name,
-            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/templates/", $name)),
-        )
+///
+/// `$dir` is the caller's template root and is not optional, because
+/// `CARGO_MANIFEST_DIR` expands at the *call site*: a macro that baked it in
+/// resolved to whichever crate invoked it, which is the workspace's one real
+/// trap here. Each crate declares its own one-line `template!` wrapper naming
+/// its root, so a wrong path is a compile error rather than a silent miss.
+#[macro_export]
+macro_rules! template_at {
+    ($dir:expr, $name:literal) => {
+        $crate::template::resolve($name, include_str!(concat!($dir, $name)))
     };
 }
-pub(crate) use template;
 
 /// Point the override search at a project. Idempotent; the first call wins.
 ///
@@ -93,12 +97,12 @@ pub(crate) use template;
 /// resolved a project has the right overrides and nothing else has to remember.
 /// `new` runs before a project exists, so it sees the machine tier only --
 /// which is the correct answer, not an omission.
-pub(crate) fn install(root: &Path) {
+pub fn install(root: &Path) {
     let _ = OVERRIDES.set(discover(user_templates(), Some(root)));
 }
 
 /// Every override in effect, for `doctor` to name.
-pub(crate) fn active() -> Vec<(String, PathBuf)> {
+pub fn active() -> Vec<(String, PathBuf)> {
     OVERRIDES
         .get()
         .map(|found| {
@@ -116,7 +120,7 @@ pub(crate) fn active() -> Vec<(String, PathBuf)> {
 /// built-in on a mismatch would be the worst of the three options -- the
 /// reader's file is ignored and the build is green -- so this refuses, naming
 /// the file and the exact difference.
-pub(crate) fn resolve(name: &'static str, default: &'static str) -> String {
+pub fn resolve(name: &'static str, default: &'static str) -> String {
     let Some(entry) = OVERRIDES.get().and_then(|found| found.get(name)) else {
         return default.to_string();
     };
@@ -216,7 +220,7 @@ fn collect(base: &Path, dir: &Path, found: &mut BTreeMap<String, Override>) {
 /// that is a programming error and the golden target catches it long before a
 /// user could: silently shipping `{{nmae}}` inside a generated class is the
 /// one outcome worth being loud about.
-pub(crate) fn render(template: impl AsRef<str>, values: &[(&str, &str)]) -> String {
+pub fn render(template: impl AsRef<str>, values: &[(&str, &str)]) -> String {
     let template = template.as_ref();
     // Checked against the *template*, never the result. A rendered value may
     // legitimately contain anything -- it is data by then -- and scanning the

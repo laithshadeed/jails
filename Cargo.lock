@@ -125,6 +125,14 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "clap_complete",
+ "jails-java",
+ "jails-support",
+]
+
+[[package]]
+name = "jails-java"
+version = "0.1.0"
+dependencies = [
  "jails-support",
 ]
 

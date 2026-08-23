@@ -26,7 +26,7 @@ use crate::generate::find_project_root;
 use crate::inspect;
 use crate::pom;
 use crate::run;
-use jails_support::{Result, apply};
+use jails_support::Result;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Status {
@@ -148,17 +148,15 @@ pub fn doctor(json: bool) -> Result<()> {
 /// The exit code is unchanged: failures still exit non-zero, because
 /// `jails doctor --json && deploy` should behave like `jails doctor && deploy`.
 fn report_json(checks: &[Check]) -> Result<()> {
-    use jails_support::json;
-
     let rows: Vec<String> = checks
         .iter()
         .map(|check| {
             format!(
                 "    {{\"status\": {}, \"title\": {}, \"detail\": {}, \"fix\": {}}}",
-                json::string(check.status.name()),
-                json::string(&check.title),
-                json::string(&check.detail),
-                json::string(&check.fix)
+                crate::json::string(check.status.name()),
+                crate::json::string(&check.title),
+                crate::json::string(&check.detail),
+                crate::json::string(&check.fix)
             )
         })
         .collect();
@@ -628,7 +626,7 @@ pub fn setup(dry_run: bool) -> Result<()> {
         return Ok(());
     }
 
-    apply::put_outside_project(&path, next)?;
+    crate::apply::put_outside_project(&path, next)?;
     println!(
         "  write   testcontainers.reuse.enable=true -> {}",
         path.display()

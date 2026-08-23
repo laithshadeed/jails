@@ -21,7 +21,6 @@
 
 use clap::{Command, CommandFactory, ValueEnum};
 use jails_support::Result;
-use jails_support::json;
 
 /// One name the CLI accepts, with whatever else it answers to.
 struct Name {
@@ -116,13 +115,21 @@ fn render_names(label: &str, names: &[Name]) -> String {
     let rows: Vec<String> = names
         .iter()
         .map(|entry| {
-            let aliases: Vec<String> = entry.aliases.iter().map(|a| json::string(a)).collect();
-            let options: Vec<String> = entry.options.iter().map(|o| json::string(o)).collect();
+            let aliases: Vec<String> = entry
+                .aliases
+                .iter()
+                .map(|a| crate::json::string(a))
+                .collect();
+            let options: Vec<String> = entry
+                .options
+                .iter()
+                .map(|o| crate::json::string(o))
+                .collect();
             format!(
                 "    {{\"name\": {}, \"aliases\": [{}], \"about\": {}, \"options\": [{}]}}",
-                json::string(&entry.name),
+                crate::json::string(&entry.name),
                 aliases.join(", "),
-                json::string(&entry.about),
+                crate::json::string(&entry.about),
                 options.join(", ")
             )
         })
@@ -160,7 +167,7 @@ pub(crate) fn commands(json: bool) -> Result<()> {
         return Ok(());
     }
 
-    let flag_list: Vec<String> = flags.iter().map(|flag| json::string(flag)).collect();
+    let flag_list: Vec<String> = flags.iter().map(|flag| crate::json::string(flag)).collect();
     println!(
         "{{\n  \"schema_version\": 1,\n{},\n{},\n{},\n  \"options\": [{}]\n}}",
         render_names("subcommands", &subs),

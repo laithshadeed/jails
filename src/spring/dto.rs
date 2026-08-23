@@ -210,7 +210,7 @@ pub(crate) fn request_java_for(
         .collect::<Vec<_>>()
         .join(",\n");
     crate::template::render(
-        crate::template::template!("spring/request_java_for.java"),
+        crate::template_here!("spring/request_java_for.java"),
         &[
             ("pkg", pkg),
             ("domain_import", domain_import),
@@ -240,7 +240,7 @@ pub(crate) fn response_java_for(
         .join(",\n");
     let var = crate::generate::lower_first(name);
     crate::template::render(
-        crate::template::template!("spring/response_java_for.java"),
+        crate::template_here!("spring/response_java_for.java"),
         &[
             ("pkg", pkg),
             ("domain_import", domain_import),
@@ -323,7 +323,7 @@ fn dto_test_java(
     let sample_imports = dto_imports(fields, false, domain, pkg);
 
     crate::template::render(
-        crate::template::template!("spring/dto_test_java.java"),
+        crate::template_here!("spring/dto_test_java.java"),
         &[
             ("pkg", pkg),
             ("domain_import", domain_import),

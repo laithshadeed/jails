@@ -18,7 +18,6 @@
 //! before the manifest existed is still part of the project.
 
 use super::*;
-use jails_support::apply;
 
 /// Inverse of [`add`]: unsplice the same pom entries, delete the same files,
 /// take compose services out, and stop their containers.
@@ -214,7 +213,7 @@ pub fn remove(
     }
 
     if pom_changed {
-        apply::put_named(root.join("pom.xml"), &updated_pom, "pom.xml")?;
+        crate::apply::put_named(root.join("pom.xml"), &updated_pom, "pom.xml")?;
         for dep in &removed_deps {
             println!("  remove  {}:{}", dep.group_id, dep.artifact_id);
         }

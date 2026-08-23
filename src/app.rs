@@ -7,7 +7,6 @@
 
 mod manifest;
 mod reconcile;
-use jails_support::apply;
 use manifest::*;
 use reconcile::*;
 
@@ -381,7 +380,7 @@ fn init(root: &Path, requested: Option<&Path>, pretend: bool) -> Result<()> {
         fs::create_dir_all(parent)
             .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
     }
-    apply::put(
+    crate::apply::put(
         &path,
         "# Generic application intent. Add capabilities, then one [[generate]] table per slice.\n\
          schema = 1\n\

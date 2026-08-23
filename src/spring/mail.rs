@@ -80,14 +80,14 @@ pub(crate) fn mail_slice(slice: &Slice) -> Change {
             artifact(
                 crate::generate::main_dir(root, pkg).join(format!("{name}.java")),
                 crate::template::render(
-                    crate::template::template!("spring/mailer_java.java"),
+                    crate::template_here!("spring/mailer_java.java"),
                     &[("pkg", pkg), ("name", name)],
                 ),
             ),
             artifact(
                 crate::generate::test_dir(root, pkg).join(format!("{name}IT.java")),
                 crate::template::render(
-                    crate::template::template!("spring/mailer_it_java.java"),
+                    crate::template_here!("spring/mailer_it_java.java"),
                     &[("pkg", pkg), ("name", name), ("image", IMAGE)],
                 ),
             ),

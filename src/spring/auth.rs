@@ -49,7 +49,7 @@ pub(crate) fn auth_files(slice: &Slice, name: &str) -> jails_support::Result<Vec
             kind: "token config",
             path: main.join(format!("{name}TokenConfig.java")),
             contents: crate::template::render(
-                crate::template::template!("spring/auth_config_java.java"),
+                crate::template_here!("spring/auth_config_java.java"),
                 &[("pkg", pkg), ("name", name)],
             ),
         },
@@ -57,7 +57,7 @@ pub(crate) fn auth_files(slice: &Slice, name: &str) -> jails_support::Result<Vec
             kind: "token issuer",
             path: main.join(format!("{name}Tokens.java")),
             contents: crate::template::render(
-                crate::template::template!("spring/auth_tokens_java.java"),
+                crate::template_here!("spring/auth_tokens_java.java"),
                 &[("pkg", pkg), ("name", name), ("issuer", &issuer)],
             ),
         },
@@ -65,7 +65,7 @@ pub(crate) fn auth_files(slice: &Slice, name: &str) -> jails_support::Result<Vec
             kind: "token issuer test",
             path: test.join(format!("{name}TokensTest.java")),
             contents: crate::template::render(
-                crate::template::template!("spring/auth_tokens_test_java.java"),
+                crate::template_here!("spring/auth_tokens_test_java.java"),
                 &[("pkg", pkg), ("name", name), ("issuer", &issuer)],
             ),
         },

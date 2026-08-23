@@ -119,7 +119,7 @@ fn kafka_deserializer_properties() -> Vec<String> {
 /// topics are called. `jails g event <Name>` declares them, because it does.
 fn kafka_config_java(pkg: &str) -> String {
     crate::template::render(
-        crate::template::template!("spring/kafka_config_java.java"),
+        crate::template_here!("spring/kafka_config_java.java"),
         &[("pkg", pkg)],
     )
 }
@@ -132,7 +132,7 @@ fn kafka_config_java(pkg: &str) -> String {
 /// a human reads out of the dead-letter headers.
 fn non_retryable_exception_java(pkg: &str) -> String {
     crate::template::render(
-        crate::template::template!("spring/non_retryable_exception_java.java"),
+        crate::template_here!("spring/non_retryable_exception_java.java"),
         &[("pkg", pkg)],
     )
 }
@@ -144,7 +144,7 @@ fn non_retryable_exception_java(pkg: &str) -> String {
 /// the code that uses it, *and a test that proves it works*.
 fn kafka_config_test_java(pkg: &str) -> String {
     crate::template::render(
-        crate::template::template!("spring/kafka_config_test_java.java"),
+        crate::template_here!("spring/kafka_config_test_java.java"),
         &[("pkg", pkg)],
     )
 }
@@ -156,7 +156,7 @@ fn kafka_config_test_java(pkg: &str) -> String {
 /// it globally would make every unrelated `@SpringBootTest` start Kafka.
 fn kafka_testcontainers_config_java(pkg: &str) -> String {
     crate::template::render(
-        crate::template::template!("spring/kafka_testcontainers_config_java.java"),
+        crate::template_here!("spring/kafka_testcontainers_config_java.java"),
         &[
             ("pkg", pkg),
             ("KAFKA_TESTCONTAINERS_CONFIG", KAFKA_TESTCONTAINERS_CONFIG),
@@ -245,7 +245,7 @@ pub(crate) fn event_files(
 fn event_java(pkg: &str, domain: &str, name: &str, fields: &[crate::generate::Field]) -> String {
     if fields.is_empty() {
         return crate::template::render(
-            crate::template::template!("spring/event_java.java"),
+            crate::template_here!("spring/event_java.java"),
             &[("pkg", pkg), ("name", name)],
         );
     }
@@ -273,7 +273,7 @@ fn event_java(pkg: &str, domain: &str, name: &str, fields: &[crate::generate::Fi
 
 fn publisher_java(pkg: &str, name: &str, topic: &str, key: &str) -> String {
     let source = crate::template::render(
-        crate::template::template!("spring/publisher_java.java"),
+        crate::template_here!("spring/publisher_java.java"),
         &[("pkg", pkg), ("name", name), ("topic", topic)],
     );
     source.replace(
@@ -284,7 +284,7 @@ fn publisher_java(pkg: &str, name: &str, topic: &str, key: &str) -> String {
 
 fn listener_java(pkg: &str, name: &str, topic: &str) -> String {
     crate::template::render(
-        crate::template::template!("spring/listener_java.java"),
+        crate::template_here!("spring/listener_java.java"),
         &[("pkg", pkg), ("name", name), ("topic", topic)],
     )
 }
@@ -376,7 +376,7 @@ fn messaging_it_java(
         }
     };
     crate::template::render(
-        crate::template::template!("spring/messaging_it_java.java"),
+        crate::template_here!("spring/messaging_it_java.java"),
         &[
             ("pkg", pkg),
             ("name", name),

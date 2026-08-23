@@ -154,7 +154,7 @@ pub(super) fn declared_type_name(line: &str) -> Option<String> {
 /// The name of the `@Test` method containing `line` (1-based).
 ///
 /// Scans upward for a method declaration and then checks that a test
-/// annotation sits above it, which is the same shape `java::annotations`
+/// annotation sits above it, which is the same shape `crate::java::annotations`
 /// reads -- but line numbers matter here and that reader does not carry
 /// them. Comments and string literals are blanked first, so a `@Test` in
 /// Javadoc cannot promote the method below it.

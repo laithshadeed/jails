@@ -144,7 +144,7 @@ pub(crate) fn association_files(
         .collect::<Vec<_>>()
         .join(",");
     let test = crate::template::render(
-        crate::template::template!("spring/association_it_java.java"),
+        crate::template_here!("spring/association_it_java.java"),
         &[
             ("pkg", adapters),
             ("name", name),
@@ -277,7 +277,7 @@ pub(crate) fn idempotency_files(slice: &Slice, name: &str) -> jails_support::Res
             kind: "idempotency receipt",
             path: crate::generate::main_dir(root, domain).join(format!("{record}.java")),
             contents: crate::template::render(
-                crate::template::template!("spring/idempotency_record_java.java"),
+                crate::template_here!("spring/idempotency_record_java.java"),
                 &[("domain", domain), ("name", name)],
             ),
         },
@@ -285,7 +285,7 @@ pub(crate) fn idempotency_files(slice: &Slice, name: &str) -> jails_support::Res
             kind: "idempotency receipt store port",
             path: crate::generate::main_dir(root, app).join(format!("{port}.java")),
             contents: crate::template::render(
-                crate::template::template!("spring/idempotency_port_java.java"),
+                crate::template_here!("spring/idempotency_port_java.java"),
                 &[
                     ("app", app),
                     ("name", name),
@@ -300,7 +300,7 @@ pub(crate) fn idempotency_files(slice: &Slice, name: &str) -> jails_support::Res
             kind: "idempotency PostgreSQL store",
             path: crate::generate::main_dir(root, adapters).join(format!("Jdbc{port}.java")),
             contents: crate::template::render(
-                crate::template::template!("spring/idempotency_store_java.java"),
+                crate::template_here!("spring/idempotency_store_java.java"),
                 &[
                     ("adapters", adapters),
                     ("name", name),
@@ -320,7 +320,7 @@ pub(crate) fn idempotency_files(slice: &Slice, name: &str) -> jails_support::Res
             kind: "idempotency guard",
             path: crate::generate::main_dir(root, service).join(format!("{name}Guard.java")),
             contents: crate::template::render(
-                crate::template::template!("spring/idempotency_guard_java.java"),
+                crate::template_here!("spring/idempotency_guard_java.java"),
                 &[
                     ("service", service),
                     ("name", name),
@@ -339,7 +339,7 @@ pub(crate) fn idempotency_files(slice: &Slice, name: &str) -> jails_support::Res
             kind: "idempotency guard test",
             path: crate::generate::test_dir(root, service).join(format!("{name}GuardTest.java")),
             contents: crate::template::render(
-                crate::template::template!("spring/idempotency_test_java.java"),
+                crate::template_here!("spring/idempotency_test_java.java"),
                 &[
                     ("service", service),
                     ("name", name),
@@ -365,7 +365,7 @@ pub(crate) fn idempotency_files(slice: &Slice, name: &str) -> jails_support::Res
 /// The table, and the two constraints that carry the semantics.
 fn idempotency_migration(table: &str) -> String {
     crate::template::render(
-        crate::template::template!("spring/idempotency_migration.sql"),
+        crate::template_here!("spring/idempotency_migration.sql"),
         &[("table", table)],
     )
 }
@@ -417,7 +417,7 @@ pub(crate) fn http_sink_files(
     let connect_timeout_value = format!("${{{}.connect-timeout-ms:2000}}", property);
     let request_timeout_value = format!("${{{}.request-timeout-ms:5000}}", property);
     let main = crate::template::render(
-        crate::template::template!("spring/http_outbox_sink_java.java"),
+        crate::template_here!("spring/http_outbox_sink_java.java"),
         &[
             ("pkg", jobs),
             ("messaging", messaging),
@@ -462,7 +462,7 @@ pub(crate) fn http_sink_files(
         ""
     };
     let test = crate::template::render(
-        crate::template::template!("spring/http_outbox_sink_test_java.java"),
+        crate::template_here!("spring/http_outbox_sink_test_java.java"),
         &[
             ("pkg", jobs),
             ("messaging", messaging),

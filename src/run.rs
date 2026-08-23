@@ -1,7 +1,6 @@
 use crate::compose;
 use crate::generate::find_project_root;
 use jails_support::Result;
-use jails_support::{apply, process};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -25,7 +24,7 @@ mod filter;
 use filter::*;
 
 pub(crate) fn find_on_path(bin: &str) -> bool {
-    process::on_path(bin)
+    crate::process::on_path(bin)
 }
 
 /// Run a command with our stdio, failing on a non-zero exit.
@@ -41,12 +40,12 @@ pub(crate) fn run_inherited(mut cmd: Command, debug: bool) -> Result<()> {
     if is_maven {
         forced_color(&mut cmd);
     }
-    let mut spec = process::CommandSpec::new(cmd.get_program())
+    let mut spec = crate::process::CommandSpec::new(cmd.get_program())
         .args(cmd.get_args())
         .output(if is_maven {
-            process::OutputMode::Tee
+            crate::process::OutputMode::Tee
         } else {
-            process::OutputMode::Inherit
+            crate::process::OutputMode::Inherit
         });
     if let Some(dir) = cmd.get_current_dir() {
         spec = spec.current_dir(dir);
@@ -56,7 +55,7 @@ pub(crate) fn run_inherited(mut cmd: Command, debug: bool) -> Result<()> {
             spec = spec.env(key, value);
         }
     }
-    let done = process::run(&spec, process::Diagnostics::from_flag(debug))?;
+    let done = crate::process::run(&spec, crate::process::Diagnostics::from_flag(debug))?;
     if done.status.success() {
         return Ok(());
     }
@@ -324,8 +323,6 @@ pub fn test(filter: Option<&str>, options: TestOptions, debug: bool) -> Result<(
 /// says what actually executed, which is the other half a consumer needs to
 /// tell "all green" from "nothing ran".
 fn report_json(root: &Path, passed: bool) -> Result<()> {
-    use jails_support::json;
-
     let cases = crate::surefire::cases(root);
     let rows: Vec<String> = cases
         .iter()
@@ -333,11 +330,11 @@ fn report_json(root: &Path, passed: bool) -> Result<()> {
             format!(
                 "    {{\"class\": {}, \"method\": {}, \"seconds\": {:.3}, \"failed\": {}, \
                  \"selector\": {}}}",
-                json::string(&case.class),
-                json::string(&case.method),
+                crate::json::string(&case.class),
+                crate::json::string(&case.method),
                 case.seconds,
                 case.failed,
-                json::string(&case.selector())
+                crate::json::string(&case.selector())
             )
         })
         .collect();
@@ -440,7 +437,7 @@ fn ensure_console_launcher(root: &Path, debug: bool) -> Result<()> {
     let Some(updated) = crate::pom::add_dependency(&pom, &dependency)? else {
         return Ok(());
     };
-    apply::put_named(root.join("pom.xml"), updated, "pom.xml")?;
+    crate::apply::put_named(root.join("pom.xml"), updated, "pom.xml")?;
     println!(
         "added {}:{} (test scope) -- `--fast` runs JUnit's console launcher directly",
         dependency.group_id, dependency.artifact_id
@@ -1055,7 +1052,7 @@ class ResultTest {
     #[test]
     fn a_method_with_no_test_annotation_is_not_a_test() {
         // `helper` is preceded by Javadoc containing the word @Test, which
-        // is exactly what `java::blanked` exists to stop being read as one.
+        // is exactly what `crate::java::blanked` exists to stop being read as one.
         assert_eq!(enclosing_test_method(SOURCE, line_of("void helper")), None);
     }
 

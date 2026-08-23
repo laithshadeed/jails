@@ -46,7 +46,7 @@ pub(crate) fn webhook_files(slice: &Slice, name: &str) -> jails_support::Result<
             kind: "webhook verifier",
             path: main.join(format!("{name}Verifier.java")),
             contents: crate::template::render(
-                crate::template::template!("spring/webhook_verifier_java.java"),
+                crate::template_here!("spring/webhook_verifier_java.java"),
                 &[("pkg", pkg), ("name", name), ("property", &property)],
             ),
         },
@@ -55,7 +55,7 @@ pub(crate) fn webhook_files(slice: &Slice, name: &str) -> jails_support::Result<
             path: crate::generate::main_dir(root, web)
                 .join(format!("{name}WebhookController.java")),
             contents: crate::template::render(
-                crate::template::template!("spring/webhook_controller_java.java"),
+                crate::template_here!("spring/webhook_controller_java.java"),
                 &[
                     ("web", web),
                     ("name", name),
@@ -70,7 +70,7 @@ pub(crate) fn webhook_files(slice: &Slice, name: &str) -> jails_support::Result<
             kind: "webhook verifier test",
             path: test.join(format!("{name}VerifierTest.java")),
             contents: crate::template::render(
-                crate::template::template!("spring/webhook_verifier_test_java.java"),
+                crate::template_here!("spring/webhook_verifier_test_java.java"),
                 &[("pkg", pkg), ("name", name)],
             ),
         },

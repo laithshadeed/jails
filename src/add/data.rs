@@ -50,14 +50,14 @@ pub(super) fn csv_plan(slice: &Slice, name: Option<&str>) -> Result<Change> {
 
 pub(super) fn csv_reader_java(pkg: &str, class: &str) -> String {
     crate::template::render(
-        crate::template::template!("add/csv_reader_java.java"),
+        crate::template_here!("add/csv_reader_java.java"),
         &[("pkg", pkg), ("class", class)],
     )
 }
 
 pub(super) fn csv_reader_test_java(pkg: &str, class: &str) -> String {
     crate::template::render(
-        crate::template::template!("add/csv_reader_test_java.java"),
+        crate::template_here!("add/csv_reader_test_java.java"),
         &[("pkg", pkg), ("class", class)],
     )
 }
@@ -147,14 +147,14 @@ pub(super) fn json_plan(slice: &Slice, name: Option<&str>) -> Result<Change> {
 
 pub(super) fn json_java(pkg: &str, class: &str) -> String {
     crate::template::render(
-        crate::template::template!("add/json_java.java"),
+        crate::template_here!("add/json_java.java"),
         &[("pkg", pkg), ("class", class)],
     )
 }
 
 pub(super) fn json_test_java(pkg: &str, class: &str) -> String {
     crate::template::render(
-        crate::template::template!("add/json_test_java.java"),
+        crate::template_here!("add/json_test_java.java"),
         &[("pkg", pkg), ("class", class)],
     )
 }

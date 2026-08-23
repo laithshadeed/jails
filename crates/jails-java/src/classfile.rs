@@ -20,7 +20,7 @@
 use std::collections::BTreeSet;
 
 /// Every internal class name (`com/example/Money`) this class file names.
-pub(crate) fn referenced_types(bytes: &[u8]) -> Option<BTreeSet<String>> {
+pub fn referenced_types(bytes: &[u8]) -> Option<BTreeSet<String>> {
     let mut reader = Reader::new(bytes);
     if reader.u32()? != 0xCAFE_BABE {
         return None;

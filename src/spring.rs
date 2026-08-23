@@ -300,21 +300,21 @@ pub(crate) fn api_slice(slice: &Slice) -> Change {
 /// which is where the decision about its status code belongs.
 fn api_exception_java(pkg: &str) -> String {
     crate::template::render(
-        crate::template::template!("spring/api_exception_java.java"),
+        crate::template_here!("spring/api_exception_java.java"),
         &[("pkg", pkg)],
     )
 }
 
 fn api_exception_handler_java(pkg: &str) -> String {
     crate::template::render(
-        crate::template::template!("spring/api_exception_handler_java.java"),
+        crate::template_here!("spring/api_exception_handler_java.java"),
         &[("pkg", pkg)],
     )
 }
 
 fn api_exception_handler_test_java(pkg: &str) -> String {
     crate::template::render(
-        crate::template::template!("spring/api_exception_handler_test_java.java"),
+        crate::template_here!("spring/api_exception_handler_test_java.java"),
         &[("pkg", pkg)],
     )
 }
@@ -395,7 +395,7 @@ pub(crate) fn actuator_slice(slice: &Slice) -> Change {
 
 fn actuator_test_java(pkg: &str) -> String {
     crate::template::render(
-        crate::template::template!("spring/actuator_test_java.java"),
+        crate::template_here!("spring/actuator_test_java.java"),
         &[("pkg", pkg)],
     )
 }
@@ -426,14 +426,14 @@ pub(crate) fn cache_slice(slice: &Slice) -> Change {
 
 fn cache_config_java(pkg: &str) -> String {
     crate::template::render(
-        crate::template::template!("spring/cache_config_java.java"),
+        crate::template_here!("spring/cache_config_java.java"),
         &[("pkg", pkg)],
     )
 }
 
 fn cache_test_java(pkg: &str) -> String {
     crate::template::render(
-        crate::template::template!("spring/cache_test_java.java"),
+        crate::template_here!("spring/cache_test_java.java"),
         &[("pkg", pkg)],
     )
 }
@@ -528,7 +528,7 @@ pub(crate) const OAUTH2_RESOURCE_SERVER: Dependency = Dependency {
 pub(crate) fn resource_service_java(pkg: &str, name: &str, extra: &str) -> String {
     let var = crate::generate::lower_first(name);
     crate::template::render(
-        crate::template::template!("spring/resource_service_java.java"),
+        crate::template_here!("spring/resource_service_java.java"),
         &[
             ("pkg", pkg),
             ("extra", extra),
@@ -585,7 +585,7 @@ pub(crate) fn resource_controller_java(
         "import org.springframework.http.HttpStatus;\n"
     };
     crate::template::render(
-        crate::template::template!("spring/resource_controller_java.java"),
+        crate::template_here!("spring/resource_controller_java.java"),
         &[
             ("pkg", pkg),
             ("extra", extra),
@@ -637,7 +637,7 @@ fn scoped_resource_controller_java(
         "import org.springframework.http.HttpStatus;\n"
     };
     crate::template::render(
-        crate::template::template!("spring/scoped_resource_controller_java.java"),
+        crate::template_here!("spring/scoped_resource_controller_java.java"),
         &[
             ("pkg", pkg),
             ("extra", extra),
@@ -675,7 +675,7 @@ pub(crate) fn resource_controller_test_java(
     if fields.iter().any(|field| field.constraints.scoped) {
         let guard_import = crate::generate::import_of(pkg, security, "ScopeAuthorizer");
         return crate::template::render(
-            crate::template::template!("spring/resource_controller_test_scoped_java.java"),
+            crate::template_here!("spring/resource_controller_test_scoped_java.java"),
             &[
                 ("pkg", pkg),
                 ("extra", extra),
@@ -685,7 +685,7 @@ pub(crate) fn resource_controller_test_java(
         );
     }
     crate::template::render(
-        crate::template::template!("spring/resource_controller_test_java.java"),
+        crate::template_here!("spring/resource_controller_test_java.java"),
         &[("pkg", pkg), ("extra", extra), ("name", name)],
     )
 }
@@ -702,7 +702,7 @@ pub(crate) fn resource_controller_test_java(
 /// reports whether anything was actually removed.
 pub(crate) fn resource_service_test_java(pkg: &str, name: &str, extra: &str) -> String {
     crate::template::render(
-        crate::template::template!("spring/resource_service_test_java.java"),
+        crate::template_here!("spring/resource_service_test_java.java"),
         &[("pkg", pkg), ("extra", extra), ("name", name)],
     )
 }
@@ -774,7 +774,7 @@ pub(crate) fn in_memory_repository_java(
             + "Repository}\n * is the {@code @Component}. This stays as a fake for tests that want a\n * repository without a container -- construct it directly.\n"
     };
     crate::template::render(
-        crate::template::template!("spring/in_memory_repository_java.java"),
+        crate::template_here!("spring/in_memory_repository_java.java"),
         &[
             ("pkg", pkg),
             ("extra", extra),
@@ -891,14 +891,14 @@ pub(crate) fn redis_slice(slice: &Slice) -> Change {
 
 fn key_value_store_java(pkg: &str) -> String {
     crate::template::render(
-        crate::template::template!("spring/key_value_store_java.java"),
+        crate::template_here!("spring/key_value_store_java.java"),
         &[("pkg", pkg)],
     )
 }
 
 fn key_value_store_it_java(pkg: &str) -> String {
     crate::template::render(
-        crate::template::template!("spring/key_value_store_it_java.java"),
+        crate::template_here!("spring/key_value_store_it_java.java"),
         &[("pkg", pkg), ("REDIS_IMAGE", REDIS_IMAGE)],
     )
 }
@@ -998,14 +998,14 @@ pub(crate) fn observability_slice(slice: &Slice) -> Change {
 
 fn app_metrics_java(pkg: &str) -> String {
     crate::template::render(
-        crate::template::template!("spring/app_metrics_java.java"),
+        crate::template_here!("spring/app_metrics_java.java"),
         &[("pkg", pkg)],
     )
 }
 
 fn app_metrics_test_java(pkg: &str) -> String {
     crate::template::render(
-        crate::template::template!("spring/app_metrics_test_java.java"),
+        crate::template_here!("spring/app_metrics_test_java.java"),
         &[("pkg", pkg)],
     )
 }
@@ -1097,7 +1097,7 @@ mod observability_tests {
 
 fn prometheus_scrape_test_java(pkg: &str) -> String {
     crate::template::render(
-        crate::template::template!("spring/prometheus_scrape_test_java.java"),
+        crate::template_here!("spring/prometheus_scrape_test_java.java"),
         &[("pkg", pkg)],
     )
 }
@@ -1118,7 +1118,7 @@ fn meter_registry_customizer_import(slice: &Slice) -> &'static str {
 
 fn metrics_config_java(pkg: &str, customizer_import: &str) -> String {
     crate::template::render(
-        crate::template::template!("spring/metrics_config_java.java"),
+        crate::template_here!("spring/metrics_config_java.java"),
         &[("pkg", pkg), ("customizer_import", customizer_import)],
     )
 }

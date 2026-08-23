@@ -153,7 +153,7 @@ fn query_port_java(slice: &Slice, name: &str, target: &str) -> String {
     let domain: &str = &slice.owned(Layer::Domain);
     let target_import = crate::generate::import_of(pkg, domain, target);
     crate::template::render(
-        crate::template::template!("spring/query_port_java.java"),
+        crate::template_here!("spring/query_port_java.java"),
         &[
             ("pkg", pkg),
             ("target_import", &*target_import),
@@ -230,7 +230,7 @@ fn jdbc_query_java(slice: &Slice, name: &str, target: &str, projection: &Project
         .map(|column| column.name.as_str())
         .unwrap_or(&target_columns[0].name);
     crate::template::render(
-        crate::template::template!("spring/jdbc_query_java.java"),
+        crate::template_here!("spring/jdbc_query_java.java"),
         &[
             ("pkg", pkg),
             ("target_import", &*target_import),
@@ -299,7 +299,7 @@ fn jdbc_query_it_java(
         ""
     };
     crate::template::render(
-        crate::template::template!("spring/jdbc_query_it_java.java"),
+        crate::template_here!("spring/jdbc_query_it_java.java"),
         &[
             ("pkg", pkg),
             ("target_import", &*target_import),
@@ -341,7 +341,7 @@ fn query_controller_java(
         scope_checks,
     ) = scope_controller_parts(security, web, fields, "query");
     crate::template::render(
-        crate::template::template!("spring/query_controller_java.java"),
+        crate::template_here!("spring/query_controller_java.java"),
         &[
             ("web", web),
             ("query_import", &*query_import),
@@ -405,7 +405,7 @@ fn query_controller_test_java(
     };
     let (scope_import, scope_argument) = scope_test_parts(security, web, fields);
     crate::template::render(
-        crate::template::template!("spring/query_controller_test_java.java"),
+        crate::template_here!("spring/query_controller_test_java.java"),
         &[
             ("web", web),
             ("port_import", &*port_import),

@@ -24,7 +24,6 @@
 //! the answer is that it is not on disk.
 
 use jails_support::Result;
-use jails_support::json;
 use std::path::{Path, PathBuf};
 
 /// One `.java` file that declares the requested simple name.
@@ -59,8 +58,8 @@ pub fn src(type_name: &str, json: bool) -> Result<()> {
             .map(|hit| {
                 format!(
                     "{{\"type\":{},\"path\":{}}}",
-                    json::string(&hit.qualified),
-                    json::string(&hit.path.to_string_lossy())
+                    crate::json::string(&hit.qualified),
+                    crate::json::string(&hit.path.to_string_lossy())
                 )
             })
             .collect::<Vec<_>>()

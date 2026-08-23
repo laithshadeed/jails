@@ -104,7 +104,7 @@ pub(crate) fn search_files(
             kind: "search port",
             path: crate::generate::main_dir(root, app).join(format!("{name}Search.java")),
             contents: crate::template::render(
-                crate::template::template!("spring/search_port_java.java"),
+                crate::template_here!("spring/search_port_java.java"),
                 &[
                     ("app", app),
                     ("name", name),
@@ -119,7 +119,7 @@ pub(crate) fn search_files(
             kind: "search adapter",
             path: crate::generate::main_dir(root, adapters).join(format!("Jdbc{name}Search.java")),
             contents: crate::template::render(
-                crate::template::template!("spring/search_adapter_java.java"),
+                crate::template_here!("spring/search_adapter_java.java"),
                 &[
                     ("adapters", adapters),
                     ("name", name),
@@ -139,7 +139,7 @@ pub(crate) fn search_files(
                 crate::sql::snake_case(name)
             )),
             contents: crate::template::render(
-                crate::template::template!("spring/search_migration.sql"),
+                crate::template_here!("spring/search_migration.sql"),
                 &[
                     ("table", &table),
                     ("column", column),

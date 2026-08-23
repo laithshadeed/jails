@@ -11,7 +11,6 @@
 //! generated class.
 
 use super::*;
-use jails_support::{apply, codemod};
 
 // ---------------------------------------------------------------------------
 // `generate job` -- scheduled work.
@@ -44,21 +43,21 @@ pub(crate) fn job_files(slice: &Slice, name: &str) -> Vec<Artifact> {
 fn job_java(pkg: &str, name: &str) -> String {
     let property = crate::sql::snake_case(name).replace('_', "-");
     crate::template::render(
-        crate::template::template!("spring/job_java.java"),
+        crate::template_here!("spring/job_java.java"),
         &[("pkg", pkg), ("property", &*property), ("name", name)],
     )
 }
 
 pub(crate) fn scheduling_config_java(pkg: &str) -> String {
     crate::template::render(
-        crate::template::template!("spring/scheduling_config_java.java"),
+        crate::template_here!("spring/scheduling_config_java.java"),
         &[("pkg", pkg)],
     )
 }
 
 fn job_test_java(pkg: &str, name: &str) -> String {
     crate::template::render(
-        crate::template::template!("spring/job_test_java.java"),
+        crate::template_here!("spring/job_test_java.java"),
         &[("pkg", pkg), ("name", name)],
     )
 }
@@ -90,7 +89,7 @@ pub(crate) fn install_durable_job_test_properties(
     let max_attempts = format!("jobs.{property}.max-attempts=2");
     let expected = format!("{initial_delay}\n{max_attempts}\n");
     let marker = format!("durable-job-{property}");
-    let marked = codemod::Marked::new(&marker);
+    let marked = crate::codemod::Marked::new(&marker);
     let path = root.join(DURABLE_JOB_TEST_PROPERTIES);
     let existing = if path.exists() {
         std::fs::read_to_string(&path)
@@ -129,7 +128,7 @@ pub(crate) fn install_durable_job_test_properties(
     } else {
         format!("{existing}\n{block}")
     };
-    apply::put(&path, next)?;
+    crate::apply::put(&path, next)?;
     println!("set {initial_delay}");
     println!("set {max_attempts}");
     Ok(true)
@@ -150,7 +149,7 @@ pub(crate) fn uninstall_durable_job_test_properties(
     }
     let existing = std::fs::read_to_string(&path)
         .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
-    let Some(next) = codemod::Marked::new(&marker).strip_from(&existing) else {
+    let Some(next) = crate::codemod::Marked::new(&marker).strip_from(&existing) else {
         return Ok(false);
     };
 
@@ -162,7 +161,7 @@ pub(crate) fn uninstall_durable_job_test_properties(
         std::fs::remove_file(&path)
             .map_err(|error| format!("failed to remove {}: {error}", path.display()))?;
     } else {
-        apply::put(&path, next)?;
+        crate::apply::put(&path, next)?;
     }
     println!("unset jobs.{property}.* in {DURABLE_JOB_TEST_PROPERTIES}");
     Ok(true)
@@ -337,7 +336,7 @@ fn durable_work_java(slice: &Slice, name: &str, fields: &[crate::generate::Field
 
 fn durable_queue_java(pkg: &str, name: &str) -> String {
     crate::template::render(
-        crate::template::template!("spring/durable_queue_java.java"),
+        crate::template_here!("spring/durable_queue_java.java"),
         &[("pkg", pkg), ("name", name)],
     )
 }
@@ -397,7 +396,7 @@ fn durable_store_java(
         .collect::<Vec<_>>()
         .join(",\n");
     crate::template::render(
-        crate::template::template!("spring/durable_store_java.java"),
+        crate::template_here!("spring/durable_store_java.java"),
         &[
             ("pkg", pkg),
             ("imports", &*imports),
@@ -434,7 +433,7 @@ fn durable_worker_java(
         .join(",\n");
     let property = crate::sql::snake_case(name).replace('_', "-");
     crate::template::render(
-        crate::template::template!("spring/durable_worker_java.java"),
+        crate::template_here!("spring/durable_worker_java.java"),
         &[
             ("pkg", pkg),
             ("command_import", &*command_import),
@@ -469,7 +468,7 @@ fn durable_job_controller_java(
     ) = scope_controller_parts(security, web, fields, "work");
     let path = format!("/jobs/{}", crate::sql::snake_case(name).replace('_', "-"));
     crate::template::render(
-        crate::template::template!("spring/durable_job_controller_java.java"),
+        crate::template_here!("spring/durable_job_controller_java.java"),
         &[
             ("web", web),
             ("queue_import", &*queue_import),
@@ -555,7 +554,7 @@ fn durable_job_it_java(
         ""
     };
     crate::template::render(
-        crate::template::template!("spring/durable_job_it_java.java"),
+        crate::template_here!("spring/durable_job_it_java.java"),
         &[
             ("pkg", pkg),
             ("repository_import", &*repository_import),

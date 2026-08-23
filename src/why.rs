@@ -16,7 +16,6 @@
 //! reported as unrecognised. Guessing at a cause is worse than silence,
 //! because a wrong explanation costs more time than no explanation.
 
-use jails_support::json;
 use std::io::{IsTerminal, Read};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -517,13 +516,13 @@ fn diagnoses_json(found: &[Diagnosis]) -> String {
             let fixes = diagnosis
                 .fixes
                 .iter()
-                .map(|fix| json::string(fix))
+                .map(|fix| crate::json::string(fix))
                 .collect::<Vec<_>>()
                 .join(",");
             format!(
                 "{{\"headline\":{},\"because\":{},\"fixes\":[{}]}}",
-                json::string(&diagnosis.headline),
-                json::string(&diagnosis.because),
+                crate::json::string(&diagnosis.headline),
+                crate::json::string(&diagnosis.because),
                 fixes
             )
         })

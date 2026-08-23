@@ -37,7 +37,6 @@
 //! the same diff they read before.
 
 use jails_support::Result;
-use jails_support::apply;
 use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
@@ -391,7 +390,7 @@ fn elements(inner: &str) -> Vec<String> {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn save(root: &Path, ledger: &Ledger) -> Result<()> {
-    apply::atomically(root.join(LEDGER), render(ledger))
+    crate::apply::atomically(root.join(LEDGER), render(ledger))
 }
 
 fn render(ledger: &Ledger) -> String {

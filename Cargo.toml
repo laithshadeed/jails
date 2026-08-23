@@ -20,6 +20,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+jails-java = { path = "crates/jails-java" }
 clap = { version = "4.6.4", features = ["derive"] }
 clap_complete = "4.6.7"
 jails-support = { path = "crates/jails-support" }
