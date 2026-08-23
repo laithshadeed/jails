@@ -29,9 +29,10 @@ use crate::conflict::{
 };
 use crate::effect::DeferredEffectIntent;
 use crate::entity::{OneShotId, OneShotSpec, SourceInputId};
-use crate::envelope::{AppliedEntity, LegacyEntry};
+use crate::envelope::LegacyEntry;
 use crate::identity::{ObjectId, OperationId, ProjectPath};
 use crate::provenance::RendererStamp;
+use crate::record::AppliedEntity;
 use crate::request::{InvocationFingerprint, ManifestSourceId};
 use crate::resource::{
     OneShotLifecycle, OneShotState, ResourceKey, ResourceOwner, ResourceValue, decode_owners,

@@ -224,84 +224,12 @@ fn decimal(value: &str) -> Result<usize> {
 // The payload
 // ---------------------------------------------------------------------------
 
-use crate::entity::{EntityId, EntitySpec, OwnerId};
-use crate::identity::{ObjectId, OperationId};
+use crate::entity::{EntityId, EntitySpec, OneShotId, OwnerId};
+use crate::identity::{ObjectId, OperationId, ProjectPath};
+use crate::record::{AppliedEntity, AppliedVersion, OneShotReceipt, OutputRecord};
+use crate::resource::{ResourceKey, ResourceOwner, ResourceRecord, ResourceValue};
 use jails_support::codec::{Decoder, Encoder, ordered};
 use std::collections::BTreeSet;
-
-/// One applied entity: its identity, who claims it, and what was applied.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AppliedEntity {
-    pub id: EntityId,
-    pub owners: BTreeSet<OwnerId>,
-    pub version: AppliedVersion,
-}
-
-/// What was applied, and by which operation.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AppliedVersion {
-    pub spec: EntitySpec,
-    pub operation: OperationId,
-}
-
-impl AppliedEntity {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.id.encode(encoder)?;
-        if self.owners.is_empty() {
-            // An entity with no owner is one nobody wants, and a row for it is
-            // a contradiction: reconciliation would remove it on sight.
-            return Err(format!(
-                "{:?} is recorded with no owner, which is not a thing that can be applied",
-                self.id
-            ));
-        }
-        if !self.version.spec.matches(&self.id) {
-            return Err(
-                "an applied row pairs an identity and a spec of different kinds".to_string(),
-            );
-        }
-        encoder.count(self.owners.len())?;
-        let mut previous: Option<&OwnerId> = None;
-        for owner in &self.owners {
-            ordered(previous, owner)?;
-            previous = Some(owner);
-            encoder.tag(owner.tag());
-        }
-        self.version.spec.encode(encoder)?;
-        self.version.operation.encode(encoder);
-        Ok(())
-    }
-
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        let id = EntityId::decode(decoder)?;
-        let count = decoder.count()?;
-        let mut owners = BTreeSet::new();
-        let mut previous: Option<OwnerId> = None;
-        for _ in 0..count {
-            let owner = OwnerId::from_tag(decoder.tag()?)?;
-            ordered(previous.as_ref(), &owner)?;
-            previous = Some(owner);
-            owners.insert(owner);
-        }
-        if owners.is_empty() {
-            return Err("an applied row carries no owner".to_string());
-        }
-        let spec = EntitySpec::decode(decoder)?;
-        if !spec.matches(&id) {
-            return Err(
-                "an applied row pairs an identity and a spec of different kinds".to_string(),
-            );
-        }
-        Ok(Self {
-            id,
-            owners,
-            version: AppliedVersion {
-                spec,
-                operation: OperationId::decode(decoder)?,
-            },
-        })
-    }
-}
 
 /// Which pre-schema-2 store a row came out of.
 ///
@@ -558,6 +486,14 @@ pub struct LedgerV2 {
     pub generation: u64,
     pub last_operation: Option<OperationId>,
     pub applied: Vec<AppliedEntity>,
+    /// One row per applied one-shot, by id.
+    pub one_shots: Vec<OneShotReceipt>,
+    /// One canonical row per `ResourceKey`: what is installed, and who wants
+    /// it. A resource with two rows would let the written order decide which
+    /// of them a removal consults.
+    pub resources: Vec<ResourceRecord>,
+    /// One canonical row per path jails has written.
+    pub outputs: Vec<OutputRecord>,
     pub legacy: Vec<LegacyEntry>,
     /// A reconciliation that stopped with conflicts still in the tree.
     ///
@@ -629,6 +565,36 @@ impl LedgerV2 {
             previous = Some(&entity.id);
             entity.encode(&mut encoder)?;
         }
+        encoder.count(self.one_shots.len())?;
+        let mut previous: Option<&OneShotId> = None;
+        for receipt in &self.one_shots {
+            ordered(previous, &receipt.id)?;
+            previous = Some(&receipt.id);
+            receipt.encode(&mut encoder)?;
+        }
+        encoder.count(self.resources.len())?;
+        let mut previous: Option<&ResourceKey> = None;
+        for resource in &self.resources {
+            ordered(previous, &resource.key)?;
+            previous = Some(&resource.key);
+            resource.value.agrees_with(&resource.key)?;
+            resource.key.encode(&mut encoder)?;
+            encoder.count(resource.owners.len())?;
+            let mut owner_before: Option<&ResourceOwner> = None;
+            for owner in &resource.owners {
+                ordered(owner_before, owner)?;
+                owner_before = Some(owner);
+                owner.encode(&mut encoder)?;
+            }
+            resource.value.encode(&mut encoder)?;
+        }
+        encoder.count(self.outputs.len())?;
+        let mut previous: Option<&ProjectPath> = None;
+        for output in &self.outputs {
+            ordered(previous, &output.path)?;
+            previous = Some(&output.path);
+            output.encode(&mut encoder)?;
+        }
         encoder.count(self.legacy.len())?;
         let mut previous: Option<(&str, &str, &str)> = None;
         for entry in &self.legacy {
@@ -656,6 +622,38 @@ impl LedgerV2 {
             applied.push(entity);
         }
         let count = decoder.count()?;
+        let mut one_shots: Vec<OneShotReceipt> = Vec::new();
+        for _ in 0..count {
+            let receipt = OneShotReceipt::decode(&mut decoder)?;
+            ordered(one_shots.last().map(|last| &last.id), &receipt.id)?;
+            one_shots.push(receipt);
+        }
+        let count = decoder.count()?;
+        let mut resources: Vec<ResourceRecord> = Vec::new();
+        for _ in 0..count {
+            let key = ResourceKey::decode(&mut decoder)?;
+            ordered(resources.last().map(|last| &last.key), &key)?;
+            let owner_count = decoder.count()?;
+            let mut owners = BTreeSet::new();
+            let mut owner_before: Option<ResourceOwner> = None;
+            for _ in 0..owner_count {
+                let owner = ResourceOwner::decode(&mut decoder)?;
+                ordered(owner_before.as_ref(), &owner)?;
+                owner_before = Some(owner.clone());
+                owners.insert(owner);
+            }
+            let value = ResourceValue::decode(&mut decoder)?;
+            value.agrees_with(&key)?;
+            resources.push(ResourceRecord { key, owners, value });
+        }
+        let count = decoder.count()?;
+        let mut outputs: Vec<OutputRecord> = Vec::new();
+        for _ in 0..count {
+            let output = OutputRecord::decode(&mut decoder)?;
+            ordered(outputs.last().map(|last| &last.path), &output.path)?;
+            outputs.push(output);
+        }
+        let count = decoder.count()?;
         let mut legacy: Vec<LegacyEntry> = Vec::new();
         for _ in 0..count {
             let entry = LegacyEntry::decode(&mut decoder)?;
@@ -671,6 +669,9 @@ impl LedgerV2 {
             generation,
             last_operation,
             applied,
+            one_shots,
+            resources,
+            outputs,
             legacy,
             pending_conflict,
         })
@@ -827,6 +828,14 @@ pub fn migrate_schema1(written_by: &str, rows: &[Schema1Row]) -> Result<LedgerV2
         generation: 1,
         last_operation: None,
         applied,
+        // A schema-1 store recorded none of these three. Translating them into
+        // empty tables is the honest reading: nothing was claimed, nothing was
+        // stamped, and the first schema-2 command to touch a resource records
+        // it then. Inventing rows here would give `destroy` a list of files to
+        // delete that nothing had actually written.
+        one_shots: Vec::new(),
+        resources: Vec::new(),
+        outputs: Vec::new(),
         legacy,
         pending_conflict: None,
     })
@@ -834,6 +843,44 @@ pub fn migrate_schema1(written_by: &str, rows: &[Schema1Row]) -> Result<LedgerV2
 
 #[cfg(test)]
 mod tests {
+
+    /// The three tables R1.4 adds are canonical sets, and a decoder that
+    /// accepted them out of order would accept two spellings of one store.
+    #[test]
+    fn the_recorded_tables_round_trip_and_refuse_a_second_spelling() {
+        use crate::coordinate::{DependencySpec, MavenCoordinate};
+        use crate::resource::{ResourceKey, ResourceRecord, ResourceValue};
+
+        let coordinate =
+            |artifact: &str| MavenCoordinate::parse("org.springframework.boot", artifact).unwrap();
+        let row = |artifact: &str| ResourceRecord {
+            key: ResourceKey::MavenDependency(coordinate(artifact)),
+            owners: BTreeSet::from([ResourceOwner::Entity(EntityId::ToolFeature(
+                crate::entity::ToolFeature::FastTest,
+            ))]),
+            value: ResourceValue::MavenDependency(DependencySpec::managed(coordinate(artifact))),
+        };
+        let mut ledger = LedgerV2 {
+            written_by: "0.1.0".to_string(),
+            generation: 2,
+            last_operation: None,
+            applied: Vec::new(),
+            one_shots: Vec::new(),
+            resources: vec![
+                row("spring-boot-starter-actuator"),
+                row("spring-boot-starter-web"),
+            ],
+            outputs: Vec::new(),
+            legacy: Vec::new(),
+            pending_conflict: None,
+        };
+        let bytes = ledger.encode().unwrap();
+        assert_eq!(LedgerV2::decode(&bytes).unwrap(), ledger);
+
+        ledger.resources.reverse();
+        let error = ledger.encode().unwrap_err();
+        assert!(error.contains("order"), "{error}");
+    }
     use super::*;
 
     /// The exact bytes, so a second implementation can reproduce them.
@@ -1029,6 +1076,9 @@ mod tests {
             generation: 7,
             last_operation: Some(OperationId::from_bytes(jails_support::codec::sha256(b"x"))),
             applied: vec![intent("Alpha", &["a:string"]), intent("Beta", &["b:int"])],
+            one_shots: Vec::new(),
+            resources: Vec::new(),
+            outputs: Vec::new(),
             legacy: vec![],
             pending_conflict: None,
         };
@@ -1076,6 +1126,9 @@ mod tests {
             generation: 1,
             last_operation: None,
             applied: vec![intent("Beta", &[]), intent("Alpha", &[])],
+            one_shots: Vec::new(),
+            resources: Vec::new(),
+            outputs: Vec::new(),
             legacy: vec![],
             pending_conflict: None,
         };
@@ -1107,6 +1160,9 @@ mod tests {
                 intent("Alpha", &["a:string!", "id:uuid@pk"]),
                 intent("NoFields", &[]),
             ],
+            one_shots: Vec::new(),
+            resources: Vec::new(),
+            outputs: Vec::new(),
             legacy: vec![],
             pending_conflict: None,
         };

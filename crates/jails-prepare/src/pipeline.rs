@@ -634,6 +634,9 @@ mod tests {
             applied: Vec::new(),
             legacy: Vec::new(),
             pending_conflict: None,
+            one_shots: Vec::new(),
+            resources: Vec::new(),
+            outputs: Vec::new(),
         }))
         .unwrap()
         .classify()
@@ -949,6 +952,9 @@ mod tests {
                     .unwrap(),
                 resume_display: "jails app apply".to_string(),
             }),
+            one_shots: Vec::new(),
+            resources: Vec::new(),
+            outputs: Vec::new(),
         }))
         .unwrap()
         .classify()

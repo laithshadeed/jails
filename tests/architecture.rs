@@ -668,6 +668,7 @@ const LAYERS: &[(&str, usize)] = &[
     ("plan", 3),
     ("provenance", 3),
     ("recipe", 3),
+    ("record", 3),
     ("render", 3),
     ("request", 3),
     ("resource", 3),

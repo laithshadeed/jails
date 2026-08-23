@@ -218,6 +218,9 @@ mod tests {
             generation: 3,
             last_operation: None,
             applied: Vec::new(),
+            one_shots: Vec::new(),
+            resources: Vec::new(),
+            outputs: Vec::new(),
             legacy: Vec::new(),
             pending_conflict: pending,
         }

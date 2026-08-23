@@ -27,6 +27,7 @@ pub mod pending;
 pub mod plan;
 pub mod provenance;
 pub mod recipe;
+pub mod record;
 pub mod render;
 pub mod request;
 pub mod resource;
