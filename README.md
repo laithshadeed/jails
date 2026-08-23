@@ -310,6 +310,20 @@ it already draws for hand-written properties inside a jails-owned block.
   either order both leave `prometheus` exposed. The generated test scrapes the
   live endpoint rather than the registry, since a missing registry is not an
   error — it is a 404 nobody notices for days.
+- `jails g search <Name> <component>...` (alias `fts`) — PostgreSQL full-text
+  search over a record that already exists. The `tsvector` is a **generated
+  column**, not a trigger, and that is the whole kind: a trigger has one silent
+  failure — somebody adds an UPDATE path that does not fire it, the row's text
+  changes, the vector does not, and the row stops matching a search it used to
+  match, with nothing erroring. `generated always as (…) stored` cannot drift,
+  because PostgreSQL maintains it. Every column is wrapped in `coalesce(x, '')`
+  (`||` with a NULL operand yields NULL, which would blank the whole vector),
+  the text search configuration is named in the expression rather than left to
+  a session setting, and the adapter uses `websearch_to_tsquery` — the syntax
+  in which unformatted text is a valid query, where `to_tsquery` throws a
+  syntax error on a bare two-word phrase. You name the components to index:
+  indexing every text column would index ids and status codes as prose. Needs
+  `jails add db`.
 - `jails g webhook <Name>` (alias `hook`) — an inbound webhook endpoint you
   can believe. Three details, and each is a way this is normally got wrong.
   **The signature is over the raw bytes**: two JSON documents can mean the same

@@ -127,6 +127,10 @@ pub enum ArtifactKind {
     /// request bytes, in constant time, with a bounded timestamp window
     #[value(alias = "hook")]
     Webhook,
+    /// PostgreSQL full-text search over an existing record: a generated
+    /// `tsvector` column, a GIN index, and a port with its JDBC adapter
+    #[value(alias = "fts")]
+    Search,
     /// PostgreSQL-backed, leased, bounded-retry work that invokes an existing
     /// generated create use case. `--on` names the use case and `--yields`
     /// names its resource; fields include the stable resource `id`.

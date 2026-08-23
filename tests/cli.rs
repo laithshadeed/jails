@@ -6237,3 +6237,103 @@ fn generate_webhook_produces_tests_that_run_and_pass() {
         "all seven verifier tests must actually run: {report}"
     );
 }
+
+/// `plan.md` §13.3's `g search`. The generated column is the whole point, and
+/// the only thing that can prove the expression is right is PostgreSQL parsing
+/// it — a Rust test on the string proves the string.
+#[test]
+fn generate_search_produces_a_project_that_compiles() {
+    if !real_mvn_available() {
+        skip("mvn not found on PATH");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let root = temp_dir("real-search");
+    write_spring_fixture(&root);
+
+    for step in [
+        vec!["add", "db", "--no-start"],
+        vec![
+            "generate",
+            "scaffold",
+            "Article",
+            "id:uuid@pk",
+            "title:string!",
+            "body:string",
+        ],
+        vec!["generate", "search", "Article", "title", "body"],
+    ] {
+        let output = jails_cmd_with_path(&root, &path)
+            .args(&step)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "`{}` failed: {}{}",
+            step.join(" "),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let output = jails_cmd_with_path(&root, &path)
+        .args(["mvn", "--", "-q", "test-compile"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// Indexing a non-text component is refused at generation time, where the
+/// reader is, rather than at `flyway migrate` — which is the furthest possible
+/// point from the mistake.
+#[test]
+fn generate_search_refuses_a_component_it_cannot_index() {
+    let root = temp_dir("search-refusals");
+    write_spring_fixture(&root);
+    let status = jails_cmd(&root, None)
+        .args(["add", "db", "--no-start"])
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let status = jails_cmd(&root, None)
+        .args([
+            "generate",
+            "scaffold",
+            "Article",
+            "id:uuid@pk",
+            "views:long",
+            "title:string!",
+        ])
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    for (args, expected) in [
+        (
+            vec!["generate", "search", "Article"],
+            "needs the components",
+        ),
+        (
+            vec!["generate", "search", "Article", "views"],
+            "full-text search indexes text",
+        ),
+        (
+            vec!["generate", "search", "Article", "nosuch"],
+            "has no component",
+        ),
+        (
+            vec!["generate", "search", "Missing", "title"],
+            "needs the record it searches",
+        ),
+    ] {
+        let output = jails_cmd(&root, None).args(&args).output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "{args:?} should refuse");
+        assert!(stderr.contains(expected), "{args:?}: {stderr}");
+    }
+}

@@ -264,6 +264,30 @@ const EXPLANATIONS: &[Explanation] = &[
                or make it idempotent with `g idempotency`.",
     },
     Explanation {
+        kind: ArtifactKind::Search,
+        summary: "PostgreSQL full-text search: a generated tsvector column, a GIN index, a port.",
+        body: "The `tsvector` is a **generated column**, not a trigger, and that is the whole \
+               kind.\n\n\
+               The trigger recipe is older and still widely copied, and it has one silent \
+               failure: somebody adds an UPDATE path that does not fire it -- a bulk fixup, a \
+               migration, a second service writing the same table -- the row's text changes, \
+               the vector does not, and the row stops matching a search it used to match. \
+               Nothing errors. `generated always as (...) stored` cannot drift from its \
+               inputs, because PostgreSQL maintains it.\n\n\
+               Every column is wrapped in `coalesce(x, '')`: `||` with a NULL operand yields \
+               NULL, so one null column would blank the whole vector and the row would match \
+               nothing at all. The text search configuration is named in the expression rather \
+               than left to `default_text_search_config`, so the stemming a row was indexed \
+               under does not change when a session setting does.\n\n\
+               The adapter uses `websearch_to_tsquery`, the syntax in which unformatted text \
+               is a valid query. `to_tsquery` throws a syntax error on a bare two-word \
+               phrase -- which is what a search box produces, so a search endpoint built on \
+               it 500s on an apostrophe.\n\n\
+               The components to index are named rather than inferred: a vector over every \
+               text column indexes ids and status codes as prose, and a search for \"active\" \
+               then returns everything.",
+    },
+    Explanation {
         kind: ArtifactKind::Migration,
         summary: "An empty, correctly numbered Flyway migration.",
         body: "Numbered numerically rather than lexically: `V10` sorts before `V9` as a string, \

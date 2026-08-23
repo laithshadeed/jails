@@ -225,6 +225,20 @@ fn recomputed_paths(
         })
         .unwrap_or_default();
     let one = components.first().cloned().into_iter().collect::<Vec<_>>();
+    // A kind whose fields name components of *its own* record rather than of a
+    // `--on` target -- `search` is one, and its record is the intent's name.
+    // Only the `String` components: `search` refuses a uuid, correctly, so the
+    // whole component list is not a spec it would accept.
+    let own_text: Vec<String> = project
+        .record_in(&domain, name)
+        .map(|fields| {
+            fields
+                .iter()
+                .filter(|field| field.java_type == "String")
+                .map(|field| field.name.clone())
+                .collect()
+        })
+        .unwrap_or_default();
     let on = target.as_deref();
     let a_component = vec!["value:string".to_string()];
     let a_constant = vec!["VALUE".to_string()];
@@ -247,6 +261,7 @@ fn recomputed_paths(
         (&one, on, None),
         (&one, on, on),
         (&[], on, on),
+        (&own_text, None, None),
     ];
 
     for (fields, strategy_on, strategy_yields) in &probes {

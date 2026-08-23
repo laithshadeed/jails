@@ -213,6 +213,10 @@ pub(crate) fn artifacts_for(
             }
             crate::spring::webhook_files(&crate::model::Slice::new(project, package), name)?
         }
+        ArtifactKind::Search => {
+            require_spring_project(project, "search")?;
+            crate::spring::search_files(&crate::model::Slice::new(project, package), name, fields)?
+        }
         ArtifactKind::HttpSink => {
             require_spring_project(project, "http-sink")?;
             if !fields.is_empty() {

@@ -1,0 +1,42 @@
+package com.example.demo.service;
+
+import com.example.demo.app.ArticleRepository;
+import com.example.demo.domain.Article;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import org.springframework.stereotype.Component;
+
+/**
+ * What the application can do with {@link Article}.
+ *
+ * <p>Depends on the port, not on an adapter, so a test can hand it an
+ * in-memory implementation and never start a database.
+ */
+@Component
+public class ArticleService {
+
+    private final ArticleRepository repository;
+
+    public ArticleService(ArticleRepository repository) {
+        this.repository = Objects.requireNonNull(repository, "repository is required");
+    }
+
+    public List<Article> findAll() {
+        return repository.findAll();
+    }
+
+    public Optional<Article> findById(String id) {
+        return repository.findById(id);
+    }
+
+    public Article create(Article article) {
+        repository.save(article);
+        return article;
+    }
+
+    /** @return true when a row was actually removed. */
+    public boolean deleteById(String id) {
+        return repository.deleteById(id);
+    }
+}

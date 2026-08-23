@@ -301,6 +301,23 @@ pub const SCENARIOS: &[Scenario] = &[
         steps: &[&["add", "security", "--no-start"], &["g", "auth", "Api"]],
     },
     Scenario {
+        name: "search",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[
+            &["add", "db", "--no-start"],
+            &[
+                "g",
+                "scaffold",
+                "Article",
+                "id:uuid@pk",
+                "title:string!",
+                "body:string",
+            ],
+            &["g", "search", "Article", "title", "body"],
+        ],
+    },
+    Scenario {
         name: "webhook",
         fixture: Fixture::Spring,
         seed: &[],
