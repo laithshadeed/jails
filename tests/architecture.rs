@@ -606,9 +606,11 @@ const LAYERS: &[(&str, usize)] = &[
     ("spec", 2),
     // jails-protocol: the validated values every closed format is built from.
     ("declaration", 3),
+    ("effect", 3),
     ("envelope", 3),
     ("entity", 3),
     ("identity", 3),
+    ("provenance", 3),
     // jails-project: the resolved project and everything jails records about it.
     ("pom", 4),
     ("maven", 4),

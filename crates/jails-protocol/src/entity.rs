@@ -319,7 +319,7 @@ impl OwnerId {
 // spelling and the recorded spelling must be the same string, or a ledger
 // written by one and read by the other disagrees about what a row names.
 
-fn recipe_label(recipe: Recipe) -> &'static str {
+pub(crate) fn recipe_label(recipe: Recipe) -> &'static str {
     use clap::ValueEnum;
     recipe
         .to_possible_value()
@@ -329,12 +329,12 @@ fn recipe_label(recipe: Recipe) -> &'static str {
         .leak()
 }
 
-fn recipe_from_label(label: &str) -> Result<Recipe> {
+pub(crate) fn recipe_from_label(label: &str) -> Result<Recipe> {
     use clap::ValueEnum;
     Recipe::from_str(label, false).map_err(|_| format!("unknown recipe `{label}`"))
 }
 
-fn capability_from_label(label: &str) -> Result<Capability> {
+pub(crate) fn capability_from_label(label: &str) -> Result<Capability> {
     use clap::ValueEnum;
     Capability::value_variants()
         .iter()
