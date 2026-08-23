@@ -866,6 +866,72 @@ fn snapshot_tree(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
     out
 }
 
+/// `app plan` names an entity the manifest has stopped asking for.
+///
+/// It was silent about those: a reader could not tell "this manifest is fully
+/// applied" from "this manifest has quietly dropped something it used to
+/// declare". Verified against the previous binary, which printed only the
+/// retained entity. This is what the owner model buys — the imperative plan
+/// compares each declaration against a recorded row and so can only speak
+/// about declarations that still exist.
+#[test]
+fn app_plan_names_an_entity_the_manifest_no_longer_declares() {
+    let root = temp_dir("app-plan-orphan");
+    write_plain_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    let manifest = root.join(".jails/app.toml");
+    fs::write(
+        &manifest,
+        "schema = 1\ncapabilities = []\n\n\
+         [[generate]]\nkind = \"record\"\nname = \"Keep\"\n\n\
+         [[generate]]\nkind = \"record\"\nname = \"Dropped\"\n",
+    )
+    .unwrap();
+
+    let applied = jails_cmd(&root, None)
+        .args(["app", "apply", "--no-start"])
+        .output()
+        .unwrap();
+    assert!(
+        applied.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&applied.stdout),
+        String::from_utf8_lossy(&applied.stderr)
+    );
+
+    fs::write(
+        &manifest,
+        "schema = 1\ncapabilities = []\n\n\
+         [[generate]]\nkind = \"record\"\nname = \"Keep\"\n",
+    )
+    .unwrap();
+
+    let planned = jails_cmd(&root, None)
+        .args(["app", "plan"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&planned.stdout);
+    assert!(planned.status.success(), "{stdout}");
+    assert!(
+        stdout.contains("orphan") && stdout.contains("record Dropped"),
+        "the dropped entity is named: {stdout}"
+    );
+    assert!(
+        stdout.contains("record Keep"),
+        "and the retained one still is: {stdout}"
+    );
+    // Planning stays non-mutating: nothing was removed.
+    assert!(
+        root.join("src/main/java/com/example/demo/domain/Dropped.java")
+            .is_file(),
+        "`app plan` may not delete anything"
+    );
+    assert!(
+        !stdout.contains("disagree"),
+        "the typed and imperative plans must agree: {stdout}"
+    );
+}
+
 #[test]
 fn app_manifest_merges_an_edited_intent_over_user_changes() {
     let root = temp_dir("app-intent-merge");

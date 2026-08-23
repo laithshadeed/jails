@@ -60,6 +60,9 @@ const ALLOWED: &[AllowedConcept] = &[
             // and messages name the thing they describe.
             "crates/jails-protocol/src/envelope.rs",
             "src/app.rs",
+            // The typed shadow reads the schema-1 store's rows to build its
+            // observed side, so it names the module they live in.
+            "src/app/shadow.rs",
             "crates/jails-generate/src/generate/remove.rs",
             "src/main.rs",
         ],

@@ -7,6 +7,7 @@
 
 mod manifest;
 mod reconcile;
+mod shadow;
 use manifest::*;
 use reconcile::*;
 
@@ -419,15 +420,59 @@ fn plan(root: &Path, requested: Option<&Path>) -> Result<()> {
     for capability in &manifest.capabilities {
         println!("  ensure capability  {}", capability.label());
     }
+    // The typed comparison, run beside the one being acted on. R1.5 step 7
+    // switches `app plan` to it; the switch completes in R2, when the observed
+    // side comes from `ProjectSnapshot` rather than from these rows. Until
+    // then the two answers are checked against each other, which is where a
+    // defect in either shows up while the typed path is still not
+    // load-bearing.
+    let typed = shadow::typed_view(&intents, &state.ledger.applied);
+    let mut disagreements = Vec::new();
+
     for intent in &intents {
         let status = if state.is_applied(intent) {
-            "applied"
+            shadow::Status::Applied
         } else if state.previous(intent)?.is_some() {
-            "update"
+            shadow::Status::Update
         } else {
-            "pending"
+            shadow::Status::Pending
         };
-        println!("  {status:7}  {}", intent.label());
+        if let Some(view) = typed.as_ref()
+            && let Some(shadowed) = view.status(intent)
+            && shadowed != status
+        {
+            disagreements.push(format!(
+                "  {}: acted on as `{}`, typed comparison says `{}`",
+                intent.label(),
+                status.label(),
+                shadowed.label()
+            ));
+        }
+        println!("  {:7}  {}", status.label(), intent.label());
+    }
+
+    // What the owner model can say and the imperative plan cannot: an entity
+    // the manifest used to declare and no longer does. `app plan` is silent
+    // about those today, so a reader cannot tell "this manifest is fully
+    // applied" from "this manifest has quietly stopped asking for something".
+    if let Some(view) = typed.as_ref()
+        && let Ok(result) = view.reconcile()
+    {
+        for id in &result.removed {
+            println!("  {:7}  {}", "orphan", shadow::describe(id));
+        }
+    }
+
+    // Loud rather than logged. The two paths reach the same three answers by
+    // completely different routes, so a disagreement is a real defect in one
+    // of them and the run that found it is the one that should say so.
+    if !disagreements.is_empty() {
+        println!();
+        println!("note: the typed and imperative plans disagree:");
+        for line in &disagreements {
+            println!("{line}");
+        }
+        println!("      This is a jails defect, not a problem with your manifest.");
     }
     println!();
     println!("plan only -- nothing was written");
