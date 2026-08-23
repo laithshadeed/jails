@@ -451,6 +451,43 @@ sweeps once per process and removes only fixtures older than an hour — well
 clear of the longest sweep, so this run's evidence and any concurrent run's
 fixtures are untouched, and the rubbish from finished runs goes.
 
+## Evidence baseline re-established — 2026-08-23 (`119ed20`)
+
+plan.md §3.3, run after the §3.1 ledger fixes and the §3.2 scratch guard.
+
+Host prerequisites, all present on this machine:
+
+| prerequisite | value |
+|---|---|
+| Maven | 3.9.16 (mise) |
+| JDK | OpenJDK 26.0.2, `JAVA_HOME` set to it |
+| container engine | `docker` (podman's CLI shim), daemon up |
+| loopback binding | permitted |
+| JVM self-attachment | permitted (Mockito inline mock maker) |
+
+Commands and results:
+
+```bash
+cargo test --workspace                       # 612 passed, 0 failed, 19/19 binaries
+TMPDIR=$(mktemp -d) cargo test --workspace   # 612 passed — §3.2's fresh-temp gate
+JAILS_REQUIRE_TOOLCHAIN=1 cargo test --workspace   # 612 passed, ZERO skips
+```
+
+The third command is the one that matters. Every `common::skip()` becomes a
+failure under it, so a green run is proof the generated-Maven tier actually
+compiled and ran real Java rather than reporting success for tests that never
+executed. It passed with zero skips: **the whole tier is exercised on this
+host.**
+
+That closes the two entries plan.md §2 listed as unverified. The `/tmp`
+collision is gone — §3.2 reserves every scratch tree rather than naming it, and
+the suite now agrees across two normal-`TMPDIR` runs and one fresh one. The
+port-0 and Mockito-attachment constraints were the *audit sandbox's*, not this
+project's; on a host that permits both, nothing is skipped.
+
+Still historical, not re-measured here: the 293-second proof-app sweep. It
+predates this baseline and stays historical until R6 repeats it.
+
 ## Friction ledger
 
 | Application | Step | Manual intervention or weak output | Generic Jails improvement |

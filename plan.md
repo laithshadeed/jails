@@ -9,17 +9,23 @@
 > architectural invariants. If they disagree, stop and reconcile both before
 > writing code.
 
-Audited 2026-08-23 against **`97840af`** (`main`). The shared Kafka
-Testcontainers fixture, consolidated generated-Spring proof toolboxes and
-suite-scoped PostgreSQL/Kafka harness are committed in `de75b76`; the benchmark
-reproduction is committed in `97840af`. They are current test infrastructure,
-not an R1–R6 mutation phase, and this RFC does not count their commit status as
-proof of a roadmap gate. Apart from this documentation rewrite, the current
-tracked worktree also contains concurrent generator/template/test work: Spring
-generator modules in `src/spring*`, Spring controller-test templates,
-architecture/CLI/common test harnesses, and regenerated controller-test
-goldens. That work is **IN FLIGHT**, is outside this RFC rewrite, and is not
-used as shipped evidence for any roadmap phase.
+Audited 2026-08-23, re-baselined against **`119ed20`** (`main`). §3 is
+shipped; R1 is the next queued work and nothing below it has been started.
+
+Two structural changes landed between the audit and this baseline, neither of
+which is a roadmap phase and neither of which may be counted as one. The
+generator/template/test work the audit found in the worktree is committed. And
+`src/` is now a seven-crate workspace — `jails-support`, `jails-java`,
+`jails-spec`, `jails-project`, `jails-generate`, `jails-tooling` and the `jails`
+binary — because the tree was one twelve-module strongly connected component
+and no boundary could be drawn anywhere in it. **Every path in this RFC that
+names `src/<module>` should be read against `CLAUDE.md`'s Workspace table**;
+line numbers here are evidence locators, not current addresses.
+
+The workspace has one consequence for every gate below: `cargo test` at the
+root tests the root package only. Every command in this document means
+`cargo test --workspace`.
+
 `deps/`, `ideas/` and `patterns/` are untracked research trees, not in-flight
 product work.
 The `home-laith-code-jails` knowledge-graph transport was closed during the
@@ -123,33 +129,49 @@ The finished pipeline has five invariants:
 
 Verified at the baseline:
 
-- `cargo fmt --check` and `cargo test --all-targets --no-run` pass.
-- `tests/architecture.rs` passes 9/9; agreement and genericity pass.
+- `cargo fmt --all --check` and `cargo clippy --workspace --all-targets` pass.
+- `cargo test --workspace` passes: 612 tests across 19 binaries. So does
+  `JAILS_REQUIRE_TOOLCHAIN=1 cargo test --workspace`, **with zero skips**,
+  which is the only run that distinguishes an executed generated-Maven tier
+  from a skipped one.
+- `tests/architecture.rs` passes 11/11; agreement, genericity, golden, editor
+  and CLI pass. The count is evidence, not an acceptance criterion.
 - The architecture board reports one `Change`/`Artifact`, no ad-hoc file tuple
-  or alias, no `KIND_FILES`, no literal direct `fs::write` outside
-  `src/apply/`, no inline Java in `spring.rs`, and a 673-line largest
-  production module. That ratchet does **not** prove that every mutation is
-  owned by `apply`: deletes, copies, directory creation, renames and mutating
+  or alias, no `KIND_FILES`, no literal direct `fs::write` outside the apply
+  layer, no inline Java in `spring.rs`, and a 666-line largest production
+  module. That ratchet does **not** prove that every mutation is owned by
+  `apply`: deletes, copies, directory creation, renames and mutating
   subprocesses still occur elsewhere and are explicitly in R4's scope.
+- Two gates were added and are now part of the board:
+  `no_module_depends_on_a_layer_above_its_own` (the crate layering, including
+  the module-level edges Cargo cannot see) and
+  `production_scratch_directories_are_exclusively_created` (§3.2).
+- The scanners in `tests/architecture.rs` and `tests/genericity.rs` walk the
+  whole workspace and assert a minimum file count. Before that they read `src/`
+  alone, which after the split would have reported a clean board over five
+  crates they never opened.
 
 Not verified as green at this baseline:
 
-- The default `/tmp` unit run can collide with a stale
-  `generated_files::tests::scratch` directory. A unique `TMPDIR` clears the
-  failure, proving a non-hermetic test rather than a product regression.
-- The complete generated-Maven tier reaches its real Java tests, but this
-  managed sandbox forbids binding port 0 and Mockito self-attachment. Those
-  failures are environment-constrained; they are neither a green gate nor a
-  confirmed product regression.
 - The last recorded 293-second proof-app sweep predates this baseline. It is
   historical evidence until R6 repeats it on a capable host.
+
+The two entries that stood here are closed, and `examples/DOGFOOD.md` records
+the commands. The `/tmp` collision was real and is fixed: §3.2 reserves every
+scratch tree instead of naming one, and the suite now agrees across two runs
+under the normal temp directory and one under a fresh `TMPDIR`. The port-0 and
+Mockito-attachment failures were the audit sandbox's constraint rather than
+this project's; on a host permitting both,
+`JAILS_REQUIRE_TOOLCHAIN=1 cargo test --workspace` passes with **zero skips**,
+which is the only run that proves the generated-Maven tier executed rather than
+reporting success for tests that never ran.
 
 Two lifecycle properties are still open: recoverable whole-manifest
 application and execution of generated hosted CI in an actual repository.
 Offline creation and three-way drift repair already exist; prose that still
 calls them missing is stale.
 
-## 3. Immediate integrity work — QUEUED
+## 3. Immediate integrity work — SHIPPED
 
 Do this before R1 so a red run and an absent ledger each have exactly one
 meaning. These are correctness repairs, not prerequisites to disguise inside
@@ -245,18 +267,31 @@ results. Creating a disposable hosted repository and proving the generated
 least-privilege workflow belongs exclusively to R6 product acceptance; it is
 not a credential-dependent prerequisite for starting R1.
 
-Immediate gate:
+Immediate gate — met, `36ddee2` (§3.1) and `119ed20` (§3.2):
 
 - every ledger read failure has a distinct fail-closed test and only
-  `NotFound` means empty;
-- present/absent/unknown spec state is explicit and zero-argument specs survive;
-- plan, pretend and inspection are byte-for-byte non-mutating on legacy state;
+  `NotFound` means empty — **met**; empty, malformed, non-UTF-8, permission and
+  unsupported-newer input each have one;
+- present/absent/unknown spec state is explicit and zero-argument specs survive
+  — **met**; `SpecPresence` is persisted as `has_spec`, and the previous binary
+  is on record planning `pending generate` where this one plans `update`;
+- plan, pretend and inspection are byte-for-byte non-mutating on legacy state —
+  **met**, at unit and CLI level with before/after tree snapshots. The previous
+  binary printed "nothing to destroy" *and deleted the records that said
+  otherwise*;
 - every scratch root is exclusively created, guarded and cleaned without
-  touching a pre-existing directory;
-- ordinary suites repeat under shared and fresh temp parents; and
+  touching a pre-existing directory — **met**; `ScratchDir` over
+  `tempfile::Builder`, with an architecture gate against a new
+  `env::temp_dir()` in production;
+- ordinary suites repeat under shared and fresh temp parents — **met**; two
+  normal-`TMPDIR` runs and one fresh, all 19/19 binaries and 612 tests;
 - the current Maven tier is recorded as passed, failed or
-  environment-constrained without changing the meaning of its gate; hosted-CI
-  proof remains explicitly unclaimed until R6.
+  environment-constrained without changing the meaning of its gate — **passed**
+  on this host: `JAILS_REQUIRE_TOOLCHAIN=1 cargo test --workspace` is green
+  with zero skips, which is the only run that distinguishes an executed tier
+  from a skipped one. Hosted-CI proof remains explicitly unclaimed until R6.
+
+Commands, host prerequisites and results are in `examples/DOGFOOD.md`.
 
 ## 4. Authoritative roadmap
 
