@@ -75,6 +75,12 @@ const ALLOWED: &[AllowedConcept] = &[
             // Preparation guards the ledger generation the plan was computed
             // against, and renders the image the commit will write.
             "crates/jails-prepare/src/pipeline.rs",
+            // A report, a receipt and a command envelope each say what
+            // happened to the ledger file, which is the name of the thing.
+            "crates/jails-prepare/src/report.rs",
+            "crates/jails-prepare/src/receipt.rs",
+            "crates/jails-prepare/src/command.rs",
+            "crates/jails-prepare/src/serialize.rs",
             "src/app.rs",
             // The typed shadow reads the schema-1 store's rows to build its
             // observed side, so it names the module they live in.

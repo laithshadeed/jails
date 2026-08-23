@@ -8,12 +8,15 @@
 //! It remains plan-only. Nothing in here creates `.jails/`, migrates state or
 //! commits an operation; R4 adds the executor that does.
 
+pub mod command;
 pub mod migration;
 pub mod operation;
 pub mod pipeline;
 pub mod prepare;
+pub mod receipt;
 pub mod report;
 pub mod sandbox;
+pub mod serialize;
 pub mod tool;
 
 pub(crate) use jails_support::Result;

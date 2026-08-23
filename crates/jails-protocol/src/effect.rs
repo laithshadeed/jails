@@ -176,6 +176,10 @@ impl EffectId {
         self.0
     }
 
+    pub fn to_hex(&self) -> String {
+        self.0.to_hex()
+    }
+
     pub fn encode(&self, encoder: &mut Encoder) {
         self.0.encode(encoder);
     }

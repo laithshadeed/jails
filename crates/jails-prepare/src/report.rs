@@ -9,53 +9,306 @@
 //! Sorted by path, because a report whose line order depends on a hash map is
 //! a report two identical runs disagree about.
 
-use crate::prepare::{FileOp, OperationTarget, PreparedChange, PreparedKind};
+use crate::Result;
+use crate::prepare::{
+    DirectoryOp, FileOp, GuardedImage, OperationTarget, PreparedChange, PreparedKind,
+};
+use jails_protocol::conflict::{FileImage, FileMode};
+use jails_protocol::effect::{EffectState, PostCommitEffect};
+use jails_protocol::identity::{ObjectId, OperationId, TransactionId};
+use jails_protocol::resource::ResourceOwner;
+use std::collections::BTreeSet;
 
-/// One reported line.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Line {
-    pub verb: &'static str,
-    pub subject: String,
+/// The schema string a machine reader keys on.
+pub const SCHEMA: &str = "jails.prepared-change.v1";
+
+/// What a reported operation does.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum ReportedOpKind {
+    Create,
+    Replace,
+    Delete,
+    CreateDirectory,
 }
 
-impl std::fmt::Display for Line {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "  {:<7} {}", self.verb, self.subject)
+impl ReportedOpKind {
+    /// The kebab-case spelling both the JSON and the human output use.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Create => "create",
+            Self::Replace => "replace",
+            Self::Delete => "delete",
+            Self::CreateDirectory => "create-directory",
+        }
+    }
+
+    /// The verb the human report prints, which is deliberately shorter.
+    pub fn verb(self) -> &'static str {
+        match self {
+            Self::Create => "create",
+            Self::Replace => "replace",
+            Self::Delete => "delete",
+            Self::CreateDirectory => "mkdir",
+        }
     }
 }
 
-/// The verb for one operation, chosen from what it does rather than from what
-/// the caller thought it was doing.
-fn verb(op: &FileOp) -> &'static str {
-    match op {
-        FileOp::Create { .. } => "create",
-        FileOp::Replace { .. } => "update",
-        FileOp::Delete { path, .. } => match path {
-            // A legacy delete is a migration, not a removal the user asked
-            // for, and saying "delete" about their old state would read as
-            // data loss rather than as cleanup.
-            OperationTarget::LegacyMachine(_) => "retire",
-            OperationTarget::Project(_) => "delete",
+/// One operation, as a reader sees it.
+///
+/// `before`/`after` are content addresses, never bytes: a report that printed
+/// file contents would put generated source — and anything a template
+/// interpolated into it — into a terminal, a CI log and a JSON payload.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReportedOp {
+    pub kind: ReportedOpKind,
+    pub path: OperationTarget,
+    pub before: Option<ObjectId>,
+    pub after: Option<ObjectId>,
+    pub bytes: Option<u64>,
+    /// §R3.4: the exact after-mode for a create or replace, the exact
+    /// before-mode for a delete, and `None` only for a directory.
+    pub mode: Option<FileMode>,
+    pub contributors: BTreeSet<ResourceOwner>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReportedLedgerKind {
+    Unchanged,
+    Create,
+    Replace,
+}
+
+impl ReportedLedgerKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Unchanged => "unchanged",
+            Self::Create => "create",
+            Self::Replace => "replace",
+        }
+    }
+}
+
+/// What happens to the store.
+///
+/// The images preserve `Absent`, so a project that has no ledger yet is not
+/// rendered as an invented hash.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ReportedLedger {
+    pub kind: ReportedLedgerKind,
+    pub before: FileImage,
+    pub after: FileImage,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReportedEffect {
+    pub effect: PostCommitEffect,
+    pub state: EffectState,
+}
+
+/// Something the reader should know that is not a failure.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum WarningCode {
+    LegacyUntrusted,
+    UnmanagedRetained,
+    PostCommitDeferred,
+    EnvironmentConstrained,
+}
+
+impl WarningCode {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::LegacyUntrusted => "legacy-untrusted",
+            Self::UnmanagedRetained => "unmanaged-retained",
+            Self::PostCommitDeferred => "post-commit-deferred",
+            Self::EnvironmentConstrained => "environment-constrained",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct Warning {
+    pub code: WarningCode,
+    pub paths: Vec<OperationTarget>,
+    pub message: String,
+}
+
+/// One presentation-neutral description of a prepared change.
+///
+/// A *pure projection* over `PreparedChange`, and deliberately not stored
+/// inside it. That is the whole fix for the current split: `--pretend` and
+/// the real run interpret the same buckets independently today, so a dry run
+/// can describe work that differs from what happens. One value, one
+/// projection, and the human and JSON renderings are two views of this.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Report {
+    pub operation: OperationId,
+    pub transaction: TransactionId,
+    pub kind: PreparedKind,
+    pub operations: Vec<ReportedOp>,
+    pub ledger: ReportedLedger,
+    pub post_commit: Vec<ReportedEffect>,
+    pub warnings: Vec<Warning>,
+}
+
+impl Report {
+    /// Project a prepared change. Never reads disk and never replans.
+    pub fn of(change: &PreparedChange) -> Result<Self> {
+        let mut operations: Vec<ReportedOp> = change.directories.iter().map(directory_op).collect();
+        operations.extend(change.operations.iter().map(file_op));
+
+        Ok(Self {
+            operation: change.operation_id,
+            transaction: change.transaction_id,
+            kind: change.kind.clone(),
+            operations,
+            ledger: ledger_of(change.ledger_before, change.ledger_after),
+            post_commit: change
+                .post_commit
+                .iter()
+                .map(|effect| ReportedEffect {
+                    effect: effect.clone(),
+                    state: EffectState::Deferred,
+                })
+                .collect(),
+            warnings: Vec::new(),
+        })
+    }
+
+    /// Add a warning, keeping the canonical order §R3.4 specifies.
+    pub fn warn(&mut self, mut warning: Warning) {
+        warning.paths.sort();
+        self.warnings.push(warning);
+        self.warnings.sort();
+    }
+}
+
+fn directory_op(directory: &DirectoryOp) -> ReportedOp {
+    ReportedOp {
+        kind: ReportedOpKind::CreateDirectory,
+        path: OperationTarget::Project(directory.path().clone()),
+        before: None,
+        after: None,
+        bytes: None,
+        mode: None,
+        contributors: BTreeSet::new(),
+    }
+}
+
+fn file_op(operation: &FileOp) -> ReportedOp {
+    match operation {
+        FileOp::Create {
+            path,
+            after,
+            mode,
+            contributors,
+        } => ReportedOp {
+            kind: ReportedOpKind::Create,
+            path: path.clone(),
+            before: None,
+            after: Some(after.id),
+            bytes: Some(after.len),
+            mode: Some(*mode),
+            contributors: contributors.clone(),
+        },
+        FileOp::Replace {
+            path,
+            before,
+            after,
+            mode,
+            contributors,
+        } => ReportedOp {
+            kind: ReportedOpKind::Replace,
+            path: path.clone(),
+            before: Some(before.object.id),
+            after: Some(after.id),
+            bytes: Some(after.len),
+            mode: Some(*mode),
+            contributors: contributors.clone(),
+        },
+        FileOp::Delete {
+            path,
+            before: GuardedImage { object, mode },
+            contributors,
+        } => ReportedOp {
+            kind: ReportedOpKind::Delete,
+            path: path.clone(),
+            before: Some(object.id),
+            after: None,
+            bytes: Some(object.len),
+            mode: Some(*mode),
+            contributors: contributors.clone(),
         },
     }
 }
 
-/// Every line this change would produce, in path order.
-pub fn lines(change: &PreparedChange) -> Vec<Line> {
-    let mut lines: Vec<Line> = change
-        .directories
-        .iter()
-        .map(|directory| Line {
-            verb: "mkdir",
-            subject: directory.path().to_string(),
-        })
-        .chain(change.operations.iter().map(|op| Line {
-            verb: verb(op),
-            subject: op.target().to_string(),
-        }))
-        .collect();
-    lines.sort_by(|a, b| a.subject.cmp(&b.subject).then(a.verb.cmp(b.verb)));
-    lines
+fn ledger_of(before: FileImage, after: FileImage) -> ReportedLedger {
+    let kind = match (before, after) {
+        (a, b) if a == b => ReportedLedgerKind::Unchanged,
+        (FileImage::Absent, _) => ReportedLedgerKind::Create,
+        _ => ReportedLedgerKind::Replace,
+    };
+    ReportedLedger {
+        kind,
+        before,
+        after,
+    }
+}
+
+/// The human rendering.
+///
+/// Starts `plan <transaction> apply|conflict|finalise|abort`, then one line
+/// per operation in the prepared change's own order, then the ledger, the
+/// effects and the warnings. It never prints file contents, secrets or an
+/// absolute user-template path — a report is read in terminals and CI logs
+/// that outlive the run.
+pub fn render(report: &Report) -> String {
+    let mut out = format!("plan {} {}\n", report.transaction, kind_label(&report.kind));
+    for operation in &report.operations {
+        let subject = match &operation.path {
+            OperationTarget::Project(path) => path.to_string(),
+            // Never disguised as an ordinary project output: this is machine
+            // state being retired, not a file the user asked to remove.
+            OperationTarget::LegacyMachine(path) => format!("legacy-machine {path:?}"),
+        };
+        out.push_str(&format!("  {:<7} {subject}\n", operation.kind.verb()));
+    }
+    if report.ledger.kind != ReportedLedgerKind::Unchanged {
+        out.push_str(&format!("  ledger  {}\n", report.ledger.kind.label()));
+    }
+    for effect in &report.post_commit {
+        out.push_str(&format!("  effect  {}\n", effect_label(&effect.effect)));
+    }
+    for warning in &report.warnings {
+        out.push_str(&format!(
+            "  warn    {}: {}\n",
+            warning.code.label(),
+            warning.message
+        ));
+    }
+    out
+}
+
+pub fn kind_label(kind: &PreparedKind) -> &'static str {
+    match kind {
+        PreparedKind::Apply => "apply",
+        PreparedKind::Conflict { .. } => "conflict",
+        PreparedKind::Finalise { .. } => "finalise",
+        PreparedKind::Abort { .. } => "abort",
+    }
+}
+
+fn effect_label(effect: &PostCommitEffect) -> String {
+    match effect {
+        PostCommitEffect::ComposeReconcile {
+            desired_services,
+            stop_services,
+            ..
+        } => format!(
+            "compose reconcile ({} up, {} stopped)",
+            desired_services.len(),
+            stop_services.len()
+        ),
+    }
 }
 
 /// The one-line summary, which has to be able to say "nothing".
@@ -63,8 +316,8 @@ pub fn lines(change: &PreparedChange) -> Vec<Line> {
 /// A run that found everything already in place is a real outcome, and
 /// printing a confident "applied" over it is how a tool teaches people to
 /// stop reading its output.
-pub fn summary(change: &PreparedChange) -> String {
-    match &change.kind {
+pub fn summary(report: &Report) -> String {
+    match &report.kind {
         PreparedKind::Conflict { paths } => format!(
             "{} file{} could not be merged automatically",
             paths.len(),
@@ -72,17 +325,26 @@ pub fn summary(change: &PreparedChange) -> String {
         ),
         PreparedKind::Finalise { .. } => "finishing the frozen conflict".to_string(),
         PreparedKind::Abort { .. } => "putting the frozen conflict back".to_string(),
-        PreparedKind::Apply if change.is_no_op() => "nothing to do".to_string(),
+        PreparedKind::Apply if is_no_op(report) => "nothing to do".to_string(),
         PreparedKind::Apply => {
-            let files = change.operations.len();
-            let effects = change.post_commit.len();
+            let files = report
+                .operations
+                .iter()
+                .filter(|op| op.kind != ReportedOpKind::CreateDirectory)
+                .count();
             let mut summary = format!("{files} file{}", plural(files));
-            if effects > 0 {
+            if !report.post_commit.is_empty() {
                 summary.push_str(", then reconciling compose services");
             }
             summary
         }
     }
+}
+
+fn is_no_op(report: &Report) -> bool {
+    report.operations.is_empty()
+        && report.post_commit.is_empty()
+        && report.ledger.kind == ReportedLedgerKind::Unchanged
 }
 
 fn plural(count: usize) -> &'static str {
@@ -94,15 +356,23 @@ mod tests {
     use super::*;
     use crate::prepare::tests::{change_with, create};
 
+    /// The projection follows the prepared change's own order, which is
+    /// path order: a report whose lines depend on a hash map is a report two
+    /// identical runs disagree about.
     #[test]
-    fn lines_are_ordered_by_path_not_by_construction() {
+    fn operations_follow_the_prepared_order() {
         let change = change_with(vec![
             create("src/main/java/com/example/demo/Zebra.java", b"z"),
             create("src/main/java/com/example/demo/Apple.java", b"a"),
         ]);
-        let rendered: Vec<String> = lines(&change)
-            .into_iter()
-            .map(|line| line.subject)
+        let report = Report::of(&change).unwrap();
+        let rendered: Vec<String> = report
+            .operations
+            .iter()
+            .map(|op| match &op.path {
+                OperationTarget::Project(path) => path.to_string(),
+                other => format!("{other:?}"),
+            })
             .collect();
         assert_eq!(
             rendered,
@@ -117,12 +387,89 @@ mod tests {
     /// tool teaches people to stop reading its output.
     #[test]
     fn a_change_with_nothing_to_do_says_so() {
-        assert_eq!(summary(&change_with(Vec::new())), "nothing to do");
+        let report = Report::of(&change_with(Vec::new())).unwrap();
+        assert_eq!(summary(&report), "nothing to do");
     }
 
     #[test]
     fn one_file_is_not_reported_as_one_files() {
-        let change = change_with(vec![create("pom.xml", b"<project/>")]);
-        assert_eq!(summary(&change), "1 file");
+        let report = Report::of(&change_with(vec![create("pom.xml", b"<project/>")])).unwrap();
+        assert_eq!(summary(&report), "1 file");
+    }
+
+    /// A report that printed file contents would put generated source — and
+    /// anything a template interpolated into it — into a terminal and a CI log.
+    #[test]
+    fn a_report_carries_content_addresses_and_never_content() {
+        let change = change_with(vec![create("pom.xml", b"<project>secret</project>")]);
+        let report = Report::of(&change).unwrap();
+        let text = render(&report);
+        assert!(!text.contains("secret"), "{text}");
+        assert_eq!(report.operations[0].bytes, Some(25));
+        assert!(report.operations[0].after.is_some());
+    }
+
+    /// §R3.4: the exact after-mode for a create or replace, the exact
+    /// before-mode for a delete, and `None` only for a directory.
+    #[test]
+    fn only_a_directory_reports_no_mode() {
+        let mut change = change_with(vec![create("pom.xml", b"<project/>")]);
+        change
+            .directories
+            .push(crate::prepare::DirectoryOp::Create {
+                path: jails_protocol::identity::ProjectPath::parse("src").unwrap(),
+            });
+        change.transaction_id = change.identity().unwrap().transaction_id().unwrap();
+        let report = Report::of(&change).unwrap();
+        for operation in &report.operations {
+            assert_eq!(
+                operation.mode.is_none(),
+                operation.kind == ReportedOpKind::CreateDirectory,
+                "{operation:?}"
+            );
+        }
+    }
+
+    /// A project that has no ledger yet must not be rendered as an invented
+    /// hash, so the images preserve `Absent`.
+    #[test]
+    fn an_absent_ledger_stays_absent_in_the_report() {
+        let report = Report::of(&change_with(Vec::new())).unwrap();
+        assert_eq!(report.ledger.kind, ReportedLedgerKind::Unchanged);
+        assert_eq!(report.ledger.before, FileImage::Absent);
+    }
+
+    /// Machine state being retired is not a file the user asked to remove.
+    #[test]
+    fn a_legacy_target_is_labelled_rather_than_disguised() {
+        let mut report = Report::of(&change_with(Vec::new())).unwrap();
+        report.operations.push(ReportedOp {
+            kind: ReportedOpKind::Delete,
+            path: OperationTarget::LegacyMachine(
+                jails_protocol::snapshot::LegacySourcePath::VersionFile,
+            ),
+            before: None,
+            after: None,
+            bytes: None,
+            mode: None,
+            contributors: BTreeSet::new(),
+        });
+        assert!(render(&report).contains("legacy-machine"));
+    }
+
+    #[test]
+    fn warnings_sort_by_code_then_path_then_message() {
+        let mut report = Report::of(&change_with(Vec::new())).unwrap();
+        report.warn(Warning {
+            code: WarningCode::UnmanagedRetained,
+            paths: Vec::new(),
+            message: "kept two hand-written properties".to_string(),
+        });
+        report.warn(Warning {
+            code: WarningCode::LegacyUntrusted,
+            paths: Vec::new(),
+            message: "one row of unknown origin".to_string(),
+        });
+        assert_eq!(report.warnings[0].code, WarningCode::LegacyUntrusted);
     }
 }
