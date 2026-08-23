@@ -662,6 +662,7 @@ const LAYERS: &[(&str, usize)] = &[
     ("tool", 5),
     // jails-commit: making a prepared transaction durable, and recovering one.
     ("execute", 6),
+    ("fault", 6),
     ("journal", 6),
     ("outcome", 6),
     ("recover", 6),

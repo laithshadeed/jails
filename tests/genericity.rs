@@ -90,6 +90,9 @@ const ALLOWED: &[AllowedConcept] = &[
             // Recovery classifies the ledger first: it is what says whether
             // the commit point was crossed.
             "crates/jails-commit/src/recover.rs",
+            // The failpoint names are the commit protocol's own steps, and
+            // three of them are the ledger transition.
+            "crates/jails-commit/src/fault.rs",
             "src/app.rs",
             // The typed shadow reads the schema-1 store's rows to build its
             // observed side, so it names the module they live in.

@@ -8,6 +8,7 @@
 //! journal either has everything it needs to finish or was never valid.
 
 pub mod execute;
+pub mod fault;
 pub mod journal;
 pub mod outcome;
 pub mod recover;

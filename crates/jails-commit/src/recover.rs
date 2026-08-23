@@ -29,12 +29,14 @@
 //! everything from scratch and either advances or rewrites the block with
 //! whatever fails *now*.
 
-use crate::execute::LockedProject;
+use crate::execute::{
+    LedgerFailure, LedgerPosition, LockedProject, apply_operations, ledger_position, write_ledger,
+};
 use crate::journal::{JournalState, JournalV1, ResumeState};
 use crate::outcome::{RecoveryChange, RecoveryError, RecoveryOutcome, RecoveryTransactionAction};
 use crate::store;
 use jails_protocol::identity::TransactionId;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Finish or classify every incomplete transaction. Idempotent.
 ///
@@ -99,8 +101,24 @@ pub fn recover_locked(
             });
         }
         ResumeState::Active | ResumeState::LedgerCommitted | ResumeState::Complete => {
-            // Everything from `Active` onward is finished forward. The
-            // published pair is what the next run reads.
+            // The ledger says whether the commit point was crossed. Below it
+            // the files are still the plan's business and every remaining
+            // operation is applied; above it the transaction is *true* and
+            // the only work left is structural — applying a file operation
+            // there would overwrite whatever the user has done since.
+            match ledger_position(locked, &journal.prepared) {
+                LedgerPosition::Before => {
+                    roll_forward(locked, &directory, &journal)?;
+                }
+                LedgerPosition::After => {}
+                LedgerPosition::Neither => {
+                    return Err(RecoveryError::RecoveryBlocked(
+                        crate::journal::BlockReason::UnknownLiveImage {
+                            actual: crate::journal::ActualImage::Other,
+                        },
+                    ));
+                }
+            }
             finish(locked, &directory, &journal, &mut outcome)?;
         }
     }
@@ -123,10 +141,39 @@ fn effective_state(journal: &JournalV1) -> ResumeState {
     }
 }
 
+/// Apply every operation this transaction has not reached yet, then commit
+/// the ledger.
+///
+/// The same code the first attempt ran, because a recovery pass that used a
+/// different one would be a second implementation of the thing that must not
+/// disagree with itself. Each operation reclassifies immediately before
+/// acting, so an already-applied one is skipped and an unrecognised one
+/// stops.
+fn roll_forward(
+    locked: &LockedProject,
+    directory: &Path,
+    journal: &JournalV1,
+) -> std::result::Result<(), RecoveryError> {
+    let objects = directory.join("objects");
+    if let Err(blocked) = apply_operations(locked, &journal.prepared, directory, &objects) {
+        let reason = blocked.reason.clone();
+        // Record the block so the next run reads it rather than
+        // rediscovering it, then refuse.
+        let _ = blocked.into_error(directory, journal);
+        return Err(RecoveryError::RecoveryBlocked(reason));
+    }
+    match write_ledger(locked, &journal.prepared, directory, &objects) {
+        Ok(()) => Ok(()),
+        Err(LedgerFailure::BeforeCommit(why) | LedgerFailure::AfterCommit(why)) => {
+            Err(RecoveryError::Io(why))
+        }
+    }
+}
+
 /// Complete the journal, publish the receipt, and move the intact directory.
 fn finish(
     locked: &LockedProject,
-    directory: &PathBuf,
+    directory: &Path,
     journal: &JournalV1,
     outcome: &mut RecoveryOutcome,
 ) -> std::result::Result<(), RecoveryError> {
@@ -272,6 +319,16 @@ mod tests {
         };
         let directory = locked.handle().store().transaction(&journal.transaction);
         store::create_private_dir(&directory).unwrap();
+        // The bytes the transaction will write live with it. A journal
+        // without them is a transaction that cannot be finished, which is a
+        // different test.
+        let body = b"class App {}\n";
+        store::put_object(
+            &directory.join("objects"),
+            &ObjectId::from_bytes(sha256(body)),
+            body,
+        )
+        .unwrap();
         journal.persist(&directory).unwrap();
         (directory, journal)
     }

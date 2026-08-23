@@ -196,6 +196,7 @@ dependencies = [
 name = "jails-commit"
 version = "0.1.0"
 dependencies = [
+ "jails-commit",
  "jails-prepare",
  "jails-project",
  "jails-protocol",

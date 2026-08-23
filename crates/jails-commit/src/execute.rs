@@ -44,7 +44,9 @@ use crate::outcome::{
 };
 use crate::store::{self, Store};
 use jails_prepare::pipeline::PreparedBundle;
-use jails_prepare::prepare::{FileOp, GuardedImage, OperationTarget, PreparedChange};
+use jails_prepare::prepare::{
+    FileOp, GuardedImage, OperationTarget, PreparedChange, PreparedIdentityV1,
+};
 use jails_prepare::receipt::{AppliedReceipt, ApplyOutcome, DirectoryReceipt, FileReceipt};
 use jails_protocol::conflict::{FileImage, FileMode};
 use jails_protocol::identity::{ObjectId, ObjectRef, ProjectPath};
@@ -143,9 +145,12 @@ pub fn commit(
     let change = &bundle.change;
     change.validate().map_err(CommitError::InvalidPrepared)?;
 
+    crate::fault::trip("after-lock").map_err(CommitError::PreActivationIo)?;
+
     // Step 2. Recheck every guard under the lock. A mismatch is stale, and
     // stale is a refusal — commit never substitutes changed operations.
     recheck(locked, change)?;
+    crate::fault::trip("after-recheck").map_err(CommitError::PreActivationIo)?;
 
     // Step 3. Truthful *because* it comes after the recheck rather than
     // before it.
@@ -167,6 +172,7 @@ pub fn commit(
     for (id, body) in &change.objects {
         store::put_object(&objects, id, body).map_err(CommitError::PreActivationIo)?;
     }
+    crate::fault::trip("after-objects-sync").map_err(CommitError::PreActivationIo)?;
 
     let journal = JournalV1 {
         transaction: change.transaction_id,
@@ -178,6 +184,7 @@ pub fn commit(
     journal
         .persist(&directory)
         .map_err(CommitError::PreActivationIo)?;
+    crate::fault::trip("after-journal-prepared").map_err(CommitError::PreActivationIo)?;
 
     // Step 6. From here a failure leaves recovery work, never "nothing
     // written".
@@ -185,43 +192,81 @@ pub fn commit(
     active
         .persist(&directory)
         .map_err(CommitError::PreActivationIo)?;
+    // Armed here, the failure is *after* activation: recovery owns it.
+    crate::fault::trip("after-journal-active").map_err(CommitError::PreActivationIo)?;
 
-    apply_operations(locked, change, &directory, &objects)
+    let identity = change.identity().map_err(CommitError::InvalidPrepared)?;
+    apply_operations(locked, &identity, &directory, &objects)
         .map_err(|blocked| blocked.into_error(&directory, &active))?;
 
     // Step 10. The ledger last, with the same guarded primitive. It is the
     // commit point: everything before it can be abandoned, and this is what
     // makes the change true.
-    write_ledger(locked, change, &directory, &objects).map_err(CommitError::CorruptMachineState)?;
+    match write_ledger(locked, &identity, &directory, &objects) {
+        Ok(()) => {}
+        // Before the rename the transaction is still abandonable.
+        Err(LedgerFailure::BeforeCommit(why)) => {
+            return Err(CommitError::CorruptMachineState(why));
+        }
+        // After it, the commit is durable, and saying "error" would tell the
+        // caller to retry work that has already happened.
+        Err(LedgerFailure::AfterCommit(why)) => {
+            return Ok(CommitResult::CommittedRecoveryRequired(Box::new(
+                CommittedRecoveryRequired {
+                    operation: change.operation_id,
+                    transaction: change.transaction_id,
+                    receipt: None,
+                    stage: PostCommitStage::JournalCompletion,
+                    error: PostCommitRecoveryError::Io(why),
+                },
+            )));
+        }
+    }
 
     // Step 11. From here nothing may return `CommitError`.
     Ok(publish(locked, change, &directory, &active))
 }
 
+/// Which side of the commit point a ledger failure fell on.
+///
+/// The distinction is the whole protocol in one type: before the rename the
+/// transaction can still be abandoned, after it the change is true.
+pub(crate) enum LedgerFailure {
+    BeforeCommit(String),
+    AfterCommit(String),
+}
+
 /// Step 10: the guarded ledger transition, then fsync the machine root.
-fn write_ledger(
+pub(crate) fn write_ledger(
     locked: &LockedProject,
-    change: &PreparedChange,
+    change: &PreparedIdentityV1,
     directory: &Path,
     objects: &Path,
-) -> Result<()> {
+) -> std::result::Result<(), LedgerFailure> {
     let path = locked.handle.store.root().join("ledger.toml");
     let publish = directory.join("live-temp");
+    crate::fault::trip("before-ledger").map_err(LedgerFailure::BeforeCommit)?;
     match change.ledger_after {
         FileImage::Absent => {
             if path.exists() {
                 let kept = publish.join("ledger.deleted");
-                std::fs::rename(&path, &kept)
-                    .map_err(|error| format!("could not retire the store: {error}"))?;
+                std::fs::rename(&path, &kept).map_err(|error| {
+                    LedgerFailure::BeforeCommit(format!("could not retire the store: {error}"))
+                })?;
             }
         }
         FileImage::Present { object, mode } => {
-            let staged = stage(&publish, objects, &object, mode, usize::MAX)?;
-            std::fs::rename(&staged, &path)
-                .map_err(|error| format!("could not write the store: {error}"))?;
+            let staged = stage(&publish, objects, &object, mode, usize::MAX)
+                .map_err(LedgerFailure::BeforeCommit)?;
+            std::fs::rename(&staged, &path).map_err(|error| {
+                LedgerFailure::BeforeCommit(format!("could not write the store: {error}"))
+            })?;
         }
     }
-    store::sync_dir(locked.handle.store.root())
+    // The rename is the commit point. Everything after it is durable.
+    crate::fault::trip("after-ledger-rename").map_err(LedgerFailure::AfterCommit)?;
+    store::sync_dir(locked.handle.store.root()).map_err(LedgerFailure::AfterCommit)?;
+    crate::fault::trip("after-ledger-dirsync").map_err(LedgerFailure::AfterCommit)
 }
 
 /// Step 11: complete the journal, build and publish the receipt, and move the
@@ -247,11 +292,17 @@ fn publish(
     };
 
     let committed = active.advanced(JournalState::LedgerCommitted);
-    if let Err(error) = committed.persist(directory) {
+    if let Err(error) = committed
+        .persist(directory)
+        .and_then(|()| crate::fault::trip("after-journal-ledger-committed"))
+    {
         return required(PostCommitStage::JournalCompletion, error);
     }
     let complete = active.advanced(JournalState::Complete);
-    if let Err(error) = complete.persist(directory) {
+    if let Err(error) = complete
+        .persist(directory)
+        .and_then(|()| crate::fault::trip("after-journal-complete"))
+    {
         return required(PostCommitStage::JournalCompletion, error);
     }
 
@@ -266,7 +317,10 @@ fn publish(
         complete_journal_checksum: witness,
         post_commit: Vec::new(),
     };
-    if let Err(error) = receipt.persist(directory) {
+    if let Err(error) = receipt
+        .persist(directory)
+        .and_then(|()| crate::fault::trip("after-receipt-sync"))
+    {
         return required(PostCommitStage::ReceiptPublication, error);
     }
 
@@ -278,6 +332,9 @@ fn publish(
         return required(PostCommitStage::ReceiptPublication, error);
     }
 
+    if let Err(error) = crate::fault::trip("before-receipt-move") {
+        return required(PostCommitStage::ReceiptPublication, error);
+    }
     let destination = locked.handle.store.receipt(&change.transaction_id);
     if destination.exists() {
         return required(
@@ -291,12 +348,18 @@ fn publish(
             format!("could not publish the receipt: {error}"),
         );
     }
-    for parent in [
-        locked.handle.store.transactions(),
-        locked.handle.store.receipts(),
-        locked.handle.store.root().to_path_buf(),
+    if let Err(error) = crate::fault::trip("after-receipt-move") {
+        return required(PostCommitStage::ReceiptPublication, error);
+    }
+    for (parent, point) in [
+        (
+            locked.handle.store.transactions(),
+            "after-transactions-parent-sync",
+        ),
+        (locked.handle.store.receipts(), "after-receipts-parent-sync"),
+        (locked.handle.store.root().to_path_buf(), "after-root-sync"),
     ] {
-        if let Err(error) = store::sync_dir(&parent) {
+        if let Err(error) = store::sync_dir(&parent).and_then(|()| crate::fault::trip(point)) {
             return required(PostCommitStage::ReceiptPublication, error);
         }
     }
@@ -367,15 +430,15 @@ fn after_image(operation: &FileOp) -> FileImage {
 }
 
 /// A failure after activation, with the reason recovery will record.
-struct Blocked {
-    path: Option<ProjectPath>,
-    reason: BlockReason,
+pub(crate) struct Blocked {
+    pub(crate) path: Option<ProjectPath>,
+    pub(crate) reason: BlockReason,
 }
 
 impl Blocked {
     /// Persist the block on the journal, so the next run sees it rather than
     /// rediscovering it.
-    fn into_error(self, directory: &Path, active: &JournalV1) -> CommitError {
+    pub(crate) fn into_error(self, directory: &Path, active: &JournalV1) -> CommitError {
         let blocked = active.advanced(JournalState::Blocked {
             resume: crate::journal::ResumeState::Active,
             path: self.path,
@@ -393,9 +456,9 @@ impl Blocked {
 
 /// Steps 7 to 9: directories shallowest-first, then file operations in
 /// canonical path order.
-fn apply_operations(
+pub(crate) fn apply_operations(
     locked: &LockedProject,
-    change: &PreparedChange,
+    change: &PreparedIdentityV1,
     directory: &Path,
     objects: &Path,
 ) -> std::result::Result<(), Blocked> {
@@ -428,15 +491,21 @@ fn apply_operations(
                 if let Some(parent) = at.parent() {
                     let _ = store::sync_dir(parent);
                 }
+                crate::fault::trip("after-directory-sync").map_err(|error| Blocked {
+                    path: Some(path.clone()),
+                    reason: BlockReason::Unreadable { error_kind: error },
+                })?;
             }
         }
     }
 
     let publish = directory.join("live-temp");
-    store::create_private_dir(&publish).map_err(|error| Blocked {
-        path: None,
-        reason: BlockReason::Unreadable { error_kind: error },
-    })?;
+    store::create_private_dir(&publish)
+        .and_then(|()| crate::fault::trip("after-live-temp-sync"))
+        .map_err(|error| Blocked {
+            path: None,
+            reason: BlockReason::Unreadable { error_kind: error },
+        })?;
 
     for (index, operation) in change.operations.iter().enumerate() {
         let OperationTarget::Project(path) = operation.target() else {
@@ -461,7 +530,26 @@ fn apply_operations(
                 });
             }
         }
+        // Missing or wrong bytes are machine-state corruption, and naming the
+        // object is what makes that actionable — "could not read a file
+        // under .jails" is not.
+        if let Some(after) = operation.after()
+            && store::read_object(objects, &after.id).is_err()
+        {
+            return Err(Blocked {
+                path: Some(path.clone()),
+                reason: BlockReason::CorruptObject(after.id),
+            });
+        }
+        crate::fault::trip("before-file").map_err(|error| Blocked {
+            path: Some(path.clone()),
+            reason: BlockReason::Unreadable { error_kind: error },
+        })?;
         apply_one(operation, &at, &publish, objects, index).map_err(|error| Blocked {
+            path: Some(path.clone()),
+            reason: BlockReason::Unreadable { error_kind: error },
+        })?;
+        crate::fault::trip("after-file-dirsync").map_err(|error| Blocked {
             path: Some(path.clone()),
             reason: BlockReason::Unreadable { error_kind: error },
         })?;
@@ -679,13 +767,36 @@ fn recheck(
     check_ledger(locked, change.ledger_before)
 }
 
-fn check_ledger(
+/// Where the store stands relative to a transaction's two images.
+///
+/// This is what says whether the commit point was crossed, and therefore
+/// whether the files are still the plan's business.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum LedgerPosition {
+    Before,
+    After,
+    Neither,
+}
+
+pub(crate) fn ledger_position(
     locked: &LockedProject,
-    expected: FileImage,
-) -> std::result::Result<(), CommitError> {
+    prepared: &PreparedIdentityV1,
+) -> LedgerPosition {
     let path = locked.handle.store.root().join("ledger.toml");
-    let actual = observe(&path).map_err(CommitError::StaleInput)?;
-    let matched = match (expected, &actual) {
+    let Ok(actual) = observe(&path) else {
+        return LedgerPosition::Neither;
+    };
+    if image_matches(&actual, prepared.ledger_before) {
+        return LedgerPosition::Before;
+    }
+    if image_matches(&actual, prepared.ledger_after) {
+        return LedgerPosition::After;
+    }
+    LedgerPosition::Neither
+}
+
+fn image_matches(actual: &ActualImage, expected: FileImage) -> bool {
+    match (expected, actual) {
         (FileImage::Absent, ActualImage::Absent) => true,
         (
             FileImage::Present { object, mode },
@@ -696,8 +807,16 @@ fn check_ledger(
             },
         ) => sha256 == &object.id && len == &object.len && actual_mode == &mode,
         _ => false,
-    };
-    if !matched {
+    }
+}
+
+fn check_ledger(
+    locked: &LockedProject,
+    expected: FileImage,
+) -> std::result::Result<(), CommitError> {
+    let path = locked.handle.store.root().join("ledger.toml");
+    let actual = observe(&path).map_err(CommitError::StaleInput)?;
+    if !image_matches(&actual, expected) {
         return Err(CommitError::StaleInput(
             "the store changed after this plan was made.\n       fix: another run committed in \
              between; replan."
