@@ -42,6 +42,10 @@ jails-protocol = { path = "crates/jails-protocol" }
 jails-support = { path = "crates/jails-support" }
 
 [dev-dependencies]
+# Failpoints, for the crash sweep over a *real* route in `tests/engine.rs`.
+# §R4.5's property is about whatever instant a run stops at, and the only way
+# to ask it of a whole command is to arm the executor the command uses.
+jails-commit = { path = "crates/jails-commit", features = ["fault-injection"] }
 # The integration tests assert against jails' own constants -- `TARGET_RELEASE`
 # among them -- rather than keeping copies of them in the fixtures.
 jails-project = { path = "crates/jails-project" }

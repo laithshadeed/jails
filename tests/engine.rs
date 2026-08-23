@@ -214,3 +214,63 @@ fn a_file_the_request_does_not_own_is_not_overwritten() {
         "a refusal before the lock writes none of the request, not most of it"
     );
 }
+
+/// §R4.5, asked of a whole command rather than of a hand-built transaction.
+///
+/// Whatever instant the run stops at, the project is either completely
+/// installed or completely absent -- never a POM naming a dependency whose
+/// file is missing, and never a file nothing declares. Recovery runs twice,
+/// because recovery that converges on the first pass and changes something on
+/// the second is not idempotent, and that difference only shows up under a
+/// second crash.
+#[test]
+fn a_capability_install_converges_from_every_failpoint() {
+    let mut interrupted = 0;
+    for point in jails_commit::fault::POINTS {
+        let root = common::temp_dir(&format!("engine-crash-{point}"));
+        std::fs::create_dir_all(&root).unwrap();
+        common::write_spring_fixture(&root);
+        let project = Project::load(&root).unwrap();
+
+        {
+            let _armed = jails_commit::fault::Armed::at(point);
+            let _ = jails_engine::route::install(&project, Capability::Actuator);
+        }
+
+        for pass in 0..2 {
+            let handle = jails_commit::execute::ProjectHandle::at(&root).unwrap();
+            let locked = jails_commit::execute::LockedProject::acquire(handle, "recovery").unwrap();
+            let outcome = jails_commit::recover::recover_locked(&locked)
+                .unwrap_or_else(|why| panic!("{point}: recovery pass {pass} failed: {why:?}"));
+            assert!(
+                pass == 0 || outcome.is_clean(),
+                "{point}: the second recovery still had work to do: {outcome:?}"
+            );
+        }
+
+        let pom = std::fs::read_to_string(root.join("pom.xml")).unwrap();
+        let installed = pom.contains("spring-boot-starter-actuator");
+        let file = root
+            .join("src/test/java/com/example/demo/ActuatorEndpointsTest.java")
+            .is_file();
+        assert_eq!(
+            installed, file,
+            "{point}: the project is half-installed -- dependency {installed}, file {file}"
+        );
+        if !installed {
+            interrupted += 1;
+        }
+    }
+
+    // A sweep where nothing was ever interrupted proves nothing: it would
+    // pass identically with the failpoints compiled out, which is exactly the
+    // "a skipped test reports as a pass" failure CLAUDE.md keeps warning
+    // about. Some points fire before anything is applied and some after the
+    // commit rolls forward, so both outcomes have to appear.
+    assert!(
+        interrupted > 0 && interrupted < jails_commit::fault::POINTS.len(),
+        "the sweep saw {interrupted} interrupted installs out of {}; the failpoints are not \
+         firing, or they all are",
+        jails_commit::fault::POINTS.len()
+    );
+}
