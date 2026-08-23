@@ -14,8 +14,11 @@
 //! never had to know either key existed.
 //!
 //! **Old projects still read.** A `.jails/` that predates the ledger is folded
-//! into one on first write and the old files removed. Refusing to read them
-//! would strand `destroy` on exactly the projects with the most history to lose.
+//! into one *in memory* on every read, and the old files are removed only after
+//! a mutating command has durably written the ledger that replaces them.
+//! Refusing to read them would strand `destroy` on exactly the projects with
+//! the most history to lose; deleting them while merely reading -- which is
+//! what this module used to do -- made `app plan` and `--pretend` destructive.
 
 use crate::Result;
 use crate::ledger::{self, Applied, Ledger, Model};
@@ -23,17 +26,58 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Read the ledger, migrating a pre-ledger `.jails/` if that is what is there.
-fn read(root: &Path) -> Result<Ledger> {
-    let mut current = ledger::load(root)?;
-    if current.applied.is_empty() && current.models.is_empty() {
-        migrate_legacy(root, &mut current)?;
-    }
-    Ok(current)
+/// The ledger as it currently reads, and the pre-ledger sources that had to be
+/// folded into it to get there.
+struct Read {
+    ledger: Ledger,
+    /// Exactly the paths the fold consumed, kept rather than re-derived. Same
+    /// rule as the recorded file list: a name rebuilt later is today's answer
+    /// for yesterday's layout, and here it would delete the wrong thing.
+    legacy: Vec<PathBuf>,
 }
 
-/// Fold `.jails/intents/*`, `.jails/models/*`, `.jails/files` and
-/// `.jails/version` into the ledger, then take them out.
+impl Read {
+    /// Take the old layout out, once the ledger that replaced it is on disk.
+    ///
+    /// Call order is the whole point: `ledger::save` is atomic, so at every
+    /// instant either the old layout or the new ledger is a complete record of
+    /// what jails owns -- never neither.
+    ///
+    /// Best-effort by design. The ledger is authoritative the moment it is
+    /// written, and a leftover legacy directory is folded again on the next
+    /// read to the same result; failing the command over it would turn a
+    /// successful migration into a reported failure.
+    fn retire(&self) {
+        for path in &self.legacy {
+            let _ = if path.is_dir() {
+                fs::remove_dir_all(path)
+            } else {
+                fs::remove_file(path)
+            };
+        }
+    }
+}
+
+/// Read the ledger, folding a pre-ledger `.jails/` **in memory only**.
+///
+/// This used to delete the legacy files as a side effect of reading them, which
+/// made `app plan`, `destroy --pretend` and `generate`'s model lookups
+/// destructive: a reader asking what jails would do consumed the only copy of
+/// what jails had done. Reading is non-mutating for every caller now, and
+/// `Read::retire` is what a mutating command calls afterwards.
+fn read(root: &Path) -> Result<Read> {
+    let mut ledger = ledger::load(root)?;
+    let legacy = if ledger.applied.is_empty() && ledger.models.is_empty() {
+        fold_legacy(root, &mut ledger)?
+    } else {
+        Vec::new()
+    };
+    Ok(Read { ledger, legacy })
+}
+
+/// Fold `.jails/intents/*` and `.jails/models/*` into the ledger in memory.
+///
+/// Returns the paths it consumed, which is what `Read::retire` later removes.
 ///
 /// The old per-intent filename was `<kind>-<name>-<fnv>.files`, and the hash
 /// was over `kind\0name\0package` -- recoverable only for the first two. The
@@ -42,12 +86,13 @@ fn read(root: &Path) -> Result<Ledger> {
 /// `--package`, and the consequence is stated rather than hidden: such an
 /// intent migrates without its override, and a later `destroy` falls back to
 /// recomputing paths -- which is what it did before any of this existed.
-fn migrate_legacy(root: &Path, into: &mut Ledger) -> Result<()> {
+fn fold_legacy(root: &Path, into: &mut Ledger) -> Result<Vec<PathBuf>> {
     let intents = root.join(".jails/intents");
     let models = root.join(".jails/models");
     if !intents.is_dir() && !models.is_dir() {
-        return Ok(());
+        return Ok(Vec::new());
     }
+    let mut consumed = Vec::new();
 
     if let Ok(entries) = fs::read_dir(&intents) {
         for entry in entries.flatten() {
@@ -59,10 +104,15 @@ fn migrate_legacy(root: &Path, into: &mut Ledger) -> Result<()> {
                 continue;
             };
             let files = read_lines(&path)?;
+            consumed.push(path);
             into.applied.push(Applied {
                 recipe,
                 name,
                 package: String::new(),
+                // The old layout recorded paths and nothing about origin, so
+                // whether a manifest ever owned this is genuinely unknown --
+                // and staying unknown is the honest answer.
+                spec: ledger::SpecPresence::UnknownLegacy,
                 fields: Vec::new(),
                 indexes: Vec::new(),
                 on: String::new(),
@@ -81,20 +131,23 @@ fn migrate_legacy(root: &Path, into: &mut Ledger) -> Result<()> {
             let Some((_, name)) = legacy_identity(&path) else {
                 continue;
             };
+            let fields = read_lines(&path)?;
+            consumed.push(path);
             into.models.push(Model {
                 name,
                 package: String::new(),
-                fields: read_lines(&path)?,
+                fields,
             });
         }
     }
 
-    for stale in [root.join(".jails/files"), root.join(".jails/version")] {
-        let _ = fs::remove_file(stale);
-    }
-    let _ = fs::remove_dir_all(&intents);
-    let _ = fs::remove_dir_all(&models);
-    Ok(())
+    // The two siblings that layout kept but this one has no column for: a flat
+    // path list superseded by the per-entity `files`, and a version string the
+    // ledger's own `version` replaces. They are part of the layout being
+    // retired even though nothing was folded out of them.
+    consumed.extend([root.join(".jails/files"), root.join(".jails/version")]);
+    consumed.extend([intents, models]);
+    Ok(consumed)
 }
 
 /// `record-note-44c464a9777ec2f0.files` -> `("record", "Note")`.
@@ -140,10 +193,13 @@ pub(crate) fn record(
     for path in paths {
         relative.insert(ledger::relative(root, path)?);
     }
-    let mut current = read(root)?;
-    current.version = env!("CARGO_PKG_VERSION").to_string();
-    ledger::entry_mut(&mut current, kind, name, package).files = relative.into_iter().collect();
-    ledger::save(root, &current)
+    let mut state = read(root)?;
+    state.ledger.version = env!("CARGO_PKG_VERSION").to_string();
+    ledger::entry_mut(&mut state.ledger, kind, name, package).files =
+        relative.into_iter().collect();
+    ledger::save(root, &state.ledger)?;
+    state.retire();
+    Ok(())
 }
 
 pub(crate) fn paths(
@@ -152,7 +208,7 @@ pub(crate) fn paths(
     name: &str,
     package: Option<&str>,
 ) -> Result<Option<Vec<PathBuf>>> {
-    let current = read(root)?;
+    let current = read(root)?.ledger;
     let Some(entry) = current
         .applied
         .iter()
@@ -169,13 +225,15 @@ pub(crate) fn paths(
 }
 
 pub(crate) fn forget(root: &Path, kind: &str, name: &str, package: Option<&str>) -> Result<()> {
-    let mut current = read(root)?;
-    let before = current.applied.len();
-    current
+    let mut state = read(root)?;
+    let before = state.ledger.applied.len();
+    state
+        .ledger
         .applied
         .retain(|entry| !entry.is(kind, name, package));
-    if current.applied.len() != before {
-        ledger::save(root, &current)?;
+    if state.ledger.applied.len() != before || !state.legacy.is_empty() {
+        ledger::save(root, &state.ledger)?;
+        state.retire();
     }
     Ok(())
 }
@@ -186,22 +244,25 @@ pub(crate) fn record_model(
     package: Option<&str>,
     fields: &[String],
 ) -> Result<()> {
-    let mut current = read(root)?;
-    current.version = env!("CARGO_PKG_VERSION").to_string();
+    let mut state = read(root)?;
+    state.ledger.version = env!("CARGO_PKG_VERSION").to_string();
     let entry = Model {
         name: name.to_string(),
         package: package.unwrap_or_default().to_string(),
         fields: fields.to_vec(),
     };
-    match current
+    match state
+        .ledger
         .models
         .iter_mut()
         .find(|model| model.name == entry.name && model.package == entry.package)
     {
         Some(existing) => *existing = entry,
-        None => current.models.push(entry),
+        None => state.ledger.models.push(entry),
     }
-    ledger::save(root, &current)
+    ledger::save(root, &state.ledger)?;
+    state.retire();
+    Ok(())
 }
 
 pub(crate) fn model_fields(
@@ -209,7 +270,7 @@ pub(crate) fn model_fields(
     name: &str,
     package: Option<&str>,
 ) -> Result<Option<Vec<String>>> {
-    let current = read(root)?;
+    let current = read(root)?.ledger;
     Ok(current
         .models
         .iter()
@@ -383,5 +444,76 @@ mod tests {
         );
         assert!(!root.join(".jails/files").exists());
         assert!(root.join(".jails/ledger.toml").is_file());
+    }
+
+    /// Reading is not a migration. `app plan`, `destroy --pretend` and every
+    /// model lookup go through `read`, and this module used to delete the old
+    /// layout from inside it -- so asking jails what it *would* do consumed the
+    /// only copy of what it had done.
+    #[test]
+    fn reading_a_pre_ledger_project_folds_it_without_touching_a_byte() {
+        let root = scratch();
+        fs::create_dir_all(root.join(".jails/intents")).unwrap();
+        let intent = root.join(".jails/intents/record-note-44c464a9777ec2f0.files");
+        fs::write(&intent, "src/main/java/com/example/demo/domain/Note.java\n").unwrap();
+        let stale = root.join(".jails/version");
+        fs::write(&stale, "0.0.1\n").unwrap();
+        let before = snapshot(&root.join(".jails"));
+
+        assert_eq!(
+            paths(&root, "record", "Note", None).unwrap(),
+            Some(vec![
+                root.join("src/main/java/com/example/demo/domain/Note.java")
+            ]),
+            "the legacy layout is still readable"
+        );
+        assert_eq!(model_fields(&root, "Absent", None).unwrap(), None);
+
+        assert_eq!(
+            before,
+            snapshot(&root.join(".jails")),
+            "reads wrote nothing"
+        );
+        assert!(!root.join(".jails/ledger.toml").exists());
+
+        // The first mutating command is what retires it -- and only after the
+        // ledger that replaces it is on disk.
+        record(
+            &root,
+            "record",
+            "Other",
+            None,
+            &[root.join("src/main/java/O.java")],
+        )
+        .unwrap();
+        assert!(root.join(".jails/ledger.toml").is_file());
+        assert!(!intent.exists());
+        assert!(!stale.exists());
+        assert_eq!(
+            paths(&root, "record", "Note", None).unwrap(),
+            Some(vec![
+                root.join("src/main/java/com/example/demo/domain/Note.java")
+            ]),
+            "and the folded history is in the ledger, not lost with the files"
+        );
+    }
+
+    /// Every path under a directory with its bytes, so "wrote nothing" is a
+    /// claim about content and not only about which names still exist.
+    fn snapshot(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+        let mut out = Vec::new();
+        let Ok(entries) = fs::read_dir(dir) else {
+            return out;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                out.extend(snapshot(&path));
+            } else {
+                out.push((path.clone(), fs::read(&path).unwrap()));
+            }
+        }
+        out.sort();
+        out
     }
 }

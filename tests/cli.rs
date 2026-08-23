@@ -3,7 +3,7 @@ mod common;
 use common::*;
 use std::fs;
 use std::io::Write as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 // ---- offline, filesystem-only: exercise the real binary against real
@@ -769,6 +769,101 @@ fn app_manifest_formats_the_complete_generated_tree_once() {
         root.join("src/main/java/com/example/demo/domain/Note.java")
             .is_file()
     );
+}
+
+/// Reading is not a migration.
+///
+/// `app plan`, `--pretend` and inspection all reach the provenance store, and
+/// it used to fold a pre-ledger `.jails/` and **delete the old files** from
+/// inside the read. Asking jails what it would do therefore consumed the only
+/// record of what it had done -- and if the answer was "nothing to destroy",
+/// the evidence for that answer had just been thrown away.
+#[test]
+fn plan_pretend_and_inspection_leave_a_pre_ledger_project_byte_for_byte() {
+    let root = temp_dir("legacy-read-purity");
+    write_plain_fixture(&root);
+    fs::create_dir_all(root.join(".jails/intents")).unwrap();
+    fs::create_dir_all(root.join(".jails/models")).unwrap();
+    fs::write(
+        root.join(".jails/intents/record-note-44c464a9777ec2f0.files"),
+        "src/main/java/com/example/demo/domain/Note.java\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join(".jails/models/model-note-70ab6d016b346e7e.files"),
+        "title:string!\n",
+    )
+    .unwrap();
+    fs::write(root.join(".jails/version"), "0.0.1\n").unwrap();
+    fs::write(
+        root.join(".jails/app.toml"),
+        "schema = 1\ncapabilities = []\n\n[[generate]]\nkind = \"record\"\nname = \"Note\"\n\
+         fields = [\"title:string!\"]\n",
+    )
+    .unwrap();
+    let before = snapshot_tree(&root.join(".jails"));
+
+    for arguments in [
+        vec!["app", "plan"],
+        vec!["destroy", "record", "Note", "--pretend"],
+        vec!["generate", "record", "Other", "title:string!", "--pretend"],
+        vec!["routes"],
+    ] {
+        let output = jails_cmd(&root, None).args(&arguments).output().unwrap();
+        assert!(
+            output.status.success(),
+            "`jails {}` failed: {}{}",
+            arguments.join(" "),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            before,
+            snapshot_tree(&root.join(".jails")),
+            "`jails {}` changed machine state while only being asked to report",
+            arguments.join(" ")
+        );
+    }
+    assert!(
+        !root.join(".jails/ledger.toml").exists(),
+        "and no read created the ledger either"
+    );
+
+    // The first mutating command migrates, and only then is the old layout
+    // retired -- after the ledger that replaces it is durable.
+    let applied = jails_cmd(&root, None)
+        .args(["app", "apply", "--no-start"])
+        .output()
+        .unwrap();
+    assert!(
+        applied.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&applied.stdout),
+        String::from_utf8_lossy(&applied.stderr)
+    );
+    assert!(root.join(".jails/ledger.toml").is_file());
+    assert!(!root.join(".jails/intents").exists());
+    assert!(!root.join(".jails/models").exists());
+    assert!(!root.join(".jails/version").exists());
+}
+
+/// Every file under a directory with its bytes, so "left it alone" is a claim
+/// about content rather than only about which names still exist.
+fn snapshot_tree(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    let mut out = Vec::new();
+    let Ok(entries) = fs::read_dir(dir) else {
+        return out;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            out.extend(snapshot_tree(&path));
+        } else {
+            out.push((path.clone(), fs::read(&path).unwrap()));
+        }
+    }
+    out.sort();
+    out
 }
 
 #[test]

@@ -10,6 +10,7 @@ version = "0.1.0"
 recipe = "value"
 name = "Money"
 package = ""
+has_spec = false
 files = [
   "src/main/java/com/example/demo/domain/Money.java",
   "src/test/java/com/example/demo/domain/MoneyTest.java",

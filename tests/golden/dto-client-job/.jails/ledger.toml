@@ -10,6 +10,7 @@ version = "0.1.0"
 recipe = "client"
 name = "Ledger"
 package = ""
+has_spec = false
 files = [
   "src/main/java/com/example/demo/clients/HttpClientsConfig.java",
   "src/main/java/com/example/demo/clients/LedgerClient.java",
@@ -20,6 +21,7 @@ files = [
 recipe = "dto"
 name = "Payout"
 package = ""
+has_spec = false
 files = [
   "src/main/java/com/example/demo/web/PayoutRequest.java",
   "src/main/java/com/example/demo/web/PayoutResponse.java",
@@ -30,6 +32,7 @@ files = [
 recipe = "job"
 name = "Reconcile"
 package = ""
+has_spec = false
 files = [
   "src/main/java/com/example/demo/jobs/ReconcileJob.java",
   "src/main/java/com/example/demo/jobs/SchedulingConfig.java",
@@ -40,6 +43,7 @@ files = [
 recipe = "record"
 name = "Payout"
 package = ""
+has_spec = false
 files = [
   "src/main/java/com/example/demo/domain/Payout.java",
   "src/test/java/com/example/demo/domain/PayoutTest.java",

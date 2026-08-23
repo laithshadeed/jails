@@ -10,6 +10,7 @@ version = "0.1.0"
 recipe = "repo"
 name = "Note"
 package = ""
+has_spec = false
 files = [
   "src/main/java/com/example/demo/adapters/JdbcNoteRepository.java",
   "src/main/java/com/example/demo/app/NoteRepository.java",

@@ -10,6 +10,7 @@ version = "0.1.0"
 recipe = "handler"
 name = "WorkItem"
 package = ""
+has_spec = false
 files = [
   "src/main/java/com/example/demo/api/WorkItemHandler.java",
   "src/main/java/com/example/demo/domain/ApiError.java",

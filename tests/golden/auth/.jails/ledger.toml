@@ -10,6 +10,7 @@ version = "0.1.0"
 recipe = "auth"
 name = "Api"
 package = ""
+has_spec = false
 files = [
   "src/main/java/com/example/demo/ApiTokenConfig.java",
   "src/main/java/com/example/demo/ApiTokens.java",

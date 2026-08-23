@@ -38,6 +38,7 @@
 
 use crate::Result;
 use std::fs;
+use std::io;
 use std::path::{Component, Path, PathBuf};
 
 const LEDGER: &str = ".jails/ledger.toml";
@@ -51,6 +52,43 @@ pub(crate) struct Ledger {
     pub(crate) models: Vec<Model>,
 }
 
+impl Ledger {
+    /// The only empty ledger anyone may construct: the one that stands for a
+    /// project jails has never written to.
+    ///
+    /// `load` reaches this on `NotFound` and on nothing else. Every other read
+    /// failure is an error, because an empty ledger is a *claim* -- that jails
+    /// owns nothing here -- and a permission error is not evidence for it.
+    pub(crate) fn empty() -> Self {
+        Ledger {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            ..Ledger::default()
+        }
+    }
+}
+
+/// Whether anyone ever recorded *what* an entity was built from.
+///
+/// This used to be guessed from content by `has_spec()`, which could not tell a
+/// valid zero-argument `app` intent from a row `generate` wrote and never held
+/// a spec for: both have empty fields, no indexes and no references. The two
+/// need opposite treatment -- the first is a manifest entry to three-way merge
+/// against, the second must never be read as a manifest entry that has since
+/// been emptied -- so presence is data now, written by whichever writer owns
+/// the spec column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SpecPresence {
+    /// An `app` manifest intent. True even when every argument is defaulted.
+    Present,
+    /// A direct `generate` row: paths, and no spec was ever offered.
+    Absent,
+    /// A row written before this key existed. **Not** resolvable by looking at
+    /// the content: a legacy row whose fields happen to match today's manifest
+    /// is still a row of unknown origin. Only a user-requested adoption may
+    /// turn it into a named owner.
+    UnknownLegacy,
+}
+
 /// One intent, recorded once. Identity is `(recipe, name, package)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Applied {
@@ -58,6 +96,8 @@ pub(crate) struct Applied {
     pub(crate) name: String,
     /// The `--package` override, or empty for the conventional layer.
     pub(crate) package: String,
+    /// Whether a spec was recorded, as data rather than as a guess.
+    pub(crate) spec: SpecPresence,
     /// Content, not identity: this is what the entity currently says.
     pub(crate) fields: Vec<String>,
     pub(crate) indexes: Vec<String>,
@@ -78,20 +118,12 @@ impl Applied {
         self.recipe == recipe && self.name == name && self.package == package.unwrap_or_default()
     }
 
-    /// Whether anyone ever recorded *what* this entity was built from.
+    /// Mark this row as one `app apply` owns the spec of.
     ///
-    /// `generate` records the paths it wrote and nothing else -- it is handed a
-    /// spec, not asked to keep one. `app apply` records the spec, because the
-    /// manifest is the thing it has to notice edits to. So an entry with files
-    /// and no spec is not a spec of "no fields"; it is an artifact jails wrote
-    /// without being told to remember why, and `app plan` must not read it as a
-    /// manifest entry that has since been emptied.
-    pub(crate) fn has_spec(&self) -> bool {
-        !self.fields.is_empty()
-            || !self.indexes.is_empty()
-            || !self.on.is_empty()
-            || !self.yields.is_empty()
-            || self.timestamps
+    /// Unconditional: a manifest intent with no arguments at all is still a
+    /// manifest intent, and that is exactly the case content could not express.
+    pub(crate) fn claim_spec(&mut self) {
+        self.spec = SpecPresence::Present;
     }
 }
 
@@ -108,15 +140,42 @@ pub(crate) struct Model {
 // Reading
 // ---------------------------------------------------------------------------
 
+/// Read the ledger, failing closed.
+///
+/// The `let Ok(..) else` this replaces turned **every** read failure into an
+/// empty ledger: a permission error, a non-UTF-8 file, an I/O error mid-read.
+/// Empty is not a neutral value here -- it is the claim that jails owns nothing
+/// in this project -- so `destroy` would report there is nothing to delete over
+/// files that are right there, and a write would overwrite the only record of
+/// what jails owns. Only `NotFound` is evidence for that claim.
 pub(crate) fn load(root: &Path) -> Result<Ledger> {
     let path = root.join(LEDGER);
-    let Ok(source) = fs::read_to_string(&path) else {
-        return Ok(Ledger {
-            version: env!("CARGO_PKG_VERSION").to_string(),
-            ..Ledger::default()
-        });
+    match fs::read_to_string(&path) {
+        Ok(source) => parse(&source).map_err(|error| format!("{}: {error}", path.display())),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Ledger::empty()),
+        Err(error) => Err(contextual_read_error(&path, error)),
+    }
+}
+
+/// Name the failure and what to do about it, rather than the raw `io::Error`.
+///
+/// `doctor`'s rule: a report a reader cannot act on costs more than no report.
+fn contextual_read_error(path: &Path, error: io::Error) -> String {
+    let fix = match error.kind() {
+        io::ErrorKind::PermissionDenied => {
+            "\n       fix: restore read access to this file; jails refuses to \
+             treat an unreadable ledger as an empty one."
+        }
+        io::ErrorKind::InvalidData => {
+            "\n       fix: this file is not valid UTF-8. Restore it from version \
+             control; jails will not guess what it recorded."
+        }
+        _ => {
+            "\n       fix: restore this file from version control, or remove it \
+             only if you accept that jails then owns nothing in this project."
+        }
     };
-    parse(&source).map_err(|error| format!("{}: {error}", path.display()))
+    format!("failed to read {}: {error}{fix}", path.display())
 }
 
 /// A closed schema, like `jails.toml` and `.jails/app.toml`.
@@ -140,6 +199,9 @@ fn parse(source: &str) -> std::result::Result<Ledger, String> {
                 recipe: String::new(),
                 name: String::new(),
                 package: String::new(),
+                // A row that never says. `has_spec` below is the only thing
+                // that resolves it, and content must not.
+                spec: SpecPresence::UnknownLegacy,
                 fields: Vec::new(),
                 indexes: Vec::new(),
                 on: String::new(),
@@ -171,6 +233,13 @@ fn parse(source: &str) -> std::result::Result<Ledger, String> {
                 "on" => entry.on = string(value, number)?,
                 "yields" => entry.yields = string(value, number)?,
                 "timestamps" => entry.timestamps = boolean(value, number)?,
+                "has_spec" => {
+                    entry.spec = if boolean(value, number)? {
+                        SpecPresence::Present
+                    } else {
+                        SpecPresence::Absent
+                    }
+                }
                 "fields" => entry.fields = array(value, number)?,
                 "indexes" => entry.indexes = array(value, number)?,
                 "files" => entry.files = array(value, number)?,
@@ -191,6 +260,16 @@ fn parse(source: &str) -> std::result::Result<Ledger, String> {
         }
     }
     flush(&mut ledger, &mut applied, &mut model);
+    if ledger.version.is_empty() {
+        // An empty or version-less file is not "a project with no history"; it
+        // is a ledger that was truncated, half-written or hand-made. `NotFound`
+        // is the one shape that means no history, and it never reaches here.
+        return Err(
+            "missing top-level `version`; an empty or truncated ledger is an error, \
+             not an empty project"
+                .to_string(),
+        );
+    }
     Ok(ledger)
 }
 
@@ -348,6 +427,13 @@ fn render(ledger: &Ledger) -> String {
         if entry.timestamps {
             out.push_str("timestamps = true\n");
         }
+        // Omitted for a legacy row, so re-reading it keeps saying "unknown"
+        // rather than inventing an answer this binary never learned.
+        match entry.spec {
+            SpecPresence::Present => out.push_str("has_spec = true\n"),
+            SpecPresence::Absent => out.push_str("has_spec = false\n"),
+            SpecPresence::UnknownLegacy => {}
+        }
         if !entry.files.is_empty() {
             out.push_str(&format!("files = {}\n", quoted_array(&entry.files)));
         }
@@ -449,6 +535,11 @@ pub(crate) fn entry_mut<'a>(
                 recipe: recipe.to_string(),
                 name: name.to_string(),
                 package: package.unwrap_or_default().to_string(),
+                // A row jails is creating now genuinely has no spec. `app
+                // apply` calls `claim_spec` when it is the one asking; a row
+                // `generate` created keeps this and is never mistaken for an
+                // emptied manifest entry.
+                spec: SpecPresence::Absent,
                 fields: Vec::new(),
                 indexes: Vec::new(),
                 on: String::new(),
@@ -472,6 +563,7 @@ mod tests {
                 recipe: "scaffold".to_string(),
                 name: "Note".to_string(),
                 package: String::new(),
+                spec: SpecPresence::Present,
                 fields: vec!["id:uuid@pk".to_string(), "title:string!".to_string()],
                 indexes: vec!["title".to_string()],
                 on: String::new(),
@@ -519,20 +611,117 @@ mod tests {
             first.fields, edited.fields,
             "but its content changed, which is what a merge needs to know"
         );
-        assert!(edited.has_spec());
-        let paths_only = Applied {
+    }
+
+    /// The case content could not express, and the reason `has_spec()` had to
+    /// become data: both of these rows have no fields, no indexes and no
+    /// references, and they mean opposite things.
+    #[test]
+    fn a_zero_argument_app_intent_is_not_a_row_generate_wrote() {
+        let bare = Applied {
+            recipe: "record".to_string(),
+            name: "Marker".to_string(),
+            package: String::new(),
+            spec: SpecPresence::Absent,
             fields: Vec::new(),
             indexes: Vec::new(),
             on: String::new(),
             yields: String::new(),
             timestamps: false,
-            ..edited
+            files: vec!["src/main/java/com/example/demo/domain/Marker.java".to_string()],
         };
-        assert!(
-            !paths_only.has_spec(),
-            "a row `generate` wrote has files but never had a spec, which is not \
-             the same as a spec that has been emptied"
+        let mut claimed = bare.clone();
+        claimed.claim_spec();
+
+        assert_ne!(
+            bare.spec, claimed.spec,
+            "identical content, opposite origin"
         );
+        assert_eq!(claimed.spec, SpecPresence::Present);
+
+        let ledger = Ledger {
+            version: "0.1.0".to_string(),
+            applied: vec![claimed.clone()],
+            models: Vec::new(),
+        };
+        let rendered = render(&ledger);
+        assert!(rendered.contains("has_spec = true"), "{rendered}");
+        assert_eq!(
+            parse(&rendered).unwrap().applied[0].spec,
+            SpecPresence::Present,
+            "a spec with every argument defaulted survives the round trip"
+        );
+
+        let paths_only = render(&Ledger {
+            applied: vec![bare],
+            ..ledger
+        });
+        assert!(paths_only.contains("has_spec = false"), "{paths_only}");
+    }
+
+    /// A row written before the key existed stays unknown. Its content may
+    /// happen to match a manifest entry exactly; that is not evidence, and
+    /// resolving it is a user-requested adoption, not a parse.
+    #[test]
+    fn a_legacy_row_without_the_key_stays_unknown_through_a_round_trip() {
+        let parsed = parse(
+            "version = \"0.1.0\"\n\n[[applied]]\nrecipe = \"record\"\nname = \"Note\"\n\
+             fields = [\"title:string!\"]\n",
+        )
+        .unwrap();
+        assert_eq!(parsed.applied[0].spec, SpecPresence::UnknownLegacy);
+
+        let rendered = render(&parsed);
+        assert!(
+            !rendered.contains("has_spec"),
+            "re-rendering must not invent an answer this binary never learned: {rendered}"
+        );
+        assert_eq!(
+            parse(&rendered).unwrap().applied[0].spec,
+            SpecPresence::UnknownLegacy
+        );
+    }
+
+    /// Only `NotFound` may construct empty state. Every other read failure is
+    /// the claim "jails owns nothing here" made without evidence for it.
+    #[test]
+    fn an_absent_ledger_is_empty_and_an_unreadable_one_is_an_error() {
+        let root = scratch("fail-closed");
+        assert_eq!(load(&root).unwrap(), Ledger::empty(), "no file yet");
+
+        fs::create_dir_all(root.join(".jails")).unwrap();
+        let path = root.join(LEDGER);
+
+        fs::write(&path, "").unwrap();
+        let error = load(&root).unwrap_err();
+        assert!(error.contains("missing top-level `version`"), "{error}");
+
+        fs::write(&path, [0xff, 0xfe, 0x00]).unwrap();
+        let error = load(&root).unwrap_err();
+        assert!(error.contains("failed to read"), "{error}");
+        assert!(error.contains("fix:"), "{error}");
+
+        fs::write(&path, "version = \"0.1.0\"\nschema = 2\n").unwrap();
+        let error = load(&root).unwrap_err();
+        assert!(
+            error.contains("unknown key `schema`"),
+            "a ledger from a newer jails is refused, not half-read: {error}"
+        );
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "jails-ledger-{tag}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        root
     }
 
     /// `map<string,double>` is a documented field type, and a naive

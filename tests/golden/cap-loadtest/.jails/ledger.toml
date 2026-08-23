@@ -10,6 +10,7 @@ version = "0.1.0"
 recipe = "controller"
 name = "Health"
 package = ""
+has_spec = false
 files = [
   "src/main/java/com/example/demo/web/HealthController.java",
   "src/test/java/com/example/demo/web/HealthControllerTest.java",

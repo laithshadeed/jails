@@ -10,6 +10,7 @@ version = "0.1.0"
 recipe = "field"
 name = "Note.createdAt"
 package = ""
+has_spec = false
 files = [
   "src/main/resources/db/migration/V001__add_created_at_to_notes.sql",
 ]
@@ -18,6 +19,7 @@ files = [
 recipe = "record"
 name = "Note"
 package = ""
+has_spec = false
 files = [
   "src/main/java/com/example/demo/domain/Note.java",
   "src/test/java/com/example/demo/domain/NoteTest.java",

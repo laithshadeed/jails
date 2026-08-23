@@ -10,6 +10,7 @@ version = "0.1.0"
 recipe = "fetcher"
 name = "Page"
 package = ""
+has_spec = false
 files = [
   "src/main/java/com/example/demo/clients/PageFetcher.java",
   "src/main/java/com/example/demo/clients/SafePageFetcher.java",
@@ -20,6 +21,7 @@ files = [
 recipe = "http-workflow"
 name = "SiteWalk"
 package = ""
+has_spec = false
 files = [
   "src/main/java/com/example/demo/jobs/SchedulingConfig.java",
   "src/main/java/com/example/demo/jobs/SiteWalkWorkflow.java",

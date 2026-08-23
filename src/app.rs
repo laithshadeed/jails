@@ -185,6 +185,10 @@ impl ResolvedIntent {
     /// Write this intent's spec onto a ledger row, leaving `files` -- which
     /// `generate` owns -- untouched.
     fn record_onto(&self, entry: &mut crate::ledger::Applied) {
+        // Unconditional, and before the fields: an intent with no arguments at
+        // all is still a manifest intent, which is the case the old
+        // content-guessing `has_spec()` could not express.
+        entry.claim_spec();
         entry.fields = self.fields.clone();
         entry.indexes = self.indexes.clone();
         entry.on = self.strategy_on.clone().unwrap_or_default();
@@ -297,8 +301,23 @@ impl AppState {
     /// three-way merge against a spec nobody ever wrote.
     fn previous(&self, intent: &ResolvedIntent) -> Result<Option<ResolvedIntent>> {
         match self.entry(intent) {
-            Some(entry) if entry.has_spec() && !intent.is_recorded_as(entry) => {
+            Some(entry)
+                if entry.spec == crate::ledger::SpecPresence::Present
+                    && !intent.is_recorded_as(entry) =>
+            {
                 ResolvedIntent::from_applied(entry).map(Some)
+            }
+            Some(entry) if entry.spec == crate::ledger::SpecPresence::UnknownLegacy => {
+                // Reported, not resolved. Its content may match this manifest
+                // exactly; that is not evidence of who wrote it, and merging
+                // against a spec nobody recorded would hand the reader a
+                // three-way diff with an invented base.
+                println!(
+                    "note: {} {} was recorded before jails tracked intent origin, so it is \
+                     left alone. Regenerate it explicitly if the manifest should own it.",
+                    entry.recipe, entry.name
+                );
+                Ok(None)
             }
             _ => Ok(None),
         }

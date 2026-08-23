@@ -10,6 +10,7 @@ version = "0.1.0"
 recipe = "event"
 name = "MessageReceived"
 package = ""
+has_spec = false
 files = [
   "src/main/java/com/example/demo/messaging/MessageReceivedEvent.java",
   "src/main/java/com/example/demo/messaging/MessageReceivedListener.java",
@@ -21,6 +22,7 @@ files = [
 recipe = "http-sink"
 name = "Provider"
 package = ""
+has_spec = false
 files = [
   "src/main/java/com/example/demo/jobs/ProviderHttpOutboxSink.java",
   "src/test/java/com/example/demo/jobs/ProviderHttpOutboxSinkTest.java",
@@ -30,6 +32,7 @@ files = [
 recipe = "scaffold"
 name = "Message"
 package = ""
+has_spec = false
 files = [
   "requests/message.http",
   "src/main/java/com/example/demo/adapters/InMemoryMessageRepository.java",
@@ -51,6 +54,7 @@ files = [
 recipe = "usecase"
 name = "ReceiveMessage"
 package = ""
+has_spec = false
 files = [
   "src/main/java/com/example/demo/jobs/JdbcReceiveMessageOutbox.java",
   "src/main/java/com/example/demo/jobs/ReceiveMessageKafkaOutboxSink.java",

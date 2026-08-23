@@ -10,6 +10,7 @@ version = "0.1.0"
 recipe = "enum"
 name = "PayoutStatus"
 package = ""
+has_spec = false
 files = [
   "src/main/java/com/example/demo/domain/PayoutStatus.java",
   "src/test/java/com/example/demo/domain/PayoutStatusTest.java",
@@ -19,6 +20,7 @@ files = [
 recipe = "query"
 name = "PayoutsByStatus"
 package = ""
+has_spec = false
 files = [
   "src/main/java/com/example/demo/adapters/JdbcPayoutsByStatusQuery.java",
   "src/main/java/com/example/demo/service/PayoutsByStatusQuery.java",
@@ -32,6 +34,7 @@ files = [
 recipe = "scaffold"
 name = "Payout"
 package = ""
+has_spec = false
 files = [
   "requests/payout.http",
   "src/main/java/com/example/demo/adapters/InMemoryPayoutRepository.java",
@@ -52,6 +55,7 @@ files = [
 recipe = "transition"
 name = "ChangePayoutStatus"
 package = ""
+has_spec = false
 files = [
   "src/main/java/com/example/demo/adapters/JdbcChangePayoutStatusTransition.java",
   "src/main/java/com/example/demo/service/ChangePayoutStatusCommand.java",
@@ -65,6 +69,7 @@ files = [
 recipe = "usecase"
 name = "RequestPayout"
 package = ""
+has_spec = false
 files = [
   "src/main/java/com/example/demo/service/DefaultRequestPayoutUseCase.java",
   "src/main/java/com/example/demo/service/RequestPayoutCommand.java",

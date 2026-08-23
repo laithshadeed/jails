@@ -10,6 +10,7 @@ version = "0.1.0"
 recipe = "class"
 name = "RingBuffer"
 package = ""
+has_spec = false
 files = [
   "src/main/java/com/example/demo/RingBuffer.java",
   "src/test/java/com/example/demo/RingBufferTest.java",
@@ -19,6 +20,7 @@ files = [
 recipe = "integration-test"
 name = "Checkout"
 package = ""
+has_spec = false
 files = [
   "src/test/java/com/example/demo/CheckoutIT.java",
 ]
@@ -27,6 +29,7 @@ files = [
 recipe = "interface"
 name = "Clock"
 package = ""
+has_spec = false
 files = [
   "src/main/java/com/example/demo/Clock.java",
 ]
@@ -35,6 +38,7 @@ files = [
 recipe = "test"
 name = "Parser"
 package = ""
+has_spec = false
 files = [
   "src/test/java/com/example/demo/ParserTest.java",
 ]

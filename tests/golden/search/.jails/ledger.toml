@@ -10,6 +10,7 @@ version = "0.1.0"
 recipe = "scaffold"
 name = "Article"
 package = ""
+has_spec = false
 files = [
   "requests/article.http",
   "src/main/java/com/example/demo/adapters/InMemoryArticleRepository.java",
@@ -31,6 +32,7 @@ files = [
 recipe = "search"
 name = "Article"
 package = ""
+has_spec = false
 files = [
   "src/main/java/com/example/demo/adapters/JdbcArticleSearch.java",
   "src/main/java/com/example/demo/app/ArticleSearch.java",

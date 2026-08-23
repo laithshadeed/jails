@@ -10,6 +10,7 @@ version = "0.1.0"
 recipe = "idempotency"
 name = "Request"
 package = ""
+has_spec = false
 files = [
   "src/main/java/com/example/demo/adapters/JdbcRequestReceipts.java",
   "src/main/java/com/example/demo/app/RequestReceipts.java",

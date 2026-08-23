@@ -10,6 +10,7 @@ version = "0.1.0"
 recipe = "webhook"
 name = "Provider"
 package = ""
+has_spec = false
 files = [
   "src/main/java/com/example/demo/ProviderVerifier.java",
   "src/main/java/com/example/demo/web/ProviderWebhookController.java",

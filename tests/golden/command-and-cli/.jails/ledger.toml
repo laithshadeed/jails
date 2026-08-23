@@ -10,6 +10,7 @@ version = "0.1.0"
 recipe = "cli"
 name = "Admin"
 package = ""
+has_spec = false
 files = [
   "src/main/java/com/example/demo/cli/AdminCli.java",
   "src/test/java/com/example/demo/cli/AdminCliTest.java",
@@ -19,6 +20,7 @@ files = [
 recipe = "command"
 name = "Greet"
 package = ""
+has_spec = false
 files = [
   "src/main/java/com/example/demo/cli/GreetCommand.java",
   "src/test/java/com/example/demo/cli/GreetCommandTest.java",

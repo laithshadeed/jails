@@ -10,6 +10,7 @@ version = "0.1.0"
 recipe = "event"
 name = "Transaction"
 package = ""
+has_spec = false
 files = [
   "src/main/java/com/example/demo/messaging/TransactionEvent.java",
   "src/main/java/com/example/demo/messaging/TransactionListener.java",

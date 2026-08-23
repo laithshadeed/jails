@@ -10,6 +10,7 @@ version = "0.1.0"
 recipe = "record"
 name = "Reward"
 package = ""
+has_spec = false
 files = [
   "src/main/java/com/example/demo/domain/Reward.java",
   "src/test/java/com/example/demo/domain/RewardTest.java",
@@ -19,6 +20,7 @@ files = [
 recipe = "record"
 name = "Transaction"
 package = ""
+has_spec = false
 files = [
   "src/main/java/com/example/demo/domain/Transaction.java",
   "src/test/java/com/example/demo/domain/TransactionTest.java",
@@ -28,6 +30,7 @@ files = [
 recipe = "strategy"
 name = "Eligibility"
 package = ""
+has_spec = false
 files = [
   "src/main/java/com/example/demo/domain/DomesticEligibility.java",
   "src/main/java/com/example/demo/domain/Eligibility.java",
@@ -38,6 +41,7 @@ files = [
 recipe = "strategy"
 name = "RewardRule"
 package = ""
+has_spec = false
 files = [
   "src/main/java/com/example/demo/domain/CoffeeRewardRule.java",
   "src/main/java/com/example/demo/domain/LargeRewardRule.java",

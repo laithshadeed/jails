@@ -10,6 +10,7 @@ version = "0.1.0"
 recipe = "scaffold"
 name = "Note"
 package = ""
+has_spec = false
 files = [
   "requests/note.http",
   "src/main/java/com/example/demo/adapters/InMemoryNoteRepository.java",
