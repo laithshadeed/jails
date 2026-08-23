@@ -94,12 +94,19 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // category as `build::detect` above and the thing
                 // `Project::load` itself needs first.
                 //
+                // 147 -> 148 for `capture::canonical_root`, which is the
+                // boundary that turns a path into the resolved root every
+                // other function in that module takes. It is the one place a
+                // `&Path` may still arrive: a boundary handed the parameter
+                // object would have nothing left to resolve. `capture` itself
+                // takes `&CanonicalRoot` precisely so this stays at one.
+                //
                 // 145 -> 146 for `ProjectHandle::at`, which is the executor's
                 // constructor: the one place a path becomes the resolved
                 // handle every commit step then takes. That is the cure this
                 // rung asks for, not the disease -- nothing downstream of it
                 // sees a `&Path` at all.
-                ceiling: 147,
+                ceiling: 148,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;
@@ -669,6 +676,7 @@ const LAYERS: &[(&str, usize)] = &[
     ("pom", 4),
     ("maven", 4),
     ("config", 4),
+    ("capture", 4),
     ("compat", 4),
     ("compose", 4),
     ("model", 4),
