@@ -1,0 +1,16 @@
+[package]
+name = "jails-engine"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+jails-commit = { path = "../jails-commit" }
+jails-generate = { path = "../jails-generate" }
+jails-prepare = { path = "../jails-prepare" }
+jails-project = { path = "../jails-project" }
+jails-protocol = { path = "../jails-protocol" }
+jails-spec = { path = "../jails-spec" }
+jails-support = { path = "../jails-support" }
+
+[lints]
+workspace = true

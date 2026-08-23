@@ -713,6 +713,9 @@ const LAYERS: &[(&str, usize)] = &[
     ("outcome", 6),
     ("recover", 6),
     ("store", 6),
+    // jails-engine: one request, as one transition. Above the executor because
+    // it drives it, and below the CLI because it is not about arguments.
+    ("route", 7),
     // jails-tooling: commands that drive a toolchain or report on a project.
     ("run", 7),
     ("launcher", 7),

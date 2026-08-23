@@ -181,6 +181,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "jails-commit",
+ "jails-engine",
  "jails-generate",
  "jails-java",
  "jails-prepare",
@@ -200,6 +201,19 @@ dependencies = [
  "jails-prepare",
  "jails-project",
  "jails-protocol",
+ "jails-support",
+]
+
+[[package]]
+name = "jails-engine"
+version = "0.1.0"
+dependencies = [
+ "jails-commit",
+ "jails-generate",
+ "jails-prepare",
+ "jails-project",
+ "jails-protocol",
+ "jails-spec",
  "jails-support",
 ]
 

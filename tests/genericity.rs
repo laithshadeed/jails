@@ -87,6 +87,9 @@ const ALLOWED: &[AllowedConcept] = &[
             "crates/jails-prepare/src/receipt.rs",
             "crates/jails-prepare/src/command.rs",
             "crates/jails-prepare/src/serialize.rs",
+            // A whole route ends in the ledger write, and its declared
+            // intent is literally a `LedgerIntent`.
+            "crates/jails-engine/src/route.rs",
             // A journal names the ledger-committed phase, which is the point
             // after which recovery must roll forward rather than back.
             "crates/jails-commit/src/journal.rs",
