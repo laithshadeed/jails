@@ -10,6 +10,7 @@
 //! value rejected at the CLI arrives through a recovered journal instead.
 //! There is one constructor per type and the codec calls it.
 
+pub mod entity;
 pub mod identity;
 
 pub(crate) use jails_support::Result;

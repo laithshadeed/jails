@@ -206,6 +206,8 @@ dependencies = [
 name = "jails-protocol"
 version = "0.1.0"
 dependencies = [
+ "clap",
+ "jails-spec",
  "jails-support",
 ]
 
