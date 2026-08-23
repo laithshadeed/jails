@@ -16,10 +16,10 @@
 //! The generator layer re-exports all of it, so `crate::generate::Field` still
 //! resolves; what changed is the direction of the arrow.
 
-pub(crate) mod field;
-pub(crate) mod kind;
-pub(crate) mod layout;
-pub(crate) mod paths;
+pub mod field;
+pub mod kind;
+pub mod layout;
+pub mod paths;
 
-pub(crate) use field::*;
-pub(crate) use paths::*;
+pub use field::*;
+pub use paths::*;

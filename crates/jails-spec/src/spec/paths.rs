@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 ///
 /// Nearest wins, so a Gradle sub-module inside a Maven reactor resolves to the
 /// sub-module -- the same rule as before, applied to more markers.
-pub(crate) fn find_project_root() -> Result<PathBuf> {
+pub fn find_project_root() -> Result<PathBuf> {
     let mut dir = std::env::current_dir().map_err(|e| format!("failed to get cwd: {e}"))?;
     loop {
         if crate::build::detect(&dir) != crate::build::Build::Bare {
@@ -40,7 +40,7 @@ pub(crate) fn find_project_root() -> Result<PathBuf> {
 
 /// Same logic as springgen.nvim's base_package(): read the package line off
 /// the project's *Application.java entry point rather than configuring it.
-pub(crate) fn base_package(root: &Path) -> Result<String> {
+pub fn base_package(root: &Path) -> Result<String> {
     let src_root = root.join("src/main/java");
     // Spring projects have a *Application.java entry point; `new-cli` ones
     // have App.java, so fall back to whatever source file sits closest to the
@@ -109,7 +109,7 @@ fn shallowest_java_file(dir: &Path) -> Option<PathBuf> {
 
 /// `com.example.demo` + `domain` -> `com.example.demo.domain`. An empty
 /// subpackage leaves the base package alone.
-pub(crate) fn subpackage(base: &str, sub: &str) -> String {
+pub fn subpackage(base: &str, sub: &str) -> String {
     if sub.is_empty() {
         base.to_string()
     } else {
@@ -121,17 +121,17 @@ fn pkg_dir(pkg: &str) -> String {
     pkg.replace('.', "/")
 }
 
-pub(crate) fn main_dir(root: &Path, pkg: &str) -> PathBuf {
+pub fn main_dir(root: &Path, pkg: &str) -> PathBuf {
     root.join("src/main/java").join(pkg_dir(pkg))
 }
 
-pub(crate) fn test_dir(root: &Path, pkg: &str) -> PathBuf {
+pub fn test_dir(root: &Path, pkg: &str) -> PathBuf {
     root.join("src/test/java").join(pkg_dir(pkg))
 }
 
 /// An `import` line for `{from}.{class}`, or nothing at all when the two
 /// packages are the same -- importing a sibling is a compile error.
-pub(crate) fn import_of(user: &str, owner: &str, class: &str) -> String {
+pub fn import_of(user: &str, owner: &str, class: &str) -> String {
     if user == owner {
         String::new()
     } else {

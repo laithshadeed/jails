@@ -759,7 +759,7 @@ fn sample_value(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::generate::parse_fields_for_test as parse;
+    use crate::generate::parse_fields as parse;
     use std::path::PathBuf;
 
     fn cols(specs: &[&str]) -> Vec<Column> {

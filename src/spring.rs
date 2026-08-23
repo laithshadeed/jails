@@ -444,7 +444,7 @@ mod event_tests {
 
     #[test]
     fn typed_events_share_the_field_model_and_keep_a_string_kafka_key() {
-        let fields = crate::generate::parse_fields_for_test(&[
+        let fields = crate::generate::parse_fields(&[
             "id:uuid".to_string(),
             "url:uri".to_string(),
             "occurredAt:instant".to_string(),
@@ -478,8 +478,7 @@ mod event_tests {
 
     #[test]
     fn typed_events_refuse_to_invent_a_durable_identity() {
-        let fields =
-            crate::generate::parse_fields_for_test(&["occurredAt:instant".to_string()]).unwrap();
+        let fields = crate::generate::parse_fields(&["occurredAt:instant".to_string()]).unwrap();
         let (_root, project) = scratch_jdbc_project("event-no-id");
         let error =
             event_files(&Slice::new(&project, None), "PageDiscovered", &fields).unwrap_err();

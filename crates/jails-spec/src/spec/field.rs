@@ -75,7 +75,7 @@ pub enum NumericCheck {
 }
 
 impl NumericCheck {
-    pub(crate) fn predicate(self, column: &str) -> String {
+    pub fn predicate(self, column: &str) -> String {
         match self {
             NumericCheck::Positive => format!("{column} > 0"),
             NumericCheck::NonNegative => format!("{column} >= 0"),
@@ -100,7 +100,7 @@ pub enum Optionality {
 }
 
 /// One resolved type: how to spell it in Java, and what it needs imported.
-pub(crate) struct Resolved {
+pub struct Resolved {
     java_type: String,
     imports: Vec<&'static str>,
     owned: bool,
@@ -112,7 +112,7 @@ pub(crate) struct Resolved {
 /// Recursion is what makes the collection types worth having: `list<Match>`
 /// and `map<string,double>` cost nothing extra once the element goes through
 /// the same resolver as a bare field.
-pub(crate) fn resolve_type(token: &str) -> Result<Resolved> {
+pub fn resolve_type(token: &str) -> Result<Resolved> {
     let token = token.trim();
 
     if let Some(inner) = generic_argument(token, "list") {
@@ -188,7 +188,7 @@ pub(crate) fn resolve_type(token: &str) -> Result<Resolved> {
 /// A collection's element type, with a message that names the collection it
 /// came from -- `unknown field type 'nope'` alone is not much help when it
 /// came out of `list<nope>`.
-pub(crate) fn resolve_element(token: &str, outer: &str) -> Result<Resolved> {
+pub fn resolve_element(token: &str, outer: &str) -> Result<Resolved> {
     let token = token.trim();
     if token.is_empty() {
         return Err(format!("'{outer}' is missing an element type"));
@@ -205,14 +205,14 @@ pub(crate) fn resolve_element(token: &str, outer: &str) -> Result<Resolved> {
 /// The text inside `name<...>`, if the token is that shape. A bare `list` has
 /// no element type and is meaningless, so it is not matched here and falls
 /// through to the unknown-type error.
-pub(crate) fn generic_argument<'a>(token: &'a str, name: &str) -> Option<&'a str> {
+pub fn generic_argument<'a>(token: &'a str, name: &str) -> Option<&'a str> {
     token
         .strip_prefix(name)?
         .strip_prefix('<')?
         .strip_suffix('>')
 }
 
-pub(crate) fn field_type(token: &str) -> Result<(&'static str, Option<&'static str>)> {
+pub fn field_type(token: &str) -> Result<(&'static str, Option<&'static str>)> {
     match token {
         "string" | "text" => Ok(("String", None)),
         "int" | "integer" => Ok(("Integer", None)),
@@ -241,7 +241,7 @@ pub(crate) fn field_type(token: &str) -> Result<(&'static str, Option<&'static s
 
 /// The Java spellings of the built-in table, so `date:LocalDate` and
 /// `date:date` mean the same thing.
-pub(crate) fn builtin_by_java_name(ty: &str) -> Option<(&'static str, Option<&'static str>)> {
+pub fn builtin_by_java_name(ty: &str) -> Option<(&'static str, Option<&'static str>)> {
     match ty {
         "String" => Some(("String", None)),
         "Integer" | "int" => Some(("Integer", None)),
@@ -261,15 +261,7 @@ pub(crate) fn builtin_by_java_name(ty: &str) -> Option<(&'static str, Option<&'s
     }
 }
 
-/// `parse_fields` for tests in sibling modules -- `sql.rs` needs real
-/// `Field`s to derive columns from, and duplicating the parser in a test
-/// fixture would let the two drift.
-#[cfg(test)]
-pub(crate) fn parse_fields_for_test(args: &[String]) -> Result<Vec<Field>> {
-    parse_fields(args)
-}
-
-pub(crate) fn parse_fields(args: &[String]) -> Result<Vec<Field>> {
+pub fn parse_fields(args: &[String]) -> Result<Vec<Field>> {
     args.iter()
         .map(|arg| {
             let (name, ty) = arg
@@ -348,7 +340,7 @@ pub(crate) fn parse_fields(args: &[String]) -> Result<Vec<Field>> {
 /// error listing the real ones -- a typo that parsed as "no constraint" would
 /// produce a schema quietly missing the primary key someone thought they had
 /// asked for, which is the failure mode this whole feature exists to prevent.
-pub(crate) fn parse_constraints<'a>(ty: &'a str, arg: &str) -> Result<(&'a str, Constraints)> {
+pub fn parse_constraints<'a>(ty: &'a str, arg: &str) -> Result<(&'a str, Constraints)> {
     const KNOWN: &str = "@pk, @unique, @index, @scope, @positive, @nonnegative";
     let mut constraints = Constraints::default();
     let mut rest = ty;
@@ -383,14 +375,14 @@ pub(crate) fn parse_constraints<'a>(ty: &'a str, arg: &str) -> Result<(&'a str, 
 }
 
 /// Java types a numeric `check` can be emitted against.
-pub(crate) fn is_numeric(java_type: &str) -> bool {
+pub fn is_numeric(java_type: &str) -> bool {
     matches!(
         java_type,
         "long" | "Long" | "int" | "Integer" | "double" | "Double" | "BigDecimal"
     )
 }
 
-pub(crate) fn capitalize(s: &str) -> String {
+pub fn capitalize(s: &str) -> String {
     let mut chars = s.chars();
     match chars.next() {
         Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
@@ -400,7 +392,7 @@ pub(crate) fn capitalize(s: &str) -> String {
 
 /// Parse through boxed names so collection elements work, then use primitives
 /// for required record/value components where null is not a meaningful state.
-pub(crate) fn unboxed(java_type: &str) -> &str {
+pub fn unboxed(java_type: &str) -> &str {
     match java_type {
         "Integer" => "int",
         "Long" => "long",
@@ -411,12 +403,12 @@ pub(crate) fn unboxed(java_type: &str) -> &str {
 }
 
 /// A primitive component cannot be null, so it needs no runtime check.
-pub(crate) fn is_reference_type(java_type: &str) -> bool {
+pub fn is_reference_type(java_type: &str) -> bool {
     !matches!(java_type, "int" | "long" | "boolean" | "double")
 }
 
 /// A component gets a null check when it *can* be null and was not marked `?`.
-pub(crate) fn needs_null_check(field: &Field) -> bool {
+pub fn needs_null_check(field: &Field) -> bool {
     !field.collection
         && is_reference_type(unboxed(&field.java_type))
         && field.optionality != Optionality::Nullable
@@ -428,7 +420,7 @@ pub(crate) fn needs_null_check(field: &Field) -> bool {
 /// list the caller passed in is not actually immutable, and a null bucket
 /// makes every consumer downstream write a null check that should never have
 /// been their problem.
-pub(crate) fn collection_defaults(fields: &[Field]) -> String {
+pub fn collection_defaults(fields: &[Field]) -> String {
     fields
         .iter()
         .filter(|f| f.collection)
@@ -451,7 +443,7 @@ pub(crate) fn collection_defaults(fields: &[Field]) -> String {
         .collect()
 }
 
-pub(crate) fn has_collection(fields: &[Field]) -> bool {
+pub fn has_collection(fields: &[Field]) -> bool {
     fields.iter().any(|f| f.collection)
 }
 
@@ -463,7 +455,7 @@ pub(crate) fn has_collection(fields: &[Field]) -> bool {
 /// at once, and the alternative -- a nullable component plus a differently
 /// named `Optional`-returning method, since an accessor cannot be overridden
 /// to change its return type -- is worse on every axis that matters here.
-pub(crate) fn declared_type(field: &Field) -> String {
+pub fn declared_type(field: &Field) -> String {
     match field.optionality {
         Optionality::Nullable => format!("Optional<{}>", boxed(&field.java_type)),
         _ if field.collection => field.java_type.clone(),
@@ -472,7 +464,7 @@ pub(crate) fn declared_type(field: &Field) -> String {
 }
 
 /// `Optional<int>` does not exist, so an optional primitive takes its wrapper.
-pub(crate) fn boxed(java_type: &str) -> &str {
+pub fn boxed(java_type: &str) -> &str {
     match java_type {
         "int" => "Integer",
         "long" => "Long",
@@ -485,7 +477,7 @@ pub(crate) fn boxed(java_type: &str) -> &str {
 /// An `Optional` component still has to be non-null itself; a null `Optional`
 /// is the one thing worse than a null value. Normalise rather than reject:
 /// `of(..., null)` meaning "absent" is what every caller expects.
-pub(crate) fn optional_defaults(fields: &[Field]) -> String {
+pub fn optional_defaults(fields: &[Field]) -> String {
     fields
         .iter()
         .filter(|f| f.optionality == Optionality::Nullable)
@@ -498,19 +490,19 @@ pub(crate) fn optional_defaults(fields: &[Field]) -> String {
         .collect()
 }
 
-pub(crate) fn has_optional(fields: &[Field]) -> bool {
+pub fn has_optional(fields: &[Field]) -> bool {
     fields
         .iter()
         .any(|f| f.optionality == Optionality::Nullable)
 }
 
 /// Only `!` asks for the blank check, and only text can be blank.
-pub(crate) fn needs_blank_check(field: &Field) -> bool {
+pub fn needs_blank_check(field: &Field) -> bool {
     field.optionality == Optionality::NonBlank && field.java_type == "String"
 }
 
 /// Trim-then-reject, in that order, so " " fails rather than sneaking past.
-pub(crate) fn blank_checks(fields: &[&Field]) -> String {
+pub fn blank_checks(fields: &[&Field]) -> String {
     let mut out = String::new();
     for field in fields {
         out += &format!("        {0} = {0}.trim();\n", field.name);
@@ -534,7 +526,7 @@ pub(crate) fn blank_checks(fields: &[&Field]) -> String {
 /// TODOs. Returns `None` when there is no such file, or when it declares no
 /// components -- both mean jails has nothing to derive from and should say
 /// so rather than invent columns.
-pub(crate) fn fields_from_record(root: &Path, pkg: &str, name: &str) -> Option<Vec<Field>> {
+pub fn fields_from_record(root: &Path, pkg: &str, name: &str) -> Option<Vec<Field>> {
     let path = main_dir(root, pkg).join(format!("{name}.java"));
     let source = fs::read_to_string(path).ok()?;
     let info = crate::java::type_info(&source)?;

@@ -78,7 +78,7 @@ pub enum Capability {
 }
 
 impl Capability {
-    pub(crate) fn label(self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
             Capability::Db => "db",
             Capability::Kafka => "kafka",

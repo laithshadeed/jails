@@ -30,7 +30,7 @@ use std::path::Path;
 
 /// What builds this directory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Build {
+pub enum Build {
     /// A `pom.xml`. Everything works.
     Maven,
     /// A build jails recognises by filename and will not read.
@@ -59,7 +59,7 @@ const MARKERS: &[(&str, Option<&str>)] = &[
 
 impl Build {
     /// What to call it in a message.
-    pub(crate) fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Build::Maven => "Maven",
             Build::Foreign(name) => name,
@@ -69,7 +69,7 @@ impl Build {
 }
 
 /// What builds this directory. Never reads a build file, only names it.
-pub(crate) fn detect(root: &Path) -> Build {
+pub fn detect(root: &Path) -> Build {
     for (marker, foreign) in MARKERS {
         if root.join(marker).is_file() {
             return match foreign {
@@ -86,7 +86,7 @@ pub(crate) fn detect(root: &Path) -> Build {
 /// The refusal names the command rather than the module, because the reader
 /// asked for a command. It also names what *does* work, so the answer is a
 /// route forward rather than a wall -- half of jails is useful here.
-pub(crate) fn require_maven(build: Build, command: &str) -> Result<()> {
+pub fn require_maven(build: Build, command: &str) -> Result<()> {
     match build {
         Build::Maven => Ok(()),
         _ => Err(format!(
@@ -101,7 +101,7 @@ pub(crate) fn require_maven(build: Build, command: &str) -> Result<()> {
 }
 
 /// The same, for a command that has a root but no resolved `Project`.
-pub(crate) fn require_maven_at(root: &Path, command: &str) -> Result<()> {
+pub fn require_maven_at(root: &Path, command: &str) -> Result<()> {
     require_maven(detect(root), command)
 }
 
