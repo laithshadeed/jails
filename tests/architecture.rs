@@ -537,6 +537,54 @@ fn no_module_depends_on_a_layer_above_its_own() {
     );
 }
 
+/// Two crates must not declare the same top-level module name.
+///
+/// `module_of` identifies a file by its first path component, so
+/// `crates/a/src/spec.rs` and `crates/b/src/spec.rs` are one name to every
+/// gate here — and the layering check would silently measure one of them
+/// against the other's level. That happened once, between `jails_spec::spec`
+/// and a `spec` module in `jails-protocol`, and nothing reported it: the test
+/// simply passed while checking the wrong thing.
+#[test]
+fn no_two_crates_share_a_module_name() {
+    let mut owners: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    for file in sources() {
+        let Some(module) = module_of(&file.path) else {
+            continue;
+        };
+        let crate_name = file
+            .path
+            .strip_prefix(Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+            .ok()
+            .and_then(|rest| rest.components().next())
+            .map(|part| part.as_os_str().to_string_lossy().into_owned())
+            .unwrap_or_else(|| "jails".to_string());
+        let seen = owners.entry(module).or_default();
+        if !seen.contains(&crate_name) {
+            seen.push(crate_name);
+        }
+    }
+    let clashes: Vec<String> = owners
+        .iter()
+        .filter(|(_, crates)| crates.len() > 1)
+        .map(|(module, crates)| format!("  `{module}` is declared by {}", crates.join(" and ")))
+        .collect();
+    assert!(
+        clashes.is_empty(),
+        "these module names are ambiguous across crates:\n{}\n\n\
+         Every gate here identifies a file by its first path component, so a \
+         shared name makes one module be measured against another's rules. \
+         Rename one.",
+        clashes.join("\n")
+    );
+
+    let mut names: Vec<&str> = LAYERS.iter().map(|(name, _)| *name).collect();
+    names.sort_unstable();
+    let before = names.len();
+    names.dedup();
+    assert_eq!(before, names.len(), "`LAYERS` lists a module name twice");
+}
+
 /// Which crate each module ships in, lowest first. The 7-crate workspace this
 /// documents is `jails-support`, `jails-java`, `jails-spec`, `jails-project`,
 /// `jails-generate`, `jails-tooling` and the `jails-cli` binary.
@@ -557,6 +605,7 @@ const LAYERS: &[(&str, usize)] = &[
     ("build", 2),
     ("spec", 2),
     // jails-protocol: the validated values every closed format is built from.
+    ("declaration", 3),
     ("entity", 3),
     ("identity", 3),
     // jails-project: the resolved project and everything jails records about it.

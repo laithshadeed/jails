@@ -10,6 +10,7 @@
 //! value rejected at the CLI arrives through a recovered journal instead.
 //! There is one constructor per type and the codec calls it.
 
+pub mod declaration;
 pub mod entity;
 pub mod identity;
 
