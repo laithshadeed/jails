@@ -21,7 +21,7 @@ use super::*;
 /// The one command that spans layers, and so the only place that has to say
 /// out loud which package each half of a vertical slice lives in -- and add
 /// the imports that crossing those boundaries now costs.
-pub(crate) fn scaffold_artifacts(
+pub fn scaffold_artifacts(
     slice: &crate::model::Slice,
     name: &str,
     fields: &[String],
@@ -37,7 +37,7 @@ pub(crate) fn scaffold_artifacts(
     scaffold_artifacts_from_fields(slice, name, &parsed, indexes, !reusing_record)
 }
 
-pub(crate) fn scaffold_artifacts_from_fields(
+pub fn scaffold_artifacts_from_fields(
     slice: &crate::model::Slice,
     name: &str,
     parsed: &[Field],
@@ -295,7 +295,7 @@ pub(crate) fn scaffold_artifacts_from_fields(
     Ok(artifacts)
 }
 
-pub(crate) fn scaffold_requests(root: &Path, domain: &str, name: &str, fields: &[Field]) -> String {
+pub fn scaffold_requests(root: &Path, domain: &str, name: &str, fields: &[Field]) -> String {
     let body = fields
         .iter()
         .map(|field| {
@@ -341,7 +341,7 @@ pub(crate) fn scaffold_requests(root: &Path, domain: &str, name: &str, fields: &
     )
 }
 
-pub(crate) fn field_spec(field: &Field) -> String {
+pub fn field_spec(field: &Field) -> String {
     let mut ty = field.java_type.clone();
     if let Some(inner) = ty
         .strip_prefix("List<")
@@ -362,7 +362,7 @@ pub(crate) fn field_spec(field: &Field) -> String {
     format!("{}:{ty}", field.name)
 }
 
-pub(crate) fn stored_primary_key(
+pub fn stored_primary_key(
     root: &Path,
     type_name: &str,
     package: Option<&str>,
@@ -387,7 +387,7 @@ pub(crate) fn stored_primary_key(
     })
 }
 
-pub(crate) fn generate_field(
+pub fn generate_field(
     project: &Project,
     name: &str,
     fields: &[String],
@@ -565,7 +565,7 @@ pub(crate) fn generate_field(
     Ok(())
 }
 
-pub(crate) fn prepared_artifact_contents(path: &Path, contents: &str) -> String {
+pub fn prepared_artifact_contents(path: &Path, contents: &str) -> String {
     if path
         .extension()
         .is_some_and(|extension| extension == "java")

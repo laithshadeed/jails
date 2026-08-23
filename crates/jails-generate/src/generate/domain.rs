@@ -11,7 +11,7 @@ use super::*;
 // no framework annotations, and a compact constructor so an invalid value cannot be
 // constructed in the first place. ----
 
-pub(crate) fn record_java(pkg: &str, name: &str, fields: &[Field]) -> String {
+pub fn record_java(pkg: &str, name: &str, fields: &[Field]) -> String {
     // Only reference components can be null, and only ones not marked `?`
     // are checked -- if that leaves nothing, the compact constructor is dead
     // weight.
@@ -84,13 +84,7 @@ pub(crate) fn record_java(pkg: &str, name: &str, fields: &[Field]) -> String {
 /// table as generated tests and fixtures. Unknown project types remain null
 /// and `build()` names them; silently guessing would produce a factory that
 /// compiles and lies.
-pub(crate) fn factory_java(
-    root: &Path,
-    pkg: &str,
-    domain: &str,
-    name: &str,
-    fields: &[Field],
-) -> String {
+pub fn factory_java(root: &Path, pkg: &str, domain: &str, name: &str, fields: &[Field]) -> String {
     let mut imports: Vec<&str> = fields
         .iter()
         .flat_map(|field| field.imports.clone())
@@ -296,7 +290,7 @@ pub(super) fn record_test(root: &Path, pkg: &str, name: &str, fields: &[Field]) 
 /// have any constructor at all, and guessing produces a test that does not
 /// compile. The one case it *can* solve is an enum -- hence `generate enum`
 /// pulling its weight twice.
-pub(crate) fn sample_value(field: &Field, root: &Path, pkg: &str) -> Option<String> {
+pub fn sample_value(field: &Field, root: &Path, pkg: &str) -> Option<String> {
     // An absent Optional is a sample of anything, so `?` rescues even a type
     // jails knows nothing about.
     if field.optionality == Optionality::Nullable {
@@ -335,7 +329,7 @@ pub(crate) fn sample_value(field: &Field, root: &Path, pkg: &str) -> Option<Stri
 ///
 /// Returns the expression and any imports its *components* need, since the
 /// nested literals are not otherwise visible to the file's import list.
-pub(crate) fn sample_in_package(
+pub fn sample_in_package(
     field: &Field,
     root: &Path,
     pkg: &str,
@@ -419,7 +413,7 @@ fn owned_record_sample(
 /// The boolean is true when the record on disk was the source. Keeping that
 /// fact lets a spanning generator such as `scaffold` reuse the model without
 /// claiming (or later destroying) a file it did not create.
-pub(crate) fn fields_from_spec_or_record(
+pub fn fields_from_spec_or_record(
     root: &Path,
     pkg: &str,
     name: &str,
@@ -443,7 +437,7 @@ pub(crate) fn fields_from_spec_or_record(
 /// The first constant of a project enum, for a fixture sample. Reads the
 /// file rather than guessing: a made-up constant produces a fixture that
 /// looks right and fails on the first `valueOf`.
-pub(crate) fn first_enum_constant(root: &Path, pkg: &str, type_name: &str) -> Option<String> {
+pub fn first_enum_constant(root: &Path, pkg: &str, type_name: &str) -> Option<String> {
     let source = fs::read_to_string(main_dir(root, pkg).join(format!("{type_name}.java"))).ok()?;
     let text = crate::java::blanked(&source);
     let body = text.find(&format!("enum {type_name}"))?;
@@ -478,7 +472,7 @@ pub(crate) fn first_enum_constant(root: &Path, pkg: &str, type_name: &str) -> Op
 /// Whether `<Type>.java` in this package declares an enum. Reading the file is
 /// the only honest way to know: jails has no type model, and guessing from the
 /// name would be worse than admitting ignorance.
-pub(crate) fn is_enum_type(root: &Path, pkg: &str, type_name: &str) -> bool {
+pub fn is_enum_type(root: &Path, pkg: &str, type_name: &str) -> bool {
     fs::read_to_string(main_dir(root, pkg).join(format!("{type_name}.java")))
         .map(|src| src.contains(&format!("enum {type_name}")))
         .unwrap_or(false)

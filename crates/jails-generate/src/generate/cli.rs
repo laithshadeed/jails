@@ -72,7 +72,7 @@ pub(super) fn command_test(pkg: &str, name: &str) -> String {
 
 // ---- cli: the dispatcher that `generate command` leaves you to write. ----
 
-pub(crate) fn cli_java(pkg: &str, class: &str, program: &str) -> String {
+pub fn cli_java(pkg: &str, class: &str, program: &str) -> String {
     format!(
         r#"package {pkg};
 
@@ -165,7 +165,7 @@ public final class {class} {{
     )
 }
 
-pub(crate) fn cli_test(pkg: &str, class: &str) -> String {
+pub fn cli_test(pkg: &str, class: &str) -> String {
     format!(
         r#"package {pkg};
 
@@ -410,11 +410,11 @@ pub(super) fn registry_body(source: &str) -> Option<&str> {
 /// What makes a file a jails command dispatcher: the registry type it
 /// dispatches over, and the line `register_command` splices above. Both are
 /// checked, because either alone shows up in files that are not dispatchers.
-pub(crate) fn is_dispatcher(source: &str) -> bool {
+pub fn is_dispatcher(source: &str) -> bool {
     source.contains("SequencedMap<String, Command>") && source.contains("return commands;")
 }
 
-pub(crate) fn package_of(source: &str) -> Option<String> {
+pub fn package_of(source: &str) -> Option<String> {
     source.lines().find_map(|line| {
         line.trim()
             .strip_prefix("package ")?

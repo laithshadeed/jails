@@ -21,7 +21,7 @@ struct Update<'a> {
 
 use crate::model::{Artifact, Layer, Slice};
 
-pub(crate) fn transition_files(
+pub fn transition_files(
     slice: &Slice,
     name: &str,
     target: &str,

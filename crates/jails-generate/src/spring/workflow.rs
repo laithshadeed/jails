@@ -21,7 +21,7 @@ use super::*;
 // `generate usecase` -- an executable create operation over a scaffold.
 // ---------------------------------------------------------------------------
 
-pub(crate) fn require_scope_authorizer(
+pub fn require_scope_authorizer(
     slice: &Slice,
     kind: &str,
     name: &str,
@@ -72,11 +72,11 @@ pub(super) fn scope_test_parts(
 /// standing in for. Reading it is also the one refusal every field-taking
 /// operation shares, so it lives here once rather than in each generator with
 /// its own wording -- plan.md §9.4's rule, in the only form that cannot drift.
-pub(crate) struct Target {
+pub struct Target {
     /// The resource's class name.
-    pub(crate) name: String,
+    pub name: String,
     /// Its record components, read off disk.
-    pub(crate) fields: Vec<crate::generate::Field>,
+    pub fields: Vec<crate::generate::Field>,
 }
 
 impl Target {
@@ -86,7 +86,7 @@ impl Target {
     /// the record on disk, else an error naming the record *and the fix*.
     /// `usecase`, `query` and `transition` each used to raise their own
     /// wording, and only some of them carried a `fix:` line.
-    pub(crate) fn read(
+    pub fn read(
         slice: &Slice,
         kind: &str,
         name: &str,
@@ -105,11 +105,7 @@ impl Target {
 
     /// The stable non-optional `id` that lets an operation return a resource
     /// location and verify persistence, or a refusal saying why it needs one.
-    pub(crate) fn id(
-        &self,
-        kind: &str,
-        name: &str,
-    ) -> jails_support::Result<&crate::generate::Field> {
+    pub fn id(&self, kind: &str, name: &str) -> jails_support::Result<&crate::generate::Field> {
         let target = &self.name;
         self.fields
             .iter()
@@ -135,7 +131,7 @@ struct Defaults {
     imports: Vec<String>,
 }
 
-pub(crate) fn usecase_files(
+pub fn usecase_files(
     slice: &Slice,
     name: &str,
     target: &str,

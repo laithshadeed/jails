@@ -20,7 +20,7 @@ use crate::generate::{Field, Optionality};
 
 /// How one record component crosses the JDBC boundary.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Column {
+pub struct Column {
     /// The column name: the component name in snake_case.
     pub name: String,
     /// The PostgreSQL type for a `create table`.
@@ -60,7 +60,7 @@ impl Column {
 /// write` together produces `x.Timestamp.from(createdAt())`, which is
 /// exactly the kind of not-quite-right code this module exists to stop
 /// anyone from writing by hand.
-pub(crate) fn columns(
+pub fn columns(
     fields: &[Field],
     project: &crate::model::Project,
     pkg: &str,
@@ -297,7 +297,7 @@ fn builtin_mapping(inner: &str, column: &str, accessor: &str) -> Option<(String,
 /// The imports the generated read/write expressions need, sorted and
 /// de-duplicated. Derived from the component types rather than scraped out
 /// of the expression strings, so adding a mapping cannot forget its import.
-pub(crate) fn imports(columns: &[Column]) -> Vec<&'static str> {
+pub fn imports(columns: &[Column]) -> Vec<&'static str> {
     let mut found: Vec<&'static str> = Vec::new();
     for column in columns {
         if !column.mapped() {
@@ -380,7 +380,7 @@ fn word_as_is(word: &str) -> &'static str {
 /// and `childs` would look like a bug, and a handful of uncountables where
 /// appending `s` is simply wrong. `jails.toml` gets no override for either:
 /// derivability is what lets `destroy` find what `generate` wrote.
-pub(crate) fn table_name(type_name: &str) -> String {
+pub fn table_name(type_name: &str) -> String {
     let base = snake_case(type_name);
     // Matched on the last word, so `SupportPerson` -> `support_people`.
     let (prefix, last) = match base.rfind('_') {
@@ -421,7 +421,7 @@ pub(crate) fn table_name(type_name: &str) -> String {
 /// `transactionId` -> `transaction_id`. Runs of capitals stay together
 /// (`customerURL` -> `customer_url`) so an acronym does not explode into
 /// one underscore per letter.
-pub(crate) fn snake_case(name: &str) -> String {
+pub fn snake_case(name: &str) -> String {
     let chars: Vec<char> = name.chars().collect();
     let mut out = String::with_capacity(name.len() + 4);
     for (i, &c) in chars.iter().enumerate() {
@@ -459,11 +459,7 @@ pub(crate) fn snake_case(name: &str) -> String {
 /// ordered index (`customer_id, created_at desc`). Passed through as written
 /// after its column names are checked against the table, because index
 /// ordering is a real schema decision with no shorthand worth inventing.
-pub(crate) fn create_table(
-    type_name: &str,
-    columns: &[Column],
-    extra_indexes: &[String],
-) -> String {
+pub fn create_table(type_name: &str, columns: &[Column], extra_indexes: &[String]) -> String {
     let table = table_name(type_name);
     let width = columns
         .iter()
@@ -575,7 +571,7 @@ pub(crate) fn create_table(
 /// Required columns carry a deterministic backfill default so this migration
 /// is valid on a populated table, then drop that default: application code,
 /// not the database, remains responsible for every future value.
-pub(crate) fn add_column(type_name: &str, column: &Column) -> Result<String, String> {
+pub fn add_column(type_name: &str, column: &Column) -> Result<String, String> {
     if !column.mapped() {
         return Err(format!(
             "field `{}` has project type `{}` and cannot be mapped to one column.\n       \
@@ -669,7 +665,7 @@ pub(crate) fn add_column(type_name: &str, column: &Column) -> Result<String, Str
 ///
 /// A typo here fails at `flyway migrate` with "column does not exist", which
 /// is a slow way to find out and happens on whichever machine runs it first.
-pub(crate) fn validate_index(spec: &str, columns: &[Column]) -> Result<(), String> {
+pub fn validate_index(spec: &str, columns: &[Column]) -> Result<(), String> {
     let known: Vec<&str> = columns.iter().map(|c| c.name.as_str()).collect();
     for part in spec.split(',') {
         // `created_at desc` -- the column is the first word, the rest is
@@ -700,10 +696,7 @@ pub(crate) fn validate_index(spec: &str, columns: &[Column]) -> Result<(), Strin
 /// The keys are the *column* names, not the component names, so the fixture
 /// lines up with what the database actually holds -- which is the point of
 /// having it next to a JDBC adapter rather than a Java builder.
-pub(crate) fn fixture_json(
-    columns: &[Column],
-    enum_constant: &dyn Fn(&str) -> Option<String>,
-) -> String {
+pub fn fixture_json(columns: &[Column], enum_constant: &dyn Fn(&str) -> Option<String>) -> String {
     let rows: Vec<String> = (1..=2)
         .map(|row| {
             let fields: Vec<String> = columns

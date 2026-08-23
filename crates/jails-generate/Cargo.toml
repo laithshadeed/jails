@@ -1,0 +1,16 @@
+[package]
+name = "jails-generate"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+# `ArtifactKind` is a `ValueEnum` so `clap_complete` can emit a static
+# completion list for `generate <TAB>` -- CLAUDE.md's rule.
+clap = { version = "4.6.4", features = ["derive"] }
+jails-support = { path = "../jails-support" }
+jails-java = { path = "../jails-java" }
+jails-spec = { path = "../jails-spec" }
+jails-project = { path = "../jails-project" }
+
+[lints]
+workspace = true

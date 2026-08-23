@@ -30,7 +30,7 @@
 
 use super::*;
 
-pub(crate) const MAIL_STARTER: Dependency = Dependency {
+pub const MAIL_STARTER: Dependency = Dependency {
     group_id: "org.springframework.boot",
     artifact_id: "spring-boot-starter-mail",
     version: None,
@@ -38,7 +38,7 @@ pub(crate) const MAIL_STARTER: Dependency = Dependency {
     optional: false,
 };
 
-pub(crate) const MAIL_TEST_STARTER: Dependency = Dependency {
+pub const MAIL_TEST_STARTER: Dependency = Dependency {
     group_id: "org.springframework.boot",
     artifact_id: "spring-boot-starter-mail-test",
     version: None,
@@ -49,7 +49,7 @@ pub(crate) const MAIL_TEST_STARTER: Dependency = Dependency {
 /// Awaitility: versionless because `spring-boot-dependencies` manages
 /// `org.awaitility`, and pinning it beside a BOM that moves is how two
 /// versions of one library end up on a classpath.
-pub(crate) const AWAITILITY: Dependency = Dependency {
+pub const AWAITILITY: Dependency = Dependency {
     group_id: "org.awaitility",
     artifact_id: "awaitility",
     version: None,
@@ -62,7 +62,7 @@ pub(crate) const AWAITILITY: Dependency = Dependency {
 /// over POP3 cannot be two different things.
 const IMAGE: &str = "axllent/mailpit:v1.21";
 
-pub(crate) fn mail_slice(slice: &Slice) -> Change {
+pub fn mail_slice(slice: &Slice) -> Change {
     let root: &Path = slice.project().root();
     let pkg: &str = &slice.root_package();
     let name = "Mailer";

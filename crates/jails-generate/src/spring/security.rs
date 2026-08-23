@@ -26,7 +26,7 @@ use super::*;
 /// So this writes the filter chain explicitly. An explicit chain is readable,
 /// reviewable, and testable, and the generated test asserts both directions:
 /// anonymous requests are rejected, authenticated ones are not.
-pub(crate) fn security_slice(slice: &Slice) -> Change {
+pub fn security_slice(slice: &Slice) -> Change {
     let root: &Path = slice.project().root();
     let pkg: &str = &slice.root_package();
     let main = crate::generate::main_dir(root, pkg);
@@ -57,7 +57,7 @@ pub(crate) fn security_slice(slice: &Slice) -> Change {
     }
 }
 
-pub(crate) fn cors_slice(slice: &Slice) -> Change {
+pub fn cors_slice(slice: &Slice) -> Change {
     let root: &Path = slice.project().root();
     let pkg: &str = &slice.root_package();
     let main = crate::generate::main_dir(root, pkg);

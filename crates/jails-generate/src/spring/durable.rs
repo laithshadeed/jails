@@ -16,7 +16,7 @@ use super::*;
 // `generate job` -- scheduled work.
 // ---------------------------------------------------------------------------
 
-pub(crate) fn job_files(slice: &Slice, name: &str) -> Vec<Artifact> {
+pub fn job_files(slice: &Slice, name: &str) -> Vec<Artifact> {
     let root: &Path = slice.project().root();
     let pkg: &str = &slice.placed(Layer::Jobs);
     let main = crate::generate::main_dir(root, pkg);
@@ -48,7 +48,7 @@ fn job_java(pkg: &str, name: &str) -> String {
     )
 }
 
-pub(crate) fn scheduling_config_java(pkg: &str) -> String {
+pub fn scheduling_config_java(pkg: &str) -> String {
     crate::template::render(
         crate::template_here!("spring/scheduling_config_java.java"),
         &[("pkg", pkg)],
@@ -78,7 +78,7 @@ const DURABLE_JOB_TEST_PROPERTIES: &str = "src/test/resources/config/application
 /// Install one durable job's scheduler/retry limits into the app-wide test
 /// property source without touching another job's block or reader-owned
 /// properties around it.
-pub(crate) fn install_durable_job_test_properties(
+pub fn install_durable_job_test_properties(
     project: &crate::model::Project,
     name: &str,
     dry_run: bool,
@@ -136,7 +136,7 @@ pub(crate) fn install_durable_job_test_properties(
 
 /// Remove one durable job's contribution, retaining every other block and
 /// every reader-owned property in the shared source.
-pub(crate) fn uninstall_durable_job_test_properties(
+pub fn uninstall_durable_job_test_properties(
     project: &crate::model::Project,
     name: &str,
     dry_run: bool,
@@ -174,7 +174,7 @@ pub(crate) fn uninstall_durable_job_test_properties(
 /// use case. That lets a reclaimed execution observe an already-committed
 /// resource and mark the work successful after a crash between the business
 /// commit and the queue acknowledgement.
-pub(crate) fn durable_job_files(
+pub fn durable_job_files(
     slice: &Slice,
     name: &str,
     usecase: &str,
@@ -570,7 +570,7 @@ fn durable_job_it_java(
     )
 }
 
-pub(crate) fn durable_alternate_sample(field: &crate::generate::Field) -> Option<String> {
+pub fn durable_alternate_sample(field: &crate::generate::Field) -> Option<String> {
     match usecase_normalized_type(&field.java_type) {
         "String" => Some("\"different-payload\"".to_string()),
         "UUID" => Some("UUID.fromString(\"00000000-0000-0000-0000-000000000002\")".to_string()),

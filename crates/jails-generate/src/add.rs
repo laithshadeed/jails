@@ -46,7 +46,7 @@ use database::*;
 pub use shrink::*;
 use test_wiring::*;
 
-pub(crate) use crate::spec::kind::Capability;
+pub use crate::spec::kind::Capability;
 
 const SPRING_DOCKER_COMPOSE: Dependency = Dependency {
     group_id: "org.springframework.boot",
@@ -80,7 +80,7 @@ pub fn preflight(
 }
 
 /// The same check against a project the caller already resolved.
-pub(crate) fn preflight_in(
+pub fn preflight_in(
     project: &Project,
     capabilities: &[Capability],
     name: Option<&str>,
@@ -137,7 +137,7 @@ pub fn add(
 /// directory the user happens to be standing in. Resolving once at the top and
 /// threading the value is rung 1's whole shape.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn add_in(
+pub fn add_in(
     project: &Project,
     capability: Capability,
     name: Option<&str>,
@@ -439,7 +439,7 @@ fn require_java_release(release: Option<u32>) -> Result<()> {
 ///
 /// Planning is pure: no writes, no subprocesses. That is what makes it safe
 /// for `doctor`, which is read-only by contract.
-pub(crate) fn plan_for(capability: Capability, project: &Project) -> Result<Change> {
+pub fn plan_for(capability: Capability, project: &Project) -> Result<Change> {
     build_plan(capability, project, None, None)
 }
 

@@ -18,7 +18,7 @@ use std::path::Path;
 
 /// Whether this change writes an integration test and therefore needs the
 /// Failsafe plugin. Derived from the planned files so a recipe cannot forget.
-pub(crate) fn writes_an_it(artifacts: &[Artifact]) -> bool {
+pub fn writes_an_it(artifacts: &[Artifact]) -> bool {
     artifacts.iter().any(|a| {
         a.path
             .file_name()
@@ -41,7 +41,7 @@ pub(crate) fn writes_an_it(artifacts: &[Artifact]) -> bool {
 /// Under a Spring Boot parent the version is left to the BOM; without one it
 /// is pinned, since a versionless dependency is a pom Maven refuses to read
 /// (plan.md §8.1).
-pub(crate) fn ensure_assertj(project: &Project, writes_a_test: bool) -> Result<()> {
+pub fn ensure_assertj(project: &Project, writes_a_test: bool) -> Result<()> {
     if !writes_a_test || project.build() != crate::build::Build::Maven {
         return Ok(());
     }
@@ -59,7 +59,7 @@ pub(crate) fn ensure_assertj(project: &Project, writes_a_test: bool) -> Result<(
 }
 
 /// Did this batch write anything under `src/test`?
-pub(crate) fn writes_a_test(artifacts: &[Artifact]) -> bool {
+pub fn writes_a_test(artifacts: &[Artifact]) -> bool {
     artifacts
         .iter()
         .any(|a| a.path.to_string_lossy().contains("src/test/java"))
@@ -70,7 +70,7 @@ pub(crate) fn writes_a_test(artifacts: &[Artifact]) -> bool {
 /// Comment-preserving, like every other pom edit jails makes: the file
 /// belongs to the reader, and a generator that reformats it has taken more
 /// than it was asked for.
-pub(crate) fn ensure_dependency(root: &Path, dep: &crate::pom::Dependency) -> Result<()> {
+pub fn ensure_dependency(root: &Path, dep: &crate::pom::Dependency) -> Result<()> {
     // Nothing to splice into, and jails will not write a foreign build file.
     // `generate::report_degraded_shape` has already named this dependency for
     // the reader to add, which is the honest half of the trade.
@@ -89,7 +89,7 @@ pub(crate) fn ensure_dependency(root: &Path, dep: &crate::pom::Dependency) -> Re
 }
 
 /// Apply the POM portion of a planned change in memory and write it once.
-pub(crate) fn apply_build_change(root: &Path, pom: &str, change: &Change) -> Result<()> {
+pub fn apply_build_change(root: &Path, pom: &str, change: &Change) -> Result<()> {
     if crate::build::detect(root) != crate::build::Build::Maven {
         return Ok(());
     }
@@ -128,7 +128,7 @@ pub(crate) fn apply_build_change(root: &Path, pom: &str, change: &Change) -> Res
 /// surrounding project (wrong pom, wrong package) or found nothing -- which
 /// is why a `new-cli` project's own base package never got the
 /// `package-info.java` every other package gets.
-pub(crate) fn write_new_file(root: &Path, path: &Path, contents: &str) -> Result<()> {
+pub fn write_new_file(root: &Path, path: &Path, contents: &str) -> Result<()> {
     // The refusal stays here rather than in `crate::apply::create`, because this is
     // the one a person reads: it names the three ways forward. `crate::apply::create`
     // repeats the check underneath, which costs nothing and closes the window
@@ -167,7 +167,7 @@ pub(crate) fn write_new_file(root: &Path, path: &Path, contents: &str) -> Result
 /// can span lines, so a blank line inside one is data -- SQL, JSON, an
 /// expected message -- and collapsing it would change what the program says.
 /// Counting the delimiters is enough to know which side of one a line is on.
-pub(crate) fn tidy_blank_lines(source: &str) -> String {
+pub fn tidy_blank_lines(source: &str) -> String {
     let mut out = String::with_capacity(source.len());
     let mut in_text_block = false;
     let mut previous_blank = false;
@@ -212,7 +212,7 @@ pub(crate) fn tidy_blank_lines(source: &str) -> String {
 /// `org.jspecify:jspecify` dependency would not compile with the annotation,
 /// so nothing is written unless the annotation is actually available. That is
 /// checked by the caller chain rather than here; see `jspecify_available`.
-pub(crate) fn ensure_package_info(root: &Path, class_path: &Path) -> Result<()> {
+pub fn ensure_package_info(root: &Path, class_path: &Path) -> Result<()> {
     let Some(dir) = class_path.parent() else {
         return Ok(());
     };
@@ -244,7 +244,7 @@ pub(crate) fn ensure_package_info(root: &Path, class_path: &Path) -> Result<()> 
     Ok(())
 }
 
-pub(crate) fn package_info_java(pkg: &str) -> String {
+pub fn package_info_java(pkg: &str) -> String {
     format!(
         r#"/**
  * Every reference type in this package is non-null unless it is explicitly
@@ -276,11 +276,7 @@ import org.jspecify.annotations.NullMarked;
 /// do is exactly the drift this costs elsewhere. They are prepended to the
 /// plan so each lands before the class that needed it, at which point
 /// `ensure_package_info` finds the file present and does nothing.
-pub(crate) fn planned_package_infos(
-    root: &Path,
-    pom: &str,
-    artifacts: &[Artifact],
-) -> Vec<Artifact> {
+pub fn planned_package_infos(root: &Path, pom: &str, artifacts: &[Artifact]) -> Vec<Artifact> {
     if !jspecify_available(pom) {
         return Vec::new();
     }
@@ -319,12 +315,12 @@ pub(crate) fn planned_package_infos(
 /// Annotating a package that cannot resolve `@NullMarked` would hand the
 /// reader a compile error for a file they did not ask for, which is the exact
 /// opposite of what a scaffold is for.
-pub(crate) fn jspecify_available(pom: &str) -> bool {
+pub fn jspecify_available(pom: &str) -> bool {
     crate::pom::has_dependency(pom, "org.jspecify", "jspecify")
 }
 
 /// The package name for a directory under `src/main/java`.
-pub(crate) fn package_of_dir(root: &Path, dir: &Path) -> Option<String> {
+pub fn package_of_dir(root: &Path, dir: &Path) -> Option<String> {
     let src_root = root.join("src/main/java");
     let rel = dir.strip_prefix(&src_root).ok()?;
     let pkg = rel
@@ -344,7 +340,7 @@ pub(crate) fn package_of_dir(root: &Path, dir: &Path) -> Option<String> {
 /// nobody notices until `jails add format` makes `mvn verify` fail on a
 /// freshly generated project, which is a bad first impression for a scaffold
 /// to make.
-pub(crate) fn normalize_imports(source: &str) -> String {
+pub fn normalize_imports(source: &str) -> String {
     let lines: Vec<&str> = source.lines().collect();
 
     let Some(package_at) = lines

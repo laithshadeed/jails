@@ -28,7 +28,7 @@
 
 use super::*;
 
-pub(crate) fn webhook_files(slice: &Slice, name: &str) -> jails_support::Result<Vec<Artifact>> {
+pub fn webhook_files(slice: &Slice, name: &str) -> jails_support::Result<Vec<Artifact>> {
     let root: &Path = slice.project().root();
     let pkg: &str = &slice.root_package();
     let web: &str = &slice.owned(Layer::Web);

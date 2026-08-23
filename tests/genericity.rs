@@ -31,7 +31,7 @@ const ALLOWED: &[AllowedConcept] = &[
         files: &[
             // Followed the http-workflow generator out of `spring.rs` when rung 11
             // split it; the concept is unchanged, only its address.
-            "src/spring/http.rs",
+            "crates/jails-generate/src/spring/http.rs",
             "templates/spring/http_workflow_java.java",
             "templates/spring/http_workflow_it_java.java",
         ],
@@ -54,7 +54,7 @@ const ALLOWED: &[AllowedConcept] = &[
             // is for. Same word, same reason, one level up.
             "crates/jails-project/src/lib.rs",
             "src/app.rs",
-            "src/generate/remove.rs",
+            "crates/jails-generate/src/generate/remove.rs",
             "src/main.rs",
         ],
         reason: "jails' own bookkeeping file (`abstract.md` §6.3 names it), which collides \

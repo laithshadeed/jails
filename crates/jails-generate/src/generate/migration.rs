@@ -29,7 +29,7 @@ pub(super) fn generate_migration(root: &Path, description: &str, pretend: bool) 
     Ok(())
 }
 
-pub(crate) fn next_migration_version(dir: &Path) -> Result<u32> {
+pub fn next_migration_version(dir: &Path) -> Result<u32> {
     if !dir.exists() {
         return Ok(1);
     }

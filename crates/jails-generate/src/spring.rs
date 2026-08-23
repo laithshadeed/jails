@@ -33,22 +33,22 @@ mod sse;
 mod transition;
 mod webhook;
 mod workflow;
-pub(crate) use auth::*;
-pub(crate) use containers::*;
-pub(crate) use dto::*;
-pub(crate) use durable::*;
-pub(crate) use http::*;
-pub(crate) use mail::*;
-pub(crate) use messaging::*;
-pub(crate) use outbox::*;
-pub(crate) use query::*;
-pub(crate) use schema::*;
-pub(crate) use search::*;
-pub(crate) use security::*;
-pub(crate) use sse::*;
-pub(crate) use transition::*;
-pub(crate) use webhook::*;
-pub(crate) use workflow::*;
+pub use auth::*;
+pub use containers::*;
+pub use dto::*;
+pub use durable::*;
+pub use http::*;
+pub use mail::*;
+pub use messaging::*;
+pub use outbox::*;
+pub use query::*;
+pub use schema::*;
+pub use search::*;
+pub use security::*;
+pub use sse::*;
+pub use transition::*;
+pub use webhook::*;
+pub use workflow::*;
 // Production code here reaches the project through `Slice`; only the renderer
 // fixtures build one directly.
 #[cfg(test)]
@@ -59,7 +59,7 @@ fn artifact(path: std::path::PathBuf, contents: String) -> Artifact {
     Artifact::rendered(path, contents)
 }
 
-pub(crate) const VALIDATION_STARTER: Dependency = Dependency {
+pub const VALIDATION_STARTER: Dependency = Dependency {
     group_id: "org.springframework.boot",
     artifact_id: "spring-boot-starter-validation",
     version: None,
@@ -75,7 +75,7 @@ pub(crate) const VALIDATION_STARTER: Dependency = Dependency {
 /// versionless, which is a pom Maven refuses to read (plan.md §8.1), and it
 /// drags Boot into a project that deliberately has none. The API jar is the
 /// artifact the generated code actually imports.
-pub(crate) const JAKARTA_VALIDATION_API: Dependency = Dependency {
+pub const JAKARTA_VALIDATION_API: Dependency = Dependency {
     group_id: "jakarta.validation",
     artifact_id: "jakarta.validation-api",
     version: Some("3.1.1"),
@@ -84,14 +84,14 @@ pub(crate) const JAKARTA_VALIDATION_API: Dependency = Dependency {
 };
 
 /// Whichever of the two the project can actually resolve.
-pub(crate) fn validation_dependency(flavor: crate::pom::Flavor) -> &'static Dependency {
+pub fn validation_dependency(flavor: crate::pom::Flavor) -> &'static Dependency {
     match flavor {
         crate::pom::Flavor::SpringBoot => &VALIDATION_STARTER,
         crate::pom::Flavor::PlainMaven => &JAKARTA_VALIDATION_API,
     }
 }
 
-pub(crate) const ACTUATOR_STARTER: Dependency = Dependency {
+pub const ACTUATOR_STARTER: Dependency = Dependency {
     group_id: "org.springframework.boot",
     artifact_id: "spring-boot-starter-actuator",
     version: None,
@@ -99,7 +99,7 @@ pub(crate) const ACTUATOR_STARTER: Dependency = Dependency {
     optional: false,
 };
 
-pub(crate) const CACHE_STARTER: Dependency = Dependency {
+pub const CACHE_STARTER: Dependency = Dependency {
     group_id: "org.springframework.boot",
     artifact_id: "spring-boot-starter-cache",
     version: None,
@@ -116,7 +116,7 @@ pub(crate) const CACHE_STARTER: Dependency = Dependency {
 /// call fails with "URI with undefined scheme" -- a message that says nothing
 /// about a missing dependency. `spring-boot-starter-webmvc` does not bring it;
 /// serving HTTP and calling it are separate concerns.
-pub(crate) const RESTCLIENT_STARTER: Dependency = Dependency {
+pub const RESTCLIENT_STARTER: Dependency = Dependency {
     group_id: "org.springframework.boot",
     artifact_id: "spring-boot-starter-restclient",
     version: None,
@@ -128,7 +128,7 @@ pub(crate) const RESTCLIENT_STARTER: Dependency = Dependency {
 /// be pinned to the addresses that passed policy validation. JDK HttpClient
 /// does not expose that boundary, leaving a DNS-rebinding window between
 /// validation and connection.
-pub(crate) const APACHE_HTTPCLIENT: Dependency = Dependency {
+pub const APACHE_HTTPCLIENT: Dependency = Dependency {
     group_id: "org.apache.httpcomponents.client5",
     artifact_id: "httpclient5",
     version: None,
@@ -139,7 +139,7 @@ pub(crate) const APACHE_HTTPCLIENT: Dependency = Dependency {
 /// Caffeine is the cache Spring Boot picks up automatically when it is on
 /// the classpath and nothing else claims the slot. Version managed by the
 /// Boot parent so it moves with the platform.
-pub(crate) const CAFFEINE: Dependency = Dependency {
+pub const CAFFEINE: Dependency = Dependency {
     group_id: "com.github.ben-manes.caffeine",
     artifact_id: "caffeine",
     version: None,
@@ -149,7 +149,7 @@ pub(crate) const CAFFEINE: Dependency = Dependency {
 
 /// Refuse politely rather than generating Spring code into a plain Maven
 /// project, where it would not compile and the reason would not be obvious.
-pub(crate) fn require_spring(flavor: Flavor, capability: &str) -> Result<()> {
+pub fn require_spring(flavor: Flavor, capability: &str) -> Result<()> {
     match flavor {
         Flavor::SpringBoot => Ok(()),
         Flavor::PlainMaven => Err(format!(
@@ -269,7 +269,7 @@ fn scope_controller_parts(
 /// The generated advice extends `ResponseEntityExceptionHandler` -- Spring's
 /// own base class, so every framework exception keeps its correct status and
 /// only the project's own exceptions need mapping.
-pub(crate) fn api_slice(slice: &Slice) -> Change {
+pub fn api_slice(slice: &Slice) -> Change {
     let root: &Path = slice.project().root();
     let pkg: &str = &slice.placed(Layer::Api);
     let main = crate::generate::main_dir(root, pkg);
@@ -361,7 +361,7 @@ fn exposure_include(slice: &Slice, wanted: &[&str]) -> String {
     )
 }
 
-pub(crate) fn actuator_slice(slice: &Slice) -> Change {
+pub fn actuator_slice(slice: &Slice) -> Change {
     let root: &Path = slice.project().root();
     let pkg: &str = &slice.root_package();
     let test = crate::generate::test_dir(root, pkg);
@@ -404,7 +404,7 @@ fn actuator_test_java(pkg: &str) -> String {
 // `add cache` -- caching that is switched on and provably working.
 // ---------------------------------------------------------------------------
 
-pub(crate) fn cache_slice(slice: &Slice) -> Change {
+pub fn cache_slice(slice: &Slice) -> Change {
     let root: &Path = slice.project().root();
     let pkg: &str = &slice.root_package();
     let main = crate::generate::main_dir(root, pkg);
@@ -489,7 +489,7 @@ mod event_tests {
 // `add security` -- an explicit filter chain, rather than the default one.
 // ---------------------------------------------------------------------------
 
-pub(crate) const SECURITY_STARTER: Dependency = Dependency {
+pub const SECURITY_STARTER: Dependency = Dependency {
     group_id: "org.springframework.boot",
     artifact_id: "spring-boot-starter-security",
     version: None,
@@ -497,7 +497,7 @@ pub(crate) const SECURITY_STARTER: Dependency = Dependency {
     optional: false,
 };
 
-pub(crate) const SECURITY_TEST: Dependency = Dependency {
+pub const SECURITY_TEST: Dependency = Dependency {
     group_id: "org.springframework.security",
     artifact_id: "spring-security-test",
     version: None,
@@ -505,7 +505,7 @@ pub(crate) const SECURITY_TEST: Dependency = Dependency {
     optional: false,
 };
 
-pub(crate) const OAUTH2_RESOURCE_SERVER: Dependency = Dependency {
+pub const OAUTH2_RESOURCE_SERVER: Dependency = Dependency {
     group_id: "org.springframework.boot",
     artifact_id: "spring-boot-starter-oauth2-resource-server",
     version: None,
@@ -524,7 +524,7 @@ pub(crate) const OAUTH2_RESOURCE_SERVER: Dependency = Dependency {
 /// repository, so the day one of these operations grows a rule (a permission
 /// check, an event to publish) there is somewhere for it to go that is not a
 /// controller method.
-pub(crate) fn resource_service_java(pkg: &str, name: &str, extra: &str) -> String {
+pub fn resource_service_java(pkg: &str, name: &str, extra: &str) -> String {
     let var = crate::generate::lower_first(name);
     crate::template::render(
         crate::template_here!("spring/resource_service_java.java"),
@@ -545,7 +545,7 @@ pub(crate) fn resource_service_java(pkg: &str, name: &str, extra: &str) -> Strin
 /// with a `Location` for a creation, 204 for a delete that removed
 /// something, 404 for one that did not, and 404 rather than an empty 200 for
 /// a missing item.
-pub(crate) fn resource_controller_java(
+pub fn resource_controller_java(
     slice: &Slice,
     name: &str,
     extra: &str,
@@ -663,7 +663,7 @@ fn scoped_resource_controller_java(
 /// resource. Security configuration and full-context behavior retain their
 /// dedicated Spring tests; this companion test stays focused on HTTP and uses
 /// a fresh Mockito service for every method.
-pub(crate) fn resource_controller_test_java(
+pub fn resource_controller_test_java(
     slice: &Slice,
     name: &str,
     extra: &str,
@@ -699,7 +699,7 @@ pub(crate) fn resource_controller_test_java(
 /// What it pins is delegation and the two boolean-ish outcomes that are easy
 /// to get backwards -- an absent item is `Optional.empty()`, and a delete
 /// reports whether anything was actually removed.
-pub(crate) fn resource_service_test_java(pkg: &str, name: &str, extra: &str) -> String {
+pub fn resource_service_test_java(pkg: &str, name: &str, extra: &str) -> String {
     crate::template::render(
         crate::template_here!("spring/resource_service_test_java.java"),
         &[("pkg", pkg), ("extra", extra), ("name", name)],
@@ -726,7 +726,7 @@ pub(crate) fn resource_service_test_java(pkg: &str, name: &str, extra: &str) -> 
 /// this and the JDBC adapter may -- see `generate::RepositoryWiring`. Two
 /// annotated adapters make two beans qualify for one injection point, and the
 /// scaffold then compiles and refuses to start.
-pub(crate) fn in_memory_repository_java(
+pub fn in_memory_repository_java(
     pkg: &str,
     name: &str,
     extra: &str,
@@ -801,7 +801,7 @@ pub(crate) fn in_memory_repository_java(
 /// `integration-test` and `verify` are both bound: the first runs the tests,
 /// the second is what makes a failure fail the build. Binding only the first
 /// runs them and ignores the result.
-pub(crate) const FAILSAFE_ARTIFACT: &str = "maven-failsafe-plugin";
+pub const FAILSAFE_ARTIFACT: &str = "maven-failsafe-plugin";
 
 /// The Failsafe plugin, versioned for the project it is going into.
 ///
@@ -810,14 +810,14 @@ pub(crate) const FAILSAFE_ARTIFACT: &str = "maven-failsafe-plugin";
 /// rather than refusing the pom, so it resolves whatever the running Maven
 /// defaults to, which is not a decision jails should be making silently.
 /// plan.md §8.1 names it as the quiet half of that defect.
-pub(crate) fn failsafe_plugin(flavor: crate::pom::Flavor) -> &'static str {
+pub fn failsafe_plugin(flavor: crate::pom::Flavor) -> &'static str {
     match flavor {
         crate::pom::Flavor::SpringBoot => FAILSAFE_PLUGIN,
         crate::pom::Flavor::PlainMaven => FAILSAFE_PLUGIN_PINNED,
     }
 }
 
-pub(crate) const FAILSAFE_PLUGIN_PINNED: &str = r#"<plugin>
+pub const FAILSAFE_PLUGIN_PINNED: &str = r#"<plugin>
     <groupId>org.apache.maven.plugins</groupId>
     <artifactId>maven-failsafe-plugin</artifactId>
     <version>3.5.6</version>
@@ -833,7 +833,7 @@ pub(crate) const FAILSAFE_PLUGIN_PINNED: &str = r#"<plugin>
     </executions>
 </plugin>"#;
 
-pub(crate) const FAILSAFE_PLUGIN: &str = r#"<plugin>
+pub const FAILSAFE_PLUGIN: &str = r#"<plugin>
     <groupId>org.apache.maven.plugins</groupId>
     <artifactId>maven-failsafe-plugin</artifactId>
     <executions>
@@ -852,7 +852,7 @@ pub(crate) const FAILSAFE_PLUGIN: &str = r#"<plugin>
 // `add redis` -- a key/value store with a compose service and a real test.
 // ---------------------------------------------------------------------------
 
-pub(crate) const REDIS_STARTER: Dependency = Dependency {
+pub const REDIS_STARTER: Dependency = Dependency {
     group_id: "org.springframework.boot",
     artifact_id: "spring-boot-starter-data-redis",
     version: None,
@@ -860,9 +860,9 @@ pub(crate) const REDIS_STARTER: Dependency = Dependency {
     optional: false,
 };
 
-pub(crate) const REDIS_IMAGE: &str = "redis:7-alpine";
+pub const REDIS_IMAGE: &str = "redis:7-alpine";
 
-pub(crate) fn redis_slice(slice: &Slice) -> Change {
+pub fn redis_slice(slice: &Slice) -> Change {
     let root: &Path = slice.project().root();
     let pkg: &str = &slice.placed(Layer::Adapters);
     let main = crate::generate::main_dir(root, pkg);
@@ -908,7 +908,7 @@ fn key_value_store_it_java(pkg: &str) -> String {
 
 /// Version managed by the Spring Boot parent, which imports the Micrometer
 /// BOM (verified in spring-boot-dependencies, not assumed).
-pub(crate) const PROMETHEUS_REGISTRY: Dependency = Dependency {
+pub const PROMETHEUS_REGISTRY: Dependency = Dependency {
     group_id: "io.micrometer",
     artifact_id: "micrometer-registry-prometheus",
     version: None,
@@ -924,7 +924,7 @@ pub(crate) const PROMETHEUS_REGISTRY: Dependency = Dependency {
 /// and a counter created inline per call site gets a slightly different name
 /// each time (`orders.created`, `order_created`, `ordersCreated`) until the
 /// dashboards stop agreeing.
-pub(crate) fn observability_slice(slice: &Slice) -> Change {
+pub fn observability_slice(slice: &Slice) -> Change {
     let root: &Path = slice.project().root();
     let pkg: &str = &slice.root_package();
     let main = crate::generate::main_dir(root, pkg);

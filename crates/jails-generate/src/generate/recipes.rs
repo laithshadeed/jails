@@ -27,7 +27,7 @@ use super::*;
 /// cost, and it is the right trade: a query that returned only paths would be
 /// a *second* traversal of the same match, which is the duplication this
 /// removes wearing a different hat.
-pub(crate) fn artifacts_for(
+pub fn artifacts_for(
     project: &Project,
     recipe: &Recipe<'_>,
     package: Option<&str>,

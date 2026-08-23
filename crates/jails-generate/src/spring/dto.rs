@@ -25,11 +25,7 @@ use super::*;
 /// spec jails already has -- a non-null component becomes `@NotNull`, a
 /// non-blank one `@NotBlank` -- so a malformed request is rejected at the
 /// edge and reported by `add api`'s handler as a 400 naming the field.
-pub(crate) fn dto_files(
-    slice: &Slice,
-    name: &str,
-    fields: &[crate::generate::Field],
-) -> Vec<Artifact> {
+pub fn dto_files(slice: &Slice, name: &str, fields: &[crate::generate::Field]) -> Vec<Artifact> {
     let root: &Path = slice.project().root();
     let pkg: &str = &slice.placed(Layer::Web);
     let domain: &str = &slice.placed(Layer::Domain);
@@ -189,7 +185,7 @@ fn needs_optional(fields: &[crate::generate::Field]) -> bool {
     fields.iter().any(is_optional)
 }
 
-pub(crate) fn request_java_for(
+pub fn request_java_for(
     pkg: &str,
     name: &str,
     fields: &[crate::generate::Field],
@@ -223,7 +219,7 @@ pub(crate) fn request_java_for(
     )
 }
 
-pub(crate) fn response_java_for(
+pub fn response_java_for(
     pkg: &str,
     name: &str,
     fields: &[crate::generate::Field],

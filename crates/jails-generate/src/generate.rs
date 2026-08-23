@@ -9,36 +9,36 @@ use std::path::{Path, PathBuf};
 // and `generate::main_dir` still resolve for every caller inside this layer;
 // what moved is where they are *defined*, and therefore which way the
 // dependency points. See `crate::spec`.
-pub(crate) use crate::spec::layout;
-pub(crate) use crate::spec::{field::*, paths::*};
+pub use crate::spec::layout;
+pub use crate::spec::{field::*, paths::*};
 
 mod migration;
-pub(crate) use migration::*;
+pub use migration::*;
 
 mod web;
-pub(crate) use web::*;
+pub use web::*;
 
 mod cli;
-pub(crate) use cli::*;
+pub use cli::*;
 
 mod closed;
 mod domain;
 use closed::*;
-pub(crate) use domain::*;
+pub use domain::*;
 
 mod repository;
 use repository::*;
 
 mod recipes;
 mod write;
-pub(crate) use recipes::*;
-pub(crate) use write::*;
+pub use recipes::*;
+pub use write::*;
 
 mod scaffold;
-pub(crate) use scaffold::*;
+pub use scaffold::*;
 
 mod remove;
-pub(crate) use remove::*;
+pub use remove::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 #[value(rename_all = "lowercase")]
@@ -225,7 +225,7 @@ pub fn generate_with_timestamps(
 /// App reconciliation uses this to render old and new intents in isolated
 /// project copies without mutating process-global cwd. The ordinary CLI path
 /// resolves the same value once in [`generate_with_timestamps`].
-pub(crate) fn generate_in_project(
+pub fn generate_in_project(
     project: &Project,
     kind: ArtifactKind,
     name: &str,
@@ -469,7 +469,7 @@ fn generate(
 ///
 /// `None` for kinds that use the name verbatim (`record`, `enum`, `scaffold`
 /// -- which spans several suffixes and cannot have one of them stripped).
-pub(crate) fn kind_suffix(kind: ArtifactKind) -> Option<&'static str> {
+pub fn kind_suffix(kind: ArtifactKind) -> Option<&'static str> {
     match kind {
         ArtifactKind::Controller => Some("Controller"),
         ArtifactKind::Service => Some("Service"),
@@ -505,7 +505,7 @@ pub(crate) fn kind_suffix(kind: ArtifactKind) -> Option<&'static str> {
 /// **This has to run in `destroy` too.** `destroy` rebuilds the paths that
 /// `generate` wrote, so a normalisation applied to one and not the other
 /// leaves files behind that the tool then claims to have deleted.
-pub(crate) fn strip_redundant_suffix(kind: ArtifactKind, name: &str) -> String {
+pub fn strip_redundant_suffix(kind: ArtifactKind, name: &str) -> String {
     match kind_suffix(kind) {
         Some(suffix) => match name.strip_suffix(suffix) {
             Some(stem) if !stem.is_empty() => stem.to_string(),
@@ -521,13 +521,13 @@ pub(crate) fn strip_redundant_suffix(kind: ArtifactKind, name: &str) -> String {
 /// List at its worst: `generate`, `destroy` and `app apply` each passed the
 /// same ones in the same order, so two `Option<&str>` slots swapped by mistake
 /// still compiled.
-pub(crate) struct Recipe<'a> {
-    pub(crate) kind: ArtifactKind,
-    pub(crate) name: &'a str,
-    pub(crate) fields: &'a [String],
-    pub(crate) indexes: &'a [String],
-    pub(crate) strategy_on: Option<&'a str>,
-    pub(crate) strategy_yields: Option<&'a str>,
+pub struct Recipe<'a> {
+    pub kind: ArtifactKind,
+    pub name: &'a str,
+    pub fields: &'a [String],
+    pub indexes: &'a [String],
+    pub strategy_on: Option<&'a str>,
+    pub strategy_yields: Option<&'a str>,
 }
 
 #[cfg(test)]

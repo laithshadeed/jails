@@ -4,13 +4,13 @@ use jails_support::Result;
 // `crate::java` and `crate::template`. A facade at the root rather than an
 // import line in forty files: the paths a reader already knows stay correct,
 // and the crate boundary is enforced by Cargo either way.
+pub(crate) use jails_generate::{add, generate};
 pub(crate) use jails_java::{classfile, java, template};
 pub(crate) use jails_project::{
     compose, config, generated_files, inspect, ledger, maven, model, pom, project,
 };
-pub(crate) use jails_spec::{build, spec};
-pub(crate) use jails_support::{apply, codemod, json, process};
-mod add;
+pub(crate) use jails_spec::build;
+pub(crate) use jails_support::{apply, json, process};
 mod adopt;
 mod affected;
 mod app;
@@ -19,7 +19,6 @@ mod commands;
 mod console;
 mod doctor;
 mod explain;
-mod generate;
 mod kafka;
 mod launcher;
 mod lint;
@@ -28,8 +27,6 @@ mod new;
 mod rename;
 mod run;
 mod source;
-mod spring;
-mod sql;
 mod surefire;
 mod testd;
 mod why;
