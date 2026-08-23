@@ -33,6 +33,11 @@ jails-support = { path = "crates/jails-support" }
 # The integration tests assert against jails' own constants -- `TARGET_RELEASE`
 # among them -- rather than keeping copies of them in the fixtures.
 jails-project = { path = "crates/jails-project" }
+# plan.md §3.2: atomic, random, exclusive scratch creation. A pid plus a
+# timestamp is not exclusive -- two threads in one test binary read the same
+# nanosecond and got the same directory -- and reimplementing OS randomness
+# and Windows deletion semantics is not this project's work.
+tempfile = "3.27"
 
 [lints]
 workspace = true

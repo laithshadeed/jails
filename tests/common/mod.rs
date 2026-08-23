@@ -27,18 +27,28 @@ pub fn bin() -> &'static str {
 /// Maven failed with `Disk quota exceeded` mid-gate. It happened again on
 /// 2026-08-22, which is why the sweep below exists: **keep the evidence from
 /// this run, take out the ones nobody is looking at any more.**
+/// A scratch tree no other test can be handed.
+///
+/// The name used to be a pid plus a nanosecond timestamp, created with
+/// `create_dir_all` -- which is not exclusive in either half. Two threads in
+/// one test binary read the same nanosecond, `create_dir_all` succeeded for
+/// both, and the second `jails g cli Admin` failed with "already exists" over
+/// the first one's files. It reproduced roughly once in five full-workspace
+/// runs, and the workspace split made it more likely by running seven test
+/// binaries where there had been one.
+///
+/// `tempfile` creates the directory atomically with OS randomness in the name,
+/// so exclusivity is the filesystem's guarantee rather than a hope about clock
+/// resolution. The guard is leaked on purpose: these fixtures outlive the test
+/// so a failure can be inspected, and `sweep_stale_fixtures` is what collects
+/// them an hour later.
 pub fn temp_dir(label: &str) -> PathBuf {
     sweep_stale_fixtures();
-    let dir = std::env::temp_dir().join(format!(
-        "jails-e2e-{label}-{}-{:?}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&dir).unwrap();
-    dir
+    tempfile::Builder::new()
+        .prefix(&format!("jails-e2e-{label}-"))
+        .tempdir()
+        .expect("failed to create a scratch directory")
+        .keep()
 }
 
 /// A persistent generated-project directory keyed to this integration-test

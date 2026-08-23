@@ -14,18 +14,66 @@ features in generated Java, and no plugin system with lifecycle hooks. Check
 file describes what the code *is* and the traps in it; `plan.md` describes what
 to build next and why. Do not add proposals here.
 
+## Workspace
+
+Seven crates, lowest first. A crate may only depend on one below it, and
+Cargo enforces that; `no_module_depends_on_a_layer_above_its_own` in
+`tests/architecture.rs` enforces the same rule for module-level edges the
+compiler cannot see, and assigns every module its crate.
+
+| crate | what belongs in it |
+|---|---|
+| `jails-support` | writing, running, splicing, encoding. Nothing here knows what a Java project is. `Result`, `debug_cmd` and `CWD_LOCK` live here. |
+| `jails-java` | reading Java (`java`, `classfile`) and rendering templates into it (`template`). |
+| `jails-spec` | where a project is and how it is laid out (`build`, `spec::paths`, `spec::layout`), what a field spec means (`spec::field`), and the closed CLI vocabularies (`spec::kind`). |
+| `jails-project` | one resolved `model::Project`, plus every file jails writes *about* a project — the reader's (`config`, `compose`) and jails' own (`ledger`, `generated_files`). |
+| `jails-generate` | everything that decides what Java to write: `generate`, `spring`, `add`, `sql`. |
+| `jails-tooling` | commands that drive a toolchain or report on a project: `run`, `testd`, `doctor`, `why` and the rest. |
+| `jails` (root) | the binary: `main`, `new`, `app`, `adopt`, and `tests/`. |
+
+**This existed because `src/` was one twelve-module cycle** — `add`, `compose`,
+`config`, `generate`, `inspect`, `launcher`, `model`, `project`, `run`,
+`spring`, `sql`, `why` — so no boundary could be drawn anywhere in it. The
+cause was not tangled logic: every back-edge was a single symbol, because
+everything below the generators reached up into `generate.rs` for `Field`,
+`layout` and `find_project_root`. `jails-spec` is those symbols at their own
+layer.
+
+Four things to know before touching it:
+
+- **Each crate's `lib.rs` carries a facade block** re-exporting the lower
+  crates, so module code keeps saying `crate::java` and `crate::Result`
+  wherever it ships. Only that block knows which crate a module lives in,
+  which is what makes moving one a one-line change instead of a sweep through
+  forty files. Keep it trimmed to what the crate actually references.
+- **`CARGO_MANIFEST_DIR` expands at the call site**, so `template!` cannot bake
+  in its own root: it would resolve to whichever crate invoked it.
+  `jails_java::template_at!` takes the root as an argument and each crate
+  declares a one-line `template_here!` wrapper naming its own. `templates/`
+  stays at the repository root; `jails-generate` and `testd` reach it through
+  `concat!(env!("CARGO_MANIFEST_DIR"), "/../../templates/")`.
+- **The binary is the root package, not `crates/jails-cli`.** That keeps
+  `tests/`, `tests/golden/` and `tests/fixtures/` where they are, so the 24
+  golden trees were not rewritten for a move that changes no bytes.
+- **Every scanner has to walk `crates/*/src`, not `src/`.**
+  `tests/architecture.rs` and `tests/genericity.rs` both do, and both assert a
+  minimum file count, because a scanner that has lost the code reports exactly
+  the same clean result as one that read it all. Path-matching scanners must
+  also accept any visibility: the split turned `pub(crate) struct` into `pub
+  struct`, and a gate matching only the first spelling silently read zero.
+
 ## Layout
 
 - `src/main.rs` — clap derive CLI, dispatch only.
 - `src/new.rs` — `new` (start.spring.io wrapper, real network) and `new-cli`
   (hand-written pom/App/AppTest, no network). Both also seed
   `src/test/resources/fixtures/.gitkeep`.
-- `src/generate.rs` — `generate`/`destroy` dispatch, `scaffold_artifacts`,
+- `crates/jails-generate/src/generate.rs` — `generate`/`destroy` dispatch, `scaffold_artifacts`,
   the write path and the project helpers. `ArtifactKind` is a
   `clap::ValueEnum` — keep it that way, see gotcha below. The per-kind
   generators live in submodules beside it:
-  - `generate/field.rs` — the field spec and everything derived from it on
-    the Java side (`sql.rs` is the SQL/JDBC projection of the same spec).
+  - the field spec moved down to `crates/jails-spec/src/spec/field.rs`;
+    `sql.rs` is the SQL/JDBC projection of the same spec.
   - `generate/domain.rs` — `record`, `value`, `enum`, `sealed`, `strategy`.
   - `generate/web.rs` — the `controller`/`service` stubs and `handler`.
   - `generate/repository.rs` — `repo`: the port and the JDBC adapters.
@@ -47,7 +95,7 @@ to build next and why. Do not add proposals here.
   extractor cut them mid-identifier. Do it by hand, a few at a time, or not
   at all — `scratch()` is already hoisted to module level so a submodule
   test mod can use it.
-- `src/add.rs` — `add`/`remove`/`sync`/`preflight`: the orchestration that
+- `crates/jails-generate/src/add.rs` — `add`/`remove`/`sync`/`preflight`: the orchestration that
   grows or shrinks an existing project by a whole slice (dependency + code +
   test, and for `db`/`kafka` a compose service). `Capability` is a
   `clap::ValueEnum` for the same completion reason as `ArtifactKind`. The
@@ -61,10 +109,10 @@ to build next and why. Do not add proposals here.
   `ci` and `docker` are the two capabilities whose plans live in `add.rs`
   itself rather than a submodule.
 
-  The Spring-only capabilities live in `src/spring.rs` instead — a different
+  The Spring-only capabilities live in `crates/jails-generate/src/spring.rs` instead — a different
   cut: they share one precondition (`require_spring`), not one subject. See
   that entry below, and note it has outgrown its original rationale.
-- `templates/**.java` + `src/template.rs` — the Java bodies, as Java files.
+- `templates/**.java` + `crates/jails-java/src/template.rs` — the Java bodies, as Java files.
   A template used to be a Rust `format!` string, which meant **every brace
   doubled** (`class {name}Controller {{`, and `{{@code public}}` in Javadoc)
   because `format!` owns that syntax and Java is made of braces. The
@@ -78,7 +126,7 @@ to build next and why. Do not add proposals here.
   `@Component` versus its absence, a body repeated per field) stays in Rust
   and is passed in rendered. A template under ~15 lines stays inline, since a
   file for four lines is indirection with nothing to show for it.
-- `src/apply/` — **the only module that writes.** `fs::write` appears nowhere
+- `crates/jails-support/src/apply/` — **the only module that writes.** `fs::write` appears nowhere
   else, and `tests/architecture.rs` fails when it does. Four verbs, and the
   distinction between them is *what the caller believes is already there*:
   `create` (must not exist — the refusal `g scaffold` and `g record` are built
@@ -99,7 +147,7 @@ to build next and why. Do not add proposals here.
   artifact being written *is* `package-info.java` the caller then wrote it
   again. Harmless while the second write was a silent overwrite; an "already
   exists" refusal the moment the write path started refusing to clobber.
-- `src/process.rs` — `CommandSpec` + one synchronous executor, and the one
+- `crates/jails-support/src/process.rs` — `CommandSpec` + one synchronous executor, and the one
   place a tool is resolved on PATH. Extracted because two copies of "which
   tool is this" had already drifted: `run.rs` vs `project.rs` on whether mvnd
   is `mvnd` or `mvnd.cmd`, and `compose.rs` vs `doctor.rs` on whether Docker
@@ -134,7 +182,7 @@ to build next and why. Do not add proposals here.
   listed twice under two spellings. Writing back is a targeted one-line splice
   that leaves comments and `[layout]` byte-for-byte alone — this is a file
   people edit, same rule as `pom.rs`.
-- `src/build.rs` — **which build tool a directory uses, and nothing more.**
+- `crates/jails-spec/src/build.rs` — **which build tool a directory uses, and nothing more.**
   `find_project_root` used to look for `pom.xml` alone, which refused ~30
   commands on a foreign project when only about ten of them need Maven at all
   (`inspect.rs` and `rename.rs` contain zero occurrences of `pom`). The door
@@ -155,14 +203,14 @@ to build next and why. Do not add proposals here.
   an unrecognised directory is reported not guessed; two candidates for one
   layer writes neither; and it never touches `[project] capabilities`, because
   that is the list `sync` acts on.
-- `src/config.rs` — `jails.toml`, the per-project layout override. Hand-parsed
-  (jails' only dependencies are clap), understands one `[layout]` table of
+- `crates/jails-project/src/config.rs` — `jails.toml`, the per-project layout override. Hand-parsed
+  (jails' only dependency is clap), understands one `[layout]` table of
   `key = "value"` pairs, and the keys are a **closed set** matching
   `generate::layout` — an unknown one is an error, because a `jails.toml`
   saying `adapter = "persistence"` that silently kept writing to `adapters`
   would be worse than no file. Read through the `place` closure in
   `generate`/`destroy`/`add`, so a renamed layer is renamed everywhere.
-- `src/kafka.rs` — `jails kafka`: the broker counterpart to `jails db`. Runs
+- `crates/jails-tooling/src/kafka.rs` — `jails kafka`: the broker counterpart to `jails db`. Runs
   the image's own CLI tools inside the compose container, so nothing is
   installed. Note `BROKER` is `kafka:19092`, the *inter-broker* listener —
   `localhost:9092` is the host-side advertised one and works from inside the
@@ -170,15 +218,15 @@ to build next and why. Do not add proposals here.
   `TOPIC` constant out of source, using `java::blanked()` to locate the
   declaration and the **original** string to read the value, since `blanked`
   replaces the quotes too.
-- `src/migrate.rs` — `jails migrate --check`: applies every migration to a
+- `crates/jails-tooling/src/migrate.rs` — `jails migrate --check`: applies every migration to a
   scratch database (`create database` / `drop database` around the run) and
   reports the first failure with psql's file and line. **Not a `doctor`
   check** — doctor is read-only by contract and this writes. Ordering is
   numeric, not lexical: `V10` sorts before `V9` as a string, which would apply
   migrations in an order nobody has tested.
-- `src/pom.rs` — flavor and release-level detection, plus a comment-preserving
+- `crates/jails-project/src/pom.rs` — flavor and release-level detection, plus a comment-preserving
   dependency/plugin splice and unsplice. `TARGET_RELEASE` lives here.
-- `src/codemod.rs` — **the marked block, and only that**: `# jails:<marker>`
+- `crates/jails-support/src/codemod.rs` — **the marked block, and only that**: `# jails:<marker>`
   … `# /jails:<marker>`, which is how jails edits a file the reader owns and
   what makes `remove` the exact inverse of `add`. It had five owners
   (`compose.rs`, `add.rs`, `add/database.rs`, `add/test_wiring.rs`,
@@ -188,11 +236,11 @@ to build next and why. Do not add proposals here.
   YAML mapping is a parse error rather than a misplaced comment. There is no
   `replace` — nothing needs one, and `remove` then `add` is the path `sync`
   takes.
-- `src/compose.rs` — the other user-owned file jails edits: `compose.yaml`.
+- `crates/jails-project/src/compose.rs` — the other user-owned file jails edits: `compose.yaml`.
   Marked service blocks so `add db` and `add kafka` stack, and `remove` can
   take one service out without touching the other. Also `start`/`stop`
   (`docker compose up/stop`) and the auto-start `run` shells out to.
-- `src/launcher.rs` — `jails test --fast`: JUnit's console launcher over the
+- `crates/jails-tooling/src/launcher.rs` — `jails test --fast`: JUnit's console launcher over the
   already-compiled classes, no Maven. Three things worth knowing before
   touching it. **The console artifact's version must equal the project's own
   JUnit version** — a mismatch resolves fine and dies at run time with
@@ -204,7 +252,7 @@ to build next and why. Do not add proposals here.
   And **`--fast` does not beat `mvnd`**: `plan.md` §19.1 has the numbers, it is
   the no-mvnd path and the substrate for `jails testd`, and it must not be
   described as faster than the default.
-- `src/testd.rs` + `templates/testd/JailsTestDaemon.java` — `jails testd`: a
+- `crates/jails-tooling/src/testd.rs` + `templates/testd/JailsTestDaemon.java` — `jails testd`: a
   resident JVM over a unix socket. **0.06-0.10 s against `--fast`'s 0.62 s**
   for one test method, measured; §19.2 says why, and it is not the launcher --
   the first JUnit session in a JVM is 464 ms against 20 ms warm, and a cold
@@ -223,7 +271,7 @@ to build next and why. Do not add proposals here.
   And it is **a Java program, not a jails jar**: the daemon is a template
   compiled by `java`'s single-file source launcher at start-up, and nothing
   about it enters the project.
-- `src/affected.rs` + `src/classfile.rs` — `jails testd --affected`: a reverse
+- `crates/jails-tooling/src/affected.rs` + `crates/jails-java/src/classfile.rs` — `jails testd --affected`: a reverse
   dependency index built from the constant pools already in `target/`.
   `classfile.rs` is **the smallest reader that can answer "which types does
   this class name"** and must not grow into a class-file parser (same rule as
@@ -239,11 +287,11 @@ to build next and why. Do not add proposals here.
   writes, because a marker makes the same command select differently on two
   consecutive runs with no edit between, and after a red run with nothing
   changed it would select nothing and report green.
-- `src/run.rs` — `test`/`build`/`clean`/`run`, shells to `mvn`/`mvnd`. `run`/`watch`
+- `crates/jails-tooling/src/run.rs` — `test`/`build`/`clean`/`run`, shells to `mvn`/`mvnd`. `run`/`watch`
   start compose services first when `compose.yaml` is present.
-- `src/console.rs` — `db`/`dbconsole` (`psql` or `sqlite3`) and `console`/`c`
+- `crates/jails-tooling/src/console.rs` — `db`/`dbconsole` (`psql` or `sqlite3`) and `console`/`c`
   (`jshell` + Maven classpath). Interactive; inherit stdio.
-- `src/java.rs` — a deliberately small Java reader shared by `inspect`,
+- `crates/jails-java/src/java.rs` — a deliberately small Java reader shared by `inspect`,
   `doctor` and `rename`: annotations and what they are attached to, a type's
   supertypes, a constructor's parameters. **Not a parser, and must not grow
   into one.** Its one trick is `blanked()`, which replaces comments and
@@ -251,11 +299,11 @@ to build next and why. Do not add proposals here.
   `// @Service` while byte offsets still index the original source — which
   is why `annotations()` slices names and args out of `source`, not out of
   the blanked copy.
-- `src/inspect.rs` — `routes` and `beans`. Reads source, never a running
+- `crates/jails-project/src/inspect.rs` — `routes` and `beans`. Reads source, never a running
   context: instant, and works on a project that does not start (the case
   that matters). The cost is anything decided at runtime, which the output
   states rather than hiding.
-- `src/doctor.rs` + `src/doctor/` — `doctor`. Split by **who is being asked**:
+- `crates/jails-tooling/src/doctor.rs` + `crates/jails-tooling/src/doctor/` — `doctor`. Split by **who is being asked**:
   `doctor/environment.rs` asks the machine (is Maven there, which JDK will run,
   is the container engine up and is it the one Testcontainers will find),
   `doctor/wiring.rs` asks the project whether a capability is actually wired up,
@@ -277,7 +325,7 @@ to build next and why. Do not add proposals here.
   carries a `fix:` line (an integration test asserts this), and a failure
   exits non-zero via an *empty* `Err` so `main` prints no redundant
   `jails: ` line.
-- `src/why.rs` — `why`. A table of (signature, explanation, fix) rules
+- `crates/jails-tooling/src/why.rs` — `why`. A table of (signature, explanation, fix) rules
   matched against a log. Rules sharing a `group` describe one failure
   through different messages and only the most specific is reported. Add
   rules only from failures that actually happened; a guessed cause costs
@@ -290,7 +338,7 @@ to build next and why. Do not add proposals here.
   failures already covered — Testcontainers caches its environment probe, so
   the *retry* message ("Previous attempts to find a Docker environment
   failed") appears more often than the original.
-- `src/sql.rs` — the field spec -> SQL mapping: column name, Postgres type,
+- `crates/jails-generate/src/sql.rs` — the field spec -> SQL mapping: column name, Postgres type,
   and the two JDBC expressions. One column list feeds the DDL, the select,
   the insert, the bind and the row mapper, which is the whole point — a
   hand-written pair drifts (`amount` in the insert against `amount_minor` in
@@ -301,7 +349,7 @@ to build next and why. Do not add proposals here.
   real-toolchain tier catches that, which is why
   `a_scaffold_with_database_types_compiles_including_its_derived_jdbc_adapter`
   exists.
-- `src/spring.rs` — the Spring-only capabilities (`api`, `actuator`, `cache`,
+- `crates/jails-generate/src/spring.rs` — the Spring-only capabilities (`api`, `actuator`, `cache`,
   `security`, `redis`, `observability`) **and most of the generator kinds**:
   `client`, `job`, `dto`, `event`, plus everything added since —
   `fetcher`, `usecase` (and its `outbox` half), `query`, `transition`,
@@ -316,9 +364,9 @@ to build next and why. Do not add proposals here.
   real Java an editor can check. `tests/architecture.rs` holds that at zero.
 
   **It is no longer the biggest file here.** `plan.md` §6.5's split landed:
-  `src/spring/workflow.rs` (usecase + its outbox half, transition, query),
-  `src/spring/durable.rs` (job, durable-job), `src/spring/http.rs` (client,
-  fetcher, http-workflow, http-sink) and `src/spring/schema.rs` (association,
+  `crates/jails-generate/src/spring/workflow.rs` (usecase + its outbox half, transition, query),
+  `crates/jails-generate/src/spring/durable.rs` (job, durable-job), `crates/jails-generate/src/spring/http.rs` (client,
+  fetcher, http-workflow, http-sink) and `crates/jails-generate/src/spring/schema.rs` (association,
   idempotency). `spring.rs` itself is down from 6,624 to ~1,900 lines and holds
   the shared precondition, the shared helpers used by more than one kind, and
   the capability slices.
@@ -330,7 +378,7 @@ to build next and why. Do not add proposals here.
   `include_str!` is relative to the *file*, so every template path in a moved
   block gains a `../`.
 
-  The largest module is now `src/generate.rs`, which `abstract.md` §3.2 calls
+  The largest module is now `crates/jails-generate/src/generate.rs`, which `abstract.md` §3.2 calls
   Ousterhout's named anti-pattern verbatim — parse → dispatch → write → side
   effects. `tests/architecture.rs` has a gate on the largest module precisely
   so a split cannot be satisfied by *moving* a monolith.
@@ -348,7 +396,7 @@ to build next and why. Do not add proposals here.
   other parameter objects that fell out — each one a group of values that is
   computed together and consumed together.
 
-  `src/spring/auth.rs` (`g auth`) and `src/spring/sse.rs` (`add sse`) are the
+  `crates/jails-generate/src/spring/auth.rs` (`g auth`) and `crates/jails-generate/src/spring/sse.rs` (`add sse`) are the
   two most recent, and both exist because a default is wrong in a way nothing
   reports: `JwtTimestampValidator` accepts a token with no `exp`, and
   `spring.task.scheduling.pool.size` is 1. In both cases the generated *test*
@@ -378,7 +426,7 @@ to build next and why. Do not add proposals here.
   one** (so an interrupted apply resumes), then **reconciles every capability a
   second time** — because a generator can create a new integration point for
   an already-installed capability.
-- `src/ledger.rs` — `.jails/ledger.toml`, the **one** file jails keeps its own
+- `crates/jails-project/src/ledger.rs` — `.jails/ledger.toml`, the **one** file jails keeps its own
   bookkeeping in. It replaced five (`app-state-v1`, `intents/*`, `models/*`,
   `files`, `version`), two of which were intent registries keyed differently —
   which is what made an edited `fields` line arrive as a *new* intent against
@@ -410,7 +458,7 @@ to build next and why. Do not add proposals here.
   twenty-one-defect ledger, and the friction ledger. **Never hand-edit a
   generated proof app to make it pass** — a manual edit is evidence for the
   next generic improvement and belongs in the friction ledger.
-- `src/source.rs` — `jails src <Type>`: where a type's source is. The one
+- `crates/jails-tooling/src/source.rs` — `jails src <Type>`: where a type's source is. The one
   command that deliberately does **not** require a build file — "where is this
   type" is a question about a directory, and the case it exists for (jumping
   into a library checkout) is often asked from a repo that is not a Maven
@@ -418,12 +466,12 @@ to build next and why. Do not add proposals here.
   three `Status.java` files is ordinary and choosing silently sends an editor
   to the wrong one. The package is read off the `package` line, not derived
   from the path, since a checkout's layout does not always match its packages.
-- `src/bench.rs` — `jails bench`: runs the k6 script `add loadtest` wrote,
+- `crates/jails-tooling/src/bench.rs` — `jails bench`: runs the k6 script `add loadtest` wrote,
   after stating the load profile. **It does not parse k6's output** — k6 prints
   p95/p99 and its own thresholds decide pass/fail, and k6 is not installed on
   this machine, so a parser would be written against a format nobody has seen.
   `plan.md` §19.6's p99 is still unmeasured and says so.
-- `src/rename.rs` — `rename`. Textual by design (see its module docs for
+- `crates/jails-tooling/src/rename.rs` — `rename`. Textual by design (see its module docs for
   when to prefer jdt.ls `grn`): whole identifiers only, string literals left
   alone and the skipped count reported.
 - `tests/common/mod.rs` + `tests/cli.rs` — integration tests against the
@@ -449,13 +497,13 @@ to build next and why. Do not add proposals here.
   because select-then-insert reopens the race. Domain-blind by construction:
   scope is a string the caller picks, the request is bytes the caller
   canonicalises, and the stored result is opaque.
-- `src/explain.rs` — `jails explain <kind>`: why each artifact is shaped the
+- `crates/jails-tooling/src/explain.rs` — `jails explain <kind>`: why each artifact is shaped the
   way it is, and the trap it invites. **A hand-written table, deliberately** —
   a rationale is prose with nowhere to derive it from — so it is held to
   `why.rs`'s shape: a value in a table, one edit per kind, with
   `every_kind_has_an_explanation` failing the build when a kind is added
   without one. That is what stops it becoming the editor lists.
-- `src/commands.rs` — `jails commands [--json]`: every subcommand, generator
+- `crates/jails-tooling/src/commands.rs` — `jails commands [--json]`: every subcommand, generator
   kind, capability and flag, walked out of the same `clap::Command` that parses
   the arguments and the same `ValueEnum`s that validate them. **There is no
   second list**, which is the point — adding a kind is one edit and this output
@@ -482,11 +530,14 @@ jails'. `deps.tsv` and `deps-update.sh` at the repo root *are* tracked.
 ## Workflow (every change, no exceptions)
 
 ```
-cargo build && cargo test && cargo install --path .
+cargo build --workspace && cargo test --workspace && cargo install --path .
 ```
-Tests must stay green before installing. A Stop hook runs this
-automatically (see `.claude/settings.json`) — don't skip it manually even
-though the hook exists, since the hook only fires on turn end, not mid-turn.
+**`--workspace` is not optional.** `cargo test` at a workspace root tests the
+root package only: it reported 390 passing where the tree has 418, and nothing
+said the other 28 had not run. Tests must stay green before installing. A Stop
+hook runs this automatically (see `.claude/settings.json`) — don't skip it
+manually even though the hook exists, since the hook only fires on turn end,
+not mid-turn.
 
 ## Package layout
 
@@ -864,13 +915,22 @@ jails knows nothing about.
   version-pinned fixture (`write_spring_fixture` in `tests/common/mod.rs`)
   instead. Keep it that way — don't reintroduce a network dependency into
   the test suite.
-- **All unit tests share one test binary** (this is a bin crate, not
-  lib+bin), so `#[cfg(test)]` modules across `src/*.rs` run in the same
-  process. Any test that calls `std::env::set_current_dir` MUST hold
-  `crate::CWD_LOCK` (defined in `main.rs`) for the duration, or parallel
-  tests race on the process-global cwd.
+- **Each crate gets its own test binary**, so `#[cfg(test)]` modules within
+  one crate share a process and one process-global current directory. Any test
+  that calls `std::env::set_current_dir` MUST hold `CWD_LOCK` for the duration,
+  or parallel tests race on it. The lock lives in `jails-support` and is
+  deliberately **not** `#[cfg(test)]`: the crates that need it are not the
+  crate that defines it, and one instance per dependent test binary is exactly
+  the scope it has to cover.
+- **`#[cfg(test)]` in a library crate means "when *this* crate is under
+  test".** A dependent crate's tests cannot see it. That killed
+  `parse_fields_for_test`, a `#[cfg(test)]` helper `sql.rs` and `spring.rs`
+  called from their own test modules back when one binary held everything. If
+  a test helper has to cross a crate boundary, it is ordinary public API — or
+  it should not exist, which was the answer there.
 - **`cargo clippy` works here now**, and a `.githooks/pre-commit` runs
-  `cargo fmt --check` and `cargo clippy --all-targets` before every commit, so
+  `cargo fmt --all --check` and `cargo clippy --workspace --all-targets` before every
+  commit, so
   a lint is a *blocked commit* rather than a warning you can ignore. It used to
   fail with E0514 (crate compiled by incompatible rustc) on a toolchain
   mismatch, which is why this file said to skip it; that is no longer true, and
