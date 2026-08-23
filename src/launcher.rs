@@ -193,7 +193,7 @@ fn join<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Result<String> {
 pub(crate) fn test_classpath(root: &Path, debug: bool) -> Result<TestClasspath> {
     let cache = root.join("target/jails-test-classpath");
     if !is_fresh(&cache, &root.join("pom.xml")) {
-        let mut mvn = Command::new(run::maven_binary(root));
+        let mut mvn = Command::new(crate::maven::binary(root));
         mvn.args([
             "-q",
             "dependency:build-classpath",

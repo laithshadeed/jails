@@ -183,7 +183,7 @@ impl Layer {
     ];
 
     pub(crate) const fn key(self) -> &'static str {
-        use crate::generate::layout;
+        use crate::spec::layout;
         match self {
             Self::Domain => layout::DOMAIN,
             Self::App => layout::APP,
@@ -276,7 +276,7 @@ impl Project {
         let config = Config::load(root)?;
         Ok(Self {
             root: root.to_path_buf(),
-            base: crate::generate::base_package(root)?,
+            base: crate::spec::base_package(root)?,
             flavor: pom::flavor(&pom),
             java_release: pom::release_level(&pom),
             layers: Layers::from_config(&config),
@@ -305,7 +305,7 @@ impl Project {
         let config = Config::load(root)?;
         Ok(Self {
             root: root.to_path_buf(),
-            base: crate::generate::base_package(root).unwrap_or_default(),
+            base: crate::spec::base_package(root).unwrap_or_default(),
             flavor: pom::flavor(&pom),
             java_release: pom::release_level(&pom),
             layers: Layers::from_config(&config),
@@ -317,7 +317,7 @@ impl Project {
 
     /// Discover the containing Maven module and resolve it once.
     pub(crate) fn discover() -> Result<Self> {
-        Self::load(&crate::generate::find_project_root()?)
+        Self::load(&crate::spec::find_project_root()?)
     }
 
     pub(crate) fn root(&self) -> &Path {
@@ -360,7 +360,7 @@ impl Project {
 
     /// Resolve a package override, or the configured conventional layer.
     pub(crate) fn package(&self, layer: Layer, package: Option<&str>) -> String {
-        crate::generate::subpackage(
+        crate::spec::subpackage(
             &self.base,
             package.unwrap_or_else(|| self.layers.get(layer)),
         )
@@ -368,7 +368,7 @@ impl Project {
 
     /// Transitional string-key form for recipes not yet moved to [`Layer`].
     pub(crate) fn package_named(&self, default: &str, package: Option<&str>) -> String {
-        crate::generate::subpackage(&self.base, package.unwrap_or(self.layers.named(default)))
+        crate::spec::subpackage(&self.base, package.unwrap_or(self.layers.named(default)))
     }
 
     /// Whether the resolved pom declares this dependency.
@@ -390,12 +390,12 @@ impl Project {
     /// be read -- the conservative choice, since pre-4 package names still
     /// exist as deprecated aliases while the 4 ones simply do not exist before 4.
     pub(crate) fn boot_major(&self) -> u32 {
-        crate::generate::spring_boot_major_of(&self.pom)
+        crate::pom::spring_boot_major_of(&self.pom)
     }
 
     /// `@AutoConfigureMockMvc`'s package, moved in the same Boot 4 change.
     pub(crate) fn mockmvc_autoconfigure_import(&self) -> &'static str {
-        crate::generate::mockmvc_autoconfigure_import_for(self.boot_major())
+        crate::pom::mockmvc_autoconfigure_import_for(self.boot_major())
     }
 
     /// The components of a record that already exists in this project.
@@ -404,26 +404,26 @@ impl Project {
     /// disagreed about failure. `Project` owns the one window onto disk, so
     /// the recipes above it stay pure. Recipes reach it through
     /// `spring::Slice::record`, which knows which layer owns the resource.
-    pub(crate) fn record_in(&self, package: &str, ty: &str) -> Option<Vec<crate::generate::Field>> {
-        crate::generate::fields_from_record(&self.root, package, ty)
+    pub(crate) fn record_in(&self, package: &str, ty: &str) -> Option<Vec<crate::spec::Field>> {
+        crate::spec::fields_from_record(&self.root, package, ty)
     }
 
     pub(crate) fn main(&self, layer: Layer, package: Option<&str>) -> PathBuf {
-        crate::generate::main_dir(&self.root, &self.package(layer, package))
+        crate::spec::main_dir(&self.root, &self.package(layer, package))
     }
 
     pub(crate) fn test(&self, layer: Layer, package: Option<&str>) -> PathBuf {
-        crate::generate::test_dir(&self.root, &self.package(layer, package))
+        crate::spec::test_dir(&self.root, &self.package(layer, package))
     }
 
     /// Main/test source roots for a package already resolved by the caller.
     /// Transitional, for recipes mid-move off the layer strings.
     pub(crate) fn main_in(&self, package: &str) -> PathBuf {
-        crate::generate::main_dir(&self.root, package)
+        crate::spec::main_dir(&self.root, package)
     }
 
     pub(crate) fn test_in(&self, package: &str) -> PathBuf {
-        crate::generate::test_dir(&self.root, package)
+        crate::spec::test_dir(&self.root, package)
     }
 }
 
@@ -489,7 +489,7 @@ impl<'a> Slice<'a> {
     }
 
     /// The components of an already-generated record in its conventional home.
-    pub(crate) fn record(&self, layer: Layer, ty: &str) -> Option<Vec<crate::generate::Field>> {
+    pub(crate) fn record(&self, layer: Layer, ty: &str) -> Option<Vec<crate::spec::Field>> {
         self.project.record_in(&self.owned(layer), ty)
     }
 

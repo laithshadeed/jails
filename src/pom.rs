@@ -676,8 +676,85 @@ fn indent_block(body: &str, indent: &str) -> String {
     out
 }
 
+// ---------------------------------------------------------------------------
+// Facts the generated Java is shaped by
+// ---------------------------------------------------------------------------
+//
+// These read the pom and nothing else, and they moved here out of `generate`
+// so `model::Project` -- which caches the pom and answers both questions --
+// stops reaching up into the generator layer for them.
+
+/// The Spring Boot major version from the parent pom, defaulting to 3 when it
+/// cannot be read -- the conservative choice, since the pre-4 package names
+/// still exist as deprecated aliases in some builds while the 4 ones simply
+/// do not exist before 4.
+/// The same decision, taken from a pom already in hand.
+///
+/// `Project` caches the pom once; re-reading it per renderer is exactly the
+/// information leakage abstract.md §4.3 names.
+pub(crate) fn spring_boot_major_of(pom: &str) -> u32 {
+    let Some(idx) = pom.find("spring-boot-starter-parent") else {
+        return 3;
+    };
+    let after = &pom[idx..];
+    let Some(vstart) = after.find("<version>").map(|i| i + "<version>".len()) else {
+        return 3;
+    };
+    let Some(vend) = after[vstart..].find("</version>") else {
+        return 3;
+    };
+    after[vstart..vstart + vend]
+        .split('.')
+        .next()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(3)
+}
+
+/// `@AutoConfigureMockMvc`'s package, moved in the same Boot 4 change.
+///
+/// Reached through [`crate::model::Project::mockmvc_autoconfigure_import`],
+/// for the same reason as its `@WebMvcTest` sibling above.
+pub(crate) fn mockmvc_autoconfigure_import_for(boot_major: u32) -> &'static str {
+    const LEGACY: &str =
+        "org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc";
+    const CURRENT: &str = "org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc";
+    if boot_major >= 4 { CURRENT } else { LEGACY }
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn mockmvc_import_picks_legacy_package_for_boot_3() {
+        let pom = "<parent><artifactId>spring-boot-starter-parent</artifactId>\
+                   <version>3.3.4</version></parent>";
+        assert_eq!(
+            mockmvc_autoconfigure_import_for(spring_boot_major_of(pom)),
+            "org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc"
+        );
+    }
+
+    #[test]
+    fn mockmvc_import_picks_current_package_for_boot_4() {
+        let pom = "<parent><artifactId>spring-boot-starter-parent</artifactId>\
+                   <version>4.1.0</version></parent>";
+        assert_eq!(
+            mockmvc_autoconfigure_import_for(spring_boot_major_of(pom)),
+            "org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc"
+        );
+    }
+
+    #[test]
+    fn mockmvc_import_defaults_to_legacy_when_pom_is_unreadable() {
+        // No pom at all reads as the empty string, and the default is the
+        // pre-4 package: it still exists in Boot 4 builds as a deprecated
+        // alias, while the 4 spelling simply does not exist before 4.
+        assert_eq!(
+            mockmvc_autoconfigure_import_for(spring_boot_major_of("")),
+            "org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc"
+        );
+    }
+
     use super::*;
 
     const SPRING_POM: &str = r#"<project xmlns="http://maven.apache.org/POM/4.0.0">

@@ -18,9 +18,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use crate::Result;
-use crate::generate::find_project_root;
 use crate::java::{self, Target};
 use crate::json;
+use crate::spec::find_project_root;
 
 /// One HTTP route: verb, path, and the method behind it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]

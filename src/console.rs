@@ -83,7 +83,7 @@ pub fn console(no_build: bool, args: &[String], debug: bool) -> Result<()> {
         "jshell not on PATH -- it ships with the JDK (`JAVA_HOME/bin/jshell`)".to_string()
     })?;
     if !no_build {
-        let mut compile = Command::new(run::maven_binary(&root));
+        let mut compile = Command::new(crate::maven::binary(&root));
         compile.arg("compile").current_dir(&root);
         run::run_inherited(compile, debug)?;
     }
@@ -110,7 +110,7 @@ fn project_classpath(root: &Path, debug: bool) -> Result<String> {
         fs::create_dir_all(parent)
             .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
     }
-    let mut mvn = Command::new(run::maven_binary(root));
+    let mut mvn = Command::new(crate::maven::binary(root));
     mvn.args([
         "-q",
         "dependency:build-classpath",

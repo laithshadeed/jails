@@ -472,6 +472,127 @@ fn the_abstract_md_ladder_gates_are_ratchets_that_only_move_down() {
 /// Both directions. A name that has gone means the function was fixed or
 /// renamed and the reason is now permission for nothing; a reader that is not
 /// named is one nobody decided about.
+/// The layering the workspace split is built on, as a test, so it holds before
+/// the crates physically exist and keeps holding for module-level edges the
+/// compiler will never see.
+///
+/// Every module is assigned the crate it belongs to, and a module may only
+/// reference one at its own level or below. That is the whole property: the
+/// twelve-module strongly connected component this replaced -- `add`, `compose`,
+/// `config`, `generate`, `inspect`, `launcher`, `model`, `project`, `run`,
+/// `spring`, `sql`, `why` -- existed because everything below the generators
+/// reached up into `generate.rs` for `Field`, `layout` and `find_project_root`.
+/// A cycle is a boundary nothing can enforce, and `CLAUDE.md` records what an
+/// unenforced boundary produces: `inspect.rs` kept its own copy of the layer
+/// list and silently reported a renamed layer as "Other".
+///
+/// Same-level edges are allowed, including mutual ones: `generate` and `spring`
+/// call each other and ship in the same crate, which is a design decision
+/// rather than an accident.
+#[test]
+fn no_module_depends_on_a_layer_above_its_own() {
+    let mut offenders = Vec::new();
+    for file in sources() {
+        let Some(owner) = module_of(&file.path) else {
+            continue;
+        };
+        let Some(&level) = LAYERS.iter().find(|(m, _)| *m == owner).map(|(_, l)| l) else {
+            panic!(
+                "{} belongs to module `{owner}`, which is not assigned a layer in \
+                 `LAYERS`. Add it there in the same change that adds the module -- \
+                 an unassigned module is an unenforced boundary.",
+                file.path.display()
+            );
+        };
+        for (other, other_level) in LAYERS {
+            if *other == owner || *other_level <= level {
+                continue;
+            }
+            if file.production.contains(&format!("crate::{other}::"))
+                || file.production.contains(&format!("crate::{other};"))
+            {
+                offenders.push(format!(
+                    "  {} ({owner}, L{level}) -> {other} (L{other_level})",
+                    file.path.display()
+                ));
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "these modules reach up into a higher layer:\n{}\n\n\
+         Move what they need down to the layer that needs it, the way `Field`,\n\
+         `layout` and `find_project_root` moved from `generate` to `spec`. Do not\n\
+         fix this by moving the module up: that is how one module at a time\n\
+         becomes one cycle.",
+        offenders.join("\n")
+    );
+}
+
+/// Which crate each module ships in, lowest first. The 7-crate workspace this
+/// documents is `jails-support`, `jails-java`, `jails-spec`, `jails-project`,
+/// `jails-generate`, `jails-tooling` and the `jails-cli` binary.
+const LAYERS: &[(&str, usize)] = &[
+    // jails-support: no jails concepts at all -- writing, running, encoding.
+    ("apply", 0),
+    ("process", 0),
+    ("codemod", 0),
+    ("json", 0),
+    // jails-java: reading Java and rendering templates into it.
+    ("java", 1),
+    ("classfile", 1),
+    ("template", 1),
+    // jails-spec: what a jails project is -- where it is, how it is laid out,
+    // what a field means, and the closed CLI vocabularies.
+    ("build", 2),
+    ("spec", 2),
+    // jails-project: the resolved project and everything jails records about it.
+    ("pom", 3),
+    ("maven", 3),
+    ("config", 3),
+    ("compose", 3),
+    ("model", 3),
+    ("project", 3),
+    ("ledger", 3),
+    ("generated_files", 3),
+    ("inspect", 3),
+    // jails-generate: everything that decides what Java to write.
+    ("sql", 4),
+    ("generate", 4),
+    ("spring", 4),
+    ("add", 4),
+    // jails-tooling: commands that drive a toolchain or report on a project.
+    ("run", 5),
+    ("launcher", 5),
+    ("testd", 5),
+    ("affected", 5),
+    ("doctor", 5),
+    ("why", 5),
+    ("kafka", 5),
+    ("migrate", 5),
+    ("console", 5),
+    ("bench", 5),
+    ("surefire", 5),
+    ("lint", 5),
+    ("rename", 5),
+    ("source", 5),
+    ("explain", 5),
+    ("commands", 5),
+    // jails-cli: the binary and the whole-project lifecycle commands.
+    ("new", 6),
+    ("app", 6),
+    ("adopt", 6),
+    ("main", 6),
+];
+
+/// `src/spring/durable.rs` -> `spring`; `src/ledger.rs` -> `ledger`.
+fn module_of(path: &Path) -> Option<String> {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let rest = path.strip_prefix(&src).ok()?;
+    let first = rest.components().next()?.as_os_str().to_str()?;
+    Some(first.strip_suffix(".rs").unwrap_or(first).to_string())
+}
+
 #[test]
 fn every_fresh_read_of_the_pom_is_a_decision_somebody_wrote_down() {
     let src = sources();

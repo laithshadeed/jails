@@ -413,64 +413,6 @@ fn owned_record_sample(
     Some((format!("new {type_name}({})", args.join(", ")), imports))
 }
 
-/// Whether `<Type>.java` in this package declares an enum. Reading the file is
-/// the only honest way to know: jails has no type model, and guessing from the
-/// name would be worse than admitting ignorance.
-/// The components of a record that already exists on disk, as `Field`s.
-///
-/// This is what makes `jails g repo Reward` useful on a type you wrote
-/// yourself: the record already states every component and its type, so the
-/// adapter can be derived from it instead of being handed back as a pile of
-/// TODOs. Returns `None` when there is no such file, or when it declares no
-/// components -- both mean jails has nothing to derive from and should say
-/// so rather than invent columns.
-pub(crate) fn fields_from_record(root: &Path, pkg: &str, name: &str) -> Option<Vec<Field>> {
-    let path = main_dir(root, pkg).join(format!("{name}.java"));
-    let source = fs::read_to_string(path).ok()?;
-    let info = crate::java::type_info(&source)?;
-    if info.constructor_params.is_empty() {
-        return None;
-    }
-    let fields: Vec<Field> = info
-        .constructor_params
-        .iter()
-        .map(|param| {
-            // An `Optional<T>` component is jails' `?` optionality; the rest
-            // of the type resolves through the same table `parse_fields` uses,
-            // so a hand-written record and a generated one map identically.
-            let (java_type, optionality) = match param
-                .raw_type
-                .strip_prefix("Optional<")
-                .and_then(|rest| rest.strip_suffix('>'))
-            {
-                Some(inner) => (inner.to_string(), Optionality::Nullable),
-                None => (param.raw_type.clone(), Optionality::Required),
-            };
-            let builtin = builtin_by_java_name(&java_type);
-            Field {
-                name: param.name.clone(),
-                // The *inner* type, exactly as `parse_fields` records it:
-                // optionality lives in `optionality`, and `component_type`
-                // is the one place that wraps it back into an `Optional`.
-                // Two representations of the same thing is how a template
-                // that works for one source of fields breaks for the other.
-                java_type: java_type.clone(),
-                imports: builtin.and_then(|(_, import)| import).into_iter().collect(),
-                optionality,
-                // A record read off disk carries no table markers: the Java
-                // type cannot say what the column is. `g repo` on an existing
-                // record therefore derives no constraints, which is honest --
-                // guessing a primary key from a component called `id` is how
-                // a schema ends up with one nobody asked for.
-                constraints: Constraints::default(),
-                owned: builtin.is_none(),
-                collection: java_type.starts_with("List") || java_type.starts_with("Map"),
-            }
-        })
-        .collect();
-    Some(fields)
-}
-
 /// Resolve the fields for every generator that can be driven either from an
 /// explicit spec or from an existing domain record.
 ///
@@ -533,6 +475,9 @@ pub(crate) fn first_enum_constant(root: &Path, pkg: &str, type_name: &str) -> Op
         })
 }
 
+/// Whether `<Type>.java` in this package declares an enum. Reading the file is
+/// the only honest way to know: jails has no type model, and guessing from the
+/// name would be worse than admitting ignorance.
 pub(crate) fn is_enum_type(root: &Path, pkg: &str, type_name: &str) -> bool {
     fs::read_to_string(main_dir(root, pkg).join(format!("{type_name}.java")))
         .map(|src| src.contains(&format!("enum {type_name}")))

@@ -110,7 +110,7 @@ impl ProjectContext {
 
     fn to_json(&self) -> String {
         let config = crate::config::Config::load(&self.module.root).unwrap_or_default();
-        let base_package = crate::generate::base_package(&self.module.root).ok();
+        let base_package = crate::spec::base_package(&self.module.root).ok();
         let layout = config
             .layout_entries()
             .into_iter()
@@ -288,7 +288,7 @@ fn roots_to_workspace<'a>(module_root: &'a Path, workspace_root: &'a Path) -> Ve
 /// this one probed for `mvnd.cmd` on Windows and `run.rs` probed for a bare
 /// `mvnd`, so the reported command and the run command disagreed there.
 fn maven_command(workspace_root: &Path) -> PathBuf {
-    crate::run::maven_binary(workspace_root)
+    crate::maven::binary(workspace_root)
 }
 
 #[cfg(test)]

@@ -16,7 +16,7 @@
 //!
 //! Still deliberately not a general config file -- no template overrides, no
 //! plugin hooks, no per-kind paths. Both tables are **closed sets**: the layout
-//! keys are exactly the constants in [`crate::generate::layout`], and the
+//! keys are exactly the constants in [`crate::spec::layout`], and the
 //! capability names are derived from the `Capability` enum rather than
 //! restated. A name that is not one of them is a typo and is reported as such
 //! rather than ignored -- silently accepting `adapter = "persistence"`
@@ -44,7 +44,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use crate::generate::layout;
+use crate::spec::layout;
 
 /// The file, at the project root next to `pom.xml`.
 pub(crate) const FILE: &str = "jails.toml";
@@ -453,7 +453,7 @@ fn render_string_array(labels: &[String]) -> String {
 /// name this file rejects for no reason a reader could find.
 fn known_capabilities() -> Vec<&'static str> {
     use clap::ValueEnum;
-    crate::add::Capability::value_variants()
+    crate::spec::kind::Capability::value_variants()
         .iter()
         .map(|c| c.label())
         .collect()

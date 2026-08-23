@@ -14,7 +14,10 @@
 //!
 //! See `sql.rs` for the SQL/JDBC projection of the same spec.
 
-use super::*;
+use crate::Result;
+use crate::spec::paths::main_dir;
+use std::fs;
+use std::path::Path;
 
 #[derive(Clone, Debug)]
 pub struct Field {
@@ -97,7 +100,7 @@ pub enum Optionality {
 }
 
 /// One resolved type: how to spell it in Java, and what it needs imported.
-pub(super) struct Resolved {
+pub(crate) struct Resolved {
     java_type: String,
     imports: Vec<&'static str>,
     owned: bool,
@@ -109,7 +112,7 @@ pub(super) struct Resolved {
 /// Recursion is what makes the collection types worth having: `list<Match>`
 /// and `map<string,double>` cost nothing extra once the element goes through
 /// the same resolver as a bare field.
-pub(super) fn resolve_type(token: &str) -> Result<Resolved> {
+pub(crate) fn resolve_type(token: &str) -> Result<Resolved> {
     let token = token.trim();
 
     if let Some(inner) = generic_argument(token, "list") {
@@ -185,7 +188,7 @@ pub(super) fn resolve_type(token: &str) -> Result<Resolved> {
 /// A collection's element type, with a message that names the collection it
 /// came from -- `unknown field type 'nope'` alone is not much help when it
 /// came out of `list<nope>`.
-pub(super) fn resolve_element(token: &str, outer: &str) -> Result<Resolved> {
+pub(crate) fn resolve_element(token: &str, outer: &str) -> Result<Resolved> {
     let token = token.trim();
     if token.is_empty() {
         return Err(format!("'{outer}' is missing an element type"));
@@ -202,14 +205,14 @@ pub(super) fn resolve_element(token: &str, outer: &str) -> Result<Resolved> {
 /// The text inside `name<...>`, if the token is that shape. A bare `list` has
 /// no element type and is meaningless, so it is not matched here and falls
 /// through to the unknown-type error.
-pub(super) fn generic_argument<'a>(token: &'a str, name: &str) -> Option<&'a str> {
+pub(crate) fn generic_argument<'a>(token: &'a str, name: &str) -> Option<&'a str> {
     token
         .strip_prefix(name)?
         .strip_prefix('<')?
         .strip_suffix('>')
 }
 
-pub(super) fn field_type(token: &str) -> Result<(&'static str, Option<&'static str>)> {
+pub(crate) fn field_type(token: &str) -> Result<(&'static str, Option<&'static str>)> {
     match token {
         "string" | "text" => Ok(("String", None)),
         "int" | "integer" => Ok(("Integer", None)),
@@ -345,7 +348,7 @@ pub(crate) fn parse_fields(args: &[String]) -> Result<Vec<Field>> {
 /// error listing the real ones -- a typo that parsed as "no constraint" would
 /// produce a schema quietly missing the primary key someone thought they had
 /// asked for, which is the failure mode this whole feature exists to prevent.
-pub(super) fn parse_constraints<'a>(ty: &'a str, arg: &str) -> Result<(&'a str, Constraints)> {
+pub(crate) fn parse_constraints<'a>(ty: &'a str, arg: &str) -> Result<(&'a str, Constraints)> {
     const KNOWN: &str = "@pk, @unique, @index, @scope, @positive, @nonnegative";
     let mut constraints = Constraints::default();
     let mut rest = ty;
@@ -380,14 +383,14 @@ pub(super) fn parse_constraints<'a>(ty: &'a str, arg: &str) -> Result<(&'a str, 
 }
 
 /// Java types a numeric `check` can be emitted against.
-pub(super) fn is_numeric(java_type: &str) -> bool {
+pub(crate) fn is_numeric(java_type: &str) -> bool {
     matches!(
         java_type,
         "long" | "Long" | "int" | "Integer" | "double" | "Double" | "BigDecimal"
     )
 }
 
-pub(super) fn capitalize(s: &str) -> String {
+pub(crate) fn capitalize(s: &str) -> String {
     let mut chars = s.chars();
     match chars.next() {
         Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
@@ -395,59 +398,9 @@ pub(super) fn capitalize(s: &str) -> String {
     }
 }
 
-/// The suffix each kind appends to the name it is given.
-///
-/// `None` for kinds that use the name verbatim (`record`, `enum`, `scaffold`
-/// -- which spans several suffixes and cannot have one of them stripped).
-pub(super) fn kind_suffix(kind: ArtifactKind) -> Option<&'static str> {
-    match kind {
-        ArtifactKind::Controller => Some("Controller"),
-        ArtifactKind::Service => Some("Service"),
-        ArtifactKind::Repo => Some("Repository"),
-        ArtifactKind::Cli => Some("Cli"),
-        ArtifactKind::Job => Some("Job"),
-        ArtifactKind::DurableJob => Some("Job"),
-        ArtifactKind::HttpWorkflow => Some("Workflow"),
-        ArtifactKind::HttpSink => None,
-        ArtifactKind::Client => Some("Client"),
-        ArtifactKind::Fetcher => Some("Fetcher"),
-        ArtifactKind::Usecase => Some("UseCase"),
-        ArtifactKind::Query => Some("Query"),
-        ArtifactKind::Test => Some("Test"),
-        ArtifactKind::IntegrationTest => Some("IT"),
-        _ => None,
-    }
-}
-
-/// Drop the suffix a kind is about to add, when the name already carries it.
-///
-/// `jails g service RewardHistoryService` should write
-/// `RewardHistoryService.java`, not `RewardHistoryServiceService.java`. Naming
-/// the type the way it will appear in the source is the obvious thing to type
-/// -- it is what the file is called, and what every other reference to it
-/// says -- and jails punished it with a rename.
-///
-/// Only a *whole* trailing suffix counts, and never the entire name: `g
-/// service Service` means a type called `Service`, and stripping it would
-/// leave nothing to name the file after. `g repo Rewards` keeps its `s`
-/// because `Repository` is matched, not `y`.
-///
-/// **This has to run in `destroy` too.** `destroy` rebuilds the paths that
-/// `generate` wrote, so a normalisation applied to one and not the other
-/// leaves files behind that the tool then claims to have deleted.
-pub(super) fn strip_redundant_suffix(kind: ArtifactKind, name: &str) -> String {
-    match kind_suffix(kind) {
-        Some(suffix) => match name.strip_suffix(suffix) {
-            Some(stem) if !stem.is_empty() => stem.to_string(),
-            _ => name.to_string(),
-        },
-        None => name.to_string(),
-    }
-}
-
 /// Parse through boxed names so collection elements work, then use primitives
 /// for required record/value components where null is not a meaningful state.
-pub(super) fn unboxed(java_type: &str) -> &str {
+pub(crate) fn unboxed(java_type: &str) -> &str {
     match java_type {
         "Integer" => "int",
         "Long" => "long",
@@ -458,12 +411,12 @@ pub(super) fn unboxed(java_type: &str) -> &str {
 }
 
 /// A primitive component cannot be null, so it needs no runtime check.
-pub(super) fn is_reference_type(java_type: &str) -> bool {
+pub(crate) fn is_reference_type(java_type: &str) -> bool {
     !matches!(java_type, "int" | "long" | "boolean" | "double")
 }
 
 /// A component gets a null check when it *can* be null and was not marked `?`.
-pub(super) fn needs_null_check(field: &Field) -> bool {
+pub(crate) fn needs_null_check(field: &Field) -> bool {
     !field.collection
         && is_reference_type(unboxed(&field.java_type))
         && field.optionality != Optionality::Nullable
@@ -475,7 +428,7 @@ pub(super) fn needs_null_check(field: &Field) -> bool {
 /// list the caller passed in is not actually immutable, and a null bucket
 /// makes every consumer downstream write a null check that should never have
 /// been their problem.
-pub(super) fn collection_defaults(fields: &[Field]) -> String {
+pub(crate) fn collection_defaults(fields: &[Field]) -> String {
     fields
         .iter()
         .filter(|f| f.collection)
@@ -498,7 +451,7 @@ pub(super) fn collection_defaults(fields: &[Field]) -> String {
         .collect()
 }
 
-pub(super) fn has_collection(fields: &[Field]) -> bool {
+pub(crate) fn has_collection(fields: &[Field]) -> bool {
     fields.iter().any(|f| f.collection)
 }
 
@@ -510,7 +463,7 @@ pub(super) fn has_collection(fields: &[Field]) -> bool {
 /// at once, and the alternative -- a nullable component plus a differently
 /// named `Optional`-returning method, since an accessor cannot be overridden
 /// to change its return type -- is worse on every axis that matters here.
-pub(super) fn declared_type(field: &Field) -> String {
+pub(crate) fn declared_type(field: &Field) -> String {
     match field.optionality {
         Optionality::Nullable => format!("Optional<{}>", boxed(&field.java_type)),
         _ if field.collection => field.java_type.clone(),
@@ -519,7 +472,7 @@ pub(super) fn declared_type(field: &Field) -> String {
 }
 
 /// `Optional<int>` does not exist, so an optional primitive takes its wrapper.
-pub(super) fn boxed(java_type: &str) -> &str {
+pub(crate) fn boxed(java_type: &str) -> &str {
     match java_type {
         "int" => "Integer",
         "long" => "Long",
@@ -532,7 +485,7 @@ pub(super) fn boxed(java_type: &str) -> &str {
 /// An `Optional` component still has to be non-null itself; a null `Optional`
 /// is the one thing worse than a null value. Normalise rather than reject:
 /// `of(..., null)` meaning "absent" is what every caller expects.
-pub(super) fn optional_defaults(fields: &[Field]) -> String {
+pub(crate) fn optional_defaults(fields: &[Field]) -> String {
     fields
         .iter()
         .filter(|f| f.optionality == Optionality::Nullable)
@@ -545,19 +498,19 @@ pub(super) fn optional_defaults(fields: &[Field]) -> String {
         .collect()
 }
 
-pub(super) fn has_optional(fields: &[Field]) -> bool {
+pub(crate) fn has_optional(fields: &[Field]) -> bool {
     fields
         .iter()
         .any(|f| f.optionality == Optionality::Nullable)
 }
 
 /// Only `!` asks for the blank check, and only text can be blank.
-pub(super) fn needs_blank_check(field: &Field) -> bool {
+pub(crate) fn needs_blank_check(field: &Field) -> bool {
     field.optionality == Optionality::NonBlank && field.java_type == "String"
 }
 
 /// Trim-then-reject, in that order, so " " fails rather than sneaking past.
-pub(super) fn blank_checks(fields: &[&Field]) -> String {
+pub(crate) fn blank_checks(fields: &[&Field]) -> String {
     let mut out = String::new();
     for field in fields {
         out += &format!("        {0} = {0}.trim();\n", field.name);
@@ -567,4 +520,63 @@ pub(super) fn blank_checks(fields: &[&Field]) -> String {
         );
     }
     out
+}
+
+// ---------------------------------------------------------------------------
+// The same spec, read back off a record that already exists
+// ---------------------------------------------------------------------------
+
+/// The components of a record that already exists on disk, as `Field`s.
+///
+/// This is what makes `jails g repo Reward` useful on a type you wrote
+/// yourself: the record already states every component and its type, so the
+/// adapter can be derived from it instead of being handed back as a pile of
+/// TODOs. Returns `None` when there is no such file, or when it declares no
+/// components -- both mean jails has nothing to derive from and should say
+/// so rather than invent columns.
+pub(crate) fn fields_from_record(root: &Path, pkg: &str, name: &str) -> Option<Vec<Field>> {
+    let path = main_dir(root, pkg).join(format!("{name}.java"));
+    let source = fs::read_to_string(path).ok()?;
+    let info = crate::java::type_info(&source)?;
+    if info.constructor_params.is_empty() {
+        return None;
+    }
+    let fields: Vec<Field> = info
+        .constructor_params
+        .iter()
+        .map(|param| {
+            // An `Optional<T>` component is jails' `?` optionality; the rest
+            // of the type resolves through the same table `parse_fields` uses,
+            // so a hand-written record and a generated one map identically.
+            let (java_type, optionality) = match param
+                .raw_type
+                .strip_prefix("Optional<")
+                .and_then(|rest| rest.strip_suffix('>'))
+            {
+                Some(inner) => (inner.to_string(), Optionality::Nullable),
+                None => (param.raw_type.clone(), Optionality::Required),
+            };
+            let builtin = builtin_by_java_name(&java_type);
+            Field {
+                name: param.name.clone(),
+                // The *inner* type, exactly as `parse_fields` records it:
+                // optionality lives in `optionality`, and `component_type`
+                // is the one place that wraps it back into an `Optional`.
+                // Two representations of the same thing is how a template
+                // that works for one source of fields breaks for the other.
+                java_type: java_type.clone(),
+                imports: builtin.and_then(|(_, import)| import).into_iter().collect(),
+                optionality,
+                // A record read off disk carries no table markers: the Java
+                // type cannot say what the column is. `g repo` on an existing
+                // record therefore derives no constraints, which is honest --
+                // guessing a primary key from a component called `id` is how
+                // a schema ends up with one nobody asked for.
+                constraints: Constraints::default(),
+                owned: builtin.is_none(),
+                collection: java_type.starts_with("List") || java_type.starts_with("Map"),
+            }
+        })
+        .collect();
+    Some(fields)
 }

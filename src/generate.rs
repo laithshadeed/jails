@@ -5,8 +5,12 @@ use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
-mod field;
-pub(crate) use field::*;
+// The vocabulary below the generator layer. Re-exported so `generate::Field`
+// and `generate::main_dir` still resolve for every caller inside this layer;
+// what moved is where they are *defined*, and therefore which way the
+// dependency points. See `crate::spec`.
+pub(crate) use crate::spec::layout;
+pub(crate) use crate::spec::{field::*, paths::*};
 
 mod migration;
 pub(crate) use migration::*;
@@ -184,196 +188,10 @@ fn report_degraded_shape(project: &Project, change: &Change) {
     }
 }
 
-/// Walk up from the current directory looking for a project root.
-///
-/// **Any** build marker, not only `pom.xml` -- `plan.md` §12. Most of jails
-/// never touches Maven (`inspect.rs` and `rename.rs` contain zero occurrences
-/// of `pom`), so refusing at the door was refusing commands that would have
-/// worked. The commands that do need Maven refuse themselves, through
-/// `build::require_maven`, which is a refusal that can say what still works.
-///
-/// Nearest wins, so a Gradle sub-module inside a Maven reactor resolves to the
-/// sub-module -- the same rule as before, applied to more markers.
-pub(crate) fn find_project_root() -> Result<PathBuf> {
-    let mut dir = std::env::current_dir().map_err(|e| format!("failed to get cwd: {e}"))?;
-    loop {
-        if crate::build::detect(&dir) != crate::build::Build::Bare {
-            return Ok(dir);
-        }
-        if !dir.pop() {
-            return Err(
-                "no pom.xml (or build.gradle, settings.gradle, build.xml, BUILD.bazel) \
-                 in this or any parent directory"
-                    .to_string(),
-            );
-        }
-    }
-}
-
-/// Same logic as springgen.nvim's base_package(): read the package line off
-/// the project's *Application.java entry point rather than configuring it.
-pub(crate) fn base_package(root: &Path) -> Result<String> {
-    let src_root = root.join("src/main/java");
-    // Spring projects have a *Application.java entry point; `new-cli` ones
-    // have App.java, so fall back to whatever source file sits closest to the
-    // source root rather than failing on plain Maven projects.
-    let entry = find_application_file(&src_root)
-        .or_else(|| shallowest_java_file(&src_root))
-        .ok_or_else(|| {
-            "could not find a .java file under src/main/java to infer the base package".to_string()
-        })?;
-    let contents = fs::read_to_string(&entry)
-        .map_err(|e| format!("failed to read {}: {e}", entry.display()))?;
-    for line in contents.lines() {
-        let line = line.trim();
-        if let Some(rest) = line.strip_prefix("package ")
-            && let Some(pkg) = rest.trim().strip_suffix(';')
-        {
-            return Ok(pkg.trim().to_string());
-        }
-    }
-    Err(format!(
-        "no package declaration found in {}",
-        entry.display()
-    ))
-}
-
-fn find_application_file(dir: &Path) -> Option<PathBuf> {
-    let entries = fs::read_dir(dir).ok()?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            if let Some(found) = find_application_file(&path) {
-                return Some(found);
-            }
-        } else if path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|n| n.ends_with("Application.java"))
-        {
-            return Some(path);
-        }
-    }
-    None
-}
-
-/// The .java file with the fewest path segments below `dir`, i.e. the one in
-/// the outermost package -- for a plain Maven project that is the base package
-/// by construction.
-fn shallowest_java_file(dir: &Path) -> Option<PathBuf> {
-    let mut best: Option<(usize, PathBuf)> = None;
-    let mut stack = vec![(dir.to_path_buf(), 0usize)];
-    while let Some((current, depth)) = stack.pop() {
-        for entry in fs::read_dir(&current).ok()?.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push((path, depth + 1));
-            } else if path.extension().is_some_and(|e| e == "java") {
-                let better = best.as_ref().is_none_or(|(d, _)| depth < *d);
-                if better {
-                    best = Some((depth, path));
-                }
-            }
-        }
-    }
-    best.map(|(_, path)| path)
-}
-
-/// The Spring Boot major version from the parent pom, defaulting to 3 when it
-/// cannot be read -- the conservative choice, since the pre-4 package names
-/// still exist as deprecated aliases in some builds while the 4 ones simply
-/// do not exist before 4.
-/// The same decision, taken from a pom already in hand.
-///
-/// `Project` caches the pom once; re-reading it per renderer is exactly the
-/// information leakage abstract.md §4.3 names.
-pub(crate) fn spring_boot_major_of(pom: &str) -> u32 {
-    let Some(idx) = pom.find("spring-boot-starter-parent") else {
-        return 3;
-    };
-    let after = &pom[idx..];
-    let Some(vstart) = after.find("<version>").map(|i| i + "<version>".len()) else {
-        return 3;
-    };
-    let Some(vend) = after[vstart..].find("</version>") else {
-        return 3;
-    };
-    after[vstart..vstart + vend]
-        .split('.')
-        .next()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(3)
-}
-
-/// `@AutoConfigureMockMvc`'s package, moved in the same Boot 4 change.
-///
-/// Reached through [`crate::model::Project::mockmvc_autoconfigure_import`],
-/// for the same reason as its `@WebMvcTest` sibling above.
-pub(crate) fn mockmvc_autoconfigure_import_for(boot_major: u32) -> &'static str {
-    const LEGACY: &str =
-        "org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc";
-    const CURRENT: &str = "org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc";
-    if boot_major >= 4 { CURRENT } else { LEGACY }
-}
-
-/// Where each kind of artifact lives, relative to the project's base package.
-///
-/// A generated project should look like one a person laid out, and nobody
-/// lays out thirty classes as siblings of `App.java`. The names are the ones
-/// the Java ecosystem already uses, so the layout reads as conventional rather
-/// than as jails' invention -- and every one of them is a package a human
-/// would have created by hand on about the third file.
-///
-/// This is a default, not a policy: `--package` overrides it, and `--package
-/// ''` puts everything back in the base package for a project small enough not
-/// to want the ceremony.
-pub(crate) mod layout {
-    pub const DOMAIN: &str = "domain";
-    /// Ports -- the interfaces the application depends on, kept free of the
-    /// technology that implements them.
-    pub const APP: &str = "app";
-    pub const SERVICE: &str = "service";
-    pub const WEB: &str = "web";
-    pub const CLI: &str = "cli";
-    pub const ADAPTERS: &str = "adapters";
-    pub const API: &str = "api";
-    pub const TESTKIT: &str = "testkit";
-    /// Outbound HTTP: interfaces this application calls, kept apart from
-    /// `api` (what it serves) so the direction of a dependency is visible
-    /// from the package name alone.
-    pub const CLIENTS: &str = "clients";
-    /// Scheduled work.
-    pub const JOBS: &str = "jobs";
-    /// Events published to and consumed from a broker.
-    pub const MESSAGING: &str = "messaging";
-}
-
 /// Spring-only generator kinds refuse politely rather than writing code that
 /// cannot compile.
 fn require_spring_project(project: &Project, kind: &str) -> Result<()> {
     crate::spring::require_spring(project.flavor(), kind)
-}
-
-/// `com.example.demo` + `domain` -> `com.example.demo.domain`. An empty
-/// subpackage leaves the base package alone.
-pub(crate) fn subpackage(base: &str, sub: &str) -> String {
-    if sub.is_empty() {
-        base.to_string()
-    } else {
-        format!("{base}.{sub}")
-    }
-}
-
-fn pkg_dir(pkg: &str) -> String {
-    pkg.replace('.', "/")
-}
-
-pub(crate) fn main_dir(root: &Path, pkg: &str) -> PathBuf {
-    root.join("src/main/java").join(pkg_dir(pkg))
-}
-
-pub(crate) fn test_dir(root: &Path, pkg: &str) -> PathBuf {
-    root.join("src/test/java").join(pkg_dir(pkg))
 }
 
 pub fn generate_with_timestamps(
@@ -640,13 +458,60 @@ fn generate(
     )
 }
 
-/// An `import` line for `{from}.{class}`, or nothing at all when the two
-/// packages are the same -- importing a sibling is a compile error.
-pub(crate) fn import_of(user: &str, owner: &str, class: &str) -> String {
-    if user == owner {
-        String::new()
-    } else {
-        format!("import {owner}.{class};\n")
+// ---------------------------------------------------------------------------
+// Names, per kind
+// ---------------------------------------------------------------------------
+//
+// These are about `ArtifactKind`, not about a field, so they stayed at this
+// layer when the field spec moved down to `crate::spec`.
+
+/// The suffix each kind appends to the name it is given.
+///
+/// `None` for kinds that use the name verbatim (`record`, `enum`, `scaffold`
+/// -- which spans several suffixes and cannot have one of them stripped).
+pub(crate) fn kind_suffix(kind: ArtifactKind) -> Option<&'static str> {
+    match kind {
+        ArtifactKind::Controller => Some("Controller"),
+        ArtifactKind::Service => Some("Service"),
+        ArtifactKind::Repo => Some("Repository"),
+        ArtifactKind::Cli => Some("Cli"),
+        ArtifactKind::Job => Some("Job"),
+        ArtifactKind::DurableJob => Some("Job"),
+        ArtifactKind::HttpWorkflow => Some("Workflow"),
+        ArtifactKind::HttpSink => None,
+        ArtifactKind::Client => Some("Client"),
+        ArtifactKind::Fetcher => Some("Fetcher"),
+        ArtifactKind::Usecase => Some("UseCase"),
+        ArtifactKind::Query => Some("Query"),
+        ArtifactKind::Test => Some("Test"),
+        ArtifactKind::IntegrationTest => Some("IT"),
+        _ => None,
+    }
+}
+
+/// Drop the suffix a kind is about to add, when the name already carries it.
+///
+/// `jails g service RewardHistoryService` should write
+/// `RewardHistoryService.java`, not `RewardHistoryServiceService.java`. Naming
+/// the type the way it will appear in the source is the obvious thing to type
+/// -- it is what the file is called, and what every other reference to it
+/// says -- and jails punished it with a rename.
+///
+/// Only a *whole* trailing suffix counts, and never the entire name: `g
+/// service Service` means a type called `Service`, and stripping it would
+/// leave nothing to name the file after. `g repo Rewards` keeps its `s`
+/// because `Repository` is matched, not `y`.
+///
+/// **This has to run in `destroy` too.** `destroy` rebuilds the paths that
+/// `generate` wrote, so a normalisation applied to one and not the other
+/// leaves files behind that the tool then claims to have deleted.
+pub(crate) fn strip_redundant_suffix(kind: ArtifactKind, name: &str) -> String {
+    match kind_suffix(kind) {
+        Some(suffix) => match name.strip_suffix(suffix) {
+            Some(stem) if !stem.is_empty() => stem.to_string(),
+            _ => name.to_string(),
+        },
+        None => name.to_string(),
     }
 }
 
@@ -1330,49 +1195,6 @@ mod tests {
         let root = scratch("no-application");
         fs::create_dir_all(root.join("src/main/java")).unwrap();
         assert!(base_package(&root).is_err());
-    }
-
-    #[test]
-    fn mockmvc_import_picks_legacy_package_for_boot_3() {
-        let root = scratch("boot3");
-        fs::write(
-            root.join("pom.xml"),
-            "<parent><artifactId>spring-boot-starter-parent</artifactId><version>3.3.4</version></parent>",
-        )
-        .unwrap();
-        assert_eq!(
-            mockmvc_autoconfigure_import_for(spring_boot_major_of(
-                &fs::read_to_string(root.join("pom.xml")).unwrap_or_default(),
-            )),
-            "org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc"
-        );
-    }
-
-    #[test]
-    fn mockmvc_import_picks_current_package_for_boot_4() {
-        let root = scratch("boot4");
-        fs::write(
-            root.join("pom.xml"),
-            "<parent><artifactId>spring-boot-starter-parent</artifactId><version>4.1.0</version></parent>",
-        )
-        .unwrap();
-        assert_eq!(
-            mockmvc_autoconfigure_import_for(spring_boot_major_of(
-                &fs::read_to_string(root.join("pom.xml")).unwrap_or_default(),
-            )),
-            "org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc"
-        );
-    }
-
-    #[test]
-    fn mockmvc_import_defaults_to_legacy_when_pom_is_unreadable() {
-        let root = scratch("no-pom");
-        assert_eq!(
-            mockmvc_autoconfigure_import_for(spring_boot_major_of(
-                &fs::read_to_string(root.join("pom.xml")).unwrap_or_default(),
-            )),
-            "org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc"
-        );
     }
 
     #[test]

@@ -27,37 +27,6 @@ pub(crate) fn find_on_path(bin: &str) -> bool {
     crate::process::on_path(bin)
 }
 
-/// The name mvnd is installed under. On Windows it ships as `mvnd.cmd`, so
-/// probing for a bare `mvnd` there finds nothing and silently falls back to
-/// `mvn`.
-///
-/// This is the whole reason there is one resolver: `project.rs` had its own
-/// copy that got this right while this one got it wrong, so on Windows
-/// `jails about` reported a Maven command that `jails test` would not have
-/// used -- and this path would then have tried to execute a name that is not
-/// on disk.
-fn mvnd_binary() -> &'static str {
-    if cfg!(windows) { "mvnd.cmd" } else { "mvnd" }
-}
-
-/// Prefer the project's wrapper so its Maven version is reproducible. A
-/// project without one keeps the fast mvnd/system-Maven fallback.
-///
-/// The one place this is decided. `project.rs` reports it, `run.rs` executes
-/// it, and the two disagreeing is how you get a tool that describes a build
-/// it does not run.
-pub(crate) fn maven_binary(root: &Path) -> PathBuf {
-    let wrapper = root.join(if cfg!(windows) { "mvnw.cmd" } else { "mvnw" });
-    if wrapper.is_file() {
-        return wrapper;
-    }
-    if find_on_path(mvnd_binary()) {
-        PathBuf::from(mvnd_binary())
-    } else {
-        PathBuf::from("mvn")
-    }
-}
-
 /// Run a command with our stdio, failing on a non-zero exit.
 ///
 /// A thin adapter over the one executor: the callers here build a
@@ -287,7 +256,7 @@ pub fn test(filter: Option<&str>, options: TestOptions, debug: bool) -> Result<(
         }
     }
 
-    let mut cmd = Command::new(maven_binary(&root));
+    let mut cmd = Command::new(crate::maven::binary(&root));
     let mut rerun_hint: Option<String> = None;
     if let Some(f) = filter {
         let resolved = resolve_filter(&root, f)?;
@@ -504,14 +473,14 @@ fn fast_path_refusal(root: &Path, options: &TestOptions) -> Option<String> {
 
 pub fn build(debug: bool) -> Result<()> {
     let root = maven_root("build")?;
-    let mut cmd = Command::new(maven_binary(&root));
+    let mut cmd = Command::new(crate::maven::binary(&root));
     cmd.arg("package").current_dir(&root);
     run_inherited(cmd, debug)
 }
 
 pub fn clean(debug: bool) -> Result<()> {
     let root = maven_root("clean")?;
-    let mut cmd = Command::new(maven_binary(&root));
+    let mut cmd = Command::new(crate::maven::binary(&root));
     cmd.arg("clean").current_dir(&root);
     run_inherited(cmd, debug)
 }
@@ -522,7 +491,7 @@ pub fn clean(debug: bool) -> Result<()> {
 pub fn fmt(debug: bool) -> Result<()> {
     let root = maven_root("fmt")?;
     require_spotless(&root)?;
-    let mut cmd = Command::new(maven_binary(&root));
+    let mut cmd = Command::new(crate::maven::binary(&root));
     cmd.args(["spotless:apply"]).current_dir(&root);
     run_inherited(cmd, debug)
 }
@@ -534,15 +503,6 @@ pub fn fmt(debug: bool) -> Result<()> {
 ///
 /// Best-effort: a project without Maven on PATH is not a reason to fail the
 /// capability, it just means the first `jails fmt` has work to do.
-pub fn fmt_quietly(root: &Path) -> bool {
-    Command::new(maven_binary(root))
-        .args(["-q", "spotless:apply"])
-        .current_dir(root)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
 /// Everything the build has to say: format check, compile, tests. `verify`
 /// rather than `test` because that is the phase `add format` binds to.
 /// `clean` first: Maven's incremental compile does not delete stale `.class`
@@ -550,7 +510,7 @@ pub fn fmt_quietly(root: &Path) -> bool {
 /// `target/` and fail the check for a file that is no longer in the tree.
 pub fn check(debug: bool) -> Result<()> {
     let root = maven_root("check")?;
-    let mut cmd = Command::new(maven_binary(&root));
+    let mut cmd = Command::new(crate::maven::binary(&root));
     cmd.args(["clean", "verify"]).current_dir(&root);
     run_inherited(cmd, debug)
 }
@@ -559,7 +519,7 @@ pub fn check(debug: bool) -> Result<()> {
 /// forwarded exactly; the project wrapper is still preferred.
 pub fn mvn(args: &[String], debug: bool) -> Result<()> {
     let root = maven_root("mvn")?;
-    let mut cmd = Command::new(maven_binary(&root));
+    let mut cmd = Command::new(crate::maven::binary(&root));
     cmd.args(args).current_dir(&root);
     run_inherited(cmd, debug)
 }
@@ -593,7 +553,7 @@ pub fn watch(debug: bool) -> Result<()> {
         );
     }
 
-    let mut run_cmd = Command::new(maven_binary(&root));
+    let mut run_cmd = Command::new(crate::maven::binary(&root));
     run_cmd.arg("spring-boot:run").current_dir(&root);
     // The same treatment `jails run` gets, and for the same reason:
     // `mvn spring-boot:run` exits 0 over an application that never started,
@@ -634,7 +594,7 @@ pub fn watch(debug: bool) -> Result<()> {
             println!("jails: {change}");
         }
         println!("jails: recompiling...");
-        let mut compile = Command::new(maven_binary(&root));
+        let mut compile = Command::new(crate::maven::binary(&root));
         compile.arg("compile").current_dir(&root);
         if debug {
             crate::debug_cmd(&compile);
@@ -747,7 +707,7 @@ pub fn run(no_build: bool, args: &[String], debug: bool) -> Result<()> {
             run.args(["-jar"]).arg(&jar).args(args).current_dir(&root);
             return run_inherited(run, debug);
         }
-        let mut cmd = Command::new(maven_binary(&root));
+        let mut cmd = Command::new(crate::maven::binary(&root));
         cmd.arg("spring-boot:run").current_dir(&root);
         // spring-boot:run forks a JVM, so argv cannot simply be appended: the
         // plugin takes them as one space-joined property instead.
@@ -766,7 +726,7 @@ pub fn run(no_build: bool, args: &[String], debug: bool) -> Result<()> {
     };
 
     if !no_build {
-        let mut compile = Command::new(maven_binary(&root));
+        let mut compile = Command::new(crate::maven::binary(&root));
         compile.arg("compile").current_dir(&root);
         run_inherited(compile, debug)?;
     } else if !root
@@ -1023,56 +983,6 @@ mod tests {
         let (pkg, class_name) = find_main_class(&root).unwrap();
         assert_eq!(pkg, "");
         assert_eq!(class_name, "Cli");
-    }
-}
-
-#[cfg(test)]
-mod maven_resolution_tests {
-    use super::*;
-
-    /// mvnd ships as `mvnd.cmd` on Windows. `run.rs` probed for a bare
-    /// `mvnd` while `project.rs` probed for `mvnd.cmd`, so on Windows the
-    /// command `jails about` reported was not the one `jails test` would run
-    /// -- and this side would have tried to execute a name not on disk.
-    #[test]
-    fn the_mvnd_binary_carries_its_platform_extension() {
-        if cfg!(windows) {
-            assert_eq!(mvnd_binary(), "mvnd.cmd");
-        } else {
-            assert_eq!(mvnd_binary(), "mvnd");
-        }
-    }
-
-    /// The wrapper wins over anything on PATH, so a project's pinned Maven
-    /// version is what runs.
-    #[test]
-    fn the_project_wrapper_is_preferred_over_path() {
-        let dir = std::env::temp_dir().join(format!(
-            "jails-maven-binary-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(&dir).unwrap();
-
-        // No wrapper: falls back to something on PATH, never to a wrapper path.
-        assert!(!maven_binary(&dir).starts_with(&dir));
-
-        let wrapper = dir.join(if cfg!(windows) { "mvnw.cmd" } else { "mvnw" });
-        std::fs::write(&wrapper, "#!/bin/sh\n").unwrap();
-        assert_eq!(maven_binary(&dir), wrapper);
-
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    /// `about` must report the command that will actually be executed.
-    #[test]
-    fn about_and_run_resolve_the_same_maven() {
-        let root = std::env::temp_dir();
-        assert_eq!(
-            crate::project::maven_command_for_tests(&root),
-            maven_binary(&root)
-        );
     }
 }
 

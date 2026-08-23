@@ -23,7 +23,7 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 pub(super) fn maven_check(root: &Path) -> Check {
-    let binary = run::maven_binary(root);
+    let binary = crate::maven::binary(root);
     let label = binary.display().to_string();
     if binary.is_absolute() || label.starts_with("./") {
         return Check::new(Status::Ok, "maven", format!("project wrapper ({label})"));

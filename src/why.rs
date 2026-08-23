@@ -23,7 +23,6 @@ use std::process::{Command, Stdio};
 use crate::Result;
 use crate::generate::find_project_root;
 use crate::pom;
-use crate::run;
 
 /// One recognised failure.
 struct Diagnosis {
@@ -636,7 +635,7 @@ fn read_input(input: Option<&Path>, debug: bool) -> Result<String> {
 fn run_and_capture(debug: bool) -> Result<String> {
     let root = find_project_root()?;
     let pom_text = pom::read(&root)?;
-    let mut cmd = Command::new(run::maven_binary(&root));
+    let mut cmd = Command::new(crate::maven::binary(&root));
     match pom::flavor(&pom_text) {
         pom::Flavor::SpringBoot => {
             cmd.arg("spring-boot:run");

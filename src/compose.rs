@@ -12,7 +12,7 @@
 //! does the same without going through jails.
 
 use crate::Result;
-use crate::generate::find_project_root;
+use crate::spec::find_project_root;
 use clap::ValueEnum;
 use std::path::{Path, PathBuf};
 use std::process::Command;
