@@ -31,6 +31,7 @@
 //! cross it.
 
 use crate::Result;
+use crate::affected;
 use crate::build;
 use crate::launcher;
 use crate::model::Project;
@@ -56,6 +57,8 @@ const START_TIMEOUT: Duration = Duration::from_secs(90);
 pub(crate) enum Action {
     /// Run the tests this filter selects, starting a daemon if needed.
     Run(Option<String>),
+    /// Run only the tests reachable from what has changed in the working tree.
+    Affected,
     /// Stop this project's daemon, if one is running.
     Stop,
     /// Say whether one is running, and where.
@@ -84,11 +87,20 @@ pub(crate) fn testd(action: Action, debug: bool) -> Result<()> {
             }
             Ok(())
         }
-        Action::Run(filter) => run(&project, &socket, filter.as_deref(), debug),
+        Action::Run(filter) => run(&project, &socket, Wanted::Filter(filter), debug),
+        Action::Affected => run(&project, &socket, Wanted::Affected, debug),
     }
 }
 
-fn run(project: &Project, socket: &Path, filter: Option<&str>, debug: bool) -> Result<()> {
+/// What this run should execute.
+enum Wanted {
+    /// A `jails test`-style filter, or everything when it is `None`.
+    Filter(Option<String>),
+    /// Whatever the working tree's changes can reach.
+    Affected,
+}
+
+fn run(project: &Project, socket: &Path, wanted: Wanted, debug: bool) -> Result<()> {
     let root = project.root();
 
     // The same refusal `--fast` makes, for the same reason: a run over classes
@@ -99,9 +111,17 @@ fn run(project: &Project, socket: &Path, filter: Option<&str>, debug: bool) -> R
             stale.explain()
         ));
     }
-    let resolved = match filter {
-        Some(filter) => match launcher::fully_qualified(root, filter) {
-            Some(name) => Some(name),
+    // Decided before the daemon is touched: `--affected` can conclude there is
+    // nothing to run, and starting a JVM to be told that is pure waste.
+    let selectors = match &wanted {
+        Wanted::Filter(None) => {
+            // Nothing selected means "everything the output directories hold",
+            // which is what `--class-path` already names -- so the scan is
+            // over exactly the classpath JUnit was handed, and no wider.
+            vec!["--scan-class-path".to_string()]
+        }
+        Wanted::Filter(Some(filter)) => match launcher::fully_qualified(root, filter) {
+            Some(name) => launcher::selectors(Some(&name)),
             None => {
                 return Err(format!(
                     "testd not taken: could not resolve `{filter}` to a fully qualified name.\n  \
@@ -109,20 +129,36 @@ fn run(project: &Project, socket: &Path, filter: Option<&str>, debug: bool) -> R
                 ));
             }
         },
-        None => None,
+        Wanted::Affected => match affected::select(root, debug) {
+            affected::Selection::Nothing => {
+                println!("testd: nothing has changed under src/main/java or src/test/java");
+                return Ok(());
+            }
+            affected::Selection::Everything(reason) => {
+                // Loud, and it says which of the unknowns it hit. A selector
+                // that silently widened would be indistinguishable from one
+                // that was simply not selecting.
+                println!("testd: running everything -- {reason}");
+                vec!["--scan-class-path".to_string()]
+            }
+            affected::Selection::Tests(tests) => {
+                println!(
+                    "testd: {} test class(es) reachable from the working tree's changes",
+                    tests.len()
+                );
+                tests
+                    .iter()
+                    .map(|name| format!("--select-class={name}"))
+                    .collect()
+            }
+        },
     };
 
     let classpath = launcher::test_classpath(root, debug)?;
     ensure_running(project, socket, &classpath, debug)?;
 
     let mut message = vec!["RUN".to_string()];
-    match &resolved {
-        Some(name) => message.extend(launcher::selectors(Some(name))),
-        // Nothing selected means "everything the output directories hold",
-        // which is what `--class-path` already names -- so the scan is over
-        // exactly the classpath JUnit was handed, and no wider.
-        None => message.push("--scan-class-path".into()),
-    }
+    message.extend(selectors);
     message.push("--details=testfeed".into());
 
     let (output, code) = request(socket, &message)?;

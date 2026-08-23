@@ -1,9 +1,11 @@
 mod add;
 mod adopt;
+mod affected;
 mod app;
 mod apply;
 mod bench;
 mod build;
+mod classfile;
 mod codemod;
 mod commands;
 mod compose;
@@ -489,6 +491,13 @@ enum Command {
     /// language server already writes `target/classes` on save (§19.5).
     Testd {
         filter: Option<String>,
+        /// Run only the tests reachable from what has changed in the working
+        /// tree, via a reverse-dependency index built from the constant pools
+        /// already in `target/`. Widens to everything, loudly, whenever it
+        /// cannot know -- no git, a source with no compiled class, nothing
+        /// compiled yet
+        #[arg(long, conflicts_with_all = ["filter", "stop", "status"])]
+        affected: bool,
         /// Stop this project's daemon
         #[arg(long, conflicts_with_all = ["status", "filter"])]
         stop: bool,
@@ -740,6 +749,7 @@ fn main() -> std::process::ExitCode {
         ),
         Command::Testd {
             filter,
+            affected,
             stop,
             status,
         } => testd::testd(
@@ -747,6 +757,8 @@ fn main() -> std::process::ExitCode {
                 testd::Action::Stop
             } else if status {
                 testd::Action::Status
+            } else if affected {
+                testd::Action::Affected
             } else {
                 testd::Action::Run(filter)
             },

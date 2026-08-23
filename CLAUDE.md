@@ -223,6 +223,22 @@ to build next and why. Do not add proposals here.
   And it is **a Java program, not a jails jar**: the daemon is a template
   compiled by `java`'s single-file source launcher at start-up, and nothing
   about it enters the project.
+- `src/affected.rs` + `src/classfile.rs` — `jails testd --affected`: a reverse
+  dependency index built from the constant pools already in `target/`.
+  `classfile.rs` is **the smallest reader that can answer "which types does
+  this class name"** and must not grow into a class-file parser (same rule as
+  `java.rs`): constant pool only, `CONSTANT_Class` plus a descriptor scan of
+  every `CONSTANT_Utf8`, because a type named only in a signature is still one
+  whose change breaks the class. **`CONSTANT_Long` and `CONSTANT_Double` take
+  two pool slots**, and a reader advancing by one lands on tags that are
+  usually valid — so it produces a plausible wrong answer rather than an error.
+  Verified against 2,957 real class files under `deps/spring-boot`, not only
+  synthetic pools. `affected.rs`'s rule is **unknown widens**: no git, a source
+  with no compiled class, nothing compiled — each returns `Everything` with the
+  reason printed. "Changed" is what git reports rather than a marker jails
+  writes, because a marker makes the same command select differently on two
+  consecutive runs with no edit between, and after a red run with nothing
+  changed it would select nothing and report green.
 - `src/run.rs` — `test`/`build`/`clean`/`run`, shells to `mvn`/`mvnd`. `run`/`watch`
   start compose services first when `compose.yaml` is present.
 - `src/console.rs` — `db`/`dbconsole` (`psql` or `sqlite3`) and `console`/`c`

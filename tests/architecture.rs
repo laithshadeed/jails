@@ -76,7 +76,18 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // disease was rewritten instead -- `pom_moved_since` takes the
                 // pom it stats, not the root it would have had to derive it
                 // from -- so this is one rise, not two.
-                ceiling: 143,
+                //
+                // 143 -> 145 for `affected::select` and its
+                // `affected::changed_sources`. Same category once more: one
+                // walks `target/` for class files and the source tree for
+                // paths, the other runs `git status` with that directory as
+                // its cwd. Neither reads a fact out of the project, so a
+                // `Project` would hand them exactly the re-derivation this
+                // gate is against. Worth saying plainly: three of the last
+                // five rises here are directory-walkers, which is the pattern
+                // §8.0 predicted would keep the raw count away from zero and
+                // is why the target was withdrawn rather than chased.
+                ceiling: 145,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;

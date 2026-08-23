@@ -880,10 +880,30 @@ Two departures from what was planned here, both from measurements taken since:
 **That classloader cost is measured** (§19.2): 0.04 ms to construct, ~0.5 ms per test class to
 populate, against the 0.6 s of cold `java` it removes. Not the obstacle.
 
-**Step 3, `--affected`** — a reverse-dependency index from `.class` constant
-pools: ~120 lines (skip entries by tag width — `CONSTANT_Long`/`Double` take
-**two** slots — keep `Utf8` and `Class`, scan `Utf8` for `L<pkg>/<Class>;`).
-Blunt rules for Spring; **unknown ⇒ run**; exclude `*IT` by default.
+**Step 3, `--affected`** — **shipped**, and the sketch was right about the
+format: `CONSTANT_Long`/`Double` take two slots, and the reader keeps `Class`
+plus a descriptor scan of every `Utf8`. `src/classfile.rs` is that reader and
+is held to `java.rs`'s rule — the smallest thing that answers one question,
+never a class-file parser. It is verified against **2,957 real class files**
+under `deps/spring-boot` as well as hand-built pools, because a synthetic pool
+proves the arithmetic and not that the arithmetic was about the right format.
+
+`src/affected.rs` inverts that into a reverse-dependency graph over the
+project's own types only, and reachability is transitive: a change to a record
+selects the test three hops away. Measured on an eleven-test project, a change
+to `Money` selects two classes and a change to `Order` selects one.
+
+**"Changed" is what git reports, not a marker jails writes.** A marker makes
+the selection depend on when jails last ran, so the same command selects
+differently on two consecutive invocations with no edit between them — and
+after a red run with nothing changed it would select nothing and report green.
+
+**Unknown ⇒ run held, and it is what the integration test pins**: no git, a
+source with no compiled class, nothing compiled yet. Each prints its reason,
+because a selector that silently widened is indistinguishable from one that
+was not selecting. What it cannot see — reflection, component scan, a resource
+file — is stated rather than guessed at, which is the other half of why
+`jails check` stays `mvn clean verify`.
 
 **The correctness price:** compiling only the changed file is unsound — a
 removed method leaves a stale caller. Which is why **`jails check` stays `mvn
@@ -1355,7 +1375,7 @@ yet — which is a healthier list than the one it replaces.
 | ~~10~~ | ~~`jails new <name> --app <manifest>`~~ — **done.** `new` and `new-cli` both take `--app`, seeding `.jails/app.toml` and applying it against the project just created. Verified on App D: one command from an empty directory to `mvn clean verify` green. Needed `add::add_in`, `add::preflight_in` and `ResolvedIntent::apply_to` so nothing in the apply path reads the process CWD | §11 | S | A B C D |
 | 11 | **§6.2 F** — one descriptor per kind. **Most of what it was going to buy has since been bought another way, and the headline property is already enforced**: `[golden]` was to make it "impossible to add a kind without a snapshot test", and `every_kind_and_capability_has_a_golden_scenario` does that today — verified by deleting the `search` scenario, which failed with *"1 thing(s) jails can generate have no golden scenario: kind `search`"*. `destroy`'s paths are derived from the generator now (rungs 4–5), which cannot drift from it at all, where a descriptor still could; the Lua lists are gone, deleted by `commands --json`. What is left unique to F is generating the `ArtifactKind` enum, clap aliases, `--help` and the README table from one file — real, but a `build.rs` and a week for the smaller half of the original case | §6 | L, and re-price it first | — |
 | ~~12~~ | ~~§12 marker widening + `jails adopt`~~ — **done.** `src/build.rs` names the build tool without reading it; `find_project_root` takes any recognised marker, nearest wins; ten Maven-inherent commands refuse through `require_maven` naming what still works; `generate` states which shape a missing pom chose and which dependencies it could not splice; `doctor` leads with the real build tool instead of reporting on an absent pom. `jails adopt` writes `[layout]` from a closed synonym table, reports what it does not recognise, refuses to pick between two candidates, and never touches `[project] capabilities` | §12 | M | — |
-| 13 | ~~`jails testd`~~ **shipped and measured**: 0.06-0.10 s for one test method against `--fast`'s and mvnd's 0.62 s, and 0.27 s against 0.96 s for a 151-class suite. §19.2 explains it -- the first JUnit session in a JVM is 464 ms against 20 ms warm, and a cold `java` pays that every run. It **does not compile**, which §10.2's design assumed it would: §19.5 measured that the editor's language server already writes `target/classes` on save, so the daemon runs what is there and refuses a stale class through the same gate `--fast` uses. Freshness comes from JUnit -- `--class-path` naming only the output directories, so a child loader is built and closed per run -- and the daemon's own classpath must therefore *exclude* them or parent-first delegation serves the stale class silently, which an integration test pins. **`--affected` is still open** and is now the cheaper half of this row | §10.2 | L | — |
+| 13 | ~~`jails testd`~~ **shipped and measured**: 0.06-0.10 s for one test method against `--fast`'s and mvnd's 0.62 s, and 0.27 s against 0.96 s for a 151-class suite. §19.2 explains it -- the first JUnit session in a JVM is 464 ms against 20 ms warm, and a cold `java` pays that every run. It **does not compile**, which §10.2's design assumed it would: §19.5 measured that the editor's language server already writes `target/classes` on save, so the daemon runs what is there and refuses a stale class through the same gate `--fast` uses. Freshness comes from JUnit -- `--class-path` naming only the output directories, so a child loader is built and closed per run -- and the daemon's own classpath must therefore *exclude* them or parent-first delegation serves the stale class silently, which an integration test pins. **`--affected` shipped too**: a reverse-dependency index from the constant pools already in `target/`, transitive, git as the definition of "changed", and every unknown widening it loudly | §10.2 | L | — |
 | ~~14~~ | ~~`jails dev` v1.~~ **Answered by measurement and therefore not built.** §19.5 asked where jdt.ls writes `.class` files; it writes them into the project's own `target/classes` with no Maven run, and `jails new` has been installing devtools *and* tuning its poll interval all along. So both halves of the loop already shipped and the supervisor §10.3 describes would have been a third party to a conversation two programs were already having. What shipped instead is the README's save-and-reload section and `doctor`'s `reload` check — because the machinery existed and the **diagnosis** did not, and every way this loop breaks is silent | §10.3 | L→S | C |
 | ~~15~~ | ~~`add sse`~~ (§13.2), ~~`g auth`~~, ~~`g webhook`~~, ~~`g search`~~ and ~~`add mail`~~ (§13.3) — **all shipped.** What is left in §13.3 is the "build the first time a project needs one" row: `add flags`, `add shedlock`, `add storage`, `add arch`, `add nullcheck`, none of which a proof app has demanded | §13 | done | B C |
 | 16 | ~~`codemod.rs`~~ **shipped** — narrower than proposed and the narrowing is the finding (§11): the primitives share a *format*, not an implementation, and that format had five owners. `src/apply/` remains the single write path. What is left is the atomic whole-manifest `ChangeSet` on top, which is the part §11's own sequence puts last and calls "if it still earns its keep" | §11 | S remaining | A B C |

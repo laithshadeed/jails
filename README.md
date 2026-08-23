@@ -562,6 +562,17 @@ it already draws for hand-written properties inside a jails-owned block.
   loop](#the-save-and-reload-loop)), so between the two the loop is save, run,
   read, in about a tenth of a second.
 
+  `--affected` runs only the tests reachable from what git reports changed in
+  the working tree, using a reverse-dependency index built from the constant
+  pools already sitting in `target/` — no configuration, nothing to keep in
+  step. Reachability is transitive, so a change to a domain record selects the
+  controller test three hops away. **Every unknown widens it**: no git, a
+  source with no compiled class, nothing compiled yet — each prints the reason
+  and runs everything, because a selector that silently drops a test is a green
+  build proving nothing. It cannot see reflection, a component scan or a
+  resource file, which is one more reason `jails check` stays `mvn clean
+  verify`.
+
   Needs the console launcher, which `jails test --fast` splices for you. The
   daemon exits after 30 minutes idle, restarts itself when `pom.xml` changes,
   and is per-project. `jails check` is still `mvn clean verify` — nothing fast

@@ -6224,6 +6224,138 @@ fn testd_refuses_stale_classes_and_sees_a_recompile_after_it_started() {
     );
 }
 
+/// `plan.md` §10.2 step 3. The property worth an integration test is not that
+/// the selection is small -- it is that it is small *and* transitive: a change
+/// to a record two hops from a test still selects that test. A one-hop version
+/// looks correct on any scaffold and quietly misses the failure.
+#[test]
+fn testd_affected_selects_transitively_and_widens_when_it_cannot_know() {
+    if !real_mvn_available() || !real_java_supports_target_release() {
+        skip("mvn or a new enough JDK not found on PATH");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let root = temp_dir("real-affected");
+    write_plain_fixture(&root);
+
+    // Money <- Order <- OrderTest, and a Money change must reach OrderTest.
+    for (relative, body) in [
+        (
+            "src/main/java/com/example/demo/Money.java",
+            "package com.example.demo;\n\npublic record Money(long amount) {}\n",
+        ),
+        (
+            "src/main/java/com/example/demo/Order.java",
+            "package com.example.demo;\n\npublic record Order(Money total) {}\n",
+        ),
+        (
+            "src/test/java/com/example/demo/OrderTest.java",
+            "package com.example.demo;\n\nimport org.junit.jupiter.api.Test;\n\n             class OrderTest {\n    @Test\n    void holds() { new Order(new Money(1)); }\n}\n",
+        ),
+        (
+            "src/test/java/com/example/demo/UnrelatedTest.java",
+            "package com.example.demo;\n\nimport org.junit.jupiter.api.Test;\n\n             class UnrelatedTest {\n    @Test\n    void alone() {}\n}\n",
+        ),
+    ] {
+        let file = root.join(relative);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, body).unwrap();
+    }
+
+    let prepared = jails_cmd_with_path(&root, &path)
+        .args(["test", "--fast"])
+        .output()
+        .unwrap();
+    if !prepared.status.success() {
+        skip("could not prepare the fixture with `test --fast`");
+        return;
+    }
+
+    // No git here, so the selector must widen rather than select nothing --
+    // and say which unknown it hit.
+    let blind = jails_cmd_with_path(&root, &path)
+        .args(["testd", "--affected"])
+        .output()
+        .unwrap();
+    let report = format!(
+        "{}{}",
+        String::from_utf8_lossy(&blind.stdout),
+        String::from_utf8_lossy(&blind.stderr)
+    );
+    let _ = jails_cmd_with_path(&root, &path)
+        .args(["testd", "--stop"])
+        .output();
+    assert!(
+        report.contains("running everything") && report.contains("git"),
+        "without git the selector must widen and name the reason: {report}"
+    );
+
+    // Now give it a git repository and the transitive question can be asked.
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(&root)
+            .env("PATH", &path)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@example.com")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@example.com")
+            .output()
+    };
+    if !matches!(git(&["init", "-q"]), Ok(out) if out.status.success()) {
+        skip("git not available");
+        return;
+    }
+    let _ = git(&["add", "-A"]);
+    if !matches!(git(&["commit", "-qm", "base"]), Ok(out) if out.status.success()) {
+        skip("git could not commit the fixture");
+        return;
+    }
+
+    // Change Money, which OrderTest reaches only *through* Order. Recompile
+    // first, or the staleness gate refuses before the selector is consulted.
+    let money = root.join("src/main/java/com/example/demo/Money.java");
+    std::fs::write(
+        &money,
+        "package com.example.demo;\n\npublic record Money(long amount) {\n    // edited\n}\n",
+    )
+    .unwrap();
+    let compiled = std::process::Command::new("mvn")
+        .args(["-q", "-o", "test-compile"])
+        .current_dir(&root)
+        .env("PATH", &path)
+        .status();
+    if !matches!(compiled, Ok(status) if status.success()) {
+        skip("offline Maven could not recompile the fixture");
+        return;
+    }
+
+    let selected = jails_cmd_with_path(&root, &path)
+        .args(["testd", "--affected"])
+        .output()
+        .unwrap();
+    let report = format!(
+        "{}{}",
+        String::from_utf8_lossy(&selected.stdout),
+        String::from_utf8_lossy(&selected.stderr)
+    );
+    let _ = jails_cmd_with_path(&root, &path)
+        .args(["testd", "--stop"])
+        .output();
+    assert!(selected.status.success(), "{report}");
+    // One class, and it is the one two hops away. `UnrelatedTest` proves the
+    // selection is a selection: a version that ran everything would also
+    // satisfy "OrderTest ran".
+    assert!(
+        report.contains("1 test class(es) reachable"),
+        "a Money change must select exactly OrderTest, transitively: {report}"
+    );
+    assert!(
+        report.contains("1 tests successful"),
+        "and it must actually run: {report}"
+    );
+}
+
 /// `plan.md` §13.2. Every claim in `EventHub`'s Javadoc is a behavioural one,
 /// so the only place they can be checked is against a real JUnit run --
 /// especially the concurrency test, which is the reason the registry is a
