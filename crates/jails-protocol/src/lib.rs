@@ -13,6 +13,7 @@
 pub mod bootstrap;
 pub mod change;
 pub mod conflict;
+pub mod context;
 pub mod declaration;
 pub mod edit;
 pub mod effect;

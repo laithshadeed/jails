@@ -97,6 +97,13 @@ pub fn object_path(objects: &Path, id: &ObjectId) -> PathBuf {
 }
 
 /// Write one object, or verify the one already there.
+///
+/// plan.md §R5.1's protocol: a unique same-shard temporary with `create_new`,
+/// synced and reread, then hard-linked to the final absent name and the
+/// temporary unlinked. The link is the atomic no-replace step — writing
+/// directly at the final name would leave a partially written file under a
+/// content address for as long as the write took, and a concurrent reader
+/// would see bytes that do not hash to their own name.
 pub fn put_object(objects: &Path, id: &ObjectId, bytes: &[u8]) -> Result<PathBuf> {
     let actual = ObjectId::from_bytes(sha256(bytes));
     if &actual != id {
@@ -108,26 +115,109 @@ pub fn put_object(objects: &Path, id: &ObjectId, bytes: &[u8]) -> Result<PathBuf
     let parent = path.parent().expect("object paths have parents");
     create_private_dir(parent)?;
 
-    match File::options().write(true).create_new(true).open(&path) {
-        Ok(mut file) => {
-            file.write_all(bytes)
-                .map_err(|error| format!("could not write {}: {error}", path.display()))?;
-            file.sync_all()
-                .map_err(|error| format!("could not sync {}: {error}", path.display()))?;
-            drop(file);
-            verify(&path, id, bytes.len() as u64)?;
-            sync_dir(parent)?;
-        }
+    if path.exists() {
+        // A content address is stable, so an object already there is
+        // ordinary. Its *name* proves nothing about its bytes, though.
+        verify(&path, id, bytes.len() as u64)?;
+        return Ok(path);
+    }
+
+    // Same shard, so the link is within one directory and one filesystem.
+    let temporary = parent.join(format!(
+        ".{}.{}.tmp",
+        &id.to_hex()[2..10],
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&temporary);
+    {
+        let mut file = File::options()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|error| format!("could not create {}: {error}", temporary.display()))?;
+        file.write_all(bytes)
+            .map_err(|error| format!("could not write {}: {error}", temporary.display()))?;
+        file.sync_all()
+            .map_err(|error| format!("could not sync {}: {error}", temporary.display()))?;
+    }
+    verify(&temporary, id, bytes.len() as u64)?;
+
+    match std::fs::hard_link(&temporary, &path) {
+        Ok(()) => {}
+        // Somebody else won the race to the same content address. Their bytes
+        // are checked, not assumed.
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            // A content address is stable, so an object already there is
-            // ordinary. Its *name* proves nothing about its bytes, though.
             verify(&path, id, bytes.len() as u64)?;
         }
         Err(error) => {
-            return Err(format!("could not create {}: {error}", path.display()));
+            let _ = std::fs::remove_file(&temporary);
+            return Err(format!("could not link {}: {error}", path.display()));
         }
     }
+    let _ = std::fs::remove_file(&temporary);
+    sync_dir(parent)?;
+    sync_dir(objects)?;
     Ok(path)
+}
+
+/// Whether a name under an object store is one this store would have written.
+///
+/// Checked rather than assumed because a store is a directory anyone can put
+/// a file in, and a name that is not a content address is not an object —
+/// reading it as one would mean trusting bytes nothing verified.
+pub fn is_object_name(shard: &str, rest: &str) -> bool {
+    fn lower_hex(text: &str, len: usize) -> bool {
+        text.len() == len
+            && text
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    }
+    lower_hex(shard, 2) && lower_hex(rest, 62)
+}
+
+/// Copy every object reachable from one store into another, verifying each.
+///
+/// §R5.1: promotion happens **before** the ledger that references the
+/// objects, so a committed store can never point at bytes that only exist
+/// inside a transaction directory somebody later cleans up.
+pub fn promote(from: &Path, into: &Path, ids: &[ObjectId]) -> Result<usize> {
+    let mut promoted = 0;
+    for id in ids {
+        let bytes = read_object(from, id)?;
+        put_object(into, id, &bytes)?;
+        promoted += 1;
+    }
+    Ok(promoted)
+}
+
+/// Every object a store holds, by id.
+pub fn list_objects(objects: &Path) -> Result<Vec<ObjectId>> {
+    let sha256 = objects.join("sha256");
+    let shards = match std::fs::read_dir(&sha256) {
+        Ok(shards) => shards,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("could not read {}: {error}", sha256.display())),
+    };
+    let mut out = Vec::new();
+    for shard in shards {
+        let shard = shard.map_err(|error| format!("could not read a shard: {error}"))?;
+        let shard_name = shard.file_name().to_string_lossy().to_string();
+        let entries = std::fs::read_dir(shard.path())
+            .map_err(|error| format!("could not read {}: {error}", shard.path().display()))?;
+        for entry in entries {
+            let entry = entry.map_err(|error| format!("could not read an object: {error}"))?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            // A temporary or anything else that is not a content address is
+            // not an object, and reading it as one would be trusting bytes
+            // nothing verified.
+            if !is_object_name(&shard_name, &name) {
+                continue;
+            }
+            out.push(ObjectId::parse_hex(&format!("{shard_name}{name}"))?);
+        }
+    }
+    out.sort();
+    Ok(out)
 }
 
 /// Reread and check length and hash.
@@ -291,6 +381,93 @@ mod tests {
         let hex = id.to_hex();
         let path = object_path(Path::new("/tmp/objects"), &id);
         assert!(path.ends_with(format!("sha256/{}/{}", &hex[..2], &hex[2..])));
+    }
+
+    /// The link is the atomic no-replace step. Writing at the final name
+    /// would leave a partially written file under a content address, and a
+    /// concurrent reader would see bytes that do not hash to their own name.
+    #[test]
+    fn no_temporary_survives_a_successful_write() {
+        let (scratch, objects) = objects();
+        let id = id_of(b"hello");
+        let path = put_object(&objects, &id, b"hello").unwrap();
+        let shard = path.parent().unwrap();
+        let leftovers: Vec<_> = std::fs::read_dir(shard)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .filter(|name| name.starts_with('.'))
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
+        scratch.close().unwrap();
+    }
+
+    /// A store is a directory anyone can put a file in. A name that is not a
+    /// content address is not an object.
+    #[test]
+    fn only_a_content_address_is_read_as_an_object() {
+        assert!(is_object_name("ab", &"c".repeat(62)));
+        assert!(!is_object_name("AB", &"c".repeat(62)), "uppercase");
+        assert!(!is_object_name("ab", &"c".repeat(61)), "wrong length");
+        assert!(!is_object_name("zz", &"c".repeat(62)), "not hex");
+        assert!(!is_object_name("ab", ".tmp"), "a temporary");
+    }
+
+    #[test]
+    fn listing_a_store_returns_exactly_its_objects() {
+        let (scratch, objects) = objects();
+        put_object(&objects, &id_of(b"one"), b"one").unwrap();
+        put_object(&objects, &id_of(b"two"), b"two").unwrap();
+        // A stray file in a shard is not an object and must not be listed.
+        let shard = object_path(&objects, &id_of(b"one"));
+        std::fs::write(shard.parent().unwrap().join("notes.txt"), b"hi").unwrap();
+
+        let listed = list_objects(&objects).unwrap();
+        assert_eq!(listed, {
+            let mut expected = vec![id_of(b"one"), id_of(b"two")];
+            expected.sort();
+            expected
+        });
+        scratch.close().unwrap();
+    }
+
+    /// Promotion happens before the store that references the objects, so a
+    /// committed ledger can never point at bytes that live only inside a
+    /// transaction directory somebody later cleans up.
+    #[test]
+    fn promotion_copies_and_verifies_every_named_object() {
+        let scratch = ScratchDir::in_temp("jails-promote").unwrap();
+        let from = scratch.path().join("transaction/objects");
+        let into = scratch.path().join("durable/objects");
+        put_object(&from, &id_of(b"one"), b"one").unwrap();
+        put_object(&from, &id_of(b"two"), b"two").unwrap();
+
+        assert_eq!(
+            promote(&from, &into, &[id_of(b"one"), id_of(b"two")]).unwrap(),
+            2
+        );
+        assert_eq!(read_object(&into, &id_of(b"one")).unwrap(), b"one");
+        // Idempotent: promoting again verifies rather than rewrites.
+        assert_eq!(promote(&from, &into, &[id_of(b"one")]).unwrap(), 1);
+        scratch.close().unwrap();
+    }
+
+    /// A corrupt object is never "repaired" from whatever is nearby: the
+    /// promotion refuses and the durable store stays as it was.
+    #[test]
+    fn promoting_a_corrupt_object_refuses_rather_than_repairing_it() {
+        let scratch = ScratchDir::in_temp("jails-promote").unwrap();
+        let from = scratch.path().join("transaction/objects");
+        let into = scratch.path().join("durable/objects");
+        let id = id_of(b"one");
+        let path = object_path(&from, &id);
+        create_private_dir(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"two").unwrap();
+
+        let error = promote(&from, &into, &[id]).unwrap_err();
+        assert!(error.contains("corrupt"), "{error}");
+        assert!(list_objects(&into).unwrap().is_empty());
+        scratch.close().unwrap();
     }
 
     #[test]

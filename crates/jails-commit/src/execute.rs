@@ -199,6 +199,14 @@ pub fn commit(
     apply_operations(locked, &identity, &directory, &objects)
         .map_err(|blocked| blocked.into_error(&directory, &active))?;
 
+    // §R5.1. Promote every object the prospective store will reference into
+    // the durable store *before* the ledger that names them. A committed
+    // store pointing only into a transaction directory would lose its bytes
+    // the moment that directory was cleaned up.
+    let durable = locked.handle.store.objects();
+    let promoted: Vec<ObjectId> = change.objects.keys().copied().collect();
+    store::promote(&objects, &durable, &promoted).map_err(CommitError::PreActivationIo)?;
+
     // Step 10. The ledger last, with the same guarded primitive. It is the
     // commit point: everything before it can be abandoned, and this is what
     // makes the change true.
