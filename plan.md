@@ -637,7 +637,21 @@ the `.jails/app.toml` exception only as the absent create target of `AppInit`
 and forbids writes to template overrides; recipes may
 read, but never mutate, the override layer. Managed non-UTF-8 paths refuse
 instead of entering lossy ledger text. `Name` and `Package`
-validate the Java/package rules once. `Recipe` is the existing `ArtifactKind`
+validate the Java/package rules once. Those rules were unspecified here and are
+now fixed, from JLS §3.8/§3.9 rather than invented: an identifier starts with a
+letter, `_` or `$` and continues with those plus digits, and is never a
+reserved word or one of the `true`/`false`/`null` literals. The *contextual*
+keywords (`record`, `sealed`, `permits`, `yield`, `var`) stay legal, because
+`javac` accepts them as identifiers and refusing them would reject a good field
+name for a rule the compiler does not have. The first character is restricted
+to ASCII, which is stricter than the JLS: jails derives file names from these,
+filesystems disagree about Unicode normalisation, and a type whose name is one
+sequence in the ledger and another on disk is not a class of bug worth
+accepting for a feature nobody has asked for. `Package` is a dot-separated
+sequence of the same and **is allowed to be empty** — `--package ''` puts a
+generated tree flat in the base package, which `CLAUDE.md` pins as a shape that
+must keep compiling. That is also why `IntentId.package` is not an `Option`:
+"the user did not say" and "the user said flat" must not share a slot. `Recipe` is the existing `ArtifactKind`
 renamed at the internal boundary; Clap spelling stays at the CLI boundary.
 
 Other scalar names in this RFC are validating newtypes, not aliases:

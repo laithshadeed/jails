@@ -53,6 +53,9 @@ const ALLOWED: &[AllowedConcept] = &[
             // The crate root has to declare `pub mod ledger;` and say what it
             // is for. Same word, same reason, one level up.
             "crates/jails-project/src/lib.rs",
+            // `ProjectPath` must refuse `.jails/ledger.toml` by name, and the
+            // test that proves it has to spell the path it is refusing.
+            "crates/jails-protocol/src/identity.rs",
             "src/app.rs",
             "crates/jails-generate/src/generate/remove.rs",
             "src/main.rs",

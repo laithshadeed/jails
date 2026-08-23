@@ -1,0 +1,10 @@
+[package]
+name = "jails-protocol"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+jails-support = { path = "../jails-support" }
+
+[lints]
+workspace = true
