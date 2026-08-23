@@ -6447,3 +6447,41 @@ fn bench_states_the_profile_it_is_about_to_run() {
     assert!(argv.contains("run"), "{argv}");
     assert!(argv.contains("load-tests/load-test.js"), "{argv}");
 }
+
+/// `plan.md` §14's `jails src`. Two properties matter: it works on a project
+/// that does not compile — which is when a language server can least help —
+/// and it lists rather than picking, because a project with three
+/// `Status.java` files is ordinary.
+#[test]
+fn src_resolves_a_type_and_lists_every_match() {
+    let root = temp_dir("src-command");
+    write_plain_fixture(&root);
+    let main = root.join("src/main/java/com/example/demo");
+    for (package, dir) in [("com.example.demo.a", "a"), ("com.example.demo.b", "b")] {
+        fs::create_dir_all(main.join(dir)).unwrap();
+        fs::write(
+            main.join(dir).join("Status.java"),
+            format!("package {package};\n\n// deliberately not valid Java below\nclass Status {{"),
+        )
+        .unwrap();
+    }
+
+    let output = jails_cmd(&root, None)
+        .args(["src", "Status"])
+        .output()
+        .unwrap();
+    let report = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{report}");
+    assert!(report.contains("com.example.demo.a.Status"), "{report}");
+    assert!(report.contains("com.example.demo.b.Status"), "{report}");
+
+    let missing = jails_cmd(&root, None)
+        .args(["src", "Nowhere"])
+        .output()
+        .unwrap();
+    assert!(!missing.status.success());
+    assert!(
+        String::from_utf8_lossy(&missing.stderr).contains("JAILS_SOURCE_PATH"),
+        "the refusal names the way to widen the search"
+    );
+}

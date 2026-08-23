@@ -878,6 +878,13 @@ require('jails').setup({ terminal_height = 12 })
 The plugin shells out to the real `jails` on PATH and deliberately
 reimplements none of its project-generation logic.
 
+- `jails src <Type> [--json]` — where a Java type's source is, fully qualified.
+  Searches the project's own sources first, then whatever `JAILS_SOURCE_PATH`
+  names (or `deps/` when it does not). Instant, and works on a project that does
+  not compile — which is exactly when a language server can least help. It
+  **lists every match rather than picking one**: a project with three
+  `Status.java` files is ordinary, and silently choosing sends your editor to
+  the wrong one.
 - `jails bench [--vus N] [--duration 30s] [--export FILE]` — runs the k6 load
   test `jails add loadtest` wrote, stating the profile first so the number is
   reproducible. jails does not parse k6's output: k6 prints p95 and p99 itself

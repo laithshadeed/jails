@@ -28,6 +28,7 @@ mod process;
 mod project;
 mod rename;
 mod run;
+mod source;
 mod spring;
 mod sql;
 mod surefire;
@@ -291,6 +292,20 @@ enum Command {
     Stop {
         #[arg(num_args = 0..)]
         services: Vec<Runtime>,
+    },
+    /// Print where a Java type's source is, fully qualified
+    ///
+    /// The project's own sources first, then whatever `JAILS_SOURCE_PATH`
+    /// names (or `deps/` when it does not). Instant, and works on a project
+    /// that does not compile -- which is when you most need it and when a
+    /// language server can least help. Lists every match rather than picking.
+    Src {
+        /// The simple type name, e.g. `JdbcClient`
+        #[arg(value_name = "TYPE")]
+        type_name: String,
+        /// Emit the matches as JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Run the k6 load test (`jails add loadtest`) and report what it measured
     ///
@@ -647,6 +662,7 @@ fn main() -> std::process::ExitCode {
         Command::Start { services } => compose::start(&services, debug),
         Command::Stop { services } => compose::stop_cmd(&services, debug),
         Command::Adopt => adopt::adopt(pretend),
+        Command::Src { type_name, json } => source::src(&type_name, json),
         Command::Bench {
             vus,
             duration,

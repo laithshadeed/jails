@@ -755,7 +755,7 @@ fn stats_json(main: &[LayerStats], test: &[LayerStats]) -> Result<()> {
     let code: usize = main.iter().map(|r| r.code).sum();
     let test_code: usize = test.iter().map(|r| r.code).sum();
     println!(
-        "{{\n  \"version\": 1,\n  \"main\": [\n{}\n  ],\n  \"test\": [\n{}\n  ],\n  \
+        "{{\n  \"schema_version\": 1,\n  \"main\": [\n{}\n  ],\n  \"test\": [\n{}\n  ],\n  \
          \"totals\": {{\"code\": {code}, \"test_code\": {test_code}, \"files\": {}, \
          \"test_files\": {}}}\n}}",
         render(main),
@@ -873,7 +873,7 @@ pub fn notes(tag: Option<&str>, json: bool) -> Result<()> {
         // `file` and `line` are the shape a quickfix list wants, which is the
         // whole reason this has a JSON form.
         println!(
-            "{{\n  \"version\": 1,\n  \"notes\": [\n{}\n  ]\n}}",
+            "{{\n  \"schema_version\": 1,\n  \"notes\": [\n{}\n  ]\n}}",
             rows.join(",\n")
         );
         return Ok(());

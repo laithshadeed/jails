@@ -66,13 +66,13 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // available to them, and this is the containment boundary
                 // rather than the disease. `run.rs`'s eight call sites fold
                 // into one `maven_root`, which is why it is four and not five.
-                ceiling: 140,
+                ceiling: 142,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;
                 // this one stays a ratchet against growth, which is why the
                 // target tracks the ceiling rather than sitting under it.
-                target: 140,
+                target: 142,
                 why: "Every one is a fact re-derived from a primitive instead of read off \
                       the resolved `Project`. This is the count abstract.md §8.1 watched \
                       rise from 161 to 195 with nothing to say so.",
@@ -185,6 +185,29 @@ fn gates() -> Vec<(Ratchet, usize)> {
                       a test that polices duplication is a receipt for a decision not made.",
             },
             count_matches(&src, "KIND_FILES") + count_matches(&src, "NO_FILE_TABLE"),
+        ),
+        (
+            Ratchet {
+                name: "JSON payloads spelling their version anything but `schema_version`",
+                rung: "plan.md §14 — one vocabulary across the machine-readable surface",
+                // `about`, `routes`, `beans` and `why` said `schema_version`;
+                // `commands`, `doctor`, `test`, `stats` and `notes` said
+                // `version`. Nine emitters, two spellings, and an editor
+                // integration reading two of them has to know which is which.
+                //
+                // The *numbers* stay per-payload on purpose: each payload has
+                // its own schema and its own history, so one global number
+                // would bump `routes --json` because `doctor --json` gained a
+                // field.
+                ceiling: 0,
+                target: 0,
+                why: "A machine-readable surface with two names for one field makes every \
+                      consumer carry a special case, and the special case is what breaks \
+                      when a tenth emitter picks a third name.",
+            },
+            src.iter()
+                .map(|file| file.production.matches("\\\"version\\\": ").count())
+                .sum(),
         ),
         (
             Ratchet {

@@ -373,7 +373,7 @@ fn report_json(root: &Path, passed: bool) -> Result<()> {
         .collect();
     let failed = cases.iter().filter(|case| case.failed).count();
     println!(
-        "{{\n  \"version\": 1,\n  \"passed\": {passed},\n  \"total\": {},\n  \
+        "{{\n  \"schema_version\": 1,\n  \"passed\": {passed},\n  \"total\": {},\n  \
          \"failed\": {failed},\n  \"cases\": [\n{}\n  ]\n}}",
         cases.len(),
         rows.join(",\n")

@@ -162,7 +162,7 @@ pub(crate) fn commands(json: bool) -> Result<()> {
 
     let flag_list: Vec<String> = flags.iter().map(|flag| json::string(flag)).collect();
     println!(
-        "{{\n  \"version\": 1,\n{},\n{},\n{},\n  \"options\": [{}]\n}}",
+        "{{\n  \"schema_version\": 1,\n{},\n{},\n{},\n  \"options\": [{}]\n}}",
         render_names("subcommands", &subs),
         render_names("kinds", &kinds),
         render_names("capabilities", &capabilities),

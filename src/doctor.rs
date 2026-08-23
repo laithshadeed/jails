@@ -165,7 +165,7 @@ fn report_json(checks: &[Check]) -> Result<()> {
     let failures = checks.iter().filter(|c| c.status == Status::Fail).count();
     let warnings = checks.iter().filter(|c| c.status == Status::Warn).count();
     println!(
-        "{{\n  \"version\": 1,\n  \"failures\": {failures},\n  \"warnings\": {warnings},\n  \"checks\": [\n{}\n  ]\n}}",
+        "{{\n  \"schema_version\": 1,\n  \"failures\": {failures},\n  \"warnings\": {warnings},\n  \"checks\": [\n{}\n  ]\n}}",
         rows.join(",\n")
     );
     if failures > 0 {

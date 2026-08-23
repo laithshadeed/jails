@@ -375,6 +375,19 @@ to build next and why. Do not add proposals here.
   twenty-one-defect ledger, and the friction ledger. **Never hand-edit a
   generated proof app to make it pass** — a manual edit is evidence for the
   next generic improvement and belongs in the friction ledger.
+- `src/source.rs` — `jails src <Type>`: where a type's source is. The one
+  command that deliberately does **not** require a build file — "where is this
+  type" is a question about a directory, and the case it exists for (jumping
+  into a library checkout) is often asked from a repo that is not a Maven
+  project. It **lists every match rather than picking**, because a project with
+  three `Status.java` files is ordinary and choosing silently sends an editor
+  to the wrong one. The package is read off the `package` line, not derived
+  from the path, since a checkout's layout does not always match its packages.
+- `src/bench.rs` — `jails bench`: runs the k6 script `add loadtest` wrote,
+  after stating the load profile. **It does not parse k6's output** — k6 prints
+  p95/p99 and its own thresholds decide pass/fail, and k6 is not installed on
+  this machine, so a parser would be written against a format nobody has seen.
+  `plan.md` §19.6's p99 is still unmeasured and says so.
 - `src/rename.rs` — `rename`. Textual by design (see its module docs for
   when to prefer jdt.ls `grn`): whole identifiers only, string literals left
   alone and the skipped count reported.
