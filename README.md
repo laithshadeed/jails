@@ -548,6 +548,24 @@ it already draws for hand-written properties inside a jails-owned block.
   only) recompiles on every source change and lets devtools restart the
   already-running app — no manual restarts. In an editor with a Java language
   server you do not need it; see [the save-and-reload loop](#the-save-and-reload-loop).
+- `jails testd [filter] [--stop] [--status]` — the same tests against a
+  **resident JVM**, started on demand and reused. Measured here: 0.06–0.10 s
+  for one test method against 0.62 s for `test --fast` or `mvnd`, and 0.27 s
+  against 0.96 s for a 151-class suite. The reason is not the launcher — it is
+  that the *first* JUnit session in a JVM costs 464 ms where warm ones cost
+  20 ms, and a cold `java` pays that every single run.
+
+  It **runs what is compiled and never compiles**: a source newer than its
+  class is refused, naming `jails test`. That is not a limitation so much as a
+  division of labour — your editor's Java language server is already writing
+  `target/classes` on every save (see [the save-and-reload
+  loop](#the-save-and-reload-loop)), so between the two the loop is save, run,
+  read, in about a tenth of a second.
+
+  Needs the console launcher, which `jails test --fast` splices for you. The
+  daemon exits after 30 minutes idle, restarts itself when `pom.xml` changes,
+  and is per-project. `jails check` is still `mvn clean verify` — nothing fast
+  is allowed to be the last word.
 - `jails fmt` — reformat in place (Spotless); `jails check` — format check +
   compile + tests (`mvn clean verify`). Both need `jails add format`. The
   `clean` is load-bearing: Maven's incremental compile leaves deleted tests

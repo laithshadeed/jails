@@ -104,7 +104,7 @@ number, so "it feels better" is never the answer.
 | **Cheaper** | manifest lines per app | 65 (A), 263 (B) | falls as generators absorb repetition |
 | **Cheaper** | generated lines per manifest line | ~18× for one scaffold | rises |
 | **Faster** | full gate wall time | **293 s** | container reuse is not the lever it looked like (§7); §10.2 is |
-| **Faster** | edit → test result | 3,810 ms | ~110 ms (§10.2), measured not estimated |
+| **Faster** | edit → test result | **60–100 ms** (`jails testd`, measured; 3,810 ms was `mvn`, 620 ms is `mvnd`/`--fast`) | reached — the remaining lever is `--affected` on large suites |
 | **Confidence** | acceptance clauses open | 4, all lifecycle (§4.2) | 0 |
 
 **Hand-written lines must stay at zero.** It is currently zero across all four
@@ -857,10 +857,26 @@ org.junit.platform.console.ConsoleLauncher execute --select-method …
 --details=testfeed --fail-if-no-tests`. `cwd` must be the module root.
 Estimated 0.35–0.6 s vs 2.57 s — **unverified; measure first** (§19.1).
 
-**Step 2, `jails testd`** — one resident JVM holding
-`ToolProvider.getSystemJavaCompiler()` and the `"junit"` provider over a unix
-socket. Compile in-process (74–166 ms warm), run via
-`LauncherFactory.openSession()` (9–13 ms warm), fresh `URLClassLoader` per run.
+**Step 2, `jails testd`** — **shipped, and simpler than this sketch.** One
+resident JVM over a unix socket, `src/testd.rs` plus a single Java template
+compiled by `java`'s source launcher at start-up. Measured: **0.06–0.10 s for
+one test method against 0.62 s**, and 0.27 s against 0.96 s for 151 classes.
+
+Two departures from what was planned here, both from measurements taken since:
+
+* **No in-process compiler.** §19.5 measured that the editor's language server
+  already writes `target/classes` on save, so the compile is being done by
+  something holding the whole project's model rather than one changed file —
+  and the correctness note below says compiling one file is unsound. The
+  daemon runs what is on disk and refuses a stale class through the same gate
+  `--fast` uses.
+* **No hand-rolled session or classloader.** `ConsoleLauncher.run` with
+  `--class-path` naming only the output directories makes JUnit build the
+  child loader and close it per run, so freshness is JUnit's semantics rather
+  than jails'. The consequence is a rule that has to be kept: the daemon's own
+  classpath carries the *dependencies only*, because a copy of the outputs up
+  there would be served parent-first and the daemon would be green over
+  deleted code, silently and forever.
 **That classloader cost is measured** (§19.2): 0.04 ms to construct, ~0.5 ms per test class to
 populate, against the 0.6 s of cold `java` it removes. Not the obstacle.
 
@@ -1339,7 +1355,7 @@ yet — which is a healthier list than the one it replaces.
 | ~~10~~ | ~~`jails new <name> --app <manifest>`~~ — **done.** `new` and `new-cli` both take `--app`, seeding `.jails/app.toml` and applying it against the project just created. Verified on App D: one command from an empty directory to `mvn clean verify` green. Needed `add::add_in`, `add::preflight_in` and `ResolvedIntent::apply_to` so nothing in the apply path reads the process CWD | §11 | S | A B C D |
 | 11 | **§6.2 F** — one descriptor per kind. **Most of what it was going to buy has since been bought another way, and the headline property is already enforced**: `[golden]` was to make it "impossible to add a kind without a snapshot test", and `every_kind_and_capability_has_a_golden_scenario` does that today — verified by deleting the `search` scenario, which failed with *"1 thing(s) jails can generate have no golden scenario: kind `search`"*. `destroy`'s paths are derived from the generator now (rungs 4–5), which cannot drift from it at all, where a descriptor still could; the Lua lists are gone, deleted by `commands --json`. What is left unique to F is generating the `ArtifactKind` enum, clap aliases, `--help` and the README table from one file — real, but a `build.rs` and a week for the smaller half of the original case | §6 | L, and re-price it first | — |
 | ~~12~~ | ~~§12 marker widening + `jails adopt`~~ — **done.** `src/build.rs` names the build tool without reading it; `find_project_root` takes any recognised marker, nearest wins; ten Maven-inherent commands refuse through `require_maven` naming what still works; `generate` states which shape a missing pom chose and which dependencies it could not splice; `doctor` leads with the real build tool instead of reporting on an absent pom. `jails adopt` writes `[layout]` from a closed synonym table, reports what it does not recognise, refuses to pick between two candidates, and never touches `[project] capabilities` | §12 | M | — |
-| 13 | `jails testd` + `--affected`. **§19.2 is measured now and clears it**: a fresh `URLClassLoader` per run costs 0.04 ms to construct and ~0.5 ms per test class to populate — 2–12 % of the ~0.6 s cold-`java` floor it buys back, while being the thing that makes a recompiled class visible. The real prize the measurement exposed is warmup: the first JUnit session in a JVM is 464 ms where the warm ones are 20 ms, and a cold `java` pays that every run. `src/launcher.rs` is the substrate — selector translation, cached test classpath, staleness gate — so what remains is the daemon and the socket | §10.2 | L | — |
+| 13 | ~~`jails testd`~~ **shipped and measured**: 0.06-0.10 s for one test method against `--fast`'s and mvnd's 0.62 s, and 0.27 s against 0.96 s for a 151-class suite. §19.2 explains it -- the first JUnit session in a JVM is 464 ms against 20 ms warm, and a cold `java` pays that every run. It **does not compile**, which §10.2's design assumed it would: §19.5 measured that the editor's language server already writes `target/classes` on save, so the daemon runs what is there and refuses a stale class through the same gate `--fast` uses. Freshness comes from JUnit -- `--class-path` naming only the output directories, so a child loader is built and closed per run -- and the daemon's own classpath must therefore *exclude* them or parent-first delegation serves the stale class silently, which an integration test pins. **`--affected` is still open** and is now the cheaper half of this row | §10.2 | L | — |
 | ~~14~~ | ~~`jails dev` v1.~~ **Answered by measurement and therefore not built.** §19.5 asked where jdt.ls writes `.class` files; it writes them into the project's own `target/classes` with no Maven run, and `jails new` has been installing devtools *and* tuning its poll interval all along. So both halves of the loop already shipped and the supervisor §10.3 describes would have been a third party to a conversation two programs were already having. What shipped instead is the README's save-and-reload section and `doctor`'s `reload` check — because the machinery existed and the **diagnosis** did not, and every way this loop breaks is silent | §10.3 | L→S | C |
 | ~~15~~ | ~~`add sse`~~ (§13.2), ~~`g auth`~~, ~~`g webhook`~~, ~~`g search`~~ and ~~`add mail`~~ (§13.3) — **all shipped.** What is left in §13.3 is the "build the first time a project needs one" row: `add flags`, `add shedlock`, `add storage`, `add arch`, `add nullcheck`, none of which a proof app has demanded | §13 | done | B C |
 | 16 | ~~`codemod.rs`~~ **shipped** — narrower than proposed and the narrowing is the finding (§11): the primitives share a *format*, not an implementation, and that format had five owners. `src/apply/` remains the single write path. What is left is the atomic whole-manifest `ChangeSet` on top, which is the part §11's own sequence puts last and calls "if it still earns its keep" | §11 | S remaining | A B C |

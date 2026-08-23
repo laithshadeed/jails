@@ -25,7 +25,7 @@
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 
 use crate::Result;
 
@@ -210,6 +210,29 @@ impl Done {
     pub(crate) fn stdout_string(&self) -> String {
         String::from_utf8_lossy(&self.stdout).into_owned()
     }
+}
+
+/// Start a long-lived child and return it without waiting.
+///
+/// The one caller is `testd`, whose child is a resident JVM that outlives the
+/// command that started it. It goes through `CommandSpec` rather than a bare
+/// `Command` for the reason every other call site does: **this is where a tool
+/// is resolved on PATH and where `--debug` prints what ran**, and a second
+/// place that spawns is a second place those two rules can be forgotten.
+///
+/// stdout and stderr are piped rather than inherited, because a daemon writing
+/// into the terminal of whichever command happened to start it is output
+/// nobody can attribute. The caller reads them to explain a start-up failure.
+pub(crate) fn spawn(spec: &CommandSpec, diagnostics: Diagnostics) -> Result<Child> {
+    if diagnostics == Diagnostics::Debug {
+        eprintln!("{}", spec.render());
+    }
+    spec.to_command()
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("failed to run {}: {error}", spec.program.to_string_lossy()))
 }
 
 /// Run a command to completion.

@@ -66,7 +66,17 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // available to them, and this is the containment boundary
                 // rather than the disease. `run.rs`'s eight call sites fold
                 // into one `maven_root`, which is why it is four and not five.
-                ceiling: 142,
+                //
+                // 142 -> 143 for `testd::socket_path`, which names a unix
+                // socket after a project directory. That is the boundary case
+                // again rather than the disease: it does path arithmetic on a
+                // directory and reads nothing out of the project, so a
+                // `Project` parameter would be a heavier value carrying facts
+                // it must not use. The sibling that *did* look like the
+                // disease was rewritten instead -- `pom_moved_since` takes the
+                // pom it stats, not the root it would have had to derive it
+                // from -- so this is one rise, not two.
+                ceiling: 143,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;
@@ -295,11 +305,18 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // jails capability at all. So this is a check that *replaces*
                 // a feature, which is the cheapest direction this gate can
                 // move in even while the number rises.
-                ceiling: 1404,
+                //
+                // 1404 -> 1411, and this one is embarrassing rather than
+                // interesting: `cargo fmt` reflowed `hot_reload_checks` after
+                // the 1404 above was measured, and the commit went out without
+                // the board being re-read. No behaviour changed. Recorded as
+                // its own step anyway, because a ceiling quietly absorbing a
+                // second rise is how a ratchet becomes decoration.
+                ceiling: 1411,
                 // Withdrawn, not reached. abstract.md §8.0.1 audits all ten
                 // checks: none is a re-encoded dependency fact, so the 700
                 // measured a saving that is not there. Ratchet against growth.
-                target: 1404,
+                target: 1411,
                 why: "Feature Envy at module scale: doctor re-derives by reading the project \
                       back off disk the facts `add/*` already own, and the drift between them \
                       is a class nothing catches.",

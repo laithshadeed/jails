@@ -160,8 +160,37 @@ fn newest_with_extension(dir: &Path, extension: &str) -> Option<(PathBuf, System
     newest
 }
 
+/// A project's test classpath, with its two halves kept apart.
+///
+/// They are separated because `testd` needs them separated and a single joined
+/// string cannot be taken back apart reliably (a dependency path may contain
+/// the substring `target/classes`). The daemon holds `dependencies` on its own
+/// classpath -- loaded once, stays warm -- and hands `outputs` to JUnit as
+/// `--class-path`, which loads them into a fresh child loader per run. Put the
+/// outputs in both and the parent-first delegation returns the **stale** class
+/// every time, silently: the run is fresh in name only.
+pub(crate) struct TestClasspath {
+    /// `target/classes` and `target/test-classes`: what a recompile changes.
+    pub(crate) outputs: Vec<PathBuf>,
+    /// The resolved third-party jars: what a pom change changes.
+    pub(crate) dependencies: Vec<PathBuf>,
+}
+
+impl TestClasspath {
+    /// Everything, in the order `java -cp` wants it.
+    pub(crate) fn joined(&self) -> Result<String> {
+        join(self.outputs.iter().chain(&self.dependencies))
+    }
+}
+
+fn join<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Result<String> {
+    std::env::join_paths(paths)
+        .map(|joined| joined.to_string_lossy().into_owned())
+        .map_err(|error| format!("failed to join classpath: {error}"))
+}
+
 /// The test classpath, from cache when the pom has not moved since.
-fn test_classpath(root: &Path, debug: bool) -> Result<String> {
+pub(crate) fn test_classpath(root: &Path, debug: bool) -> Result<TestClasspath> {
     let cache = root.join("target/jails-test-classpath");
     if !is_fresh(&cache, &root.join("pom.xml")) {
         let mut mvn = Command::new(run::maven_binary(root));
@@ -175,19 +204,20 @@ fn test_classpath(root: &Path, debug: bool) -> Result<String> {
         run::run_inherited(mvn, debug)?;
     }
 
-    let mut entries = vec![
-        root.join("target/classes"),
-        root.join("target/test-classes"),
-    ];
+    let mut dependencies = Vec::new();
     if let Ok(deps) = std::fs::read_to_string(&cache) {
         let deps = deps.trim();
         if !deps.is_empty() {
-            entries.extend(std::env::split_paths(deps));
+            dependencies.extend(std::env::split_paths(deps));
         }
     }
-    std::env::join_paths(entries)
-        .map(|joined| joined.to_string_lossy().into_owned())
-        .map_err(|error| format!("failed to join classpath: {error}"))
+    Ok(TestClasspath {
+        outputs: vec![
+            root.join("target/classes"),
+            root.join("target/test-classes"),
+        ],
+        dependencies,
+    })
 }
 
 fn is_fresh(cache: &Path, source: &Path) -> bool {
@@ -265,7 +295,7 @@ pub(crate) fn fully_qualified(root: &Path, filter: &str) -> Option<String> {
 
 /// Run the already-compiled tests. The caller has checked [`staleness`].
 pub(crate) fn run_fast(root: &Path, filter: Option<&str>, debug: bool) -> Result<()> {
-    let classpath = test_classpath(root, debug)?;
+    let classpath = test_classpath(root, debug)?.joined()?;
     let mut cmd = Command::new("java");
     cmd.args(["-cp", &classpath])
         .arg("org.junit.platform.console.ConsoleLauncher")

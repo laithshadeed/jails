@@ -6105,6 +6105,125 @@ fn test_fast_runs_compiled_classes_and_falls_back_loudly_when_they_are_stale() {
     );
 }
 
+/// `plan.md` item 13, and the two things about a daemon that must be true
+/// before speed matters at all.
+///
+/// The first is that it refuses rather than runs when the classes are older
+/// than their sources -- a resident JVM makes a green-over-deleted-code report
+/// *faster*, not less wrong.
+///
+/// The second is the one that cannot be checked by reading: that a run really
+/// does see a class recompiled since the daemon started. The daemon holds the
+/// dependencies on its own classpath and hands only `target/classes` and
+/// `target/test-classes` to JUnit as `--class-path`, so JUnit builds a child
+/// loader for them per run. Put the outputs on the daemon's classpath too and
+/// parent-first delegation serves the *stale* class forever, silently -- which
+/// looks exactly like a working daemon until someone notices a fixed test
+/// still failing.
+#[test]
+fn testd_refuses_stale_classes_and_sees_a_recompile_after_it_started() {
+    if !real_mvn_available() || !real_java_supports_target_release() {
+        skip("mvn or a new enough JDK not found on PATH");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let root = temp_dir("real-testd");
+    write_plain_fixture(&root);
+    // The plain fixture ships no test, and a daemon that finds nothing to run
+    // would satisfy every assertion below for the wrong reason.
+    let test_dir = root.join("src/test/java/com/example/demo");
+    std::fs::create_dir_all(&test_dir).unwrap();
+    let test_source = test_dir.join("AppTest.java");
+    std::fs::write(
+        &test_source,
+        "package com.example.demo;\n\nimport org.junit.jupiter.api.Test;\n\n         class AppTest {\n    @Test\n    void passes() {}\n}\n",
+    )
+    .unwrap();
+
+    // Nothing compiled: refused, and the refusal names the way out.
+    let cold = jails_cmd_with_path(&root, &path)
+        .args(["testd"])
+        .output()
+        .unwrap();
+    let report = format!(
+        "{}{}",
+        String::from_utf8_lossy(&cold.stdout),
+        String::from_utf8_lossy(&cold.stderr)
+    );
+    assert!(
+        report.contains("testd not taken") && report.contains("fix:"),
+        "an uncompiled project must be refused, with a fix: {report}"
+    );
+
+    // `--fast` splices the console launcher, pinned to this project's JUnit,
+    // and compiles. `testd` shares that dependency rather than having its own
+    // idea of which JUnit this is.
+    let prepared = jails_cmd_with_path(&root, &path)
+        .args(["test", "--fast"])
+        .output()
+        .unwrap();
+    if !prepared.status.success() {
+        skip("could not prepare the fixture with `test --fast`");
+        return;
+    }
+
+    let first = jails_cmd_with_path(&root, &path)
+        .args(["testd"])
+        .output()
+        .unwrap();
+    let report = format!(
+        "{}{}",
+        String::from_utf8_lossy(&first.stdout),
+        String::from_utf8_lossy(&first.stderr)
+    );
+    assert!(
+        first.status.success(),
+        "the first daemon run failed: {report}"
+    );
+    assert!(
+        report.contains("tests successful"),
+        "the daemon must report a real JUnit run: {report}"
+    );
+
+    // Now add a failing test *after* the daemon is up, recompile, and run
+    // again. A daemon serving cached classes would still report success here.
+    std::fs::write(
+        &test_source,
+        "package com.example.demo;\n\nimport org.junit.jupiter.api.Test;\n         import static org.junit.jupiter.api.Assertions.fail;\n\n         class AppTest {\n    @Test\n    void passes() {}\n\n         \x20   @Test\n    void addedAfterTheDaemonStarted() {\n        fail(\"seen\");\n    }\n}\n",
+    )
+    .unwrap();
+
+    let compiled = std::process::Command::new("mvn")
+        .args(["-q", "-o", "test-compile"])
+        .current_dir(&root)
+        .env("PATH", &path)
+        .status();
+    if !matches!(compiled, Ok(status) if status.success()) {
+        let _ = jails_cmd_with_path(&root, &path)
+            .args(["testd", "--stop"])
+            .output();
+        skip("offline Maven could not recompile the fixture");
+        return;
+    }
+
+    let after = jails_cmd_with_path(&root, &path)
+        .args(["testd"])
+        .output()
+        .unwrap();
+    let report = format!(
+        "{}{}",
+        String::from_utf8_lossy(&after.stdout),
+        String::from_utf8_lossy(&after.stderr)
+    );
+    let _ = jails_cmd_with_path(&root, &path)
+        .args(["testd", "--stop"])
+        .output();
+    assert!(
+        !after.status.success() && report.contains("tests failed"),
+        "the daemon must see a class recompiled after it started: {report}"
+    );
+}
+
 /// `plan.md` §13.2. Every claim in `EventHub`'s Javadoc is a behavioural one,
 /// so the only place they can be checked is against a real JUnit run --
 /// especially the concurrency test, which is the reason the registry is a

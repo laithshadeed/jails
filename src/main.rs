@@ -33,6 +33,7 @@ mod spring;
 mod sql;
 mod surefire;
 mod template;
+mod testd;
 mod why;
 
 use add::Capability;
@@ -477,6 +478,24 @@ enum Command {
         #[arg(long)]
         fast: bool,
     },
+    /// Run the tests against a resident JVM, started on demand
+    ///
+    /// The measurement this exists for is in `plan.md` §19.2: the *first*
+    /// JUnit session in a JVM costs 464 ms where the warm ones cost 20 ms, and
+    /// a cold `java` pays it every run. The daemon pays it once.
+    ///
+    /// It runs what is compiled and refuses when a source is newer -- the same
+    /// gate as `test --fast`. It does not compile, because the editor's
+    /// language server already writes `target/classes` on save (§19.5).
+    Testd {
+        filter: Option<String>,
+        /// Stop this project's daemon
+        #[arg(long, conflicts_with_all = ["status", "filter"])]
+        stop: bool,
+        /// Say whether one is running, and where
+        #[arg(long, conflicts_with = "filter")]
+        status: bool,
+    },
     /// Build the project (mvn package)
     Build,
     /// Delete Maven's `target/` directory (`mvn clean`)
@@ -716,6 +735,20 @@ fn main() -> std::process::ExitCode {
                 slowest,
                 json,
                 fast,
+            },
+            debug,
+        ),
+        Command::Testd {
+            filter,
+            stop,
+            status,
+        } => testd::testd(
+            if stop {
+                testd::Action::Stop
+            } else if status {
+                testd::Action::Status
+            } else {
+                testd::Action::Run(filter)
             },
             debug,
         ),

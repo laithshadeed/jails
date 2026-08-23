@@ -204,6 +204,25 @@ to build next and why. Do not add proposals here.
   And **`--fast` does not beat `mvnd`**: `plan.md` §19.1 has the numbers, it is
   the no-mvnd path and the substrate for `jails testd`, and it must not be
   described as faster than the default.
+- `src/testd.rs` + `templates/testd/JailsTestDaemon.java` — `jails testd`: a
+  resident JVM over a unix socket. **0.06-0.10 s against `--fast`'s 0.62 s**
+  for one test method, measured; §19.2 says why, and it is not the launcher --
+  the first JUnit session in a JVM is 464 ms against 20 ms warm, and a cold
+  `java` pays it every run. Three things to know before touching it.
+  **The classpath is split in two and must stay that way**: the daemon holds
+  the *dependencies* on its own classpath and hands only `target/classes` and
+  `target/test-classes` to JUnit as `--class-path`, so JUnit builds a child
+  loader per run. Put the outputs on the daemon's classpath as well and
+  parent-first delegation serves the stale class forever -- a daemon that looks
+  perfect and is green over code that no longer exists.
+  **It does not compile, deliberately.** §10.2's design had it hold a
+  `JavaCompiler`; §19.5 measured that the editor's language server already
+  writes `target/classes` on save, so the compile is being done by something
+  with the whole project's model rather than one changed file -- and §10.2
+  itself records that compiling only the changed file is unsound.
+  And it is **a Java program, not a jails jar**: the daemon is a template
+  compiled by `java`'s single-file source launcher at start-up, and nothing
+  about it enters the project.
 - `src/run.rs` — `test`/`build`/`clean`/`run`, shells to `mvn`/`mvnd`. `run`/`watch`
   start compose services first when `compose.yaml` is present.
 - `src/console.rs` — `db`/`dbconsole` (`psql` or `sqlite3`) and `console`/`c`
