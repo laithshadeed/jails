@@ -36,13 +36,14 @@ use jails_project::capture::{self, ReadDeclaration};
 use jails_project::model::{Change, Project};
 use jails_protocol::bootstrap::Bootstrap;
 use jails_protocol::change::DesiredChange;
+use jails_protocol::edit::SemanticEdit;
 use jails_protocol::entity::{
     CapabilityId, CapabilityInstance, CapabilitySpec, EntityId, EntitySpec, OwnerId,
 };
 use jails_protocol::identity::ProjectPath;
 use jails_protocol::ownership::{DesiredEntity, DesiredState, ReconcileScope};
 use jails_protocol::plan::{DesiredAppliedEntity, DesiredChangeSet, LedgerIntent, PlannedSubject};
-use jails_protocol::resource::ResourceOwner;
+use jails_protocol::resource::{DesiredResource, ResourceKey, ResourceOwner, ResourceValue};
 use jails_protocol::snapshot::{MachineRootPresence, TemplateStore};
 use jails_protocol::transition::CommitPlan;
 use jails_spec::spec::kind::Capability;
@@ -59,8 +60,9 @@ pub fn install(project: &Project, capability: Capability) -> Result<CommitResult
         instance: CapabilityInstance::Singleton,
     };
     let owner = ResourceOwner::Entity(EntityId::Capability(id.clone()));
-    let change = jails_generate::add::plan_for(capability, project)?;
-    let desired = desire::contribution(&owner, &change, project)?;
+    let change = with_test_support(project, jails_generate::add::plan_for(capability, project)?);
+    let mut desired = desire::contribution(&owner, &change, project)?;
+    record_capability(&mut desired, &owner, &id)?;
     let entity = DesiredEntity {
         id: EntityId::Capability(id),
         spec: EntitySpec::Capability(CapabilitySpec { placement: None }),
@@ -68,6 +70,68 @@ pub fn install(project: &Project, capability: Capability) -> Result<CommitResult
     };
     let set = change_set(ReconcileScope::DirectConfig, entity, desired)?;
     commit(project, set, &declaration(project, &change)?, "jails add")
+}
+
+/// The two things the write path adds to any change that writes tests.
+///
+/// A capability or a generator that emits a test emits it against AssertJ, and
+/// one that emits an `*IT` needs Failsafe -- which is *not* in the Spring Boot
+/// parent's default build, so without it `mvn verify` completes, reports
+/// success and runs none of them. jails generated integration tests for months
+/// that never ran once.
+///
+/// The direct write path applies both from `write_new_file`/`add_in` rather
+/// than per recipe, for the same reason the Java shape rules live below every
+/// producer: a rule twenty recipes have to remember is a rule that decays. So
+/// every route applies them here, once, to whatever it is about to desire.
+fn with_test_support(project: &Project, mut change: Change) -> Change {
+    let writes = |suffix: &str| {
+        change
+            .files
+            .iter()
+            .any(|file| file.path.to_string_lossy().contains(suffix))
+    };
+    if writes("src/test/java")
+        && !jails_project::pom::has_dependency(project.pom(), "org.assertj", "assertj-core")
+        && !project.pom().contains("spring-boot-starter-test")
+        && !project.pom().contains("spring-boot-starter-webmvc-test")
+    {
+        change
+            .deps
+            .push(jails_project::pom::assertj(project.flavor()));
+    }
+    if writes("IT.java") {
+        change.plugins.push((
+            jails_generate::spring::FAILSAFE_ARTIFACT,
+            jails_generate::spring::failsafe_plugin(project.flavor()).to_string(),
+        ));
+    }
+    change
+}
+
+/// Record the capability in the manifest `sync` acts on.
+///
+/// CLAUDE.md states the rule and the reason: a manifest somebody has to
+/// remember to update is a manifest that is wrong, and a wrong one is worse
+/// than none because `sync` acts on it. It is a resource rather than a side
+/// effect, so removing the capability takes the line out by the same
+/// mechanism that put it in.
+fn record_capability(
+    change: &mut DesiredChange,
+    owner: &ResourceOwner,
+    id: &CapabilityId,
+) -> Result<()> {
+    let key = ResourceKey::HumanConfigCapability(id.clone());
+    let spec = CapabilitySpec { placement: None };
+    change.resources.push(DesiredResource::new(
+        key.clone(),
+        BTreeSet::from([owner.clone()]),
+        ResourceValue::HumanConfigCapability(spec.clone()),
+    )?);
+    change
+        .edits
+        .push(SemanticEdit::HumanConfigCapability { key, spec });
+    Ok(())
 }
 
 /// Everything one request wants, as the complete state of the scope it speaks

@@ -40,6 +40,36 @@ fn a_capability_installs_through_the_transaction_protocol() {
         root.join(".jails").is_dir(),
         "the transaction left its own bookkeeping behind"
     );
+
+    // CLAUDE.md's rule: the manifest `sync` acts on is maintained by `add`,
+    // never by the user. A capability installed and not recorded is one the
+    // next `sync` would take back out.
+    let manifest = std::fs::read_to_string(root.join("jails.toml")).unwrap();
+    assert!(manifest.contains("actuator"), "{manifest}");
+}
+
+/// A capability that writes a test writes it against AssertJ.
+///
+/// The direct write path applies this from one place rather than per recipe,
+/// and so does the route. The case it exists for is a project jails did not
+/// create: `add testkit` on plain Maven is where it showed up, as six
+/// `cannot find symbol: method assertThat` for a file the reader never wrote.
+#[test]
+fn a_capability_that_writes_a_test_brings_something_to_assert_with() {
+    let root = common::temp_dir("engine-assertj");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+    let project = Project::load(&root).unwrap();
+
+    jails_engine::route::install(&project, Capability::Csv).unwrap();
+
+    let pom = std::fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(pom.contains("assertj-core"), "{pom}");
+    assert!(
+        pom.contains(jails_project::pom::ASSERTJ_VERSION),
+        "without a managing parent the version has to be pinned, or Maven refuses to read the \
+         POM at all:\n{pom}"
+    );
 }
 
 /// The property every step before the lock has: it touches nothing.
