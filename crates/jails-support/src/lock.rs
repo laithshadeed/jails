@@ -73,9 +73,7 @@ impl Lock {
             })?;
         set_private(&file, path).map_err(Contention::Refused)?;
 
-        if file.try_lock_exclusive().is_err() {
-            return Err(Contention::Held(read_best_effort(path)));
-        }
+        contend(&file, path)?;
 
         // The lock is on an inode. If the path now names a different one,
         // somebody replaced the file and a second holder is possible.
@@ -102,6 +100,33 @@ impl Lock {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+}
+
+/// Take the lock, and say what happened in the caller's vocabulary.
+///
+/// The distinction this draws is not pedantry. `flock` reports three
+/// different things through one `Err`: somebody else holds it (`EWOULDBLOCK`),
+/// the call was interrupted by a signal (`EINTR`), and something is wrong with
+/// the file or the filesystem. Reporting all three as "another jails mutation
+/// holds the lock" sends the reader looking for a process that does not exist
+/// — and `EINTR` is not hypothetical here, because jails spawns child
+/// processes and their `SIGCHLD` arrives on whichever thread the kernel picks.
+/// An interrupted attempt is retried, since nothing about it says the lock is
+/// taken.
+fn contend(file: &File, path: &Path) -> std::result::Result<(), Contention> {
+    loop {
+        return match file.try_lock_exclusive() {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                Err(Contention::Held(read_best_effort(path)))
+            }
+            Err(error) => Err(Contention::Refused(format!(
+                "could not lock {}: {error}",
+                path.display()
+            ))),
+        };
     }
 }
 

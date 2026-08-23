@@ -538,25 +538,6 @@ enum Command {
 /// flight -- `migrate` creates a scratch database it is responsible for
 /// dropping -- and anything staging a file beside its destination would be in
 /// the same position. Returning lets the stack unwind normally first.
-/// Apply `--app <manifest>` to a project `new`/`new-cli` has just created.
-///
-/// Nothing to do without the flag, and nothing to do under `--pretend`: that
-/// created no project to apply anything to, and saying so beats failing to
-/// find a `pom.xml` that was never written.
-fn seed(name: &str, manifest: Option<&std::path::Path>, debug: bool, pretend: bool) -> Result<()> {
-    let Some(manifest) = manifest else {
-        return Ok(());
-    };
-    if pretend {
-        println!(
-            "--pretend: no project was created, so {} was not applied.",
-            manifest.display()
-        );
-        return Ok(());
-    }
-    new::seed_manifest(std::path::Path::new(name), manifest, debug)
-}
-
 fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
     let debug = cli.debug;
@@ -579,17 +560,16 @@ fn main() -> std::process::ExitCode {
             !no_git,
             !no_devtools,
             offline,
+            app.as_deref(),
             debug,
             pretend,
-        )
-        .and_then(|()| seed(&name, app.as_deref(), debug, pretend)),
+        ),
         Command::NewCli {
             name,
             release,
             no_git,
             app,
-        } => new::new_cli(&name, &release, !no_git, debug, pretend)
-            .and_then(|()| seed(&name, app.as_deref(), debug, pretend)),
+        } => new::new_cli(&name, &release, !no_git, app.as_deref(), debug, pretend),
         Command::App { command } => app::run(command, debug, pretend),
         Command::Generate {
             kind,

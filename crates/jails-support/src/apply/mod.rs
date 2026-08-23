@@ -261,6 +261,48 @@ pub fn move_file(from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<()> {
     })
 }
 
+/// Publish a completed tree by renaming it onto a destination that must be
+/// absent, then flushing the directory entry that now names it.
+///
+/// This is what makes a new project "absent or complete" (plan.md §R6.5).
+/// Everything a `jails new` writes goes into a scratch sibling of the
+/// destination, so a download that fails, a template that refuses or a
+/// killed process leaves nothing behind for the reader to distinguish from a
+/// project — and the one step that makes it real is a rename, which the
+/// kernel either performs or does not.
+///
+/// `from` and `to` must share a filesystem, which the caller guarantees by
+/// reserving the scratch tree beside the destination rather than in `/tmp`.
+/// A cross-device rename is reported rather than papered over with a copy:
+/// a copy is not atomic, and silently downgrading to one would give back the
+/// half-written tree this exists to prevent.
+pub fn publish_tree(from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<()> {
+    let (from, to) = (from.as_ref(), to.as_ref());
+    if to.symlink_metadata().is_ok() {
+        return Err(format!("{} already exists", to.display()));
+    }
+    fs::rename(from, to).map_err(|error| {
+        format!(
+            "failed to publish {} as {}: {error}",
+            from.display(),
+            to.display()
+        )
+    })?;
+    let Some(parent) = to.parent() else {
+        return Ok(());
+    };
+    sync_directory(parent)
+}
+
+/// Flush a directory's own entries, so a name that was just created or
+/// renamed survives a crash rather than only the bytes it points at.
+pub fn sync_directory(path: impl AsRef<Path>) -> Result<()> {
+    let path = path.as_ref();
+    std::fs::File::open(path)
+        .and_then(|dir| dir.sync_all())
+        .map_err(|error| format!("failed to flush {}: {error}", path.display()))
+}
+
 /// Copy a file into a tree jails owns for the duration of one run.
 ///
 /// Named for its destination rather than its action: copying *into a project*

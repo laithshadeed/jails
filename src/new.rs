@@ -1,3 +1,5 @@
+mod publish;
+
 use jails_support::Result;
 use std::fs;
 use std::path::Path;
@@ -33,11 +35,12 @@ pub fn new(
     git: bool,
     devtools: bool,
     offline: bool,
+    app: Option<&Path>,
     debug: bool,
     pretend: bool,
 ) -> Result<()> {
     if Path::new(name).exists() {
-        return Err(format!("{name} already exists"));
+        return Err(publish::already_exists(Path::new(name)));
     }
 
     // Refused rather than ignored. The project `new` creates is whatever
@@ -59,14 +62,42 @@ pub fn new(
     let deps = deps.as_str();
 
     if offline {
-        return new_offline(name, deps, java, git, debug, pretend);
+        return new_offline(name, deps, java, git, app, debug, pretend);
     }
 
-    // Exclusively created, and removed by its guard on every path out of this
-    // function -- including the two early returns below, which previously each
-    // had to remember a `remove_dir_all` of their own.
-    let tmp = crate::scratch::ScratchDir::in_temp(&format!("jails-new-{name}"))?;
-    let zip_path = tmp.path().join("starter.zip");
+    let publication = publish::Publication::reserve(Path::new(name))?;
+    let root = publication.root().to_path_buf();
+    download_starter(&publication, name, deps, java, debug)?;
+
+    if initializr_java(java) != java {
+        set_java_release(&root, initializr_java(java), java)?;
+    }
+    write_fixtures_dir(&root)?;
+    finish_spring_project(&root, deps)?;
+    ensure_enforcer(&root, java)?;
+    write_mise(&root, java)?;
+    write_agents(&root, java)?;
+
+    // start.spring.io's zip already ships a .gitignore, so just init.
+    if git {
+        git_init(&root, debug);
+    }
+    seed(&publication, app, debug)?;
+
+    publication.publish()?;
+    println!("Created ./{name} (deps: {deps}, Java {java})");
+    Ok(())
+}
+
+/// Fetch and unpack start.spring.io's answer into the reserved scratch tree.
+fn download_starter(
+    publication: &publish::Publication,
+    name: &str,
+    deps: &str,
+    java: &str,
+    debug: bool,
+) -> Result<()> {
+    let zip_path = publication.enclosure().join("starter.zip");
 
     // Explicit future/EA choices may be newer than Initializr advertises.
     // Bootstrap with the newest version it accepts, then set the generated
@@ -101,8 +132,15 @@ pub fn new(
         );
     }
 
+    // Unpacked into the enclosure rather than into the project root: the
+    // archive carries its own `<name>/` folder, which `Publication` has
+    // already created, so this lands the contents exactly there.
     let mut unzip = Command::new("unzip");
-    unzip.args(["-q"]).arg(&zip_path).args(["-d", "."]);
+    unzip
+        .args(["-q"])
+        .arg(&zip_path)
+        .arg("-d")
+        .arg(publication.enclosure());
     if debug {
         jails_support::debug_cmd(&unzip);
     }
@@ -113,23 +151,6 @@ pub fn new(
     if !status.success() {
         return Err("failed to extract starter.zip".to_string());
     }
-    tmp.close()?;
-
-    if initializer_java != java {
-        set_java_release(Path::new(name), initializer_java, java)?;
-    }
-    write_fixtures_dir(Path::new(name))?;
-    finish_spring_project(Path::new(name), deps)?;
-    ensure_enforcer(Path::new(name), java)?;
-    write_mise(Path::new(name), java)?;
-    write_agents(Path::new(name), java)?;
-
-    // start.spring.io's zip already ships a .gitignore, so just init.
-    if git {
-        git_init(Path::new(name), debug);
-    }
-
-    println!("Created ./{name} (deps: {deps}, Java {java})");
     Ok(())
 }
 
@@ -138,6 +159,7 @@ fn new_offline(
     deps: &str,
     java: &str,
     git: bool,
+    app: Option<&Path>,
     debug: bool,
     pretend: bool,
 ) -> Result<()> {
@@ -150,21 +172,20 @@ fn new_offline(
             crate::pom::MIN_RELEASE
         ));
     }
-    let root = Path::new(name);
     let package = sanitize_package(name);
     let class = application_class(name);
-    let source = root.join("src/main/java").join(package.replace('.', "/"));
-    let tests = root.join("src/test/java").join(package.replace('.', "/"));
-    let paths = [
-        root.join("pom.xml"),
-        source.join(format!("{class}Application.java")),
-        tests.join(format!("{class}ApplicationTests.java")),
-        root.join("src/main/resources/application.properties"),
-        root.join("mise.toml"),
-        root.join("AGENTS.md"),
-    ];
     if pretend {
-        for path in paths {
+        let root = Path::new(name);
+        let source = root.join("src/main/java").join(package.replace('.', "/"));
+        let tests = root.join("src/test/java").join(package.replace('.', "/"));
+        for path in [
+            root.join("pom.xml"),
+            source.join(format!("{class}Application.java")),
+            tests.join(format!("{class}ApplicationTests.java")),
+            root.join("src/main/resources/application.properties"),
+            root.join("mise.toml"),
+            root.join("AGENTS.md"),
+        ] {
             println!("would create {}", path.display());
         }
         if git {
@@ -172,8 +193,13 @@ fn new_offline(
         }
         println!();
         println!("--pretend: nothing was written. (offline fixture, Java {java})");
-        return Ok(());
+        return previewed(app);
     }
+
+    let publication = publish::Publication::reserve(Path::new(name))?;
+    let root = publication.root();
+    let source = root.join("src/main/java").join(package.replace('.', "/"));
+    let tests = root.join("src/test/java").join(package.replace('.', "/"));
 
     jails_support::apply::ensure_directory(&source)
         .map_err(|error| format!("failed to create {}: {error}", source.display()))?;
@@ -217,6 +243,9 @@ fn new_offline(
         crate::apply::put(root.join(".gitignore"), GITIGNORE)?;
         git_init(root, debug);
     }
+    seed(&publication, app, debug)?;
+
+    publication.publish()?;
     println!("Created ./{name} offline (deps: {deps}, Java {java})");
     Ok(())
 }
@@ -470,10 +499,16 @@ fn set_java_release(root: &Path, from: &str, to: &str) -> Result<()> {
 /// Plain Maven CLI project, written directly -- no `mvn archetype:generate`
 /// (slow, needs network, and falls into an interactive catalog picker
 /// without exact archetype coordinates).
-pub fn new_cli(name: &str, java: &str, git: bool, debug: bool, pretend: bool) -> Result<()> {
-    let root = Path::new(name);
-    if root.exists() {
-        return Err(format!("{name} already exists"));
+pub fn new_cli(
+    name: &str,
+    java: &str,
+    git: bool,
+    app: Option<&Path>,
+    debug: bool,
+    pretend: bool,
+) -> Result<()> {
+    if Path::new(name).exists() {
+        return Err(publish::already_exists(Path::new(name)));
     }
 
     // A generic tool cannot hardcode one release level: the LTS most people
@@ -491,16 +526,18 @@ pub fn new_cli(name: &str, java: &str, git: bool, debug: bool, pretend: bool) ->
 
     let package = sanitize_package(name);
 
-    let src_dir = root.join("src/main/java").join(package.replace('.', "/"));
-    let test_dir = root.join("src/test/java").join(package.replace('.', "/"));
-
     // Every path below is written unconditionally, so the preview is the
     // list itself rather than a second description of it that can drift.
     if pretend {
+        let root = Path::new(name);
         let mut planned = vec![
             root.join("pom.xml"),
-            src_dir.join("App.java"),
-            test_dir.join("AppTest.java"),
+            root.join("src/main/java")
+                .join(package.replace('.', "/"))
+                .join("App.java"),
+            root.join("src/test/java")
+                .join(package.replace('.', "/"))
+                .join("AppTest.java"),
             root.join("src/test/resources/fixtures/.gitkeep"),
             root.join("mise.toml"),
             root.join("AGENTS.md"),
@@ -516,8 +553,13 @@ pub fn new_cli(name: &str, java: &str, git: bool, debug: bool, pretend: bool) ->
         }
         println!();
         println!("--pretend: nothing was written. (package: {package}, Java {java})");
-        return Ok(());
+        return previewed(app);
     }
+
+    let publication = publish::Publication::reserve(Path::new(name))?;
+    let root = publication.root();
+    let src_dir = root.join("src/main/java").join(package.replace('.', "/"));
+    let test_dir = root.join("src/test/java").join(package.replace('.', "/"));
 
     jails_support::apply::ensure_directory(&src_dir)
         .map_err(|e| format!("failed to create {}: {e}", src_dir.display()))?;
@@ -561,8 +603,39 @@ pub fn new_cli(name: &str, java: &str, git: bool, debug: bool, pretend: bool) ->
         crate::apply::put(root.join(".gitignore"), GITIGNORE)?;
         git_init(root, debug);
     }
+    seed(&publication, app, debug)?;
 
+    publication.publish()?;
     println!("Created ./{name} (package: {package}, Java {java})");
+    Ok(())
+}
+
+/// Apply `--app <manifest>` to the project being created, before it is
+/// published.
+///
+/// plan.md §R6.5 puts the manifest inside the publication rather than after
+/// it: `new --app` is one command, and a destination holding a project whose
+/// manifest half-applied is exactly the state publication-by-rename exists to
+/// remove. The manifest path is resolved against the directory the *user* is
+/// standing in, which is why it is read before anything is written.
+fn seed(publication: &publish::Publication, app: Option<&Path>, debug: bool) -> Result<()> {
+    match app {
+        Some(manifest) => seed_manifest(publication.root(), manifest, debug),
+        None => Ok(()),
+    }
+}
+
+/// What `--app` does under `--pretend`: nothing, and says so.
+///
+/// A preview created no project, so there is nothing to apply a manifest to,
+/// and saying that beats failing to find a `pom.xml` that was never written.
+fn previewed(app: Option<&Path>) -> Result<()> {
+    if let Some(manifest) = app {
+        println!(
+            "--pretend: no project was created, so {} was not applied.",
+            manifest.display()
+        );
+    }
     Ok(())
 }
 
@@ -885,7 +958,14 @@ mod tests {
         let workdir = scratch("new-cli");
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&workdir).unwrap();
-        let result = new_cli("demo-app", crate::pom::TARGET_RELEASE, false, false, false);
+        let result = new_cli(
+            "demo-app",
+            crate::pom::TARGET_RELEASE,
+            false,
+            None,
+            false,
+            false,
+        );
         std::env::set_current_dir(&original_cwd).unwrap();
         result.unwrap();
 
@@ -910,7 +990,14 @@ mod tests {
         fs::create_dir_all(workdir.join("demo-app")).unwrap();
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&workdir).unwrap();
-        let result = new_cli("demo-app", crate::pom::TARGET_RELEASE, false, false, false);
+        let result = new_cli(
+            "demo-app",
+            crate::pom::TARGET_RELEASE,
+            false,
+            None,
+            false,
+            false,
+        );
         std::env::set_current_dir(&original_cwd).unwrap();
 
         assert!(result.is_err());
@@ -922,7 +1009,14 @@ mod tests {
         let workdir = scratch("new-cli-no-git");
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&workdir).unwrap();
-        let result = new_cli("demo-app", crate::pom::TARGET_RELEASE, false, false, false);
+        let result = new_cli(
+            "demo-app",
+            crate::pom::TARGET_RELEASE,
+            false,
+            None,
+            false,
+            false,
+        );
         std::env::set_current_dir(&original_cwd).unwrap();
         result.unwrap();
 
@@ -937,7 +1031,14 @@ mod tests {
         let workdir = scratch("new-cli-git");
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&workdir).unwrap();
-        let result = new_cli("demo-app", crate::pom::TARGET_RELEASE, true, false, false);
+        let result = new_cli(
+            "demo-app",
+            crate::pom::TARGET_RELEASE,
+            true,
+            None,
+            false,
+            false,
+        );
         std::env::set_current_dir(&original_cwd).unwrap();
         result.unwrap();
 

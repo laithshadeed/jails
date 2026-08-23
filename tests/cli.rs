@@ -622,6 +622,62 @@ fn new_with_an_unreadable_app_manifest_says_so_with_a_fix() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("application manifest"), "{stderr}");
     assert!(stderr.contains("fix:"), "{stderr}");
+
+    // plan.md §R6.5: the destination is absent or complete. Everything
+    // `new-cli` writes goes into a scratch sibling and becomes real in one
+    // rename, so a manifest that cannot be read leaves nothing that reads
+    // like a project -- which is what the previous behaviour left: a pom, an
+    // App.java, and no manifest, in a directory the next run then refused to
+    // reuse.
+    assert!(
+        !workspace.join("demo").exists(),
+        "a refused `new-cli --app` leaves no half-written project behind"
+    );
+    let leftovers: Vec<String> = fs::read_dir(&workspace)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name != ".jails-new.lock")
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "the scratch tree is swept too, found {leftovers:?}"
+    );
+}
+
+/// The refusal a second `jails new` gets while the first is still publishing.
+///
+/// Not a hypothetical: the check that a destination is free and the rename
+/// that takes it are separated by a download and a whole project's worth of
+/// writes, so without the parent lock two runs can both pass the check.
+#[test]
+fn a_new_project_publishes_atomically_into_a_directory_that_is_watched() {
+    let workspace = temp_dir("new-publication");
+    fs::create_dir_all(&workspace).unwrap();
+    let status = std::process::Command::new(env!("CARGO_BIN_EXE_jails"))
+        .current_dir(&workspace)
+        .args(["new-cli", "demo", "--no-git"])
+        .status()
+        .unwrap();
+    assert!(status.success());
+    assert!(workspace.join("demo/pom.xml").is_file());
+
+    // The lock file is left in the parent on purpose (a lock is on an inode,
+    // so deleting it lets two holders exist at once), but nothing else is.
+    let leftovers: Vec<String> = fs::read_dir(&workspace)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name != ".jails-new.lock" && name != "demo")
+        .collect();
+    assert!(leftovers.is_empty(), "found {leftovers:?}");
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_jails"))
+        .current_dir(&workspace)
+        .args(["new-cli", "demo", "--no-git"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("already exists"), "{stderr}");
 }
 
 /// The generated guard has to *run*, not merely compile.
