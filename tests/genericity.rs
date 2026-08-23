@@ -68,6 +68,9 @@ const ALLOWED: &[AllowedConcept] = &[
             // A transition is chosen against the ledger's pending-conflict
             // state, and its tests construct one to prove the pairing.
             "crates/jails-protocol/src/transition.rs",
+            // A frozen conflict carries the complete ledger state a
+            // resolution will promote; that is what it is.
+            "crates/jails-protocol/src/pending.rs",
             // A prepared transaction guards the ledger file it will replace,
             // and its semantics carry the intent for it.
             "crates/jails-prepare/src/prepare.rs",

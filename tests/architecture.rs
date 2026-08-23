@@ -625,6 +625,7 @@ const LAYERS: &[(&str, usize)] = &[
     ("entity", 3),
     ("identity", 3),
     ("ownership", 3),
+    ("pending", 3),
     ("plan", 3),
     ("provenance", 3),
     ("recipe", 3),
@@ -657,6 +658,7 @@ const LAYERS: &[(&str, usize)] = &[
     ("pipeline", 5),
     ("prepare", 5),
     ("receipt", 5),
+    ("reconcile", 5),
     ("report", 5),
     ("sandbox", 5),
     ("serialize", 5),
@@ -664,6 +666,7 @@ const LAYERS: &[(&str, usize)] = &[
     // jails-commit: making a prepared transaction durable, and recovering one.
     ("execute", 6),
     ("fault", 6),
+    ("gc", 6),
     ("journal", 6),
     ("outcome", 6),
     ("recover", 6),

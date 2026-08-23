@@ -22,6 +22,7 @@ pub mod envelope;
 pub mod fact;
 pub mod identity;
 pub mod ownership;
+pub mod pending;
 pub mod plan;
 pub mod provenance;
 pub mod recipe;

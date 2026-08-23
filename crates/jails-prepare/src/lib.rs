@@ -14,6 +14,7 @@ pub mod operation;
 pub mod pipeline;
 pub mod prepare;
 pub mod receipt;
+pub mod reconcile;
 pub mod report;
 pub mod sandbox;
 pub mod serialize;

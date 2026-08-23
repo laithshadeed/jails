@@ -9,6 +9,7 @@
 
 pub mod execute;
 pub mod fault;
+pub mod gc;
 pub mod journal;
 pub mod outcome;
 pub mod recover;

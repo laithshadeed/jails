@@ -627,7 +627,7 @@ impl ChangeSubject {
 /// leave a hidden second app owner."* There is one app-manifest namespace; the
 /// source is an input fact, recorded in the fingerprint rather than in the
 /// ownership model.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum ManifestSourceId {
     Project(ProjectPath),
     External { path_id: ExternalPathId },
