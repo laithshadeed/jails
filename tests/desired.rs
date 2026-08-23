@@ -36,8 +36,6 @@ enum Verdict {
     NeedsTestWiring,
     /// Supersedes an older dependency, which is an absence, not a claim.
     NeedsSupersedes,
-    /// Contributes a comment line inside its property block.
-    NeedsPropertyComment,
     /// The capability refuses to plan against this fixture because the fixture
     /// does not meet its precondition — no HTTP routes to load-test, no
     /// actuator to probe. Nothing to do with the translation.
@@ -49,7 +47,7 @@ const BOARD: &[(&str, Verdict)] = &[
     ("api", Verdict::Translates),
     ("cache", Verdict::Translates),
     ("ci", Verdict::Translates),
-    ("cors", Verdict::NeedsPropertyComment),
+    ("cors", Verdict::Translates),
     ("coverage", Verdict::Translates),
     ("csv", Verdict::Translates),
     ("db", Verdict::NeedsTestWiring),
@@ -63,12 +61,12 @@ const BOARD: &[(&str, Verdict)] = &[
     ("kafka", Verdict::Translates),
     // Needs at least one HTTP route in the project to load-test.
     ("loadtest", Verdict::PreconditionUnmet),
-    ("mail", Verdict::NeedsPropertyComment),
+    ("mail", Verdict::Translates),
     ("observability", Verdict::Translates),
     ("redis", Verdict::Translates),
     ("security", Verdict::Translates),
     ("sqlite", Verdict::Translates),
-    ("sse", Verdict::NeedsPropertyComment),
+    ("sse", Verdict::Translates),
     ("testkit", Verdict::Translates),
     ("toxiproxy", Verdict::Translates),
 ];
@@ -91,7 +89,6 @@ fn verdict(capability: Capability, project: &Project) -> Verdict {
         Ok(_) => Verdict::Translates,
         Err(message) if message.contains("Spring test import") => Verdict::NeedsTestWiring,
         Err(message) if message.contains("supersedes") => Verdict::NeedsSupersedes,
-        Err(message) if message.contains("the comment") => Verdict::NeedsPropertyComment,
         Err(message) => panic!(
             "{} refused for an unlisted reason: {message}",
             capability.label()

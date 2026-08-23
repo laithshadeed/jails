@@ -286,11 +286,13 @@ impl ProjectedProject {
                 let path = pom_path()?;
                 let text = self.required_text(&path)?;
                 let version = match &value.version {
-                    jails_protocol::resource::MavenVersion::Managed => None,
-                    jails_protocol::resource::MavenVersion::Pinned(pinned) => Some(pinned.as_str()),
+                    jails_protocol::coordinate::MavenVersion::Managed => None,
+                    jails_protocol::coordinate::MavenVersion::Pinned(pinned) => {
+                        Some(pinned.as_str())
+                    }
                 };
                 let scope = match value.scope {
-                    jails_protocol::resource::MavenScope::Compile => None,
+                    jails_protocol::coordinate::MavenScope::Compile => None,
                     other => Some(other.label()),
                 };
                 let spliced = pom::add_dependency_ref(
@@ -338,7 +340,10 @@ impl ProjectedProject {
                     return Err("a property edit filed under another key".to_string());
                 };
                 let text = self.text(path)?.unwrap_or_default();
-                self.write_text(path, properties::set(&text, key.as_str(), value));
+                self.write_text(
+                    path,
+                    properties::introduce(&text, key.as_str(), &value.value, &value.comment),
+                );
                 Ok(Some(path.clone()))
             }
             SemanticEdit::MarkedBlock { key, body } => {
@@ -535,13 +540,12 @@ fn default_mode() -> jails_protocol::conflict::FileMode {
 mod tests {
     use super::*;
     use jails_protocol::change::{DesiredChange, MaintenanceAttribution};
+    use jails_protocol::coordinate::{DependencySpec, MavenCoordinate};
     use jails_protocol::edit::FactDelta;
     use jails_protocol::entity::{EntityId, IntentId, Recipe};
     use jails_protocol::identity::{Name, PropertyKey};
     use jails_protocol::render::DesiredFile;
-    use jails_protocol::resource::{
-        DependencySpec, DesiredResource, MavenCoordinate, ResourceOwner,
-    };
+    use jails_protocol::resource::{DesiredResource, ResourceOwner};
     use jails_protocol::snapshot::CanonicalRoot;
     use std::collections::BTreeMap;
 
@@ -664,7 +668,7 @@ mod tests {
         let mut other = DependencySpec::managed(
             MavenCoordinate::parse("org.postgresql", "postgresql").unwrap(),
         );
-        other.scope = jails_protocol::resource::MavenScope::Test;
+        other.scope = jails_protocol::coordinate::MavenScope::Test;
         clash.resources.push(
             DesiredResource::new(
                 key,
@@ -821,7 +825,7 @@ mod tests {
         let mut change = DesiredChange::maintenance(MaintenanceAttribution::AdoptLayout);
         change.edits.push(SemanticEdit::Property {
             key,
-            value: "9090".to_string(),
+            value: jails_protocol::resource::PropertySetting::plain("9090"),
         });
         projected.advance(&change).unwrap();
         assert_eq!(

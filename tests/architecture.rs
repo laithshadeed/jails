@@ -646,6 +646,7 @@ const LAYERS: &[(&str, usize)] = &[
     ("bootstrap", 3),
     ("change", 3),
     ("conflict", 3),
+    ("coordinate", 3),
     ("context", 3),
     ("declaration", 3),
     ("edit", 3),

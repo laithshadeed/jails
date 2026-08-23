@@ -42,6 +42,17 @@ pub fn get(text: &str, key: &str) -> Option<String> {
 /// Rewriting the first would leave a later line still deciding the value while
 /// the edit looks applied.
 pub fn set(text: &str, key: &str, value: &str) -> String {
+    introduce(text, key, value, &[])
+}
+
+/// Set a key, and write prose above it *the first time it appears*.
+///
+/// The comment is only ever written when the key is introduced. A capability's
+/// explanation is written for a human reading a file jails does not own, and
+/// somebody who edits or deletes it means it: rewriting it on every reconcile
+/// would be jails arguing with the reader about their own file. So an existing
+/// key keeps whatever is above it, and only its value is brought into line.
+pub fn introduce(text: &str, key: &str, value: &str, comment: &[String]) -> String {
     let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
     let last = lines
         .iter()
@@ -51,7 +62,12 @@ pub fn set(text: &str, key: &str, value: &str) -> String {
         .next_back();
     match last {
         Some(index) => lines[index] = format!("{key}={value}"),
-        None => lines.push(format!("{key}={value}")),
+        None => {
+            for line in comment {
+                lines.push(format!("# {line}"));
+            }
+            lines.push(format!("{key}={value}"));
+        }
     }
     let mut out = lines.join("\n");
     // A properties file ends with a newline; an appended key on the last line
@@ -98,6 +114,27 @@ fn entry(line: &str) -> Option<(&str, &str)> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_comment_is_written_when_the_key_is_introduced() {
+        let out = introduce("", "a.b", "one", &["why it is one".to_string()]);
+        assert_eq!(out, "# why it is one\na.b=one\n");
+    }
+
+    #[test]
+    fn an_existing_key_keeps_the_prose_above_it() {
+        let text = "# the reader wrote this\na.b=one\n";
+        let out = introduce(
+            text,
+            "a.b",
+            "two",
+            &["jails would have written this".to_string()],
+        );
+        assert_eq!(
+            out, "# the reader wrote this\na.b=two\n",
+            "only the value moves; prose in a file jails does not own is not rewritten"
+        );
+    }
+
     use super::*;
 
     const SAMPLE: &str = "# datasource\nspring.datasource.url=jdbc:one\n\nserver.port=8080\n";

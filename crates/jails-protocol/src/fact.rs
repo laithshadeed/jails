@@ -24,9 +24,10 @@
 //! together when a real project needs another type form."*
 
 use crate::Result;
+use crate::coordinate::{DependencySpec, MavenCoordinate, PluginSpec};
 use crate::entity::{CapabilityId, CapabilitySpec};
 use crate::identity::{JavaType, MarkerId, Name, ObjectId, ProjectPath, PropertyKey, ServiceName};
-use crate::resource::{ComposeServiceSpec, DependencySpec, MavenCoordinate, PluginSpec};
+use crate::resource::ComposeServiceSpec;
 use jails_support::codec::{Decoder, Encoder, MAX_CODEC_DEPTH, ordered};
 use std::collections::BTreeMap;
 
@@ -768,7 +769,7 @@ fn deeper(depth: usize) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::resource::{CanonicalPluginXml, DEFAULT_PLUGIN_GROUP};
+    use crate::coordinate::{CanonicalPluginXml, DEFAULT_PLUGIN_GROUP};
     use jails_support::codec::sha256;
 
     fn coordinate(group: &str, artifact: &str) -> MavenCoordinate {
@@ -808,10 +809,9 @@ mod tests {
             .record(
                 FactKind::Pom,
                 ProjectFactKey::MavenDependency(coordinate("org.postgresql", "postgresql")),
-                ProjectFact::MavenDependency(crate::resource::DependencySpec::managed(coordinate(
-                    "org.postgresql",
-                    "postgresql",
-                ))),
+                ProjectFact::MavenDependency(crate::coordinate::DependencySpec::managed(
+                    coordinate("org.postgresql", "postgresql"),
+                )),
             )
             .unwrap();
         facts
@@ -943,10 +943,9 @@ mod tests {
             .record(
                 FactKind::Pom,
                 ProjectFactKey::MavenDependency(coordinate("org.postgresql", "postgresql")),
-                ProjectFact::MavenDependency(crate::resource::DependencySpec::managed(coordinate(
-                    "org.postgresql",
-                    "postgresql",
-                ))),
+                ProjectFact::MavenDependency(crate::coordinate::DependencySpec::managed(
+                    coordinate("org.postgresql", "postgresql"),
+                )),
             )
             .unwrap();
         facts

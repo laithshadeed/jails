@@ -7,10 +7,11 @@
 //! the whole reason `codemod` and `pom` exist, expressed as a value.
 
 use crate::Result;
+use crate::coordinate::{DependencySpec, PluginSpec};
 use crate::entity::{CapabilityId, CapabilitySpec};
 use crate::fact::{ProjectFact, ProjectFactKey};
 use crate::identity::JavaType;
-use crate::resource::{ComposeServiceSpec, DependencySpec, PluginSpec, ResourceKey};
+use crate::resource::{ComposeServiceSpec, PropertySetting, ResourceKey};
 use jails_spec::spec::layout::Layer;
 use jails_support::codec::{Decoder, Encoder, ordered};
 use std::collections::{BTreeMap, BTreeSet};
@@ -40,7 +41,7 @@ pub enum SemanticEdit {
     },
     Property {
         key: ResourceKey,
-        value: String,
+        value: PropertySetting,
     },
     MarkedBlock {
         key: ResourceKey,
@@ -136,7 +137,7 @@ impl SemanticEdit {
             }
             Self::Property { key, value } => {
                 key.encode(encoder)?;
-                encoder.string(value)
+                value.encode(encoder)
             }
             Self::MarkedBlock { key, body } => {
                 key.encode(encoder)?;
@@ -173,7 +174,7 @@ impl SemanticEdit {
             },
             3 => Self::Property {
                 key: ResourceKey::decode(decoder)?,
-                value: decoder.string()?,
+                value: PropertySetting::decode(decoder)?,
             },
             4 => Self::MarkedBlock {
                 key: ResourceKey::decode(decoder)?,
@@ -312,7 +313,7 @@ impl FactDelta {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::resource::MavenCoordinate;
+    use crate::coordinate::MavenCoordinate;
 
     #[test]
     fn an_edit_filed_under_the_wrong_kind_of_key_is_refused() {
@@ -320,7 +321,7 @@ mod tests {
             key: ResourceKey::MavenDependency(
                 MavenCoordinate::parse("org.postgresql", "postgresql").unwrap(),
             ),
-            value: "x".to_string(),
+            value: PropertySetting::plain("x"),
         };
         let error = edit.validate().unwrap_err();
         assert!(error.contains("filed under a resource key"), "{error}");

@@ -225,10 +225,11 @@ pub(crate) fn decode_all<T>(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::coordinate::MavenCoordinate;
     use crate::entity::{EntityId, IntentId, Recipe};
     use crate::identity::{Name, Package, ProjectPath};
     use crate::render::{DesiredBody, DesiredFile, ManagedPath};
-    use crate::resource::{MavenCoordinate, ResourceKey, ResourceValue};
+    use crate::resource::{ResourceKey, ResourceValue};
 
     pub(crate) fn intent(name: &str) -> IntentId {
         IntentId::new(
@@ -255,7 +256,7 @@ pub(crate) mod tests {
             DesiredResource::new(
                 key.clone(),
                 BTreeSet::from([owner("Note")]),
-                ResourceValue::MavenDependency(crate::resource::DependencySpec::managed(
+                ResourceValue::MavenDependency(crate::coordinate::DependencySpec::managed(
                     coordinate.clone(),
                 )),
             )
@@ -271,7 +272,7 @@ pub(crate) mod tests {
         });
         change.edits.push(SemanticEdit::MavenDependency {
             key,
-            value: crate::resource::DependencySpec::managed(coordinate),
+            value: crate::coordinate::DependencySpec::managed(coordinate),
         });
         change
     }

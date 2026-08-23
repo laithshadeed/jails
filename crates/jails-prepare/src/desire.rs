@@ -41,15 +41,17 @@ use jails_project::compose::Service as ComposeService;
 use jails_project::model::{Change, Project};
 use jails_project::pom::Dependency;
 use jails_protocol::change::DesiredChange;
+use jails_protocol::coordinate::{
+    CanonicalPluginXml, DependencySpec, MavenCoordinate, MavenScope, MavenVersion, PluginSpec,
+};
 use jails_protocol::edit::SemanticEdit;
 use jails_protocol::identity::{
     ManagedVersion, MarkerId, ProjectPath, PropertyKey, ServiceName, VolumeName,
 };
 use jails_protocol::render::{DesiredBody, DesiredFile};
 use jails_protocol::resource::{
-    CanonicalPluginXml, CanonicalYamlMapping, ComposeServiceSpec, DependencySpec, DesiredResource,
-    MavenCoordinate, MavenScope, MavenVersion, PluginSpec, ResourceKey, ResourceOwner,
-    ResourceValue,
+    CanonicalYamlMapping, ComposeServiceSpec, DesiredResource, PropertySetting, ResourceKey,
+    ResourceOwner, ResourceValue,
 };
 
 use crate::Result;
@@ -108,15 +110,36 @@ pub fn contribution(
             .edits
             .push(SemanticEdit::ComposeService { key, value: spec });
     }
+    // A capability's property block is prose *and* settings, in the order it
+    // wrote them, and a comment documents the line beneath it. Carrying the
+    // pending lines forward is what lets a per-key resource own the
+    // explanation the marked block used to hold.
+    let mut prose: Vec<String> = Vec::new();
     for line in &change.properties {
-        let (key, value) = property_resource(line)?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        if let Some(comment) = line.trim().strip_prefix('#') {
+            prose.push(comment.trim().to_string());
+            continue;
+        }
+        let (key, value) = property_resource(line, std::mem::take(&mut prose))?;
         claim(&mut desired, owner, key.clone(), value.clone())?;
-        let ResourceValue::Property(text) = value else {
+        let ResourceValue::Property(setting) = value else {
             unreachable!("property_resource returns a property value");
         };
-        desired
-            .edits
-            .push(SemanticEdit::Property { key, value: text });
+        desired.edits.push(SemanticEdit::Property {
+            key,
+            value: setting,
+        });
+    }
+    if let Some(orphan) = prose.first() {
+        return Err(format!(
+            "the comment `{orphan}` is the last thing this capability's properties say, so it \
+             documents nothing.\n       \
+             fix: a property comment introduces the line beneath it. A trailing one would be \
+             written above whichever property happened to be added next."
+        ));
     }
     for artifact in &change.files {
         let path = project_path(&artifact.path, project)?;
@@ -240,17 +263,7 @@ fn compose_resource(service: &ComposeService) -> Result<(ResourceKey, ResourceVa
     ))
 }
 
-fn property_resource(line: &str) -> Result<(ResourceKey, ResourceValue)> {
-    if line.trim_start().starts_with('#') {
-        return Err(format!(
-            "this capability's properties include the comment `{}`, and a per-key property \
-             resource has nowhere to carry it.\n       \
-             fix: keep this capability on the V1 path until a comment is part of what a property \
-             owner states. Dropping it would delete prose written for the reader of a file jails \
-             does not own, which is the opposite of what marked blocks are for.",
-            line.trim()
-        ));
-    }
+fn property_resource(line: &str, comment: Vec<String>) -> Result<(ResourceKey, ResourceValue)> {
     let (key, value) = line.split_once('=').ok_or_else(|| {
         format!("`{line}` is not a `key=value` property line, so it names nothing to own")
     })?;
@@ -259,7 +272,7 @@ fn property_resource(line: &str) -> Result<(ResourceKey, ResourceValue)> {
             path: ProjectPath::parse(APPLICATION_PROPERTIES)?,
             key: PropertyKey::parse(key.trim())?,
         },
-        ResourceValue::Property(value.to_string()),
+        ResourceValue::Property(PropertySetting::new(value, comment)?),
     ))
 }
 
@@ -430,6 +443,41 @@ mod tests {
         };
         assert_eq!(key.as_str(), "spring.docker.compose.enabled");
         assert_eq!(path.as_str(), APPLICATION_PROPERTIES);
+    }
+
+    #[test]
+    fn a_comment_is_carried_onto_the_property_it_introduces() {
+        let change = Change {
+            properties: vec![
+                "# jails starts compose itself.".to_string(),
+                "spring.docker.compose.enabled=false".to_string(),
+            ],
+            ..Change::default()
+        };
+        let desired = contribution(&owner(), &change, &project().1).unwrap();
+        assert_eq!(
+            desired.resources.len(),
+            1,
+            "the comment is not its own resource"
+        );
+        let ResourceValue::Property(setting) = &desired.resources[0].value else {
+            panic!("expected a property");
+        };
+        assert_eq!(setting.value, "false");
+        assert_eq!(
+            setting.comment,
+            ["jails starts compose itself.".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_trailing_comment_documents_nothing_and_is_refused() {
+        let change = Change {
+            properties: vec!["a.b=one".to_string(), "# and then?".to_string()],
+            ..Change::default()
+        };
+        let message = contribution(&owner(), &change, &project().1).unwrap_err();
+        assert!(message.contains("documents nothing"), "{message}");
     }
 
     #[test]
