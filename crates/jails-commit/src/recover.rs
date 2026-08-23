@@ -29,9 +29,7 @@
 //! everything from scratch and either advances or rewrites the block with
 //! whatever fails *now*.
 
-use crate::execute::{
-    LedgerFailure, LedgerPosition, LockedProject, apply_operations, ledger_position, write_ledger,
-};
+use crate::execute::{LedgerFailure, LedgerPosition, LockedProject, ledger_position, write_ledger};
 use crate::journal::{JournalState, JournalV1, ResumeState};
 use crate::outcome::{RecoveryChange, RecoveryError, RecoveryOutcome, RecoveryTransactionAction};
 use crate::store;
@@ -155,7 +153,9 @@ fn roll_forward(
     journal: &JournalV1,
 ) -> std::result::Result<(), RecoveryError> {
     let objects = directory.join("objects");
-    if let Err(blocked) = apply_operations(locked, &journal.prepared, directory, &objects) {
+    if let Err(blocked) =
+        crate::activate::apply_operations(locked, &journal.prepared, directory, &objects)
+    {
         let reason = blocked.reason.clone();
         // Record the block so the next run reads it rather than
         // rediscovering it, then refuse.

@@ -7,6 +7,7 @@
 //! executor small: there is one direction to finish in, and a recovered
 //! journal either has everything it needs to finish or was never valid.
 
+pub mod activate;
 pub mod execute;
 pub mod fault;
 pub mod gc;

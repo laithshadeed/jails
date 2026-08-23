@@ -50,16 +50,25 @@ never put its domain vocabulary into `src/` or `templates/`.
 
 Every roadmap item has one status:
 
-- **SHIPPED** — committed at the baseline and its named gate passed. Shipped
-  items are removed from this file at the next refresh.
+- **SHIPPED** — committed at the baseline and its named gate passed. A shipped
+  section's *status line* is what changes; its normative text stays. That is an
+  amendment to the earlier rule, made under §1.1's step 7 because implementation
+  proved it inconsistent: 73 source and test comments cite these sections by
+  number (`§R1.4`, `§R3.1`, `§R5.3`), and deleting a section on the day it ships
+  would turn every one of those citations into a dangling reference to git
+  history. Prose that merely *describes* the pre-implementation baseline is
+  replaced when it goes stale; the closed tables, wire definitions and numbered
+  algorithms are the reference the code points at and are kept.
 - **IN FLIGHT** — present only in tracked worktree changes. It is not a trusted
   dependency and must not be described as shipped.
 - **QUEUED** — no active implementation claim.
 
-There is no tracked in-flight implementation of the mutation architecture.
-The concurrent generator/template/test work above does not claim a roadmap
-phase. The sole order is: immediate integrity work, then R1 through R6. Later
-sections do not define a second queue.
+R1 through R5 are shipped and R6 is in flight: its routes exist and are tested,
+and **no production dispatch uses them**. That is the state §R6.1 step 1
+describes, not a half-finished cutover -- the flip is one commit, step 9, and
+until it lands every command still runs the V1 path. The sole order is:
+immediate integrity work, then R1 through R6. Later sections do not define a
+second queue.
 
 ### 1.1 Implementation protocol for one bounded slice
 
@@ -127,49 +136,36 @@ The finished pipeline has five invariants:
 
 ## 2. Baseline truth
 
-Verified at the baseline:
+Verified at this baseline:
 
 - `cargo fmt --all --check` and `cargo clippy --workspace --all-targets` pass.
-- `cargo test --workspace` passes: 612 tests across 19 binaries. So does
+  `dead_code` is denied workspace-wide: a function nobody calls inside a
+  `mod tests` is almost always a test that stopped being one, and that happened
+  once while moving code between modules.
+- `cargo test --workspace` passes: 1,068 tests across 30 binaries. So does
   `JAILS_REQUIRE_TOOLCHAIN=1 cargo test --workspace`, **with zero skips**,
   which is the only run that distinguishes an executed generated-Maven tier
   from a skipped one.
-- `tests/architecture.rs` passes 11/11; agreement, genericity, golden, editor
-  and CLI pass. The count is evidence, not an acceptance criterion.
+- `tests/architecture.rs` passes 13/13; agreement, genericity, golden, editor,
+  desired, engine and CLI pass. The count is evidence, not an acceptance
+  criterion.
 - The architecture board reports one `Change`/`Artifact`, no ad-hoc file tuple
-  or alias, no `KIND_FILES`, no literal direct `fs::write` outside the apply
-  layer, no inline Java in `spring.rs`, and a 666-line largest production
-  module. That ratchet does **not** prove that every mutation is owned by
-  `apply`: deletes, copies, directory creation, renames and mutating
-  subprocesses still occur elsewhere and are explicitly in R4's scope.
-- Two gates were added and are now part of the board:
-  `no_module_depends_on_a_layer_above_its_own` (the crate layering, including
-  the module-level edges Cargo cannot see) and
-  `production_scratch_directories_are_exclusively_created` (§3.2).
-- The scanners in `tests/architecture.rs` and `tests/genericity.rs` walk the
-  whole workspace and assert a minimum file count. Before that they read `src/`
-  alone, which after the split would have reported a clean board over five
-  crates they never opened.
+  or alias, no `KIND_FILES`, **zero** filesystem mutation sites outside the
+  write layer (not only `fs::write`: deletes, copies, renames, hard links,
+  directory creation and permission changes are all counted now), no inline
+  Java in `spring.rs`, and a 666-line largest production module.
+- Every module that starts a subprocess is classified against §R6.6's fixed
+  rows by `every_module_that_starts_a_process_is_classified`, which fails both
+  on an unclassified module and on a stale row.
+- Ten crates, layered, with the edges Cargo cannot see enforced at module
+  granularity by `no_module_depends_on_a_layer_above_its_own`.
 
 Not verified as green at this baseline:
 
 - The last recorded 293-second proof-app sweep predates this baseline. It is
-  historical evidence until R6 repeats it on a capable host.
-
-The two entries that stood here are closed, and `examples/DOGFOOD.md` records
-the commands. The `/tmp` collision was real and is fixed: §3.2 reserves every
-scratch tree instead of naming one, and the suite now agrees across two runs
-under the normal temp directory and one under a fresh `TMPDIR`. The port-0 and
-Mockito-attachment failures were the audit sandbox's constraint rather than
-this project's; on a host permitting both,
-`JAILS_REQUIRE_TOOLCHAIN=1 cargo test --workspace` passes with **zero skips**,
-which is the only run that proves the generated-Maven tier executed rather than
-reporting success for tests that never ran.
-
-Two lifecycle properties are still open: recoverable whole-manifest
-application and execution of generated hosted CI in an actual repository.
-Offline creation and three-way drift repair already exist; prose that still
-calls them missing is stale.
+  historical evidence until §R6.8 repeats it on a capable host.
+- Generated hosted CI has never executed in an actual repository. §R6.8 owns
+  that gate and it remains explicitly unclaimed.
 
 ## 3. Immediate integrity work — SHIPPED
 
@@ -347,7 +343,11 @@ protocol values/codecs (R1)
     <- reconciliation/conflict/GC semantics (R5)
 ```
 
-### R1 — Desired-state model — QUEUED
+### R1 — Desired-state model — SHIPPED
+
+Gate: the closed protocol leaves round-trip and refuse a corrupted field in
+`crates/jails-protocol`, and `no_two_crates_share_a_module_name` plus the layer
+table hold the dependency direction §4.1 fixes.
 
 Replace the command-shaped app loop with typed declarations and an explicit
 comparison between human desire and machine observation.
@@ -1394,7 +1394,11 @@ R1 gate:
   and ambiguity, missing/wrong referents, cycles, owner union/conflict,
   scope-limited removal, model derivation and every migration rule above.
 
-### R2 — Deterministic `ProjectSnapshot` and projected planning — QUEUED
+### R2 — Deterministic `ProjectSnapshot` and projected planning — SHIPPED
+
+Gate: `jails_project::capture` reads a declared set into one snapshot and
+`ProjectSnapshot::read` refuses anything undeclared; `ProjectedProject::advance`
+implements §R2.4's six steps over it.
 
 Planning must stop learning by mutating or rereading the live tree.
 
@@ -2363,7 +2367,11 @@ R2 gate:
 - the shadow planner matches current golden outputs for every persistent kind,
   capability class and one-shot without switching production mutation.
 
-### R3 — Exhaustive preparation — QUEUED
+### R3 — Exhaustive preparation — SHIPPED
+
+Gate: `jails_prepare::pipeline::prepare` turns a validated desired change set
+into exact operations with no live-tree write, and the sandboxed runner is the
+one place a tool is executed.
 
 Separate semantic desire from an exact executable transition. Current
 `model::Change` still contains deps/plugins/properties/compose/files and a
@@ -3770,7 +3778,12 @@ R3 gate:
 - shadow prepared operations match the current command golden outputs but no
   production writer has yet switched.
 
-### R4 — Recoverable commit — QUEUED
+### R4 — Recoverable commit — SHIPPED
+
+Gate: `crates/jails-commit/tests/crash.rs` converges at all 21 named
+failpoints, and `tests/engine.rs` now sweeps the same set through a *whole*
+capability install -- either completely applied or completely absent, with
+recovery idempotent on the second pass.
 
 Make a `PreparedChange` durable without pretending several filesystem names
 change instantaneously. Default crash recovery rolls a fully persisted,
@@ -4565,7 +4578,11 @@ R4 gate:
   created by a committed/aborted transition may remain by the explicit
   monotonic-directory contract and are reported.
 
-### R5 — Durable reconciliation — QUEUED
+### R5 — Durable reconciliation — SHIPPED
+
+Gate: `jails_prepare::reconcile` decides every row of §R5.3's matrix, and the
+preparation consults it for owned outputs -- a file jails did not write is
+refused with the `jails adopt` fix rather than replaced.
 
 Stop reconstructing yesterday's merge base with today's binary, templates and
 context. Current `src/app/reconcile.rs` regenerates old/new intents into copied
@@ -5166,7 +5183,7 @@ R5 gate:
   only unique object is a non-ledger preimage is promoted globally before its
   local copy may be pruned.
 
-### R6 — Migrate every mutation path and prove the product — QUEUED
+### R6 — Migrate every mutation path and prove the product — IN FLIGHT
 
 Switch every in-project mutation to R1→R5, remove the old inverse/sequential
 paths, and prove the new route on real applications. A command moves only when
@@ -5174,6 +5191,40 @@ all mutations it can trigger are represented; no command may apply half through
 the executor and half through a legacy helper.
 
 #### R6.1 Migration order
+
+Step status, against the ordered list below. A step is done only when its work
+is committed and its gate ran; "the route exists" is not the same claim as "the
+command uses it", and dispatch is still V1 for every command.
+
+| Step | State | Evidence |
+|---|---|---|
+| 1. Land the executor dark | done | `jails-engine` is a library crate precisely so nothing in `main.rs` calls it; the workspace `dead_code` denial makes dark code in the binary impossible rather than merely discouraged. |
+| 2. Capability `add`/`remove`/`sync` on V2 | done | `route::{install,remove,sync}`; `tests/desired.rs` compares 21 capabilities against V1 on dependencies, effective property values and file bytes; `tests/engine.rs` sweeps 21 failpoints through a real install. `sync` is one transition, not a loop. |
+| 3. Persistent `generate`, then the one-shots | partial | `generate::plan_recipe` separates planning from writing and `route::generate` commits it; 22 scenarios match V1 byte-for-byte. `destroy` and the `field`/`migration`/`cases` policies are not started, and `plan_recipe` refuses those three by name. |
+| 4. `app init/plan/apply/reconcile` as one aggregate | not started | — |
+| 5. Maintenance mutations | not started | — |
+| 6. New-project bootstrap through publish | done | §R6.5; `new`/`new-cli` build in a scratch sibling under `<parent>/.jails-new.lock` and become real in one rename, `--app` included. |
+| 7. Read-only `StateCompatibility` facade | done | `jails_project::compat::read` classifies absent/current/legacy/unreadable without mutating, and `ledger::parse` refuses a newer schema with a no-downgrade message. |
+| 8. Classify every remaining mutating path | done | Filesystem: the write-layer ratchet is at zero and counts deletes, copies, renames, links, directory creation and permissions. Subprocesses: §R6.6's table is enforced by a test that fails on stale rows too. |
+| 9. Flip the single dispatch point | not started | Blocked on 3, 4 and 5. |
+| 10. Delete V1, then prove the product | not started | §R6.8 owns the proof-app sweep and hosted CI; both remain unclaimed. |
+
+Two schema gaps are open and named where they bite rather than left to be
+discovered:
+
+- `LedgerV2.outputs` is written empty. §R1.4's `OutputRecord` carries a
+  `RendererStamp`, and these routes' bytes arrive already rendered by a recipe
+  that never produced one. An output row with an invented stamp would claim
+  provenance that did not happen, and provenance is what §R5.2's upgrade path
+  reads to decide whether a template moved. Until it is written, an update to
+  jails' own earlier output refuses rather than replaces, which is the safe
+  direction and matches what V1 does.
+- `add db` and anything else contributing a Spring test import cannot yet be
+  stated as desired state: the protocol has no semantic edit for it (§R6.3's
+  `add::test_wiring` row). `desire::contribution` refuses it **by name** rather
+  than dropping it, because a translator that silently loses a contribution
+  produces a project that compiles and does not start.
+
 
 Schema 2 and command-by-command production switching cannot coexist: once one
 command writes schema 2, an unswitched schema-1 writer cannot safely read or
@@ -5425,11 +5476,14 @@ R6 gate:
   “9/9” architecture count is not an acceptance criterion;
 - `JAILS_REQUIRE_TOOLCHAIN=1 cargo test` passes with zero skips on a capable
   host, including generated Maven/PostgreSQL/Kafka/socket/Mockito tests;
-- `tests/architecture.rs` has named assertions
-  `mutation_api_inventory_is_exhaustive`,
-  `project_mutations_are_executor_owned`,
-  `mutating_subprocesses_are_classified`, and
-  `v2_dispatch_is_all_or_nothing`. The inventory recognises `fs`/`File` writes,
+- `tests/architecture.rs` carries the mutation inventory, the executor-ownership
+  ratchet, the subprocess classification and `v2_dispatch_is_all_or_nothing`.
+  The first three exist under the names the board prints them by -- the
+  `filesystem mutation sites outside the write layer` ratchet (at zero) and
+  `every_module_that_starts_a_process_is_classified`, which fails on a stale
+  row as well as an unclassified module. The fourth arrives with step 9, and
+  until it does there is nothing for it to assert: no production dispatch
+  reaches V2. The inventory recognises `fs`/`File` writes,
   `OpenOptions` create/write/append/truncate, remove/copy/rename/link/symlink,
   directory and permission mutation, plus process spawn/status/output sites.
   It scans production syntax with resolved aliases where the lightweight

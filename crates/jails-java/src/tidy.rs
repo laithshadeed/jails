@@ -130,3 +130,68 @@ pub fn tidy_blank_lines(source: &str) -> String {
     }
     format!("{trimmed}\n")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn imports_are_sorted_with_statics_first_and_a_blank_line_between() {
+        let source = "package com.example;\n\nimport java.util.List;\nimport static org.assertj.core.api.Assertions.assertThat;\nimport java.time.Instant;\n\nclass Demo {}\n";
+        assert_eq!(
+            normalize_imports(source),
+            "package com.example;\n\nimport static org.assertj.core.api.Assertions.assertThat;\n\nimport java.time.Instant;\nimport java.util.List;\n\nclass Demo {}\n"
+        );
+    }
+
+    /// The scan stops at the first construct that is not an import, so a
+    /// string or annotation further down cannot be dragged into the block.
+    #[test]
+    fn nothing_after_the_import_block_is_touched() {
+        let source = "package com.example;\n\nimport java.util.List;\n\n@Component\nclass Demo {\n    String s = \"import java.util.Map;\";\n}\n";
+        assert_eq!(normalize_imports(source), source);
+    }
+
+    /// A file with no imports, and a file with no package, are both left
+    /// exactly as they are rather than rewritten into a shape nobody asked
+    /// for.
+    #[test]
+    fn a_file_with_nothing_to_order_is_returned_unchanged() {
+        assert_eq!(
+            normalize_imports("package com.example;\n\nclass Demo {}\n"),
+            "package com.example;\n\nclass Demo {}\n"
+        );
+        assert_eq!(normalize_imports("// no package\n"), "// no package\n");
+    }
+
+    #[test]
+    fn a_duplicate_import_survives_only_once() {
+        let source = "package a;\n\nimport java.util.List;\nimport java.util.List;\n\nclass B {}\n";
+        assert_eq!(
+            normalize_imports(source),
+            "package a;\n\nimport java.util.List;\n\nclass B {}\n"
+        );
+    }
+
+    #[test]
+    fn repeated_blank_lines_collapse_and_the_file_ends_with_one_newline() {
+        assert_eq!(
+            tidy_blank_lines("class A {\n\n\n    void b() {}\n}\n\n\n"),
+            "class A {\n\n    void b() {}\n}\n"
+        );
+    }
+
+    /// A text block's blank lines are its content. Collapsing them would
+    /// change what the program *says*, not how it is laid out -- which is why
+    /// this tracks `\"\"\"` rather than trusting indentation.
+    #[test]
+    fn blank_lines_inside_a_text_block_are_left_alone() {
+        let source = "class A {\n    String sql = \"\"\"\n        select 1\n\n\n        from t\n        \"\"\";\n}\n";
+        assert_eq!(tidy_blank_lines(source), source);
+    }
+
+    #[test]
+    fn a_file_of_nothing_but_blank_lines_becomes_empty() {
+        assert_eq!(tidy_blank_lines("\n\n\n"), "");
+    }
+}

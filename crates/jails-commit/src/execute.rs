@@ -50,6 +50,7 @@ use jails_prepare::prepare::{
 use jails_prepare::receipt::{AppliedReceipt, ApplyOutcome, DirectoryReceipt, FileReceipt};
 use jails_protocol::conflict::{FileImage, FileMode};
 use jails_protocol::identity::{ObjectId, ObjectRef, ProjectPath};
+use jails_protocol::snapshot::CanonicalRoot;
 use jails_support::codec::sha256;
 use jails_support::lock::{Contention, Lock};
 use std::path::{Path, PathBuf};
@@ -129,6 +130,11 @@ impl LockedProject {
         &self.handle
     }
 
+    /// Where this lock is held. The plan's root is compared against it.
+    pub fn root(&self) -> &Path {
+        self.handle.root()
+    }
+
     pub fn root_identity(&self) -> RootIdentity {
         self.root_identity
     }
@@ -144,6 +150,17 @@ pub fn commit(
 ) -> std::result::Result<CommitResult, CommitError> {
     let change = &bundle.change;
     change.validate().map_err(CommitError::InvalidPrepared)?;
+
+    // Step 1. The plan and the project it is about to be applied to have to be
+    // the same project.
+    //
+    // The bundle has always carried the root it was prepared against and this
+    // never compared it, which made a bundle for project A applicable to a
+    // same-shaped project B: every path in a prepared operation is
+    // project-relative, so nothing else downstream would have noticed. The
+    // preconditions would pass against B's identical files and B would be
+    // written with A's plan.
+    require_same_project(locked, &bundle.root)?;
 
     crate::fault::trip("after-lock").map_err(CommitError::PreActivationIo)?;
 
@@ -196,7 +213,7 @@ pub fn commit(
     crate::fault::trip("after-journal-active").map_err(CommitError::PreActivationIo)?;
 
     let identity = change.identity().map_err(CommitError::InvalidPrepared)?;
-    apply_operations(locked, &identity, &directory, &objects)
+    crate::activate::apply_operations(locked, &identity, &directory, &objects)
         .map_err(|blocked| blocked.into_error(&directory, &active))?;
 
     // §R5.1. Promote every object the prospective store will reference into
@@ -244,6 +261,42 @@ pub(crate) enum LedgerFailure {
     AfterCommit(String),
 }
 
+/// Refuse a plan prepared against a different project.
+///
+/// Compared as the *resolved* root, because that is what the preparation
+/// recorded: two paths that differ only by a symlink or a relative segment are
+/// one project, and refusing those would refuse ordinary use from a different
+/// working directory.
+fn require_same_project(
+    locked: &LockedProject,
+    prepared: &CanonicalRoot,
+) -> std::result::Result<(), CommitError> {
+    let at = std::fs::canonicalize(&locked.handle.root)
+        .map_err(|error| {
+            CommitError::PreActivationIo(format!(
+                "could not resolve {}: {error}",
+                locked.handle.root.display()
+            ))
+        })?
+        .to_str()
+        .ok_or_else(|| {
+            CommitError::PreActivationIo(format!(
+                "{} is not valid UTF-8",
+                locked.handle.root.display()
+            ))
+        })?
+        .to_string();
+    if at != prepared.as_str() {
+        return Err(CommitError::InvalidPrepared(format!(
+            "this plan was prepared for {} and is being applied to {at}.\n       fix: plan and \
+             commit against one project. Every path in a prepared operation is project-relative, \
+             so nothing further down would have caught this.",
+            prepared.as_str()
+        )));
+    }
+    Ok(())
+}
+
 /// Step 10: the guarded ledger transition, then fsync the machine root.
 pub(crate) fn write_ledger(
     locked: &LockedProject,
@@ -264,7 +317,7 @@ pub(crate) fn write_ledger(
             }
         }
         FileImage::Present { object, mode } => {
-            let staged = stage(&publish, objects, &object, mode, usize::MAX)
+            let staged = crate::activate::stage(&publish, objects, &object, mode, usize::MAX)
                 .map_err(LedgerFailure::BeforeCommit)?;
             std::fs::rename(&staged, &path).map_err(|error| {
                 LedgerFailure::BeforeCommit(format!("could not write the store: {error}"))
@@ -461,289 +514,6 @@ impl Blocked {
         CommitError::RecoveryBlocked(self.reason)
     }
 }
-
-/// Steps 7 to 9: directories shallowest-first, then file operations in
-/// canonical path order.
-pub(crate) fn apply_operations(
-    locked: &LockedProject,
-    change: &PreparedIdentityV1,
-    directory: &Path,
-    objects: &Path,
-) -> std::result::Result<(), Blocked> {
-    let root = &locked.handle.root;
-    let mut directories: Vec<&ProjectPath> =
-        change.directories.iter().map(|one| one.path()).collect();
-    directories.sort_by_key(|path| path.as_str().matches('/').count());
-    for path in directories {
-        let at = root.join(path.as_str());
-        match std::fs::symlink_metadata(&at) {
-            Ok(metadata) if metadata.is_dir() => {
-                // On a recovery pass an ordinary directory is the permitted
-                // after-state. Anything else is not.
-            }
-            Ok(_) => {
-                return Err(Blocked {
-                    path: Some(path.clone()),
-                    reason: BlockReason::UnknownLiveImage {
-                        actual: ActualImage::Other,
-                    },
-                });
-            }
-            Err(_) => {
-                std::fs::create_dir(&at).map_err(|error| Blocked {
-                    path: Some(path.clone()),
-                    reason: BlockReason::Unreadable {
-                        error_kind: error.kind().to_string(),
-                    },
-                })?;
-                if let Some(parent) = at.parent() {
-                    let _ = store::sync_dir(parent);
-                }
-                crate::fault::trip("after-directory-sync").map_err(|error| Blocked {
-                    path: Some(path.clone()),
-                    reason: BlockReason::Unreadable { error_kind: error },
-                })?;
-            }
-        }
-    }
-
-    let publish = directory.join("live-temp");
-    store::create_private_dir(&publish)
-        .and_then(|()| crate::fault::trip("after-live-temp-sync"))
-        .map_err(|error| Blocked {
-            path: None,
-            reason: BlockReason::Unreadable { error_kind: error },
-        })?;
-
-    for (index, operation) in change.operations.iter().enumerate() {
-        let OperationTarget::Project(path) = operation.target() else {
-            // A legacy machine delete touches machine state, not the live
-            // tree, and is applied with the ledger transition.
-            continue;
-        };
-        let at = root.join(path.as_str());
-        match classify(&at, operation) {
-            ObservedImage::After => continue,
-            ObservedImage::Before => {}
-            ObservedImage::Unknown { actual } => {
-                return Err(Blocked {
-                    path: Some(path.clone()),
-                    reason: BlockReason::UnknownLiveImage { actual },
-                });
-            }
-            ObservedImage::Unreadable { error_kind } => {
-                return Err(Blocked {
-                    path: Some(path.clone()),
-                    reason: BlockReason::Unreadable { error_kind },
-                });
-            }
-        }
-        // Missing or wrong bytes are machine-state corruption, and naming the
-        // object is what makes that actionable — "could not read a file
-        // under .jails" is not.
-        if let Some(after) = operation.after()
-            && store::read_object(objects, &after.id).is_err()
-        {
-            return Err(Blocked {
-                path: Some(path.clone()),
-                reason: BlockReason::CorruptObject(after.id),
-            });
-        }
-        crate::fault::trip("before-file").map_err(|error| Blocked {
-            path: Some(path.clone()),
-            reason: BlockReason::Unreadable { error_kind: error },
-        })?;
-        apply_one(operation, &at, &publish, objects, index).map_err(|error| Blocked {
-            path: Some(path.clone()),
-            reason: BlockReason::Unreadable { error_kind: error },
-        })?;
-        crate::fault::trip("after-file-dirsync").map_err(|error| Blocked {
-            path: Some(path.clone()),
-            reason: BlockReason::Unreadable { error_kind: error },
-        })?;
-    }
-    Ok(())
-}
-
-/// Where a live path stands relative to the two images this operation names.
-fn classify(at: &Path, operation: &FileOp) -> ObservedImage {
-    let (before, after) = match operation {
-        FileOp::Create { after, mode, .. } => (
-            None,
-            Some(GuardedImage {
-                object: *after,
-                mode: *mode,
-            }),
-        ),
-        FileOp::Replace {
-            before,
-            after,
-            mode,
-            ..
-        } => (
-            Some(*before),
-            Some(GuardedImage {
-                object: *after,
-                mode: *mode,
-            }),
-        ),
-        FileOp::Delete { before, .. } => (Some(*before), None),
-    };
-    let actual = match observe(at) {
-        Ok(actual) => actual,
-        Err(error_kind) => return ObservedImage::Unreadable { error_kind },
-    };
-    if matches(&actual, before.as_ref()) {
-        return ObservedImage::Before;
-    }
-    if matches(&actual, after.as_ref()) {
-        return ObservedImage::After;
-    }
-    ObservedImage::Unknown { actual }
-}
-
-fn matches(actual: &ActualImage, expected: Option<&GuardedImage>) -> bool {
-    match (actual, expected) {
-        (ActualImage::Absent, None) => true,
-        (
-            ActualImage::File { sha256, len, mode },
-            Some(GuardedImage {
-                object,
-                mode: expected_mode,
-            }),
-        ) => sha256 == &object.id && len == &object.len && mode == expected_mode,
-        _ => false,
-    }
-}
-
-/// What is actually there. A symlink or a directory is its own answer, never
-/// followed: a plan that named a file must not act on something else.
-fn observe(at: &Path) -> std::result::Result<ActualImage, String> {
-    let metadata = match std::fs::symlink_metadata(at) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(ActualImage::Absent);
-        }
-        Err(error) => return Err(error.kind().to_string()),
-    };
-    if metadata.is_symlink() {
-        return Ok(ActualImage::Symlink);
-    }
-    if metadata.is_dir() {
-        return Ok(ActualImage::Directory);
-    }
-    if !metadata.is_file() {
-        return Ok(ActualImage::Other);
-    }
-    let bytes = std::fs::read(at).map_err(|error| error.kind().to_string())?;
-    Ok(ActualImage::File {
-        sha256: ObjectId::from_bytes(sha256(&bytes)),
-        len: bytes.len() as u64,
-        mode: mode_of(&metadata).map_err(|error| error.to_string())?,
-    })
-}
-
-#[cfg(unix)]
-fn mode_of(metadata: &std::fs::Metadata) -> Result<FileMode> {
-    use std::os::unix::fs::MetadataExt;
-    FileMode::new(metadata.mode() & 0o777)
-}
-
-/// One operation, made observably atomic.
-fn apply_one(
-    operation: &FileOp,
-    at: &Path,
-    publish: &Path,
-    objects: &Path,
-    index: usize,
-) -> Result<()> {
-    match operation {
-        FileOp::Create { after, mode, .. } => {
-            let staged = stage(publish, objects, after, *mode, index)?;
-            // A hard link, so the destination appears complete or not at all.
-            // Linking the content object itself would make the live file and
-            // the immutable object share an inode.
-            std::fs::hard_link(&staged, at)
-                .map_err(|error| format!("could not publish {}: {error}", at.display()))?;
-            sync_parent(at)
-        }
-        FileOp::Replace { after, mode, .. } => {
-            let staged = stage(publish, objects, after, *mode, index)?;
-            std::fs::rename(&staged, at)
-                .map_err(|error| format!("could not replace {}: {error}", at.display()))?;
-            sync_parent(at)
-        }
-        FileOp::Delete { .. } => {
-            // Renamed rather than unlinked, so the preimage survives for an
-            // abort and for audit.
-            let kept = publish.join(format!("{index}.deleted"));
-            std::fs::rename(at, &kept)
-                .map_err(|error| format!("could not remove {}: {error}", at.display()))?;
-            let _ = store::sync_dir(publish);
-            sync_parent(at)
-        }
-    }
-}
-
-/// Copy an object into its own publication inode, verify it, set the mode.
-fn stage(
-    publish: &Path,
-    objects: &Path,
-    object: &ObjectRef,
-    mode: FileMode,
-    index: usize,
-) -> Result<PathBuf> {
-    let bytes = store::read_object(objects, &object.id)?;
-    if bytes.len() as u64 != object.len {
-        return Err(format!(
-            "object {} is {} bytes and the plan says {}",
-            object.id,
-            bytes.len(),
-            object.len
-        ));
-    }
-    let staged = publish.join(format!("{index}.publish"));
-    let _ = std::fs::remove_file(&staged);
-    {
-        use std::io::Write;
-        let mut file = std::fs::File::options()
-            .write(true)
-            .create_new(true)
-            .open(&staged)
-            .map_err(|error| format!("could not create {}: {error}", staged.display()))?;
-        file.write_all(&bytes)
-            .map_err(|error| format!("could not write {}: {error}", staged.display()))?;
-        file.sync_all()
-            .map_err(|error| format!("could not sync {}: {error}", staged.display()))?;
-    }
-    set_mode(&staged, mode)?;
-    let written = std::fs::read(&staged)
-        .map_err(|error| format!("could not reread {}: {error}", staged.display()))?;
-    if ObjectId::from_bytes(sha256(&written)) != object.id {
-        return Err(format!(
-            "{} does not hold the bytes it was staged from",
-            staged.display()
-        ));
-    }
-    Ok(staged)
-}
-
-#[cfg(unix)]
-fn set_mode(at: &Path, mode: FileMode) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(at, std::fs::Permissions::from_mode(mode.bits()))
-        .map_err(|error| format!("could not set the mode of {}: {error}", at.display()))
-}
-
-fn sync_parent(at: &Path) -> Result<()> {
-    match at.parent() {
-        Some(parent) => store::sync_dir(parent),
-        None => Ok(()),
-    }
-}
-
-/// Step 2: every precondition, every operation's expected image, and the
-/// ledger's own before-image, rechecked under the lock.
 fn recheck(
     locked: &LockedProject,
     change: &PreparedChange,
@@ -754,7 +524,7 @@ fn recheck(
             continue;
         };
         let at = root.join(path.as_str());
-        match classify(&at, operation) {
+        match crate::activate::classify(&at, operation) {
             // `After` is acceptable: the work is already done, and step 8
             // will skip it. Anything unclassifiable is not.
             ObservedImage::Before | ObservedImage::After => {}
@@ -791,7 +561,7 @@ pub(crate) fn ledger_position(
     prepared: &PreparedIdentityV1,
 ) -> LedgerPosition {
     let path = locked.handle.store.root().join("ledger.toml");
-    let Ok(actual) = observe(&path) else {
+    let Ok(actual) = crate::activate::observe(&path) else {
         return LedgerPosition::Neither;
     };
     if image_matches(&actual, prepared.ledger_before) {
@@ -823,7 +593,7 @@ fn check_ledger(
     expected: FileImage,
 ) -> std::result::Result<(), CommitError> {
     let path = locked.handle.store.root().join("ledger.toml");
-    let actual = observe(&path).map_err(CommitError::StaleInput)?;
+    let actual = crate::activate::observe(&path).map_err(CommitError::StaleInput)?;
     if !image_matches(&actual, expected) {
         return Err(CommitError::StaleInput(
             "the store changed after this plan was made.\n       fix: another run committed in \
@@ -917,9 +687,20 @@ mod tests {
         }
     }
 
-    fn bundle(change: PreparedChange) -> PreparedBundle {
+    /// A bundle prepared for the project it is about to be committed to.
+    ///
+    /// The root is not decoration: `commit` refuses a plan prepared elsewhere,
+    /// because every path in a prepared operation is project-relative and a plan
+    /// for a same-shaped project would otherwise apply cleanly to the wrong one.
+    fn bundle(locked: &LockedProject, change: PreparedChange) -> PreparedBundle {
         PreparedBundle {
-            root: CanonicalRoot::new("/srv/demo").unwrap(),
+            root: CanonicalRoot::new(
+                std::fs::canonicalize(locked.root())
+                    .unwrap()
+                    .to_str()
+                    .unwrap(),
+            )
+            .unwrap(),
             change,
         }
     }
@@ -940,12 +721,15 @@ mod tests {
             vec!["src", "src/main", "src/main/java"],
         );
         let transaction = change.transaction_id;
-        let result = commit(&locked, &bundle(change)).unwrap();
+        let result = commit(&locked, &bundle(&locked, change)).unwrap();
         assert!(matches!(result, CommitResult::Committed(_)), "{result:?}");
 
         let at = scratch.path().join("src/main/java/App.java");
         assert_eq!(std::fs::read(&at).unwrap(), b"class App {}\n");
-        assert_eq!(mode_of(&std::fs::metadata(&at).unwrap()).unwrap(), mode());
+        assert_eq!(
+            crate::activate::mode_of(&std::fs::metadata(&at).unwrap()).unwrap(),
+            mode()
+        );
 
         // The directory moved intact into `receipts/`, journal included.
         let published = locked.handle.store.receipt(&transaction);
@@ -967,7 +751,7 @@ mod tests {
             vec![b"class App {}\n"],
             Vec::new(),
         );
-        commit(&locked, &bundle(change)).unwrap();
+        commit(&locked, &bundle(&locked, change)).unwrap();
         let strays: Vec<_> = std::fs::read_dir(scratch.path())
             .unwrap()
             .filter_map(|entry| entry.ok())
@@ -983,7 +767,7 @@ mod tests {
         let (scratch, locked) = project();
         let at = scratch.path().join("pom.xml");
         std::fs::write(&at, b"<project/>").unwrap();
-        set_mode(&at, mode()).unwrap();
+        crate::activate::set_mode(&at, mode()).unwrap();
 
         let change = change_of(
             vec![FileOp::Replace {
@@ -999,7 +783,7 @@ mod tests {
             vec![b"<project></project>"],
             Vec::new(),
         );
-        commit(&locked, &bundle(change)).unwrap();
+        commit(&locked, &bundle(&locked, change)).unwrap();
         assert_eq!(std::fs::read(&at).unwrap(), b"<project></project>");
         scratch.close().unwrap();
     }
@@ -1011,7 +795,7 @@ mod tests {
         let (scratch, locked) = project();
         let at = scratch.path().join("pom.xml");
         std::fs::write(&at, b"<project/>").unwrap();
-        set_mode(&at, mode()).unwrap();
+        crate::activate::set_mode(&at, mode()).unwrap();
 
         let change = change_of(
             vec![FileOp::Replace {
@@ -1030,7 +814,7 @@ mod tests {
         // The user edits it between plan and commit.
         std::fs::write(&at, b"<project>mine</project>").unwrap();
 
-        let error = commit(&locked, &bundle(change)).unwrap_err();
+        let error = commit(&locked, &bundle(&locked, change)).unwrap_err();
         assert!(matches!(error, CommitError::StaleInput(_)), "{error:?}");
         assert_eq!(std::fs::read(&at).unwrap(), b"<project>mine</project>");
         scratch.close().unwrap();
@@ -1043,14 +827,14 @@ mod tests {
         let (scratch, locked) = project();
         let at = scratch.path().join("App.java");
         std::fs::write(&at, b"class App {}\n").unwrap();
-        set_mode(&at, mode()).unwrap();
+        crate::activate::set_mode(&at, mode()).unwrap();
 
         let change = change_of(
             vec![create_op("App.java", b"class App {}\n")],
             vec![b"class App {}\n"],
             Vec::new(),
         );
-        let result = commit(&locked, &bundle(change)).unwrap();
+        let result = commit(&locked, &bundle(&locked, change)).unwrap();
         assert!(matches!(result, CommitResult::Committed(_)), "{result:?}");
         scratch.close().unwrap();
     }
@@ -1062,7 +846,7 @@ mod tests {
         let (scratch, locked) = project();
         let change = change_of(Vec::new(), Vec::new(), Vec::new());
         assert_eq!(
-            commit(&locked, &bundle(change)).unwrap(),
+            commit(&locked, &bundle(&locked, change)).unwrap(),
             CommitResult::NoOp
         );
         assert!(!locked.handle.store.transactions().join("x").exists());
@@ -1086,7 +870,7 @@ mod tests {
         // recheck would have looked. Simulated by committing twice: the
         // second call sees a live file that is neither image.
         std::fs::create_dir(&at).unwrap();
-        let error = commit(&locked, &bundle(change)).unwrap_err();
+        let error = commit(&locked, &bundle(&locked, change)).unwrap_err();
         assert!(matches!(error, CommitError::StaleInput(_)), "{error:?}");
         assert!(!locked.handle.store.transaction(&transaction).exists());
         scratch.close().unwrap();
@@ -1125,9 +909,9 @@ mod tests {
             vec![b"class App {}\n"],
             Vec::new(),
         );
-        commit(&locked, &bundle(change.clone())).unwrap();
+        commit(&locked, &bundle(&locked, change.clone())).unwrap();
         std::fs::remove_file(scratch.path().join("App.java")).unwrap();
-        let error = commit(&locked, &bundle(change)).unwrap_err();
+        let error = commit(&locked, &bundle(&locked, change)).unwrap_err();
         assert!(matches!(error, CommitError::StaleInput(_)), "{error:?}");
         scratch.close().unwrap();
     }

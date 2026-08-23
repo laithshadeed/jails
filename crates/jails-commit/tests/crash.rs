@@ -84,9 +84,20 @@ fn one_create() -> PreparedChange {
     change
 }
 
-fn bundle(change: PreparedChange) -> PreparedBundle {
+/// A bundle prepared for the project it is about to be committed to.
+///
+/// The root is not decoration: `commit` refuses a plan prepared elsewhere,
+/// because every path in a prepared operation is project-relative and a plan
+/// for a same-shaped project would otherwise apply cleanly to the wrong one.
+fn bundle(locked: &LockedProject, change: PreparedChange) -> PreparedBundle {
     PreparedBundle {
-        root: CanonicalRoot::new("/srv/demo").unwrap(),
+        root: CanonicalRoot::new(
+            std::fs::canonicalize(locked.root())
+                .unwrap()
+                .to_str()
+                .unwrap(),
+        )
+        .unwrap(),
         change,
     }
 }
@@ -131,7 +142,7 @@ fn every_named_failpoint_converges() {
 
         let interrupted = {
             let _armed = Armed::at(point);
-            commit(&locked, &bundle(change))
+            commit(&locked, &bundle(&locked, change))
         };
 
         if let Err(error) = recover_twice(&locked) {
@@ -171,7 +182,7 @@ fn a_failure_before_the_ledger_refuses_and_one_after_it_is_committed() {
     let transaction = change.transaction_id;
     {
         let _armed = Armed::at("before-ledger");
-        commit(&locked, &bundle(change)).unwrap_err();
+        commit(&locked, &bundle(&locked, change)).unwrap_err();
     }
     recover_twice(&locked).unwrap();
     // The transaction had activated, so recovery finishes it forward.
@@ -183,7 +194,7 @@ fn a_failure_before_the_ledger_refuses_and_one_after_it_is_committed() {
     let transaction = change.transaction_id;
     let result = {
         let _armed = Armed::at("after-ledger-rename");
-        commit(&locked, &bundle(change)).unwrap()
+        commit(&locked, &bundle(&locked, change)).unwrap()
     };
     // Past the commit point, so this is a success-side value: the work is
     // durable and the caller must not be told to retry it.
@@ -204,7 +215,7 @@ fn recovery_never_overwrites_a_file_it_does_not_recognise() {
     let change = one_create();
     {
         let _armed = Armed::at("after-journal-active");
-        commit(&locked, &bundle(change)).unwrap_err();
+        commit(&locked, &bundle(&locked, change)).unwrap_err();
     }
 
     std::fs::create_dir_all(scratch.path().join("src/main/java")).unwrap();
@@ -217,4 +228,38 @@ fn recovery_never_overwrites_a_file_it_does_not_recognise() {
         "recovery overwrote a file it did not recognise"
     );
     scratch.close().unwrap();
+}
+
+/// A plan prepared for one project may not be committed to another.
+///
+/// Not a hypothetical: every path in a prepared operation is project-relative,
+/// so a bundle for a same-shaped project passes every precondition against the
+/// wrong tree and writes it. The bundle has always carried the root it was
+/// prepared against; `commit` compares it now.
+#[test]
+fn a_plan_prepared_elsewhere_is_refused_before_anything_is_written() {
+    let (theirs, locked) = project();
+    let elsewhere = ScratchDir::in_temp("jails-crash-elsewhere").unwrap();
+    let mut change = one_create();
+    change.transaction_id = change.identity().unwrap().transaction_id().unwrap();
+    let foreign = PreparedBundle {
+        root: CanonicalRoot::new(
+            std::fs::canonicalize(elsewhere.path())
+                .unwrap()
+                .to_str()
+                .unwrap(),
+        )
+        .unwrap(),
+        change,
+    };
+
+    let error = commit(&locked, &foreign).unwrap_err();
+    assert!(
+        format!("{error:?}").contains("prepared for"),
+        "the refusal names both projects: {error:?}"
+    );
+    assert!(
+        !theirs.path().join(AT).exists(),
+        "and nothing of the foreign plan reached this project"
+    );
 }

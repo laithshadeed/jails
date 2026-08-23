@@ -707,6 +707,7 @@ const LAYERS: &[(&str, usize)] = &[
     ("serialize", 5),
     ("tool", 5),
     // jails-commit: making a prepared transaction durable, and recovering one.
+    ("activate", 6),
     ("execute", 6),
     ("fault", 6),
     ("gc", 6),
@@ -1548,6 +1549,10 @@ fn owns_writing(path: &Path) -> bool {
         "store.rs",
         "journal.rs",
         "execute.rs",
+        // The half of the executor that actually moves bytes. It was inside
+        // `execute.rs` until that module outgrew the size ceiling; splitting a
+        // file must not change what the project's write layer *is*.
+        "activate.rs",
         "scratch.rs",
         "sandbox.rs",
         "recover.rs",

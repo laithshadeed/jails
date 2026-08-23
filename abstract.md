@@ -1,396 +1,252 @@
-# abstract.md — the mutation architecture contract
+# abstract.md — mutation architecture contract
 
-`plan.md` says what to change and in what order. This document says what the mutation system is, which
-guarantees it must provide, and which abstractions it must not pretend to have.
+`plan.md` is the execution ledger: current status, delivery order, and acceptance tests. This document is
+the stable architectural contract: which facts exist, who owns them, and which transitions are legal.
 
-This is the **target contract**, not a claim that the current code already satisfies it. The
-audited baseline, queued phases and exact implementation/wire details live in `plan.md`. Any implementation
-choice that weakens this contract requires both documents and their enforcement tests to change together.
+The contract describes the destination, not the current implementation. Section 2 is a short audited
+reality check; `plan.md` is authoritative for live status. Exact binary tags, field ordering, magic bytes,
+CLI JSON spelling, and fixture bytes have one authority only: the codecs and their golden tests. They must
+not be copied into both design documents.
 
-This is a living contract, not a historical audit. Measurements and delivery status belong in tests and
-`plan.md`; superseded designs belong in git history.
-
-### Legacy citation locator
-
-Source and test comments written against the pre-contract document still cite its old sections. Until those
-callers naturally change, read the citations as these conceptual aliases:
-
-| Earlier citation | Current home |
-|---|---|
-| §2 | Current evidence in §2; design test in §§8–9 |
-| §3, especially §3.2 | Current module evidence in §2; snapshot boundary in §3.1; decomposition rule in §8 |
-| §4.1 | Current `Artifact`/`Change` limit in §2; desired/prepared changes in §§3.3–3.4; removal in §7 |
-| §4.2 | Interpreter gap in §2; shared planning in §4; derived verification in §9 |
-| §4.3 | Snapshot/project boundary in §3.1; planning purity in §4 |
-| §4.4 | Typed identity and references in §3.2 |
-| §4.5 | Ownership boundary in §1; canonical ledger in §6 |
-| §5 | Clone-the-abstraction diagnosis in §2; governing principle in §8 |
-| §6.2 | Current derived behaviour in §2; consequences in §§4, 7, and 9 |
-| §6.3 | Human/machine ownership in §1; ledger semantics in §6 |
-| §7 | Delivery sequence in `plan.md`; architectural destination in §§3–7; gates in §9 |
-| §8 | Wrong-abstraction counterweight in §8; falsification through §9 |
-| §8.0 | Ratchet policy in §9 and `tests/architecture.rs` |
-| §8.0.1 | Current doctor evidence in §2; counter policy in §9 |
-| §8.1 | Current-state evidence in §2; delivery state in `plan.md`; ratchets in §9 |
-| §8.2 | Human manifests in §1; ledger boundary in §6 |
-| §9 | Principles in §8; enforceable contract in §9 |
+The numbered sections are retained for coarse orientation. Existing source comments that cite an old
+step/part must be migrated to a named acceptance ID or stable semantic anchor when touched; a broad section
+number does not preserve an obsolete ordered algorithm. A change that weakens an invariant here must update
+this document and the test that enforces it in the same change.
 
 ## 0. The one sentence
 
-jails turns a typed mutation request and an immutable view of a project into a
-**prepared, recoverable transition** of that project—or one guarded retry of an
-already-recorded external effect.
+jails turns a typed request and one immutable capture of a project into a completely prepared,
+root-bound, recoverable transition—or into one guarded retry of an external effect already recorded by a
+committed transition.
 
 ```text
-load       : (ProjectHandle, HumanSourceSelection, DirectRequest)
-             -> LoadedProject
-resolve    : (&LoadedProject, DirectRequest) -> ResolvedMutation
-plan_all   : (&LoadedProject, ResolvedMutation) -> PlannedTransition
-prepare    : (LoadedProject, CommitPlan, PreparationContext) -> PreparedBundle
-describe   : PreparedBundle.change -> Report
-describe_effect : EffectRetryPlan -> EffectRetryReport       // after = None
-describe_effect_result : (EffectRetryPlan, EffectRunResult) -> EffectRetryReport
-commit     : (ProjectHandle, PreparedBundle) -> Result<CommitResult, CommitError>
-resume_effect : (ProjectHandle, EffectRetryPlan) -> Result<EffectRunResult, EffectRunError>
-recover    : ProjectHandle -> Result<RecoveryOutcome, RecoveryError>
-verify_project : ProjectSnapshot -> [Finding]
+syntax adapter
+    -> CanonicalMutationRequest
+    -> capture(ProjectHandle, request)
+    -> LoadedMutation
+    -> resolve claims and references
+    -> PlannedTransition
+       |-> Commit(PlannedCommit) -> prepare -> PreparedBundle -> describe | commit
+       `-> RetryEffect(EffectRetryPlan) -> resume_effect
 ```
 
-`load` owns a staged, ledger-first capture. With no pending conflict it returns
-`LoadedProject::Ready`: captured declaration syntax plus the complete ordinary
-snapshot. With a committed pending conflict it returns the deliberately
-smaller, parse-free `LoadedProject::Pending`. That fast path does not feed a
-marker-bearing POM, `jails.toml`, app manifest or Java source through an
-ordinary parser. It uses the current request-syntax fingerprint and frozen
-desired-input guards to reach only guarded continue or abort. A caller never
-constructs or supplies the final `InputSet`, and no planner may expand it by
-reading live state. `plan.md` defines the exact bootstrap and completeness
-algorithm.
+The arrows are ownership boundaries, not an invitation to make every stage a trait. For an existing
+project, one concrete application service in the root crate drives them. `jails new` has a separate,
+audited publication boundary because no project root exists yet. Command modules translate syntax and
+render an outcome; they do not each reimplement either lifecycle.
 
-`PlannedTransition` is a closed choice between `Commit(CommitPlan)` and
-`RetryEffect(EffectRetryPlan)`. A `CommitPlan` is exactly one of ordinary
-apply, conflict finalisation, or guarded conflict abort. Only `commit` and
-`recover` mutate managed project files or the ledger. `resume_effect` is the
-executor-owned entrypoint that compare-and-swaps receipt effect state and runs
-one already-recorded external effect; it never plans or changes project files.
-`plan_all` is pure. `prepare` accepts the matching `LoadedProject` variant,
-moves its opaque runtime bindings into the prepared bundle, and may perform
-fallible work only in memory or bounded scratch space. It does not mutate the
-project. `describe` reports the exact operations `commit` will attempt.
+The public conceptual API is:
 
-`destroy` and `remove` are not a generic inverse function. They plan the desired project with an owner claim
-removed. A receipt supports crash recovery, conflict abort and audit; it is not the semantic model of
-uninstall or a universal rollback API.
-`verify_project` covers captured project state. Machine, process, socket and environment probes remain
-separate read-only services; the mutation snapshot must not be stretched into a universal inspection model.
+```rust
+capture(ProjectHandle, CanonicalMutationRequest, &CaptureCatalog)
+    -> Result<LoadedMutation, StateLoadError>
+resolve(LoadedMutation) -> Result<ResolvedMutation, PlanError>
+plan(ResolvedMutation) -> Result<PlannedTransition, PlanError>
+prepare(PlannedCommit, &PreparationServices) -> Result<PreparedBundle, PrepareError>
+describe(&PreparedBundle) -> Report
+commit(PreparedBundle) -> Result<CommitResult, CommitError>
+resume_effect(EffectRetryPlan) -> Result<EffectRunResult, EffectRunError>
+recover(ProjectHandle) -> Result<RecoveryOutcome, RecoveryError>
+```
 
-## 1. Scope and ownership
+`PlannedTransition` is a closed choice between a structural commit and a retry of an effect already named
+by a validated receipt. A commit plan is ordinary apply, conflict finalisation, or guarded conflict abort.
+There is no generic rollback operation.
 
-This contract governs capability add/remove, artifact generate/destroy, app apply/reconcile, field, factory,
-sync, and related changes to generated code, build files, compose, properties, human configuration, and
-machine state.
+## 1. Scope and authority
 
-Read-only commands may use simpler paths. They must still fail closed when authoritative state cannot be
-read, and a command presented as read-only must not migrate or repair state as a side effect.
+This contract governs mutations within one project root: capability add/remove, artifact
+generate/destroy, app apply/reconcile, one-shots such as field and cases, format, rename, adoption, and the
+machine state under `.jails/`.
 
-Authority is split by domain; “authoritative” never means “all of these files
-describe the same thing”:
+Authority is deliberately split:
 
-1. `jails.toml` and `.jails/app.toml` are human-owned declarations. jails may make explicit surgical edits
-   while preserving unrelated bytes, but must not rewrite them as machine state.
-2. `.jails/ledger.toml` is authoritative for the current logical ownership,
-   provenance and pending-conflict generation. It is not an execution log.
-3. One validated active journal is authoritative for how an incomplete
-   transaction may advance. A retained receipt is authoritative for its
-   immutable prepared history and mutable effect state. Neither is consulted
-   to invent current desired state.
-4. Content-addressed objects are authoritative only for the bytes named by an
-   already-authoritative ledger, journal or receipt reference. Reachability,
-   not directory presence, gives an object meaning.
-5. Project files are shared. Some are wholly generated; others contain managed contributions beside user
-   content. Ownership is recorded per managed resource, not inferred merely from a path.
+1. `jails.toml`, `.jails/app.toml`, and direct command syntax express human desire. A surgical edit may
+   preserve unrelated bytes, but these files are not machine state.
+2. `.jails/ledger.toml` records the last successful logical state, ownership, provenance, and an optional
+   pending conflict. It is not desired state and not an execution log.
+3. One active journal is the authority for an incomplete structural transaction. A linked receipt is the
+   immutable prepared history plus mutable effect state. Neither invents current desire.
+4. Content-addressed objects have meaning only when reached from a validated ledger, journal, or retained
+   receipt. Directory presence alone conveys no ownership.
+5. Project files are shared. Ownership is attached to typed resources and outputs, not inferred from a
+   pathname or from whichever command touched the file last.
+6. Processes, containers, sockets, caches, and machine-level files are outside the project transaction.
+   When a project mutation requires an external runtime effect, the structural commit records its exact
+   descriptor first and the effect runner reconciles it separately.
 
-Legacy formats are compatibility inputs only. There is no permanent dual write. Any compatibility
-projection is derived, transitional, and non-authoritative.
+Read-only commands may have smaller domain models, but a ledger-aware read uses the same strict machine
+state capture. It never migrates, repairs, creates `.jails/`, deletes a legacy source, or recovers a
+transaction as a side effect.
 
-## 2. What exists now
+Legacy formats are compatibility inputs only. There is one production writer at a time, no dual write,
+and no command-by-command schema activation.
 
-The current code has valuable foundations, but none should be described more strongly than it is:
+## 2. Audited implementation reality
 
-| Foundation | Current truth | Remaining limit |
+At baseline `7e54a606f99b` (2026-08-23), the workspace contains the root binary and nine library crates. It has
+substantial R1–R5 foundations, but the production commands still use the earlier imperative writers.
+Cargo dependencies on `jails-prepare` and `jails-commit` do not constitute integration.
+
+| Area | What exists | What prevents a production claim |
 |---|---|---|
-| `model::Project` | Central resolved project facts and layers | Some planning still rereads live disk |
-| `model::Artifact` | One file shape with eagerly rendered contents | A complete change includes more than files |
-| `model::Change` | Shared add/generate shape and fallible preflight merge | Omits deletes, state, ownership, registration, and effects |
-| `generate::artifacts_for` | Common generation query; `KIND_FILES` is gone | Removal still has fallbacks and direct mutation |
-| `codemod::Marked` | One owner for marked-block syntax | No general semantic-edit model or interpreter |
-| `apply` | Direct write primitives and atomic replacement of one file | Not yet the owner of deletes, copies, mkdir, or mutating tools |
-| `.jails/ledger.toml` | One canonical entity registry | Not a journal, provenance store, or exact merge-base store |
-| Module splits | Focused recipe, app, doctor, add, and Spring modules | File layout alone does not unify mutation flow |
+| Typed protocol | IDs, requests, ownership, resources, snapshots, effects, schema-2 codecs; the ledger now carries `one_shots`, `resources` and `outputs` as canonical sets | Resolution is incomplete; `outputs` is written empty because these routes' bytes arrive without a `RendererStamp`; some legacy facts are invented |
+| Capability desire bridge | 21/24 capabilities structurally encode on the current fixture; a test-only add-parity smoke test compared selected outputs for 20 rows in the audited environment | The smoke test permits install skips and covers only selected add outputs; test wiring is blocked, 2 rows remain prerequisite-unmeasured, and ownership/lifecycle semantics remain unproved |
+| Persistent generator planning | Active `generate` now computes a write-free legacy `Change`; a dark test bridge matched projected generated-file bytes for 22 scenarios covering 21/33 persistent kinds | The value contains eager absolute artifacts plus selected deps/plugins, not complete identity/intent; imperative registration/state tails remain outside it, one-shots are separate, and the smoke test permits skips and compares files only |
+| Snapshot/projection | A caller-declared read-set helper and test-only snapshot/projection shortcut exist | The shortcut mixes newly captured bytes with facts from a separately loaded `Project`, returns separable public values, and supplies no request, complete semantics, or authority; root/closure remain caller-chosen and projection remains independently constructible |
+| Java source canonicalisation | Import ordering and blank-line tidying share one `jails-java::tidy` implementation across legacy and projected paths, with focused tests for both rules including the text-block case | Generic projection still selects it by `.java` suffix instead of receiving canonical bytes from a typed Java format owner |
+| Preparation | Prepared values, file operations, sandbox, reconcile classifier, reports | Callers can supply mutually inconsistent base/projection/context; placeholder ledgers/invocation/effects cross the bundle; production has no caller |
+| Commit/recovery | Lock, journal framing, structural apply, receipt skeleton, object helpers, recovery prototype | The prepared root is ignored by `commit`; recovery and object promotion are incomplete; effect execution is absent; production has no caller |
+| Compatibility | A committed read-only `compat` facade | It parses only the old ledger as “current”, returns raw deletion paths, follows or suppresses I/O failures, and models unreadable state as a value |
+| Reconciliation/provenance | B/L/N classifier, renderer stamps, pending-conflict and GC types | They are dark/test-only and are not representable in the current successful ledger end to end |
+| Mutation inventory | Raw filesystem mutation outside the write layer is at a zero ratchet; process starters are classified | Existing command coordinators still perform multi-step legacy mutations; a primitive boundary is not transaction routing |
 
-`Change::merge` is partial and fallible, not a monoid. Add uses its result for preflight and then discards it
-in favour of a separate imperative apply path. Generate writes files, ledger state, command registration,
-and build changes in separate steps; app apply and reconciliation are likewise multi-step.
+One stop-line defect remains for any activation:
 
-The current meaning of planner “purity” is often only “does not write”. Some planners read live files.
-Legacy migration can happen on a read path, some migration is lossy, and ledger read errors other than
-`NotFound` can be mistaken for empty state. Reconciliation reconstructs an old base with the current
-renderer, which is not exact after templates, tool versions, or relevant project context change.
+- `prepare` accepts a `LoadedProject`, `CommitPlan`, snapshot, projection, and context assembled
+  independently. The type system therefore permits a plan and projection from different captures.
 
-The target below completes these seams. It does not create a second framework beside the existing types.
+The other is closed. A bundle prepared for project A could be passed to a lock for a same-shaped
+project B: every path in a prepared operation is project-relative, so it would pass every
+precondition against the wrong tree and write it. `commit` compares the prepared root against the
+locked one before anything is activated, and a crash-suite test pins the refusal. The unit fixtures
+that had been committing a plan rooted at `/srv/demo` into a temporary directory were only passing
+because nothing compared.
+
+Focused crate tests validate the reduced implementations. They do not prove this contract. The detailed
+gap list and ordered repairs are in `plan.md`.
 
 ## 3. The internal model
 
-The names are conceptual. Existing types should evolve into these roles rather than being wrapped forever
-by parallel representations.
+The architecture has four value layers. Values may evolve in place; parallel “new” and “legacy” models
+must not become permanent.
 
-### 3.1 Snapshot and projected view
+### 3.1 Semantic snapshot and runtime authority
 
-`ProjectSnapshot` contains every planning input: resolved project root, build kind/flavour, Java release,
-layers and package, parsed build/config/compose/property/source facts, observed ledger state, relevant file
-bytes and existence facts, and frozen resolved template bytes and origins. Its canonical `ReadSet` records
-every file image or absence, every enumerated directory and its sorted entries, and every allowed external
-manifest/template/brief input. It also loads and verifies the complete transitive closure of objects referenced by the ledger;
-planners never read the object store lazily. Those entries become commit preconditions; an optional absent file and an empty
-directory are therefore observable facts rather than gaps in the snapshot.
+`ProjectSnapshot` is immutable, deterministic, and relocatable. It uses `ProjectPath` throughout and does
+not contain an absolute project root. It contains every semantic input a planner may use:
 
-Once receipts exist, loading also freezes the bounded retained receipt
-inventory and its directory digest. Effect retry plans use those captured
-records. A pending conflict requires exactly one structurally matching origin
-receipt and loads its abort preimages. Receipt checksum and inventory rows are
-commit preconditions; planners never rescan receipt storage lazily.
-`MachineReceiptDirectoryState` distinguishes an absent receipts directory from
-a present directory with its sorted listing and digest; present-empty is not
-encoded as absence.
+- captured machine state: `Fresh`, a canonical schema-2 ledger, or a typed legacy draft plus its source snapshot;
+- captured declaration syntax and origins;
+- resolved build kind, flavour, Java release, layers, package, and recipe facts;
+- exact file images, absences, symlink classifications, modes, and sorted directory inventories;
+- frozen template/tool/input descriptors and the bytes they selected;
+- the verified object closure needed by the ledger;
+- the bounded retained receipt inventory needed for conflict and effect decisions.
 
-R4's receipt support is deliberately ordered before ledger-object resolution.
-The loader first validates every retained Complete-journal/receipt pair and its
-entire local prepared manifest. A ledger object then records an exact
-`MachineObjectSource`: prefer the verified global store; during the pre-R5 dark
-period only, fall back to the lowest-`TransactionId` fully validated receipt
-whose manifest and local object set contain it. That chosen global or receipt-
-local location is part of `InputPrecondition::MachineObject`, and commit reopens
-and rehashes that exact source. A missing/corrupt selected source is stale or
-corrupt input even if another copy later appears; execution never switches
-sources after planning. Before receipt validation exists, resolution is global-
-only and no production schema-2 writer is active.
+One `FactStore` owns parsed facts, their source paths, dependency edges, and invalidation. A projected edit
+invalidates facts by path through that store. Format-specific modules parse and render; they do not keep
+competing caches.
 
-`LoadedSnapshot` pairs that deterministic value with opaque runtime absolute bindings for allowed external
-inputs. `LoadedProject` keeps ordinary and pending loading impossible to confuse:
+`SnapshotId` hashes the complete semantic capture—not merely the file read set. Changing a ledger
+generation, declaration, absence, directory listing, selected object/receipt, template, tool identity, or
+relevant external input changes the ID.
+
+Snapshot ID proves semantic equality; it does not prove that two values came from the same capture and
+never carries root authority. Lineage instead comes from ownership: one private, sealed planning-session
+enum owns the request, semantic capture, authority, and—on the ready branch—its derived projection until
+it emits a sealed plan.
+
+Runtime authority is separate:
 
 ```rust
-enum LoadedProject {
+enum LoadedMutation {
     Ready {
-        loaded: LoadedSnapshot,
-        declarations: DeclarationSyntax,
+        request: CanonicalMutationRequest,
+        snapshot: Arc<ProjectSnapshot>,
+        authority: CommitAuthority,
     },
     Pending {
-        loaded: LoadedPendingSnapshot,
+        request: CanonicalMutationRequest,
+        snapshot: PendingSnapshot,
+        authority: CommitAuthority,
+    },
+    RecoveryRequired {
+        request: CanonicalMutationRequest,
+        recovery: RecoverySnapshot,
+        project: BoundProject,
     },
 }
 
-enum DesiredInputGuard {
-    Exact { sha256: ObjectId, len: u64 },
-    ProjectedTransactionOutput {
-        path: ProjectPath,
-        sha256: ObjectId,
-        len: u64,
-    },
-    Absent,
+struct CommitAuthority {
+    project: BoundProject,
+    external_inputs: BTreeMap<ExternalInputId, ExternalBinding>,
+}
+
+struct BoundProject {
+    handle: ProjectHandle,
+    identity: MachineRootBinding,
 }
 ```
 
-Loading captures and strictly decodes the ledger before parsing the build,
-human declarations or source facts. If that ledger contains a pending
-conflict, the loader validates the origin receipt and Complete journal, captures
-only the frozen affected paths and desired inputs, and returns `Pending`.
-`RequestSyntaxFingerprint` is derived from current CLI syntax without
-project-derived defaults. Only after it, the manifest source identity and every
-desired-input guard match may pending resolution reuse the stored canonical
-request. `Exact` rehashes independent captured bytes,
-`ProjectedTransactionOutput` is accepted only for a path already guarded by the
-origin transaction, and every relevant absence has an explicit `Absent` row.
-Pending mode may parse a marker-free resolved shared file only to validate its
-frozen semantic slots; it never runs the ordinary bootstrap parsers.
+`MachineRootBinding` comes from a canonical, symlink-safe `ProjectHandle` and includes the OS identity
+needed to detect replacement of the root. `ExternalBinding` maps an opaque captured input ID to the
+runtime path/handle that commit may reopen. Absolute paths never enter semantic identities, reports,
+ledgers, or renderer provenance.
 
-Only preparation moves runtime bindings into
-`PreparedBundle.commit_context`; planners, reports, fingerprints, journals and
-receipts never see or persist them. `Apply` requires `Ready`, while `Finalise`
-and `Abort` require `Pending`; every other pairing is an invariant violation.
+Capture consumes its request. `CanonicalMutationRequest` determines the bounded declaration/template/
+external-input closure, while `CaptureCatalog` supplies immutable built-in recipe/template metadata and
+allowed external resolvers. The returned `LoadedMutation` owns that exact request. `resolve` takes no
+second request and consumes the loaded value, so `ResolvedMutation` owns the same request and non-cloneable
+authority instead of borrowing facts and later reconstructing either beside them.
 
-A snapshot method never reads the filesystem, environment, clock, or a process. `ProjectHandle` owns the
-root and is used only by loading and execution.
+Loading is ledger-first. With no pending conflict it returns a complete ordinary snapshot. With a pending
+conflict it uses a deliberately smaller, parse-free bootstrap: marker-bearing human files and source are
+not fed through ordinary parsers. Continue or abort is derived from the stored request fingerprint,
+frozen desired-input guards, and the unique matching receipt.
 
-Resolved templates belong only to the snapshot. `PreparationContext` supplies renderer/tool fingerprints,
-bounded tool specifications, and the scratch executor used to materialise bytes. Anything from it that can
-affect output contributes to the prepared fingerprint, but commit never reruns those tools.
+An authenticated incomplete journal produces `LoadedMutation::RecoveryRequired`, not an ordinary snapshot.
+A read-only command reports it without mutation. An executing driver recovers, records the recovery
+outcome, and captures again. Schema-2 state plus legacy residue is legal only in that authenticated
+post-commit recovery state; unexplained residue is corruption.
 
-Planning several intents uses a `ProjectedProject`: the snapshot plus changes already desired earlier in the
-plan. Intents are resolved in stable topological order and the projected view advances after each. A later
-intent sees a dependency introduced earlier without an intermediate write or fresh disk read.
+The loader—not a planner—computes input closure. A planner cannot add a live read later.
 
-### 3.2 Typed intent and identity
+### 3.2 Request, references, and claims
 
-Persistent intent identity is canonical and independent of mutable arguments:
+CLI/manifests are syntax DTOs. They become one `CanonicalMutationRequest` before semantic work. Strings
+that name entities are resolved once into typed identities; optional strings must not leak into planning as
+“maybe resolved” references.
+
+Recipe metadata declares identity shape, valid referents, prerequisites, required capabilities, default
+package policy, and produced resource kinds. Reference validation creates a typed graph, rejects missing or
+incompatible targets and cycles, then supplies stable topological order.
+
+Entity/resource equality claims remain per authority until agreement is proved. The conceptual shape is:
 
 ```rust
-struct IntentId {
-    recipe: Recipe,
-    name: Name,
-    package: Package,
-}
-
-enum EntityId {
-    Capability(CapabilityId),
-    Intent(IntentId),
-    ToolFeature(ToolFeature),
-}
-
-enum ResourceOwner {
-    Entity(EntityId),
-    OneShot(OneShotId),
-}
-
-enum OwnerId { AppManifest, DirectConfig, DirectCli }
-
-enum ReconcileScope {
-    AppManifest,
-    DirectConfig,
-    DirectEntity(EntityId),
-}
-
-struct DesiredEntity {
-    id: EntityId,
-    spec: EntitySpec,
-    owners: BTreeSet<OwnerId>,
-}
-
-struct DesiredState {
-    scope: ReconcileScope,
-    entities: BTreeMap<EntityId, DesiredEntity>,
-}
-
-struct ResolvedMutation {
-    invocation: InvocationFingerprint,
-    action: ResolvedAction,
-}
-
-enum ResolvedAction {
-    Reconcile(DesiredState),
-    ApplyOneShot { id: OneShotId, spec: OneShotSpec },
-    DestroyCases { id: OneShotId, force: bool },
-    AppInit { target: ProjectPath },
-    Rename { from: JavaType, to: JavaType, force: bool },
-    AdoptLayout,
-    AdoptLegacy { legacy_key: LegacyKey, intent: IntentId,
-                  replace: bool, force: bool },
-    Format { scopes: BTreeSet<ProjectPath> },
-    ContinueConflict,
-    AbortConflict,
-}
-
-enum PlannedTransition {
-    Commit(CommitPlan),
-    RetryEffect(EffectRetryPlan),
-}
-
-enum CommitPlan {
-    Apply(DesiredChangeSet),
-    Finalise(FinalisationPlan),
-    Abort(AbortPlan),
-}
-
-struct DesiredChangeSet {
-    ordered: Vec<DesiredChange>,
-    subject: PlannedSubject,
-    ledger_intent: LedgerIntent,
-}
-
-enum PlannedSubject {
-    Reconcile(DesiredState),
-    ApplyOneShot { id: OneShotId, spec: OneShotSpec },
-    DestroyCases { id: OneShotId, force: bool },
-    AppInit { target: ProjectPath },
-    Rename { from: JavaType, to: JavaType, force: bool },
-    AdoptLayout,
-    AdoptLegacy { legacy_key: LegacyKey, intent: IntentId,
-                  replace: bool, force: bool },
-    Format { scopes: BTreeSet<ProjectPath> },
-}
+type Claims<K, O, V> = BTreeMap<K, BTreeMap<O, V>>;
 ```
 
-Optional package/name spellings exist only in syntax DTOs. Resolution applies conventions and validates
-them before constructing these types. Recipe arguments remain recipe-specific. `on` and `yields` are typed
-references to compatible managed or captured-existing targets, not one string whose meaning changes by
-recipe. Before preparation the planner rejects duplicate identities, missing or incompatible references,
-and cycles. One-shot field, migration and case operations have
-`OneShotId`/receipts; they are deliberately not persistent desired entities.
-Only cases has a destroy route. App initialisation, rename, adoption and
-formatting are typed maintenance subjects, not fake entities. After the
-pending-conflict gate, exactly one same-invocation eligible interrupted or
-failed effect becomes `RetryEffect` and cannot also produce a fresh project
-transaction. Pending conflict continue/abort becomes
-`Finalise`/`Abort`; ordinary actions cannot reach those prepared kinds.
+For one entity or resource key, every surviving claimant must claim the same value. Entity claims use
+`OwnerId`; resource and whole-file claims use `ResourceOwner`. Only after agreement may the ledger compact
+the result to `{ value, owners }`. Compacting early is wrong: it makes a simultaneous update by all owners
+look like disagreement with the previous compacted value.
 
-Manifest aliases may remain at the parser boundary; they do not survive into the typed model. A future
-runtime descriptor must serialise these same types rather than create another recipe schema beside them.
+Shared semantic outputs are different: contributors intentionally supply different edits. They use
+`OutputContributions = BTreeMap<OutputId, BTreeMap<ResourceOwner, SemanticContribution>>`; the one owning
+format module validates and composes contributions in canonical order. Equality agreement must never be
+applied to these contributions.
 
-`DesiredState` comes only from the captured human `jails.toml`, the selected
-captured app manifest, and the current direct request. Ledger rows are observed
-state inside `ProjectSnapshot`; they are never translated into declarations.
-The other `ResolvedAction` variants may inspect captured observed state to
-construct guarded transitions, but they do not call that state desire. App
-ownership remains an `AppManifest` ledger claim and is never copied into
-`jails.toml`.
+Omission has meaning only inside an explicit `ReconcileScope`. Silence from a direct request cannot remove
+an app-manifest or config claim.
 
-`ResourceKey::HumanConfigCapability(id)` exists if and only if that entity has
-the `DirectConfig` owner. Its sole resource owner is the entity and its value is
-the exact capability spec. `AppManifest` and `DirectCli` owners never emit that
-resource or copy their capability into `jails.toml`; removing `DirectConfig`
-removes only the declaration resource when another owner keeps the entity
-alive. On the first schema-2 transition only, an existing valid `jails.toml`
-whose parsed `DirectConfig` declaration/resource is exact and whose pure editor
-would make no byte change permits a ledger-only authoritative bootstrap: emit
-no `FileOp`, and record the exact live file as base/current with a truthful
-`FormatOwner::HumanConfig`. A mismatch, duplicate, required edit, prior V2
-config ownership or competing managed record follows ordinary collision and
-stored-base rules; this is not general adoption.
+Conditional adoption/supersession belongs to typed recipe or migration metadata before resolution, never
+inside resolved desired state. `AdoptIfPresent` names an owner, key, exact expected `ResourceValue`, and the
+captured fact/provenance authority. Resolution against the same `FactStore` yields: no claim when absent; an
+ordinary exact `DesiredResource` claim with no materialisation when the expected value is authoritatively
+present; or refusal on value mismatch, unknown provenance, or ambiguous human ownership. A complete
+schema-2 `ReconcileScope` handles normal supersession by withdrawing an omitted old claim while preserving
+other owners. A resolved `DesiredChange` contains no key-only or “if present” instruction.
 
-That first-V2 authority has one matching resource bootstrap. It applies only
-to the **complete** resource/output closure of an entity declared by captured
-`DirectConfig`, plus `ToolFeature::FastTest` only for the explicit current
-`test --fast` request. Every ID/spec/prerequisite must come from that real
-owner, every semantic key must occur exactly once with the exact desired value,
-no candidate V2 record may have existed, and the complete fresh format-owner
-edit/render must be unchanged byte-for-byte and mode-for-mode. The closure is
-all-or-nothing. Success emits no `FileOp`, creates only the real ownership rows,
-and records exact live base/current images with fresh truthful renderer
-contexts. Partial, unequal, duplicate, post-V2, app-only or legacy-only
-candidates refuse; live coincidence never manufactures an owner.
+### 3.3 Desired state, resources, and projection
 
-Desired/observed comparison is scoped replacement. Planning first discards the
-active scope's old observed claim, then inserts that scope's current claim when
-present and retains every outside owner. A sole owner may therefore update its
-spec; multiple current/retained claims may update together only when they agree
-on one canonical spec. An incompatible outside claim refuses with an owner and
-field-level diff. A retained outside owner takes a new spec only from a
-participating captured authoritative source that explicitly declares that same
-identity; otherwise its observed spec remains. Omission outside the active
-scope is never removal.
-
-Capability prerequisites are validation edges, not declarations. Every
-transitive prerequisite must have a real current or retained `OwnerId`; files,
-dependencies and live services do not satisfy the edge, and the planner never
-invents a synthetic owner. Last-owner removal refuses while any retained
-entity depends on that capability.
-
-### 3.3 Desired change
-
-The current `Change` should become an exhaustive desired change:
+A plan describes the desired output, not the imperative process used to reach it:
 
 ```rust
 struct DesiredChange {
-    attribution: ChangeAttribution,
+    subject: PlannedSubject,
+    claims: DesiredClaims,
     resources: Vec<DesiredResource>,
     files: Vec<DesiredFile>,
     edits: Vec<SemanticEdit>,
@@ -398,1036 +254,447 @@ struct DesiredChange {
     preconditions: Vec<SemanticPrecondition>,
     fact_delta: FactDelta,
 }
-
-enum ChangeAttribution {
-    Resource(ResourceOwner),
-    Maintenance(MaintenanceAttribution),
-}
-
-enum MaintenanceAttribution {
-    AppInit,
-    Rename,
-    AdoptLayout,
-    AdoptLegacy,
-    Format,
-}
 ```
 
-`SemanticEdit` covers decisions that compose by meaning before becoming bytes: POM dependencies and
-plugins, compose services, property keys, marked source blocks, command registration, and surgical edits to
-human configuration.
+`ResourceKey` is the unit of shared ownership: Maven coordinate, compose service, property key, marked
+block, whole file, and other closed resource kinds. A path is not enough. Whole-file ownership and
+semantic-contribution ownership cannot coexist at one path.
 
-`ChangeAttribution::Resource` is limited to an entity or one-shot and may add
-durable resource ownership. `Maintenance` is audit attribution, not a fake
-owner. A subject-specific maintenance planner may transform resources whose
-owners remain real entities/one-shots (for example rename or adoption), or
-guard an explicitly unowned human/shared file such as app initialisation or
-standalone formatting. The maintenance tag itself can never be a contributor.
-Such an unowned file is reported and
-receipted, but creates no `OutputRecord` and is never later deleted by owner
-reconciliation.
+After owner agreement, a keyed materialisation obtains its payload from the single validated resource
+value under that key. It must not accept an independent copy of that value: a change that claims A and
+renders B must be unconstructible. Keyed edits carry only the key and rendering metadata that is not
+resource authority.
 
-`AdoptLayout` is a human delta, not ownership adoption. If `jails.toml` already
-has a managed output, its contributors, generated base and renderer remain
-unchanged while only `current` advances to the exact committed postimage. With
-no managed config output, the edit remains unowned and creates no output row or
-`HumanConfigCapability` resource.
+Property values and introductory prose are deliberately different. `PropertyValue` is a private,
+constructor-validated single-line value and participates in resource equality. An optional
+`PropertyIntroduction` is private, canonical, single-line prose used only when an absent key is first
+created. It is part of that prepared render's identity, but it is not an equality claim, ledger-owned
+prose, or a deletion target. Existing prose is preserved; removing the last property owner removes the
+property lines but not unmarked prose. If prose must be updated or retired, model a separately keyed marked
+resource with explicit lifecycle rather than pretending an adjacent comment is owned.
 
-Every managed output has a `ResourceKey` and owner set. A key may name a whole file or a semantic contribution such
-as a Maven coordinate, compose service, property key, or marked block. Two entities can therefore share a
-dependency without either owning its deletion. `ResourceKey`, not a path or an intent, is the deletion unit.
-Whole-file ownership cannot coexist with semantic contribution ownership at the same path.
+`ProjectedProject` has no public constructor. The ready branch of the sealed planning session builds it
+from the exact `Arc<ProjectSnapshot>` it owns. It does not accept an independent package/build/release/
+flavour. The pending branch owns `PendingSnapshot + CommitAuthority`, admits only finalise or abort, and
+does not manufacture an ordinary projection. Applying a desired change on the ready branch updates the
+projected files, resource claims, output contributions, and `FactStore` together. Later planners observe
+earlier projected changes without rereading disk.
 
-```text
-try_compose : [DesiredChange] -> Result<DesiredChangeSet, Conflict>
-```
+Rendering remains deferred until preparation. When a projected edit already has known bytes, those bytes
+are reparsed in stable `FactKind` order. `FactDelta` is a checked prediction against those parsed results,
+never a second source of truth. Every replace—including a semantic edit—preserves the current projected
+mode; a default mode is chosen only for a newly created path.
 
-`DesiredChangeSet` also carries one closed `PlannedSubject` identifying the
-ordinary action whose changes it contains. This lets operation identity
-distinguish reconciliation, a one-shot, app initialisation and maintenance
-without accepting an untyped bag of changes. `FinalisationPlan`, `AbortPlan`
-and `EffectRetryPlan` remain separate because their preconditions and allowed
-effects are different.
+Canonicalisation is a pure format-owner operation. `jails-java` owns generated-source import ordering and
+blank-line policy, including preservation of Java text blocks, but the typed Java materialiser invokes it
+while producing desired or prepared source. Generic projection does not infer a language from a filename,
+and commit never rewrites prepared bytes. The same rule and fixtures are shared by legacy-parity tests until
+cutover, then the legacy call sites are removed.
 
-Composition detects incompatible claims and combines compatible shared contributions. Associativity may be
-tested where meaningful; totality, identity, and a mathematical monoid are not claimed.
+Desired changes compose only through a fallible validator that detects duplicate paths, contradictory
+absence/write claims, incompatible shared values, and semantic precondition conflicts. It is not a monoid.
 
-### 3.4 Prepared change and receipt
+### 3.4 Sealed planning and prepared state
 
-Preparation lowers semantic edits into exact bytes and guarded operations:
+The lineage boundary is a sealed value with private fields:
 
 ```rust
-enum FileImage {
-    Absent,
-    Present { object: ObjectRef, mode: FileMode },
+enum PlannedTransition {
+    Commit(PlannedCommit),
+    RetryEffect(EffectRetryPlan),
 }
 
-struct GuardedImage {
-    object: ObjectRef,
-    mode: FileMode,
+struct PlannedCommit {
+    capture: PlannedCapture,
+    plan: CommitPlan,
+    authority: CommitAuthority,
 }
 
-struct PreparedChange {
-    format: u32,
-    operation_identity: OperationIdentityV1,
-    operation_id: OperationId,
-    transaction_id: TransactionId,
-    preparation: PreparationContextFingerprint,
-    input_preconditions: Vec<InputPrecondition>,
-    operations: Vec<FileOp>,
-    directories: Vec<DirectoryOp>,
-    ledger_before: FileImage,
-    ledger_after: FileImage,
-    objects: BTreeMap<ObjectId, Arc<[u8]>>,
-    post_commit: Vec<PostCommitEffect>,
-    kind: PreparedKind,
-}
-
-struct PreparedIdentityV1 {
-    format: u32,
-    operation_identity: OperationIdentityV1,
-    operation_id: OperationId,
-    preparation: PreparationContextFingerprint,
-    input_preconditions: Vec<InputPrecondition>,
-    operations: Vec<FileOp>,
-    directories: Vec<DirectoryOp>,
-    ledger_before: FileImage,
-    ledger_after: FileImage,
-    object_manifest: Vec<ObjectRef>,
-    post_commit: Vec<PostCommitEffect>,
-    kind: PreparedKind,
-}
-
-enum PreparedKind {
-    Apply,
-    Conflict { paths: Vec<ProjectPath> },
-    Finalise { origin: OperationId },
-    Abort { origin: OperationId },
-}
-
-struct OperationIdentityV1 {
-    snapshot: SnapshotFingerprintV1,
-    operation_context: OperationContextFingerprint,
-    invocation: Option<InvocationFingerprint>,
-    proposed_generation: u64,
-    semantics: OperationSemanticsV1,
-}
-
-struct OperationContextFingerprint {
-    schema: u32,
-    tools: Vec<OperationToolFingerprint>,
-}
-
-struct OperationToolFingerprint {
-    identity: ToolIdentityFingerprint,
-    args: Vec<ToolArgTemplate>,
-}
-
-enum ToolArgTemplate {
-    Literal(String),
-    OperationLabel { prefix: String, hex_chars: u8 },
-}
-
-enum OperationTarget {
-    Project(ProjectPath),
-    LegacyMachine(LegacySourcePath),
-}
-
-enum FileOp {
-    Create { path: OperationTarget, after: ObjectRef, mode: FileMode,
-             contributors: BTreeSet<ResourceOwner> },
-    Replace { path: OperationTarget, before: GuardedImage, after: ObjectRef,
-              mode: FileMode, contributors: BTreeSet<ResourceOwner> },
-    Delete { path: OperationTarget, before: GuardedImage,
-             contributors: BTreeSet<ResourceOwner> },
-}
-
-enum DirectoryOp { Create { path: ProjectPath } }
-
-struct PreparedBundle {
-    change: PreparedChange,
-    commit_context: CommitContext, // runtime-only; never persisted/reported
-}
-
-struct CommitContext {
-    project_root: RootIdentity,
-    external_inputs: BTreeMap<ExternalInputId, ExternalBinding>,
-    machine_root: MachineRootBinding,
-}
-
-struct FileReceipt {
-    path: OperationTarget,
-    before: FileImage,
-    after: FileImage,
-    contributors: BTreeSet<ResourceOwner>,
-}
-
-struct AppliedReceipt {
-    operation_id: OperationId,
-    transaction_id: TransactionId,
-    files: Vec<FileReceipt>,
-    directories: Vec<DirectoryReceipt>,
-    ledger_before: FileImage,
-    ledger_after: FileImage,
-    outcome: ApplyOutcome,
-    post_commit: Vec<EffectReceipt>,
-}
-
-enum CommitResult {
-    NoOp,
-    Committed(CommittedResult),
-    CommittedRecoveryRequired(CommittedRecoveryRequired),
-    RecoveredPriorTransaction(RecoveryOutcome),
-}
-
-struct CommittedResult {
-    receipt: AppliedReceipt,
-    effect: CommitEffectOutcome,
-}
-
-enum CommitEffectOutcome {
-    NotApplicable,
-    Succeeded { effect: EffectId },
-    Failed { effect: EffectId },
-    Superseded { effect: EffectId },
-    DeferredError { effect: EffectId, error: CommittedEffectError },
-}
-
-enum CommittedEffectError {
-    StaleInput,
-    CorruptMachineState,
-    ReceiptIo,
-}
-
-struct CommittedRecoveryRequired {
-    operation: OperationId,
-    transaction: TransactionId,
-    outcome: ApplyOutcome,
-    receipt: Option<AppliedReceipt>,
-    stage: PostCommitStage,
-    error: PostCommitRecoveryError,
-}
-
-enum PostCommitStage {
-    JournalCompletion,
-    ReceiptPublication,
-    ReceiptReconciliation,
-}
-
-enum PostCommitRecoveryError {
-    Io,
-    RecoveryBlocked,
-    CorruptMachineState,
-}
-
-enum EffectRunResult {
-    Succeeded(AppliedReceipt),
-    Failed(AppliedReceipt),
-    Superseded(AppliedReceipt),
-    RecoveredPriorTransaction(RecoveryOutcome),
-}
-
-struct RecoveryOutcome {
-    changes: Vec<RecoveryChange>,
-    pending_effects: Vec<RecoverableEffect>,
-}
-
-enum RecoveryChange {
-    Transaction {
-        operation: OperationId,
-        transaction: TransactionId,
-        generation: u64,
-        action: RecoveryTransactionAction,
-    },
-    EffectStateChanged {
-        operation: OperationId,
-        transaction: TransactionId,
-        generation: u64,
-        effect: EffectId,
-        before: EffectState,
-        after: EffectState,
-    },
-}
-
-enum RecoveryTransactionAction {
-    AbandonedPrepared,
-    RolledForwardAndPublished,
-    PublishedCommittedReceipt,
-}
-
-struct RecoverableEffect {
-    operation: OperationId,
-    transaction: TransactionId,
-    generation: u64,
-    effect: EffectId,
-    state: EffectState,
-}
-
-enum EffectState {
-    Deferred,
-    Pending { next_attempt: u32 },
-    Running { attempt: u32 },
-    Succeeded,
-    Failed { attempt: u32, code: EffectFailureCode, summary: String },
-    Superseded { by: Option<OperationId> },
-}
-
-enum EffectFailureCode {
-    Spawn,
-    Timeout,
-    ExitNonzero,
-    InterruptedTwice,
-    Protocol,
-}
-
-enum CommitError {
-    StaleInput,
-    MutationBusy,
-    EffectBusy,
-    RecoveryBlocked,
-    CorruptMachineState,
-    InvalidPrepared,
-    PreActivationIo,
-}
-
-enum EffectRunError {
-    StaleInput,
-    MutationBusy,
-    EffectBusy,
-    RecoveryBlocked,
-    CorruptMachineState,
-    InvalidPlan,
-    ReceiptIo,
-}
-
-enum RecoveryError {
-    MutationBusy,
-    RecoveryBlocked,
-    CorruptMachineState,
-    Io,
+enum PlannedCapture {
+    Ready(Arc<ProjectSnapshot>),
+    Pending(PendingSnapshot),
 }
 ```
 
-`DesiredFile.mode` is the mutation model's only optional mode and expresses
-policy before preparation. `Some` is an explicit permission requirement;
-`None` preserves the captured concrete live mode for a replace and resolves to
-`0o644` for a create. Executable output must request its concrete mode, normally
-`0o755`. Every snapshot/read precondition, stored/live/guarded/prepared/actual
-file image and receipt therefore carries a concrete `FileMode`. Preparation
-resolves the policy once; the executor sets and verifies the exact bits, so
-results are independent of process umask.
+Only the sealed planning session constructs it. Before dropping transient state, `seal` performs a
+branch-specific completeness proof: the ready branch replays the plan into a fresh projection and compares
+the complete result; the pending branch reconstructs finalise/abort solely from its frozen pending snapshot
+and stored guards. Only a successful comparison/validation emits `PlannedCommit`. `prepare` consumes that
+sealed value and derives generation, ledger images, renderer/tool fingerprints, and invocation identity
+from its one lineage. It does not accept correlated pieces as separate public parameters.
 
-The first schema-1-to-2 transition is an explicit protocol bridge, not an
-ordinary project edit. `OperationSemanticsV1::Apply` carries
-`Option<LegacyMigrationIdentity>` whose immutable snapshot names every closed
-legacy source as absent or as an exact object/mode, both legacy directory
-listings, and the complete purely translated `LedgerV2Draft`. Preparation and
-durable validation rerun the same legacy translation over those objects and
-require byte-for-value equality with the draft; they do not attempt to parse a
-schema-1 `ledger_before` as schema 2.
+A prepared bundle is valid by construction:
 
-Only that validated migration may use
-`OperationTarget::LegacyMachine`, and only for exact `Delete` operations with
-empty contributors covering every present non-ledger legacy source. The
-schema-1 ledger path is consumed solely by the guarded ledger transition;
-legacy targets are never creates, replacements, renderer outputs, semantic
-resources, conflict paths or directory operations. File receipts and reports
-use the same `OperationTarget` distinction. Every legacy source and directory
-is a read/commit guard. Once schema 2 exists, all old static files must remain
-absent and legacy directories must be absent or present-empty; reintroduced
-children fail closed.
+```rust
+struct PreparedBundle {
+    identity: ValidatedPreparedIdentityV1,
+    objects: PreparedObjectSet,
+    authority: CommitAuthority,
+}
+```
 
-`RecoveryOutcome` is a sorted in-memory report of structural changes made by
-one recovery call and nonterminal effects that were reported but not executed.
-`EffectStateChanged` records both allowed structural effect transitions:
-obsolete logical guards become `Superseded`, and an orphaned
-`Running { attempt >= 2 }` becomes `Failed { code: InterruptedTwice, .. }`.
-Every `Running` state is reported; this value is not a durable protocol record.
-`RecoveredPriorTransaction(outcome)` tells the outer driver to reload and
-replan once; it is not the requested operation's success. The typed error enums
-are the only execution-to-command-result boundary: stale input, lock
-contention, blocked/corrupt recovery and pre-activation I/O are not collapsed
-into an ambiguous string or a partial receipt.
+`BoundProject` owns the captured `ProjectHandle` plus its `MachineRootBinding`; it is runtime-only. Commit
+therefore has no second root argument that can disagree with the bundle, and it still reopens/checks the
+canonical path to detect replacement beneath the handle.
 
-Once the ledger commit point is crossed, `commit` returns one of the two
-success-side committed variants, never `CommitError`. `CommittedResult` carries
-the last checksum-validated receipt plus exactly one v1 effect outcome after
-structural completion; `CommittedRecoveryRequired` carries the known committed
-identity/outcome when structural work remains. In `CommittedResult`,
-`DeferredError` means a post-commit guard, corruption or
-receipt-I/O problem prevented recording a trustworthy terminal effect state;
-the returned receipt is explicitly the last validated projection. It is never
-misreported as a pre-commit `CommitError`, and recovery/retry owns the next
-step. V1 permits at most one aggregate executable effect.
+Fields are private and the authority is non-`Clone`. Canonical decode is deliberately pure:
 
-`CommittedRecoveryRequired` covers failed structural work after the ledger
-commit point: Complete-journal persistence, receipt publication, or older-
-receipt reconciliation before an external effect may start. The known
-operation, transaction and apply outcome are success-side facts, so it is never
-`CommitError`. `receipt = Some` is legal only after that exact linked pair was
-reread and checksum-validated; otherwise no receipt is fabricated. The journal
-and objects remain for recovery, the typed stage and I/O/blocked/corrupt reason
-are reported as a newly committed project, and the driver neither replans nor
-starts an effect in that invocation.
+```rust
+decode_canonical(bytes) -> UnvalidatedPreparedIdentityV1
+validate(identity, &impl ObjectResolver)
+    -> Result<(ValidatedPreparedIdentityV1, PreparedObjectSet), PreparedValidationError>
+```
 
-Mutation JSON emits exactly one `CommandEnvelope`, and that envelope has
-`recovery: Vec<RecoveryOutcome>`. A `RecoveredPriorTransaction(outcome)` is
-appended in invocation order before the one allowed reload/replan; the fresh
-attempt occupies the ordinary status/report/receipt/error fields. Outcomes are
-never merged or dropped, and an earlier `pending_effects` snapshot is not
-reinterpreted as final state. Implicit observationally clean recovery may be
-omitted, while an explicitly requested recovery retains even an empty outcome.
-Human output prints the same recovery entries before the requested result. If
-authoritative recovery changes state again after the one replan, the command
-returns `RecoveryBlocked` rather than looping and retains the first outcome in
-the envelope. `plan.md` owns the exact public JSON field shapes, enum tags and
-canonical encoding; this abstract fixes only the one-envelope/result semantics
-and must not become a second wire specification.
+The two layers share one invariant/closure implementation without making `jails-protocol` perform I/O.
+`PreparedValidationError` distinguishes resolver/source failure from a semantically invalid identity or
+object closure; callers do not collapse either into absence.
+Bundle construction uses an in-memory resolver; journal, receipt, recovery, and GC supply confined
+resolvers. Durable decode can never manufacture runtime authority. `PreparedObjectSet` is exactly the
+sorted transitive closure of every typed `ObjectRef` reachable from
+operations, ledger images, preconditions, provenance, conflict semantics, migration inputs, and effect
+descriptors. A missing object, extra object, hash/length mismatch, or unresolved typed reference is invalid.
 
-`PreparedIdentityV1.object_manifest` is the exact, sorted result of one shared
-`prepared_object_closure` traversal. Its roots are every `ObjectRef` reachable
-from operations, ledger images, operation identity, preconditions, provenance,
-conflict semantics and effect descriptors; traversal follows only declared
-typed protocol references until raw byte objects. Every manifest member must
-resolve through `PreparedChange.objects`, and extras are invalid. The durable
-validator runs the same closure helper before trusting a journal or receipt.
-Once R5 writing is active, every object reachable from a prospective ledger—
-including bases, templates and render contexts—is promoted and synced in the
-global content-addressed store before that ledger commits; a new ledger may
-never depend only on a transaction/receipt-local copy. Earlier dark-R4 receipts
-remain readable through the exact guarded source fallback above until a later
-successful R5 commit promotes their reachable objects. This is a delivery
-bridge, not a second authority or inline-base alternative. An absent ledger is
-not the hash of invented empty bytes.
-
-Every R5 GC cycle begins with an all-or-nothing promotion prepass over the full
-object closure of **every retained receipt**, including dark-R4 objects used
-only as file preimages or audit history and never referenced by the ledger. A
-receipt-local copy becomes prunable only after its global copy is synced and
-hash-verified. If any promotion fails, the cycle reports the failure and
-deletes no local or global object; a later cycle retries the entire prepass.
-
-A published receipt directory permanently contains both the immutable Complete
-`journal.bin` and `receipt.bin`. The receipt checksum covers its
-`complete_journal_checksum`, which must equal the sibling journal's record
-checksum; transaction, generation and prepared identity must be byte-identical
-in both records. Loading and recovery accept neither file alone. Retention is a
-deterministic v1 dependency graph: root the latest 32 valid committed receipts
-in each `PreparedKind` discriminant bucket (`Apply`, `Conflict`, `Finalise`,
-`Abort`), the unique pending-origin receipt selected by full immutable
-structural match, and every receipt with an executable `Deferred`, `Pending`,
-`Running` or `Failed` effect. “Latest” sorts by generation and transaction ID,
-never mtime; terminal `Succeeded`/`Superseded` effects add no root.
-`last_operation` is not a transaction locator, and v1 has no administrative
-pin API. Recursively retain every origin of a retained finalise/abort receipt;
-a missing dependency is corruption. Only after that closure may receipts and
-their now-unreachable objects be swept.
-
-Directory creation, modes, contributors, effect state and exact before/after
-images remain visible in reports and receipts. The storage protocol exists to
-make interrupted transitions recoverable; it is not an incidental cache.
-
-Every user-originated prepared change has
-`operation_identity.invocation = Some(InvocationFingerprint)`;
-recovery-only internal maintenance may use `None` only when it has no external
-effect. Preparation first renders everything that cannot contain an operation
-ID, determines the exact tools it will use, and records typed argv templates.
-The sole placeholder form is `OperationLabel`; arbitrary string substitution
-is forbidden. `OperationId` then hashes the typed request, snapshot, proposed
-next ledger generation, semantic plan, tool identities and those templates.
-Only afterward may preparation substitute the ID into a marker label or tool
-argument. The full expanded argv hashes live in
-`PreparationContextFingerprint`, which contributes to `TransactionId`, not
-back to `OperationId`. No selected tool or argv template may change after the
-operation ID is computed.
-
-Ordinary apply and conflict include the closed `PlannedSubject` and
-`LedgerIntent`; finalisation instead includes the complete frozen pending state
-plus resolution images; abort includes the origin receipt identity plus guarded
-restore targets. Each is a new operation. Ledger attribution and conflict
-labels may embed it. Once every after-byte is exact, `TransactionId` hashes the
-immutable prepared identity, including its complete object manifest; no
-after-byte embeds that transaction ID. The exact identity is embedded in both
-journal and receipt, while their mutable execution state has a separate record
-checksum. `AppliedReceipt` is a derived API/report projection, not a second
-durable authority. `ReceiptV1` never crosses the storage boundary as a command
-result. `Report` is derived from `PreparedChange`, never stored beside it.
-Absolute external paths and root identities live only in `CommitContext`;
-durable preconditions contain opaque input IDs and hashes. `project_root` is
-the loader's exact canonical-root device/inode. Commit compares it before
-activation and writes it into the journal; recovery requires the live root,
-runtime binding and journal identity to agree before trusting any path.
-`ApplyOutcome` records only `Applied`, `Conflicted`, `Finalised`, or `Aborted`;
-no-op has no receipt, and external effect failure remains orthogonal in effect
-state and command status.
-
-## 4. Planning and preparation
-
-Planning says what the project should contain. Preparation proves that answer can become exact guarded
+Preparation resolves every semantic edit, renderer, merge, mode choice, tool run, refusal, and ledger
+transition. It may use captured bytes in bounded scratch space. It does not read or mutate the live project.
+The report is a pure projection of the prepared value, so preview and execution cannot describe different
 operations.
 
-The planner consumes only a snapshot and `ResolvedMutation`. For a reconciliation
-it resolves references and stable order, combines owner-local semantic
-contributions, derives desired absence and presence, and advances the projected
-view. For a one-shot or maintenance subject it applies that subject's closed
-rule. For pending continue/abort it validates the pinned conflict and receipt;
-after the pending gate, exactly one same-invocation `Deferred`, `Pending`,
-first-attempt `Running`, or `Failed` effect emits only `RetryEffect`. A
-different invocation never resurrects old external work and may instead commit
-new logical state that supersedes it. Planning performs no live reads, writes,
-printing, subprocesses or incidental policy. Commit plans carry semantic
-`LedgerIntent`, not final ledger bytes. Preparation renders each deferred
-template exactly once and is the sole owner of exact output/provenance and
-ledger postimages.
+Every planned/prepared mutation has a non-optional user invocation. Recovery reuses the journal's prepared
+identity and never synthesises a planned mutation. No production-capable bundle may contain an invented absent ledger, missing user invocation, empty body
+standing in for a referenced object, fabricated empty effect vector, unresolved reference, or runtime path
+inside its durable identity.
 
-Before the first project write, preparation performs every foreseeable fallible operation:
+`DesiredFile.mode = None` is policy before preparation: preserve the captured concrete mode on replace and
+use the declared create default on create. Every prepared image has a concrete mode independent of umask.
 
-- render templates and package metadata;
-- parse and splice POM, compose, properties, config, and source blocks;
-- format generated or modified sources in scratch space;
-- construct three-way merges and conflict markers;
-- check confinement, collisions, ownership, case sensitivity, hashes, and ledger version;
-- materialise the complete bytes of every create and replacement.
+## 4. Planning and application service
 
-Prepared-kind validity is semantic, not merely structural. `Apply` has apply
-semantics and no pending conflict before or after. `Conflict` has apply
-semantics, preserves every successful top-level ledger table, and adds exactly
-one pending candidate whose desired-present paths and semantic
-`effect_intents` equal the prepared kind. Its prepared/receipt executable
-effect vector is empty. `Finalise` requires that exact pending candidate and
-its pinned conflict receipt, performs no file operation, promotes the entire
-candidate with resolved current images, and materialises new executable effect
-descriptors from the frozen intents and exact resolutions. `Abort` requires the
-same origin, restores exactly every origin file preimage through guarded
-forward operations, preserves the successful logical tables while clearing
-pending state, and discards the intents without an effect descriptor.
-Preparation, durable decode, commit and recovery all enforce this closed
-matrix.
+For existing project roots, the root crate owns one concrete `MutationDriver`; no new framework crate or
+dependency-injection graph is needed. Its responsibilities are fixed:
 
-There is deliberately no lazy `Body::Computed(fn ...)` in a prepared operation. Lazy bodies defer failure
-into commit, weaken exact preview, and make purity unenforceable. Eager `Artifact.contents` is the correct
-existing direction.
+1. accept a canonical request from a thin command adapter;
+2. strictly capture once per planning attempt;
+3. if capture reports recovery required, preview reports it unchanged; execution recovers and recaptures;
+4. resolve all claims/references and plan against one projection;
+5. prepare completely;
+6. return the exact report for preview, without writes or recovery;
+7. for execution, call `commit(PreparedBundle)`;
+8. if a transaction raced in and commit recovered it, reload and replan at most once;
+9. project commit/recovery/effect results into one human/JSON command outcome.
 
-`--pretend` follows the same `PlannedTransition` as execution. A `CommitPlan`
-prepares and describes the same `PreparedBundle.change` as apply; an
-`EffectRetryPlan` describes that exact retry directly. It has no separate
-hand-written branch, performs no migration or legacy deletion, changes no
-receipt state, and runs no post-commit effect. Its only uncertainty is a later
-staleness check at commit/resume.
+A second authoritative state change after that single replan blocks. There is no unbounded optimistic retry
+loop and commit never replans while holding a lock.
 
-## 5. Execution and failure semantics
+Planning purity means no live filesystem, object-store, process, clock, random, environment, or network
+access. Determinism is tested by running the same snapshot/request twice. Preparation may invoke a closed,
+fingerprinted tool spec only over scratch copies of captured inputs. The tool runner clears the environment,
+closes stdin, bounds output/time, owns the whole process group, and records exact executable/version/argv/
+input identities.
 
-No portable filesystem provides a transaction across several files. jails promises a **recoverable commit**,
-not instantaneous multi-file atomicity:
+A persistent recipe planner consumes the typed request through the ready session and emits the complete
+desired contribution: outputs, resources, build edits, source registrations, human configuration, facts,
+ownership, and ledger intent. It does not accept a separately loaded `Project`, return absolute paths, or
+leave imperative post-plan tails. Field/cases/migration and other one-shots are distinct request variants
+with their own closed allocation/source guards, not error-returning cases of the persistent planner.
 
-1. Acquire the project mutation lock.
-2. Recover or refuse an earlier incomplete transaction.
-3. Non-blockingly acquire the persistent effect lock before activation; every
-   project commit is fenced from crossing its commit protocol while an external
-   effect is running.
-4. Recheck snapshot, runtime external bindings, ledger, absence conditions, and expected hashes. A prepared
-   no-op performs these checks before it may return `NoOp`.
-5. Durably persist and validate the complete journal, after-images, and required preimages before the first
-   project mutation. Unvalidated staging is not an active transaction and can never precede a project write.
-6. Apply deterministic operations through the mutation executor.
-7. Persist the new ledger as the commit point.
-8. Persist the Complete journal and linked receipt, validate the pair, then
-   atomically publish the intact transaction directory as a receipt.
-9. Reconcile older receipt effect guards against the now-current ledger and
-   durably record any supersession. No external effect starts until journal
-   completion, receipt publication and this structural reconciliation all
-   succeed.
-10. For a clean transition or conflict finalisation, attempt only its newly
-   recorded idempotent post-commit effects and report them separately. A newly
-   conflicted transition records semantic intents but no executable effect.
+Capture freezes the selected executable, version, runner/environment policy, and input identities.
+Preparation revalidates that frozen tool and derives only invocation-specific argv and output identity. The
+sole v1 nonliteral argument is the complete item
+`OperationLabel { prefix: "jails-desired-", hex_chars: 12 }`, expanded from lowercase operation hex.
 
-Recovery validates the canonical root, journal encoding and exact prepared identity, every referenced
-object and the single-active-transaction invariant before trusting any operation. It then classifies the
-ledger first and all affected live paths before making another project mutation. The durable phase matrix
-is closed:
+Read-only inspection and derived build processes do not need to pass through `MutationDriver`. Any command
+that mutates an existing project root, its ledger, transaction storage, receipts, or effect state does.
+Before `jails new` publishes, scratch writes are non-authoritative and belong only to the separate
+`PublicationDriver`; its no-replace rename is the single transition that creates the new authority.
 
-- `Prepared` plus every exact before-state is unactivated staging and is abandoned; `Prepared` plus **any**
-  difference—including an exact after-image—blocks and is never promoted.
-- `Active` plus `ledger_before` and only exact before/after path states rolls forward idempotently.
-- `Active`, `LedgerCommitted`, or `Complete` plus `ledger_after` completes receipt/cleanup only; it does not
-  rewrite project postimages.
-- `LedgerCommitted`/`Complete` plus `ledger_before`, any ledger matching neither image, any unreadable image,
-  or any path matching neither permitted state blocks without another project write.
+## 5. Commit, recovery, and effects
 
-Multiple active transactions or a corrupt journal/object likewise block without choosing an order or guessing.
+`commit(PreparedBundle)` owns sequencing. `LockedProject` and lock guards are internal
+typestates, not public choices a caller can arrange incorrectly.
 
-Once the ledger records the transaction, recovery never rewrites project
-postimages: it treats the journal as incomplete-transaction authority, completes
-the durable Complete-journal/receipt pair and cleanup. Recovery is structural:
-it never starts a subprocess. It may validate effect guards and atomically mark
-an obsolete effect `Superseded`. While holding the project lock it must acquire
-`effects.lock` non-blockingly before any receipt-state CAS; with that lock, an
-orphaned `Running { attempt >= 2 }` becomes `Failed { code:
-InterruptedTwice, .. }`, and no third automatic attempt exists. If the effect
-lock is busy, recovery leaves the receipt untouched and reports its current
-state. It reports every nonterminal state, including every `Running`. Only
-`plan_all` for the same invocation may construct an `EffectRetryPlan`, and only
-`resume_effect` executes it. A still-running attempt at least 2 means recovery
-could not obtain the effect lock, blocks ordinary planning with `EffectBusy`,
-and is never a subprocess plan. The ledger remains current logical authority; the
-receipt is immutable prepared-history authority plus the one mutable
-effect-state machine; objects supply only referenced bytes. Conflict receipts
-have no executable effects, so structural recovery has no origin effect state
-to rewrite. The persistent effect lock prevents duplicate
-execution while the project lock is released around a long external call and
-also fences every project commit as described above.
-Repeating recovery is safe. Preimages support a new guarded conflict-abort transaction and audit;
-default crash recovery never rolls a validated transaction back. A conflicted journal rolls forward to its prepared marker
-files and `PendingConflict` state—it does not silently abort or finalise the conflict. Mutating commands run
-recovery under the project lock; read-only and pretend commands report incomplete or blocked recovery state
-without changing it.
+Before any transaction/object/project write, commit:
 
-The executor owns create, replace, delete, rename, copy, directory creation, permissions, and approved
-mutating subprocesses. Create materialises a distinct synced publication inode and exposes it with an
-absence-enforcing hard link; it never hard-links a mutable live file to an immutable receipt/object inode.
-Replace and delete require prepared object identity. Read-only I/O need not be centralised there. Created
-directories are monotonic structural shells and may remain empty after abort; automatic directory deletion
-is deliberately outside this contract.
+1. performs a read-only check that the canonical path still names the bundle's `BoundProject`;
+2. acquires the mutation lock through the bound handle;
+3. rechecks the root binding under that lock, before any recovery action;
+4. classifies prior staging read-only and requires its journal root and closure to validate;
+5. tries the effects lease nonblocking; contention releases the mutation lock with no authoritative change;
+6. performs any required recovery while holding both fences and returns its outcome before using the new
+   bundle;
+7. validates the prepared identity and complete object closure;
+8. rechecks every file, absence, directory, legacy source, ledger, object, receipt inventory, and external
+   input precondition against the exact captured image.
 
-Formatters run on staged content and their bytes enter `FileOp`. Source registration is a semantic edit, not
-a post-commit effect. Starting a service is a post-commit effect: it cannot join the filesystem transaction,
-and its failure does not pretend committed files rolled back.
+A path already equal to an intended after-image is still stale before activation unless the prepared
+operation explicitly had that image as its before-state. Coincidence is not permission to claim ownership.
 
-The only aggregate runtime descriptor is `ComposeReconcile`. It is emitted at
-most once, only when `no_start == false` and either the complete managed
-service map or committed compose output changes; owner-only/no-op transitions
-emit none. A clean executable descriptor freezes the exact committed compose
-pre/post documents, the complete prior and desired managed-service maps, and
-the exact formerly managed names to stop.
-`stop_services` is prior managed names minus *all* service names present in the
-committed postimage, so a former managed name retained by the user as unmanaged
-is not stopped. Execution
-uses those immutable object bytes—never a fresh live compose document—as the
-explicit `--file`, stops/removes only frozen removed names, then starts the
-complete frozen desired managed set. It never invokes `down` or
-`--remove-orphans`. Clean preparation derives the stop set from the committed
-postimage; conflict preparation cannot do so and freezes only the exact
-preimage plus semantic intent, with no executable descriptor. Finalisation
-derives the postimage/stop set from the marker-free resolution. Clean
-preparation and finalisation both require every stopped name to occur in the
-frozen preimage. If this subset check fails during a pending conflict, the user
-must abort and rerun the original command with `--no-start`; changing the flag
-cannot mutate the frozen invocation. The executor never substitutes the
-generated base or defers a predictable Docker failure, and durable decoding
-repeats the invariant. Immediately before an attempt, the current ledger service
-map and managed output must still match the descriptor; a later committed
-transition makes it `Superseded`, while unrecorded live drift is typed
-`EffectRunError::StaleInput`. Automatic and explicit compose mutation both use
-the same effect lock and explicit project-root/process-input contract.
+The structural protocol is:
 
-The external-call handoff releases the project lock but retains `effects.lock`.
-After the subprocess returns, the runner reacquires the project lock
-**blocking** while still holding the effect lock; competing mutators can hold
-the project lock only until their nonblocking effect-lock attempt fails, so
-this is the protocol's sole safe blocking lock acquisition. The runner rereads
-the same receipt first. A checksum/generation/descriptor/expected-state
-mismatch, or a changed project-root identity, causes no receipt rewrite and
-returns typed corruption using the pre-call last-validated receipt projection.
-Only the exact expected receipt under the exact root may revalidate ledger/live
-guards. A guard mismatch at that point is out-of-protocol: compare-and-swap the
-expected `Running` state to `Failed { code: Protocol, .. }`, report corruption,
-and never bless the subprocess as success. Failure to persist and reread the
-terminal state preserves the last validated projection and returns the typed
-receipt-I/O channel; the runner never guesses whether a temporary rename won.
+```text
+mutation lock -> root/read-only staging classification -> try effects lease
+     -> recover prior transaction or validate/recheck requested bundle
+     -> stage objects -> Prepared journal -> Active journal
+     -> guarded project operations -> promote/sync referenced objects
+     -> ledger replacement (commit point) -> LedgerCommitted
+     -> guarded Vec<LegacyRetirement>
+     -> Complete journal + linked receipt -> publish receipt
+     -> no effect: release both locks
+     -> effect: queue/start receipt CAS while both locks are held
+        -> release mutation lock only -> run -> reacquire mutation lock
+        -> outcome receipt CAS -> release both locks
+```
 
-| Failure | Required meaning |
+The ledger is last among semantic project changes. Before its durable replacement, failure is
+pre-commit/recoverable from the journal. After it, the requested logical change is committed and the API
+must return a success-side “recovery required” result rather than an error that invites replay.
+
+Every production transaction has a present `ledger_after`. Only fresh/legacy bootstrap may have an absent
+`ledger_before`; a true no-op creates no journal. If recovery makes any authoritative change before a
+requested commit, commit returns `RecoveredPriorTransaction(outcome)` immediately without staging the stale
+bundle. The driver records it, captures again, and replans once.
+
+Recovery is one pure, exhaustive classifier over journal phase, ledger position, root identity, object
+closure, and exact live mutation-target/retirement classifications. Captured non-target and external inputs
+authorise initial activation but do not strand abandonment or roll-forward after a valid journal exists:
+
+| Durable phase | Admissible state | Action |
+|---|---|---|
+| `Prepared` | ledger and every mutation/retirement target exactly before | abandon |
+| `Active` | ledger before; project operations each exactly before/after; retirement still before | roll forward |
+| `Active` | ledger after; project operations after; retirement before/after | finish retirement and publication |
+| `LedgerCommitted` | ledger/project after; retirement before/after | finish retirement and publication |
+| `Complete` | ledger/project/retirement all after | publish/verify only |
+| any phase | root mismatch, unreadable/unknown image, or any other combination | block |
+
+Recovery never guesses order from mtime, follows an unknown path, reparses desire, starts an effect, or
+rolls back. A blocked journal is reclassified on each explicit retry, but its last reason is diagnostic
+rather than authority.
+
+External effects are a separate state machine under an effects lock. The structural receipt records the
+descriptor and idempotency/guard identity before execution. Receipt updates use compare-and-swap; a newer
+generation may supersede an obsolete effect. Recovery may change an orphaned `Running` attempt to a defined
+retry/failure state, but structural recovery never executes it.
+
+Lock order is exact. Every mutator of an existing project holds the mutation lock and tries `effects.lock`
+nonblocking before creating a transaction or activating; this is required even when the new transaction
+has no effect because it may supersede older work. Contention releases the mutation lock without changing
+transaction or effect state. After receipt publication, an automatic effect handoff releases only the
+mutation lock and retains the effect lease. The runner reacquires the mutation lock while still holding
+that lease to record the result. No mutator waits for the effect lease while holding the mutation lock, so
+the intentional effect→mutation reacquisition cannot deadlock.
+
+The closed v1 transition table is:
+
+| Prior state | Event | Next state |
+|---|---|---|
+| `Deferred` | queue first attempt | `Pending { attempt: 1 }` |
+| `Pending { n }` | start the recorded attempt | `Running { n }` |
+| `Running { n }` | process succeeds | `Succeeded { n }` |
+| `Running { n }` | process fails with recorded reason | `Failed { n, reason }` |
+| `Running { 1 }` | recovery proves orphan and `max_attempts >= 2` | `Pending { attempt: 2 }` |
+| `Running { 1 }` | recovery proves orphan and `max_attempts = 1` | `Failed { 1, InterruptedAtLimit }` |
+| `Running { n >= 2 }` | recovery proves orphan | `Failed { n, InterruptedTwice }` |
+| retryable `Failed { n, reason }` | explicit retry | `Pending { attempt: n + 1 }` |
+| `Deferred`, `Pending`, or `Failed` | guard/generation is obsolete | `Superseded` |
+
+`Pending { n }` survives a crash before start and resumes the same attempt; it never increments merely
+because the runner restarted. A lease-held `Running` state resolves only through process result or orphan
+recovery, not concurrent supersession. `Succeeded` and `Superseded` are terminal. `Failed` is executable
+only when its recorded policy permits another attempt; otherwise it is terminal.
+
+Each descriptor stores `RetryPolicyV1 { max_attempts: NonZeroU32, retry_on }`. `retry_on` is a closed subset of
+`NonZeroExit`, `Timeout`, `SpawnIo`, and `WaitIo`. Retry requires `n < max_attempts`; `InterruptedAtLimit`,
+`InterruptedTwice`, protocol/corruption failures, attempt overflow, and a stale guard are never retryable.
+Receipt/store I/O failure does not invent a state transition: return an I/O error and reload the
+checksum-validated receipt.
+Attempt zero and checked-add overflow are invalid. Every CAS pins the linked receipt checksum, effect ID/
+descriptor, and exact expected prior state.
+
+`EffectRetryPlan` is constructible only from a checksum-validated receipt in `Deferred`, `Pending { n }`,
+or policy-retryable `Failed { n, reason }`. It pins that exact state and checksum, owns the bound runtime
+authority, queues the first or next attempt when required, and starts exactly one pending attempt. It
+rejects `Running`, terminal, policy-exhausted, corrupt, and overflowing states.
+
+The v1 contract permits at most one aggregate executable effect per structural transaction. After receipt
+publication, commit retains the effect lease and invokes the same recorded-effect runner used by
+`resume_effect(EffectRetryPlan)` for the automatic first attempt. `EffectRetryPlan` itself owns its bound
+project/external authority; resume has no second handle argument. Success,
+nonzero exit, timeout, interruption, supersession, and receipt I/O are durable typed outcomes. This is
+guarded at-least-once reconciliation, not a claim of universal exactly-once behavior for arbitrary external
+systems.
+
+An automatic effect failure occurs after the ledger commit point and is therefore a committed success-side
+outcome carrying the last checksum-validated receipt, never a `CommitError` that invites structural replay.
+
+Crash proof uses child-process termination and injected ordinary I/O failures at every named boundary. A
+returned error or Rust unwinding is useful unit coverage but is not crash durability evidence.
+
+## 6. Ledger, compatibility, objects, and provenance
+
+The canonical successful schema-2 state has five logical tables:
+
+1. applied entities with complete specs and owner sets;
+2. one-shot receipts and lifecycle;
+3. one global record per shared `ResourceKey`;
+4. one `OutputRecord` per managed project path;
+5. conservative `LegacyEntry` rows that have not been explicitly adopted.
+
+It also has monotonic generation, last operation, writer/schema framing, and at most one complete pending
+conflict. Successful tables describe the last successful state and remain unchanged by a conflicted commit;
+the pending value contains the complete candidate state needed for finalisation.
+
+Every output records contributors, exact current image, exact generated base, concrete mode, and a
+`RendererStamp`. Provenance uses exact `ObjectRef` values and a closed renderer context: renderer/schema,
+jails version, subject identity/spec where applicable, template origin and bytes, relevant-input digest,
+and full tool identities. Relevant-input hashes are derived from the snapshot dependency graph, never
+trusted as caller-supplied rows.
+
+The old merge base is stored bytes, never output regenerated by a newer binary. All objects reachable from
+a prospective ledger are hash-verified, promoted, and directory-synced before that ledger commits.
+
+Compatibility capture has one fail-closed shape:
+
+```rust
+fn capture_machine_state(root: &ProjectHandle)
+    -> Result<CapturedMachineState, StateLoadError>;
+
+enum CapturedMachineState {
+    Fresh { machine_root: MachineRootPresence },
+    Legacy {
+        ledger: Option<LegacyLedgerV1>,
+        translated: LedgerV2Draft,
+        sources: LegacySnapshot,
+    },
+    Current {
+        ledger: LedgerV2,
+        store: MachineStoreSnapshot,
+    },
+}
+```
+
+The reader classifies the envelope/schema before parsing, parses once, and fails closed on malformed,
+unsupported-newer, unreadable, symlinked, or ambiguous recognised inputs. `LegacySnapshot` contains closed
+`LegacySourcePath` identities, exact bytes/hash/length/mode, and guarded sorted directory inventories—never
+raw `PathBuf` deletion targets. Only `NotFound` is absence. Unknown entries are never nominated for cleanup.
+
+Capture translates purely and mutates nothing. Preparation reruns the pure translator over the sealed
+`LegacySnapshot` bytes already in `ProjectSnapshot`—never by reopening live paths—and proves the typed
+draft. It records each recognised legacy sidecar/directory as guarded post-ledger retirement in the same
+journaled transaction. The schema-1 ledger is replaced at the commit point; sidecars remain at their
+original paths until schema 2 is durable. An interruption after that point yields authenticated
+`RecoveryRequired`; schema 2 plus otherwise unexplained residue is corruption, not another migration.
+Ambiguous package, spec, path, or ownership remains `LegacyEntry`; migration never invents a plausible
+owner.
+
+Journal and receipt decoding use the shared object-closure validator. A published receipt is accepted only
+as a linked Complete-journal/receipt pair with matching transaction, generation, prepared identity, and
+checksum witness. Receipt capture roots the latest 32 valid receipts in each prepared-kind bucket ordered
+by `(generation, transaction_id)`, the unique pending origin, every executable/nonterminal-effect receipt
+(including policy-retryable `Failed` below its maximum), and recursive
+finalise/abort origins. The resolved union may contain at most 4,096 receipts in v1; overflow fails closed
+rather than dropping a root. GC uses that same selection, then promotes and syncs every retained
+object before deleting anything. One failure means no sweep.
+
+## 7. Reconciliation, removal, and conflicts
+
+For each path, reconciliation compares exact recorded base `B`, live image `L`, and newly desired image
+`N`. File action and ledger/output transition are separate results; a “no file operation” must not hide
+“drop ownership” or “advance base”.
+
+Without a prior output:
+
+| Live | Desired | Result |
+|---|---|---|
+| absent | absent | no file and no ownership |
+| absent | present | create and record ownership |
+| present | absent | preserve as unowned |
+| present | present | refuse; explicit adoption is required even when bytes match |
+
+With a prior output:
+
+| Relation | Result |
 |---|---|
-| Plan or prepare error | Project and machine state unchanged |
-| Stale/refused commit attempt | No managed project leaf, human declaration, ledger, transaction, receipt, migration or content object is created or altered; executor-owned `.jails` coordination shells, fixed machine directories, persistent lock files and diagnostic lock contents may have been bootstrapped |
-| Interrupted commit | Apply the complete phase/ledger/live-image matrix above: discard only `Prepared`/all-before staging; roll forward only eligible `Active` state; finish only after-ledger state; block every unreadable, unknown, neither-ledger or forbidden phase combination |
-| Post-commit effect error after receipt publication | Last checksum-validated receipt identifies committed files and the terminal or deferred effect state |
-| Post-ledger structural error | `CommittedRecoveryRequired` identifies the committed operation/transaction/outcome and exact unfinished stage; a receipt is present only after exact pair validation, and the journal/objects remain for structural recovery |
-| Merge conflict | Journal-committed marker files plus explicit pending state; not an error after unrecorded mutation |
+| `L = B = N` | no file operation; retain output |
+| `L = B`, `N != B` | replace with `N`; advance base/current to `N` |
+| `L != B`, `N = B` | keep user bytes; keep base `B`; record exact current |
+| `L = N`, both differ from `B` | no file operation; advance base/current to `N` |
+| all differ | bounded three-way merge; on clean merge current is merged bytes and base advances to exact `N` |
+| desired absent, `L = B` | delete and remove output ownership |
+| desired absent, `L != B` | refuse unless an explicit destructive policy is prepared |
+| live absent, desired present | refuse unless explicit replace/recreate is prepared |
 
-The coordination-shell exception applies only after an executor commit/resume
-attempt. Loading, planning, preparation, pretend and read-only inspection
-create none of that machine state. Tests assert these two promises separately;
-“stale input” does not falsely promise that acquiring a persistent lock left no
-filesystem trace.
+Mode follows its own three-way rule. If both live and desired changed the base mode differently, refuse;
+marker text cannot resolve a permission conflict.
 
-A `PreparedKind::Conflict` is not a failed preparation. It contains the
-marker-file operations and a `ledger_after` that preserves every successful
-top-level table—`applied`, `one_shots`, `resources`, `outputs`, and `legacy`—
-byte-for-value while adding `PendingConflict`. The complete prospective state
-lives only in its candidate. It follows the same journal protocol through the
-ledger commit point, returns `ApplyOutcome::Conflicted`, and does not run its
-semantic effect intents; its executable effect vector is empty.
+Removal is forward planning against claims that remain:
 
-The ledger permits at most one project-wide pending conflict. While it exists, every ordinary mutation
-refuses; only read-only inspection, finalisation, and guarded abort are allowed. The frozen transaction does
-not regenerate, re-merge, accept a changed manifest, or overwrite a recorded path. While any path fails its
-recorded desired-present rule, still equals its marker image, or still contains
-its recorded conflict-marker form, finalisation refuses without mutation and
-reports every unresolved path. Every conflict path has nonoptional prior and
-desired bases and must exist marker-free; format 1 has no desired-absent
-delete/modify marker protocol.
+1. remove only the active scope's claim;
+2. reject removal while a retained typed reference requires the entity;
+3. delete an entity only when its entity-owner set is empty;
+4. recompute shared resource/output contributors independently;
+5. remove a contribution only when its contributor set empties;
+6. reconcile exact bases and prepare guarded deletes.
 
-Once every recorded path is marker-free, every
-`frozen_nonconflict_postimage` still equals its recorded exact image, and the pinned origin receipt still
-has the expected checksum, an empty executable-effect vector and matching
-semantic intents, rerun performs a journaled
-**finalisation**, not another apply. It hashes the user's resolutions and promotes the complete frozen
-`PendingLedgerState`—entities, one-shots, the global resources/outputs, and legacy rows—while constructing
-resolved output-current images, retaining the prepared desired bases for future three-way merges, and
-removing `PendingConflict`. For every resolved shared-format path it also parses
-the frozen format and proves that each candidate-owned semantic slot occurs
-exactly once with no collision; values may be user-resolved deltas, but slots
-may not be deleted or duplicated while the candidate claims them. Promotion and
-pending-state removal occur in the same ledger commit. Finalisation then
-materialises new executable descriptors from the semantic intents and exact
-resolved postimages; it never copies an origin effect. That invocation does not
-also plan a changed manifest; a later invocation starts from the newly
-finalised snapshot.
+There is no hand-maintained inverse generator and no receipt-as-uninstall model.
 
-Aborting validates that same pinned conflict receipt and prepares a new
-`PreparedKind::Abort { origin }` transition. It requires every affected
-path—including clean postimages committed beside marker files—to equal its exact recorded transaction
-postimage. Its forward operations restore file preimages and clear pending state while incrementing ledger
-generation; the old receipt's prepared identity and file result remain
-immutable history. Abort clears the pending semantic intents, while
-finalisation derives a fresh effect only in its own receipt. If any path was edited,
-abort refuses rather than discarding resolution or later user work.
-
-## 6. Ledger and provenance
-
-The ledger is a strict, versioned record of machine knowledge, not another intent manifest. Its schema
-version is separate from jails and renderer versions. Loading is strict:
-
-- absent means a new empty ledger;
-- unreadable, corrupt, or unsupported-newer means an actionable error;
-- an older supported schema parses without mutation;
-- migration commits only with a mutating command or an explicit migration.
-
-Conflict state is separate from successfully applied state:
-
-```rust
-struct PendingConflict {
-    operation: OperationId,
-    generation: u64,
-    invocation: InvocationFingerprint,
-    resume_display: String,
-    desired_inputs: Vec<FrozenDesiredInput>,
-    candidate: PendingLedgerState,
-    paths: Vec<PendingConflictPath>,
-    frozen_nonconflict_postimages: Vec<FrozenPath>,
-    effect_intents: Vec<DeferredEffectIntent>,
-}
-
-struct PendingLedgerState {
-    applied: Vec<AppliedEntity>,
-    one_shots: Vec<OneShotReceipt>,
-    resources: Vec<ResourceRecord>,
-    outputs: Vec<PendingOutput>,
-    legacy: Vec<LegacyEntry>,
-}
-
-struct LiveFileImage {
-    sha256: ObjectId,
-    len: u64,
-    mode: FileMode,
-}
-
-struct StoredFileImage {
-    object: ObjectRef,
-    mode: FileMode,
-}
-
-struct PendingOutput {
-    path: ProjectPath,
-    contributors: BTreeSet<ResourceOwner>,
-    current: PendingCurrent,
-    base: StoredFileImage,
-    renderer: RendererStamp,
-}
-
-enum PendingCurrent {
-    Exact(LiveFileImage),
-    ResolveFromLive,
-}
-
-struct PendingConflictPath {
-    path: ProjectPath,
-    prior_base: StoredFileImage,
-    desired_base: StoredFileImage,
-    marker_image: StoredFileImage,
-    markers: MarkerTokens,
-    hunk_count: u32,
-}
-```
-
-A conflicted commit leaves all five successful top-level tables unchanged. The
-pending record contains the complete candidate ledger state, including
-entities, one-shots, one global resource table and desired output bases. A
-pending output that needs human resolution has no invented current image;
-finalisation learns its hash, length and mode from the marker-free live file.
-Its path records and exact marker grammar make finalisation independent of the
-current renderer. Its invocation fingerprint excludes presentation text and,
-with frozen desired inputs, permits continue or abort only from the same
-canonical command and unchanged human inputs. Frozen clean postimages protect
-every file changed by the aggregate commit. Loading requires exactly one
-retained receipt whose operation/generation, prepared conflict paths,
-marker/clean postimages and candidate state structurally equal the pending
-record, whose executable effect vector is empty and whose semantic intents
-match. The resulting finalise/abort plan pins that receipt's
-transaction and record checksum; discovery by operation/generation alone is
-forbidden. This avoids embedding a self-referential transaction hash in ledger
-bytes. That receipt retains project preimages.
-
-The ledger has a monotonic generation and last `OperationId`. Applied entities
-record declaration owners and complete specs; one canonical top-level
-`ResourceRecord` exists per `ResourceKey`, and one canonical `OutputRecord`
-exists per project path. Resource/output contributor sets connect those global
-rows to entities and one-shots. They are never duplicated under each applied
-row. `LegacyEntry` uses a closed machine `LegacySourcePath`, never a
-project-mutation path that could target the current ledger. Explicit legacy
-spec presence distinguishes a legitimate zero-argument intent from a path-only
-legacy record; incomplete path-only rows remain `LegacyEntry` until explicit
-adoption. Applied rows do not have a competing
-conflict flag: the sole conflict authority is the optional project-wide
-`PendingConflict`, while all last-successful top-level tables remain unchanged.
-
-The authoritative old merge base is a content-addressed object beneath ledger
-ownership, never inline bytes and never output regenerated by the current
-binary. Every base/template/context object referenced by a committed ledger is
-synced and hash-verified before that ledger commit. Without an exact base, a
-renderer or relevant-context change causes safe refusal rather than a guessed merge.
-
-`RendererStamp.context_object` contains one canonical `RendererContextV1`,
-including the exact renderer and a closed subject:
-
-```rust
-enum RenderedSubjectContext {
-    Entity { id: EntityId, spec: EntitySpec },
-    OneShot { id: OneShotId, spec: OneShotSpec },
-}
-```
-
-Recipe, capability and tool-feature renderers require the matching entity
-identity/spec; a one-shot renderer requires the matching field, migration or
-cases identity/spec; aggregate format renderers require no subject. The
-renderer ID, subject discriminants and repeated identity fields must agree.
-No renderer may omit its subject or smuggle that durable provenance through an
-untyped template-binding map.
-
-Migration preserves legacy input until the new ledger is durably committed.
-Ambiguous package, ownership or field information is never invented. Exact
-adoption selects one stable `LegacyKey` plus explicit manifest and intent. Plain
-adoption is legal only when current bytes and mode exactly match a freshly
-rendered candidate, so its `RendererStamp` is truthful; a mismatch requires the
-guarded `--replace --force` route. Separate spec/path rows are retired only by
-explicit key after the already-applied identity, spec, owner and output-path set
-are proven equal—never by a heuristic join. Lossless cases migrate and lossy
-cases stop with instructions. A read-only command never deletes legacy state. Production mutation dispatch switches from
-schema 1 to schema 2 atomically only after every mutator supports V2; command-
-by-command schema activation and dual write are both forbidden.
-
-The ledger commits after project file operations because it describes the committed project. The journal
-bridges the crash window; a second registry does not.
-
-## 7. Reconciliation, removal, and conflict abort
-
-App apply computes one desired graph. Manifest order is not dependency order; stable topological planning and
-the projected project make dependent intents deterministic.
-
-Reconciliation compares the exact recorded base, the user's current bytes, and newly prepared bytes. Clean
-replacement, disjoint edits, conflicts, creations, and deletions are explicit cases. Retaining the original
-base makes the same rules valid across renderer upgrades. After a clean merge,
-the recorded current image becomes the actual merged live bytes, but the stored
-base advances to the exact newly generated bytes—not the merge result. User
-edits therefore remain a delta from the newest generator output instead of
-being silently absorbed into the next base. Content and file mode are both
-part of each image; incompatible concurrent mode changes refuse because marker
-files cannot represent a mode conflict.
-
-Removal is scoped forward planning. The active `ReconcileScope` relinquishes only its own `OwnerId` claim;
-absence from one manifest or direct request cannot erase another manifest/config/direct claim:
-
-1. Remove the active scope's owner claim from the entity.
-2. Reject while any retained desired entity still has a typed dependency on
-   the removed entity. There is no implicit cascade flag in this contract.
-   Independently absent entities are ordered reverse-topologically and removed
-   together.
-3. Remove the entity row if and only if its own `OwnerId` set is empty; another resource owner does not keep a
-   declaration alive.
-4. Independently recompute each shared resource and output contributor set.
-5. Retain each resource/output with any contributor; plan its semantic absence only when its own set empties.
-6. Prepare the transition to the remaining desired state and delete only ownerless outputs whose guarded
-   current image satisfies the reconciliation policy.
-
-This replaces hand-maintained inverse algorithms. Forced removal of drifted generated content is an explicit
-destructive choice, and its receipt says what was discarded.
-
-Field one-shots are durable active overlays on their managed target, applied in
-canonical `OneShotId` order every time that target is rendered. Their lifecycle
-is `OneShotLifecycle::Field { target_coupled, append_only }`, with disjoint
-resource sets, and their state is exactly `Active` or
-`RetiredTargetRemoved`. Removing the target, after the normal retained-dependant check, retires each active field,
-removes only its target-coupled contributions and preserves append-only
-migrations/history. Recreating the target does not silently reactivate an old
-field. An explicit identical field command may reactivate its target-coupled
-resources without allocating a second forward migration; the same ID with a
-different spec refuses. Migration and cases one-shots never use this retired
-field state.
-
-A cases import has a stable `CasesReceiptId` derived only from its canonical
-`OneShotId::Cases { source }`, not mutable content, path output or transaction.
-`destroy cases` selects exactly that one-shot either from an existing source or
-from the printed receipt ID, so a moved/deleted external source never triggers
-path guessing. A same-source import may refresh its source hash and output by
-stored-base reconciliation, but its output path is immutable; a changed path
-requires explicit destroy then generate.
-
-`test --fast` is ordinary desired ownership of
-`EntityId::ToolFeature(FastTest)` by `DirectCli`, not an imperative dependency
-side channel. `remove fast-test [--force]` removes exactly that owner through
-the same scoped, prerequisite and stored-base rules; it does not masquerade as
-a capability or delete a drifted shared POM without the explicit force policy.
-
-There is no universal receipt rollback command. Conflict abort is the one
-supported inverse workflow because its pending ledger and pinned receipt freeze
-the exact scope; it still becomes a new guarded forward transaction and refuses
-after any affected postimage drift. Schema downgrade requires restoring the
-whole project and `.jails` from one pre-migration VCS/backup snapshot.
+A conflicted merge commits marker bytes plus a complete frozen candidate and a receipt with no executable
+effect. Finalisation is a new forward transaction that validates marker removal, clean postimages, desired
+input guards, and the unique origin receipt before promoting the candidate and deriving a fresh effect.
+Abort is also a new guarded forward transaction restoring recorded preimages and clearing pending state; it
+refuses after affected postimage drift.
 
 ## 8. Design principles and rejected abstractions
 
-> **Model the output, not the process.**
->
-> **Prepare completely; mutate once; recover explicitly.**
->
-> **One authoritative mutation owner and one authoritative machine ledger.**
->
-> **Adding one recipe or resource extends one typed model, not parallel switches and tables.**
+The governing rules are:
 
-Modules should hide stable decisions and ownership boundaries. File-format modules are good examples; thin
-command coordinators are also legitimate. The successful subject-oriented splits show that “phase first” is
-not universal. Cohesion and change isolation matter more than whether a filename is a noun or verb.
+> Model the output, not the process.
+>
+> Capture once, prepare completely, mutate once, recover explicitly.
+>
+> One authoritative machine ledger, one mutation driver, one object-closure algorithm.
+>
+> Make invalid lineage, ownership, and phase combinations unrepresentable.
 
-The system needs no inheritance, visitor, dependency-injection container, mutable object graph, or class per
-operation. Rust enums, values, exhaustive matches, and narrow functions suffice. A Rust `match` is dispatch,
-not “double dispatch”.
+Stable domain decisions belong in the lowest crate that can own them without I/O. Format modules own one
+parser/renderer each. The root application service owns orchestration. The commit crate owns mutation,
+durability, and locks. Cohesion and one-way dependencies matter more than noun/verb filenames.
 
 Explicitly rejected:
 
-- calling a fallible partial merge a monoid, or calling preflight atomicity;
-- lazy generated bodies inside commit;
-- universal `revert(Project, Change)` for semantic removal;
-- regenerating an old merge base with a new renderer;
-- merging human manifests into machine ledger state;
-- permanent compatibility ledgers or dual writes;
-- runtime descriptors that duplicate compile-time recipe types;
-- centralising every read merely because writes need one owner;
-- line-count or role-stereotype targets used as substitutes for design evidence.
-
-Duplication is cheaper than a speculative abstraction. Require an observed shared model, a narrow interface,
-and behavioural tests. Widen an existing type when it fits; add a competing type only for genuinely different
-semantics.
+- separate public base, projection, context, and plan parameters that merely promise to agree;
+- a second machine-state facade beside `LoadedMutation`;
+- public half-validated structs whose callers can assemble impossible combinations;
+- a trait or class per pipeline stage without two real implementations;
+- lazy reads or rendering during commit;
+- regenerating an old merge base with current code;
+- permanent schema adapters, dual writes, or heuristic legacy adoption;
+- a universal `revert(Change)` or receipt-driven uninstall;
+- treating a path, hash, or empty string as a typed identity;
+- centralising every read merely because all writes need one owner;
+- declaring a phase shipped because types or isolated unit tests exist;
+- line counts, crate counts, or zero raw `fs::write` sites as substitutes for end-to-end authority.
 
 ## 9. Verification contract
 
-The architecture is complete only when tests demonstrate:
+The implementation is conformant only when all of these are enforced at constructors/decoders and at the
+integration boundary:
 
-- golden output remains byte-stable unless a deliberate user-visible change updates it;
-- planning and pretend leave project and machine state unchanged, including on legacy projects;
-- planners perform no undeclared filesystem, environment, clock, or process reads outside snapshot loading;
-- every managed-project mutation routes through the executor, including deletes, copies, directory operations,
-  permissions, and managed mutating subprocesses; every other production writer has one named external or
-  derived classification and ordering rule;
-- describe and commit consume the same prepared operations; effect-retry
-  describe and `resume_effect` consume the same guarded retry plan; a second
-  clean apply is idempotent;
-- mutation JSON emits one envelope whose ordered recovery outcomes survive the
-  single reload/replan and whose remaining fields describe only the requested
-  fresh result;
-- duplicate identity, missing/incompatible references, reverse manifest order, and cycles are deterministic;
-- scoped spec replacement permits a sole/agreed owner update, preserves every
-  outside claim, refuses incompatible owner specs, and never creates a
-  synthetic capability-prerequisite owner;
-- human-config capability resources exist exactly for `DirectConfig`; manifest
-  and CLI owners never copy declarations into `jails.toml`; the one first-V2
-  exact bootstrap is ledger-only; complete exact DirectConfig resource closures
-  and only the explicit current FastTest may bootstrap all-or-nothing; and `AdoptLayout` preserves a managed
-  output's contributors/base/renderer while advancing only `current`;
-- unreadable, corrupt, and newer ledger schemas fail closed;
-- ledger-first loading reaches a pending conflict even when the POM,
-  `jails.toml`, manifest or Java source contains markers; request syntax,
-  manifest source and `Exact`/`ProjectedTransactionOutput`/`Absent` guards are
-  all required before the frozen request is reused;
-- zero-argument specs remain distinct from path-only legacy records;
-- failure injection at each commit boundary obeys the complete phase matrix: only `Active` with the ledger
-  before and exact before/after path states rolls forward, while every forbidden/unreadable combination
-  blocks without further writes;
-- a merely `Prepared` journal is discarded only when every image is before and is otherwise never activated;
-  conflict abort is a new transaction that
-  refuses after affected postimage drift, and shared contributions survive removal of one owner;
-- stored-base reconciliation covers clean, disjoint, conflicting, added,
-  deleted, mode-divergent and renderer-upgrade cases, including base advancement
-  to desired rather than merged bytes;
-- every captured/prepared/recovered image has a concrete mode; unset desired
-  policy preserves replace mode or creates `0644`, executable output is
-  explicit, and executor results are umask-independent;
-- schema-1 migration reruns exact translation, targets only closed legacy
-  machine deletes with empty contributors, consumes the old ledger through the
-  ledger transition, and refuses before deleting any source when identity,
-  listing or translated draft differs;
-- exact legacy adoption requires the named key/manifest/intent and either an
-  exact fresh-render match or explicit guarded replacement;
-- active field overlays survive target re-render, target removal retires only
-  target-coupled contributions, append-only history survives, and explicit
-  identical reactivation creates no second migration; stable cases receipt
-  selection works after source deletion; fast-test add/remove uses ordinary
-  desired ownership;
-- the prepared object manifest equals the exact typed reference closure with no
-  missing or extra object; each retained receipt validates with its linked
-  Complete journal before receipt-local fallback can be selected; the chosen
-  global/lowest-receipt source is commit-guarded; R5 promotes every new ledger
-  object globally before commit and promotes every retained receipt's full
-  preimage/audit closure before any GC deletion, with failure deleting nothing;
-  receipt-directory absence is distinct from present-empty; and v1 retention uses the four 32-receipt
-  buckets, full pending-origin match, nonterminal effects and recursive
-  finalise/abort dependencies before object collection;
-- conflicted apply journal-commits marker images while retaining all five
-  successful top-level tables unchanged and recording complete pending global
-  ledger state, including one-shots;
-- while any marker remains, any frozen clean postimage differs, or desired input changed, resolution leaves
-  tree and ledger untouched; only complete recorded resolution journal-finalises the entire frozen pending
-  ledger state, validates every candidate-owned shared-format slot exactly
-  once, and materialises new effects from semantic intents and exact resolved
-  postimages; zero/multiple or
-  structurally mismatched origin receipts refuse before activation;
-- conflict abort restores guarded file preimages at a new ledger generation, leaves only declared monotonic
-  empty directories, clears intents, and refuses after any affected-file edit;
-- structural recovery never runs a subprocess; only one same-invocation
-  eligible effect becomes a retry plan, every `Running` state is reported,
-  attempt 2 or greater becomes `InterruptedTwice` only under `effects.lock`,
-  and lock contention leaves it unchanged and blocks ordinary planning;
-- clean/finalised `ComposeReconcile` derives its stop set from frozen documents
-  without `down` or orphan removal; conflict preparation freezes only preimage
-  and intent, and a pending subset failure requires abort then rerun with
-  `--no-start`;
-- `effects.lock` fences every project commit from an executing effect; after a
-  call the runner retains it while blocking for the project lock, rewrites no
-  mismatched receipt/root, and records `Failed(Protocol)` only from the exact
-  expected receipt when post-call guards are impossible;
-- stale/refused executor attempts preserve all managed and transactional
-  leaves while allowing only the documented coordination-shell/lock bootstrap;
-  plan, prepare and pretend remain machine-state-free.
+- the same snapshot/request yields byte-identical planned and prepared identities;
+- a mismatched snapshot/projection cannot be constructed through public APIs;
+- replaying a complete plan into a fresh projection reproduces the planner's projected paths/body
+  descriptors, known bytes, modes, deferred render nodes, facts, claims, ledger intent, and base snapshot;
+- no public API can rebind an A-prepared bundle to B, and replacing/moving A after capture refuses before
+  any store, transaction, ledger, or project write;
+- every captured file, absence, directory, object, receipt, legacy source, external input, and root binding
+  is rechecked under the mutation lock;
+- object closure rejects missing members, extras, wrong length/hash, and invalid typed references;
+- the complete ownership-claim and B/L/N tables have positive and refusal tests;
+- every recovery matrix cell is table-tested and crash-tested at real process boundaries;
+- effects are fenced, CAS-updated, resumable, and never run by structural recovery;
+- a read-only compatibility pass is byte-for-byte non-mutating under success and every error;
+- no existing-project mutation adapter bypasses `MutationDriver`, the sole audited absent-destination
+  `PublicationDriver` boundary is no-replace, and no legacy writer is reachable after cutover;
+- proof applications rebuild from declarations through the public CLI on a capable host.
 
-Static architecture ratchets inspect production code only. They inventory file/directory/permission mutation
-APIs and process launch sites, require executor ownership or an explicit external/derived classification,
-and permit zero unclassified production sites. Their numbers and ceilings live in
-`tests/architecture.rs`, not here. A counter is evidence, not design, and may be withdrawn when its proxy no
-longer measures the intended property.
-
-The final test is conceptual: there is one route from `ResolvedMutation` to a
-closed `PlannedTransition`, one commit branch from typed plan to exact prepared
-operations to recoverable transition, and one bounded same-invocation
-effect-retry branch to
-`resume_effect`. Preview, apply, reconciliation, removal, doctor, and state
-recording may observe different parts of those routes; they must not recreate
-them.
+Environment-constrained or skipped external tests are reported as such. They are never counted as passed.
+The named acceptance IDs, commands, and delivery order live in `plan.md`.
