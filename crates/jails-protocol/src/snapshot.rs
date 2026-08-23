@@ -71,6 +71,37 @@ pub enum ExternalInputId {
     CasesBrief { path_id: ExternalPathId },
 }
 
+impl ExternalInputId {
+    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        match self {
+            Self::AppManifest => {
+                encoder.tag(0);
+                Ok(())
+            }
+            Self::UserTemplate(id) => {
+                encoder.tag(1);
+                id.encode(encoder)
+            }
+            Self::CasesBrief { path_id } => {
+                encoder.tag(2);
+                path_id.encode(encoder);
+                Ok(())
+            }
+        }
+    }
+
+    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(match decoder.tag()? {
+            0 => Self::AppManifest,
+            1 => Self::UserTemplate(TemplateId::decode(decoder)?),
+            2 => Self::CasesBrief {
+                path_id: ExternalPathId::decode(decoder)?,
+            },
+            other => Err(format!("unknown external input tag {other}"))?,
+        })
+    }
+}
+
 /// One pre-schema-2 machine file.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
 pub enum LegacySourcePath {
@@ -105,10 +136,75 @@ impl LegacyFileName {
     }
 }
 
+impl LegacyFileName {
+    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        encoder.string(&self.0)
+    }
+
+    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Self::parse(&decoder.string()?)
+    }
+}
+
+impl LegacySourcePath {
+    fn tag(&self) -> u8 {
+        match self {
+            Self::Schema1Ledger => 0,
+            Self::AppState => 1,
+            Self::IntentFiles { .. } => 2,
+            Self::ModelFiles { .. } => 3,
+            Self::GlobalFiles => 4,
+            Self::VersionFile => 5,
+        }
+    }
+
+    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        encoder.tag(self.tag());
+        match self {
+            Self::IntentFiles { name } | Self::ModelFiles { name } => name.encode(encoder),
+            _ => Ok(()),
+        }
+    }
+
+    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(match decoder.tag()? {
+            0 => Self::Schema1Ledger,
+            1 => Self::AppState,
+            2 => Self::IntentFiles {
+                name: LegacyFileName::decode(decoder)?,
+            },
+            3 => Self::ModelFiles {
+                name: LegacyFileName::decode(decoder)?,
+            },
+            4 => Self::GlobalFiles,
+            5 => Self::VersionFile,
+            other => Err(format!("unknown legacy source path tag {other}"))?,
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LegacyDirectoryKind {
     Intents,
     Models,
+}
+
+impl LegacyDirectoryKind {
+    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        encoder.tag(match self {
+            Self::Intents => 0,
+            Self::Models => 1,
+        });
+        Ok(())
+    }
+
+    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(match decoder.tag()? {
+            0 => Self::Intents,
+            1 => Self::Models,
+            other => Err(format!("unknown legacy directory kind tag {other}"))?,
+        })
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -118,6 +214,71 @@ pub enum LegacyDirectoryState {
         entries: Vec<LegacyFileName>,
         entries_sha256: ObjectId,
     },
+}
+
+impl LegacyDirectoryState {
+    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        match self {
+            Self::Absent => {
+                encoder.tag(0);
+                Ok(())
+            }
+            Self::Present {
+                entries,
+                entries_sha256,
+            } => {
+                encoder.tag(1);
+                encoder.count(entries.len())?;
+                let mut previous: Option<&LegacyFileName> = None;
+                for entry in entries {
+                    ordered(previous, entry)?;
+                    previous = Some(entry);
+                    entry.encode(encoder)?;
+                }
+                entries_sha256.encode(encoder);
+                Ok(())
+            }
+        }
+    }
+
+    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(match decoder.tag()? {
+            0 => Self::Absent,
+            1 => {
+                let count = decoder.count()?;
+                let mut entries = Vec::new();
+                let mut previous: Option<LegacyFileName> = None;
+                for _ in 0..count {
+                    let entry = LegacyFileName::decode(decoder)?;
+                    ordered(previous.as_ref(), &entry)?;
+                    previous = Some(entry.clone());
+                    entries.push(entry);
+                }
+                Self::Present {
+                    entries,
+                    entries_sha256: ObjectId::decode(decoder)?,
+                }
+            }
+            other => Err(format!("unknown legacy directory state tag {other}"))?,
+        })
+    }
+}
+
+impl MachineRootPresence {
+    pub fn encode(&self, encoder: &mut Encoder) {
+        encoder.tag(match self {
+            Self::Absent => 0,
+            Self::Present => 1,
+        });
+    }
+
+    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(match decoder.tag()? {
+            0 => Self::Absent,
+            1 => Self::Present,
+            other => Err(format!("unknown machine root presence tag {other}"))?,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -194,6 +355,74 @@ impl InputPrecondition {
             Self::MachineReceipt { .. } => 9,
             Self::MachineRoot { .. } => 11,
         }
+    }
+
+    /// Tag and body. Every variant, because this is the encoder the snapshot
+    /// digest, the prepared identity and the journal all use.
+    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        encoder.tag(self.tag());
+        match self {
+            Self::Absent { path } => path.encode(encoder)?,
+            Self::File {
+                path,
+                sha256,
+                len,
+                mode,
+            } => {
+                path.encode(encoder)?;
+                sha256.encode(encoder);
+                encoder.u64(*len);
+                encoder.u32(mode.bits());
+            }
+            Self::Directory {
+                path,
+                entries,
+                entries_sha256,
+            } => {
+                path.encode(encoder)?;
+                encoder.count(entries.len())?;
+                let mut previous: Option<&ProjectPath> = None;
+                for entry in entries {
+                    ordered(previous, entry)?;
+                    previous = Some(entry);
+                    entry.encode(encoder)?;
+                }
+                entries_sha256.encode(encoder);
+            }
+            Self::ExternalAbsent { id } => id.encode(encoder)?,
+            Self::ExternalFile { id, sha256, len } => {
+                id.encode(encoder)?;
+                sha256.encode(encoder);
+                encoder.u64(*len);
+            }
+            Self::LegacyAbsent { path } => path.encode(encoder)?,
+            Self::LegacyFile {
+                path,
+                sha256,
+                len,
+                mode,
+            } => {
+                path.encode(encoder)?;
+                sha256.encode(encoder);
+                encoder.u64(*len);
+                encoder.u32(mode.bits());
+            }
+            Self::LegacyDirectory { kind, state } => {
+                kind.encode(encoder)?;
+                state.encode(encoder)?;
+            }
+            Self::MachineReceipt {
+                transaction,
+                generation,
+                record_checksum,
+            } => {
+                transaction.encode(encoder);
+                encoder.u64(*generation);
+                record_checksum.encode(encoder);
+            }
+            Self::MachineRoot { presence } => presence.encode(encoder),
+        }
+        Ok(())
     }
 
     /// The canonical sort key, so a read set has one encoding.
@@ -384,39 +613,15 @@ pub fn directory_digest(entries: &[ProjectPath]) -> Result<ObjectId> {
 }
 
 /// `SHA256("JAILS-SNAPSHOT-1" || encode(read set))`.
+///
+/// Through [`InputPrecondition::encode`], not a second hand-written pass: a
+/// digest computed by one encoder and a journal written by another would let
+/// two runs agree on the hash and disagree on what it covered.
 pub fn snapshot_digest(read_set: &ReadSet) -> Result<ObjectId> {
     let mut encoder = Encoder::new();
     encoder.count(read_set.inputs().len())?;
     for input in read_set.inputs() {
-        encoder.tag(input.tag());
-        match input {
-            InputPrecondition::Absent { path } => path.encode(&mut encoder)?,
-            InputPrecondition::File {
-                path,
-                sha256,
-                len,
-                mode,
-            } => {
-                path.encode(&mut encoder)?;
-                sha256.encode(&mut encoder);
-                encoder.u64(*len);
-                encoder.u32(mode.bits());
-            }
-            InputPrecondition::Directory {
-                path,
-                entries_sha256,
-                ..
-            } => {
-                path.encode(&mut encoder)?;
-                entries_sha256.encode(&mut encoder);
-            }
-            other => {
-                // The remaining variants reach the wire with R4's journal; for
-                // now their debug projection is stable and distinct, which is
-                // enough for a snapshot digest that never leaves memory.
-                encoder.string(&format!("{other:?}"))?;
-            }
-        }
+        input.encode(&mut encoder)?;
     }
     Ok(ObjectId::from_bytes(codec::domain_hash(
         "JAILS-SNAPSHOT-1",
@@ -424,7 +629,9 @@ pub fn snapshot_digest(read_set: &ReadSet) -> Result<ObjectId> {
     )))
 }
 
-/// Decoder counterpart for the two variants that already reach the wire.
+/// Decode one precondition. Every variant, because a prepared identity puts
+/// the whole read set on the wire and a recovered journal has to reconstruct
+/// exactly what the plan rested on.
 pub fn decode_precondition(decoder: &mut Decoder<'_>) -> Result<InputPrecondition> {
     Ok(match decoder.tag()? {
         0 => InputPrecondition::Absent {
@@ -435,6 +642,52 @@ pub fn decode_precondition(decoder: &mut Decoder<'_>) -> Result<InputPreconditio
             sha256: ObjectId::decode(decoder)?,
             len: decoder.u64()?,
             mode: FileMode::new(decoder.u32()?)?,
+        },
+        2 => {
+            let path = ProjectPath::decode(decoder)?;
+            let count = decoder.count()?;
+            let mut entries = Vec::new();
+            let mut previous: Option<ProjectPath> = None;
+            for _ in 0..count {
+                let entry = ProjectPath::decode(decoder)?;
+                ordered(previous.as_ref(), &entry)?;
+                previous = Some(entry.clone());
+                entries.push(entry);
+            }
+            InputPrecondition::Directory {
+                path,
+                entries,
+                entries_sha256: ObjectId::decode(decoder)?,
+            }
+        }
+        3 => InputPrecondition::ExternalAbsent {
+            id: ExternalInputId::decode(decoder)?,
+        },
+        4 => InputPrecondition::ExternalFile {
+            id: ExternalInputId::decode(decoder)?,
+            sha256: ObjectId::decode(decoder)?,
+            len: decoder.u64()?,
+        },
+        5 => InputPrecondition::LegacyAbsent {
+            path: LegacySourcePath::decode(decoder)?,
+        },
+        6 => InputPrecondition::LegacyFile {
+            path: LegacySourcePath::decode(decoder)?,
+            sha256: ObjectId::decode(decoder)?,
+            len: decoder.u64()?,
+            mode: FileMode::new(decoder.u32()?)?,
+        },
+        7 => InputPrecondition::LegacyDirectory {
+            kind: LegacyDirectoryKind::decode(decoder)?,
+            state: LegacyDirectoryState::decode(decoder)?,
+        },
+        9 => InputPrecondition::MachineReceipt {
+            transaction: TransactionId::decode(decoder)?,
+            generation: decoder.u64()?,
+            record_checksum: ObjectId::decode(decoder)?,
+        },
+        11 => InputPrecondition::MachineRoot {
+            presence: MachineRootPresence::decode(decoder)?,
         },
         other => return Err(format!("unknown input precondition tag {other}")),
     })

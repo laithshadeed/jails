@@ -641,6 +641,12 @@ const LAYERS: &[(&str, usize)] = &[
     ("generate", 5),
     ("spring", 5),
     ("add", 5),
+    // jails-prepare: turning desire into an exact executable transition.
+    ("migration", 5),
+    ("operation", 5),
+    ("prepare", 5),
+    ("report", 5),
+    ("tool", 5),
     // jails-tooling: commands that drive a toolchain or report on a project.
     ("run", 6),
     ("launcher", 6),

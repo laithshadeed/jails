@@ -193,6 +193,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "jails-prepare"
+version = "0.1.0"
+dependencies = [
+ "jails-project",
+ "jails-protocol",
+ "jails-spec",
+ "jails-support",
+]
+
+[[package]]
 name = "jails-project"
 version = "0.1.0"
 dependencies = [

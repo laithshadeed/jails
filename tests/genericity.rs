@@ -68,6 +68,10 @@ const ALLOWED: &[AllowedConcept] = &[
             // A transition is chosen against the ledger's pending-conflict
             // state, and its tests construct one to prove the pairing.
             "crates/jails-protocol/src/transition.rs",
+            // A prepared transaction guards the ledger file it will replace,
+            // and its semantics carry the intent for it.
+            "crates/jails-prepare/src/prepare.rs",
+            "crates/jails-prepare/src/operation.rs",
             "src/app.rs",
             // The typed shadow reads the schema-1 store's rows to build its
             // observed side, so it names the module they live in.
