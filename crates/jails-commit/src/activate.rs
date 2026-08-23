@@ -11,19 +11,15 @@
 //! platform without hard links, a different way to make a rename durable.
 //! They had no reason to change together and every reason to be read apart.
 
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use jails_prepare::prepare::{
-    DirectoryOp, FileOp, GuardedImage, OperationTarget, PreparedChange, PreparedIdentityV1,
-};
-use jails_protocol::conflict::{FileImage, FileMode};
+use jails_prepare::prepare::{FileOp, GuardedImage, OperationTarget, PreparedIdentityV1};
+use jails_protocol::conflict::FileMode;
 use jails_protocol::identity::{ObjectId, ObjectRef, ProjectPath};
 
 use crate::Result;
 use crate::execute::{Blocked, LockedProject};
 use crate::journal::{ActualImage, BlockReason, ObservedImage};
-use crate::outcome::CommitError;
 use crate::store;
 use jails_support::codec::sha256;
 

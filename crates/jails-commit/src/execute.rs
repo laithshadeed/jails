@@ -44,14 +44,11 @@ use crate::outcome::{
 };
 use crate::store::{self, Store};
 use jails_prepare::pipeline::PreparedBundle;
-use jails_prepare::prepare::{
-    FileOp, GuardedImage, OperationTarget, PreparedChange, PreparedIdentityV1,
-};
+use jails_prepare::prepare::{FileOp, OperationTarget, PreparedChange, PreparedIdentityV1};
 use jails_prepare::receipt::{AppliedReceipt, ApplyOutcome, DirectoryReceipt, FileReceipt};
-use jails_protocol::conflict::{FileImage, FileMode};
-use jails_protocol::identity::{ObjectId, ObjectRef, ProjectPath};
+use jails_protocol::conflict::FileImage;
+use jails_protocol::identity::{ObjectId, ProjectPath};
 use jails_protocol::snapshot::CanonicalRoot;
-use jails_support::codec::sha256;
 use jails_support::lock::{Contention, Lock};
 use std::path::{Path, PathBuf};
 
@@ -609,10 +606,14 @@ mod tests {
     use super::*;
     use crate::journal::ReceiptV1;
     use jails_prepare::operation::{ApplySemantics, OperationIdentityV1, OperationSemanticsV1};
+    use jails_prepare::prepare::GuardedImage;
     use jails_prepare::prepare::{DirectoryOp, PreparedKind};
     use jails_prepare::tool::{OperationContextFingerprint, PreparationContextFingerprint};
+    use jails_protocol::conflict::FileMode;
+    use jails_protocol::identity::ObjectRef;
     use jails_protocol::plan::{LedgerIntent, PlannedSubject};
     use jails_protocol::snapshot::CanonicalRoot;
+    use jails_support::codec::sha256;
     use jails_support::scratch::ScratchDir;
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::Arc;
