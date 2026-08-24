@@ -280,8 +280,6 @@ pub fn durable_job_files(
         ));
     }
 
-    let migration_dir = root.join("src/main/resources/db/migration");
-    let version = crate::generate::next_migration_version(&migration_dir)?;
     let table = format!("{}_jobs", crate::sql::snake_case(name));
     let main_jobs = crate::generate::main_dir(root, jobs);
     let test_jobs = crate::generate::test_dir(root, jobs);
@@ -324,7 +322,7 @@ pub fn durable_job_files(
         },
         Artifact {
             kind: "durable job migration",
-            path: migration_dir.join(format!("V{version:03}__create_{table}.sql")),
+            path: crate::generate::migration_file(slice.project(), &format!("create_{table}"))?,
             contents: durable_job_migration(&table, &columns),
         },
     ])

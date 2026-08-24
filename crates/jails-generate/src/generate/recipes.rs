@@ -427,9 +427,9 @@ pub fn artifacts_for(
             // the port would not compile. Rather than fail, lay down the
             // smallest record that could be one -- it is a starting point the
             // reader will obviously edit, the same way `scaffold` works.
-            if !main_dir(&root, &domain)
-                .join(format!("{name}.java"))
-                .exists()
+            if !project
+                .projected_main_sources()
+                .contains_key(&main_dir(&root, &domain).join(format!("{name}.java")))
             {
                 let id = if record_fields.is_empty() {
                     parse_fields(&["id:string!".to_string()])?

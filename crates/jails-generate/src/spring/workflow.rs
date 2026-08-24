@@ -32,7 +32,16 @@ pub fn require_scope_authorizer(
     }
     let guard = crate::generate::main_dir(slice.project().root(), slice.base())
         .join("ScopeAuthorizer.java");
-    if !guard.exists() {
+    // The *projection*, not disk. In an aggregate `app apply` the `add
+    // security` row that writes `ScopeAuthorizer` and the `g scaffold` row
+    // that needs it are one transition, so the file this asks about has not
+    // been written when this plans -- and a disk read refuses a manifest
+    // whose steps are perfectly well ordered.
+    if !slice
+        .project()
+        .projected_main_sources()
+        .contains_key(&guard)
+    {
         return Err(format!(
             "{kind} {name} uses @scope, but the project has no ScopeAuthorizer.\n       fix: run `jails add security` before generating scoped HTTP operations."
         ));

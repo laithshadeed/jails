@@ -151,8 +151,6 @@ pub fn http_workflow_files(
     }
     let table = crate::sql::snake_case(name);
     let property = table.replace('_', "-");
-    let migration_dir = root.join("src/main/resources/db/migration");
-    let version = crate::generate::next_migration_version(&migration_dir)?;
     let main_jobs = crate::generate::main_dir(root, jobs);
     let main_web = crate::generate::main_dir(root, web);
     let test_jobs = crate::generate::test_dir(root, jobs);
@@ -207,7 +205,10 @@ pub fn http_workflow_files(
         },
         Artifact {
             kind: "bounded HTTP workflow migration",
-            path: migration_dir.join(format!("V{version:03}__create_{table}_workflow.sql")),
+            path: crate::generate::migration_file(
+                slice.project(),
+                &format!("create_{table}_workflow"),
+            )?,
             contents: http_workflow_migration(&table),
         },
     ])

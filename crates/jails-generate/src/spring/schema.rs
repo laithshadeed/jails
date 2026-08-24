@@ -111,7 +111,6 @@ pub fn association_files(
         }
     }
 
-    let version = crate::generate::next_migration_version(&migration_dir)?;
     let unique_index_ddl = if needs_unique_index {
         format!(
             "create unique index if not exists {unique_index}\n  on {parent_table} ({});\n\n",
@@ -162,10 +161,10 @@ pub fn association_files(
     Ok(vec![
         Artifact {
             kind: "association migration",
-            path: migration_dir.join(format!(
-                "V{version:03}__add_{}_association.sql",
-                crate::sql::snake_case(name)
-            )),
+            path: crate::generate::migration_file(
+                slice.project(),
+                &format!("add_{}_association", crate::sql::snake_case(name)),
+            )?,
             contents: migration,
         },
         Artifact {
@@ -269,9 +268,6 @@ pub fn idempotency_files(slice: &Slice, name: &str) -> jails_support::Result<Vec
     let record = format!("{name}Receipt");
     let port = format!("{name}Receipts");
 
-    let migration_dir = root.join("src/main/resources/db/migration");
-    let version = crate::generate::next_migration_version(&migration_dir)?;
-
     Ok(vec![
         Artifact {
             kind: "idempotency receipt",
@@ -356,7 +352,7 @@ pub fn idempotency_files(slice: &Slice, name: &str) -> jails_support::Result<Vec
         },
         Artifact {
             kind: "idempotency migration",
-            path: migration_dir.join(format!("V{version:03}__create_{table}.sql")),
+            path: crate::generate::migration_file(slice.project(), &format!("create_{table}"))?,
             contents: idempotency_migration(&table),
         },
     ])
@@ -386,7 +382,10 @@ pub fn http_sink_files(
     let messaging: &str = &slice.owned(Layer::Messaging);
     let adapters: &str = &slice.owned(Layer::Adapters);
     let sink_port = crate::generate::main_dir(root, jobs).join(format!("{usecase}OutboxSink.java"));
-    if !sink_port.is_file() {
+    // Through the projection, so a usecase this same manifest declares two
+    // rows above counts. `Path::is_file` answers about disk, and in one
+    // transition nothing has been written yet.
+    if !project.projected_main_sources().contains_key(&sink_port) {
         return Err(format!(
             "http-sink {name} cannot find {usecase}OutboxSink.java.\n       fix: generate usecase {usecase} with `--yields {event}` first."
         ));
@@ -406,7 +405,7 @@ pub fn http_sink_files(
         ));
     }
     let json = crate::generate::main_dir(root, adapters).join("Json.java");
-    if !json.is_file() {
+    if !project.projected_main_sources().contains_key(&json) {
         return Err(format!(
             "http-sink {name} needs the generic JSON capability.\n       fix: run `jails add json` first."
         ));

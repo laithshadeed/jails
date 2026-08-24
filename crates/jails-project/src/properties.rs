@@ -211,7 +211,18 @@ mod tests {
     /// removal that reported success.
     #[test]
     fn removing_takes_every_occurrence() {
-        assert_eq!(remove("a=1\nb=2\na=3\n", "a"), "b=2\n");
+        assert_eq!(remove("a=1\nb=2\na=3\n", "a", &[]), "b=2\n");
+
+        // The comment jails wrote goes with the key it describes; a comment
+        // that is not jails' own stays where the reader put it.
+        assert_eq!(
+            remove("# why\na=1\nb=2\n", "a", &["why".to_string()]),
+            "b=2\n"
+        );
+        assert_eq!(
+            remove("# theirs\na=1\nb=2\n", "a", &["why".to_string()]),
+            "# theirs\nb=2\n"
+        );
     }
 
     #[test]

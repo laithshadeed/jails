@@ -16,3 +16,6 @@ target/
 # whichever run last held it, so a committed one is noise that changes on every
 # regeneration of the playground and means nothing to a clone.
 .jails-new.lock
+
+# Reference checkouts cloned for study, each its own upstream repo.
+/minicom-public/

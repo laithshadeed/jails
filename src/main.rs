@@ -1,5 +1,3 @@
-use jails_support::Result;
-
 // The lower crates, re-exported so `adopt`, `app` and `new` keep saying
 // `crate::ledger` and `crate::template`. A facade at the root rather than an
 // import line in every file: the paths a reader already knows stay correct,

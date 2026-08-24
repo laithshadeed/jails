@@ -29,6 +29,43 @@ pub(super) fn generate_migration(root: &Path, description: &str, pretend: bool) 
     Ok(())
 }
 
+/// Where a migration with this description goes.
+///
+/// **The one already there, if there is one.** A migration's file name carries
+/// a serial number, and deriving that number from a count meant re-planning an
+/// entity that already exists produced a *different* path -- so a second `app
+/// apply` wrote `V005__create_crawl_runs.sql` beside the `V001` it had written
+/// the first time. Matching on the description makes the path a function of
+/// the entity rather than of how many times it has been planned.
+///
+/// The listing is the projection, not disk, so two rows of one transition
+/// cannot both take the next number.
+pub fn migration_file(project: &Project, description: &str) -> Result<std::path::PathBuf> {
+    const DIR: &str = "src/main/resources/db/migration";
+    let names = project.projected_names_in(DIR);
+    let suffix = format!("__{description}.sql");
+    if let Some(existing) = names.iter().find(|name| name.ends_with(&suffix)) {
+        return Ok(project.root().join(DIR).join(existing));
+    }
+    let mut highest = 0;
+    for name in &names {
+        let digits = name
+            .strip_prefix('V')
+            .and_then(|rest| rest.split_once("__").map(|(version, _)| version))
+            .or_else(|| name.split_once('_').map(|(version, _)| version));
+        if let Some(version) = digits.and_then(|value| value.parse::<u32>().ok()) {
+            highest = highest.max(version);
+        }
+    }
+    let version = highest
+        .checked_add(1)
+        .ok_or_else(|| "migration version overflow".to_string())?;
+    Ok(project
+        .root()
+        .join(DIR)
+        .join(format!("V{version:03}__{description}.sql")))
+}
+
 pub fn next_migration_version(dir: &Path) -> Result<u32> {
     if !dir.exists() {
         return Ok(1);

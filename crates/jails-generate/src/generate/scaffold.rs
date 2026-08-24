@@ -111,7 +111,6 @@ pub fn scaffold_artifacts_from_fields(
     // emitted it comes from the same column list as the adapter, which is
     // the point: a hand-written pair drifts (an `amount` column against an
     // `amount_minor` select), and one list cannot disagree with itself.
-    let migration_dir = root.join("src/main/resources/db/migration");
     let mut artifacts = Vec::new();
 
     // One sample, two readers: the collection a reader sends by hand and the
@@ -131,7 +130,9 @@ pub fn scaffold_artifacts_from_fields(
     // src/test/resources/fixtures, and `add testkit` generates the
     // `Fixtures` loader that reads it -- so the file is live, not decoration.
     let fixtures_dir = root.join("src/test/resources/fixtures");
-    if fixtures_dir.is_dir() && !columns.is_empty() {
+    // The projection, not disk: `new`/`new-cli` seed the fixtures directory,
+    // but in an aggregate apply an earlier row may be the thing creating it.
+    if slice.project().has_directory("src/test/resources/fixtures") && !columns.is_empty() {
         let table = crate::sql::table_name(name);
         let constant = |type_name: &str| first_enum_constant(slice.project(), &domain, type_name);
         artifacts.push(Artifact {
@@ -140,8 +141,15 @@ pub fn scaffold_artifacts_from_fields(
             contents: crate::sql::fixture_json(&columns, &constant),
         });
     }
-    if migration_dir.is_dir() && !columns.is_empty() {
-        let version = next_migration_version(&migration_dir)?;
+    // Same: `add db` creates `db/migration`, and in one transition it has not
+    // been written when this plans. Reading disk here silently dropped every
+    // scaffold's migration from the first `app apply` of a manifest that
+    // installs the database and generates a resource together.
+    if slice
+        .project()
+        .has_directory("src/main/resources/db/migration")
+        && !columns.is_empty()
+    {
         let table = crate::sql::table_name(name);
         // Checked before it is written: a typo here fails at `flyway migrate`
         // with "column does not exist", on whichever machine runs it first.
@@ -150,7 +158,7 @@ pub fn scaffold_artifacts_from_fields(
         }
         artifacts.push(Artifact {
             kind: "migration",
-            path: migration_dir.join(format!("V{version:03}__create_{table}.sql")),
+            path: crate::generate::migration_file(slice.project(), &format!("create_{table}"))?,
             contents: crate::sql::create_table(name, &columns, indexes),
         });
     }
@@ -533,14 +541,15 @@ pub fn generate_field(
         }
     }
 
-    let migration_dir = root.join("src/main/resources/db/migration");
-    let migration = if migration_dir.is_dir() {
-        let version = next_migration_version(&migration_dir)?;
-        let path = migration_dir.join(format!(
-            "V{version:03}__add_{}_to_{}.sql",
-            new_column.name,
-            crate::sql::table_name(name)
-        ));
+    let migration = if project.has_directory("src/main/resources/db/migration") {
+        let path = crate::generate::migration_file(
+            project,
+            &format!(
+                "add_{}_to_{}",
+                new_column.name,
+                crate::sql::table_name(name)
+            ),
+        )?;
         if path.exists() {
             return Err(format!(
                 "{} already exists.\n       fix: resolve the migration version collision and rerun the command.",

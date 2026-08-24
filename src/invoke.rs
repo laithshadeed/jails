@@ -14,7 +14,6 @@
 //! one place and a command cannot forget one.
 
 use crate::{Capability, Invocation, Output, add, model};
-use clap::ValueEnum;
 use jails_generate::generate::ArtifactKind;
 use jails_support::Result;
 

@@ -663,6 +663,41 @@ impl Project {
         found
     }
 
+    /// Every file name directly under a project-relative directory, as the
+    /// plan will leave it.
+    ///
+    /// Disk plus this transition's own writes. A recipe that listed only disk
+    /// could not see a file an earlier row of the same `app apply` is about to
+    /// write -- which is how two migrations in one transition both came out
+    /// numbered `V001`, and one of them then vanished.
+    pub fn projected_names_in(&self, relative: &str) -> std::collections::BTreeSet<String> {
+        let mut found = std::collections::BTreeSet::new();
+        if let Ok(entries) = std::fs::read_dir(self.root.join(relative)) {
+            for entry in entries.flatten() {
+                found.insert(entry.file_name().to_string_lossy().into_owned());
+            }
+        }
+        let prefix = format!("{}/", relative.trim_end_matches('/'));
+        for path in self.overlay.iter().flat_map(|overlay| overlay.keys()) {
+            if let Some(rest) = path.as_str().strip_prefix(&prefix)
+                && !rest.contains('/')
+            {
+                found.insert(rest.to_string());
+            }
+        }
+        found
+    }
+
+    /// Whether this project-relative directory exists, as the plan will leave
+    /// it.
+    ///
+    /// A directory an earlier row of the same transition creates counts. It is
+    /// the same question `projected_names_in` answers, asked of the directory
+    /// rather than of its contents.
+    pub fn has_directory(&self, relative: &str) -> bool {
+        self.root.join(relative).is_dir() || !self.projected_names_in(relative).is_empty()
+    }
+
     pub fn main(&self, layer: Layer, package: Option<&str>) -> PathBuf {
         crate::spec::main_dir(&self.root, &self.package(layer, package))
     }

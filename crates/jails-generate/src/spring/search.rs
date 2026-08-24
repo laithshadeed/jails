@@ -76,8 +76,6 @@ pub fn search_files(
     );
 
     let column = "search_vector";
-    let migration_dir = root.join("src/main/resources/db/migration");
-    let version = crate::generate::next_migration_version(&migration_dir)?;
     let select = columns
         .iter()
         .map(|c| c.name.as_str())
@@ -134,10 +132,10 @@ pub fn search_files(
         },
         Artifact {
             kind: "search migration",
-            path: migration_dir.join(format!(
-                "V{version:03}__add_search_to_{}.sql",
-                crate::sql::snake_case(name)
-            )),
+            path: crate::generate::migration_file(
+                slice.project(),
+                &format!("add_search_to_{}", crate::sql::snake_case(name)),
+            )?,
             contents: crate::template::render(
                 crate::template_here!("spring/search_migration.sql"),
                 &[

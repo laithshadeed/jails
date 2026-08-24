@@ -29,7 +29,10 @@ pub fn outbox_files(
     let messaging: &str = &slice.owned(Layer::Messaging);
     let jobs: &str = &slice.owned(Layer::Jobs);
     let json = crate::generate::main_dir(root, adapters).join("Json.java");
-    if !json.exists() {
+    // The projection, not disk: in an aggregate apply the `add json` row and
+    // this one are the same transition, so the file this asks about has not
+    // been written yet and a disk read refuses a well-ordered manifest.
+    if !slice.project().projected_main_sources().contains_key(&json) {
         return Err(format!(
             "usecase {usecase} --yields {event} needs the generic JSON capability for durable payloads.\n       fix: run `jails add json` first."
         ));
@@ -103,8 +106,6 @@ pub fn outbox_files(
     }
     let table = format!("{}_outbox", crate::sql::snake_case(usecase));
     let property = crate::sql::snake_case(usecase).replace('_', "-");
-    let migration_dir = root.join("src/main/resources/db/migration");
-    let version = crate::generate::next_migration_version(&migration_dir)?;
     let main_service = crate::generate::main_dir(root, service);
     let main_jobs = crate::generate::main_dir(root, jobs);
     let test_jobs = crate::generate::test_dir(root, jobs);
@@ -150,7 +151,7 @@ pub fn outbox_files(
         },
         Artifact {
             kind: "transactional outbox migration",
-            path: migration_dir.join(format!("V{version:03}__create_{table}.sql")),
+            path: crate::generate::migration_file(slice.project(), &format!("create_{table}"))?,
             contents: outbox_migration(&table),
         },
     ])

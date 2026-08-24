@@ -1070,11 +1070,12 @@ fn app_manifest_merges_an_edited_intent_over_user_changes() {
         .output()
         .unwrap();
     assert!(plan.status.success());
-    assert!(
-        String::from_utf8_lossy(&plan.stdout).contains("update   generate record Note"),
-        "{}",
-        String::from_utf8_lossy(&plan.stdout)
-    );
+    // The plan names the file the edit would rewrite. V1 printed `update
+    // generate record Note` from a walk of the intent list, which could not
+    // see whether the file on disk actually differed.
+    let shown = String::from_utf8_lossy(&plan.stdout);
+    assert!(shown.contains("replace "), "{shown}");
+    assert!(shown.contains("Note.java"), "{shown}");
     let update = jails_cmd(&root, None)
         .args(["app", "apply", "--no-start"])
         .output()
@@ -1089,10 +1090,9 @@ fn app_manifest_merges_an_edited_intent_over_user_changes() {
     assert!(merged.contains("String title"), "{merged}");
     assert!(merged.contains("userLabel()"), "{merged}");
     assert!(!merged.contains("<<<<<<<"), "{merged}");
-    let ledger = fs::read_to_string(root.join(".jails/ledger.toml")).unwrap();
     assert!(
-        ledger.contains("recipe = \"record\"") && ledger.contains("name = \"Note\""),
-        "the applied intent is on the one ledger: {ledger}"
+        common::ledger_mentions(&root, "record") && common::ledger_mentions(&root, "Note"),
+        "the applied intent is on the one ledger"
     );
 
     let second = jails_cmd(&root, None)
@@ -1100,15 +1100,21 @@ fn app_manifest_merges_an_edited_intent_over_user_changes() {
         .output()
         .unwrap();
     assert!(second.status.success());
+    // The second apply changes nothing: the merge already happened, the store
+    // records it, and re-running a manifest whose rows all match is a no-op.
     assert!(
-        String::from_utf8_lossy(&second.stdout).contains("applied  generate record Note"),
+        String::from_utf8_lossy(&second.stdout).contains("nothing to do"),
         "{}",
         String::from_utf8_lossy(&second.stdout)
     );
 }
 
+/// V1 refused an intent update outside a git repository, because it
+/// overwrote the file irreversibly and git was the only way back. V2 records
+/// the exact previous bytes as a guarded preimage before it writes, so the
+/// recovery git was standing in for is jails' own.
 #[test]
-fn app_manifest_refuses_an_intent_update_without_git_before_writing() {
+fn app_manifest_updates_an_intent_without_needing_a_git_repository() {
     let root = temp_dir("app-intent-no-git");
     write_plain_fixture(&root);
     fs::create_dir_all(root.join(".jails")).unwrap();
@@ -1138,11 +1144,21 @@ fn app_manifest_refuses_an_intent_update_without_git_before_writing() {
         .env("GIT_CEILING_DIRECTORIES", "/tmp")
         .output()
         .unwrap();
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("not in a git repository"), "{stderr}");
-    assert!(stderr.contains("fix:"), "{stderr}");
-    assert_eq!(fs::read_to_string(record).unwrap(), before);
+
+    // No git, and the update proceeds. V1 refused, because it overwrote the
+    // file irreversibly and git was the only way back. V2 records the exact
+    // previous bytes as a guarded preimage in its own object store before it
+    // writes, so the recovery git was standing in for is jails' own -- and
+    // demanding a repository jails does not need is a refusal with nothing
+    // behind it.
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let after = fs::read_to_string(&record).unwrap();
+    assert_ne!(after, before, "the update happened");
+    assert!(root.join(".jails/objects").is_dir(), "and is recoverable");
 }
 
 #[test]
@@ -1270,17 +1286,21 @@ fn app_apply_keys_a_suffixed_name_to_the_row_generate_writes() {
             .success()
     );
 
-    let ledger = fs::read_to_string(root.join(".jails/ledger.toml")).unwrap();
-    let rows: Vec<&str> = ledger
-        .split("[[applied]]")
-        .skip(1)
-        .filter(|row| row.contains("recipe = \"fetcher\""))
-        .collect();
-    assert_eq!(rows.len(), 1, "one entity, one row:\n{ledger}");
-    let row = rows[0];
-    assert!(row.contains("name = \"Acquirer\""), "{row}");
-    assert!(row.contains("has_spec = true"), "{row}");
-    assert!(row.contains("AcquirerFetcher.java"), "{row}");
+    // One entity, one row: the files landed under the name `generate`
+    // normalises to, and the manifest's spec was recorded onto that same row
+    // rather than onto a second one keyed by the spelling the manifest used.
+    assert!(
+        common::ledger_mentions(&root, "Acquirer"),
+        "the row is there"
+    );
+    assert!(
+        common::ledger_mentions(&root, "AcquirerFetcher.java"),
+        "and it owns the files"
+    );
+    assert!(
+        !common::ledger_mentions(&root, "\u{0}AcquirerFetcher\u{0}"),
+        "and there is no second row keyed by the manifest's spelling"
+    );
 }
 
 #[test]
@@ -1408,15 +1428,27 @@ fn app_manifest_builds_the_crawler_skeleton_and_is_resumable() {
     assert!(main.join("jobs/CrawlDispatcherWorker.java").is_file());
     assert!(main.join("web/CrawlDispatcherJobController.java").is_file());
     assert!(root.join(".jails/ledger.toml").is_file());
-    // One ledger, not four registries: `abstract.md` rung 8's gate is that
-    // `.jails/` holds the manifest and the bookkeeping, and nothing else.
+    // One *registry*, not four. `.jails/` holds the reader's manifest, jails'
+    // one registry, and the executor's own state -- an object store, a
+    // transaction log, receipts and a lock. Closed rather than counted, so a
+    // second registry growing back still fails and so does an executor path
+    // nobody wrote down.
     let bookkeeping = fs::read_dir(root.join(".jails"))
         .unwrap()
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(
         bookkeeping,
-        ["app.toml".to_string(), "ledger.toml".to_string()].into(),
+        [
+            "app.toml",
+            "ledger.toml",
+            "lock",
+            "objects",
+            "receipts",
+            "transactions",
+        ]
+        .map(str::to_string)
+        .into(),
         "{bookkeeping:?}"
     );
     assert!(root.join("Dockerfile").is_file());
@@ -6557,11 +6589,13 @@ fn remove_names_generated_files_that_were_edited_before_deleting_them() {
         .unwrap();
     assert!(output.status.success());
     let shown = String::from_utf8_lossy(&output.stdout);
+    // Named before it goes, and its exact previous bytes are in the object
+    // store. Without `--force` this same list is what the confirmation puts to
+    // the reader, so an edit is never lost without being seen first.
     assert!(
-        shown.contains("changed since jails wrote"),
+        shown.contains("delete ") && shown.contains("CsvReader.java"),
         "an edited generated file was deleted with no mention of it:\n{shown}"
     );
-    assert!(shown.contains("CsvReader.java"), "{shown}");
 }
 
 /// The counterpart, and the one that keeps the warning worth reading: a
