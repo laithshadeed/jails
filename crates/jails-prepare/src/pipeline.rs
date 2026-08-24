@@ -62,6 +62,14 @@ mod ledger;
 pub struct ObservedStore {
     pub image: FileImage,
     pub ledger: Option<LedgerV2>,
+    /// The pre-schema-2 sources this store was translated from, when it was.
+    ///
+    /// `None` for a store that was already schema 2 and for a project with no
+    /// store at all. `Some` is what makes the next commit a *migration*:
+    /// §R2.5 makes cleanup of the old sources atomic with the first schema-2
+    /// ledger write, so the sources have to be observed at the same moment the
+    /// ledger is, or the two could describe different machine states.
+    pub legacy: Option<crate::migration::LegacySnapshotIdentity>,
 }
 
 impl Default for ObservedStore {
@@ -70,6 +78,7 @@ impl Default for ObservedStore {
         Self {
             image: FileImage::Absent,
             ledger: None,
+            legacy: None,
         }
     }
 }
@@ -245,10 +254,27 @@ fn apply(
     // Step 9. Parents for creates only, stopping at the machine root.
     let directories = parents(&base, &operations)?;
 
+    // §R2.5: the first schema-2 commit on a pre-schema-2 project carries the
+    // migration, and the migration's deletions are part of *this* transaction
+    // rather than a tidy-up afterwards. A cleanup that could fail separately
+    // would leave two registries, and a second registry is what makes a store
+    // drift from the project it describes.
+    let migration = match &context.observed_store.legacy {
+        Some(snapshot) => Some(LegacyMigrationIdentity {
+            snapshot: snapshot.clone(),
+            translated_before: translated_image(&context.observed_store)?,
+        }),
+        None => None,
+    };
+    let mut operations = operations;
+    if let Some(migration) = &migration {
+        operations.extend(retire_legacy(&migration.snapshot));
+    }
+
     let semantics = OperationSemanticsV1::Apply(Box::new(ApplySemantics {
         subject: set.subject.clone(),
         ledger_intent: set.ledger_intent.clone(),
-        migration: None,
+        migration,
     }));
     // §R5.4 makes this a committed transition with marker postimages and one
     // frozen candidate; that half is not wired, and the reason is in
@@ -306,6 +332,68 @@ fn apply(
         post_commit,
         context,
     )
+}
+
+/// The exact translated value this plan was computed against.
+///
+/// Recorded so preparation can re-run the translation from the immutable
+/// sources and require the same answer: a migration that could produce a
+/// different result on a retry would silently rewrite the store it was meant
+/// to preserve.
+///
+/// Hashed over the *rows the translation produced*, not over the whole draft.
+/// §R2.5 makes translation total and conservative -- every schema-1 row
+/// becomes a `LegacyEntry` and none becomes an `AppliedEntity` -- so those rows
+/// are the entire answer, and the draft's other fields are constants of the
+/// shape rather than results. Encoding the draft itself is not even possible:
+/// it is generation 0 by construction and the envelope's own validation
+/// refuses to write a generation that has never been committed.
+fn translated_image(observed: &ObservedStore) -> Result<jails_protocol::identity::ObjectId> {
+    let ledger = observed
+        .ledger
+        .as_ref()
+        .ok_or_else(|| "a migration was observed without the store it translated".to_string())?;
+    let mut encoder = jails_support::codec::Encoder::new();
+    encoder.count(ledger.legacy.len())?;
+    for row in &ledger.legacy {
+        row.encode(&mut encoder)?;
+    }
+    Ok(jails_protocol::identity::ObjectId::from_bytes(
+        jails_support::codec::domain_hash("JAILS-LEGACY-TRANSLATION-1", &encoder.finish()?),
+    ))
+}
+
+/// One guarded delete per legacy source the migration found.
+///
+/// Never a directory and never the schema-1 ledger: the first is not a source
+/// with an image, and the second is consumed by the guarded ledger replace as
+/// `ledger_before -> ledger_after`. Deleting it here would drop the very rows
+/// being migrated.
+fn retire_legacy(snapshot: &crate::migration::LegacySnapshotIdentity) -> Vec<FileOp> {
+    snapshot
+        .sources
+        .iter()
+        .filter_map(|source| match source {
+            crate::migration::LegacySourceImage::Present { path, object, mode }
+                if !matches!(
+                    path,
+                    jails_protocol::snapshot::LegacySourcePath::Schema1Ledger
+                ) =>
+            {
+                Some(FileOp::Delete {
+                    path: OperationTarget::LegacyMachine(path.clone()),
+                    before: GuardedImage {
+                        object: *object,
+                        mode: *mode,
+                    },
+                    // Nobody owns a row of unknown origin. §R2.5's whole point
+                    // is that the old format never recorded who asked for one.
+                    contributors: BTreeSet::new(),
+                })
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// What the store already knows about the bytes jails wrote at each path.

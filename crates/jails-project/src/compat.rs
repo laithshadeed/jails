@@ -24,6 +24,7 @@
 //! last two loses the difference between "migrate this" and "stop".
 
 use crate::ledger::{self, Ledger};
+use jails_protocol::snapshot::{LegacyDirectoryKind, LegacyFileName, LegacySourcePath};
 use jails_support::Result;
 use std::path::{Path, PathBuf};
 
@@ -113,6 +114,99 @@ pub fn read(root: &Path) -> MachineState {
         // difference is a project's whole contents.
         Err(why) => MachineState::Unreadable(why),
     }
+}
+
+/// Where one legacy source lives, given the machine directory.
+///
+/// The single owner of that mapping. The lister below and the executor that
+/// deletes them both go through it, so a source recorded under one spelling
+/// cannot be looked for under another -- which would make a migration refuse
+/// its own guarded preimage.
+pub fn legacy_source_at(machine: &Path, path: &LegacySourcePath) -> PathBuf {
+    match path {
+        LegacySourcePath::Schema1Ledger => machine.join("ledger.toml"),
+        LegacySourcePath::AppState => machine.join("app-state-v1"),
+        LegacySourcePath::GlobalFiles => machine.join("files"),
+        LegacySourcePath::VersionFile => machine.join("version"),
+        LegacySourcePath::IntentFiles { name } => machine.join("intents").join(name.as_str()),
+        LegacySourcePath::ModelFiles { name } => machine.join("models").join(name.as_str()),
+    }
+}
+
+/// The same closed list, typed and with each source's on-disk path.
+///
+/// The untyped [`legacy_sources`] answers "is this project pre-schema-2"; this
+/// answers "what exactly will the migration delete", which is a different
+/// question and needs the identity the record stores rather than a `PathBuf`.
+/// A directory is named separately because it is removed after its children
+/// and is not a source with an image.
+///
+/// Takes the machine directory rather than the project root, like its untyped
+/// sibling: what these read is `.jails`, and a function that joined the name
+/// itself would be a second place that decides where machine state lives.
+///
+/// **The `.files` children are enumerated, not guessed.** A migration records
+/// the sources it *found*, and the executor refuses to delete a legacy target
+/// that migration did not find -- so a name invented here would refuse at
+/// commit rather than be silently skipped.
+pub fn legacy_typed_sources(machine: &Path) -> Vec<(LegacySourcePath, PathBuf)> {
+    let mut found: Vec<(LegacySourcePath, PathBuf)> = Vec::new();
+    for kind in [
+        LegacySourcePath::AppState,
+        LegacySourcePath::GlobalFiles,
+        LegacySourcePath::VersionFile,
+    ] {
+        let path = legacy_source_at(machine, &kind);
+        if path.is_file() {
+            found.push((kind, path));
+        }
+    }
+    for (directory, wrap) in [
+        (
+            "intents",
+            (|name| LegacySourcePath::IntentFiles { name })
+                as fn(LegacyFileName) -> LegacySourcePath,
+        ),
+        ("models", |name| LegacySourcePath::ModelFiles { name }),
+    ] {
+        let at = machine.join(directory);
+        let Ok(entries) = std::fs::read_dir(&at) else {
+            continue;
+        };
+        let mut children: Vec<PathBuf> = entries
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .filter(|path| path.is_file())
+            .collect();
+        children.sort();
+        for child in children {
+            let Some(name) = child.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            // A component that is not a legacy `.files` name is left alone
+            // rather than deleted: this list is what a migration promises to
+            // remove, and promising to remove something it cannot name is how
+            // a cleanup takes a file it did not put there.
+            let Ok(name) = LegacyFileName::parse(name) else {
+                continue;
+            };
+            found.push((wrap(name), child));
+        }
+    }
+    found.sort_by(|(one, _), (other, _)| one.cmp(other));
+    found
+}
+
+/// Which legacy directories this project still has.
+pub fn legacy_directories(machine: &Path) -> Vec<LegacyDirectoryKind> {
+    [
+        ("intents", LegacyDirectoryKind::Intents),
+        ("models", LegacyDirectoryKind::Models),
+    ]
+    .into_iter()
+    .filter(|(name, _)| machine.join(name).is_dir())
+    .map(|(_, kind)| kind)
+    .collect()
 }
 
 /// Every pre-schema-2 file still present.

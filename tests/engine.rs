@@ -3182,6 +3182,90 @@ fn replace_over_a_row_that_already_matches_changes_nothing() {
     assert_eq!(before, after, "replace rewrote bytes that already matched");
 }
 
+/// The first schema-2 commit takes the old registry with it.
+///
+/// §R2.5 makes cleanup atomic with the migration, and the reason is that a
+/// second registry is what makes a store drift from the project it describes:
+/// `app-state-v1`, `files`, `version` and the `.files` directories are read by
+/// nothing once the ledger is schema 2, and left behind they are a set of
+/// facts nobody maintains.
+///
+/// The order is the half that matters and it is not observable from the
+/// outside, so it is stated here: the sources go *after* the ledger rename.
+/// Before it, a crash would leave a project whose old registry is half deleted
+/// and whose new one was never written -- which is losing rows.
+#[test]
+fn migrating_a_project_removes_the_registry_it_replaced() {
+    let root = common::temp_dir("engine-legacy-cleanup");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+    let machine = root.join(".jails");
+    std::fs::create_dir_all(machine.join("intents")).unwrap();
+    std::fs::create_dir_all(machine.join("models")).unwrap();
+    std::fs::write(
+        machine.join("ledger.toml"),
+        "version = \"0.1.0\"\n\n[[applied]]\nrecipe = \"record\"\nname = \"Reward\"\n\
+         package = \"\"\nhas_spec = false\nfields = [\"title:string!\"]\nfiles = []\n",
+    )
+    .unwrap();
+    // The other pre-schema-2 sources, which V1's own fold would have removed
+    // and a project that skipped that path still carries.
+    std::fs::write(machine.join("version"), "0.0.1\n").unwrap();
+    std::fs::write(machine.join("files"), "src/main/java/App.java\n").unwrap();
+    std::fs::write(machine.join("app-state-v1"), "{}\n").unwrap();
+    std::fs::write(machine.join("intents/record-reward.files"), "a\n").unwrap();
+    std::fs::write(machine.join("models/reward.files"), "b\n").unwrap();
+    // Something jails did not put there stays: a migration removes the sources
+    // it found, not the directory's contents.
+    std::fs::write(machine.join("models/notes.txt"), "mine\n").unwrap();
+
+    jails_engine::route::generate(
+        &committing(&Project::load(&root).unwrap()),
+        jails_spec::spec::kind::ArtifactKind::Record,
+        "Memo",
+        &["title:string!".to_string()],
+        None,
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+
+    for gone in [
+        "version",
+        "files",
+        "app-state-v1",
+        "intents/record-reward.files",
+        "models/reward.files",
+    ] {
+        assert!(
+            !machine.join(gone).exists(),
+            "`{gone}` survived the migration"
+        );
+    }
+    assert!(
+        !machine.join("intents").exists(),
+        "an empty directory stayed"
+    );
+    assert!(
+        machine.join("models/notes.txt").is_file(),
+        "the migration took a file it did not put there"
+    );
+    assert!(
+        machine.join("models").is_dir(),
+        "a directory with somebody else's file in it was removed"
+    );
+
+    // The ledger is schema 2 and the legacy row survives, because that is what
+    // `jails adopt --legacy-key` resolves.
+    let after = jails_commit::store::Store::at(&root).observe().unwrap();
+    let ledger = after.ledger.as_ref().unwrap();
+    assert_eq!(ledger.generation, 1);
+    assert_eq!(ledger.legacy.len(), 1);
+    // And a second commit is an ordinary one: there is nothing left to migrate.
+    assert!(after.legacy.is_none(), "the store still claims a migration");
+}
+
 /// A capability that brings a container plans the run that starts it.
 ///
 /// §R3.3's one aggregate effect. It is a *descriptor* frozen at preparation --

@@ -65,15 +65,23 @@ impl Store {
         // has ever touched. The translation is *in memory*: what reaches disk
         // is decided by the first V2 commit, which takes the schema-1 bytes as
         // its guarded before-image.
-        let ledger = match jails_protocol::envelope::LedgerV2::parse_file(&source) {
-            Ok(ledger) => ledger,
+        let (ledger, translated) = match jails_protocol::envelope::LedgerV2::parse_file(&source) {
+            Ok(ledger) => (ledger, false),
             Err(current) => match jails_project::ledger::parse_source(&source) {
-                Ok(schema1) => jails_project::compat::translate(&schema1),
+                Ok(schema1) => (jails_project::compat::translate(&schema1), true),
                 // Neither format. The schema-2 message is the one to show:
                 // this binary writes schema 2, and a store it cannot read is
                 // more likely a newer one than an older one.
                 Err(_) => return Err(current),
             },
+        };
+        // Observed in the same breath as the ledger, because §R2.5 makes the
+        // cleanup of the old sources atomic with the first schema-2 write: two
+        // reads could describe two different machine states, and the commit
+        // would then guard preimages that were never all true at once.
+        let legacy = match translated {
+            true => Some(legacy_snapshot(self.root())?),
+            false => None,
         };
         let metadata = std::fs::metadata(&path)
             .map_err(|error| format!("failed to stat {}: {error}", path.display()))?;
@@ -88,6 +96,7 @@ impl Store {
                 mode: file_mode(&metadata)?,
             },
             ledger: Some(ledger),
+            legacy,
         })
     }
 
@@ -378,6 +387,47 @@ fn file_mode(metadata: &std::fs::Metadata) -> Result<jails_protocol::conflict::F
 #[cfg(not(unix))]
 fn file_mode(_metadata: &std::fs::Metadata) -> Result<jails_protocol::conflict::FileMode> {
     jails_protocol::conflict::FileMode::new(0o644)
+}
+
+/// Every pre-schema-2 source, exactly as it is on disk.
+///
+/// Absences are recorded as well as presences: the record is *the complete
+/// machine state this migration was computed from*, so a source that was not
+/// there is a fact rather than a gap -- and the executor's rule that a legacy
+/// delete must name a source the migration found depends on the list being
+/// complete rather than merely non-empty.
+fn legacy_snapshot(machine: &Path) -> Result<jails_prepare::migration::LegacySnapshotIdentity> {
+    use jails_prepare::migration::{LegacySnapshotIdentity, LegacySourceImage};
+
+    // The schema-1 ledger is *present* -- this snapshot exists only because it
+    // was read -- but it is recorded as an absence here because the guarded
+    // ledger create/replace consumes it as `ledger_before -> ledger_after`.
+    // Listing it as a deletable source would drop the very rows being
+    // migrated, which is why `deletable()` excludes it too.
+    let mut sources = vec![LegacySourceImage::Absent {
+        path: jails_protocol::snapshot::LegacySourcePath::Schema1Ledger,
+    }];
+    for (path, at) in jails_project::compat::legacy_typed_sources(machine) {
+        let bytes = std::fs::read(&at)
+            .map_err(|error| format!("failed to read {}: {error}", at.display()))?;
+        let metadata = std::fs::metadata(&at)
+            .map_err(|error| format!("failed to stat {}: {error}", at.display()))?;
+        sources.push(LegacySourceImage::Present {
+            path,
+            object: jails_protocol::identity::ObjectRef::new(
+                jails_protocol::identity::ObjectId::from_bytes(jails_support::codec::sha256(
+                    &bytes,
+                )),
+                bytes.len() as u64,
+            ),
+            mode: file_mode(&metadata)?,
+        });
+    }
+    sources.sort_by(|one, other| one.path().cmp(other.path()));
+    Ok(LegacySnapshotIdentity {
+        sources,
+        directories: jails_project::compat::legacy_directories(machine),
+    })
 }
 
 #[cfg(test)]
