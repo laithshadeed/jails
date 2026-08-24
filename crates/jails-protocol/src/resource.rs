@@ -612,6 +612,9 @@ pub enum OneShotLifecycle {
     },
     Migration,
     Cases,
+    /// A seeded manifest: written once, owned by the reader after, and never
+    /// retired -- everything it applied outlives the file it was declared in.
+    Manifest,
 }
 
 impl OneShotLifecycle {
@@ -620,6 +623,7 @@ impl OneShotLifecycle {
             Self::Field { .. } => 0,
             Self::Migration => 1,
             Self::Cases => 2,
+            Self::Manifest => 3,
         }
     }
 
@@ -633,7 +637,7 @@ impl OneShotLifecycle {
                 encode_keys(encoder, target_coupled)?;
                 encode_keys(encoder, append_only)
             }
-            Self::Migration | Self::Cases => Ok(()),
+            Self::Migration | Self::Cases | Self::Manifest => Ok(()),
         }
     }
 
@@ -645,6 +649,7 @@ impl OneShotLifecycle {
             },
             1 => Self::Migration,
             2 => Self::Cases,
+            3 => Self::Manifest,
             other => Err(format!("unknown one-shot lifecycle tag {other}"))?,
         })
     }

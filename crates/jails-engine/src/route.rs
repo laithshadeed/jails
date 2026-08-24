@@ -66,11 +66,11 @@ mod field;
 mod oneshot;
 mod provenance;
 
-pub use app::{AppIntent, app_apply};
+pub use app::{AppIntent, app_apply, app_plan};
 pub use artifact::{destroy, generate};
 pub use capability::{install, remove, sync};
 pub use field::field;
-pub use oneshot::{cases, migration};
+pub use oneshot::{app_init, cases, migration};
 
 /// A kind as the word somebody types, taken from the same `ValueEnum` clap
 /// parses -- so a refusal naming `jails g <kind>` names a command that exists.
@@ -541,6 +541,24 @@ fn commit_set(
     declaration: &ReadDeclaration,
     description: &str,
 ) -> Result<CommitResult> {
+    let bundle = prepare_set(project, set, declaration)?;
+    let handle = ProjectHandle::at(project.root())?;
+    let locked = LockedProject::acquire(handle, description).map_err(describe)?;
+    execute::commit(&locked, &bundle).map_err(describe)
+}
+
+/// Everything a commit does except taking the lock and activating.
+///
+/// A plan is not a weaker commit that stops early by accident -- it is the
+/// same computation, and the bundle it produces is the *exact* one the commit
+/// would have activated. Anything that describes a transition therefore
+/// describes this value, which is what makes `--pretend` an answer about what
+/// will happen rather than a second implementation that hopes to agree.
+fn prepare_set(
+    project: &Project,
+    set: DesiredChangeSet,
+    declaration: &ReadDeclaration,
+) -> Result<pipeline::PreparedBundle> {
     let (snapshot, mut projection) = capture::projected(project, declaration)?;
     let observed = observed(project)?;
     if let Some(store) = &observed.ledger {
@@ -578,17 +596,54 @@ fn commit_set(
             })
         },
     };
-    let bundle = pipeline::prepare(
+    pipeline::prepare(
         &loaded,
         CommitPlan::Apply(set),
         snapshot,
         projection,
         context,
-    )?;
+    )
+}
 
-    let handle = ProjectHandle::at(project.root())?;
-    let locked = LockedProject::acquire(handle, description).map_err(describe)?;
-    execute::commit(&locked, &bundle).map_err(describe)
+/// One file operation, as a person reads it.
+///
+/// Deliberately not a re-export of `FileOp`: that type carries guarded
+/// preimages, object references and contributor sets, none of which a plan
+/// line means. What a reader wants from `--pretend` is the verb and the path,
+/// and giving them the executor's own value would tie every printer to a
+/// structure that exists for crash recovery.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct PlannedOp {
+    pub verb: &'static str,
+    pub path: String,
+}
+
+/// The operations a prepared bundle will perform.
+///
+/// Sorted by path rather than left in operation order: the order operations
+/// execute in is the executor's business (directories before their files,
+/// deletes after the replacements that supersede them), and presenting it as
+/// if it were meaningful invites a reader to depend on it.
+fn planned_ops(bundle: &pipeline::PreparedBundle) -> Vec<PlannedOp> {
+    let mut out: Vec<PlannedOp> = bundle
+        .change
+        .operations
+        .iter()
+        .map(|op| PlannedOp {
+            verb: match op {
+                jails_prepare::prepare::FileOp::Create { .. } => "create",
+                jails_prepare::prepare::FileOp::Replace { .. } => "update",
+                jails_prepare::prepare::FileOp::Delete { .. } => "delete",
+            },
+            // `OperationTarget` renders a project path as itself and a
+            // legacy machine file as the variant it is -- which is the honest
+            // line for the second case, since those are reachable only from a
+            // validated migration and only to delete.
+            path: op.target().to_string(),
+        })
+        .collect();
+    out.sort();
+    out
 }
 
 /// A commit failure as the one line a person reads.

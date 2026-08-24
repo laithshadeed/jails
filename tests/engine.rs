@@ -1618,3 +1618,240 @@ fn the_web_crawler_manifest_applies_as_one_transition() {
         );
     }
 }
+
+/// §R6.2's `app::init` row: seed the manifest through the protocol.
+///
+/// The interesting half is the second call. V1 refuses by asking
+/// `Path::exists` and then writing, which is a check and a write with a gap
+/// between them; here the refusal is the plan's own -- a `Create` operation
+/// carries no preimage, so the file being there is a precondition failure
+/// rather than an overwrite of somebody's manifest.
+#[test]
+fn app_init_seeds_a_manifest_once_and_refuses_to_land_on_it_twice() {
+    let root = common::temp_dir("engine-app-init");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_spring_fixture(&root);
+
+    jails_engine::route::app_init(&Project::load(&root).unwrap(), None).unwrap();
+    let seeded = std::fs::read_to_string(root.join(".jails/app.toml")).unwrap();
+    assert!(seeded.contains("schema = 1"), "{seeded}");
+    assert!(seeded.contains("capabilities = []"), "{seeded}");
+
+    // Somebody has filled it in. A second `app init` must not quietly take
+    // that away, and must not merge into it either: seeding is a one-shot,
+    // and its answer to "already there" is to say so.
+    std::fs::write(
+        root.join(".jails/app.toml"),
+        "schema = 1\ncapabilities = [\"db\"]\n",
+    )
+    .unwrap();
+    let again = jails_engine::route::app_init(&Project::load(&root).unwrap(), None);
+    assert!(again.is_err(), "a second seed landed on the reader's file");
+    assert_eq!(
+        std::fs::read_to_string(root.join(".jails/app.toml")).unwrap(),
+        "schema = 1\ncapabilities = [\"db\"]\n",
+        "the refusal wrote anyway"
+    );
+}
+
+/// §R6.2's `app::plan` row: what apply would do, computed by apply.
+///
+/// The property under test is not that the lines look right -- it is that
+/// there is one implementation. V1 answers `app plan` with a second walk over
+/// the intent list that compares each row against the ledger, and it had to
+/// be shadowed against a typed comparison precisely because two
+/// implementations of one question disagree. Here the plan is the commit's own
+/// bundle, stopped before the lock: what it names is exactly what appears.
+#[test]
+fn a_plan_names_exactly_the_files_the_apply_then_writes() {
+    let root = common::temp_dir("engine-app-plan");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+    let note = |name: &str| jails_engine::route::AppIntent {
+        kind: jails_spec::spec::kind::ArtifactKind::Record,
+        timestamps: false,
+        name: name.to_string(),
+        fields: vec!["title:string!".to_string()],
+        indexes: Vec::new(),
+        package: None,
+        on: None,
+        yields: None,
+    };
+
+    let before = common::scenarios::file_set(&root);
+    let planned =
+        jails_engine::route::app_plan(&Project::load(&root).unwrap(), &[], &[note("Note")])
+            .unwrap();
+    assert_eq!(
+        before,
+        common::scenarios::file_set(&root),
+        "a plan wrote something"
+    );
+
+    jails_engine::route::app_apply(&Project::load(&root).unwrap(), &[], &[note("Note")]).unwrap();
+    let after = common::scenarios::file_set(&root);
+
+    let created: std::collections::BTreeSet<_> = planned
+        .iter()
+        .filter(|op| op.verb == "create")
+        .map(|op| op.path.clone())
+        .collect();
+    let appeared: std::collections::BTreeSet<_> = after
+        .iter()
+        .filter(|path| !before.contains(*path))
+        // `.jails/` is the machine root: the ledger and journal are the
+        // transaction's own bookkeeping, not files a plan line describes.
+        .filter(|path| !path.starts_with(".jails/"))
+        .cloned()
+        .collect();
+    assert_eq!(created, appeared, "the plan and the apply disagree");
+
+    // And a plan over what is already applied is empty -- not "applied" as a
+    // status word beside every row, but no operations at all, because there
+    // is nothing left to do.
+    let again = jails_engine::route::app_plan(&Project::load(&root).unwrap(), &[], &[note("Note")])
+        .unwrap();
+    assert!(again.is_empty(), "replanning a settled manifest: {again:?}");
+
+    // Dropping the row plans the deletion, which is the answer the imperative
+    // walk cannot give at all: it prints a status per row it *has*, so a row
+    // the manifest stopped naming is simply not mentioned.
+    let dropped = jails_engine::route::app_plan(&Project::load(&root).unwrap(), &[], &[]).unwrap();
+    assert!(
+        dropped.iter().any(|op| op.verb == "delete"
+            && op.path == "src/main/java/com/example/demo/domain/Note.java"),
+        "{dropped:?}"
+    );
+}
+
+/// §R6.2's `app::reconcile` row, and the claim that it needs no route.
+///
+/// V1 has a whole module for this: when a manifest row's spec changes, it
+/// regenerates against a scratch tree, three-way merges each file, and
+/// stitches the result back. §R5.3 says that is not a manifest concern at all
+/// -- it is what *any* rewrite of a file with a recorded base means -- so the
+/// decision table does it for every route at once and `app apply` inherits it.
+///
+/// This is the falsifier for that claim. The reader edits a generated record;
+/// the manifest then asks for a component it did not have. Both changes must
+/// survive, and neither may be silently dropped.
+#[test]
+fn a_manifest_row_that_changes_merges_with_what_the_reader_wrote() {
+    let root = common::temp_dir("engine-app-reconcile");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+    let note = |fields: &[&str]| jails_engine::route::AppIntent {
+        kind: jails_spec::spec::kind::ArtifactKind::Record,
+        timestamps: false,
+        name: "Note".to_string(),
+        fields: fields.iter().map(|f| f.to_string()).collect(),
+        indexes: Vec::new(),
+        package: None,
+        on: None,
+        yields: None,
+    };
+    let at = root.join("src/main/java/com/example/demo/domain/Note.java");
+
+    jails_engine::route::app_apply(
+        &Project::load(&root).unwrap(),
+        &[],
+        &[note(&["title:string!"])],
+    )
+    .unwrap();
+
+    // The reader annotates the file, well clear of the components -- an edit
+    // that genuinely does not overlap what the generator is about to change.
+    let original = std::fs::read_to_string(&at).unwrap();
+    let edited = original.replacen(
+        "package com.example.demo.domain;",
+        "package com.example.demo.domain;\n\n// reviewed 2026-08",
+        1,
+    );
+    assert_ne!(edited, original, "the edit did not apply");
+    std::fs::write(&at, &edited).unwrap();
+
+    // The manifest now asks for a second component.
+    jails_engine::route::app_apply(
+        &Project::load(&root).unwrap(),
+        &[],
+        &[note(&["title:string!", "body:string"])],
+    )
+    .unwrap();
+
+    let merged = std::fs::read_to_string(&at).unwrap();
+    assert!(
+        merged.contains("reviewed 2026-08"),
+        "the reader's edit was clobbered: {merged}"
+    );
+    assert!(
+        merged.contains("String body"),
+        "the manifest's change was dropped: {merged}"
+    );
+    assert!(
+        !merged.contains("<<<<<<<"),
+        "two changes that do not overlap were reported as a conflict: {merged}"
+    );
+}
+
+/// And where the two changes genuinely do overlap, the refusal is a refusal.
+///
+/// This is §R5.4's boundary as it actually stands: the merge runs, finds a
+/// real conflict, and stops. Committing marker bytes with a resumable pending
+/// state is the half that is not wired, so the honest answer is to leave the
+/// reader's file exactly as they left it and say which route would be needed.
+/// A partial write here would be the worst of both -- their version gone and
+/// no pending conflict to continue from.
+#[test]
+fn an_overlapping_edit_refuses_without_writing_anything() {
+    let root = common::temp_dir("engine-app-conflict");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+    let note = |fields: &[&str]| jails_engine::route::AppIntent {
+        kind: jails_spec::spec::kind::ArtifactKind::Record,
+        timestamps: false,
+        name: "Note".to_string(),
+        fields: fields.iter().map(|f| f.to_string()).collect(),
+        indexes: Vec::new(),
+        package: None,
+        on: None,
+        yields: None,
+    };
+    let at = root.join("src/main/java/com/example/demo/domain/Note.java");
+
+    jails_engine::route::app_apply(
+        &Project::load(&root).unwrap(),
+        &[],
+        &[note(&["title:string!"])],
+    )
+    .unwrap();
+
+    // Directly above the component list, which is the line the manifest's
+    // change rewrites.
+    let mine = std::fs::read_to_string(&at).unwrap().replacen(
+        "public record Note(",
+        "// mine\npublic record Note(",
+        1,
+    );
+    std::fs::write(&at, &mine).unwrap();
+    let before = common::scenarios::file_set(&root);
+
+    let error = jails_engine::route::app_apply(
+        &Project::load(&root).unwrap(),
+        &[],
+        &[note(&["title:string!", "body:string"])],
+    )
+    .unwrap_err();
+
+    assert!(error.contains("overlap"), "{error}");
+    assert!(error.contains("§R5.4") || error.contains("R5.4"), "{error}");
+    assert_eq!(
+        std::fs::read_to_string(&at).unwrap(),
+        mine,
+        "the refusal wrote over the reader's file"
+    );
+    assert_eq!(
+        before,
+        common::scenarios::file_set(&root),
+        "the refusal left something behind"
+    );
+}

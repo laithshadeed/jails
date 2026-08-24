@@ -546,9 +546,24 @@ impl SourceInputId {
 /// A one-shot operation's identity: stable across a re-run of the same thing.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
 pub enum OneShotId {
-    Field { target: TypeTargetId, field: Name },
-    Migration { path: ProjectPath },
-    Cases { source: SourceInputId },
+    Field {
+        target: TypeTargetId,
+        field: Name,
+    },
+    Migration {
+        path: ProjectPath,
+    },
+    Cases {
+        source: SourceInputId,
+    },
+    /// A seeded application manifest.
+    ///
+    /// Identified by its path rather than by "the manifest", because
+    /// `--manifest` lets a project carry more than one and seeding a second
+    /// is not a re-run of seeding the first.
+    Manifest {
+        path: ProjectPath,
+    },
 }
 
 impl OneShotId {
@@ -557,6 +572,7 @@ impl OneShotId {
             Self::Field { .. } => 0,
             Self::Migration { .. } => 1,
             Self::Cases { .. } => 2,
+            Self::Manifest { .. } => 3,
         }
     }
 
@@ -569,6 +585,7 @@ impl OneShotId {
             }
             Self::Migration { path } => path.encode(encoder),
             Self::Cases { source } => source.encode(encoder),
+            Self::Manifest { path } => path.encode(encoder),
         }
     }
 
@@ -583,6 +600,9 @@ impl OneShotId {
             },
             2 => Self::Cases {
                 source: SourceInputId::decode(decoder)?,
+            },
+            3 => Self::Manifest {
+                path: ProjectPath::decode(decoder)?,
             },
             other => return Err(format!("unknown one-shot id tag {other}")),
         })
@@ -640,6 +660,13 @@ pub enum OneShotSpec {
         source_sha256: ObjectId,
         output: ProjectPath,
     },
+    Manifest {
+        path: ProjectPath,
+        /// What was seeded, so a later read can tell an untouched skeleton
+        /// from a manifest somebody has filled in. Not a claim of ownership:
+        /// jails writes this file once and the reader owns it after.
+        body: ObjectId,
+    },
 }
 
 impl OneShotSpec {
@@ -648,6 +675,7 @@ impl OneShotSpec {
             Self::Field { .. } => 0,
             Self::Migration { .. } => 1,
             Self::Cases { .. } => 2,
+            Self::Manifest { .. } => 3,
         }
     }
 
@@ -668,6 +696,7 @@ impl OneShotSpec {
             ) => target == t && field == &f.name,
             (OneShotId::Migration { path }, Self::Migration { path: p, .. }) => path == p,
             (OneShotId::Cases { source }, Self::Cases { source: s, .. }) => source == s,
+            (OneShotId::Manifest { path }, Self::Manifest { path: p, .. }) => path == p,
             _ => false,
         }
     }
@@ -687,6 +716,11 @@ impl OneShotSpec {
             } => {
                 encoder.string(description)?;
                 encoder.u64(*allocated_version);
+                path.encode(encoder)?;
+                body.encode(encoder);
+                Ok(())
+            }
+            Self::Manifest { path, body } => {
                 path.encode(encoder)?;
                 body.encode(encoder);
                 Ok(())
@@ -719,6 +753,10 @@ impl OneShotSpec {
                 source: SourceInputId::decode(decoder)?,
                 source_sha256: ObjectId::decode(decoder)?,
                 output: ProjectPath::decode(decoder)?,
+            },
+            3 => Self::Manifest {
+                path: ProjectPath::decode(decoder)?,
+                body: ObjectId::decode(decoder)?,
             },
             other => return Err(format!("unknown one-shot spec tag {other}")),
         })

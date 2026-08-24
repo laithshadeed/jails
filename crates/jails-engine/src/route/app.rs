@@ -53,6 +53,37 @@ pub fn app_apply(
     capabilities: &[Capability],
     intents: &[AppIntent],
 ) -> Result<CommitResult> {
+    let (request, reads) = declare(project, capabilities, intents)?;
+    commit(project, request, &reads, "jails app apply")
+}
+
+/// What `app apply` would do, computed by `app apply`'s own algorithm.
+///
+/// The point of routing `plan` rather than describing the manifest a second
+/// way: V1 answers this question with a separate walk over the intent list,
+/// comparing each row against the ledger and printing `pending`/`update`/
+/// `applied`. That walk cannot see a file the reader edited, cannot tell a
+/// regeneration that changes nothing from one that rewrites a class, and had
+/// to be shadowed against a typed comparison precisely because two
+/// implementations of one question disagree. Here there is one
+/// implementation, stopped one step before the lock.
+pub fn app_plan(
+    project: &Project,
+    capabilities: &[Capability],
+    intents: &[AppIntent],
+) -> Result<Vec<PlannedOp>> {
+    let (request, reads) = declare(project, capabilities, intents)?;
+    let observed = observed(project)?;
+    let set = request.against(&observed)?;
+    Ok(super::planned_ops(&prepare_set(project, set, &reads)?))
+}
+
+/// The manifest as a request, and everything reading it declared.
+fn declare(
+    project: &Project,
+    capabilities: &[Capability],
+    intents: &[AppIntent],
+) -> Result<(Request, ReadDeclaration)> {
     let store = observed(project)?;
     let mut declared: BTreeMap<EntityId, DesiredEntity> = BTreeMap::new();
     let mut changes: Vec<DesiredChange> = Vec::new();
@@ -195,7 +226,7 @@ pub fn app_apply(
         declared,
         changes,
     };
-    commit(project, request, &reads, "jails app apply")
+    Ok((request, reads))
 }
 
 /// The project as every step so far leaves it.

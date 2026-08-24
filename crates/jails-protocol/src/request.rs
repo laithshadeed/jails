@@ -386,6 +386,12 @@ impl CanonicalMutationRequest {
                  write a forward migration instead."
                     .to_string(),
             ),
+            OneShotId::Manifest { .. } => Err(
+                "a seeded manifest has no destroy route.\n       fix: it is your file the \
+                 moment `app init` writes it, and everything it has been used to apply \
+                 outlives it. Delete it yourself if that is what you mean."
+                    .to_string(),
+            ),
         }
     }
 

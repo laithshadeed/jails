@@ -187,3 +187,105 @@ pub fn cases(project: &Project, brief: &str, package: Option<&str>) -> Result<Co
         .file(relative_path(project, &change.files[0].path)?);
     commit_set(project, set, &reads, "jails generate cases")
 }
+
+/// Seed an application manifest, through the protocol.
+///
+/// §R6.2's `app::init` row. It is one file with fixed bytes, which is exactly
+/// why routing it is worth the paragraph: V1 refuses when the path exists by
+/// calling `Path::exists` and then writes, and between those two statements
+/// anything may happen. Here the refusal is the plan's own -- a `Create`
+/// operation carries no preimage, so a file that appeared after planning is a
+/// precondition failure under the lock rather than a silent overwrite of
+/// somebody's manifest.
+///
+/// A one-shot rather than an entity because jails does not own the result.
+/// The reader edits this file, `app apply` reads it, and nothing regenerates
+/// it -- so there is no desired state to reconcile and nothing a later run
+/// could relinquish. The receipt records that these bytes were seeded here,
+/// which is what makes a second `app init` at the same path a re-run of a
+/// known one-shot instead of a collision.
+pub fn app_init(project: &Project, manifest: Option<&str>) -> Result<CommitResult> {
+    const SKELETON: &str = "\
+# Generic application intent. Add capabilities, then one [[generate]] table per slice.
+schema = 1
+capabilities = []
+
+# [[generate]]
+# kind = \"scaffold\"
+# name = \"Note\"
+# fields = [\"id:uuid@pk\", \"title:string!\"]
+# timestamps = true
+";
+    let path = ProjectPath::parse(manifest.unwrap_or(".jails/app.toml"))?;
+
+    // Refused from the capture rather than from a raw `Path::exists`, and
+    // that is the point of routing this at all. The path is a declared read,
+    // so §R4.3 step 2 rechecks it under the lock: a manifest that appears
+    // between planning and committing fails the precondition instead of being
+    // silently replaced. Checking the disk here and writing later is the
+    // check-then-write gap this protocol exists to close.
+    //
+    // Seeding is not regeneration, which is why this is a refusal and not a
+    // three-way merge. The bytes below are a skeleton nobody keeps; a
+    // manifest that exists is a document somebody has been writing, and
+    // merging a skeleton into it would produce a file neither of them meant.
+    let reads = capture::capability_reads()?.file(path.clone());
+    let (snapshot, _) = capture::projected(project, &reads)?;
+    if let jails_protocol::snapshot::Captured::Present(_) = snapshot.read(&path)? {
+        return Err(format!(
+            "application manifest already exists: {path}.\n       fix: edit it, or pass \
+             --manifest with a new path."
+        ));
+    }
+
+    let id = OneShotId::Manifest { path: path.clone() };
+    let owner = ResourceOwner::OneShot(id.clone());
+    let key = ResourceKey::WholeFile(path.clone());
+    let mut change = DesiredChange::owned_by(owner.clone());
+    change.resources.push(DesiredResource::new(
+        key.clone(),
+        BTreeSet::from([owner]),
+        ResourceValue::WholeFile,
+    )?);
+    change.files.push(DesiredFile {
+        path: path.clone(),
+        body: DesiredBody::Bytes(SKELETON.as_bytes().into()),
+        mode: None,
+        resource: Some(key),
+        renderer: None,
+    });
+
+    let spec = OneShotSpec::Manifest {
+        path: path.clone(),
+        body: ObjectId::from_bytes(jails_support::codec::sha256(SKELETON.as_bytes())),
+    };
+    provenance::stamp_files(
+        &mut change,
+        project,
+        RendererId::OneShot(OneShotKind::Manifest),
+        Some(RenderedSubjectContext::OneShot {
+            id: id.clone(),
+            spec: spec.clone(),
+        }),
+    )?;
+    let observed = observed(project)?;
+    let set = DesiredChangeSet {
+        ledger_intent: LedgerIntent {
+            generation_before: observed.generation(),
+            entities_after: Vec::new(),
+            one_shots_after: vec![DesiredOneShotReceipt {
+                id: id.clone(),
+                spec: spec.clone(),
+                state: OneShotState::Active,
+                lifecycle: OneShotLifecycle::Manifest,
+            }],
+            resources_after: change.resources.clone(),
+            entities_removed: Vec::new(),
+            legacy_after: Vec::new(),
+        },
+        ordered: vec![change],
+        subject: PlannedSubject::ApplyOneShot { id, spec },
+    };
+    set.validate()?;
+    commit_set(project, set, &reads, "jails app init")
+}
