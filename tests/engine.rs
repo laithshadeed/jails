@@ -1828,8 +1828,8 @@ fn a_plan_names_exactly_the_files_the_apply_then_writes() {
 
     let created: std::collections::BTreeSet<_> = planned
         .iter()
-        .filter(|op| op.verb == "create")
-        .map(|op| op.path.clone())
+        .filter(|op| op.kind == jails_prepare::report::ReportedOpKind::Create)
+        .map(|op| op.path.to_string())
         .collect();
     let appeared: std::collections::BTreeSet<_> = after
         .iter()
@@ -1864,8 +1864,10 @@ fn a_plan_names_exactly_the_files_the_apply_then_writes() {
     .unwrap()
     .operations();
     assert!(
-        dropped.iter().any(|op| op.verb == "delete"
-            && op.path == "src/main/java/com/example/demo/domain/Note.java"),
+        dropped.iter().any(
+            |op| op.kind == jails_prepare::report::ReportedOpKind::Delete
+                && op.path.to_string() == "src/main/java/com/example/demo/domain/Note.java"
+        ),
         "{dropped:?}"
     );
 }
@@ -2628,10 +2630,98 @@ fn pretending_writes_nothing_and_names_what_a_commit_would_write() {
         .collect();
     let created: std::collections::BTreeSet<String> = artifact
         .iter()
-        .filter(|op| op.verb == "create")
-        .map(|op| op.path.clone())
+        .filter(|op| op.kind == jails_prepare::report::ReportedOpKind::Create)
+        .map(|op| op.path.to_string())
         .collect();
     assert_eq!(created, appeared, "the pretend run and the commit disagree");
+}
+
+/// A plan describes the transition in the receipt's own words.
+///
+/// §R3.4 makes reporting a pure projection of the prepared value, and the
+/// reason is drift: a hand-rolled list here called a replace an `update`,
+/// sorted by path where the executor keeps its own order, and left out
+/// directory creation entirely -- so `--pretend` was describing work in words
+/// nothing else used. `Report` is the one projection, and the envelope's
+/// status is derived from it rather than asserted beside it.
+#[test]
+fn a_plan_is_reported_through_the_one_projection() {
+    let root = common::temp_dir("engine-report-projection");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+    let project = Project::load(&root).unwrap();
+    let pretend = jails_engine::route::Run::pretending(&project);
+
+    let outcome = jails_engine::route::generate(
+        &pretend,
+        jails_spec::spec::kind::ArtifactKind::Record,
+        "Note",
+        &["title:string!".to_string()],
+        None,
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+
+    let report = outcome.report().expect("a pretend run reports");
+    // The directory the record's package needs is part of the plan. The old
+    // projection dropped every one of these.
+    assert!(
+        report
+            .operations
+            .iter()
+            .any(|op| op.kind == jails_prepare::report::ReportedOpKind::CreateDirectory),
+        "no directory is named: {:?}",
+        report.operations
+    );
+    // The verbs are the report's, not a second vocabulary.
+    for op in &report.operations {
+        assert!(
+            ["create", "replace", "delete", "mkdir"].contains(&op.kind.verb()),
+            "{:?}",
+            op.kind
+        );
+    }
+    // And the envelope's status falls out of the report rather than being set
+    // beside it: work planned is a preview.
+    let envelope = outcome.envelope().expect("a pretend run has an envelope");
+    assert_eq!(
+        envelope.status,
+        jails_prepare::command::CommandStatus::Preview
+    );
+    assert_eq!(envelope.exit_code(), 0);
+    assert!(envelope.receipt.is_none(), "a plan committed nothing");
+
+    // Committing it, then planning it again, is a no-op -- and the envelope
+    // says so as a status rather than as an empty list the caller has to read.
+    jails_engine::route::generate(
+        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        jails_spec::spec::kind::ArtifactKind::Record,
+        "Note",
+        &["title:string!".to_string()],
+        None,
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+    let project = Project::load(&root).unwrap();
+    let settled = jails_engine::route::generate(
+        &jails_engine::route::Run::pretending(&project),
+        jails_spec::spec::kind::ArtifactKind::Record,
+        "Note",
+        &["title:string!".to_string()],
+        None,
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        settled.envelope().unwrap().status,
+        jails_prepare::command::CommandStatus::NoOp
+    );
 }
 
 /// A package is found by the Java in it, and the two traps that rules out.

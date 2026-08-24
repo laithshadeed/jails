@@ -31,8 +31,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use clap::ValueEnum;
 use jails_commit::execute::{self, LockedProject, ProjectHandle};
 use jails_commit::outcome::{CommitError, CommitResult};
+use jails_prepare::command::CommandEnvelope;
 use jails_prepare::desire;
 use jails_prepare::pipeline::{self, ObservedStore, PreparationContext};
+use jails_prepare::report::{Report, ReportedOp};
 use jails_project::capability::Declaration;
 use jails_project::capture::{self, ReadDeclaration};
 use jails_project::model::{Change, Project};
@@ -556,7 +558,9 @@ fn commit_set(
     let project = run.project();
     let bundle = prepare_set(run, set, declaration, Some(asked))?;
     if !run.write {
-        return Ok(Outcome::Planned(planned_ops(&bundle)));
+        return Ok(Outcome::Planned(Box::new(
+            jails_prepare::report::Report::of(&bundle.change)?,
+        )));
     }
     let handle = ProjectHandle::at(project.root())?;
     let locked = LockedProject::acquire(handle, &asked.display()).map_err(describe)?;
@@ -699,8 +703,16 @@ impl<'a> Run<'a> {
 #[derive(Debug)]
 pub enum Outcome {
     Committed(CommitResult),
-    /// Nothing was written. These are the operations that would have been.
-    Planned(Vec<PlannedOp>),
+    /// Nothing was written. This is the prepared transition, projected.
+    ///
+    /// §R3.4's `Report`, not a second description of it. There used to be a
+    /// hand-rolled list here, and it had already drifted from the normative
+    /// projection in three ways: it called a replace an `update`, it sorted by
+    /// path where the report keeps the executor's order, and it dropped
+    /// directory creation entirely. A `--pretend` that describes the work in
+    /// different words from the receipt is the failure the one-projection rule
+    /// exists to prevent.
+    Planned(Box<Report>),
 }
 
 impl Outcome {
@@ -714,9 +726,29 @@ impl Outcome {
         }
     }
 
-    pub fn operations(&self) -> Vec<PlannedOp> {
+    /// The prepared transition, for a run that planned one.
+    pub fn report(&self) -> Option<&Report> {
         match self {
-            Self::Planned(ops) => ops.clone(),
+            Self::Planned(report) => Some(report),
+            Self::Committed(_) => None,
+        }
+    }
+
+    /// The one value a mutation command returns, per §R3.4.
+    ///
+    /// Only the planned side is projected here. The committed side needs the
+    /// recovery vector and the replan-once loop the same section specifies,
+    /// and both belong with the dispatch flip -- projecting half of it now
+    /// would mean a `status` that is right for a preview and invented for
+    /// everything else.
+    pub fn envelope(&self) -> Option<CommandEnvelope> {
+        self.report().cloned().map(CommandEnvelope::preview)
+    }
+
+    /// Every operation a plan would perform, in the report's order.
+    pub fn operations(&self) -> Vec<ReportedOp> {
+        match self {
+            Self::Planned(report) => report.operations.clone(),
             Self::Committed(_) => Vec::new(),
         }
     }
@@ -880,47 +912,6 @@ fn asked_capabilities(
     }
     let syntax: Vec<&str> = syntax.iter().map(String::as_str).collect();
     Asked::plain(request, command, &syntax)
-}
-
-/// One file operation, as a person reads it.
-///
-/// Deliberately not a re-export of `FileOp`: that type carries guarded
-/// preimages, object references and contributor sets, none of which a plan
-/// line means. What a reader wants from `--pretend` is the verb and the path,
-/// and giving them the executor's own value would tie every printer to a
-/// structure that exists for crash recovery.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct PlannedOp {
-    pub verb: &'static str,
-    pub path: String,
-}
-
-/// The operations a prepared bundle will perform.
-///
-/// Sorted by path rather than left in operation order: the order operations
-/// execute in is the executor's business (directories before their files,
-/// deletes after the replacements that supersede them), and presenting it as
-/// if it were meaningful invites a reader to depend on it.
-fn planned_ops(bundle: &pipeline::PreparedBundle) -> Vec<PlannedOp> {
-    let mut out: Vec<PlannedOp> = bundle
-        .change
-        .operations
-        .iter()
-        .map(|op| PlannedOp {
-            verb: match op {
-                jails_prepare::prepare::FileOp::Create { .. } => "create",
-                jails_prepare::prepare::FileOp::Replace { .. } => "update",
-                jails_prepare::prepare::FileOp::Delete { .. } => "delete",
-            },
-            // `OperationTarget` renders a project path as itself and a
-            // legacy machine file as the variant it is -- which is the honest
-            // line for the second case, since those are reachable only from a
-            // validated migration and only to delete.
-            path: op.target().to_string(),
-        })
-        .collect();
-    out.sort();
-    out
 }
 
 /// A commit failure as the one line a person reads.
