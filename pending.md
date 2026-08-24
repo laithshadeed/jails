@@ -120,12 +120,18 @@ makes `jails add db security` refuse before either is installed.
 
 ### Still to do
 
-1. **Prove it on the four example applications** — regenerate
-   `examples/{payments-gateway,support-inbox,web-crawler,ledger-cli}` through
-   the flipped binary and confirm `jails check` is still green in all four.
-   The three Spring ones already pass the generated verification gate inside
-   the test suite; this is the same thing against a checked-in tree.
-2. **Hosted CI**, which has never been set up.
+**Hosted CI**, which has never been set up. That is the only item left from the
+cutover.
+
+The four example applications are proved by the suite rather than by hand:
+`SPRING_APP_MANIFESTS` and `ledger_cli_manifest_builds_without_spring`
+`include_str!` the four `examples/*/.jails/app.toml` files directly, generate
+from them, and run the full Maven gate — so a manifest that stopped building
+fails `cargo test`. Verified once by hand as well: a fresh `jails new-cli
+--app examples/ledger-cli/.jails/app.toml` gives `doctor` "15 checks, all
+clear" (it was 15 plus 77 adoptable-row warnings) and `jails check` BUILD
+SUCCESS. The six skipped tests there are `g cases` stubs, `@Disabled` on
+purpose because they name what the reader has to write.
 
 ---
 
