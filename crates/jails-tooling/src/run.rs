@@ -234,9 +234,12 @@ pub fn test(filter: Option<&str>, options: TestOptions, debug: bool) -> Result<(
     // so it is resolved first and then follows exactly the same path.
     let from_reports;
     let filter = if options.failed {
-        let failures = crate::surefire::failed_selectors(&root);
+        let failures = crate::reports::failed_selectors(&root);
         if failures.is_empty() {
-            println!("no failures recorded in target/surefire-reports or target/failsafe-reports.");
+            println!(
+                "no failures recorded. Reports are read from target/surefire-reports, \
+                 target/failsafe-reports and build/test-results/."
+            );
             println!("Nothing to rerun -- run `jails test` first, or drop --failed.");
             return Ok(());
         }
@@ -328,51 +331,18 @@ pub fn test(filter: Option<&str>, options: TestOptions, debug: bool) -> Result<(
             .stderr(std::process::Stdio::piped())
             .output()
             .map_err(|error| format!("failed to run Maven: {error}"))?;
-        return report_json(&root, captured.status.success());
+        return crate::reports::report_json(&root, captured.status.success());
     }
 
     let outcome = run_inherited(cmd, debug);
 
     if let Some(count) = options.slowest {
-        report_slowest(&root, count);
+        crate::reports::report_slowest(&root, count);
     }
     if outcome.is_err() {
         report_rerun_line(&root, rerun_hint.as_deref());
     }
     outcome
-}
-
-/// The finished run, as data.
-///
-/// `passed` is the build's own verdict rather than "no failed cases": a build
-/// can fail before a single test runs -- a compile error, a missing dependency
-/// -- and an empty failure list would then read as success. The `cases` array
-/// says what actually executed, which is the other half a consumer needs to
-/// tell "all green" from "nothing ran".
-fn report_json(root: &Path, passed: bool) -> Result<()> {
-    let cases = crate::surefire::cases(root);
-    let rows: Vec<String> = cases
-        .iter()
-        .map(|case| {
-            format!(
-                "    {{\"class\": {}, \"method\": {}, \"seconds\": {:.3}, \"failed\": {}, \
-                 \"selector\": {}}}",
-                crate::json::string(&case.class),
-                crate::json::string(&case.method),
-                case.seconds,
-                case.failed,
-                crate::json::string(&case.selector())
-            )
-        })
-        .collect();
-    let failed = cases.iter().filter(|case| case.failed).count();
-    println!(
-        "{{\n  \"schema_version\": 1,\n  \"passed\": {passed},\n  \"total\": {},\n  \
-         \"failed\": {failed},\n  \"cases\": [\n{}\n  ]\n}}",
-        cases.len(),
-        rows.join(",\n")
-    );
-    if passed { Ok(()) } else { Err(String::new()) }
 }
 
 /// After a failing run, the command that reruns just what broke.
@@ -382,7 +352,7 @@ fn report_json(root: &Path, passed: bool) -> Result<()> {
 /// `--only-failures` to Rails; that is RSpec's, and **the copy-pasteable
 /// line is the part worth having** (plan.md §7).
 fn report_rerun_line(root: &Path, already_filtered: Option<&str>) {
-    let failures = crate::surefire::failed_selectors(root);
+    let failures = crate::reports::failed_selectors(root);
     println!();
     match failures.len() {
         0 => {
@@ -403,25 +373,6 @@ fn report_rerun_line(root: &Path, already_filtered: Option<&str>) {
                 println!("         ... and {} more", n - 5);
             }
         }
-    }
-}
-
-/// The slowest tests of the run that just finished.
-///
-/// Read from the reports rather than timed here: Maven already measured
-/// each one, and a wall-clock number jails invented would include its own
-/// startup.
-fn report_slowest(root: &Path, count: usize) {
-    let slowest = crate::surefire::slowest(root, count);
-    if slowest.is_empty() {
-        println!();
-        println!("jails: no test reports to read -- nothing ran, or the build failed first.");
-        return;
-    }
-    println!();
-    println!("slowest {} test(s):", slowest.len());
-    for case in slowest {
-        println!("  {:>8.2}s  {}", case.seconds, case.selector());
     }
 }
 

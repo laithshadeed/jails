@@ -148,7 +148,12 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // *before* there is a project to resolve -- it is unpacking
                 // the zip that will become one -- so a root is the only thing
                 // it can be given.
-                ceiling: 105,
+                //
+                // 105 -> 106 for `reports::failed_patterns`, which joins the
+                // three readers already here. `reports.rs` reads a directory
+                // of XML and knows nothing about a Java project; a `Project`
+                // would carry no fact it reads.
+                ceiling: 106,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;
@@ -849,7 +854,7 @@ const LAYERS: &[(&str, usize)] = &[
     ("migrate", 7),
     ("console", 7),
     ("bench", 7),
-    ("surefire", 7),
+    ("reports", 7),
     ("lint", 7),
     ("rename", 7),
     ("source", 7),

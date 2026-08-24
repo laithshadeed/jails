@@ -21,9 +21,9 @@ pub mod launcher;
 pub mod lint;
 pub mod migrate;
 pub mod rename;
+pub mod reports;
 pub mod run;
 pub mod source;
-pub mod surefire;
 pub mod testd;
 pub mod why;
 

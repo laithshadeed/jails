@@ -11,6 +11,27 @@ asked, what jails did instead, and what had to be written by hand.
 `pending.md` is where an idea goes once it has been designed. This file is the
 raw evidence: what a real project needed and did not get.
 
+## All eight are closed
+
+Kept as written, because the evidence is the point and a list of solved
+problems edited into silence teaches nothing. What shipped, per entry:
+
+| # | what was missing | what closed it |
+|---|---|---|
+| 1 | `new` cannot choose the group or package | `--group` / `--package` on `new` and `new-cli` |
+| 2 | `g controller` emits one shape | `--method`, `--returns` (`--yields`), `--on` |
+| 3a | no H2 capability | `jails add h2` |
+| 3b | no way to add an arbitrary dependency | `jails add dependency <g>:<a> [--version] [--scope]` |
+| 4 | `add cors` generates CORS that does not work | the `CorsFilter` registration, and a preflight test through the dispatcher |
+| 5 | nothing writes a property outside a capability | `jails set` / `jails unset` |
+| 6 | no non-Flyway schema, and its silent failure | a `doctor` check for `spring.sql.init.mode` with no schema file; H2 dialect in `sql.rs` |
+| 7 | no test-only datasource | `jails set --tests`, writing the additive `config/` overlay |
+| 8 | smaller friction | `HELP.md` and `info.app.description` gone; 8a did not reproduce and is recorded as such |
+
+Entry 4 was the one to act on first and was: the defect is fixed, and the
+replacement test was checked by removing the fix again -- two failures where
+the old test passed.
+
 ---
 
 ## 1. `jails new` cannot choose the group or the package

@@ -36,43 +36,72 @@ pub(super) fn tasks(root: &Path, names: &[&str], debug: bool) -> Result<()> {
 
 /// `jails test` on a Gradle build.
 ///
-/// The plain case only, and the options it cannot honour refuse by name rather
-/// than being ignored. `--fast`, `--affected` and `--failed` are all built on
-/// reading Maven's own output -- the Surefire report directory, a classpath
-/// resolved by `dependency:build-classpath` -- and silently downgrading to a
-/// full run would make the flag look like it worked while doing something
-/// else. That is the fast-path rule from `launcher.rs` applied one level up:
-/// a fast path falls back *loudly*.
+/// The report-reading options work here now, because the report is the same
+/// document: Gradle's `Test` task writes the JUnit XML schema Surefire writes,
+/// under `build/test-results/<task>/` instead of `target/*-reports/`.
+/// `crate::reports` reads both.
+///
+/// `--fast` and `--affected` still refuse, and by name rather than by being
+/// ignored. Those two need a *resolved classpath*, which jails gets from
+/// `dependency:build-classpath`; Gradle has no equivalent without adding a
+/// task to a file the reader owns, and doing that for a convenience is a
+/// different bargain from splicing a dependency they asked for. A flag that
+/// silently ran the whole suite instead would look like it worked -- the
+/// fast-path rule from `launcher.rs`, one level up: a fast path falls back
+/// *loudly*.
 pub(super) fn test(
     root: &Path,
     filter: Option<&str>,
     options: TestOptions,
     debug: bool,
 ) -> Result<()> {
-    for (asked, flag) in [
-        (options.fast, "--fast"),
-        (options.failed, "--failed"),
-        (options.json, "--json"),
-        (options.slowest.is_some(), "--slowest"),
-    ] {
-        if asked {
-            return Err(format!(
-                "`jails test {flag}` reads Maven's own output -- the Surefire reports, or a \
-                 classpath resolved through Maven -- and this project is built by \
-                 Gradle.\n       fix: `jails test` runs the suite here, and `--tests` \
-                 patterns work through the filter argument. The flag is refused rather than \
-                 ignored, because one that silently did something else is worse than one \
-                 that says it cannot."
-            ));
-        }
+    if options.fast {
+        return Err(
+            "`jails test --fast` needs a classpath resolved by Maven, and this project is \
+             built by Gradle.\n       fix: `jails test` runs the suite here, and `--failed`, \
+             `--json` and `--slowest` all work -- they read the JUnit XML Gradle already \
+             writes. The flag is refused rather than ignored, because one that silently did \
+             something else is worse than one that says it cannot."
+                .to_string(),
+        );
     }
+
+    // Resolved before anything runs, and then followed exactly like a filter
+    // the reader typed -- the same shape the Maven path uses.
+    let patterns: Vec<String> = if options.failed {
+        let failures = crate::reports::failed_patterns(root);
+        if failures.is_empty() {
+            println!("no failures recorded. Reports are read from build/test-results/.");
+            println!("Nothing to rerun -- run `jails test` first, or drop --failed.");
+            return Ok(());
+        }
+        println!(
+            "rerunning {} failed test(s) from the last run",
+            failures.len()
+        );
+        failures
+    } else {
+        filter.map(str::to_string).into_iter().collect()
+    };
+
     let mut selectors = vec!["test".to_string()];
-    if let Some(filter) = filter {
-        // Gradle's own selector. `--tests` takes a class or method pattern,
-        // which is the same shape the reader already types for Surefire.
+    for pattern in &patterns {
+        // Gradle's own selector, and repeatable: `--tests` takes a class or
+        // method pattern, which is the same shape the reader already types for
+        // Surefire.
         selectors.push("--tests".to_string());
-        selectors.push(filter.to_string());
+        selectors.push(pattern.to_string());
     }
     let borrowed: Vec<&str> = selectors.iter().map(String::as_str).collect();
-    tasks(root, &borrowed, debug)
+    let outcome = tasks(root, &borrowed, debug);
+
+    // After the run, over the reports it just wrote. `--json` owns the exit
+    // status because its whole point is being the machine-readable answer.
+    if let Some(count) = options.slowest {
+        crate::reports::report_slowest(root, count);
+    }
+    match options.json {
+        true => crate::reports::report_json(root, outcome.is_ok()),
+        false => outcome,
+    }
 }

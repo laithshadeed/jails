@@ -152,11 +152,11 @@ Still Maven-only, roughly in the order they hurt:
 |---|---|
 | ~~`*IT` tests never run~~ | **Done.** A Failsafe claim renders a marked `integrationTest` task wired into `check`, with `test` excluding `*IT` so they do not run twice. Verified against real Gradle: `> Task :integrationTest FAILED` on a deliberately failing `*IT` |
 | ~~`add coverage`~~ | **Done.** JaCoCo ships with Gradle, so there is no version to pin and no `plugins {}` block to reach into |
+| ~~`jails watch`~~ | **Done.** Gradle's own `--continuous bootRun` rather than the devtools loop: continuous mode re-runs a task when an input changes and needs nothing added to the build. The two compose where the project has devtools |
+| ~~`jails mvn`~~ | **Done.** `jails gradle` is the sibling, and each refuses the other's project by name |
+| ~~`test --failed`, `--json`, `--slowest`~~ | **Done.** They read the same document: Gradle's `Test` task writes Surefire's JUnit XML schema, under `build/test-results/<task>/`. `surefire.rs` is `reports.rs` and reads both. One difference, and it is the plausible-wrong-answer kind: Gradle writes `name="passes()"` with the parentheses, so an untrimmed selector matches nothing and `--failed` would run zero tests and report success. Verified against Gradle 9.6.1 |
 | `add format` / `jails fmt` | Spotless is spliced as a Maven plugin, and Gradle's `com.diffplug.spotless` needs a *version* and an entry in the `plugins {}` block -- the one feature that cannot be a self-contained appended block. `add format` **refuses** on Gradle rather than recording itself installed having written nothing |
-| `jails watch` | `spring-boot:run` plus devtools; Gradle is `bootRun` with `--continuous` |
-| `jails mvn` | The escape hatch is Maven by definition. Gradle needs a `jails gradle` sibling rather than a branch |
 | `testd`, `test --fast`, `test --affected`, `jails console` | All need a resolved classpath, which jails gets from `dependency:build-classpath`. Gradle has no equivalent without adding a task to the build -- and adding one to a file the reader owns, for a convenience, is a different bargain from splicing a dependency they asked for |
-| `test --failed`, `--json`, `--slowest` | Read Surefire's report directory. Gradle writes its own XML elsewhere |
 
 `Change.plugins` is still `(artifact_id, xml_block)` -- a Maven plugin with
 Maven's syntax baked in -- and `ResourceKey::MavenPlugin` still keys the claim

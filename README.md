@@ -1076,24 +1076,39 @@ reimplements none of its project-generation logic.
 
 ## A codebase jails did not create
 
-Most of jails never touches Maven — `routes`, `beans`, `stats`, `notes`,
-`why`, `explain`, `rename`, `doctor` and most of `generate` read source and
-write source. They used to be refused anyway, because the door looked only for
-`pom.xml`. It now looks for any build marker it recognises (`pom.xml`,
-`build.gradle`, `build.gradle.kts`, `settings.gradle`, `build.xml`,
-`BUILD.bazel`), nearest wins, and the commands that genuinely need Maven —
-`test`, `build`, `clean`, `check`, `fmt`, `mvn`, `run`, `watch`, `console`,
-`add` — refuse with a message naming what still works.
+Most of jails never touches a build tool — `routes`, `beans`, `stats`,
+`notes`, `why`, `explain`, `rename`, `doctor` and most of `generate` read
+source and write source. They used to be refused anyway, because the door
+looked only for `pom.xml`. It now looks for any build marker it recognises
+(`pom.xml`, `build.gradle`, `build.gradle.kts`, `settings.gradle`, `build.xml`,
+`BUILD.bazel`), nearest wins.
 
-**jails never reads, writes, parses or invokes `build.gradle`.** That is
-strictly less than Gradle support, and it is deliberate: recognising a filename
-is not understanding a build, and a tool that half-understands one reports a
-dependency the build does not have. The cost is stated where you meet it —
-generated code is shaped by what the pom says, so with no pom the repository
-adapter is plain JDBC rather than a Spring `JdbcClient` bean and no
-`package-info.java` is annotated. `generate` prints which shape it chose and
-names the dependencies you will have to add yourself; `doctor` leads with the
-real build tool rather than reporting on a pom that is not there.
+**A Groovy `build.gradle` is read and spliced, not merely recognised.**
+`add`, `generate`, `doctor`, `about`, `build`, `clean`, `check`, `test`, `run`
+and `watch` all work on one, and `jails gradle` is the escape hatch `jails mvn`
+is for Maven. `jails test --failed`, `--json` and `--slowest` work too: Gradle
+writes the same JUnit XML Surefire does, in a different directory.
+`--fast`, `--affected`, `testd` and `console` refuse by name — they need a
+classpath resolved through Maven, and a flag that silently ran the whole suite
+instead would look like it worked.
+
+**Maven stays the default.** `jails new` creates a Maven project and goes on
+doing so; the Gradle work is about jails *operating on* a build somebody else
+wrote.
+
+Every reader of `build.gradle` has three answers, not two: yes, no, and *"this
+file says something I do not understand"* — and the third refuses rather than
+guessing. `build.gradle.kts` and a root holding only `settings.gradle` are
+still foreign on purpose: recognising a filename is not understanding a build,
+and a tool that half-understands one reports a dependency the build does not
+have.
+
+For a genuinely foreign build the cost is stated where you meet it — generated
+code is shaped by what the pom says, so with no pom the repository adapter is
+plain JDBC rather than a Spring `JdbcClient` bean and no `package-info.java` is
+annotated. `generate` prints which shape it chose and names the dependencies
+you will have to add yourself; `doctor` leads with the real build tool rather
+than reporting on a pom that is not there.
 
 ### `jails adopt`
 
@@ -1134,7 +1149,11 @@ override in effect for exactly that reason.
 
 Deferred out of v1 on purpose — this is meant to stay a small tool:
 
-- Gradle support — Maven only for now.
+- **Kotlin-DSL Gradle** (`build.gradle.kts`). The Groovy DSL is read and
+  spliced; the Kotlin one is a different grammar and stays foreign rather than
+  half-understood. `add format` also still refuses on Gradle, because Spotless
+  there needs a version inside the `plugins {}` block — the one thing that
+  cannot be a self-contained appended block.
 - A runtime bean/route view (booting the context and asking Spring itself).
   `routes` and `beans` read source instead, which is instant and works on a
   project that does not start — at the cost of anything decided at runtime.
