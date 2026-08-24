@@ -274,6 +274,15 @@ fn contextual_read_error(path: &Path, error: io::Error) -> String {
 /// An unknown key is an error rather than silence, for the reason those two
 /// give: a ledger that quietly ignored a key it did not understand would report
 /// a project as unmodified when it is not, and `destroy` acts on that report.
+/// Parse schema-1 text, for the one caller that has to try both formats.
+///
+/// Public because `.jails/ledger.toml` is one path with two schemas, and the
+/// V2 store reader has to be able to ask "is this the old one?" without
+/// guessing from the filename.
+pub fn parse_source(source: &str) -> std::result::Result<Ledger, String> {
+    parse(source)
+}
+
 fn parse(source: &str) -> std::result::Result<Ledger, String> {
     let mut ledger = Ledger::default();
     let mut applied: Option<Applied> = None;

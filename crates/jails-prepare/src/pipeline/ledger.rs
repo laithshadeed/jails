@@ -158,10 +158,26 @@ pub(super) fn record_store(
     }
     store.one_shots.sort_by(|a, b| a.id.cmp(&b.id));
 
+    // Added to, never replaced -- the same rule as `resources` above, and for
+    // the same reason. A legacy row is the *only* record that a schema-1 entry
+    // existed, and it survives until `jails adopt --legacy-key` resolves it
+    // explicitly. Assigning the intent's list here would have every ordinary
+    // route erase them, because a route that is not a migration has nothing to
+    // say about legacy rows and passes an empty vector.
+    //
+    // That is not hypothetical: it is what the first schema-1 translation
+    // found. `jails generate` in a migrated project dropped every row the
+    // migration had preserved, and the only record of what the old ledger held
+    // was gone.
+    //
     // Sorted by the encoder's own rule rather than by a second one here: the
     // legacy key is private to the envelope, and a copy of the ordering would
     // be a second authority on what canonical means.
-    store.legacy = intent.legacy_after.clone();
+    for entry in &intent.legacy_after {
+        if !store.legacy.contains(entry) {
+            store.legacy.push(entry.clone());
+        }
+    }
     Ok(store)
 }
 

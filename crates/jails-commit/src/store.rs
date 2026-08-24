@@ -59,7 +59,22 @@ impl Store {
             }
             Err(error) => return Err(format!("failed to read {}: {error}", path.display())),
         };
-        let ledger = jails_protocol::envelope::LedgerV2::parse_file(&source)?;
+        // Schema 1 is read, not refused. `.jails/ledger.toml` is one path
+        // with two formats -- V1 wrote its own and V2 writes this one -- so a
+        // store reader that only knows schema 2 refuses every project jails
+        // has ever touched. The translation is *in memory*: what reaches disk
+        // is decided by the first V2 commit, which takes the schema-1 bytes as
+        // its guarded before-image.
+        let ledger = match jails_protocol::envelope::LedgerV2::parse_file(&source) {
+            Ok(ledger) => ledger,
+            Err(current) => match jails_project::ledger::parse_source(&source) {
+                Ok(schema1) => jails_project::compat::translate(&schema1),
+                // Neither format. The schema-2 message is the one to show:
+                // this binary writes schema 2, and a store it cannot read is
+                // more likely a newer one than an older one.
+                Err(_) => return Err(current),
+            },
+        };
         let metadata = std::fs::metadata(&path)
             .map_err(|error| format!("failed to stat {}: {error}", path.display()))?;
         Ok(jails_prepare::pipeline::ObservedStore {
