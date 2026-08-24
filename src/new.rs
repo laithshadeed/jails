@@ -328,9 +328,32 @@ fn offline_dependencies(deps: &str) -> Result<String> {
 /// commit is of a project that is already in the shape jails maintains.
 fn finish_spring_project(root: &Path, requested_deps: &str) -> Result<()> {
     verify_requested_deps(root, requested_deps);
+    drop_initializr_help(root);
     add_jspecify(root)?;
     write_default_properties(root)?;
     write_devtools_defaults(root)
+}
+
+/// Remove the `HELP.md` start.spring.io ships.
+///
+/// Its own `.gitignore` lists `HELP.md`, so every new project arrives with a
+/// file that looks tracked and is not -- it shows up in an editor, is never
+/// committed, and describes a project that has since been reshaped by `jails
+/// new`.
+///
+/// Through `apply::remove` rather than `fs::remove_file`, because the write
+/// layer is the only thing that mutates a project and a deletion is a
+/// mutation. The first version of this reached for `std::fs` and reopened a
+/// gate `tests/architecture.rs` holds closed at zero.
+///
+/// Best-effort: a project without one is the ordinary case for `--offline`,
+/// and failing to delete a file nobody asked for is not a reason to fail
+/// creating the project.
+fn drop_initializr_help(root: &Path) {
+    let help = root.join("HELP.md");
+    if help.is_file() {
+        let _ = crate::apply::remove(&help);
+    }
 }
 
 /// Make the restart loop as fast as devtools can make it.

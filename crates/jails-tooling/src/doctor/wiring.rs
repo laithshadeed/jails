@@ -753,6 +753,57 @@ pub(super) fn hot_reload_checks(project: &Project) -> Vec<Check> {
     checks
 }
 
+/// `spring.sql.init.mode` is set and there is a schema for it to run.
+///
+/// The failure this catches is silent by design of Spring's own defaults: with
+/// `spring.sql.init.mode=always` and no readable `schema.sql`, the context
+/// starts perfectly. The tables are simply absent, and the first query to need
+/// one fails in front of a user.
+///
+/// Deliberately **not** a SQL parser. jails does not read SQL and should not
+/// start: what it can say exactly is whether the mechanism was switched on and
+/// left with nothing to run, which is the whole of the reported failure.
+pub(super) fn sql_init_checks(project: &Project) -> Vec<Check> {
+    let root: &Path = project.root();
+    let properties =
+        std::fs::read_to_string(root.join("src/main/resources/application.properties"))
+            .unwrap_or_default();
+    let Some(mode) = property_value(&properties, "spring.sql.init.mode") else {
+        return Vec::new();
+    };
+    if mode == "never" {
+        return Vec::new();
+    }
+    // Spring reads `schema.sql` and `data.sql` from the classpath root, and
+    // either alone is enough to make the setting mean something.
+    let present: Vec<&str> = ["schema.sql", "data.sql"]
+        .into_iter()
+        .filter(|name| root.join("src/main/resources").join(name).is_file())
+        .collect();
+    if present.is_empty() {
+        return vec![
+            Check::new(
+                Status::Fail,
+                "sql init",
+                format!(
+                    "spring.sql.init.mode={mode}, and there is no schema.sql or data.sql to \
+                     run. The context still starts -- the tables are simply absent, and the \
+                     first query to need one fails in front of a user"
+                ),
+            )
+            .fix("add src/main/resources/schema.sql, or set spring.sql.init.mode=never"),
+        ];
+    }
+    vec![Check::new(
+        Status::Ok,
+        "sql init",
+        format!(
+            "spring.sql.init.mode={mode}, running {}",
+            present.join(" and ")
+        ),
+    )]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

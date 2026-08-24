@@ -143,7 +143,12 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // 103 -> 104 for `ProjectContext::gradle`, which *constructs*
                 // the context from a root. There is no resolved project to
                 // read it off: this is the thing being resolved.
-                ceiling: 104,
+                //
+                // 104 -> 105 for `new::drop_initializr_help`. `new` runs
+                // *before* there is a project to resolve -- it is unpacking
+                // the zip that will become one -- so a root is the only thing
+                // it can be given.
+                ceiling: 105,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;
@@ -444,7 +449,12 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // makes its `fix:` line something a Gradle reader can carry
                 // out. Raised once, with the reason, rather than left to be
                 // discovered as a contradiction.
-                ceiling: 1443,
+                //
+                // 1443 -> 1479 for `sql_init_checks`. `spring.sql.init.mode`
+                // with no `schema.sql` starts perfectly and leaves the tables
+                // absent, so the first query to need one fails in front of a
+                // user -- a silent failure `doctor` exists to make loud.
+                ceiling: 1479,
                 // Withdrawn, not reached. abstract.md §8.0.1 audits all ten
                 // checks: none is a re-encoded dependency fact, so the 700
                 // measured a saving that is not there. Ratchet against growth.
@@ -493,7 +503,10 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // their tests and the in-memory adapter. One secret nothing
                 // else here shares; `scope_controller_parts` stayed because
                 // `g query` reads it too.
-                ceiling: 479,
+                // 479 -> 478: `add actuator` stopped writing
+                // `info.app.description=@project.description@`, a generated
+                // line whose value is always the empty string.
+                ceiling: 478,
                 target: 2500,
                 why: "Logical cohesion: one file for everything sharing the `require_spring` \
                       precondition. abstract.md §6.2 says turning that precondition into data \

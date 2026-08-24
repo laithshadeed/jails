@@ -389,7 +389,11 @@ pub fn actuator_slice(slice: &Slice) -> Change {
             "management.endpoint.health.show-details=when-authorized".to_string(),
             "info.app.name=@project.name@".to_string(),
             "info.app.version=@project.version@".to_string(),
-            "info.app.description=@project.description@".to_string(),
+            // `@project.description@` is deliberately absent. Initializr
+            // leaves `<description/>` empty, so the token resolves to an empty
+            // string and the endpoint reports a key that says nothing. A
+            // generated line whose value is always blank is worse than no
+            // line: it looks configured.
         ],
         ..Change::default()
     }

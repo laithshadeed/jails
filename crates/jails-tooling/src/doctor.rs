@@ -197,6 +197,7 @@ fn run_checks(project: &Project) -> Vec<Check> {
     checks.push(jackson_check(project));
     checks.extend(management_checks(project));
     checks.extend(cors_checks(project));
+    checks.extend(sql_init_checks(project));
     checks.extend(virtual_thread_checks(root));
     checks.extend(hot_reload_checks(project));
     checks.extend(port_checks(root));
