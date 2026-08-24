@@ -104,15 +104,19 @@ pub fn read(root: &Path) -> MachineState {
     let source = match std::fs::read_to_string(machine.join("ledger.toml")) {
         Ok(source) => source,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return match machine.exists() {
-                // Machine state without a store: a project mid-migration, or
-                // one whose ledger was removed by hand. Either way the legacy
-                // sources are what there is to say.
-                true => MachineState::Legacy {
+            // No store. `.jails` existing is not evidence of one: a project
+            // that has only ever been *prepared* has an objects directory and
+            // a lock and nothing to plan against, and reporting that as
+            // something to migrate would make every fresh project look like a
+            // pre-schema-2 one. Only a legacy source is evidence, and then the
+            // ledger really is the missing half.
+            let sources = legacy_sources(&machine);
+            return match sources.is_empty() {
+                true => MachineState::Absent,
+                false => MachineState::Legacy {
                     translated: translate(&Ledger::empty()),
-                    sources: legacy_sources(&machine),
+                    sources,
                 },
-                false => MachineState::Absent,
             };
         }
         // Fail closed. An unreadable store is not an empty one, and the
@@ -431,6 +435,30 @@ mod tests {
         match read(&dir) {
             MachineState::Current(read_back) => assert_eq!(read_back.generation, 1),
             other => panic!("expected the current store, got {}", other.describe()),
+        }
+    }
+
+    /// A machine root with no store in it is not something to migrate.
+    ///
+    /// `.jails` exists as soon as anything has been *prepared* -- there is an
+    /// objects directory and a lock and nothing to plan against -- so treating
+    /// its existence as evidence of a store made every fresh project look
+    /// pre-schema-2. Only a legacy source is evidence.
+    #[test]
+    fn a_machine_root_without_a_store_is_absent_not_a_migration() {
+        let dir = jails_support::scratch::ScratchDir::in_temp("jails-compat-empty-machine")
+            .unwrap()
+            .keep();
+        let machine = dir.join(".jails");
+        crate::apply::ensure_directory(machine.join("objects")).unwrap();
+        assert!(matches!(read(&dir), MachineState::Absent));
+
+        // One legacy source *is* evidence, and then the missing ledger is the
+        // half that is gone rather than a project with no history.
+        crate::apply::put(machine.join("version"), "0.0.1\n").unwrap();
+        match read(&dir) {
+            MachineState::Legacy { sources, .. } => assert_eq!(sources.len(), 1, "{sources:?}"),
+            other => panic!("expected a migration, got {}", other.describe()),
         }
     }
 

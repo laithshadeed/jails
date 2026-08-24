@@ -81,8 +81,20 @@ impl Store {
             }
             _ => None,
         };
-        let source = std::fs::read(&path)
-            .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+        // Legacy sources with no store beside them. There is nothing to plan
+        // against, but there is still something to retire, and saying the
+        // store is absent while carrying the sources is the truthful pair:
+        // `ledger_before` is an absence the first commit guards like any other.
+        let source = match std::fs::read(&path) {
+            Ok(source) => source,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(jails_prepare::pipeline::ObservedStore {
+                    legacy,
+                    ..Default::default()
+                });
+            }
+            Err(error) => return Err(format!("failed to read {}: {error}", path.display())),
+        };
         let metadata = std::fs::metadata(&path)
             .map_err(|error| format!("failed to stat {}: {error}", path.display()))?;
         Ok(jails_prepare::pipeline::ObservedStore {

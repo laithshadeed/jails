@@ -349,13 +349,17 @@ fn apply(
 /// it is generation 0 by construction and the envelope's own validation
 /// refuses to write a generation that has never been committed.
 fn translated_image(observed: &ObservedStore) -> Result<jails_protocol::identity::ObjectId> {
-    let ledger = observed
+    // No store beside the sources is a legitimate shape: legacy files with no
+    // schema-1 ledger translate to nothing, and nothing is an answer a retry
+    // can reproduce.
+    let rows = observed
         .ledger
         .as_ref()
-        .ok_or_else(|| "a migration was observed without the store it translated".to_string())?;
+        .map(|ledger| ledger.legacy.as_slice())
+        .unwrap_or_default();
     let mut encoder = jails_support::codec::Encoder::new();
-    encoder.count(ledger.legacy.len())?;
-    for row in &ledger.legacy {
+    encoder.count(rows.len())?;
+    for row in rows {
         row.encode(&mut encoder)?;
     }
     Ok(jails_protocol::identity::ObjectId::from_bytes(
