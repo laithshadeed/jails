@@ -539,6 +539,11 @@ enum Command {
         #[arg(last = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Forward arguments to this project's Gradle wrapper
+    Gradle {
+        #[arg(last = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Find, compile and run the project's main class
     Run {
         /// Skip compiling/building -- run whatever's already in target/
@@ -812,6 +817,7 @@ fn main() -> std::process::ExitCode {
         Command::Fmt => invoke::mutate(invocation, false, jails_engine::route::format),
         Command::Check => run::check(debug),
         Command::Mvn { args } => run::mvn(&args, debug),
+        Command::Gradle { args } => run::gradle(&args, debug),
         Command::Run {
             no_build,
             watch,

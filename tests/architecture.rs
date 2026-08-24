@@ -536,7 +536,15 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // `run/gradlew.rs`, split by secret -- so what is left is the
                 // three lines of dispatch that decide which of the two a
                 // command means.
-                ceiling: 646,
+                //
+                // 646 -> 643 when `watch` and `jails gradle` pushed `run.rs`
+                // to 661 and the answer was a split rather than a raise:
+                // `run/fingerprint.rs` holds "what changed on disk since last
+                // time", which is a different secret from "how do I invoke the
+                // build tool" -- nothing in it knows what Maven or Gradle is.
+                // `pom.rs` holds the record again, at the number it had before
+                // Gradle existed.
+                ceiling: 643,
                 target: 700,
                 why: "The row above can be satisfied by *moving* a monolith rather than \
                       decomposing one, so this asks the question the split is actually for: \
