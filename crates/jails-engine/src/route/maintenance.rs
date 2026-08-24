@@ -391,28 +391,22 @@ pub fn adopt_layout(project: &Project) -> Result<CommitResult> {
         );
     }
 
-    // Composed against the captured bytes, one splice after another, so the
-    // whole `[layout]` table is decided before anything is written. Every
-    // other byte of the file -- comments, `[project]`, ordering -- survives,
-    // which is the same rule `pom.rs` and `compose.rs` follow for the other
-    // files the reader owns.
-    let mut text = match snapshot.read(&config)? {
-        jails_protocol::snapshot::Captured::Present(file) => String::from_utf8(file.bytes.to_vec())
-            .map_err(|_| format!("{config} is not valid UTF-8"))?,
-        jails_protocol::snapshot::Captured::Absent => String::new(),
-    };
-    for (layer, directory) in &resolved.writes {
-        text = jails_project::config::with_layout(&text, layer, directory)?;
-    }
-
+    // One keyed edit per layer, not one rewrite of the file. `jails.toml` has
+    // more than one contributor -- `[project] capabilities` is a set of owned
+    // resources spliced by `add` -- and a whole-file body would be a claim to
+    // decide every byte of a file this change speaks for only one table of.
+    // The splices compose in the projection, in order, so the reader's
+    // comments and capability list survive untouched.
     let mut change = DesiredChange::maintenance(MaintenanceAttribution::AdoptLayout);
-    change.files.push(DesiredFile {
-        path: config,
-        body: DesiredBody::Bytes(text.into_bytes().into()),
-        mode: None,
-        resource: None,
-        renderer: None,
-    });
+    for (layer, directory) in &resolved.writes {
+        let named = jails_spec::spec::layout::Layer::by_package(layer).ok_or_else(|| {
+            format!("`{layer}` is not a layer jails knows, which the synonym table should not                      have been able to produce")
+        })?;
+        change.edits.push(SemanticEdit::HumanConfigLayout {
+            layer: named,
+            directory: (*directory).to_string(),
+        });
+    }
 
     let observed = observed(project)?;
     let set = DesiredChangeSet {

@@ -2065,6 +2065,17 @@ fn adopting_a_foreign_layout_records_every_layer_in_one_write() {
         before + 1,
         "three adopted layers took more than one generation"
     );
+
+    // `jails.toml` has more than one contributor: `[project] capabilities` is
+    // a set of owned resources `add` splices. A layout edit is keyed rather
+    // than a whole-file body precisely so the two compose, and a capability
+    // installed after adoption must not take the `[layout]` table with it --
+    // nor the reverse.
+    jails_engine::route::install(&Project::load(&root).unwrap(), Capability::Json).unwrap();
+    let both = std::fs::read_to_string(root.join("jails.toml")).unwrap();
+    assert!(both.contains("web = \"controllers\""), "{both}");
+    assert!(both.contains("json"), "{both}");
+    assert!(both.contains("# hand-written, do not lose me"), "{both}");
 }
 
 /// Two candidates for one layer writes neither, and says so.
