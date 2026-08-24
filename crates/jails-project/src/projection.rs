@@ -382,13 +382,14 @@ impl ProjectedProject {
                 self.write_text(path, format!("{without}{}", marked.render(body)));
                 Ok(Some(path.clone()))
             }
-            SemanticEdit::HumanConfigCapability { key, .. } => {
+            SemanticEdit::HumanConfigCapability { key, spec } => {
                 let ResourceKey::HumanConfigCapability(id) = key else {
                     return Err("a capability edit filed under another key".to_string());
                 };
                 let path = human_config_path()?;
                 let text = self.text(&path)?.unwrap_or_default();
-                if let Some(updated) = crate::config::with_capability(&text, id.kind.label())? {
+                let declaration = crate::capability::Declaration::of(id, spec);
+                if let Some(updated) = crate::config::with_capability(&text, &declaration)? {
                     self.write_text(&path, updated);
                 }
                 Ok(Some(path))
@@ -535,7 +536,16 @@ impl ProjectedProject {
                 let Some(text) = self.text(&path)? else {
                     return Ok(None);
                 };
-                if let Some(without) = crate::config::without_capability(&text, id.kind.label())? {
+                // The spec is read back from the store rather than the key,
+                // because `--package ''` and no `--package` are two different
+                // declarations reaching the same identity -- and only the
+                // recorded spec says which line this row put in the file.
+                let spec = match self.recorded.get(key) {
+                    Some(ResourceValue::HumanConfigCapability(spec)) => spec.clone(),
+                    _ => jails_protocol::entity::CapabilitySpec { placement: None },
+                };
+                let declaration = crate::capability::Declaration::of(id, &spec);
+                if let Some(without) = crate::config::without_capability(&text, &declaration)? {
                     self.write_text(&path, without);
                 }
                 Ok(Some(path))

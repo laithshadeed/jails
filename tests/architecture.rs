@@ -725,6 +725,7 @@ const LAYERS: &[(&str, usize)] = &[
     // jails-project: the resolved project and everything jails records about it.
     ("pom", 4),
     ("maven", 4),
+    ("capability", 4),
     ("config", 4),
     ("junit", 4),
     ("synonyms", 4),

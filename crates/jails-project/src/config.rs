@@ -14,24 +14,34 @@
 //! somebody has to remember to update. A manifest that is merely *aspirational*
 //! would be worse than none, because `sync` acts on it.
 //!
+//! `[[capability]]` is the third table and the same half as the second: a
+//! capability the caller gave a `--name` or a `--package` cannot be written as
+//! one string, because `add csv --name Order` and `add csv --name Invoice` are
+//! two capabilities and `["csv", "csv"]` says nothing about which. plan.md
+//! §R1.1 fixes the shape; [`crate::capability::Declaration`] is the value, and
+//! which of the two shapes a declaration lands in is its own decision rather
+//! than the caller's.
+//!
 //! Still deliberately not a general config file -- no template overrides, no
-//! plugin hooks, no per-kind paths. Both tables are **closed sets**: the layout
-//! keys are exactly the constants in [`crate::spec::layout`], and the
+//! plugin hooks, no per-kind paths. All three tables are **closed sets**: the
+//! layout keys are exactly the constants in [`crate::spec::layout`], the
 //! capability names are derived from the `Capability` enum rather than
-//! restated. A name that is not one of them is a typo and is reported as such
-//! rather than ignored -- silently accepting `adapter = "persistence"`
+//! restated, and a `[[capability]]` table's keys are exactly `kind`, `name`
+//! and `package`. A name that is not one of them is a typo and is reported as
+//! such rather than ignored -- silently accepting `adapter = "persistence"`
 //! (singular) would put files in `adapters` forever while the file claims
-//! otherwise, and silently accepting `postgress` would leave a capability
-//! that looks declared and never syncs.
+//! otherwise, silently accepting `postgress` would leave a capability that
+//! looks declared and never syncs, and silently accepting `nmae = "Order"`
+//! would leave one that syncs under the wrong name.
 //!
 //! ## Why this is hand-parsed
 //!
 //! jails has two dependencies, both clap. The grammar needed here is one
 //! table of `key = "value"` pairs, which is about forty lines to read
 //! directly and does not justify pulling in a TOML parser plus its error
-//! types. The cost is that this understands a *subset* of TOML: `[layout]`
-//! and `[project]`, bare keys, double-quoted values, single-line string
-//! arrays, `#` comments. Anything else in the file is ignored, and anything
+//! types. The cost is that this understands a *subset* of TOML: `[layout]`,
+//! `[project]` and repeated `[[capability]]` tables, bare keys, double-quoted
+//! values, single-line string arrays, `#` comments. Anything else in the file is ignored, and anything
 //! malformed *inside* a table it knows is an error -- quietly skipping a line
 //! the user clearly meant is the failure mode this whole module exists to
 //! avoid.
@@ -44,6 +54,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
+use crate::capability::Declaration;
+use crate::spec::kind::Capability;
 use crate::spec::layout;
 
 /// The file, at the project root next to `pom.xml`.
@@ -109,6 +121,15 @@ const LAYOUT_TABLE: &str = "layout";
 const PROJECT_TABLE: &str = "project";
 /// The one key in it.
 const CAPABILITIES_KEY: &str = "capabilities";
+/// The repeated table a parameterised capability uses, per plan.md §R1.1.
+/// `[project] capabilities` keeps the conventional singleton and default
+/// instances; anything carrying a `--name` or a `--package` needs somewhere to
+/// put it, and a string array has nowhere.
+const CAPABILITY_TABLE: &str = "capability";
+/// Its closed key set. Unknown key is an error for the same reason an unknown
+/// layer is: a `nmae = "Order"` that parsed to nothing would leave a project
+/// whose manifest claims a capability jails never installed.
+const CAPABILITY_KEYS: [&str; 3] = ["kind", "name", "package"];
 
 /// A project's layout overrides: default layer name -> the name to use.
 ///
@@ -121,7 +142,20 @@ pub struct Config {
     /// Capability labels, in the order the file lists them. Validated against
     /// the real `Capability` set at parse time, so a typo is an error naming
     /// the real ones rather than a capability that silently never syncs.
+    ///
+    /// Derived from `declarations` at parse time rather than collected beside
+    /// it: two named instances of one capability are two declarations and one
+    /// label, and a second traversal is how those two counts come to disagree.
     capabilities: Vec<String>,
+    /// Every capability this file declares, with the parameters it declared
+    /// them with, in file order.
+    declarations: Vec<Declaration>,
+    /// Just the labels in `[project] capabilities`, which is the only list the
+    /// array splice may rewrite. Rendering the derived list back into the
+    /// array would copy every `[[capability]]` table into it as a *default*
+    /// instance -- a capability the reader never asked for, beside the one
+    /// they did.
+    array: Vec<String>,
 }
 
 impl Config {
@@ -176,22 +210,54 @@ impl Config {
         &self.capabilities
     }
 
+    /// Every capability this file declares, with its parameters, in file
+    /// order. The identity-bearing view; [`Self::capabilities`] is the label
+    /// view of the same list.
+    pub fn declarations(&self) -> &[Declaration] {
+        &self.declarations
+    }
+
     pub fn parse(text: &str) -> Result<Self, String> {
         let mut layout = HashMap::new();
-        let mut capabilities = Vec::new();
+        let mut array: Vec<String> = Vec::new();
+        let mut declarations: Vec<(Declaration, usize)> = Vec::new();
         let mut table = String::new();
+        let mut pending: Option<PendingCapability> = None;
 
         for (i, raw) in text.lines().enumerate() {
             let line = strip_comment(raw).trim();
             if line.is_empty() {
                 continue;
             }
+            let lineno = i + 1;
+
+            // `[[capability]]` before `[capability]`: stripping one bracket
+            // from each end of a repeated table header leaves `[capability]`,
+            // which would be read as an ordinary table and its keys silently
+            // ignored.
+            if let Some(name) = line.strip_prefix("[[").and_then(|l| l.strip_suffix("]]")) {
+                finish_capability(&mut pending, &mut declarations)?;
+                let name = name.trim();
+                if name != CAPABILITY_TABLE {
+                    return Err(format!(
+                        "line {lineno}: unknown repeated table `[[{name}]]`. The only one is \
+                         `[[{CAPABILITY_TABLE}]]`."
+                    ));
+                }
+                table = CAPABILITY_TABLE.to_string();
+                pending = Some(PendingCapability::at(lineno));
+                continue;
+            }
             if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+                finish_capability(&mut pending, &mut declarations)?;
                 table = name.trim().to_string();
                 continue;
             }
 
-            let lineno = i + 1;
+            if let Some(entry) = pending.as_mut() {
+                entry.key(line, lineno)?;
+                continue;
+            }
 
             if table == PROJECT_TABLE {
                 let (key, value) = line.split_once('=').ok_or_else(|| {
@@ -211,15 +277,11 @@ impl Config {
                              `{CAPABILITIES_KEY} = [\"db\", \"json\"]`"
                     )
                 })? {
-                    if !is_known_capability(&label) {
-                        return Err(format!(
-                            "line {lineno}: unknown capability `{label}`. Known: {}",
-                            known_capabilities().join(", ")
-                        ));
-                    }
-                    if !capabilities.contains(&label) {
-                        capabilities.push(label);
-                    }
+                    declarations.push((
+                        Declaration::plain(capability_named(&label, lineno)?),
+                        lineno,
+                    ));
+                    array.push(label);
                 }
                 continue;
             }
@@ -247,12 +309,128 @@ impl Config {
             }
             layout.insert(key.to_string(), value.to_string());
         }
+        finish_capability(&mut pending, &mut declarations)?;
+
+        let mut capabilities: Vec<String> = Vec::new();
+        for (at, (declaration, lineno)) in declarations.iter().enumerate() {
+            declaration
+                .validate()
+                .map_err(|e| format!("line {lineno}: {e}"))?;
+            // A repeat is an error, never a silent dedup. Both spellings reach
+            // the same identity, so one of them describes a capability the
+            // reader believes is declared twice -- and `sync` acts on this
+            // file. Compared by position, not by line: an array lists several
+            // on one line.
+            if let Some((_, first)) = declarations[..at]
+                .iter()
+                .find(|(other, _)| other == declaration)
+            {
+                return Err(format!(
+                    "line {lineno}: `{}` is already declared on line {first}.",
+                    declaration.display()
+                ));
+            }
+            let label = declaration.kind.label().to_string();
+            if !capabilities.contains(&label) {
+                capabilities.push(label);
+            }
+        }
 
         Ok(Self {
             layout,
             capabilities,
+            declarations: declarations.into_iter().map(|(d, _)| d).collect(),
+            array,
         })
     }
+}
+
+/// One `[[capability]]` table part-way through being read.
+///
+/// Kept separate from [`Declaration`] because a table is only a declaration
+/// once its `kind` has arrived, and the line number of the header is what a
+/// missing-`kind` error has to name.
+struct PendingCapability {
+    lineno: usize,
+    kind: Option<String>,
+    name: Option<String>,
+    package: Option<String>,
+}
+
+impl PendingCapability {
+    fn at(lineno: usize) -> Self {
+        Self {
+            lineno,
+            kind: None,
+            name: None,
+            package: None,
+        }
+    }
+
+    fn key(&mut self, line: &str, lineno: usize) -> Result<(), String> {
+        let (key, value) = line
+            .split_once('=')
+            .ok_or_else(|| format!("line {lineno}: expected `key = \"value\"`, found `{line}`"))?;
+        let key = key.trim();
+        let value = unquote(value.trim())
+            .ok_or_else(|| format!("line {lineno}: `{key}` must be a double-quoted string"))?;
+        let slot = match key {
+            "kind" => &mut self.kind,
+            "name" => &mut self.name,
+            "package" => &mut self.package,
+            _ => {
+                return Err(format!(
+                    "line {lineno}: unknown key `{key}` in [[{CAPABILITY_TABLE}]]. Known: {}",
+                    CAPABILITY_KEYS.join(", ")
+                ));
+            }
+        };
+        if slot.is_some() {
+            return Err(format!(
+                "line {lineno}: `{key}` is set twice in one [[{CAPABILITY_TABLE}]] table."
+            ));
+        }
+        *slot = Some(value.to_string());
+        Ok(())
+    }
+}
+
+/// Close the table that was open, if one was.
+fn finish_capability(
+    pending: &mut Option<PendingCapability>,
+    into: &mut Vec<(Declaration, usize)>,
+) -> Result<(), String> {
+    let Some(entry) = pending.take() else {
+        return Ok(());
+    };
+    let lineno = entry.lineno;
+    let kind = entry.kind.ok_or_else(|| {
+        format!("line {lineno}: [[{CAPABILITY_TABLE}]] has no `kind`. Every table needs one.")
+    })?;
+    into.push((
+        Declaration {
+            kind: capability_named(&kind, lineno)?,
+            name: entry.name,
+            package: entry.package,
+        },
+        lineno,
+    ));
+    Ok(())
+}
+
+/// Resolve a label to the capability it names, or say which ones exist.
+fn capability_named(label: &str, lineno: usize) -> Result<Capability, String> {
+    use clap::ValueEnum;
+    Capability::value_variants()
+        .iter()
+        .copied()
+        .find(|candidate| candidate.label() == label)
+        .ok_or_else(|| {
+            format!(
+                "line {lineno}: unknown capability `{label}`. Known: {}",
+                known_capabilities().join(", ")
+            )
+        })
 }
 
 /// Add a capability to `[project] capabilities`, creating `jails.toml` if the
@@ -317,7 +495,7 @@ pub fn edited_capabilities(
 ) -> Result<Option<String>, String> {
     let mut labels = Config::parse(text)
         .map_err(|e| format!("{FILE}: {e}"))?
-        .capabilities;
+        .array;
     if !change(&mut labels) {
         return Ok(None);
     }
@@ -328,24 +506,176 @@ pub fn edited_capabilities(
     }))
 }
 
-/// Add one capability label to this text, or `None` when it is already there.
-pub fn with_capability(text: &str, label: &str) -> Result<Option<String>, String> {
-    edited_capabilities(text, |labels| {
-        if labels.iter().any(|l| l == label) {
-            return false;
-        }
-        labels.push(label.to_string());
-        true
-    })
+/// Declare one capability in this text, or `None` when it already is.
+///
+/// Which of the file's two shapes it lands in is the declaration's to decide,
+/// not the caller's: bare goes in `[project] capabilities`, parameterised gets
+/// a `[[capability]]` table. That is why this takes a [`Declaration`] rather
+/// than a label -- a label cannot say which.
+pub fn with_capability(text: &str, declaration: &Declaration) -> Result<Option<String>, String> {
+    declaration.validate().map_err(|e| format!("{FILE}: {e}"))?;
+    let config = Config::parse(text).map_err(|e| format!("{FILE}: {e}"))?;
+    if config.declarations.contains(declaration) {
+        return Ok(None);
+    }
+    if declaration.is_plain() {
+        let label = declaration.kind.label();
+        return edited_capabilities(text, |labels| {
+            if labels.iter().any(|l| l == label) {
+                return false;
+            }
+            labels.push(label.to_string());
+            true
+        });
+    }
+    Ok(Some(insert_capability_table(text, declaration)?))
 }
 
-/// Take one capability label back out.
-pub fn without_capability(text: &str, label: &str) -> Result<Option<String>, String> {
-    edited_capabilities(text, |labels| {
-        let before = labels.len();
-        labels.retain(|l| l != label);
-        labels.len() != before
-    })
+/// Take one capability declaration back out.
+///
+/// The exact inverse: a bare one leaves the array, a parameterised one takes
+/// its whole table with it. A declaration the file does not make is `None`
+/// rather than an error, because `remove` is allowed to be run twice.
+pub fn without_capability(text: &str, declaration: &Declaration) -> Result<Option<String>, String> {
+    let config = Config::parse(text).map_err(|e| format!("{FILE}: {e}"))?;
+    if !config.declarations.contains(declaration) {
+        return Ok(None);
+    }
+    if declaration.is_plain() {
+        let label = declaration.kind.label();
+        if config.array.iter().any(|l| l == label) {
+            return edited_capabilities(text, |labels| {
+                let before = labels.len();
+                labels.retain(|l| l != label);
+                labels.len() != before
+            });
+        }
+    }
+    remove_capability_table(text, declaration)
+}
+
+/// Every `[[capability]]` table in the text, as `(first line, one past last,
+/// what it declares)`.
+///
+/// The end excludes trailing blank lines, so removing a block does not take
+/// the separator before the next table with it.
+fn capability_blocks(text: &str) -> Result<Vec<(usize, usize, Declaration)>, String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut blocks = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let header = strip_comment(lines[i]).trim();
+        if header != format!("[[{CAPABILITY_TABLE}]]") {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        let mut entry = PendingCapability::at(start + 1);
+        let mut end = i + 1;
+        while end < lines.len() {
+            let line = strip_comment(lines[end]).trim();
+            if line.starts_with('[') {
+                break;
+            }
+            if !line.is_empty() {
+                entry.key(line, end + 1)?;
+            }
+            end += 1;
+        }
+        i = end;
+        while end > start + 1 && strip_comment(lines[end - 1]).trim().is_empty() {
+            end -= 1;
+        }
+        let mut collected = Vec::new();
+        finish_capability(&mut Some(entry), &mut collected)?;
+        if let Some((declaration, _)) = collected.pop() {
+            blocks.push((start, end, declaration));
+        }
+    }
+    Ok(blocks)
+}
+
+/// One table, in the shape jails writes it.
+fn render_capability_table(declaration: &Declaration) -> String {
+    let mut out = format!(
+        "[[{CAPABILITY_TABLE}]]\nkind = \"{}\"\n",
+        declaration.kind.label()
+    );
+    if let Some(name) = &declaration.name {
+        out.push_str(&format!("name = \"{name}\"\n"));
+    }
+    if let Some(package) = &declaration.package {
+        out.push_str(&format!("package = \"{package}\"\n"));
+    }
+    out
+}
+
+/// Splice a new table in, ordered by canonical identity among the tables
+/// already there.
+///
+/// Ordering the *insert* rather than rewriting the file is the same rule the
+/// rest of this module follows: two projects that declared the same set end up
+/// with the same file, and a table somebody wrote by hand keeps its formatting
+/// and its place.
+fn insert_capability_table(text: &str, declaration: &Declaration) -> Result<String, String> {
+    let blocks = capability_blocks(text)?;
+    let rendered = render_capability_table(declaration);
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    let at = blocks
+        .iter()
+        .find(|(_, _, other)| other.sort_key() > declaration.sort_key())
+        .map(|(start, _, _)| *start)
+        .or_else(|| blocks.last().map(|(_, end, _)| *end));
+    let block: Vec<String> = rendered.lines().map(str::to_string).collect();
+    match at {
+        Some(at) => {
+            let mut spliced = block;
+            spliced.push(String::new());
+            for (offset, line) in spliced.into_iter().enumerate() {
+                lines.insert(at + offset, line);
+            }
+        }
+        None => {
+            if !lines.is_empty() {
+                lines.push(String::new());
+            }
+            lines.extend(block);
+        }
+    }
+    let mut joined = lines.join("\n");
+    joined.push('\n');
+    Ok(joined)
+}
+
+/// Take one whole table out, and the blank line that separated it.
+fn remove_capability_table(
+    text: &str,
+    declaration: &Declaration,
+) -> Result<Option<String>, String> {
+    let blocks = capability_blocks(text)?;
+    let Some((start, end, _)) = blocks
+        .into_iter()
+        .find(|(_, _, other)| other == declaration)
+    else {
+        return Ok(None);
+    };
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    let mut end = end;
+    while end < lines.len() && lines[end].trim().is_empty() {
+        end += 1;
+    }
+    let mut start = start;
+    if end >= lines.len() {
+        while start > 0 && lines[start - 1].trim().is_empty() {
+            start -= 1;
+        }
+    }
+    lines.drain(start..end);
+    let mut joined = lines.join("\n");
+    if !joined.is_empty() {
+        joined.push('\n');
+    }
+    Ok(Some(joined))
 }
 
 /// Swap the existing `capabilities = [...]` line in place, keeping its
@@ -512,10 +842,6 @@ fn known_capabilities() -> Vec<&'static str> {
         .collect()
 }
 
-fn is_known_capability(label: &str) -> bool {
-    known_capabilities().contains(&label)
-}
-
 /// `["a", "b"]` on one line. Deliberately not multi-line: the grammar this
 /// module understands is a subset, and `jails add` writes the file itself, so
 /// the one shape jails emits is the one it has to read.
@@ -563,6 +889,235 @@ fn is_package_path(value: &str) -> bool {
                     .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
                 && !seg.starts_with(|c: char| c.is_ascii_digit())
         })
+}
+
+#[cfg(test)]
+mod capability_table_tests {
+    use super::*;
+
+    fn declarations(text: &str) -> Vec<Declaration> {
+        Config::parse(text).unwrap().declarations().to_vec()
+    }
+
+    /// The shape plan.md §R1.1 prints, read back with both parameters.
+    #[test]
+    fn a_repeated_table_declares_a_parameterised_capability() {
+        let text = "[project]\ncapabilities = [\"db\"]\n\n\
+                    [[capability]]\nkind = \"csv\"\nname = \"Dataset\"\n\
+                    package = \"imports\"\n";
+        assert_eq!(
+            declarations(text),
+            vec![
+                Declaration::plain(Capability::Db),
+                Declaration {
+                    kind: Capability::Csv,
+                    name: Some("Dataset".to_string()),
+                    package: Some("imports".to_string()),
+                },
+            ]
+        );
+        // Both views of one list: two declarations of `csv` would still be one
+        // label, and `db` is in both.
+        assert_eq!(Config::parse(text).unwrap().capabilities(), ["db", "csv"]);
+    }
+
+    /// The failure this module exists to prevent, in the new grammar: a
+    /// `[[capability]]` whose keys fell through to the ignored-table branch
+    /// would declare a capability jails then never installs.
+    #[test]
+    fn a_table_is_not_read_as_an_ordinary_one_of_the_same_name() {
+        let text = "[[capability]]\nkind = \"json\"\nname = \"Order\"\n";
+        assert_eq!(declarations(text).len(), 1);
+        assert_eq!(declarations(text)[0].name.as_deref(), Some("Order"));
+    }
+
+    #[test]
+    fn an_unknown_key_in_a_table_is_reported_not_ignored() {
+        let text = "[[capability]]\nkind = \"csv\"\nnmae = \"Order\"\n";
+        let error = Config::parse(text).unwrap_err();
+        assert!(error.contains("unknown key `nmae`"), "{error}");
+        assert!(error.contains("kind, name, package"), "{error}");
+    }
+
+    #[test]
+    fn a_table_with_no_kind_is_an_error_naming_its_line() {
+        let error = Config::parse("[[capability]]\nname = \"Order\"\n").unwrap_err();
+        assert!(error.contains("line 1"), "{error}");
+        assert!(error.contains("has no `kind`"), "{error}");
+    }
+
+    #[test]
+    fn a_key_set_twice_in_one_table_is_an_error() {
+        let text = "[[capability]]\nkind = \"csv\"\nname = \"A\"\nname = \"B\"\n";
+        let error = Config::parse(text).unwrap_err();
+        assert!(error.contains("set twice"), "{error}");
+    }
+
+    #[test]
+    fn an_unknown_repeated_table_is_an_error() {
+        let error = Config::parse("[[plugin]]\nkind = \"csv\"\n").unwrap_err();
+        assert!(
+            error.contains("unknown repeated table `[[plugin]]`"),
+            "{error}"
+        );
+    }
+
+    /// The manifest and the CLI enforce one rule, so a project cannot declare
+    /// what `jails add` would refuse.
+    #[test]
+    fn a_parameter_the_capability_has_no_meaning_for_is_refused() {
+        let named = Config::parse("[[capability]]\nkind = \"db\"\nname = \"Main\"\n").unwrap_err();
+        assert!(named.contains("--name"), "{named}");
+        let placed =
+            Config::parse("[[capability]]\nkind = \"ci\"\npackage = \"ops\"\n").unwrap_err();
+        assert!(placed.contains("--package"), "{placed}");
+        // A singleton that *is* placed keeps accepting one.
+        assert!(Config::parse("[[capability]]\nkind = \"actuator\"\npackage = \"ops\"\n").is_ok());
+    }
+
+    #[test]
+    fn declaring_the_same_capability_twice_is_an_error_not_a_silent_dedup() {
+        let error = Config::parse("[project]\ncapabilities = [\"db\", \"db\"]\n").unwrap_err();
+        assert!(error.contains("already declared"), "{error}");
+        let across = Config::parse(
+            "[project]\ncapabilities = [\"csv\"]\n\n[[capability]]\nkind = \"csv\"\n",
+        )
+        .unwrap_err();
+        assert!(across.contains("already declared"), "{across}");
+    }
+
+    /// Two named instances are two capabilities, which is the whole reason
+    /// this table exists.
+    #[test]
+    fn two_named_instances_of_one_capability_are_both_declared() {
+        let text = "[[capability]]\nkind = \"csv\"\nname = \"Order\"\n\n\
+                    [[capability]]\nkind = \"csv\"\nname = \"Invoice\"\n";
+        assert_eq!(declarations(text).len(), 2);
+        assert_eq!(Config::parse(text).unwrap().capabilities(), ["csv"]);
+    }
+
+    #[test]
+    fn a_bare_declaration_lands_in_the_array_and_a_parameterised_one_in_a_table() {
+        let plain = with_capability("", &Declaration::plain(Capability::Db))
+            .unwrap()
+            .unwrap();
+        assert!(plain.contains("capabilities = [\"db\"]"), "{plain}");
+        assert!(!plain.contains("[[capability]]"), "{plain}");
+
+        let named = with_capability(
+            &plain,
+            &Declaration {
+                kind: Capability::Csv,
+                name: Some("Order".to_string()),
+                package: None,
+            },
+        )
+        .unwrap()
+        .unwrap();
+        assert!(
+            named.contains("[[capability]]\nkind = \"csv\"\nname = \"Order\""),
+            "{named}"
+        );
+        assert!(named.contains("capabilities = [\"db\"]"), "{named}");
+        assert_eq!(declarations(&named).len(), 2);
+    }
+
+    /// Declaring it again is a no-op, so `add` twice does not grow the file.
+    #[test]
+    fn a_declaration_already_made_changes_nothing() {
+        let declaration = Declaration {
+            kind: Capability::Csv,
+            name: Some("Order".to_string()),
+            package: None,
+        };
+        let once = with_capability("", &declaration).unwrap().unwrap();
+        assert_eq!(with_capability(&once, &declaration).unwrap(), None);
+    }
+
+    /// Ordered on insert, never by rewriting what is already there.
+    #[test]
+    fn a_new_table_is_placed_in_canonical_order() {
+        let mut text = String::new();
+        for name in ["Order", "Alpha", "Zulu"] {
+            text = with_capability(
+                &text,
+                &Declaration {
+                    kind: Capability::Csv,
+                    name: Some(name.to_string()),
+                    package: None,
+                },
+            )
+            .unwrap()
+            .unwrap();
+        }
+        let names: Vec<Option<String>> = declarations(&text).into_iter().map(|d| d.name).collect();
+        assert_eq!(
+            names,
+            vec![
+                Some("Alpha".to_string()),
+                Some("Order".to_string()),
+                Some("Zulu".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn removing_one_table_leaves_the_others_and_the_array_alone() {
+        let order = Declaration {
+            kind: Capability::Csv,
+            name: Some("Order".to_string()),
+            package: None,
+        };
+        let invoice = Declaration {
+            kind: Capability::Csv,
+            name: Some("Invoice".to_string()),
+            package: None,
+        };
+        let text = with_capability("", &Declaration::plain(Capability::Db))
+            .unwrap()
+            .unwrap();
+        let text = with_capability(&text, &order).unwrap().unwrap();
+        let text = with_capability(&text, &invoice).unwrap().unwrap();
+
+        let without = without_capability(&text, &order).unwrap().unwrap();
+        assert_eq!(
+            declarations(&without),
+            vec![Declaration::plain(Capability::Db), invoice]
+        );
+        assert!(without.contains("capabilities = [\"db\"]"), "{without}");
+        // Removing what is not declared is not an error, and writes nothing.
+        assert_eq!(without_capability(&without, &order).unwrap(), None);
+    }
+
+    /// The inverse is exact: add then remove is where the file started.
+    #[test]
+    fn a_table_added_and_taken_back_out_leaves_the_bytes_it_found() {
+        let before = "# hand written\n[project]\ncapabilities = [\"db\"]\n\n\
+                      [layout]\nadapters = \"persistence\"\n";
+        let declaration = Declaration {
+            kind: Capability::Actuator,
+            name: None,
+            package: Some("ops".to_string()),
+        };
+        let with = with_capability(before, &declaration).unwrap().unwrap();
+        assert!(with.contains("[[capability]]"), "{with}");
+        assert_eq!(
+            without_capability(&with, &declaration).unwrap().unwrap(),
+            before
+        );
+    }
+
+    /// The array splice must not copy a table's capability into the array as a
+    /// default instance the reader never asked for.
+    #[test]
+    fn writing_the_array_leaves_table_capabilities_out_of_it() {
+        let text = "[[capability]]\nkind = \"csv\"\nname = \"Order\"\n";
+        let updated = with_capability(text, &Declaration::plain(Capability::Db))
+            .unwrap()
+            .unwrap();
+        assert!(updated.contains("capabilities = [\"db\"]"), "{updated}");
+        assert_eq!(declarations(&updated).len(), 2);
+    }
 }
 
 #[cfg(test)]
@@ -718,8 +1273,8 @@ mod tests {
     /// it twice.
     #[test]
     fn the_manifest_stores_labels_not_aliases() {
-        assert!(is_known_capability("db"));
-        assert!(!is_known_capability("postgres"));
+        assert!(capability_named("db", 1).is_ok());
+        assert!(capability_named("postgres", 1).is_err());
     }
 
     fn manifest_dir(label: &str) -> std::path::PathBuf {

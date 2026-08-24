@@ -774,10 +774,44 @@ A capability name that jails does not know is an error listing the real ones,
 for the same reason a misspelled layer is: `postgress` sitting in the file
 would look declared and never sync. The names are the labels `add` uses, not
 its aliases — `db`, not `postgres` — so one capability cannot be listed twice
-under two spellings.
+under two spellings. Declaring the same capability twice is an error too,
+whichever of the two shapes below it is written in.
 
-Both tables are closed sets. This renames layers and declares capabilities and
-nothing else — no template overrides, no per-kind paths, no plugin hooks.
+### `[[capability]]` — one that was given a name or a package
+
+The array holds a capability nobody parameterised. `jails add csv --name Order`
+is a different thing from `jails add csv --name Invoice` — two readers, two
+classes, two sets of files — and a string array has nowhere to say which. Those
+get a table each:
+
+```toml
+[[capability]]
+kind = "csv"
+name = "Order"
+
+[[capability]]
+kind = "actuator"
+package = "ops"
+```
+
+`kind` is required; `name` and `package` are the same values `jails add` takes,
+and which of them a capability accepts depends on what it is:
+
+| | `--name` | `--package` |
+|---|---|---|
+| `csv`, `sqlite`, `json`, `http` | yes — two names are two capabilities | yes — part of which one it is |
+| `api`, `actuator`, `cache`, `security`, `cors`, `sse`, `mail`, `redis`, `observability` | no — there is one per project | yes — it moves where the class is placed |
+| everything else | no | no — the output is project-global |
+
+A parameter a capability has no meaning for is refused rather than ignored, on
+the command line and in this file alike, so the manifest cannot declare
+something `jails add` would have turned down. You do not maintain these tables
+either: `add` writes one when the capability it applied needed it, `remove`
+takes the whole table back out, and both leave every other byte of the file
+alone.
+
+All three tables are closed sets. This renames layers and declares capabilities
+and nothing else — no template overrides, no per-kind paths, no plugin hooks.
 
 Every command takes `--debug`, which prints the `mvnw`/`mvn`/`mvnd`/`java`/`git`/`curl`
 command lines jails shells out to instead of running them silently.
