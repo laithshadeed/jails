@@ -1123,6 +1123,70 @@ fn app_manifest_refuses_an_intent_update_without_git_before_writing() {
 }
 
 #[test]
+fn app_apply_keys_a_suffixed_name_to_the_row_generate_writes() {
+    // `generate` strips a suffix its kind already implies, so `fetcher
+    // AcquirerFetcher` writes files under `Acquirer`. `app apply` records the
+    // manifest's spec onto the same row -- it has to normalise identically, or
+    // one entity gets two half-rows: files with no spec, and a spec with no
+    // files. `doctor` then reports the empty half as an unowned legacy entity
+    // and offers an adopt command for nothing.
+    let root = temp_dir("app-suffixed-name");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/app.toml"),
+        "schema = 1\ncapabilities = []\n\n[[generate]]\nkind = \"fetcher\"\nname = \"AcquirerFetcher\"\n",
+    )
+    .unwrap();
+    assert!(
+        jails_cmd(&root, None)
+            .args(["app", "apply", "--no-start"])
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let ledger = fs::read_to_string(root.join(".jails/ledger.toml")).unwrap();
+    let rows: Vec<&str> = ledger
+        .split("[[applied]]")
+        .skip(1)
+        .filter(|row| row.contains("recipe = \"fetcher\""))
+        .collect();
+    assert_eq!(rows.len(), 1, "one entity, one row:\n{ledger}");
+    let row = rows[0];
+    assert!(row.contains("name = \"Acquirer\""), "{row}");
+    assert!(row.contains("has_spec = true"), "{row}");
+    assert!(row.contains("AcquirerFetcher.java"), "{row}");
+}
+
+#[test]
+fn app_manifest_refuses_two_names_that_generate_into_one_entity() {
+    let root = temp_dir("app-suffix-collision");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/app.toml"),
+        "schema = 1\ncapabilities = []\n\n[[generate]]\nkind = \"fetcher\"\nname = \"Acquirer\"\n\n[[generate]]\nkind = \"fetcher\"\nname = \"AcquirerFetcher\"\n",
+    )
+    .unwrap();
+
+    let output = jails_cmd(&root, None)
+        .args(["app", "apply", "--no-start"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("declared twice"), "{stderr}");
+    assert!(stderr.contains("fix:"), "{stderr}");
+    assert!(
+        !root
+            .join("src/main/java/com/example/demo/clients/AcquirerFetcher.java")
+            .exists(),
+        "the duplicate gate refuses before any write"
+    );
+}
+
+#[test]
 fn scaffold_refuses_an_unmapped_project_type_before_writing() {
     let root = temp_dir("scaffold-unmapped-type");
     write_spring_fixture(&root);

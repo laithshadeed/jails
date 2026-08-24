@@ -129,7 +129,7 @@ pub fn plan_recipe(
         ));
     }
     let root = project.root().to_path_buf();
-    let name = strip_redundant_suffix(kind, &capitalize(name));
+    let name = recorded_name(kind, name);
     let artifacts = artifacts_for(
         project,
         &Recipe {
@@ -330,7 +330,7 @@ pub fn generate_in_project(
         return generate_migration(&root, name, pretend);
     }
 
-    let name = strip_redundant_suffix(kind, &capitalize(name));
+    let name = recorded_name(kind, name);
     let change = plan_recipe(
         project,
         kind,
@@ -496,6 +496,30 @@ pub fn kind_suffix(kind: ArtifactKind) -> Option<&'static str> {
 /// **This has to run in `destroy` too.** `destroy` rebuilds the paths that
 /// `generate` wrote, so a normalisation applied to one and not the other
 /// leaves files behind that the tool then claims to have deleted.
+/// The name a recipe is **recorded** under, which is not always the name the
+/// caller typed.
+///
+/// `generate` normalises before it writes -- capitalised, and with a suffix the
+/// kind already implies removed -- and records the files it wrote under the
+/// result. `app apply` records the manifest's *spec* onto the same row, so it
+/// has to normalise identically or the two writers key one entity two ways.
+///
+/// That is exactly what `fetcher AcquirerFetcher` was: a row named `Acquirer`
+/// holding four files and no spec, beside a row named `AcquirerFetcher` holding
+/// a spec and no files. `doctor` then reported the empty half as an entity with
+/// "0 file(s) ... and no recorded owner" and offered an adopt command for
+/// nothing.
+///
+/// `cases` and `migration` are addressed by a path rather than by a class, so
+/// they pass through untouched -- the exemption `generate` already makes by
+/// returning before it normalises.
+pub fn recorded_name(kind: ArtifactKind, name: &str) -> String {
+    if matches!(kind, ArtifactKind::Cases | ArtifactKind::Migration) {
+        return name.to_string();
+    }
+    strip_redundant_suffix(kind, &capitalize(name))
+}
+
 pub fn strip_redundant_suffix(kind: ArtifactKind, name: &str) -> String {
     match kind_suffix(kind) {
         Some(suffix) => match name.strip_suffix(suffix) {

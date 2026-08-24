@@ -179,7 +179,11 @@ pub(super) fn parse_manifest(text: &str) -> Result<(Manifest, Vec<ResolvedIntent
     let mut seen = HashSet::new();
     for intent in &resolved {
         let recipe = intent.recipe();
-        let key = intent.key(&recipe);
+        // The *recorded* name, so `fetcher Acquirer` and `fetcher
+        // AcquirerFetcher` are caught as the one entity they generate into
+        // rather than accepted as two and applied over each other.
+        let name = intent.recorded_name();
+        let key = intent.key(&recipe, &name);
         if !seen.insert((
             key.recipe.to_string(),
             key.name.to_string(),
