@@ -111,6 +111,26 @@ pub fn contribution(
             .edits
             .push(SemanticEdit::ComposeService { key, value: spec });
     }
+    // A dispatch line in a dispatcher this change does not own: `g command`
+    // writes the command class and registers it in the CLI that runs it.
+    for registration in &change.registrations {
+        let key = ResourceKey::CommandRegistration {
+            dispatcher: registration.dispatcher.clone(),
+            command: registration.command.clone(),
+        };
+        claim(
+            &mut desired,
+            owner,
+            key.clone(),
+            ResourceValue::CommandRegistration {
+                command: registration.command.clone(),
+            },
+        )?;
+        desired.edits.push(SemanticEdit::CommandRegistration {
+            key,
+            command: registration.command.clone(),
+        });
+    }
     // A block in a file this change does not own whole: one durable job's
     // limits in the app-wide test property source, beside another job's block
     // and whatever the reader put between them. Keyed by path and marker, so

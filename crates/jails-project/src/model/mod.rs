@@ -65,6 +65,13 @@ pub struct Change {
     pub properties: Vec<String>,
     pub legacy_deps: Vec<Dependency>,
     pub spring_test_import: Option<SpringTestImport>,
+    /// The dispatcher lines this change registers.
+    ///
+    /// Same shape as the marked block below and the same reason: `g command`
+    /// splices `commands.put(...)` into a dispatcher it does not own, and V1
+    /// did it with a `std::fs` call after the plan -- so the routes wrote the
+    /// command class and left it unreachable.
+    pub registrations: Vec<CommandRegistration>,
     /// Marked blocks in files this change does not own whole.
     ///
     /// `src/test/resources/config/application.properties` is the case: one
@@ -74,6 +81,27 @@ pub struct Change {
     /// so a route planning from the same recipe simply did not know about it,
     /// and the file stopped being generated.
     pub marked: Vec<MarkedBlock>,
+}
+
+/// One command, registered in one dispatcher.
+///
+/// Both are types rather than paths, because that is what the recorded claim
+/// is keyed by -- a dispatcher that moves package is a different registration,
+/// and a path would make it look like the same one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommandRegistration {
+    pub dispatcher: jails_protocol::identity::JavaType,
+    pub command: jails_protocol::identity::JavaType,
+}
+
+impl CommandRegistration {
+    /// From two qualified names, which is what a recipe has.
+    pub fn parse(dispatcher: &str, command: &str) -> Result<Self> {
+        Ok(Self {
+            dispatcher: jails_protocol::identity::JavaType::parse(dispatcher)?,
+            command: jails_protocol::identity::JavaType::parse(command)?,
+        })
+    }
 }
 
 /// One `# jails:<marker>` block, as a change states it.
@@ -179,6 +207,11 @@ impl Change {
                 current.group_id == dep.group_id && current.artifact_id == dep.artifact_id
             }) {
                 self.legacy_deps.push(dep);
+            }
+        }
+        for registration in other.registrations {
+            if !self.registrations.contains(&registration) {
+                self.registrations.push(registration);
             }
         }
         for block in other.marked {
@@ -598,6 +631,36 @@ impl Project {
         let key = ProjectPath::parse(path).ok()?;
         let bytes = overlay.get(&key)?;
         String::from_utf8(bytes.clone()).ok()
+    }
+
+    /// Every Java source under `src/main/java`, as the plan leaves them.
+    ///
+    /// Disk plus the overlay, with the overlay winning. A recipe that has to
+    /// *find* something in the project -- the dispatcher a generated command
+    /// registers itself in -- cannot walk disk alone: in an aggregate apply
+    /// the `g cli` row that creates the dispatcher and the `g command` row
+    /// that registers into it are one transition, and the file the second
+    /// needs has not been written when the second plans.
+    /// A map rather than a list of pairs: the two halves are a path and its
+    /// text, and abstract.md §4.1's fourth shape is exactly a positional pair
+    /// of those two that compiles when you swap them.
+    pub fn projected_main_sources(&self) -> BTreeMap<PathBuf, String> {
+        let root = self.root.join("src/main/java");
+        let mut found: BTreeMap<PathBuf, String> = BTreeMap::new();
+        for path in crate::java::source_files(&root) {
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                found.insert(path, text);
+            }
+        }
+        for (path, bytes) in self.overlay.iter().flat_map(|overlay| overlay.iter()) {
+            if !path.as_str().starts_with("src/main/java/") || !path.as_str().ends_with(".java") {
+                continue;
+            }
+            if let Ok(text) = String::from_utf8(bytes.clone()) {
+                found.insert(self.root.join(path.as_str()), text);
+            }
+        }
+        found
     }
 
     pub fn main(&self, layer: Layer, package: Option<&str>) -> PathBuf {

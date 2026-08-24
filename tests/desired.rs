@@ -373,10 +373,25 @@ fn what_v2_desires_is_what_v1_generates() {
             );
         }
         // A block spliced into a file this change does not own is a read as
-        // much as a write: the splice lands in whatever is already there.
+        // much as a write: the splice lands in whatever is already there. So
+        // is the dispatcher a generated command registers itself in.
         for block in &change.marked {
             declaration = declaration
                 .file(jails_protocol::identity::ProjectPath::parse(&block.path).unwrap());
+        }
+        for registration in &change.registrations {
+            let package = registration.dispatcher.package();
+            let directory = match package.is_base() {
+                true => String::new(),
+                false => format!("{}/", package.as_str().replace('.', "/")),
+            };
+            declaration = declaration.file(
+                jails_protocol::identity::ProjectPath::parse(&format!(
+                    "src/main/java/{directory}{}.java",
+                    registration.dispatcher.name()
+                ))
+                .unwrap(),
+            );
         }
         let (_snapshot, mut projection) =
             jails_project::capture::projected(&planned, &declaration).unwrap();

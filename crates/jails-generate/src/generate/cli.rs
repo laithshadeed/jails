@@ -399,90 +399,59 @@ pub(super) fn find_dispatchers(dir: &Path) -> Vec<PathBuf> {
     found
 }
 
-/// The statements inside `commands()`, between the map's creation and the
-/// `return` -- the only region where a registration counts.
-pub(super) fn registry_body(source: &str) -> Option<&str> {
-    let anchor = source.find("return commands;")?;
-    let start = source[..anchor].rfind("new LinkedHashMap")?;
-    Some(&source[start..anchor])
-}
+pub use jails_java::dispatch::{
+    is_dispatcher, registry_body, splice_registration, unsplice_registration,
+};
 
-/// What makes a file a jails command dispatcher: the registry type it
-/// dispatches over, and the line `register_command` splices above. Both are
-/// checked, because either alone shows up in files that are not dispatchers.
-pub fn is_dispatcher(source: &str) -> bool {
-    source.contains("SequencedMap<String, Command>") && source.contains("return commands;")
-}
-
-pub use jails_java::java::package_of;
-
-/// Insert the registration immediately above `return commands;`, matching that
-/// line's indentation, and add `import` if the command lives elsewhere.
-/// Returns `None` when the anchor is missing, so the caller can say so rather
-/// than write a mangled file.
-pub(super) fn splice_registration(
-    source: &str,
-    command_class: &str,
-    import: &str,
-) -> Option<String> {
-    let anchor = source.find("return commands;")?;
-    let line_start = source[..anchor].rfind('\n').map(|i| i + 1)?;
-    let indent: String = source[line_start..anchor].to_string();
-
-    let mut out = String::with_capacity(source.len() + import.len() + 96);
-    out.push_str(&source[..line_start]);
-    out.push_str(&format!(
-        "{indent}commands.put({command_class}.NAME, {command_class}::run);\n"
-    ));
-    out.push_str(&source[line_start..]);
-
-    if import.is_empty() {
-        return Some(out);
-    }
-    // Imports go after the package line; ordering is the normaliser's problem,
-    // but this file already exists, so re-sort it here too.
-    let package_end = out.find(";\n").map(|i| i + 2)?;
-    let mut with_import = String::with_capacity(out.len() + import.len());
-    with_import.push_str(&out[..package_end]);
-    with_import.push('\n');
-    with_import.push_str(import);
-    with_import.push_str(&out[package_end..]);
-    Some(jails_java::tidy::normalize_imports(&with_import))
-}
-
-/// The exact inverse of `splice_registration`: take the dispatch line for
-/// `command_class` back out, and the import that only existed to serve it.
+/// The dispatcher this command registers itself in, as a plan states it.
 ///
-/// Returns `None` when there is no such line, so the caller can stay quiet
-/// rather than rewriting a file it did not change. Scoped to the registry
-/// body for the same reason `register_command` is -- the dispatcher's own
-/// Javadoc carries an example `commands.put(...)` line, and a whole-file
-/// match would delete the documentation instead of the registration.
-pub(super) fn unsplice_registration(source: &str, command_class: &str) -> Option<String> {
-    let call = format!("commands.put({command_class}.NAME, {command_class}::run);");
-    let body = registry_body(source)?;
-    if !body.contains(&call) {
-        return None;
-    }
-
-    let import = format!(".{command_class};");
-    let kept: Vec<&str> = source
-        .lines()
-        .filter(|line| {
-            let trimmed = line.trim();
-            if trimmed == call {
-                return false;
-            }
-            !(trimmed.starts_with("import ") && trimmed.ends_with(&import))
-        })
+/// The planning half of [`register_command`], and it looks through the
+/// projection rather than at disk: in an aggregate apply the `g cli` row that
+/// creates the dispatcher and the `g command` row that registers into it are
+/// one transition, so the file the second needs has not been written when the
+/// second plans.
+///
+/// `None` on both the no-dispatcher and the ambiguous case, which is exactly
+/// where `register_command` declines too. Neither is silent: the generated
+/// command's Javadoc carries the line to add by hand, and `--on <Dispatcher>`
+/// is how a project with two of them says which.
+pub(super) fn planned_registration(
+    project: &Project,
+    name: &str,
+    into: Option<&str>,
+) -> Option<crate::model::CommandRegistration> {
+    // A map, for the reason abstract.md §4.1 gives: a positional pair of a
+    // path and its text is the fourth shape of "a file", and it compiles when
+    // you swap the halves.
+    let dispatchers: std::collections::BTreeMap<std::path::PathBuf, String> = project
+        .projected_main_sources()
+        .into_iter()
+        .filter(|(_, text)| is_dispatcher(text))
         .collect();
-
-    let mut out = kept.join("\n");
-    if source.ends_with('\n') {
-        out.push('\n');
-    }
-    Some(out)
+    let (path, source) = match (dispatchers.len(), into) {
+        (0, _) => return None,
+        (_, Some(wanted)) => dispatchers
+            .iter()
+            .find(|(path, _)| matches_dispatcher(path, wanted))?,
+        (1, None) => dispatchers.iter().next()?,
+        (_, None) => return None,
+    };
+    let stem = path.file_stem()?.to_str()?;
+    let command = format!("{name}Command");
+    crate::model::CommandRegistration::parse(
+        &qualified(&package_of(source).unwrap_or_default(), stem),
+        &qualified(&subpackage(project.base(), layout::CLI), &command),
+    )
+    .ok()
 }
+
+fn qualified(package: &str, name: &str) -> String {
+    match package.is_empty() {
+        true => name.to_string(),
+        false => format!("{package}.{name}"),
+    }
+}
+pub use jails_java::java::package_of;
 
 /// Undo `register_command`, so `destroy command` is its true inverse.
 ///

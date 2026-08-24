@@ -316,6 +316,9 @@ fn retiring(store: &ObservedStore, owner: &ResourceOwner) -> Result<ReadDeclarat
             ResourceKey::SpringTestImport { path, .. } | ResourceKey::MarkedBlock { path, .. } => {
                 declaration = declaration.file(path.clone())
             }
+            ResourceKey::CommandRegistration { dispatcher, .. } => {
+                declaration = declaration.file(dispatcher_source(dispatcher)?)
+            }
             _ => {}
         }
     }
@@ -536,10 +539,25 @@ fn declaration(
             ResourceKey::SpringTestImport { path, .. } | ResourceKey::MarkedBlock { path, .. } => {
                 declaration = declaration.file(path.clone());
             }
+            ResourceKey::CommandRegistration { dispatcher, .. } => {
+                declaration = declaration.file(dispatcher_source(dispatcher)?);
+            }
             _ => {}
         }
     }
     Ok(declaration)
+}
+
+/// Where a dispatcher's source lives, by the convention every Java build
+/// follows. The same derivation the projection uses, so a read and the splice
+/// that depends on it cannot name two files.
+fn dispatcher_source(ty: &jails_protocol::identity::JavaType) -> Result<ProjectPath> {
+    let package = ty.package();
+    let directory = match package.is_base() {
+        true => String::new(),
+        false => format!("{}/", package.as_str().replace('.', "/")),
+    };
+    ProjectPath::parse(&format!("src/main/java/{directory}{}.java", ty.name()))
 }
 
 /// A planned artifact's path, as the project-relative name a resource has.

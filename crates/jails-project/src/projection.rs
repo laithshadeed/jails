@@ -431,11 +431,37 @@ impl ProjectedProject {
                 }
                 Ok(Some(path.clone()))
             }
-            // The dispatcher's source file is a Java file the recipe rewrites
-            // as a whole, so the registration reaches the projection as that
-            // file rather than as a keyed splice. What is recorded here is
-            // the fact, through the change's `FactDelta`.
-            SemanticEdit::CommandRegistration { .. } => Ok(None),
+            // A dispatch line in a file the command does not own: the
+            // dispatcher belongs to the project, and a `commands.put(...)`
+            // line is this command's claim inside it. Spliced here rather than
+            // by the recipe rewriting the file whole, because owning it would
+            // make `destroy command` delete the CLI.
+            SemanticEdit::CommandRegistration { key, command } => {
+                let ResourceKey::CommandRegistration { dispatcher, .. } = key else {
+                    return Err("a registration filed under another key".to_string());
+                };
+                let path = java_source_of(dispatcher)?;
+                let Some(text) = self.text(&path)? else {
+                    // The dispatcher is not there. Nothing to splice into and
+                    // nothing to refuse over: the generated command's Javadoc
+                    // carries the line to add by hand.
+                    return Ok(None);
+                };
+                let import = crate::spec::import_of(
+                    dispatcher.package().as_str(),
+                    command.package().as_str(),
+                    command.name().as_str(),
+                );
+                let Some(spliced) = jails_java::dispatch::splice_registration(
+                    &text,
+                    command.name().as_str(),
+                    &import,
+                ) else {
+                    return Ok(None);
+                };
+                self.write_text(&path, spliced);
+                Ok(Some(path))
+            }
         }
     }
 
@@ -533,6 +559,22 @@ impl ProjectedProject {
                 self.write_text(path, properties::remove(&text, key.as_str()));
                 Ok(Some(path.clone()))
             }
+            ResourceKey::CommandRegistration {
+                dispatcher,
+                command,
+            } => {
+                let path = java_source_of(dispatcher)?;
+                let Some(text) = self.text(&path)? else {
+                    return Ok(None);
+                };
+                let Some(without) =
+                    jails_java::dispatch::unsplice_registration(&text, command.name().as_str())
+                else {
+                    return Ok(None);
+                };
+                self.write_text(&path, without);
+                Ok(Some(path))
+            }
             ResourceKey::MarkedBlock { path, marker } => {
                 let Some(text) = self.text(path)? else {
                     return Ok(None);
@@ -597,10 +639,9 @@ impl ProjectedProject {
                 }
                 Ok(Some(path.clone()))
             }
-            ResourceKey::CommandRegistration { .. } | ResourceKey::WholeFile(_) => Err(format!(
+            ResourceKey::WholeFile(_) => Err(format!(
                 "{key:?} is not retired by an edit.\n       fix: a whole file leaves as an \
-                 absence, and a command registration as a rewrite of the dispatcher, both of \
-                 which the executor can guard."
+                 absence, which is what the executor can guard a preimage for."
             )),
         }
     }
@@ -751,6 +792,19 @@ fn source_of(key: &ProjectFactKey) -> FactKind {
 
 fn pom_path() -> Result<ProjectPath> {
     ProjectPath::parse("pom.xml")
+}
+
+/// Where a type's source lives, by the convention every Java build follows.
+///
+/// Derived rather than stored, because the claim is keyed by the *type* and a
+/// path would make a dispatcher that moved package look like a different one.
+fn java_source_of(ty: &jails_protocol::identity::JavaType) -> Result<ProjectPath> {
+    let package = ty.package();
+    let directory = match package.is_base() {
+        true => String::new(),
+        false => format!("{}/", package.as_str().replace('.', "/")),
+    };
+    ProjectPath::parse(&format!("src/main/java/{directory}{}.java", ty.name()))
 }
 
 fn compose_path() -> Result<ProjectPath> {

@@ -3266,6 +3266,59 @@ fn migrating_a_project_removes_the_registry_it_replaced() {
     assert!(after.legacy.is_none(), "the store still claims a migration");
 }
 
+/// A generated command reaches the dispatcher that runs it.
+///
+/// `g command` writes the class *and* the `commands.put(...)` line that makes
+/// it reachable. V1 spliced that line with a `std::fs` call after the plan, so
+/// the routes wrote the class and left it unreachable -- a command nothing
+/// dispatches is a file, not a command.
+///
+/// The dispatcher is not owned by the command: claiming it whole would make
+/// `destroy command` delete the CLI. So the line is a keyed claim inside
+/// somebody else's file, and retiring it takes back the line and the import
+/// that only existed to serve it.
+#[test]
+fn a_generated_command_is_registered_in_the_dispatcher_that_runs_it() {
+    let root = common::temp_dir("engine-command-registration");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+
+    let generate = |kind, name: &str| {
+        jails_engine::route::generate(
+            &committing(&Project::load(&root).unwrap()),
+            kind,
+            name,
+            &[],
+            None,
+            &[],
+            None,
+            None,
+        )
+        .unwrap()
+    };
+    generate(jails_spec::spec::kind::ArtifactKind::Cli, "Admin");
+    generate(jails_spec::spec::kind::ArtifactKind::Command, "Greet");
+
+    let dispatcher = root.join("src/main/java/com/example/demo/cli/AdminCli.java");
+    let text = std::fs::read_to_string(&dispatcher).unwrap();
+    assert!(
+        text.contains("commands.put(GreetCommand.NAME, GreetCommand::run);"),
+        "the command was written and never registered:\n{text}"
+    );
+
+    // Destroying the command takes the line back out and leaves the CLI.
+    jails_engine::route::destroy(
+        &committing(&Project::load(&root).unwrap()),
+        jails_spec::spec::kind::ArtifactKind::Command,
+        "Greet",
+        None,
+    )
+    .unwrap();
+    let after = std::fs::read_to_string(&dispatcher).unwrap();
+    assert!(!after.contains("GreetCommand::run"), "{after}");
+    assert!(after.contains("return commands;"), "the CLI went with it");
+}
+
 /// The block a recipe puts in somebody else's file is part of its plan.
 ///
 /// `g durable-job` writes one job's scheduler limits into the app-wide test

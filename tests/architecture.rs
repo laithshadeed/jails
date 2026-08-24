@@ -691,6 +691,7 @@ const LAYERS: &[(&str, usize)] = &[
     ("annotate", 1),
     ("tidy", 1),
     ("java", 1),
+    ("dispatch", 1),
     ("classfile", 1),
     ("identifier", 1),
     ("template", 1),

@@ -195,7 +195,17 @@ pub fn plan_recipe(
     {
         change.deps.push(crate::pom::WEBMVC_TEST_STARTER);
     }
-    // The one block a recipe contributes to a file it does not own whole.
+    // The other two things a recipe contributes to files it does not own: the
+    // dispatch line that makes a generated command reachable, and one durable
+    // job's limits in the app-wide test property source. Both were `std::fs`
+    // calls after the plan, so the routes wrote the class and left it
+    // unreachable, and wrote the job and left the file unwritten.
+    if kind == ArtifactKind::Command
+        && let Some(registration) =
+            crate::generate::cli::planned_registration(project, &name, strategy_on)
+    {
+        change.registrations.push(registration);
+    }
     if kind == ArtifactKind::DurableJob {
         change
             .marked
