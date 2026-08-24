@@ -237,3 +237,119 @@ fn walked_directories(sources: &[ProjectPath]) -> BTreeSet<ProjectPath> {
     }
     out
 }
+
+/// Record what an existing project already calls its layers, as one commit.
+///
+/// V1 writes `jails.toml` once per adopted layer, so a project with four
+/// renamed directories is four separate rewrites of one file. Here the splices
+/// are composed against the captured text and land as one operation -- and the
+/// captured text is what makes the composition sound, since splicing against a
+/// re-read file is how the second edit comes to be written over the first.
+///
+/// It is `resource: None`, deliberately. `jails.toml` is a file the reader
+/// owns and edits, and `[layout]` is configuration jails reads rather than a
+/// thing jails owns and would later reconcile. Claiming it would make a
+/// removal somewhere else able to take it away.
+///
+/// **`[project] capabilities` cannot be touched from here**, and that is not a
+/// promise -- it is the type. What the classification produces is
+/// `(layer, directory)` pairs and nothing else, so there is no path by which a
+/// directory listing could reach the list `jails sync` acts on.
+pub fn adopt_layout(project: &Project) -> Result<CommitResult> {
+    if project.base().is_empty() {
+        return Err(
+            "no Java sources found under src/main/java, so there is no package to read.\n       \
+             fix: run this from a project with sources, or `jails new <name>` to create one."
+                .to_string(),
+        );
+    }
+    let base = ProjectPath::parse(&format!(
+        "src/main/java/{}",
+        project.base().replace('.', "/")
+    ))?;
+    let config = ProjectPath::parse(jails_project::config::FILE)?;
+    // The listing is declared, so a directory appearing under the base package
+    // between planning and committing refuses the adoption rather than
+    // recording a layout that was already out of date when it landed.
+    let reads = capture::capability_reads()?
+        .directory(base.clone())
+        .file(config.clone());
+    let (snapshot, _) = capture::projected(project, &reads)?;
+
+    let names: Vec<String> = snapshot
+        .list(&base)?
+        .iter()
+        .filter_map(|entry| {
+            entry
+                .to_string()
+                .strip_prefix(&format!("{base}/"))
+                .map(str::to_string)
+        })
+        .collect();
+    let readings = jails_project::synonyms::readings(&names);
+    let resolved = jails_project::synonyms::resolve(&readings);
+
+    for reading in &readings {
+        if let jails_project::synonyms::Reading::Conventional(layer) = reading {
+            println!("  keep    {layer:<10} already jails' own name");
+        }
+    }
+    for (layer, dir) in &resolved.writes {
+        println!("  layout  {layer:<10} = \"{dir}\"");
+    }
+    for (layer, dirs) in &resolved.ambiguous {
+        println!(
+            "  ask     {layer:<10} matches {} -- a [layout] table can only name one, so none \
+             is written",
+            dirs.join(", ")
+        );
+    }
+    for name in &resolved.unknown {
+        println!("  ignore  {name:<10} not a layer jails knows -- left alone");
+    }
+    if resolved.writes.is_empty() {
+        return Err(
+            "nothing to adopt: no directory under the base package needs a different name."
+                .to_string(),
+        );
+    }
+
+    // Composed against the captured bytes, one splice after another, so the
+    // whole `[layout]` table is decided before anything is written. Every
+    // other byte of the file -- comments, `[project]`, ordering -- survives,
+    // which is the same rule `pom.rs` and `compose.rs` follow for the other
+    // files the reader owns.
+    let mut text = match snapshot.read(&config)? {
+        jails_protocol::snapshot::Captured::Present(file) => String::from_utf8(file.bytes.to_vec())
+            .map_err(|_| format!("{config} is not valid UTF-8"))?,
+        jails_protocol::snapshot::Captured::Absent => String::new(),
+    };
+    for (layer, directory) in &resolved.writes {
+        text = jails_project::config::with_layout(&text, layer, directory)?;
+    }
+
+    let mut change = DesiredChange::maintenance(MaintenanceAttribution::AdoptLayout);
+    change.files.push(DesiredFile {
+        path: config,
+        body: DesiredBody::Bytes(text.into_bytes().into()),
+        mode: None,
+        resource: None,
+        renderer: None,
+    });
+
+    let observed = observed(project)?;
+    let set = DesiredChangeSet {
+        ledger_intent: LedgerIntent {
+            generation_before: observed.generation(),
+            entities_after: Vec::new(),
+            one_shots_after: Vec::new(),
+            resources_after: Vec::new(),
+            entities_removed: Vec::new(),
+            legacy_after: Vec::new(),
+        },
+        ordered: vec![change],
+        subject: PlannedSubject::AdoptLayout,
+    };
+    set.validate()?;
+    commit_set(project, set, &reads, "jails adopt")
+}

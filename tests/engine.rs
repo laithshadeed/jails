@@ -1998,3 +1998,93 @@ fn a_rename_is_one_generation_and_will_not_land_on_an_occupied_name() {
         "a rename touching four files took more than one generation"
     );
 }
+
+/// §R6.2's `adopt layout` row: one commit, not one per adopted layer.
+///
+/// V1 calls `record_layout` once per entry, so a project with three renamed
+/// directories is three separate rewrites of one file. The composition here is
+/// against the captured bytes, which is what makes it sound -- splicing
+/// against a re-read file is how the second edit comes to be written over the
+/// first.
+#[test]
+fn adopting_a_foreign_layout_records_every_layer_in_one_write() {
+    let root = common::temp_dir("engine-adopt");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+    let base = root.join("src/main/java/com/example/demo");
+    for name in ["controllers", "persistence", "dto", "quirk", "domain"] {
+        std::fs::create_dir_all(base.join(name)).unwrap();
+        std::fs::write(
+            base.join(name).join("Marker.java"),
+            format!("package com.example.demo.{name};\n\nfinal class Marker {{}}\n"),
+        )
+        .unwrap();
+    }
+    // A comment the reader wrote, which must survive byte-for-byte.
+    std::fs::write(
+        root.join("jails.toml"),
+        "# hand-written, do not lose me\n[project]\ncapabilities = [\"db\"]\n",
+    )
+    .unwrap();
+
+    let before = jails_commit::store::Store::at(&root)
+        .observe()
+        .unwrap()
+        .generation();
+    jails_engine::route::adopt_layout(&Project::load(&root).unwrap()).unwrap();
+
+    let config = std::fs::read_to_string(root.join("jails.toml")).unwrap();
+    for entry in [
+        "web = \"controllers\"",
+        "adapters = \"persistence\"",
+        "api = \"dto\"",
+    ] {
+        assert!(config.contains(entry), "missing {entry}: {config}");
+    }
+    assert!(
+        config.contains("# hand-written, do not lose me"),
+        "the reader's comment was lost: {config}"
+    );
+    assert!(
+        config.contains("capabilities = [\"db\"]"),
+        "the capability list was rewritten: {config}"
+    );
+    assert!(
+        !config.contains("quirk"),
+        "a directory jails does not recognise was guessed at: {config}"
+    );
+    assert!(
+        !config.contains("domain = "),
+        "a directory already spelled jails' way was recorded as a rename: {config}"
+    );
+    assert_eq!(
+        jails_commit::store::Store::at(&root)
+            .observe()
+            .unwrap()
+            .generation(),
+        before + 1,
+        "three adopted layers took more than one generation"
+    );
+}
+
+/// Two candidates for one layer writes neither, and says so.
+///
+/// A `[layout]` table can only name one directory, so picking the first
+/// alphabetically would be a coin toss the reader never saw.
+#[test]
+fn two_directories_for_one_layer_adopt_neither() {
+    let root = common::temp_dir("engine-adopt-ambiguous");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+    let base = root.join("src/main/java/com/example/demo");
+    for name in ["controllers", "rest"] {
+        std::fs::create_dir_all(base.join(name)).unwrap();
+    }
+
+    let error = jails_engine::route::adopt_layout(&Project::load(&root).unwrap()).unwrap_err();
+    assert!(error.contains("nothing to adopt"), "{error}");
+    assert!(
+        !root.join("jails.toml").exists(),
+        "a coin toss was written anyway"
+    );
+}
