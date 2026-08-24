@@ -80,12 +80,12 @@ const EXECUTOR_STATE: [&str; 5] = [
 
 /// Whether this path is the executor's bookkeeping rather than jails' output.
 fn executor_state(rel: &str) -> bool {
-    EXECUTOR_STATE.iter().any(|prefix| {
-        match prefix.ends_with('/') {
+    EXECUTOR_STATE
+        .iter()
+        .any(|prefix| match prefix.ends_with('/') {
             true => rel.starts_with(prefix),
             false => rel == *prefix,
-        }
-    })
+        })
 }
 
 fn collect(root: &Path, dir: &Path, out: &mut BTreeMap<String, String>) {

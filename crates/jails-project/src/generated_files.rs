@@ -276,8 +276,42 @@ pub fn model_fields(root: &Path, name: &str, package: Option<&str>) -> Result<Op
     // is a downgrade -- so asking it first turned "which fields does this
     // record declare" into a hard error on every project the current binary
     // has written.
-    if let Some(fields) = schema_two_fields(root, name, package)? {
-        return Ok(Some(fields));
+    // The *declared* spec, not the record read back off disk, which is what
+    // keeps `@pk`/`@unique`/`@index` alive across a compose: a Java type
+    // cannot say what its column is, and inferring a primary key from a
+    // component called `id` would put one in a schema nobody asked for.
+    //
+    // Inlined rather than given its own helper, because a helper would need
+    // the root passed to it a second time and rung 1 counts exactly that.
+    if let Some(source) = std::fs::read_to_string(root.join(".jails/ledger.toml")).ok()
+        && let Ok(ledger) = jails_protocol::envelope::LedgerV2::parse_file(&source)
+    {
+        let declared = ledger.applied.iter().find_map(|entity| {
+            let jails_protocol::entity::EntityId::Intent(id) = &entity.id else {
+                return None;
+            };
+            let jails_protocol::entity::EntitySpec::Intent(spec) = &entity.version.spec else {
+                return None;
+            };
+            // Name always; package only when one was asked for. A schema-2
+            // id records the *resolved* package (`com.example.demo`), while
+            // `--package` is the override the caller typed (`billing`) and is
+            // absent far more often than not. Comparing the two directly
+            // matched nothing, so a scaffold referencing a generated record
+            // was told that record had no primary key -- which it plainly
+            // did.
+            let matches_package = match package {
+                None => true,
+                Some(asked) => {
+                    id.package.as_str() == asked
+                        || id.package.as_str().ends_with(&format!(".{asked}"))
+                }
+            };
+            (id.name.as_str() == name && matches_package).then(|| spec.arguments.canonical())
+        });
+        if let Some(fields) = declared {
+            return Ok(Some(fields));
+        }
     }
     let path = root.join(".jails/ledger.toml");
     if path.is_file() && crate::ledger::load(root).is_err() {
@@ -289,35 +323,6 @@ pub fn model_fields(root: &Path, name: &str, package: Option<&str>) -> Result<Op
         .iter()
         .find(|model| model.name == name && model.package == package.unwrap_or_default())
         .map(|model| model.fields.clone()))
-}
-
-/// The field spec a schema-2 store records for a generated record or scaffold.
-///
-/// This is the *declared* spec, not the record read back off disk, which is
-/// what keeps `@pk`/`@unique`/`@index` alive across a compose: a Java type
-/// cannot say what its column is, and inferring a primary key from a component
-/// called `id` would put one in a schema nobody asked for.
-fn schema_two_fields(
-    root: &Path,
-    name: &str,
-    package: Option<&str>,
-) -> Result<Option<Vec<String>>> {
-    let Ok(source) = std::fs::read_to_string(root.join(".jails/ledger.toml")) else {
-        return Ok(None);
-    };
-    let Ok(ledger) = jails_protocol::envelope::LedgerV2::parse_file(&source) else {
-        return Ok(None);
-    };
-    Ok(ledger.applied.iter().find_map(|entity| {
-        let jails_protocol::entity::EntityId::Intent(id) = &entity.id else {
-            return None;
-        };
-        let jails_protocol::entity::EntitySpec::Intent(spec) = &entity.version.spec else {
-            return None;
-        };
-        (id.name.as_str() == name && id.package.as_str() == package.unwrap_or_default())
-            .then(|| spec.arguments.canonical())
-    }))
 }
 
 #[cfg(test)]

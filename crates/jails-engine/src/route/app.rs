@@ -83,11 +83,7 @@ pub fn app_apply(run: &Run, capabilities: &[Capability], intents: &[Intent]) -> 
     // The order matters and is why this is a second transition: the formatter
     // is a plugin the apply just installed, and the sources it has an opinion
     // about are the ones the apply just wrote.
-    super::capability::reformat_after(
-        run,
-        capabilities.contains(&Capability::Format),
-        applied,
-    )
+    super::capability::reformat_after(run, capabilities.contains(&Capability::Format), applied)
 }
 
 /// The manifest as a request, and everything reading it declared.

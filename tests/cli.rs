@@ -379,11 +379,11 @@ fn generate_field_updates_unchanged_derivatives_preserves_edits_and_adds_a_migra
         .unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("skipped"), "{stdout}");
-    assert!(
-        stdout.contains("add component: Instant createdAt"),
-        "{stdout}"
-    );
+    // The plan names the files a new component touches: the record, its test
+    // and the migration that adds the column. V1 printed a per-derivative
+    // `skipped`/`add component` line from a walk of its own.
+    assert!(stdout.contains("replace "), "{stdout}");
+    assert!(stdout.contains(".sql"), "{stdout}");
 
     let record =
         fs::read_to_string(root.join("src/main/java/com/example/demo/domain/Note.java")).unwrap();
@@ -393,7 +393,14 @@ fn generate_field_updates_unchanged_derivatives_preserves_edits_and_adds_a_migra
     )
     .unwrap();
     assert!(jdbc.contains("created_at"), "{jdbc}");
-    assert_eq!(fs::read_to_string(&request).unwrap(), edited);
+    // The edited derivative is *merged*, not skipped. V1 left it alone, which
+    // preserved the edit and left the request record missing the component the
+    // record had just grown -- a DTO that no longer describes its own domain
+    // type. Both halves survive here: the reader's line and the new field.
+    let merged = fs::read_to_string(&request).unwrap();
+    assert!(merged.contains("// user-owned validation"), "{merged}");
+    assert!(merged.contains("Instant createdAt"), "{merged}");
+    let _ = &edited;
 
     let migration = fs::read_to_string(
         root.join("src/main/resources/db/migration/V002__add_created_at_to_notes.sql"),
@@ -412,14 +419,16 @@ fn generate_field_updates_unchanged_derivatives_preserves_edits_and_adds_a_migra
         "{migration}"
     );
 
-    let ledger = fs::read_to_string(root.join(".jails/ledger.toml")).unwrap();
     assert!(
-        ledger.contains("src/main/resources/db/migration/V002__add_created_at_to_notes.sql"),
-        "the new migration is recorded against the intent that wrote it: {ledger}"
+        common::ledger_mentions(
+            &root,
+            "src/main/resources/db/migration/V002__add_created_at_to_notes.sql"
+        ),
+        "the new migration is recorded against the intent that wrote it"
     );
     assert!(
-        ledger.contains(&format!("version = \"{}\"", env!("CARGO_PKG_VERSION"))),
-        "{ledger}"
+        common::ledger_mentions(&root, env!("CARGO_PKG_VERSION")),
+        "the ledger records which jails wrote it"
     );
 
     let duplicate = jails_cmd(&root, None)

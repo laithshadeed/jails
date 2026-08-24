@@ -185,7 +185,6 @@ impl ResolvedIntent {
     fn recorded_name(&self) -> String {
         generate::recorded_name(self.kind, &self.name)
     }
-
 }
 
 /// `app plan` and `app apply` are one route and one flag apart.
@@ -200,14 +199,18 @@ impl ResolvedIntent {
 /// lock, so what it names is exactly what the apply then writes.
 pub(crate) fn run(command: AppCommand, invocation: crate::Invocation) -> Result<()> {
     match command {
-        AppCommand::Init { manifest } => crate::mutate(invocation, false, |run| {
+        AppCommand::Init { manifest } => crate::invoke::mutate(invocation, false, |run| {
             jails_engine::route::app_init(run, manifest.as_deref().and_then(Path::to_str))
         }),
-        AppCommand::Plan { manifest } => crate::mutate(invocation.pretending(), false, |run| {
-            declared(run, manifest.as_deref())
-        }),
+        AppCommand::Plan { manifest } => {
+            crate::invoke::mutate(invocation.pretending(), false, |run| {
+                declared(run, manifest.as_deref())
+            })
+        }
         AppCommand::Apply { manifest, no_start } => {
-            crate::mutate(invocation, no_start, |run| declared(run, manifest.as_deref()))
+            crate::invoke::mutate(invocation, no_start, |run| {
+                declared(run, manifest.as_deref())
+            })
         }
     }
 }
@@ -240,7 +243,7 @@ pub(crate) fn apply_in(root: &Path, no_start: bool, debug: bool) -> Result<()> {
         run = run.with_debug();
     }
     let outcome = declared(&run, None)?;
-    crate::report(&outcome, crate::Output::Human)
+    crate::invoke::report(&outcome, crate::Output::Human)
 }
 
 #[cfg(test)]
@@ -352,5 +355,4 @@ mod tests {
         assert_eq!(manifest.capabilities.len(), 2);
         assert!(intents.is_empty());
     }
-
 }

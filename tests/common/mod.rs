@@ -965,6 +965,22 @@ class DemoApplicationTests {
 }
 "#;
 
+/// Whether the schema-2 ledger mentions this exact string.
+///
+/// The ledger is one hex-encoded payload, so a plain `contains` over the file
+/// finds nothing -- which made every test that scraped the schema-1 TOML pass
+/// vacuously the moment it stopped being TOML. Encoding the needle the same
+/// way the payload is encoded is the smallest honest check: it proves the
+/// bytes are in there without decoding a format the test has no business
+/// knowing.
+pub fn ledger_mentions(root: &std::path::Path, needle: &str) -> bool {
+    let Ok(text) = std::fs::read_to_string(root.join(".jails/ledger.toml")) else {
+        return false;
+    };
+    let hex: String = needle.bytes().map(|byte| format!("{byte:02x}")).collect();
+    text.contains(&hex)
+}
+
 /// A minimal plain-Maven project: a pom with a release level and JUnit, and
 /// one class so `base_package` can find the tree. Shared with the golden
 /// target, which needs the same starting point every time or the snapshots

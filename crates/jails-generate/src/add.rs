@@ -51,8 +51,8 @@ mod database;
 /// So this runs *after* the commit, from the receipt's own delete list, and
 /// is deliberately best-effort: a `target/` jails cannot write is a `target/`
 /// the next build regenerates.
-pub fn drop_compiled_shadow(root: &std::path::Path, deleted: &std::path::Path) {
-    database::delete_maven_output(root, deleted);
+pub fn drop_compiled_shadow(project: &Project, deleted: &std::path::Path) {
+    database::delete_maven_output(project.root(), &project.root().join(deleted));
 }
 
 mod shrink;

@@ -47,7 +47,13 @@ pub use remove::*;
 /// the two shapes that changed and the dependencies jails would have added and
 /// cannot. Silence here is the failure `plan.md` §12 calls out -- a tool that
 /// half-understands a build reports a dependency the build does not have.
-fn report_degraded_shape(project: &Project, change: &Change) {
+/// Say what shape jails chose, when it could not read the build file.
+///
+/// `pub` because the V2 route reports it too: a foreign build file changes the
+/// Java that gets emitted -- `JdbcClient` becomes plain JDBC, JSpecify goes
+/// away -- and a reader who is not told that has no way to find out except by
+/// reading the generated code.
+pub fn report_degraded_shape(project: &Project, change: &Change) {
     let crate::build::Build::Foreign(tool) = project.build() else {
         return;
     };

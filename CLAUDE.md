@@ -10,9 +10,17 @@ The scope bar: no Gradle, no ORM, no jails runtime jar, no Lombok, no preview
 features in generated Java, and no plugin system with lifecycle hooks. Check
 `README.md`'s "Not yet" before adding a command that isn't already there.
 
-**Every idea, roadmap item and open design question lives in `plan.md`.** This
-file describes what the code *is* and the traps in it; `plan.md` describes what
-to build next and why. Do not add proposals here.
+**Every idea, roadmap item and open design question lives in `pending.md`.**
+This file describes what the code *is* and the traps in it; `pending.md`
+describes what is not done and why. Do not add proposals here.
+
+`plan.md`, `abstract.md` and `playground.md` were deleted. Roughly 237
+comments across the code still cite them by section number -- `plan.md §R6`,
+`abstract.md §3.2`, and so on. Those citations are still the best record of
+*why* a decision was made and are worth reading; they resolve through git:
+`git log --diff-filter=D -- plan.md` finds the commit that removed the file,
+and `git show <commit>^:plan.md` prints it. `pending.md` carries forward only
+what is still outstanding.
 
 ## Workspace
 

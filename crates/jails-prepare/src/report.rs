@@ -413,68 +413,87 @@ pub fn render_envelope(envelope: &crate::command::CommandEnvelope) -> String {
 pub fn render_envelope_json(envelope: &crate::command::CommandEnvelope) -> String {
     use jails_support::json;
 
-    let (transaction, kind, operations, ledger, effects, warnings) = match (
-        &envelope.report,
-        &envelope.receipt,
-    ) {
-        (Some(crate::command::CommandReport::Prepared(report)), _) => (
-            Some(report.transaction.to_string()),
-            Some(kind_label(&report.kind).to_string()),
-            report
-                .operations
-                .iter()
-                .map(|op| (op.kind.label().to_string(), target_json(&op.path)))
-                .collect::<Vec<_>>(),
-            ledger_label(report.ledger.kind),
-            report
-                .post_commit
-                .iter()
-                .map(|effect| (effect_label(&effect.effect), state_label(&effect.state).to_string()))
-                .collect::<Vec<_>>(),
-            report
-                .warnings
-                .iter()
-                .map(|warning| (warning.code.label().to_string(), warning.message.clone()))
-                .collect::<Vec<_>>(),
-        ),
-        (Some(crate::command::CommandReport::EffectRetry(retry)), _) => (
-            Some(retry.transaction.to_string()),
-            Some("effect-retry".to_string()),
-            Vec::new(),
-            None,
-            vec![(retry.effect_id.to_string(), "pending".to_string())],
-            Vec::new(),
-        ),
-        (None, Some(receipt)) => (
-            Some(receipt.transaction_id.to_string()),
-            Some(receipt.outcome.label().to_string()),
-            receipt
-                .directories
-                .iter()
-                .map(|directory| {
-                    (
-                        ReportedOpKind::CreateDirectory.label().to_string(),
-                        format!("{{\"kind\": \"project\", \"path\": {}}}", json::string(&directory.path.to_string())),
+    let (transaction, kind, operations, ledger, effects, warnings) =
+        match (&envelope.report, &envelope.receipt) {
+            (Some(crate::command::CommandReport::Prepared(report)), _) => (
+                Some(report.transaction.to_string()),
+                Some(kind_label(&report.kind).to_string()),
+                report
+                    .operations
+                    .iter()
+                    .map(|op| (op.kind.label().to_string(), target_json(&op.path)))
+                    .collect::<Vec<_>>(),
+                ledger_label(report.ledger.kind),
+                report
+                    .post_commit
+                    .iter()
+                    .map(|effect| {
+                        (
+                            effect_label(&effect.effect),
+                            state_label(&effect.state).to_string(),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+                report
+                    .warnings
+                    .iter()
+                    .map(|warning| (warning.code.label().to_string(), warning.message.clone()))
+                    .collect::<Vec<_>>(),
+            ),
+            (Some(crate::command::CommandReport::EffectRetry(retry)), _) => (
+                Some(retry.transaction.to_string()),
+                Some("effect-retry".to_string()),
+                Vec::new(),
+                None,
+                vec![(retry.effect_id.to_string(), "pending".to_string())],
+                Vec::new(),
+            ),
+            (None, Some(receipt)) => (
+                Some(receipt.transaction_id.to_string()),
+                Some(receipt.outcome.label().to_string()),
+                receipt
+                    .directories
+                    .iter()
+                    .map(|directory| {
+                        (
+                            ReportedOpKind::CreateDirectory.label().to_string(),
+                            format!(
+                                "{{\"kind\": \"project\", \"path\": {}}}",
+                                json::string(&directory.path.to_string())
+                            ),
+                        )
+                    })
+                    .chain(
+                        receipt
+                            .files
+                            .iter()
+                            .map(|file| (verb_label(file).to_string(), target_json(&file.path))),
                     )
-                })
-                .chain(receipt.files.iter().map(|file| {
-                    (verb_label(file).to_string(), target_json(&file.path))
-                }))
-                .collect::<Vec<_>>(),
-            ledger_label(ledger_of(receipt.ledger_before, receipt.ledger_after).kind),
-            receipt
-                .post_commit
-                .iter()
-                .map(|effect| (effect_label(&effect.effect), state_label(&effect.state).to_string()))
-                .collect::<Vec<_>>(),
-            Vec::new(),
-        ),
-        (None, None) => (None, None, Vec::new(), None, Vec::new(), Vec::new()),
-    };
+                    .collect::<Vec<_>>(),
+                ledger_label(ledger_of(receipt.ledger_before, receipt.ledger_after).kind),
+                receipt
+                    .post_commit
+                    .iter()
+                    .map(|effect| {
+                        (
+                            effect_label(&effect.effect),
+                            state_label(&effect.state).to_string(),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+                Vec::new(),
+            ),
+            (None, None) => (None, None, Vec::new(), None, Vec::new(), Vec::new()),
+        };
 
     let operations = operations
         .iter()
-        .map(|(verb, target)| format!("    {{\"kind\": {}, \"target\": {target}}}", json::string(verb)))
+        .map(|(verb, target)| {
+            format!(
+                "    {{\"kind\": {}, \"target\": {target}}}",
+                json::string(verb)
+            )
+        })
         .collect::<Vec<_>>()
         .join(",\n");
     let effects = effects

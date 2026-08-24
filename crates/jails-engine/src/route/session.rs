@@ -236,16 +236,9 @@ impl Outcome {
         receipt
             .files
             .iter()
-            .filter(|file| {
-                matches!(
-                    file.after,
-                    jails_protocol::conflict::FileImage::Absent
-                )
-            })
+            .filter(|file| matches!(file.after, jails_protocol::conflict::FileImage::Absent))
             .filter_map(|file| match &file.path {
-                jails_prepare::prepare::OperationTarget::Project(path) => {
-                    Some(path.to_string())
-                }
+                jails_prepare::prepare::OperationTarget::Project(path) => Some(path.to_string()),
                 jails_prepare::prepare::OperationTarget::LegacyMachine(_) => None,
             })
             .collect()

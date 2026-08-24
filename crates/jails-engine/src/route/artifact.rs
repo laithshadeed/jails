@@ -31,6 +31,11 @@ pub fn generate(
             project, kind, name, fields, package, indexes, on, yields,
         )?,
     );
+    // A foreign build file changes what gets emitted -- plain JDBC instead of
+    // `JdbcClient`, no JSpecify -- and a dependency claim splices into nothing
+    // because there is no pom to splice it into. Said out loud, because the
+    // alternative is a reader discovering it by reading the generated code.
+    jails_generate::generate::report_degraded_shape(project, &change);
     let id = intent(project, kind, name, package, fields, indexes, on, yields)?;
     let owner = ResourceOwner::Entity(EntityId::Intent(id.clone()));
     let mut desired = desire::contribution(&owner, &change, project)?;

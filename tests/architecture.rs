@@ -805,7 +805,7 @@ const LAYERS: &[(&str, usize)] = &[
     // jails-cli: the binary and the whole-project lifecycle commands.
     ("new", 8),
     ("app", 8),
-    ("adopt", 8),
+    ("invoke", 8),
     ("main", 8),
 ];
 

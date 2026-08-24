@@ -247,7 +247,6 @@ fn destroy_refuses_rather_than_guessing_on_a_project_with_no_record() {
     );
 }
 
-
 #[test]
 fn destroy_removes_exactly_what_generate_created() {
     let mut findings: Vec<String> = Vec::new();
