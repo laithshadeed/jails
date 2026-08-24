@@ -382,24 +382,31 @@ pub fn adopt_layout(run: &Run) -> Result<Outcome> {
         project.base().replace('.', "/")
     ))?;
     let config = ProjectPath::parse(jails_project::config::FILE)?;
-    // The listing is declared, so a directory appearing under the base package
-    // between planning and committing refuses the adoption rather than
-    // recording a layout that was already out of date when it landed.
-    let reads = capture::capability_reads()?
-        .directory(base.clone())
-        .file(config.clone());
+    // A subpackage is found by the Java in it, not by listing the base
+    // directory, and the difference is not pedantry. A listing returns names
+    // without kinds, so a *file* called `controllers` would be adopted as the
+    // web layer's package; and a directory holding no Java is not a package
+    // anybody can be in, so recording a layout for it would point every later
+    // command at an empty tree. A `.java` file's parent is neither.
+    //
+    // The walk itself is unguarded -- something has to look first -- but every
+    // file it finds is declared, so §R4.3 rechecks them under the lock and a
+    // source appearing in a new subpackage mid-transition refuses rather than
+    // being silently left out of the layout.
+    let mut reads = capture::capability_reads()?.file(config.clone());
+    let mut names = BTreeSet::new();
+    let prefix = format!("{base}/");
+    for absolute in jails_java::java::source_files(&project.root().join(base.to_string())) {
+        let relative = super::relative_path(project, &absolute)?;
+        reads = reads.file(relative.clone());
+        if let Some(rest) = relative.to_string().strip_prefix(&prefix)
+            && let Some((name, _)) = rest.split_once('/')
+        {
+            names.insert(name.to_string());
+        }
+    }
+    let names: Vec<String> = names.into_iter().collect();
     let (snapshot, _) = capture::projected(project, &reads)?;
-
-    let names: Vec<String> = snapshot
-        .list(&base)?
-        .iter()
-        .filter_map(|entry| {
-            entry
-                .to_string()
-                .strip_prefix(&format!("{base}/"))
-                .map(str::to_string)
-        })
-        .collect();
     let readings = jails_project::synonyms::readings(&names);
     let resolved = jails_project::synonyms::resolve(&readings);
 
@@ -423,10 +430,13 @@ pub fn adopt_layout(run: &Run) -> Result<Outcome> {
     }
     if resolved.writes.is_empty() {
         return Err(
-            "nothing to adopt: no directory under the base package needs a different name."
+            "nothing to adopt: no package under the base package needs a different name."
                 .to_string(),
         );
     }
+    // Said out loud because it is the rule that makes this command safe to
+    // run at all, and true in both modes: nothing below can reach that list.
+    println!("[project] capabilities is not touched: `jails sync` acts on that list.");
 
     // One keyed edit per layer, not one rewrite of the file. `jails.toml` has
     // more than one contributor -- `[project] capabilities` is a set of owned

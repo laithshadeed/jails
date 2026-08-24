@@ -122,7 +122,13 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // whose steps are perfectly well ordered. The projection is
                 // the only thing that can answer, and taking a `Project` is
                 // what reaching it looks like.
-                ceiling: 137,
+                //
+                // 137 -> 136: `adopt::report` went with V1's `adopt` when the
+                // dispatch point flipped. Every one of these that leaves this
+                // way is the migration's real dividend -- a V1 path deleted is
+                // a root-taking function that no longer exists rather than one
+                // that was rewritten.
+                ceiling: 136,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;

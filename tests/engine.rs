@@ -2632,3 +2632,47 @@ fn pretending_writes_nothing_and_names_what_a_commit_would_write() {
         .collect();
     assert_eq!(created, appeared, "the pretend run and the commit disagree");
 }
+
+/// A package is found by the Java in it, and the two traps that rules out.
+///
+/// A directory listing gives names without kinds, so a *file* named
+/// `controllers` would be adopted as the web layer's package -- and a
+/// directory holding no Java is not a package anybody can be in, so recording
+/// a layout for it would point every later command at an empty tree. A
+/// `.java` file's parent is neither, which is why the walk is the answer
+/// rather than the listing.
+#[test]
+fn adoption_ignores_a_file_named_like_a_layer_and_a_package_with_no_java() {
+    let root = common::temp_dir("engine-adopt-traps");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+    let base = root.join("src/main/java/com/example/demo");
+
+    // A real renamed package.
+    std::fs::create_dir_all(base.join("controllers")).unwrap();
+    std::fs::write(
+        base.join("controllers/Marker.java"),
+        "package com.example.demo.controllers;\n\nfinal class Marker {}\n",
+    )
+    .unwrap();
+    // A directory that looks like a layer and holds no Java.
+    std::fs::create_dir_all(base.join("persistence")).unwrap();
+    // A *file* that looks like a layer.
+    std::fs::write(base.join("dto"), "not java\n").unwrap();
+
+    jails_engine::route::adopt_layout(&jails_engine::route::Run::committing(
+        &Project::load(&root).unwrap(),
+    ))
+    .unwrap();
+
+    let config = std::fs::read_to_string(root.join("jails.toml")).unwrap();
+    assert!(config.contains("web = \"controllers\""), "{config}");
+    assert!(
+        !config.contains("persistence"),
+        "a package with no Java in it was adopted: {config}"
+    );
+    assert!(
+        !config.contains("dto"),
+        "a file named like a layer was adopted as a package: {config}"
+    );
+}
