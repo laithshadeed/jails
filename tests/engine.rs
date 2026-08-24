@@ -3266,6 +3266,48 @@ fn migrating_a_project_removes_the_registry_it_replaced() {
     assert!(after.legacy.is_none(), "the store still claims a migration");
 }
 
+/// The compose block a capability writes has to be a compose file.
+///
+/// The canonical `ComposeServiceSpec` mapping is stored dedented -- stated
+/// relative to the service, so one mapping has one spelling -- and the format
+/// owner indents it back. `compose::add_service_ref` takes a body that already
+/// carries its own two-space nesting, so handing it the canonical value
+/// un-nests every key: `image:` lands at the service's own indent and the file
+/// stops being YAML. Nothing compared the bytes, so it went unnoticed.
+#[test]
+fn a_capabilitys_compose_block_keeps_its_nesting() {
+    let root = common::temp_dir("engine-compose-shape");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_spring_fixture(&root);
+
+    jails_engine::route::install(
+        &committing(&Project::load(&root).unwrap()),
+        &Declaration::plain(Capability::Db),
+    )
+    .unwrap();
+
+    let compose = std::fs::read_to_string(root.join("compose.yaml")).unwrap();
+    let service = compose
+        .lines()
+        .position(|line| line.trim_end() == "  postgres:")
+        .unwrap_or_else(|| panic!("no service block:\n{compose}"));
+    let body: Vec<&str> = compose
+        .lines()
+        .skip(service + 1)
+        .take_while(|line| line.starts_with("    ") || line.trim().is_empty())
+        .collect();
+    assert!(
+        body.iter()
+            .any(|line| line.trim_start().starts_with("image:")),
+        "the service body is not nested under its name:\n{compose}"
+    );
+    // And a nested key stays nested one level deeper than its parent.
+    assert!(
+        compose.contains("\n      POSTGRES_DB:"),
+        "a nested mapping was flattened:\n{compose}"
+    );
+}
+
 /// A capability that brings a container plans the run that starts it.
 ///
 /// §R3.3's one aggregate effect. It is a *descriptor* frozen at preparation --

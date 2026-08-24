@@ -46,14 +46,6 @@ use test_wiring::*;
 
 pub use crate::spec::kind::Capability;
 
-const SPRING_DOCKER_COMPOSE: Dependency = Dependency {
-    group_id: "org.springframework.boot",
-    artifact_id: "spring-boot-docker-compose",
-    version: None,
-    scope: None,
-    optional: true,
-};
-
 /// Change every requested capability before any of them is applied.
 ///
 /// `jails add db kafka` applied them in turn, so a project that cannot have
@@ -196,14 +188,15 @@ pub fn add_in(
         && !plan.compose.is_empty()
         && compose::has_services(&compose_text)
     {
-        match pom::add_dependency(&updated_pom, &SPRING_DOCKER_COMPOSE)? {
+        match pom::add_dependency(&updated_pom, &crate::pom::SPRING_DOCKER_COMPOSE)? {
             Some(next) => {
                 updated_pom = next;
                 docker_compose_dep = true;
             }
             None => println!(
                 "  exists  {}:{}",
-                SPRING_DOCKER_COMPOSE.group_id, SPRING_DOCKER_COMPOSE.artifact_id
+                crate::pom::SPRING_DOCKER_COMPOSE.group_id,
+                crate::pom::SPRING_DOCKER_COMPOSE.artifact_id
             ),
         }
     }
@@ -218,7 +211,8 @@ pub fn add_in(
         if docker_compose_dep {
             println!(
                 "  would add dependency  {}:{} (optional)",
-                SPRING_DOCKER_COMPOSE.group_id, SPRING_DOCKER_COMPOSE.artifact_id
+                crate::pom::SPRING_DOCKER_COMPOSE.group_id,
+                crate::pom::SPRING_DOCKER_COMPOSE.artifact_id
             );
         }
         for artifact_id in &spliced_plugins {
@@ -252,7 +246,8 @@ pub fn add_in(
         if docker_compose_dep {
             println!(
                 "     dep  {}:{} (optional)",
-                SPRING_DOCKER_COMPOSE.group_id, SPRING_DOCKER_COMPOSE.artifact_id
+                crate::pom::SPRING_DOCKER_COMPOSE.group_id,
+                crate::pom::SPRING_DOCKER_COMPOSE.artifact_id
             );
         }
         for artifact_id in &spliced_plugins {

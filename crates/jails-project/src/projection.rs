@@ -350,7 +350,7 @@ impl ProjectedProject {
                 let path = compose_path()?;
                 let text = self.text(&path)?.unwrap_or_default();
                 let volume = value.volumes.iter().next().map(|v| v.as_str());
-                let spliced = crate::compose::add_service_ref(
+                let spliced = crate::compose::add_canonical_service(
                     &text,
                     crate::compose::ServiceRef {
                         name: value.name.as_str(),

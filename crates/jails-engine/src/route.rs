@@ -242,6 +242,23 @@ fn with_test_support(project: &Project, mut change: Change) -> Change {
     {
         change.deps.push(jails_project::pom::WEBMVC_TEST_STARTER);
     }
+    // A Spring project with compose services gets the module that starts them
+    // for `spring-boot:run`. Same rule as the three above and the same reason
+    // it lives here: the recipes that bring a service are `db`, `kafka`,
+    // `redis` and `mail`, and a rule four of them have to remember is one that
+    // decays. `add db` also writes `spring.docker.compose.enabled=false` on
+    // this machine, and both are right: the property is a per-project answer
+    // to a broken provider, and the dependency is what the property is *about*.
+    if project.flavor() == jails_project::pom::Flavor::SpringBoot
+        && !change.compose.is_empty()
+        && !jails_project::pom::has_dependency(
+            project.pom(),
+            "org.springframework.boot",
+            "spring-boot-docker-compose",
+        )
+    {
+        change.deps.push(jails_project::pom::SPRING_DOCKER_COMPOSE);
+    }
     change
 }
 

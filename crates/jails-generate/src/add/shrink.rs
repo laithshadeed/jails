@@ -73,8 +73,8 @@ pub fn remove(
         && !compose::has_services(&compose_text)
         && let Some(next) = pom::remove_dependency(
             &updated_pom,
-            SPRING_DOCKER_COMPOSE.group_id,
-            SPRING_DOCKER_COMPOSE.artifact_id,
+            crate::pom::SPRING_DOCKER_COMPOSE.group_id,
+            crate::pom::SPRING_DOCKER_COMPOSE.artifact_id,
         )?
     {
         updated_pom = next;
@@ -134,7 +134,8 @@ pub fn remove(
         if docker_compose_dep {
             println!(
                 "  would remove dependency  {}:{}",
-                SPRING_DOCKER_COMPOSE.group_id, SPRING_DOCKER_COMPOSE.artifact_id
+                crate::pom::SPRING_DOCKER_COMPOSE.group_id,
+                crate::pom::SPRING_DOCKER_COMPOSE.artifact_id
             );
         }
         for artifact_id in &removed_plugins {
@@ -174,7 +175,8 @@ pub fn remove(
         if docker_compose_dep {
             println!(
                 "  dep {}:{}",
-                SPRING_DOCKER_COMPOSE.group_id, SPRING_DOCKER_COMPOSE.artifact_id
+                crate::pom::SPRING_DOCKER_COMPOSE.group_id,
+                crate::pom::SPRING_DOCKER_COMPOSE.artifact_id
             );
         }
         for artifact_id in &removed_plugins {
@@ -222,7 +224,8 @@ pub fn remove(
         if docker_compose_dep {
             println!(
                 "  remove  {}:{}",
-                SPRING_DOCKER_COMPOSE.group_id, SPRING_DOCKER_COMPOSE.artifact_id
+                crate::pom::SPRING_DOCKER_COMPOSE.group_id,
+                crate::pom::SPRING_DOCKER_COMPOSE.artifact_id
             );
         }
         for artifact_id in &removed_plugins {

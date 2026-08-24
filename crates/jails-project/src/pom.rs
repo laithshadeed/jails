@@ -868,6 +868,22 @@ pub fn with_main_class(pom: &str, fqcn: &str) -> Option<String> {
 /// `@WebMvcTest` compiles only when this is declared, so it lives beside the
 /// import it belongs to rather than with the capability that happens to emit
 /// one today.
+/// The module that starts a project's compose services for `spring-boot:run`.
+///
+/// Optional, because it is a development convenience rather than something the
+/// application needs at run time -- and because `spring-boot-docker-compose`
+/// cannot drive podman-compose, which is why `add db` also writes
+/// `spring.docker.compose.enabled=false`. The two are not in tension: the
+/// property is a per-project answer to a broken provider, and the dependency
+/// is what the property is *about*.
+pub const SPRING_DOCKER_COMPOSE: Dependency = Dependency {
+    group_id: "org.springframework.boot",
+    artifact_id: "spring-boot-docker-compose",
+    version: None,
+    scope: None,
+    optional: true,
+};
+
 pub const WEBMVC_TEST_STARTER: Dependency = Dependency {
     group_id: "org.springframework.boot",
     artifact_id: "spring-boot-starter-webmvc-test",

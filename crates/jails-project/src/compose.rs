@@ -294,6 +294,38 @@ pub fn add_service(text: &str, svc: &Service) -> Option<String> {
     add_service_ref(text, svc.borrowed())
 }
 
+/// The same, for a body stated *canonically*: relative to the service, with no
+/// leading indentation at all.
+///
+/// The stored `ComposeServiceSpec.mapping` is that shape, so that one mapping
+/// has one spelling however it was written. Getting it back into a file is this
+/// module's job and not the caller's: [`add_service_ref`] takes a body that
+/// already carries the nesting a literal in this file is written with, and
+/// handing it the canonical value instead un-nests every key -- `image:` lands
+/// at the service's own indent and the document stops being YAML. That is
+/// exactly what the V2 route wrote until something compared the bytes.
+pub fn add_canonical_service(text: &str, svc: ServiceRef<'_>) -> Option<String> {
+    let body = nested(svc.body);
+    add_service_ref(text, ServiceRef { body: &body, ..svc })
+}
+
+/// A canonical mapping, indented the way a literal in this file is written.
+///
+/// `SERVICE_BODY_INDENT` is the whole convention in one place: two for the
+/// `services:` mapping and two for the service's own name.
+fn nested(body: &str) -> String {
+    const SERVICE_BODY_INDENT: &str = "    ";
+    let mut out = String::with_capacity(body.len() + body.lines().count() * 4);
+    for line in body.lines() {
+        if !line.trim().is_empty() {
+            out.push_str(SERVICE_BODY_INDENT);
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
 /// The same splice from borrowed parts, for a service that did not come from
 /// a literal in this binary. One splice, two callers — see
 /// `pom::add_dependency_ref` for the same reason.
