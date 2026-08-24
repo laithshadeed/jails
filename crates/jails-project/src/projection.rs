@@ -358,15 +358,23 @@ impl ProjectedProject {
                 Ok(Some(path))
             }
             SemanticEdit::MavenPlugin { value, .. } => {
-                let path = pom_path()?;
+                let path = self.build_file_path()?;
                 let Some(text) = self.optional_text(&path)? else {
                     return Ok(None);
                 };
-                let spliced = pom::add_plugin(
-                    &text,
-                    value.coordinate.artifact_id.as_str(),
-                    value.block.as_str(),
-                )?;
+                let artifact = value.coordinate.artifact_id.as_str();
+                // The claim names a Maven plugin; what it *means* is the job
+                // that plugin does, and that is the half a Gradle build can
+                // act on. `feature_of` is closed, so a plugin with no known
+                // equivalent renders nothing rather than something guessed --
+                // and `report_degraded_shape` is what tells the reader.
+                let spliced = match self.build {
+                    Build::Gradle => crate::gradle::feature_of(artifact)
+                        .map(|feature| crate::gradle::add_feature(&text, feature))
+                        .transpose()?
+                        .flatten(),
+                    _ => pom::add_plugin(&text, artifact, value.block.as_str())?,
+                };
                 self.write_text(&path, spliced.unwrap_or(text));
                 Ok(Some(path))
             }
@@ -569,11 +577,16 @@ impl ProjectedProject {
                 Ok(Some(path))
             }
             ResourceKey::MavenPlugin(coordinate) => {
-                let path = pom_path()?;
+                let path = self.build_file_path()?;
                 let Some(text) = self.optional_text(&path)? else {
                     return Ok(None);
                 };
-                let without = pom::remove_plugin(&text, coordinate.artifact_id.as_str())?;
+                let artifact = coordinate.artifact_id.as_str();
+                let without = match self.build {
+                    Build::Gradle => crate::gradle::feature_of(artifact)
+                        .and_then(|feature| crate::gradle::remove_feature(&text, feature)),
+                    _ => pom::remove_plugin(&text, artifact)?,
+                };
                 self.write_text(&path, without.unwrap_or(text));
                 Ok(Some(path))
             }

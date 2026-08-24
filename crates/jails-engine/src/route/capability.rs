@@ -49,6 +49,13 @@ pub fn install(run: &Run, asked: &Declaration) -> Result<Outcome> {
             asked.package.as_deref(),
         )?,
     );
+    // A capability that installs its code and silently skips half its build
+    // configuration is worse than one that refuses -- `build.rs` states that
+    // rule for dependencies, and a plugin is the same bargain. Without this,
+    // `add format` on Gradle records itself as installed having written
+    // nothing, and the ledger then says the project is formatted when nothing
+    // formats it.
+    require_renderable_plugins(project, &change)?;
     let mut desired = desire::contribution(&owner, &change, project)?;
     record_capability(&mut desired, &owner, &id, &spec)?;
     provenance::stamp_files(
@@ -325,4 +332,30 @@ fn note_unstarted(run: &Run, services: &[&str]) {
         "  note    start with `{}`",
         jails_project::compose::missing_docker_hint(services)
     );
+}
+
+/// Refuse a capability whose build-tool configuration this project cannot be
+/// given.
+///
+/// Only Gradle can fail this today, and only for a plugin with no known
+/// equivalent. The refusal names the plugin and what it was for, because the
+/// reader's way forward is to add the Gradle counterpart themselves -- and
+/// they cannot do that if all they are told is that something did not work.
+fn require_renderable_plugins(project: &Project, change: &Change) -> Result<()> {
+    if project.build() != jails_spec::build::Build::Gradle {
+        return Ok(());
+    }
+    for (artifact, _) in &change.plugins {
+        if jails_project::gradle::feature_of(artifact).is_some() {
+            continue;
+        }
+        return Err(format!(
+            "this capability configures the build with `{artifact}`, and jails does not know \
+             the Gradle equivalent.\n       Installing the code and skipping the build \
+             configuration would record the capability as present while nothing it needs \
+             runs.\n       fix: add the Gradle plugin yourself, then re-run. `jails doctor` \
+             will tell you what else is missing."
+        ));
+    }
+    Ok(())
 }

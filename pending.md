@@ -150,21 +150,26 @@ Still Maven-only, roughly in the order they hurt:
 
 | what | why it is not portable yet |
 |---|---|
-| **`*IT` tests never run** | `ensure_failsafe` splices a Maven plugin. Gradle needs an `integrationTest` task wired into `check`. Until then `jails check` on Gradle is green over integration tests nothing executed -- the exact failure Failsafe exists to prevent, one build tool over |
-| `add format` / `jails fmt` | Spotless is spliced as a Maven plugin. Gradle's is `com.diffplug.spotless` with a `spotlessApply` task |
-| `add coverage` | JaCoCo, same shape |
+| ~~`*IT` tests never run~~ | **Done.** A Failsafe claim renders a marked `integrationTest` task wired into `check`, with `test` excluding `*IT` so they do not run twice. Verified against real Gradle: `> Task :integrationTest FAILED` on a deliberately failing `*IT` |
+| ~~`add coverage`~~ | **Done.** JaCoCo ships with Gradle, so there is no version to pin and no `plugins {}` block to reach into |
+| `add format` / `jails fmt` | Spotless is spliced as a Maven plugin, and Gradle's `com.diffplug.spotless` needs a *version* and an entry in the `plugins {}` block -- the one feature that cannot be a self-contained appended block. `add format` **refuses** on Gradle rather than recording itself installed having written nothing |
 | `jails watch` | `spring-boot:run` plus devtools; Gradle is `bootRun` with `--continuous` |
 | `jails mvn` | The escape hatch is Maven by definition. Gradle needs a `jails gradle` sibling rather than a branch |
 | `testd`, `test --fast`, `test --affected`, `jails console` | All need a resolved classpath, which jails gets from `dependency:build-classpath`. Gradle has no equivalent without adding a task to the build -- and adding one to a file the reader owns, for a convenience, is a different bargain from splicing a dependency they asked for |
 | `test --failed`, `--json`, `--slowest` | Read Surefire's report directory. Gradle writes its own XML elsewhere |
 
-`Change.plugins` is the shared root cause of the first three: it is
-`(artifact_id, xml_block)`, which is a Maven plugin with Maven's syntax baked
-in. A plugin claim that named the *capability* -- format, coverage, run
-integration tests -- and let each build file render it would fix all of them at
-once, and is the same move `SemanticEdit::MavenDependency` already made for
-dependencies, where `group:artifact:version` is what both tools resolve
-against.
+`Change.plugins` is still `(artifact_id, xml_block)` -- a Maven plugin with
+Maven's syntax baked in -- and `ResourceKey::MavenPlugin` still keys the claim
+by a coordinate Gradle does not resolve. **That is a naming debt, deliberately
+taken.** `gradle::feature_of` maps the coordinate onto what the plugin *does*,
+which is total for the closed set jails emits and `None` for anything else, so
+the behaviour is right and only the name is wrong. Renaming the key to the
+feature is a protocol change across five files; it buys no behaviour and can
+be done whenever the churn is convenient.
+
+The rule that makes the debt safe: a plugin with no known Gradle equivalent
+**refuses the whole capability**, so nothing is ever half-installed on the
+strength of a name jails half-recognised.
 
 ---
 

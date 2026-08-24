@@ -868,3 +868,199 @@ dependencies {
         assert_eq!(with_main_class(MINICOM, "com.example.App"), None);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Build features: what a Maven plugin *does*, said in Gradle
+// ---------------------------------------------------------------------------
+
+/// A thing the build has to do, named by what it is for.
+///
+/// The claim in the ledger is keyed by a Maven coordinate, which is a stable
+/// name for a closed set of three -- not a thing Gradle resolves. That is a
+/// naming debt recorded in `pending.md`, and it is deliberately *not* papered
+/// over here: [`feature_of`] is total for what jails emits and returns `None`
+/// for anything else, so an unrecognised plugin refuses rather than being
+/// rendered as a guess.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Feature {
+    /// Run `*IT` classes, and fail the build when they fail.
+    IntegrationTests,
+    /// Enforce line coverage during `check`.
+    Coverage,
+}
+
+/// Which feature a Maven plugin coordinate stands for.
+///
+/// Closed on purpose. A plugin jails does not recognise is one it cannot
+/// render an equivalent for, and writing *something* into a build file on the
+/// strength of a name it half-recognised is the confident wrong answer.
+pub fn feature_of(maven_artifact: &str) -> Option<Feature> {
+    match maven_artifact {
+        "maven-failsafe-plugin" => Some(Feature::IntegrationTests),
+        "jacoco-maven-plugin" => Some(Feature::Coverage),
+        _ => None,
+    }
+}
+
+/// The marker comment that owns a block jails wrote into a file it does not
+/// own. Same contract as `codemod::Marked`, spelled here because a Groovy
+/// build file is not a `# comment` format.
+fn marker(feature: Feature) -> &'static str {
+    match feature {
+        Feature::IntegrationTests => "jails:integration-tests",
+        Feature::Coverage => "jails:coverage",
+    }
+}
+
+/// What jails writes for a feature, as a whole marked block.
+fn body(feature: Feature) -> &'static str {
+    match feature {
+        // The exact division of labour Failsafe gives Maven: `test` runs the
+        // unit tests, a separate task runs `*IT`, and `check` depends on both
+        // so a failing integration test fails the build. Without the
+        // `excludeTestsMatching`, `*IT` classes would run *twice* -- once
+        // unqualified and once here -- which is how a flaky integration test
+        // gets blamed on the wrong run.
+        Feature::IntegrationTests => {
+            "tasks.named('test') {\n    \
+                 useJUnitPlatform()\n    \
+                 filter { excludeTestsMatching '*IT' }\n\
+             }\n\n\
+             tasks.register('integrationTest', Test) {\n    \
+                 useJUnitPlatform()\n    \
+                 testClassesDirs = sourceSets.test.output.classesDirs\n    \
+                 classpath = sourceSets.test.runtimeClasspath\n    \
+                 filter { includeTestsMatching '*IT' }\n    \
+                 shouldRunAfter tasks.named('test')\n\
+             }\n\n\
+             tasks.named('check') {\n    \
+                 dependsOn tasks.named('integrationTest')\n\
+             }\n"
+        }
+        // `jacoco` ships with Gradle, so unlike Spotless there is no version
+        // to pin and no `plugins {}` block to reach into.
+        Feature::Coverage => {
+            "apply plugin: 'jacoco'\n\n\
+             tasks.named('jacocoTestCoverageVerification') {\n    \
+                 violationRules {\n        \
+                     rule {\n            \
+                         limit {\n                \
+                             counter = 'LINE'\n                \
+                             minimum = 0.70\n            \
+                         }\n        \
+                     }\n    \
+                 }\n\
+             }\n\n\
+             tasks.named('check') {\n    \
+                 dependsOn tasks.named('jacocoTestCoverageVerification')\n\
+             }\n"
+        }
+    }
+}
+
+/// Whether this build already carries jails' block for a feature.
+pub fn has_feature(text: &str, feature: Feature) -> bool {
+    text.contains(&format!("// {}", marker(feature)))
+}
+
+/// Add a feature's block, or report that there is nothing to do.
+///
+/// Appended as a marked block rather than spliced into an existing one, for
+/// the reason `codemod.rs` gives about every other file jails does not own:
+/// the marker is what makes removal exact, and what stops a second `add` from
+/// writing the block twice.
+pub fn add_feature(text: &str, feature: Feature) -> Result<Option<String>> {
+    if has_feature(text, feature) {
+        return Ok(None);
+    }
+    let name = marker(feature);
+    let separator = match text.ends_with('\n') || text.is_empty() {
+        true => "",
+        false => "\n",
+    };
+    Ok(Some(format!(
+        "{text}{separator}\n// {name}\n{}// /{name}\n",
+        body(feature)
+    )))
+}
+
+/// Take a feature's block back out, leaving every other byte alone.
+pub fn remove_feature(text: &str, feature: Feature) -> Option<String> {
+    let name = marker(feature);
+    let open = format!("// {name}\n");
+    let close = format!("// /{name}\n");
+    let start = text.find(&open)?;
+    let end = text[start..].find(&close)? + start + close.len();
+    let mut out = String::with_capacity(text.len());
+    out.push_str(&text[..start]);
+    out.push_str(&text[end..]);
+    // The blank line that separated the block from what came before goes with
+    // it, so add-then-remove is byte-for-byte the original.
+    Some(out.trim_end().to_string() + "\n")
+}
+
+#[cfg(test)]
+mod feature_tests {
+    use super::*;
+
+    const BARE: &str = "plugins {\n    id 'java'\n}\n";
+
+    #[test]
+    fn a_failsafe_claim_becomes_a_gradle_integration_test_task() {
+        assert_eq!(
+            feature_of("maven-failsafe-plugin"),
+            Some(Feature::IntegrationTests)
+        );
+        let out = add_feature(BARE, Feature::IntegrationTests)
+            .unwrap()
+            .unwrap();
+        // The division of labour Failsafe gives Maven, and the reason the
+        // exclude matters: without it `*IT` runs twice.
+        assert!(
+            out.contains("tasks.register('integrationTest', Test)"),
+            "{out}"
+        );
+        assert!(out.contains("excludeTestsMatching '*IT'"), "{out}");
+        assert!(out.contains("includeTestsMatching '*IT'"), "{out}");
+        assert!(
+            out.contains("dependsOn tasks.named('integrationTest')"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn a_plugin_with_no_gradle_equivalent_renders_nothing() {
+        assert_eq!(feature_of("spotless-maven-plugin"), None);
+        assert_eq!(feature_of("maven-surefire-plugin"), None);
+    }
+
+    #[test]
+    fn adding_a_feature_twice_changes_nothing_the_second_time() {
+        let once = add_feature(BARE, Feature::Coverage).unwrap().unwrap();
+        assert_eq!(add_feature(&once, Feature::Coverage).unwrap(), None);
+    }
+
+    #[test]
+    fn remove_is_the_inverse_of_add() {
+        let with = add_feature(BARE, Feature::IntegrationTests)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            remove_feature(&with, Feature::IntegrationTests).as_deref(),
+            Some(BARE)
+        );
+    }
+
+    #[test]
+    fn two_features_stack_and_come_out_independently() {
+        let both = add_feature(BARE, Feature::IntegrationTests)
+            .unwrap()
+            .unwrap();
+        let both = add_feature(&both, Feature::Coverage).unwrap().unwrap();
+        assert!(has_feature(&both, Feature::IntegrationTests));
+        assert!(has_feature(&both, Feature::Coverage));
+        let left = remove_feature(&both, Feature::Coverage).unwrap();
+        assert!(has_feature(&left, Feature::IntegrationTests), "{left}");
+        assert!(!has_feature(&left, Feature::Coverage), "{left}");
+    }
+}
