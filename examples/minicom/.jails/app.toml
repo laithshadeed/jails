@@ -1,0 +1,66 @@
+# Minicom, ported from Rails and Django to Spring.
+#
+# The Rails app (app/models, config/routes.rb) and the Django app
+# (minicom/models.py, minicom/urls.py) are the same domain expressed twice:
+# a user identified by email, messages that belong to them, a read flag, a
+# timestamp, and a direction. Neither framework appears below, and neither
+# does "minicom" -- these are the same generic intents the crawler and the
+# support inbox are built from.
+schema = 1
+capabilities = ["db", "api", "cors", "json", "testkit"]
+
+# `direction = models.TextField(default='TO_USER')  # or FROM_USER` in Django,
+# a bare string column in Rails. A closed set is what it always was; saying so
+# lets jails generate the sample values its tests need.
+[[generate]]
+kind = "enum"
+name = "MessageDirection"
+fields = ["TO_USER", "FROM_USER"]
+
+[[generate]]
+kind = "scaffold"
+name = "User"
+fields = ["id:long@pk", "email:string!@unique"]
+timestamps = true
+
+[[generate]]
+kind = "scaffold"
+name = "Message"
+fields = ["id:long@pk", "userId:long@index", "body:string!", "isRead:boolean", "timeStamp:instant@index", "direction:MessageDirection", "version:long@nonnegative"]
+timestamps = true
+indexes = ["user_id, time_stamp desc"]
+
+# `user = models.ForeignKey(User)` / `t.index ["user_id"]`, enforced in
+# PostgreSQL rather than trusted from the caller.
+[[generate]]
+kind = "association"
+name = "MessageUser"
+fields = ["userId=id"]
+on = "Message"
+yields = "User"
+
+# POST /api/send
+[[generate]]
+kind = "usecase"
+name = "SendMessage"
+fields = ["id:long", "userId:long", "body:string!", "direction:MessageDirection"]
+on = "Message"
+
+# POST /api/read  ->  Message.mark_read()
+#
+# `version` is jails asking for something neither framework had: Django's
+# `save()` and Rails' `update` last-write-wins, so two readers marking the
+# same message read at once silently lose one update. A transition refuses
+# without it.
+[[generate]]
+kind = "transition"
+name = "MarkAsRead"
+fields = ["id:long", "isRead:boolean", "version:long@nonnegative"]
+on = "Message"
+
+# POST /api/conversation  ->  User.all_messages()
+[[generate]]
+kind = "query"
+name = "Conversation"
+fields = ["userId:long"]
+on = "Message"
