@@ -1,8 +1,8 @@
 # Jails production playground
 
-Tested on 2026-08-24 with Jails 0.1.0, OpenJDK 26.0.2 (generated release
-25), and Maven 3.9.16. The generated applications are preserved under
-[`playground/`](playground/).
+Re-run on 2026-08-24 with Jails 0.1.0, OpenJDK 26.0.2 (generated release 25),
+Maven 3.9.16, and a working Podman container runtime. The generated
+applications are preserved under [`playground/`](playground/).
 
 This is a production-readiness exercise, not a demo. The manifests ask Jails
 for persistence, validation, tenant scoping, security, metrics, migrations,
@@ -11,66 +11,90 @@ Kafka, transactional delivery, bounded background work, containers, and CI.
 inboxes, contacts, conversations, assignments, messages, and provider
 delivery.
 
+**The first run could not operate a container runtime and could not compile a
+single generated Spring test.** Everything below is the second run, on the
+same machine with a working runtime and with the five defects the first run
+named already fixed. It found six more. Each one needed a part of the
+exercise the first run never reached — applying migrations, inspecting the
+ledger it wrote, and sending the requests Jails generates — and five are
+fixed here, each with a test that fails without it.
+
 ## Outcome
 
 | Application | Generated proof | Routes | Main/test code | Gate |
 |---|---|---:|---:|---|
-| Payments gateway | [`playground/payments-gateway/`](playground/payments-gateway/) | 10 | 2,695 / 1,968 lines | production sources compile; generated tests do not compile |
-| Intercom-style inbox | [`playground/intercom/`](playground/intercom/) | 25 | 4,417 / 3,711 lines | production sources compile; generated tests do not compile |
-| Web crawler | [`playground/web-crawler/`](playground/web-crawler/) | 18 | 2,426 / 1,542 lines | production sources compile; generated tests do not compile |
-| Ledger CLI | [`playground/ledger-cli/`](playground/ledger-cli/) | 0 | 370 / 641 lines | build succeeds: 54 tests, 0 failures, 6 skipped |
+| Payments gateway | [`playground/payments-gateway/`](playground/payments-gateway/) | 10 | 2,692 / 2,037 lines | `jails check` green: 70 unit + 17 integration tests, 0 failures |
+| Intercom-style inbox | [`playground/intercom/`](playground/intercom/) | 25 | 4,409 / 3,890 lines | `jails check` green: 123 unit + 42 integration tests, 0 failures |
+| Web crawler | [`playground/web-crawler/`](playground/web-crawler/) | 18 | 2,424 / 1,582 lines | `jails check` green: 63 unit + 11 integration tests, 0 failures |
+| Ledger CLI | [`playground/ledger-cli/`](playground/ledger-cli/) | 0 | 370 / 641 lines | `jails check` green: 54 tests, 0 failures, 6 deliberately skipped |
+
+`jails check` is `mvn clean verify`, so the integration tier really ran:
+PostgreSQL and Kafka came up under Testcontainers, Flyway applied every
+migration, and the repository, query, association, outbox, durable-job and
+messaging tests exercised them. Nothing here is a `-Dmaven.test.skip=true`
+jar.
 
 All four manifests applied twice without changing any non-`target` file. The
 before and after aggregate SHA-256 values were identical:
 
 | Application | Aggregate SHA-256 |
 |---|---|
-| Payments gateway | `af2ab3f7234123fcc16dcb9400e255bdcd04cde440fb0bd45071cc6bf80569d7` |
-| Intercom-style inbox | `0397c576b9dbc383caca84b92092b20a3e8fdfdf5bc1a0129d7e54c962339ab9` |
-| Web crawler | `3394fca759030618adb567394ffdfeffbfe0f51a6c78420d2cdf90b4662e7e24` |
-| Ledger CLI | `9ae21d049c0e25191f1a24f9083d725d2ca60e486ba57b7936012aea98f8e913` |
+| Payments gateway | `98bca0c733cb85542e15c74daae36f03898fffe509bb059057f94b80373f41f0` |
+| Intercom-style inbox | `02cd226012be3276828ef2e80c70e9a0e4ed2c3808b415492761d57420d3d5ad` |
+| Web crawler | `151cfc47c85f3869fbaf2f250ff23350fe0882cdf41e252e73a76ec7ca3268dd` |
+| Ledger CLI | `645b32f261e0258fed81a4abfe6a3bbb7a99ac7ec8cb5decc053d0215df2194f` |
 
-The three Spring projects produce executable jars with tests skipped. That is
-useful compile evidence, but it is deliberately **not** called a passing
-production gate. `jails check` is red for all three.
+They are also unchanged by everything that follows: building, testing,
+applying migrations and building images leave the generated tree
+byte-identical.
 
 ## What worked and what did not
-
-The following distinction matters:
 
 - **Generation worked.** Jails created all four directory trees, applied every
   manifest intent, generated routes/migrations/tests/CI/container files, and
   repeated the operation without changing file contents.
-- **Main-source compilation worked.** The 85 payment, 168 Intercom, and 68
-  crawler production Java files compile. They package only when Maven is told
-  not to compile tests at all.
-- **The ledger build gate worked.** Its jar was produced and Maven reported 54
-  tests, 0 failures, and 6 deliberately skipped tests.
-- **The Spring production gate did not work.** All three `jails check` runs
-  stop at generated test compilation. No Spring test executes.
-- **Real infrastructure was not proved.** PostgreSQL, Kafka, Flyway, application
-  startup, and container images could not run in this sandbox.
-- **End-to-end business behavior was not complete.** The ledger strategies and
-  the generated Kafka consumer reactions still contain TODO behavior.
+- **The production gate worked, for all four.** `mvn clean verify` is green in
+  every project, unit and integration tiers both.
+- **The generated tests are the evidence.** Application startup
+  (`PaymentsGatewayApplicationTests`), health (`ActuatorEndpointsTest`), the
+  metrics scrape (`PrometheusScrapeTest`), the rejection of an unauthenticated
+  request (`SecurityConfigTest`) and the acceptance of the documented create
+  request (`MerchantControllerTest.theDocumentedCreateRequestIsAccepted`) are
+  all generated tests that ran in that gate. Thirteen of those create tests
+  exist across the three Spring projects and none is `@Disabled`.
+- **Real infrastructure ran.** 7, 19 and 4 Flyway migrations applied cleanly to
+  a scratch PostgreSQL database from a cold container start; the three
+  generated Dockerfiles build (372–374 MB) and run as uid 10001.
+- **The ledger entry point worked.** `java -jar target/ledger-cli.jar` and
+  `jails run` both reach the generated `LedgerCli` dispatcher and agree.
+- **End-to-end business behavior is still not complete.** The ledger
+  strategies and the generated Kafka listeners still contain the
+  application-specific reaction nobody has written. That is by design; see P7.
 
 ### Problem summary
 
 | ID | Severity | Classification | Affected | Short version | Status |
 |---|---|---|---|---|---|
-| P1 | Blocker | Confirmed Jails defect | All Spring apps | Generated `SecurityConfigTest` needs a Boot 4 test dependency that the generated POM omits | **fixed** |
-| P2 | High | Confirmed `doctor` failure; runtime effect unverified | All Spring apps | Many broad Spring tests are reported without Kafka Testcontainers wiring, and the suggested fix names the wrong capability | **fixed** |
-| P3 | Medium | Confirmed Jails diagnostic defect | All Spring apps | `doctor` mistakes a generated CORS comment for a required property | **fixed** |
-| P4 | Blocker for this run | Environment limitation | All Spring apps | The sandbox cannot operate the Podman/Docker runtime, so integration evidence is unavailable | open — not a jails defect |
-| P5 | Medium | Jails portability/UX defect exposed by environment | Ledger apply | Jails selects unusable `mvnd` and provides no explicit Maven override or fallback | **fixed** |
-| P6 | Blocker | Confirmed Jails packaging defect | Ledger CLI | The jar and `jails run` start `App`, not the generated `LedgerCli` dispatcher | **fixed** |
+| P1 | Blocker | Confirmed Jails defect | All Spring apps | Generated `SecurityConfigTest` needs a Boot 4 test dependency that the generated POM omits | **fixed; the gate is green** |
+| P2 | High | Confirmed `doctor` failure | All Spring apps | Broad Spring tests reported without Kafka Testcontainers wiring, and the fix named the wrong capability | **fixed; `doctor` is silent on it** |
+| P3 | Medium | Confirmed Jails diagnostic defect | All Spring apps | `doctor` mistakes a generated CORS comment for a required property | **fixed; `doctor` is silent on it** |
+| P4 | Blocker for the first run | Environment limitation | All Spring apps | The sandbox could not operate the container runtime, so integration evidence was unavailable | **closed — every layer it blocked has now run** |
+| P5 | Medium | Jails portability/UX defect | Ledger apply | Jails selects unusable `mvnd` and offers no Maven override | **fixed; `mvnd` is on `PATH` and every apply succeeded** |
+| P6 | Blocker | Confirmed Jails packaging defect | Ledger CLI | The jar and `jails run` start `App`, not the generated `LedgerCli` | **fixed and confirmed** |
 | P7 | Blocker for production semantics | Intentional scaffolding gap | All four | Generated strategies/listeners do not implement the application-specific reaction | open — by design |
 | P8 | Low | Warnings/workflow | Ledger and this exercise | Future-JDK warnings and one incorrect relative copy path | open — upstream |
+| P9 | High | Confirmed Jails defect, new | Spring apps with a database | `migrate --check` starts PostgreSQL and connects before it is listening | **fixed** |
+| P10 | Medium | Confirmed Jails defect, new | Manifests naming a suffixed entity | One entity gets two ledger rows, and `doctor` offers to adopt the empty one | **fixed** |
+| P11 | High | Confirmed Jails defect, new | Any timestamped scaffold | The documented create request demands `createdAt`/`updatedAt` and answers 400 | **fixed** |
+| P12 | Medium | Confirmed Jails defect, new | Scoped scaffolds | The request collection offers a `GET` a create-only controller answers 405 | **fixed** |
+| P13 | High | Confirmed Jails defect, new | Scaffolds using `uri`, `currency`, `zone-id`, `duration` or `bytes` | The documented request sends `null` for a required component, and answers 400 | **fixed** |
+| P14 | Low | Transitional, not a defect | All four | `doctor` reports every entity of a freshly generated project as adoptable | open — closes with plan.md §R6 step 9 |
+| P15 | High | Confirmed Jails defect, new | Every scaffold with a `@unique` column | A duplicate key is a 500, though the generated API vocabulary has a 409 | open — the fix is a capability-ordering question |
 
 ### What was fixed, and how each is held
 
-Every fix carries a test that fails without it. Re-running the exercise is
-still required for the numbers in the tables above; those were measured before
-these changes and are not restated as current.
+Every fix carries a test that fails without it. The numbers in the tables
+above were measured **after** all of them, against the binary at this commit.
 
 - **P1** — `spring-boot-starter-webmvc-test` is spliced from the write path,
   keyed off the emitted bytes, for the same reason AssertJ and Failsafe are.
@@ -78,8 +102,7 @@ these changes and are not restated as current.
   package it has and no dependency it does not need. The reason no test caught
   this was worse than the defect: the Spring test fixture declared the module
   and `jails new` does not, so every real-toolchain test compiled against a POM
-  the tool never produces. The fixture matches `new` now, and the services
-  toolbox — `add security` followed by real `mvn test` — is the gate.
+  the tool never produces. The fixture matches `new` now.
 - **P2** — the `test datasource` check discriminates on the container's *type*.
   The invariant it exists for is specific to JDBC: once
   `spring-boot-starter-jdbc` is present, auto-configuration demands a
@@ -94,13 +117,39 @@ these changes and are not restated as current.
   Jails also declines to pick `mvnd` when its registry directory is not
   writable, because that failure happens *before* Maven runs and is
   indistinguishable from a failing build at the call site — a blind retry there
-  would re-run a genuinely broken build. `jails doctor` reports which one it
-  chose.
+  would re-run a genuinely broken build. In this run `mvnd` is on `PATH` and
+  every apply completed with no override.
 - **P6** — `jails run` resolves the POM's `<mainClass>`, so it and `java -jar`
   agree by construction. `generate cli` moves that entry point onto the new
   dispatcher, but only off a stub jails wrote that has no command registered in
-  it: once `App` dispatches something, it is the project's real CLI and moving
-  the jar out from under it would break what the reader built.
+  it: once `App` dispatches something, it is the project's real CLI.
+- **P9** — `migrate --check` waits for the database it started. `compose up`
+  returns when the container is *running*, several seconds before PostgreSQL
+  accepts a connection. The retry loop takes its probe as a parameter, so what
+  is worth pinning — stops at the first success, reports the *last* failure,
+  does not sleep after the final attempt — is testable without a database.
+- **P10** — a manifest intent is keyed by the name `generate` records it under.
+  The duplicate-identity gate uses the same name, so `fetcher Acquirer` and
+  `fetcher AcquirerFetcher` in one manifest are refused as the one entity they
+  generate into rather than accepted as two and applied over each other.
+- **P11, P12 and P13 are one gate.** The scaffold now generates a controller
+  test that POSTs the exact body `requests/<name>.http` documents, from the
+  same builder, and asserts 201. All three defects are a collection describing
+  a request the record refuses, and none of them could survive that test. What
+  each needed on its own:
+  - **P11** — the request record drops the audit pair and `toDomain` supplies
+    one `Instant now` for both. Recognised as a **pair**, never a lone
+    component: `--timestamps` refuses to expand over a hand-declared
+    `createdAt`, so one on its own was written by hand and means data.
+  - **P12** — the `### List` block is emitted only for unscoped scaffolds,
+    whose controller does serve `findAll`. The generated controller test
+    already asserted that a scoped resource answers 405 there; the test knew
+    and the collection did not.
+  - **P13** — `URI`, `Currency`, `ZoneId`, `Duration` and `byte[]` have wire
+    samples, checked against Jackson's defaults. Anything still unsampleable
+    disables the generated test naming the type, rather than shipping one that
+    fails on every build — jails' existing rule for a test it cannot fully
+    write.
 
 ## Commands run
 
@@ -130,51 +179,24 @@ install -D ../examples/web-crawler/.jails/app.toml web-crawler/.jails/app.toml
 install -D ../examples/ledger-cli/.jails/app.toml ledger-cli/.jails/app.toml
 ```
 
-The first copy attempt used the wrong relative path and failed before copying
-anything:
-
-```bash
-install -D ../../examples/payments-gateway/.jails/app.toml payments-gateway/.jails/app.toml
-```
-
 For each project, inspect and apply the manifest without starting local
-services:
+services. Every apply below ran on the ordinary `PATH`, with `mvnd` on it:
 
 ```bash
-cd playground/payments-gateway
-../../target/debug/jails app plan
-../../target/debug/jails app apply --no-start
-
-cd ../intercom
-../../target/debug/jails app plan
-../../target/debug/jails app apply --no-start
-
-cd ../web-crawler
-../../target/debug/jails app plan
-../../target/debug/jails app apply --no-start
-
-cd ../ledger-cli
-../../target/debug/jails app plan
-../../target/debug/jails app apply --no-start
-```
-
-The ledger apply failed when Jails automatically selected `mvnd`. The retry
-below removes `mvnd` from `PATH` while retaining Maven and Java:
-
-```bash
-env PATH=/home/laith/.local/share/mise/installs/maven/3.9.16/apache-maven-3.9.16/bin:/home/laith/.local/share/mise/installs/java/openjdk-26.0.2/bin:/usr/bin:/bin ../../target/debug/jails app apply --no-start
+for app in payments-gateway intercom web-crawler ledger-cli; do
+  (cd "$app" && ../../target/debug/jails app plan && ../../target/debug/jails app apply --no-start) || exit 1
+done
 ```
 
 Hash the generated content, reapply every manifest, and hash it again:
 
 ```bash
-find payments-gateway -type f -not -path '*/target/*' -print0 | sort -z | xargs -0 sha256sum | sha256sum
-find intercom -type f -not -path '*/target/*' -print0 | sort -z | xargs -0 sha256sum | sha256sum
-find web-crawler -type f -not -path '*/target/*' -print0 | sort -z | xargs -0 sha256sum | sha256sum
-find ledger-cli -type f -not -path '*/target/*' -print0 | sort -z | xargs -0 sha256sum | sha256sum
+for app in payments-gateway intercom web-crawler ledger-cli; do
+  find "$app" -type f -not -path '*/target/*' -print0 | sort -z | xargs -0 sha256sum | sha256sum
+done
 
 for app in payments-gateway intercom web-crawler ledger-cli; do
-  (cd "$app" && env PATH=/home/laith/.local/share/mise/installs/maven/3.9.16/apache-maven-3.9.16/bin:/home/laith/.local/share/mise/installs/java/openjdk-26.0.2/bin:/usr/bin:/bin ../../target/debug/jails app apply --no-start) || exit 1
+  (cd "$app" && ../../target/debug/jails app apply --no-start) || exit 1
 done
 ```
 
@@ -186,42 +208,47 @@ Run Jails' structural/readiness reports in each project:
 ../../target/debug/jails stats --json
 ```
 
-Run the real clean build/test gate in each project:
+Run the real clean build/test gate in each project. `mvnd` is unreliable on
+this machine under JDK 26 for reasons unrelated to Jails, so the gate is
+pinned to plain Maven the same way the repository's own real-toolchain tests
+are:
 
 ```bash
 env PATH=/home/laith/.local/share/mise/installs/maven/3.9.16/apache-maven-3.9.16/bin:/home/laith/.local/share/mise/installs/java/openjdk-26.0.2/bin:/usr/bin:/bin ../../target/debug/jails check
 ```
 
-Prove that the three Spring production source sets package independently of
-the broken generated test source:
+Apply every Spring migration set to a scratch database, from a **cold** start
+each time — the container is removed first, so the service is created, not
+merely restarted:
 
 ```bash
 for app in payments-gateway intercom web-crawler; do
-  (cd "$app" && env PATH=/home/laith/.local/share/mise/installs/maven/3.9.16/apache-maven-3.9.16/bin:/home/laith/.local/share/mise/installs/java/openjdk-26.0.2/bin:/usr/bin:/bin mvn -q -Dmaven.test.skip=true package) || exit 1
+  (cd "$app" && docker compose -f compose.yaml down -v && ../../target/debug/jails migrate --check)
 done
 ```
 
-Confirm that the generated Dockerfile's weaker `-DskipTests` Maven mode is
-still blocked by generated test compilation:
-
-```bash
-env PATH=/home/laith/.local/share/mise/installs/maven/3.9.16/apache-maven-3.9.16/bin:/home/laith/.local/share/mise/installs/java/openjdk-26.0.2/bin:/usr/bin:/bin mvn -q -DskipTests package
-```
-
-Attempt every Spring migration set against a scratch database:
+Build the generated container images and check what they run as:
 
 ```bash
 for app in payments-gateway intercom web-crawler; do
-  (cd "$app" && ../../target/debug/jails migrate --check)
+  (cd "$app" && docker build -t "jails-playground-$app:test" .) || exit 1
+  docker run --rm --entrypoint id "jails-playground-$app:test"
 done
 ```
+
+There is deliberately no `curl` step. Application startup, health, the metrics
+scrape, the rejection of an unauthenticated request and the acceptance of the
+documented create request are all generated tests, and they ran in the gate
+above. An exercise whose evidence is a shell session proves the tool worked
+once, on this machine, for whoever ran it; a generated test proves it on every
+build of every project. The create test exists *because* this defect was first
+found by hand — see P11.
 
 Exercise the packaged ledger CLI and the dispatcher Jails generated:
 
 ```bash
 java -jar target/ledger-cli.jar
-env PATH=/home/laith/.local/share/mise/installs/maven/3.9.16/apache-maven-3.9.16/bin:/home/laith/.local/share/mise/installs/java/openjdk-26.0.2/bin:/usr/bin:/bin ../../target/debug/jails run --no-build -- reconcile
-java -cp target/ledger-cli.jar com.example.ledgercli.cli.LedgerCli
+../../target/debug/jails run --no-build -- reconcile
 java -cp target/ledger-cli.jar com.example.ledgercli.cli.LedgerCli reconcile statement.csv
 ```
 
@@ -235,9 +262,14 @@ rg -n --glob '!target/**' --glob '!*.http' 'TODO|@Disabled|UnsupportedOperationE
 
 ### P1 — generated Spring tests do not compile
 
-**Classification:** confirmed Jails defect and release blocker. **Fixed.** The
+**Classification:** confirmed Jails defect and release blocker. **Fixed, and
+confirmed by the re-run:** all three `jails check` runs are green, with 70,
+123 and 63 unit tests and 17, 42 and 11 integration tests executing. The
 dependency is spliced from the write path and the Spring test fixture no
 longer supplies it for jails; see the fix summary above.
+
+Everything below describes the first run and is kept as the record of what
+the defect looked like.
 
 **Affected:** payments gateway, Intercom-style inbox, and web crawler.
 
@@ -283,10 +315,12 @@ adds security, and runs `mvn clean test`.
 
 ### P2 — Testcontainers wiring reported incomplete after reconciliation
 
-**Classification:** confirmed `doctor` failure; the eventual runtime failure
-is not verified because P1 stops test compilation and P4 prevents containers.
-**Fixed.** The check discriminates on the container type, so a broker config
-is not read as the project's datasource config.
+**Classification:** confirmed `doctor` failure. **Fixed, and confirmed by the
+re-run:** across all four projects `doctor` now emits no warning of this kind
+— or of any kind other than P14's transitional one — and the broad Spring
+tests it named all pass against real containers. The check discriminates on
+the container type, so a broker config is not read as the project's datasource
+config.
 
 **Affected:** all three Spring projects.
 
@@ -322,8 +356,10 @@ make `doctor` green.
 ### P3 — CORS capability is present but `doctor` says it is missing
 
 **Classification:** confirmed Jails diagnostic false-positive, not an observed
-runtime CORS failure. **Fixed.** Comment lines in a capability's property
-block are prose, not required keys.
+runtime CORS failure. **Fixed, and confirmed by the re-run:** `capability cors`
+reports `everything it installs is present`, and the generated `CorsConfigTest`
+passes. Comment lines in a capability's property block are prose, not required
+keys.
 
 **Affected:** all three Spring projects.
 
@@ -354,7 +390,23 @@ the same parser used by `doctor`.
 ### P4 — container-backed acceptance could not run here
 
 **Classification:** environment limitation, not evidence of a Jails code
-defect.
+defect. **Closed by the re-run.** Every layer it blocked has now run on this
+machine:
+
+| What it prevented | Now |
+|---|---|
+| applying every Flyway migration to PostgreSQL | 7, 19 and 4 migrations applied cleanly from a cold container start |
+| repository/query/association integration tests | executing in `jails check` — 17, 42 and 11 integration tests, 0 failures |
+| Kafka publish/consume and transactional-outbox tests | executing; `PaymentAuthorisedMessagingIT` and `AuthorisePaymentOutboxIT` pass |
+| durable-job and crawler-workflow recovery tests | executing; `SettlementDispatcherJobIT` passes |
+| real application startup and API smoke tests | generated tests: `PaymentsGatewayApplicationTests`, `ActuatorEndpointsTest`, `PrometheusScrapeTest`, `SecurityConfigTest`, and the create test written for P11 |
+| OCI image build and non-root runtime inspection | three images build (372–374 MB) and run as uid 10001 |
+
+The container runtime is still Podman behind a `docker` shim, and `doctor`
+reports its Compose provider as drivable. What changed is the machine, not
+jails: nothing in the tool was altered for P4.
+
+The first run's report follows.
 
 **Affected:** all Spring integration evidence.
 
@@ -470,7 +522,8 @@ production-grade goal.
   the otherwise successful gate;
 - `LedgerError` variants contain TODO payload descriptions;
 - `reconcile statement.csv` currently prints `statement.csv`; it does not read,
-  match, persist, report, or reconcile ledger entries.
+  match, persist, report, or reconcile ledger entries. Still true in the
+  re-run.
 
 **Spring evidence:**
 
@@ -504,27 +557,271 @@ executable behavior and assertions.
   access.
 - Spotless warns about an internal `Unsafe` call that a future JDK will remove.
 
-These warnings should be tracked during dependency/JDK upgrades, but none
-caused the current ledger build or Spring compile failure.
+These warnings should be tracked during dependency/JDK upgrades. None of them
+fails a gate in the re-run.
+
+### P9 — `migrate --check` connects before the database it started is listening
+
+**Classification:** confirmed Jails defect, found by this run. **Fixed.**
+
+**Affected:** any Spring project with a database, on a cold container start.
+
+**Reproduction:** remove the PostgreSQL container (`docker compose down -v`)
+and run `jails migrate --check`.
+
+**Actual:** 2 of 2 cold starts failed immediately:
+
+```text
+ Container intercom-postgres-1 Started
+jails: could not create the scratch database: psql: error: connection to server
+at "localhost" (::1), port 5432 failed: server closed the connection unexpectedly
+```
+
+Inserting a `sleep 8` between the start and the check made 3 of 3 succeed,
+which is what identified the race rather than a broken database.
+
+**Why it matters more than the delay it costs:** the message names the server
+closing a connection, so it reads like a database or a migration problem. It
+sends the reader to the migrations, which are fine. `compose up` returns when
+the container is *running*; PostgreSQL accepts connections some seconds later.
+
+**Fix:** a bounded readiness poll — `select 1`, 250 ms apart, for thirty
+seconds — before the scratch database is created, and only when jails started
+the service itself. Under `--no-start` the caller has asserted the database is
+up, and half a minute spent polling a port with nothing behind it is a worse
+answer than the connection error. Cold-start runs now take 11 s and pass: 7,
+19 and 4 migrations applied cleanly.
+
+### P10 — one entity, two ledger rows, when a name carries its kind's suffix
+
+**Classification:** confirmed Jails defect, found by this run. **Fixed.**
+
+**Affected:** any manifest whose intent name already ends in its kind's
+suffix. Both playground manifests that name a fetcher were affected.
+
+**Actual:** `.jails/ledger.toml` held two `[[applied]]` rows for one intent:
+
+```toml
+[[applied]]
+recipe = "fetcher"
+name = "Acquirer"          # generate wrote the files here
+has_spec = false
+files = [ ... four files ... ]
+
+[[applied]]
+recipe = "fetcher"
+name = "AcquirerFetcher"   # app apply wrote the spec here
+has_spec = true
+```
+
+`generate` normalises a name before it writes — stripping a suffix the kind
+already implies — and records its files under the result. `app apply` recorded
+the manifest's spec under the manifest's spelling. Identity is
+`(recipe, name, package)`, so the two writers keyed one entity two ways.
+
+**Production impact:** `doctor` reported the empty half as an entity with
+"0 file(s) ... and no recorded owner" and offered an `adopt` command that would
+adopt nothing. The half holding the files carried no spec, so `app apply` could
+not three-way merge an edit to that intent.
+
+**Fix:** one `recorded_name` function, used by `generate` and by `app apply`'s
+identity, exempting `cases` and `migration` the way `generate` already does.
+The duplicate-identity gate uses it too. The V2 route was never wrong here; it
+normalises at the boundary already.
+
+### P11 — the documented create path demands the columns it says it supplies
+
+**Classification:** confirmed Jails defect. **Fixed.**
+
+**Affected:** every scaffold generated with `timestamps = true`.
+
+**Actual:** sending the `### Create Merchant` request from
+`requests/merchant.http`:
+
+```text
+HTTP 400
+{"detail":"the request has invalid fields","status":400,
+ "fields":{"createdAt":"must not be null","updatedAt":"must not be null"}}
+```
+
+`jails g scaffold --help` says `--timestamps` adds conventional `createdAt`
+and `updatedAt` components and that **"the generated create path supplies
+both"**. It did not. The flag expands into two ordinary components before any
+recipe sees it — right for the record, the DDL and the response, wrong for the
+one artifact that describes what a *caller* may send — so they arrived as
+`@NotNull` wire components.
+
+**Production impact:** the documented create request fails on every timestamped
+resource, and a caller who does satisfy the validation can backdate a row.
+
+**Why no test saw it:** no golden scenario passes `--timestamps`, and no
+generated test sent a create request at all.
+
+**Fix:** the request record drops the pair and `toDomain` supplies one
+`Instant now` for both, so a freshly created row does not look already edited.
+Recognised as a **pair** and never as a lone component, because `--timestamps`
+refuses to expand over a hand-declared `createdAt` — one on its own was
+written by hand and is data the caller sends.
+
+### P12 — a scoped scaffold documents a route its controller never serves
+
+**Classification:** confirmed Jails defect. **Fixed.**
+
+**Affected:** scoped scaffolds — every resource in the payments manifest.
+
+**Actual:** `requests/<name>.http` ended with
+
+```http
+### List Merchant
+GET {{baseUrl}}/merchants
+Accept: application/json
+```
+
+A scoped resource's controller is create-only: every read has to carry the
+tenant, so it is a `jails g query`. That request answers `405 Method Not
+Allowed`, and **the generated controller test already asserted exactly that**
+— `broadUnscopedReadsAreNotExposed` has pinned the 405 since the scoped
+controller was written. The test knew and the collection did not.
+
+**Fix:** the block is emitted only for unscoped scaffolds, whose controller
+does serve `findAll`. The first attempt removed it from both and was caught by
+the golden suite plus a new scoped-scaffold integration test — there was no
+scoped scaffold among the golden scenarios, which is the coverage gap that let
+this and P11 through.
+
+### P13 — the documented request sends `null` for a required component
+
+**Classification:** confirmed Jails defect. **Fixed.**
+
+**Affected:** any scaffold with a required component of type `uri`,
+`currency`, `zone-id`, `duration` or `bytes` — the web crawler declares
+`seedUrl:uri`, so this was live in a shipped example manifest.
+
+**Actual:** the sample-body builder had cases for `String`, the numerics,
+`Boolean`, `UUID`, `LocalDate`, `LocalDateTime`, `Instant` and project enums,
+and wrote `null` for everything else. The request record declares
+`@NotNull URI seedUrl`, so the documented body is a 400.
+
+**How it was found:** by the test written for P11. It was added, the suite was
+run, and two of the crawler's three controller tests failed with
+`expected: 201 but was: 400` — a defect that had been in every generated
+crawler and was invisible to a `curl` of the payments gateway, which happens
+to declare no such type.
+
+**Fix:** those five types have wire samples, checked against Jackson's
+defaults. Anything still unsampleable writes `null` in the collection, where a
+reader replaces it, and disables the generated test naming the type — jails'
+existing rule for a test it cannot fully write, rather than shipping one that
+fails on every build.
+
+### P14 — every entity of a brand-new project is reported as adoptable
+
+**Classification:** transitional state, not a defect. **Open, and closes with
+plan.md §R6 step 9.**
+
+**Affected:** all four projects. Every one of the 77 `doctor` warnings across
+them is this one message, and there is no other warning of any kind:
+
+```text
+warn  scaffold Merchant   18 file(s) from a schema-1 ledger, with no recorded
+                          owner -- so `destroy` and `sync` cannot act on them
+      fix: jails adopt --legacy-key schema1-applied:09ecc87e... --intent scaffold:Merchant
+```
+
+The advice is accurate: those rows genuinely have no V2 owner. It is noise only
+because `main.rs` still dispatches the V1 write path, so *every* project the
+current binary creates is a schema-1 project — including one created five
+seconds earlier. The moment dispatch flips, a freshly created project is
+schema-2 and this fires only on projects that really predate the migration,
+which is what it is for.
+
+Nothing was changed for it. Suppressing a correct report to make a transitional
+state look tidy is how a check stops being believed.
+
+### P15 — a `@unique` violation is a 500, though the generated vocabulary has a 409
+
+**Classification:** confirmed Jails defect. **Open**, with the reason it is not
+a one-line fix recorded below.
+
+**Affected:** every scaffold with a `@unique` column, which is every resource
+the three manifests declare.
+
+**Reproduction:** create a resource, then create another with the same value
+in its `@unique` column.
+
+**Actual:** `HTTP 500`, with
+`org.springframework.dao.DuplicateKeyException: ... duplicate key value
+violates unique constraint "merchants_reference_key"`.
+
+**Expected:** `409 Conflict`. The generated code already has the word for it —
+`add api` writes a sealed `ApiException` whose `Conflict` variant is documented
+"Becomes a 409" — and jails is the thing that put the constraint in the schema,
+from `reference:string!@unique` in the manifest. It knows the constraint exists
+and it knows the status that describes violating it; nothing connects the two.
+
+**Production impact:** a caller retrying a create, or racing another caller, is
+told the server broke rather than that the request conflicts. 5xx is what
+alerting pages on and what clients retry, so a duplicate becomes an incident
+and then a retry storm.
+
+**Why it is not a one-line handler:** `DuplicateKeyException` lives in
+`org.springframework.dao`, which arrives with the JDBC stack, and
+`ApiExceptionHandler` is written by `add api`, which does not require a
+database. Adding the arm unconditionally hands a project with `api` and no `db`
+a compile error for a file it did not write — the exact failure
+`generate::report_degraded_shape` and the versionless-dependency rule exist to
+prevent. The shape a fix needs is a conditional arm plus a reconciliation pass
+that revisits `api` after `db` lands, which `app apply` already performs twice
+for this reason but `jails add api` followed by `jails add db` does not.
+
+That is a capability-ordering design question, not a patch, so it belongs in
+`plan.md`. The generated controller test written for P11 is where its
+assertion goes once it is answered.
+
+**Note on the response body:** during `jails run` that 500 carries a full stack
+trace, including the SQL and the offending key. That is `spring-boot-devtools`
+setting `server.error.include-stacktrace=always`; devtools is excluded from the
+repackaged jar, so it is not what the built image returns. It is worth knowing
+that the dev-time response is that verbose.
 
 ## Production-readiness verdict
 
-The manifests prove that Jails can generate a large, coherent production
-shape with very few commands. They do **not** prove production-grade working
-software today. The ledger passes its gate but deliberately contains
-unfinished domain behavior and a broken default entry point. The three Spring
-systems package their production sources, but their generated test suites do
-not compile, and this environment cannot run the container-backed acceptance
-layer.
+The manifests prove that Jails can generate a large, coherent production shape
+with very few commands, and — unlike the first run of this exercise — that the
+shape it generates passes its own gate. `mvn clean verify` is green in all four
+projects, with PostgreSQL and Kafka really started, every migration really
+applied, and the integration tier really executed. The generated Dockerfiles
+build and run unprivileged.
 
-The five confirmed defects — P1, P2, P3, P5 and P6 — are fixed, each with a
-test that fails without the fix. What that does **not** establish is a passing
-production gate: the tables above were measured before those changes, this
-environment still cannot operate a container runtime (P4), and the generated
-strategies and listeners still contain the application-specific decisions
-nobody has written (P7).
+What that still does **not** establish is working business software. The
+generated strategies and Kafka listeners contain the application-specific
+reaction nobody has written (P7), so the ledger does not reconcile and a
+received event drives nothing downstream. That gap is deliberate and is the
+honest boundary of a scaffolding tool; it is not a defect, and it is also not
+a product. Neither is a duplicate key answering 500 (P15).
 
-The next step is to rerun the whole exercise on a host with a responding
-Docker-compatible daemon: `jails check`, `jails migrate --check`, the generated
-image build, and real startup/API smoke tests. Until that run exists, this
-document records fixes to named defects and not a production verdict.
+Ten defects have now been confirmed and fixed across the two runs — P1, P2,
+P3, P5, P6, P9, P10, P11, P12 and P13 — each with a test that fails without it.
+Five of those are new here, and every one needed a part of the exercise the
+first run could not reach:
+
+- P9 needed a database that starts;
+- P10 needed a manifest applied and then inspected rather than trusted;
+- P11 needed the generated request sent at a running application;
+- P12 needed someone to notice what the *second* request in that collection
+  answers;
+- P13 needed the test written for P11 to be run against a different manifest.
+
+The last one is the argument for this document's method, and for the one
+change of method it forced. P11 was found by hand, with `curl`. That is a
+weak gate: it proves the tool worked once, on one machine, for one resource
+shape. Turning it into a generated test — the scaffold now sends its own
+documented request on every build — immediately found P13 in a manifest nobody
+had thought to curl, and would have caught P12 as well. **The exercise's real
+output is not the four applications; it is the tests the four applications
+made it obvious to generate.**
+
+The next thing this exercise cannot answer is P7 — whether the declarative
+manifest can be extended far enough to generate the decisions themselves, or
+whether that is properly the reader's code. `plan.md` is where that belongs,
+along with P15's capability-ordering question.

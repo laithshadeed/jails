@@ -5687,6 +5687,23 @@ R6 gate:
   record p95/p99 before making a performance claim.
 - **Deferred maintenance:** consolidate the Java/SQL built-in type maps into
   one data table after R6. It is a one-edit improvement, not a lifecycle blocker.
+  `playground.md` P13 is the cost of not having it: the JSON sample table had
+  five fewer types than the field vocabulary, and a `uri` component therefore
+  documented a request its own record refuses.
+- **Queued, needs a decision first: a `@unique` violation should be a 409, not
+  a 500.** `playground.md` P15. jails writes the constraint from
+  `reference:string!@unique` and `add api` writes an `ApiException.Conflict`
+  documented "Becomes a 409"; nothing maps `DuplicateKeyException` onto it, so
+  a duplicate create is reported as the server breaking. It is not a one-line
+  handler: `org.springframework.dao` arrives with the JDBC stack while
+  `ApiExceptionHandler` is written by `add api`, which does not require a
+  database, so an unconditional arm hands an `api`-without-`db` project a
+  compile error for a file it did not write. The shape a fix needs is a
+  conditional arm plus a reconciliation pass that revisits `api` after `db`
+  lands — `app apply` already reconciles twice for exactly this reason, and
+  `jails add api` followed by `jails add db` does not. Decide the ordering
+  contract before writing the handler. The generated controller test the
+  scaffold now emits is where the assertion goes.
 - **Rejected for now:** one descriptor file per kind. Golden coverage, derived
   destroy paths and `commands --json` already bought its main value; a `build.rs`
   and file format need a new consumer before they earn their cost.

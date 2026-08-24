@@ -30,7 +30,7 @@ class CrawledPageControllerTest {
             {
               "id": "00000000-0000-0000-0000-000000000001",
               "crawlRunId": "00000000-0000-0000-0000-000000000001",
-              "url": null,
+              "url": "https://example.invalid/url",
               "statusCode": 1,
               "discoveredAt": "2026-01-01T00:00:00Z"
             }

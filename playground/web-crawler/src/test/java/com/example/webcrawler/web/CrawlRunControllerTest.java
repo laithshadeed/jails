@@ -29,7 +29,7 @@ class CrawlRunControllerTest {
             """
             {
               "id": "00000000-0000-0000-0000-000000000001",
-              "seedUrl": null,
+              "seedUrl": "https://example.invalid/seed_url",
               "status": "QUEUED",
               "pagesVisited": 1,
               "startedAt": null,
