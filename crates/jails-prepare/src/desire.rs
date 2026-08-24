@@ -272,7 +272,13 @@ fn state_test_import(
 /// the class `add db` is adding shows a `@SpringBootTest` in its own Javadoc,
 /// and a byte scan reads that example as a declaration.
 fn spring_boot_tests(project: &Project) -> Vec<ProjectPath> {
-    jails_java::java::types_annotated_with(&project.root().join("src/test/java"), "SpringBootTest")
+    // The projection, not the directory. In an aggregate apply, `add
+    // actuator`'s `ActuatorEndpointsTest` and `add db`'s import of the
+    // container config are the same transition, so the test this has to wire
+    // has not been written when this plans -- and the project comes out with
+    // a `@SpringBootTest` that has no DataSource and fails on a test nobody
+    // wrote.
+    jails_java::java::types_annotated_among(&project.projected_test_sources(), "SpringBootTest")
         .into_iter()
         .filter_map(|found| {
             let relative = found.path.strip_prefix(project.root()).ok()?;

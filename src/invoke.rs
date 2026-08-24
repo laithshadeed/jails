@@ -224,11 +224,12 @@ pub(crate) fn report(outcome: &jails_engine::route::Outcome, output: Output) -> 
         // is known, and it has no single status yet. Saying so is better than
         // inventing one: the transaction is on disk and the next invocation
         // finishes it.
-        return Err(
-            "the commit reached the ledger and left work behind. Nothing is lost -- the              transaction is recorded.
-       fix: run the same command again; it completes              the interrupted one before doing anything new."
-                .to_string(),
-        );
+        return Err(concat!(
+            "the commit was recorded and then left work behind. Nothing is lost -- the ",
+            "transaction is on disk.\n       fix: run the same command again; it finishes ",
+            "the interrupted one before doing anything new.",
+        )
+        .to_string());
     };
     print!(
         "{}",

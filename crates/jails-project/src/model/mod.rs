@@ -645,15 +645,25 @@ impl Project {
     /// text, and abstract.md §4.1's fourth shape is exactly a positional pair
     /// of those two that compiles when you swap them.
     pub fn projected_main_sources(&self) -> BTreeMap<PathBuf, String> {
-        let root = self.root.join("src/main/java");
+        self.projected_sources("src/main/java")
+    }
+
+    /// The same, for the test tree.
+    pub fn projected_test_sources(&self) -> BTreeMap<PathBuf, String> {
+        self.projected_sources("src/test/java")
+    }
+
+    fn projected_sources(&self, tree: &str) -> BTreeMap<PathBuf, String> {
+        let root = self.root.join(tree);
         let mut found: BTreeMap<PathBuf, String> = BTreeMap::new();
         for path in crate::java::source_files(&root) {
             if let Ok(text) = std::fs::read_to_string(&path) {
                 found.insert(path, text);
             }
         }
+        let prefix = format!("{tree}/");
         for (path, bytes) in self.overlay.iter().flat_map(|overlay| overlay.iter()) {
-            if !path.as_str().starts_with("src/main/java/") || !path.as_str().ends_with(".java") {
+            if !path.as_str().starts_with(&prefix) || !path.as_str().ends_with(".java") {
                 continue;
             }
             if let Ok(text) = String::from_utf8(bytes.clone()) {

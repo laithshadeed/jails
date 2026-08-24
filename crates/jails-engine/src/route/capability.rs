@@ -158,16 +158,18 @@ pub fn sync(run: &Run) -> Result<Outcome> {
                 owners: BTreeSet::from([OwnerId::DirectConfig]),
             },
         );
-        // Already recorded means already installed, and re-planning it would
-        // ask the recipe to describe a project it has already changed.
-        if store.ledger.as_ref().is_some_and(|ledger| {
-            ledger
-                .applied
-                .iter()
-                .any(|row| row.id == EntityId::Capability(id.clone()))
-        }) {
-            continue;
-        }
+        // Every declared capability is re-planned, installed or not. Skipping
+        // the recorded ones made `sync` mean "install what is missing" rather
+        // than "make the project match the list", and the difference is not
+        // academic: a capability wires itself into what the project has, so
+        // `add db`'s import of its container config never reached a
+        // `@SpringBootTest` written after it -- the project came out with a
+        // test that has no DataSource and fails on a test nobody wrote.
+        //
+        // Safe because planning is pure and its paths are functions of the
+        // entity rather than of how many times it has been planned: an
+        // unchanged capability produces an identical desired set, and the
+        // reconciler turns that into no operations at all.
         let change = with_test_support(
             project,
             jails_generate::add::plan_named(

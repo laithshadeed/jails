@@ -665,6 +665,36 @@ pub fn types_annotated_with(dir: &std::path::Path, annotation: &str) -> Vec<Java
     found
 }
 
+/// The same question, asked of sources the caller already holds.
+///
+/// The directory walk answers about *disk*, and in one transition the file a
+/// later row needs may not be written yet. A caller with a projection passes
+/// it here instead, so a `@SpringBootTest` an earlier row of the same apply
+/// wrote counts.
+pub fn types_annotated_among(
+    sources: &std::collections::BTreeMap<std::path::PathBuf, String>,
+    annotation: &str,
+) -> Vec<JavaSource> {
+    let mut found: Vec<JavaSource> = sources
+        .iter()
+        .filter(|(path, _)| path.extension().is_some_and(|value| value == "java"))
+        .filter(|(path, source)| {
+            let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+                return false;
+            };
+            annotations(source).into_iter().any(|found| {
+                found.name == annotation && found.target == Target::Type(stem.to_string())
+            })
+        })
+        .map(|(path, source)| JavaSource {
+            path: path.clone(),
+            source: source.clone(),
+        })
+        .collect();
+    found.sort_by(|a, b| a.path.cmp(&b.path));
+    found
+}
+
 /// One Java file and its text, named rather than a positional pair.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JavaSource {

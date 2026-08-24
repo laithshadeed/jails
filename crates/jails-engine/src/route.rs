@@ -206,7 +206,72 @@ fn as_field_names(token: &str, fields: &[FieldSpec]) -> String {
 /// than per recipe, for the same reason the Java shape rules live below every
 /// producer: a rule twenty recipes have to remember is a rule that decays. So
 /// every route applies them here, once, to whatever it is about to desire.
+/// The Testcontainers configuration this project has, if it has one.
+///
+/// Found in the projection rather than on disk, so a config an earlier row of
+/// the same transition wrote counts. Named by its file stem, which for Java is
+/// always the top-level type.
+struct ContainerConfig {
+    package: String,
+    class: String,
+}
+
+fn container_config(project: &Project) -> Option<ContainerConfig> {
+    project
+        .projected_test_sources()
+        .iter()
+        .find(|(path, _)| {
+            path.file_stem()
+                .is_some_and(|stem| stem == "TestcontainersConfig")
+        })
+        .map(|(_, source)| ContainerConfig {
+            package: jails_java::java::package_of(source).unwrap_or_default(),
+            class: "TestcontainersConfig".to_string(),
+        })
+}
+
 fn with_test_support(project: &Project, mut change: Change) -> Change {
+    // A `@SpringBootTest` **this change writes** carries the container import
+    // from birth, when the project already has a container config.
+    //
+    // The alternative is what V1 did: `add db` splices its import into every
+    // `@SpringBootTest` on disk, and a second reconciliation pass catches the
+    // ones written after it. That needs the import to reach a file no change
+    // owns, and here the row that owns a file decides its bytes -- so the
+    // capability writing the test is the one that has to put the import in.
+    // Without it the project comes out with a `@SpringBootTest` that has no
+    // DataSource, and `mvn verify` fails on a test nobody wrote.
+    if let Some(config) = container_config(project) {
+        for file in &mut change.files {
+            if !file.path.to_string_lossy().contains("src/test/java") {
+                continue;
+            }
+            let stem = file
+                .path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or_default();
+            let annotated = jails_java::java::annotations(&file.contents)
+                .into_iter()
+                .any(|found| {
+                    found.name == "SpringBootTest"
+                        && found.target == jails_java::java::Target::Type(stem.to_string())
+                });
+            if !annotated {
+                continue;
+            }
+            let package = jails_java::java::package_of(&file.contents).unwrap_or_default();
+            let extra = match package == config.package {
+                true => String::new(),
+                false => format!("import {}.{};\n", config.package, config.class),
+            };
+            if let Some(spliced) =
+                jails_java::annotate::splice_import(&file.contents, &config.class, &extra)
+            {
+                file.contents = spliced;
+            }
+        }
+    }
     let writes = |suffix: &str| {
         change
             .files
