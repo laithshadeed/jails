@@ -28,6 +28,7 @@
 //! batch per file, stopping at the first failure and naming the file.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use crate::compose;
 use crate::generate::find_project_root;
@@ -60,6 +61,7 @@ pub fn check(no_start: bool, debug: bool) -> Result<()> {
     }
     if !no_start {
         compose::up(&root, &["postgres"], debug);
+        wait_until_ready(&conn, debug)?;
     }
 
     // Named for this run so a crashed earlier run cannot collide with this
@@ -198,6 +200,65 @@ fn psql(conn: &compose::PostgresConnect, database: &str, sql: &str, debug: bool)
     Err(String::from_utf8_lossy(&done.stderr).trim().to_string())
 }
 
+/// Wait for postgres to answer, rather than treating a container that has been
+/// *started* as a database that is *listening*.
+///
+/// `compose up` returns once the container is running, which is a few seconds
+/// before postgres accepts a connection -- and the very next thing this
+/// command does is connect. The failure that produced was "server closed the
+/// connection unexpectedly", which reads like a broken database rather than
+/// one still starting up, so it sends the reader to the migrations, which are
+/// fine.
+///
+/// Only when jails started the service itself. Under `--no-start` the caller
+/// has asserted the database is already up, and half a minute of polling a
+/// port with nothing behind it is a worse answer than the connection error.
+fn wait_until_ready(conn: &compose::PostgresConnect, debug: bool) -> Result<()> {
+    const ATTEMPTS: u32 = 120;
+    const PAUSE: Duration = Duration::from_millis(250);
+
+    wait_for(
+        // Only the first probe is announced: a poll that prints the same
+        // command 120 times buries the run it is part of.
+        |attempt| psql(conn, &conn.database, "select 1", debug && attempt == 0),
+        ATTEMPTS,
+        PAUSE,
+    )
+    .map_err(|last| {
+        format!(
+            "postgres at {}:{} did not accept connections within {} seconds -- last error: {last}",
+            conn.host,
+            conn.port,
+            u128::from(ATTEMPTS) * PAUSE.as_millis() / 1000,
+        )
+    })
+}
+
+/// Retry `probe` until it succeeds or the budget runs out.
+///
+/// Reports the **last** error rather than the first: the first one is what a
+/// starting service looks like, and the last one is the state the caller is
+/// actually in.
+fn wait_for(
+    mut probe: impl FnMut(u32) -> Result<()>,
+    attempts: u32,
+    pause: Duration,
+) -> Result<()> {
+    let mut last = Err("no attempt was made".to_string());
+    for attempt in 0..attempts {
+        last = probe(attempt);
+        if last.is_ok() {
+            return last;
+        }
+        // Not after the final attempt: a pause nothing follows is dead time
+        // added to the failure the caller is already waiting for.
+        if attempt + 1 < attempts {
+            std::thread::sleep(pause);
+        }
+    }
+    last
+}
+
 fn rel(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
         .unwrap_or(path)
@@ -244,5 +305,66 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn a_database_that_answers_on_the_first_probe_is_not_polled_again() {
+        let mut probes = 0;
+        let outcome = wait_for(
+            |_| {
+                probes += 1;
+                Ok(())
+            },
+            120,
+            Duration::from_millis(250),
+        );
+        assert!(outcome.is_ok());
+        // 250ms x 120 is half a minute; a second probe here would mean every
+        // healthy run paid for the unhealthy one.
+        assert_eq!(probes, 1);
+    }
+
+    #[test]
+    fn a_database_that_starts_slowly_is_waited_for_rather_than_failed() {
+        let mut probes = 0;
+        let outcome = wait_for(
+            |_| {
+                probes += 1;
+                if probes < 3 {
+                    Err("server closed the connection unexpectedly".to_string())
+                } else {
+                    Ok(())
+                }
+            },
+            10,
+            Duration::from_millis(0),
+        );
+        assert!(outcome.is_ok());
+        assert_eq!(probes, 3);
+    }
+
+    #[test]
+    fn exhausting_the_budget_reports_the_last_failure_not_the_first() {
+        let outcome = wait_for(
+            |attempt| Err(format!("attempt {attempt}")),
+            4,
+            Duration::from_millis(0),
+        );
+        assert_eq!(outcome, Err("attempt 3".to_string()));
+    }
+
+    #[test]
+    fn only_the_first_probe_is_announced() {
+        let mut announced = Vec::new();
+        let debug = true;
+        let _ = wait_for(
+            |attempt| {
+                announced.push(debug && attempt == 0);
+                Err("not yet".to_string())
+            },
+            3,
+            Duration::from_millis(0),
+        );
+        assert_eq!(announced, vec![true, false, false]);
     }
 }
