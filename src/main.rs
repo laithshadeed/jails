@@ -113,6 +113,17 @@ enum Command {
     /// Create a new Spring Boot project via start.spring.io
     New {
         name: String,
+        /// Maven groupId, e.g. `com.intercom`
+        ///
+        /// Without `--package`, the base package becomes `<group>.<name>`.
+        #[arg(long)]
+        group: Option<String>,
+        /// Base package, e.g. `com.intercom.spring`
+        ///
+        /// Outranks `--group`: it states the whole answer. An existing service
+        /// already has a package, and it is never `com.example`.
+        #[arg(long)]
+        package: Option<String>,
         #[arg(long, default_value = "web")]
         deps: String,
         #[arg(long, default_value = pom::TARGET_RELEASE)]
@@ -138,6 +149,16 @@ enum Command {
     /// Create a new plain Maven CLI project
     NewCli {
         name: String,
+        /// Maven groupId, e.g. `com.intercom`
+        ///
+        /// Without `--package`, the base package becomes `<group>.<name>`.
+        #[arg(long)]
+        group: Option<String>,
+        /// Base package, e.g. `com.intercom.spring`
+        ///
+        /// Outranks `--group`: it states the whole answer.
+        #[arg(long)]
+        package: Option<String>,
         /// Java release to compile against (>= 21)
         #[arg(long, default_value = pom::TARGET_RELEASE)]
         release: String,
@@ -588,6 +609,8 @@ fn main() -> std::process::ExitCode {
         Command::About { json } => project::about(json),
         Command::New {
             name,
+            group,
+            package,
             deps,
             java,
             no_git,
@@ -596,6 +619,8 @@ fn main() -> std::process::ExitCode {
             app,
         } => new::new(
             &name,
+            group.as_deref(),
+            package.as_deref(),
             &deps,
             &java,
             !no_git,
@@ -607,10 +632,21 @@ fn main() -> std::process::ExitCode {
         ),
         Command::NewCli {
             name,
+            group,
+            package,
             release,
             no_git,
             app,
-        } => new::new_cli(&name, &release, !no_git, app.as_deref(), debug, pretend),
+        } => new::new_cli(
+            &name,
+            group.as_deref(),
+            package.as_deref(),
+            &release,
+            !no_git,
+            app.as_deref(),
+            debug,
+            pretend,
+        ),
         Command::App { command } => app::run(command, invocation),
         Command::Generate {
             kind,

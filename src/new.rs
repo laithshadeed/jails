@@ -30,6 +30,8 @@ pub(crate) fn seed_manifest(root: &Path, manifest: &Path, debug: bool) -> Result
 
 pub fn new(
     name: &str,
+    group: Option<&str>,
+    package: Option<&str>,
     deps: &str,
     java: &str,
     git: bool,
@@ -62,12 +64,12 @@ pub fn new(
     let deps = deps.as_str();
 
     if offline {
-        return new_offline(name, deps, java, git, app, debug, pretend);
+        return new_offline(name, group, package, deps, java, git, app, debug, pretend);
     }
 
     let publication = publish::Publication::reserve(Path::new(name))?;
     let root = publication.root().to_path_buf();
-    download_starter(&publication, name, deps, java, debug)?;
+    download_starter(&publication, name, group, package, deps, java, debug)?;
 
     if initializr_java(java) != java {
         set_java_release(&root, initializr_java(java), java)?;
@@ -93,6 +95,8 @@ pub fn new(
 fn download_starter(
     publication: &publish::Publication,
     name: &str,
+    group: Option<&str>,
+    package: Option<&str>,
     deps: &str,
     java: &str,
     debug: bool,
@@ -112,6 +116,17 @@ fn download_starter(
         .arg(format!("javaVersion={initializer_java}"))
         .arg("-d")
         .arg(format!("artifactId={name}"))
+        // Both only when asked. Initializr has its own defaults and jails
+        // stating them again would be a second opinion that drifts the first
+        // time either side changes one.
+        .args(match group {
+            Some(group) => vec!["-d".to_string(), format!("groupId={group}")],
+            None => Vec::new(),
+        })
+        .args(match package {
+            Some(package) => vec!["-d".to_string(), format!("packageName={package}")],
+            None => Vec::new(),
+        })
         .arg("-d")
         .arg(format!("name={name}"))
         .arg("-d")
@@ -156,6 +171,8 @@ fn download_starter(
 
 fn new_offline(
     name: &str,
+    group: Option<&str>,
+    package: Option<&str>,
     deps: &str,
     java: &str,
     git: bool,
@@ -172,7 +189,7 @@ fn new_offline(
             crate::pom::MIN_RELEASE
         ));
     }
-    let package = sanitize_package(name);
+    let package = resolved_package(name, group, package);
     let class = application_class(name);
     if pretend {
         let root = Path::new(name);
@@ -501,6 +518,8 @@ fn set_java_release(root: &Path, from: &str, to: &str) -> Result<()> {
 /// without exact archetype coordinates).
 pub fn new_cli(
     name: &str,
+    group: Option<&str>,
+    package: Option<&str>,
     java: &str,
     git: bool,
     app: Option<&Path>,
@@ -524,7 +543,7 @@ pub fn new_cli(
         Err(_) => return Err(format!("--release must be a number, got '{java}'")),
     }
 
-    let package = sanitize_package(name);
+    let package = resolved_package(name, group, package);
 
     // Every path below is written unconditionally, so the preview is the
     // list itself rather than a second description of it that can drift.
@@ -568,7 +587,7 @@ pub fn new_cli(
 
     crate::apply::put_named(
         root.join("pom.xml"),
-        pom_xml(name, &package, java),
+        pom_xml(name, &group_of(group, &package), &package, java),
         "pom.xml",
     )?;
     // Through write_new_file, not fs::write, so the entry point and its test
@@ -756,24 +775,56 @@ fn effective_deps(deps: &str, devtools: bool) -> String {
     }
 }
 
-/// artifactId -> a lowercase, dot-free Java package segment under com.example.
-fn sanitize_package(name: &str) -> String {
-    let segment: String = name
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .collect::<String>()
-        .to_lowercase();
-    format!("com.example.{segment}")
+/// The base package this project will use.
+///
+/// `--package` wins outright; `--group` alone puts the sanitised name under
+/// the given group, which is what somebody migrating a service usually means
+/// -- they have a group and the last segment is the service. Neither given
+/// falls back to Initializr's own default so the two paths agree.
+///
+/// This is the first thing anyone migrating an existing service hits, because
+/// an existing service already has a package and it is never `com.example`.
+fn resolved_package(name: &str, group: Option<&str>, package: Option<&str>) -> String {
+    match (package, group) {
+        (Some(package), _) => package.to_string(),
+        (None, Some(group)) => format!("{group}.{}", package_segment(name)),
+        (None, None) => format!("com.example.{}", package_segment(name)),
+    }
 }
 
-fn pom_xml(artifact: &str, package: &str, java: &str) -> String {
+/// artifactId -> a lowercase, dot-free Java package segment.
+fn package_segment(name: &str) -> String {
+    name.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect::<String>()
+        .to_lowercase()
+}
+
+/// The group a project's own artifact is published under.
+///
+/// Derived from the package when it is not stated, because the two disagreeing
+/// is a thing nobody notices until they publish: a project in
+/// `com.intercom.spring` whose pom says `com.example` is wrong in the one
+/// field a repository indexes it by. The last segment is the artifact, so the
+/// group is everything above it.
+fn group_of(group: Option<&str>, package: &str) -> String {
+    match group {
+        Some(group) => group.to_string(),
+        None => match package.rsplit_once('.') {
+            Some((above, _)) => above.to_string(),
+            None => package.to_string(),
+        },
+    }
+}
+
+fn pom_xml(artifact: &str, group: &str, package: &str, java: &str) -> String {
     format!(
         r#"<project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.example</groupId>
+    <groupId>{group}</groupId>
     <artifactId>{artifact}</artifactId>
     <version>0.1.0</version>
     <packaging>jar</packaging>
@@ -897,21 +948,46 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_package_strips_non_alphanumerics_and_lowercases() {
-        assert_eq!(sanitize_package("my-app"), "com.example.myapp");
-        assert_eq!(sanitize_package("MyApp2"), "com.example.myapp2");
+    fn a_package_is_stripped_lowercased_and_placed_under_the_default_group() {
+        assert_eq!(resolved_package("my-app", None, None), "com.example.myapp");
+        assert_eq!(resolved_package("MyApp2", None, None), "com.example.myapp2");
+    }
+
+    /// The case this exists for: an existing service already has a package,
+    /// and it is never `com.example`.
+    #[test]
+    fn an_explicit_package_wins_and_a_group_alone_keeps_the_name_as_the_last_segment() {
+        assert_eq!(
+            resolved_package("spring-4", None, Some("com.intercom.spring")),
+            "com.intercom.spring"
+        );
+        assert_eq!(
+            resolved_package("spring-4", Some("com.intercom"), None),
+            "com.intercom.spring4"
+        );
+        // `--package` outranks `--group`: it says the whole answer, so a group
+        // beside it is a second opinion about the same thing.
+        assert_eq!(
+            resolved_package("spring-4", Some("com.ignored"), Some("com.intercom.spring")),
+            "com.intercom.spring"
+        );
     }
 
     #[test]
     fn pom_xml_pins_the_requested_java_release_and_main_class() {
-        let pom = pom_xml("demo", "com.example.demo", crate::pom::TARGET_RELEASE);
+        let pom = pom_xml(
+            "demo",
+            "com.example",
+            "com.example.demo",
+            crate::pom::TARGET_RELEASE,
+        );
         assert!(pom.contains(&format!(
             "<maven.compiler.release>{}</maven.compiler.release>",
             crate::pom::TARGET_RELEASE
         )));
         // The release is whatever the caller asked for, not a baked-in constant.
         assert!(
-            pom_xml("demo", "com.example.demo", "21")
+            pom_xml("demo", "com.example", "com.example.demo", "21")
                 .contains("<maven.compiler.release>21</maven.compiler.release>")
         );
         assert!(pom.contains("<mainClass>com.example.demo.App</mainClass>"));
@@ -920,7 +996,12 @@ mod tests {
 
     #[test]
     fn pom_xml_declares_junit_and_assertj_as_test_dependencies() {
-        let pom = pom_xml("demo", "com.example.demo", crate::pom::TARGET_RELEASE);
+        let pom = pom_xml(
+            "demo",
+            "com.example",
+            "com.example.demo",
+            crate::pom::TARGET_RELEASE,
+        );
         assert!(pom.contains("<artifactId>junit-jupiter</artifactId>"));
         assert!(pom.contains("<artifactId>assertj-core</artifactId>"));
     }
@@ -960,6 +1041,8 @@ mod tests {
         std::env::set_current_dir(&workdir).unwrap();
         let result = new_cli(
             "demo-app",
+            None,
+            None,
             crate::pom::TARGET_RELEASE,
             false,
             None,
@@ -992,6 +1075,8 @@ mod tests {
         std::env::set_current_dir(&workdir).unwrap();
         let result = new_cli(
             "demo-app",
+            None,
+            None,
             crate::pom::TARGET_RELEASE,
             false,
             None,
@@ -1011,6 +1096,8 @@ mod tests {
         std::env::set_current_dir(&workdir).unwrap();
         let result = new_cli(
             "demo-app",
+            None,
+            None,
             crate::pom::TARGET_RELEASE,
             false,
             None,
@@ -1033,6 +1120,8 @@ mod tests {
         std::env::set_current_dir(&workdir).unwrap();
         let result = new_cli(
             "demo-app",
+            None,
+            None,
             crate::pom::TARGET_RELEASE,
             true,
             None,
