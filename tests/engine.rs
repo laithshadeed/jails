@@ -1393,7 +1393,7 @@ fn a_manifest_applies_as_one_transition_that_each_step_can_see() {
         &committing(&Project::load(&root).unwrap()),
         &[Capability::Db],
         &[
-            jails_engine::route::AppIntent {
+            jails_engine::route::Intent {
                 kind: jails_spec::spec::kind::ArtifactKind::Scaffold,
                 timestamps: false,
                 name: "Article".to_string(),
@@ -1409,7 +1409,7 @@ fn a_manifest_applies_as_one_transition_that_each_step_can_see() {
             },
             // Needs `add db`'s starter *and* `g scaffold`'s record, neither of
             // which exists on disk while this plans.
-            jails_engine::route::AppIntent {
+            jails_engine::route::Intent {
                 kind: jails_spec::spec::kind::ArtifactKind::Search,
                 timestamps: false,
                 name: "Article".to_string(),
@@ -1471,7 +1471,7 @@ fn a_manifest_that_drops_a_row_takes_it_back_out() {
     let root = common::temp_dir("engine-app-drop");
     std::fs::create_dir_all(&root).unwrap();
     common::write_plain_fixture(&root);
-    let note = |name: &str| jails_engine::route::AppIntent {
+    let note = |name: &str| jails_engine::route::Intent {
         kind: jails_spec::spec::kind::ArtifactKind::Record,
         timestamps: false,
         name: name.to_string(),
@@ -1524,7 +1524,7 @@ fn applying_a_manifest_twice_leaves_the_store_where_it_was() {
         jails_engine::route::app_apply(
             &committing(&Project::load(&root).unwrap()),
             &[],
-            &[jails_engine::route::AppIntent {
+            &[jails_engine::route::Intent {
                 kind: jails_spec::spec::kind::ArtifactKind::Record,
                 timestamps: false,
                 name: "Note".to_string(),
@@ -1562,7 +1562,7 @@ fn applying_a_manifest_twice_leaves_the_store_where_it_was() {
 fn the_web_crawler_manifest_applies_as_one_transition() {
     use jails_spec::spec::kind::ArtifactKind as K;
 
-    let intent = |kind: K, name: &str, fields: &[&str]| jails_engine::route::AppIntent {
+    let intent = |kind: K, name: &str, fields: &[&str]| jails_engine::route::Intent {
         kind,
         name: name.to_string(),
         fields: fields.iter().map(|f| f.to_string()).collect(),
@@ -1572,11 +1572,11 @@ fn the_web_crawler_manifest_applies_as_one_transition() {
         on: None,
         yields: None,
     };
-    let on = |mut i: jails_engine::route::AppIntent, target: &str| {
+    let on = |mut i: jails_engine::route::Intent, target: &str| {
         i.on = Some(target.to_string());
         i
     };
-    let stamped = |mut i: jails_engine::route::AppIntent, indexes: &[&str]| {
+    let stamped = |mut i: jails_engine::route::Intent, indexes: &[&str]| {
         i.timestamps = true;
         i.indexes = indexes.iter().map(|x| x.to_string()).collect();
         i
@@ -1781,7 +1781,7 @@ fn a_plan_names_exactly_the_files_the_apply_then_writes() {
     let root = common::temp_dir("engine-app-plan");
     std::fs::create_dir_all(&root).unwrap();
     common::write_plain_fixture(&root);
-    let note = |name: &str| jails_engine::route::AppIntent {
+    let note = |name: &str| jails_engine::route::Intent {
         kind: jails_spec::spec::kind::ArtifactKind::Record,
         timestamps: false,
         name: name.to_string(),
@@ -1876,7 +1876,7 @@ fn a_manifest_row_that_changes_merges_with_what_the_reader_wrote() {
     let root = common::temp_dir("engine-app-reconcile");
     std::fs::create_dir_all(&root).unwrap();
     common::write_plain_fixture(&root);
-    let note = |fields: &[&str]| jails_engine::route::AppIntent {
+    let note = |fields: &[&str]| jails_engine::route::Intent {
         kind: jails_spec::spec::kind::ArtifactKind::Record,
         timestamps: false,
         name: "Note".to_string(),
@@ -1942,7 +1942,7 @@ fn an_overlapping_edit_refuses_without_writing_anything() {
     let root = common::temp_dir("engine-app-conflict");
     std::fs::create_dir_all(&root).unwrap();
     common::write_plain_fixture(&root);
-    let note = |fields: &[&str]| jails_engine::route::AppIntent {
+    let note = |fields: &[&str]| jails_engine::route::Intent {
         kind: jails_spec::spec::kind::ArtifactKind::Record,
         timestamps: false,
         name: "Note".to_string(),
@@ -3410,6 +3410,131 @@ fn a_commit_with_no_container_reports_no_runtime_attempt() {
         committed.effect,
         jails_commit::outcome::CommitEffectOutcome::NotApplicable
     );
+}
+
+/// A project whose build file jails does not read still gets the Java.
+///
+/// `build.rs`'s whole point: recognising a filename is not understanding a
+/// build, and about ten of thirty commands need Maven at all. So `generate`
+/// emits the code and the dependency claim splices into nothing -- the claim
+/// itself survives in the store, which is what lets `doctor` say the
+/// dependency is missing instead of the reader finding out at compile time.
+///
+/// A capability is not exempted and refuses first: installing the code and
+/// silently skipping the dependency hands the reader a compile error for a
+/// line they did not write.
+#[test]
+fn a_foreign_build_gets_the_code_and_a_capability_still_refuses() {
+    let root = common::temp_dir("engine-foreign-build");
+    std::fs::create_dir_all(root.join("src/main/java/com/example/demo")).unwrap();
+    std::fs::write(root.join("build.gradle"), "plugins { id 'java' }\n").unwrap();
+    std::fs::write(
+        root.join("src/main/java/com/example/demo/App.java"),
+        "package com.example.demo;\n\npublic class App {}\n",
+    )
+    .unwrap();
+
+    jails_engine::route::generate(
+        &committing(&Project::load(&root).unwrap()),
+        jails_spec::spec::kind::ArtifactKind::Record,
+        "Note",
+        &["title:string!".to_string()],
+        None,
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+    assert!(
+        root.join("src/main/java/com/example/demo/domain/Note.java")
+            .is_file(),
+        "a Gradle project got no code"
+    );
+    assert!(!root.join("pom.xml").exists(), "jails wrote a build file");
+
+    let refused = jails_engine::route::install(
+        &committing(&Project::load(&root).unwrap()),
+        &Declaration::plain(Capability::Json),
+    )
+    .unwrap_err();
+    assert!(refused.contains("json"), "{refused}");
+}
+
+/// One entry point picks the route the kind actually needs.
+///
+/// §R6.2 gives `field`, `migration` and `cases` policies of their own -- an
+/// overlay, a serial allocation, a source-hash receipt -- and none of them is
+/// a persistent entity. Forwarding every kind to the recipe planner is what a
+/// caller does when the selection lives at the call site, and it fails as
+/// `g cases` reaching a planner with no arm for a one-shot.
+#[test]
+fn one_entry_point_sends_each_kind_to_the_route_that_owns_it() {
+    use jails_spec::spec::kind::ArtifactKind;
+
+    let root = common::temp_dir("engine-recipe-entry");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+    std::fs::write(root.join("brief.md"), "# Notes\n\n- it works\n").unwrap();
+
+    let intent = |kind, name: &str, fields: Vec<String>| jails_engine::route::Intent {
+        kind,
+        name: name.to_string(),
+        fields,
+        timestamps: false,
+        indexes: Vec::new(),
+        package: None,
+        on: None,
+        yields: None,
+    };
+    let run =
+        |i| jails_engine::route::recipe(&committing(&Project::load(&root).unwrap()), &i).unwrap();
+
+    // A persistent kind: capitalised, suffix-stripped, planned as an entity.
+    run(intent(
+        ArtifactKind::Record,
+        "note",
+        vec!["title:string!".to_string()],
+    ));
+    assert!(
+        root.join("src/main/java/com/example/demo/domain/Note.java")
+            .is_file()
+    );
+
+    // A serial allocation, whose NAME is a description rather than a class.
+    run(intent(ArtifactKind::Migration, "create notes", Vec::new()));
+    let migrations = std::fs::read_dir(root.join("src/main/resources/db/migration"))
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(migrations.len(), 1, "{migrations:?}");
+    assert!(migrations[0].contains("create_notes"), "{migrations:?}");
+
+    // A source-hash receipt, whose NAME is a path.
+    run(intent(ArtifactKind::Cases, "brief.md", Vec::new()));
+
+    // And an overlay on the record generated above.
+    run(intent(
+        ArtifactKind::Field,
+        "Note",
+        vec!["createdAt:instant".to_string()],
+    ));
+    let record =
+        std::fs::read_to_string(root.join("src/main/java/com/example/demo/domain/Note.java"))
+            .unwrap();
+    assert!(record.contains("createdAt"), "{record}");
+
+    // A field with more than one component refuses rather than applying the
+    // first: two overlays in one call could not be undone separately.
+    let mut two = intent(
+        ArtifactKind::Field,
+        "Note",
+        vec!["a:string".to_string(), "b:string".to_string()],
+    );
+    two.package = None;
+    let error =
+        jails_engine::route::recipe(&committing(&Project::load(&root).unwrap()), &two).unwrap_err();
+    assert!(error.contains("one `name:type` component"), "{error}");
 }
 
 /// One envelope, from both sides, with the status derived rather than told.

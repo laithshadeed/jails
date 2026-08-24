@@ -78,8 +78,8 @@ mod oneshot;
 mod provenance;
 mod session;
 
-pub use app::{AppIntent, app_apply};
-pub use artifact::{destroy, generate};
+pub use app::{Intent, app_apply};
+pub use artifact::{destroy, generate, recipe};
 pub use capability::{install, remove, sync};
 pub use feature::{install_fast_test, remove_fast_test};
 pub use field::field;

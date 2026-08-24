@@ -163,3 +163,69 @@ pub fn destroy(
         ),
     )
 }
+
+/// The one entry point from an intent to the route that owns its kind.
+///
+/// A `jails generate` invocation and a `[[generate]]` manifest row are the
+/// same intent, and three of the kinds it can name are not persistent entities
+/// at all: `field` is an overlay on a target that already exists, `migration`
+/// allocates a serial, and `cases` records a source-hash receipt. §R6.2 gives
+/// each its own policy, and forwarding all of them to [`generate`] is what a
+/// caller does when the selection lives at the call site rather than here --
+/// which is exactly what a probe of the dispatch flip found, as `g cases`
+/// reaching a recipe planner that has no arm for a one-shot.
+///
+/// The match is closed on `ArtifactKind`, so a kind added without deciding
+/// which policy it follows is a compile error rather than a one-shot silently
+/// planned as an entity.
+pub fn recipe(run: &Run, intent: &Intent) -> Result<Outcome> {
+    let package = intent.package.as_deref();
+    match intent.kind {
+        // `--timestamps` is expanded into two ordinary components before any
+        // recipe sees it, through the same helper the manifest uses.
+        ArtifactKind::Field => {
+            if !intent.indexes.is_empty() || intent.on.is_some() || intent.yields.is_some() {
+                return Err(
+                    "field accepts one `name:type` component; --index/--on/--yields do not \
+                     apply.\n       fix: put @index on the field itself, for example \
+                     `createdAt:instant@index`."
+                        .to_string(),
+                );
+            }
+            let [component] = intent.fields.as_slice() else {
+                return Err(format!(
+                    "`g field` takes one target and one `name:type` component; this has {}.\n    \
+                     \x20  fix: add one component per call. A field is one overlay on one \
+                     recorded target, and two at once could not be undone separately.",
+                    intent.fields.len()
+                ));
+            };
+            super::field(run, &intent.name, component, package)
+        }
+        // These two use NAME as a description or a path rather than a Java
+        // class name, which is why they are decided before the capitalisation
+        // every other kind gets.
+        ArtifactKind::Cases => super::cases(run, &intent.name, package),
+        ArtifactKind::Migration => super::migration(run, &intent.name),
+        _ => {
+            let fields = match intent.timestamps {
+                true => jails_generate::generate::with_timestamps(intent.kind, &intent.fields)?,
+                false => intent.fields.clone(),
+            };
+            let name = jails_generate::generate::strip_redundant_suffix(
+                intent.kind,
+                &jails_generate::generate::capitalize(&intent.name),
+            );
+            generate(
+                run,
+                intent.kind,
+                &name,
+                &fields,
+                package,
+                &intent.indexes,
+                intent.on.as_deref(),
+                intent.yields.as_deref(),
+            )
+        }
+    }
+}

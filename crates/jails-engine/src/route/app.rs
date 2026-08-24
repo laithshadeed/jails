@@ -27,14 +27,20 @@
 
 use super::*;
 
-/// One `[[generate]]` row, as the engine takes it.
+/// One generation intent, as the engine takes it.
+///
+/// A `[[generate]]` row and the equivalent `jails generate` invocation are the
+/// same thing, and §R6.2 says so: a direct call has *the same direct-owner
+/// semantics as an equivalent manifest row*. So they are one type, and
+/// [`super::recipe`] is the one entry point that turns either into the route
+/// that owns the kind.
 ///
 /// Deliberately not `app::ResolvedIntent`: that type lives in the binary,
 /// which is above this crate, and it carries manifest syntax -- deprecated
 /// aliases, the `timestamps` flag that is expanded before a recipe sees it --
 /// that a route has no business knowing about.
 #[derive(Clone, Debug)]
-pub struct AppIntent {
+pub struct Intent {
     pub kind: ArtifactKind,
     pub name: String,
     pub fields: Vec<String>,
@@ -58,7 +64,7 @@ pub struct AppIntent {
 /// precisely because two implementations of one question disagree. Here the
 /// plan is this computation stopped one step before the lock: what it names is
 /// exactly what an apply then writes.
-pub fn app_apply(run: &Run, capabilities: &[Capability], intents: &[AppIntent]) -> Result<Outcome> {
+pub fn app_apply(run: &Run, capabilities: &[Capability], intents: &[Intent]) -> Result<Outcome> {
     let project = run.project();
     let (request, reads) = declare(project, capabilities, intents)?;
     commit(
@@ -79,7 +85,7 @@ pub fn app_apply(run: &Run, capabilities: &[Capability], intents: &[AppIntent]) 
 fn declare(
     project: &Project,
     capabilities: &[Capability],
-    intents: &[AppIntent],
+    intents: &[Intent],
 ) -> Result<(Request, ReadDeclaration)> {
     let store = observed(project)?;
     let mut declared: BTreeMap<EntityId, DesiredEntity> = BTreeMap::new();

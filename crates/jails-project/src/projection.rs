@@ -307,7 +307,9 @@ impl ProjectedProject {
         match edit {
             SemanticEdit::MavenDependency { value, .. } => {
                 let path = pom_path()?;
-                let text = self.required_text(&path)?;
+                let Some(text) = self.optional_text(&path)? else {
+                    return Ok(None);
+                };
                 let version = match &value.version {
                     jails_protocol::coordinate::MavenVersion::Managed => None,
                     jails_protocol::coordinate::MavenVersion::Pinned(pinned) => {
@@ -333,7 +335,9 @@ impl ProjectedProject {
             }
             SemanticEdit::MavenPlugin { value, .. } => {
                 let path = pom_path()?;
-                let text = self.required_text(&path)?;
+                let Some(text) = self.optional_text(&path)? else {
+                    return Ok(None);
+                };
                 let spliced = pom::add_plugin(
                     &text,
                     value.coordinate.artifact_id.as_str(),
@@ -435,14 +439,19 @@ impl ProjectedProject {
         }
     }
 
-    fn required_text(&self, path: &ProjectPath) -> Result<String> {
-        self.text(path)?.ok_or_else(|| {
-            format!(
-                "`{path}` is absent, so there is nothing to splice into.\n       fix: a \
-                 generator that emits code must supply the dependency it needs, and a project \
-                 with no build file cannot take one."
-            )
-        })
+    /// The text at a path an edit is allowed to find nothing at.
+    ///
+    /// A project whose build file jails does not read still gets the Java --
+    /// `build.rs`'s whole point is that recognising a filename is not
+    /// understanding a build, and about ten of thirty commands need Maven at
+    /// all. So a dependency claim on a project with no `pom.xml` splices into
+    /// nothing rather than refusing, and the claim itself survives in the
+    /// store, which is what lets `doctor` say the dependency is missing
+    /// instead of the reader finding out at compile time. A *capability* is
+    /// not exempted and refuses earlier, through `require_maven`: installing
+    /// the code and silently skipping the dependency is worse than refusing.
+    fn optional_text(&self, path: &ProjectPath) -> Result<Option<String>> {
+        self.text(path)
     }
 
     /// Put bytes at a path, applying the one write-time rule about Java.
@@ -465,7 +474,9 @@ impl ProjectedProject {
         match key {
             ResourceKey::MavenDependency(coordinate) => {
                 let path = pom_path()?;
-                let text = self.required_text(&path)?;
+                let Some(text) = self.optional_text(&path)? else {
+                    return Ok(None);
+                };
                 let without = pom::remove_dependency(
                     &text,
                     coordinate.group_id.as_str(),
@@ -476,7 +487,9 @@ impl ProjectedProject {
             }
             ResourceKey::MavenPlugin(coordinate) => {
                 let path = pom_path()?;
-                let text = self.required_text(&path)?;
+                let Some(text) = self.optional_text(&path)? else {
+                    return Ok(None);
+                };
                 let without = pom::remove_plugin(&text, coordinate.artifact_id.as_str())?;
                 self.write_text(&path, without.unwrap_or(text));
                 Ok(Some(path))

@@ -23,6 +23,15 @@ use super::*;
 pub fn install(run: &Run, asked: &Declaration) -> Result<Outcome> {
     let project = run.project();
     let capability = asked.kind;
+    // Not exempted, on purpose, and this is the one route where the rule bites:
+    // a capability is a dependency plus code plus a test, and jails will not
+    // edit a build file it refuses to read. Installing the code and silently
+    // skipping the dependency hands the reader a compile error for a line they
+    // did not write. `generate` degrades instead -- it emits Java that assumes
+    // the plainer shape and says so -- because about ten of thirty commands
+    // need Maven at all and refusing the rest would refuse a foreign project
+    // for no reason.
+    project.require_maven(capability.label())?;
     let (id, spec) = asked.resolve(project)?;
     let declared_as = Declaration::of(&id, &spec);
     let owner = ResourceOwner::Entity(EntityId::Capability(id.clone()));
@@ -87,6 +96,9 @@ pub fn install(run: &Run, asked: &Declaration) -> Result<Outcome> {
 /// of `sync`: somebody edited the list, and this is how the project catches up.
 pub fn sync(run: &Run) -> Result<Outcome> {
     let project = run.project();
+    if !project.declarations().is_empty() {
+        project.require_maven("sync")?;
+    }
     let store = observed(project)?;
     let mut declared = BTreeMap::new();
     let mut changes = Vec::new();
