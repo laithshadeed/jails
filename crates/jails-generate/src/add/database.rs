@@ -140,11 +140,27 @@ pub(super) fn db_plan(slice: &Slice) -> Result<Change> {
         None
     };
 
+    // Read back from compose.yaml where there is one, exactly as the write
+    // path does: `add db` writes that file, but a project may have edited the
+    // port or the credentials since, and a datasource pointing at the wrong
+    // one is worse than none. On a first run there is no file yet and the
+    // defaults are what this same plan is about to write.
+    let properties = if flavor == Flavor::SpringBoot {
+        let connect = compose::read(root)
+            .ok()
+            .and_then(|yaml| compose::postgres_connect(&yaml))
+            .unwrap_or_else(compose::PostgresConnect::defaults);
+        db_property_lines(&connect)
+    } else {
+        Vec::new()
+    };
+
     Ok(Change {
         deps,
         files,
         compose: vec![compose::POSTGRES],
         spring_test_import,
+        properties,
         ..Change::default()
     })
 }
@@ -248,7 +264,13 @@ pub(super) const COMPOSE_LIFECYCLE_COMMENT: &str =
 /// dies during startup). And the connection is visible in the project rather
 /// than materialising from a module, which is the same reason this
 /// capability emits SQL you can read instead of an ORM.
-pub(super) fn application_properties_block(connect: &compose::PostgresConnect) -> String {
+/// What `add db` sets in `application.properties`, as the lines themselves.
+///
+/// One list, read by both engines. V1 renders it into a marked block; V2
+/// states each line as a `Property` resource this capability owns, which is
+/// what lets `remove db` take back exactly the keys it set and leave a
+/// hand-written neighbour alone.
+pub(super) fn db_property_lines(connect: &compose::PostgresConnect) -> Vec<String> {
     let compose::PostgresConnect {
         host,
         port,
@@ -256,25 +278,29 @@ pub(super) fn application_properties_block(connect: &compose::PostgresConnect) -
         password,
         database,
     } = connect;
-    format!(
-        "# jails:db\n\
-         {EXCEPTION_TRANSLATION_PROPERTY}\n\
-         spring.datasource.url=jdbc:postgresql://{host}:{port}/{database}\n\
-         spring.datasource.username={user}\n\
-         spring.datasource.password={password}\n\
-         spring.datasource.hikari.pool-name=primary\n\
-         spring.datasource.hikari.maximum-pool-size=20\n\
-         spring.datasource.hikari.connection-timeout=1000\n\
-         spring.datasource.hikari.initialization-fail-timeout=1\n\
-         spring.datasource.hikari.transaction-isolation=TRANSACTION_READ_COMMITTED\n\
-         # Refuse a read replica now, instead of failing on the first write.\n\
-         spring.datasource.hikari.connection-init-sql=SELECT 1/(1-pg_is_in_recovery()::int)\n\
-         server.shutdown=graceful\n\
-         spring.lifecycle.timeout-per-shutdown-phase=30s\n\
-         {COMPOSE_LIFECYCLE_COMMENT}\n\
-         {COMPOSE_DISABLED_PROPERTY}\n\
-         # /jails:db\n"
-    )
+    vec![
+        EXCEPTION_TRANSLATION_PROPERTY.to_string(),
+        format!("spring.datasource.url=jdbc:postgresql://{host}:{port}/{database}"),
+        format!("spring.datasource.username={user}"),
+        format!("spring.datasource.password={password}"),
+        "spring.datasource.hikari.pool-name=primary".to_string(),
+        "spring.datasource.hikari.maximum-pool-size=20".to_string(),
+        "spring.datasource.hikari.connection-timeout=1000".to_string(),
+        "spring.datasource.hikari.initialization-fail-timeout=1".to_string(),
+        "spring.datasource.hikari.transaction-isolation=TRANSACTION_READ_COMMITTED".to_string(),
+        "# Refuse a read replica now, instead of failing on the first write.".to_string(),
+        "spring.datasource.hikari.connection-init-sql=SELECT 1/(1-pg_is_in_recovery()::int)"
+            .to_string(),
+        "server.shutdown=graceful".to_string(),
+        "spring.lifecycle.timeout-per-shutdown-phase=30s".to_string(),
+        COMPOSE_LIFECYCLE_COMMENT.to_string(),
+        COMPOSE_DISABLED_PROPERTY.to_string(),
+    ]
+}
+
+pub(super) fn application_properties_block(connect: &compose::PostgresConnect) -> String {
+    crate::codemod::Marked::new("db")
+        .render(&format!("{}\n", db_property_lines(connect).join("\n")))
 }
 
 /// Splice a capability's own `application.properties` lines into a marked

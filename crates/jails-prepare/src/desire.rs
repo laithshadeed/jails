@@ -45,7 +45,7 @@ use jails_protocol::coordinate::{
 };
 use jails_protocol::edit::SemanticEdit;
 use jails_protocol::identity::{
-    ManagedVersion, MarkerId, ProjectPath, PropertyKey, ServiceName, VolumeName,
+    JavaType, ManagedVersion, MarkerId, ProjectPath, PropertyKey, ServiceName, VolumeName,
 };
 use jails_protocol::render::{DesiredBody, DesiredFile};
 use jails_protocol::resource::{
@@ -77,8 +77,10 @@ pub fn contribution(
     change: &Change,
     project: &Project,
 ) -> Result<DesiredChange> {
-    refuse_untranslated(change)?;
     let mut desired = DesiredChange::owned_by(owner.clone());
+    if let Some(import) = &change.spring_test_import {
+        state_test_import(&mut desired, owner, import, project)?;
+    }
     for dependency in &change.deps {
         let (key, value) = dependency_resource(dependency)?;
         claim(&mut desired, owner, key.clone(), value.clone())?;
@@ -168,19 +170,99 @@ pub fn contribution(
     Ok(desired)
 }
 
-/// A contribution this translation cannot yet state, named rather than lost.
-fn refuse_untranslated(change: &Change) -> Result<()> {
-    if let Some(import) = &change.spring_test_import {
-        return Err(format!(
-            "this capability contributes the Spring test import {}, and the protocol has no \
-             semantic edit for it yet (plan.md §R6.3, the `add::test_wiring` row).\n       \
-             fix: keep this capability on the V1 path until that edit exists. Dropping the \
-             import would leave every `@SpringBootTest` in the project without a DataSource, \
-             which fails at run time and not at plan time.",
-            import.fqcn()
-        ));
+/// Claim the `@Import` this capability needs on every `@SpringBootTest` there
+/// is.
+///
+/// §R6.3's `add::test_wiring` row: *"keyed semantic contributions with
+/// explicit owners"*. One claim per target file rather than one for the whole
+/// project, because each is independent — a test written after this ran is not
+/// covered by a claim about a file it is not in, which is exactly what makes
+/// the *next* `add`/`sync` notice it.
+///
+/// The targets are read off the live tree, and that read is a precondition:
+/// every path here is declared by the caller and rechecked under the lock, so
+/// a test that appeared between planning and commit makes this refuse rather
+/// than silently miss it.
+fn state_test_import(
+    desired: &mut DesiredChange,
+    owner: &ResourceOwner,
+    import: &jails_project::model::SpringTestImport,
+    project: &Project,
+) -> Result<()> {
+    let class = JavaType::parse(&import.fqcn())?;
+    for path in spring_boot_tests(project) {
+        // The `import` statement is only needed when the test is in a
+        // different package from the config, and `import_of` returns an empty
+        // string when they match -- which is what keeps a flat project
+        // compiling.
+        let source =
+            std::fs::read_to_string(project.root().join(path.as_str())).unwrap_or_default();
+        let tests_package =
+            jails_java::java::package_of(&source).unwrap_or_else(|| import.pkg.clone());
+        let statement = if tests_package == import.pkg {
+            String::new()
+        } else {
+            format!("import {};\n", import.fqcn())
+        };
+        let key = ResourceKey::SpringTestImport {
+            path,
+            class: class.clone(),
+        };
+        claim(
+            desired,
+            owner,
+            key.clone(),
+            ResourceValue::SpringTestImport {
+                class: class.clone(),
+                statement: statement.clone(),
+            },
+        )?;
+        desired.edits.push(SemanticEdit::SpringTestImport {
+            key,
+            class: class.clone(),
+            statement,
+        });
     }
     Ok(())
+}
+
+/// Every `@SpringBootTest` under `src/test/java`, in a stable order.
+///
+/// Sorted because the order decides the order of the edits, and two runs of
+/// one request that produced different transactions would make the receipt
+/// depend on how the filesystem happened to enumerate a directory.
+fn spring_boot_tests(project: &Project) -> Vec<ProjectPath> {
+    let root = project.root().join("src/test/java");
+    let mut found = Vec::new();
+    let mut stack = vec![root];
+    while let Some(current) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&current) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if !path.extension().is_some_and(|e| e == "java") {
+                continue;
+            }
+            if !std::fs::read_to_string(&path)
+                .is_ok_and(|source| jails_java::annotate::is_spring_boot_test(&source))
+            {
+                continue;
+            }
+            if let Ok(relative) = path.strip_prefix(project.root())
+                && let Some(text) = relative.to_str()
+                && let Ok(project_path) = ProjectPath::parse(text)
+            {
+                found.push(project_path);
+            }
+        }
+    }
+    found.sort();
+    found
 }
 
 /// Record one claim, refusing a second different value for one key.
@@ -493,8 +575,30 @@ mod tests {
         assert!(message.contains("key=value"), "{message}");
     }
 
+    /// §R6.3's `add::test_wiring` row, which used to be a refusal here.
+    ///
+    /// One claim per `@SpringBootTest` in the project, keyed by that file.
+    /// The class the capability is *adding* is not one of them: its Javadoc
+    /// shows how to import it, and a text scan that read the example as a
+    /// declaration would have the config import itself.
     #[test]
-    fn a_spring_test_import_is_refused_by_name_rather_than_dropped() {
+    fn a_spring_test_import_is_claimed_once_per_test_it_edits() {
+        let (scratch, project) = project();
+        jails_support::apply::put(
+            scratch
+                .path()
+                .join("src/test/java/com/example/DemoApplicationTests.java"),
+            "package com.example;\n\n@SpringBootTest\nclass DemoApplicationTests {}\n",
+        )
+        .unwrap();
+        jails_support::apply::put(
+            scratch
+                .path()
+                .join("src/test/java/com/example/TestcontainersConfig.java"),
+            "package com.example;\n\n/** Use it as {@code @SpringBootTest} plus @Import. */\n\
+             class TestcontainersConfig {}\n",
+        )
+        .unwrap();
         let change = Change {
             spring_test_import: Some(jails_project::model::SpringTestImport {
                 pkg: "com.example".to_string(),
@@ -502,12 +606,63 @@ mod tests {
             }),
             ..Change::default()
         };
-        let message = contribution(&owner(), &change, &project().1).unwrap_err();
-        assert!(
-            message.contains("com.example.TestcontainersConfig"),
-            "{message}"
+
+        let desired = contribution(&owner(), &change, &project).unwrap();
+
+        let claimed: Vec<String> = desired
+            .resources
+            .iter()
+            .filter_map(|resource| match &resource.key {
+                ResourceKey::SpringTestImport { path, .. } => Some(path.to_string()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            claimed,
+            vec!["src/test/java/com/example/DemoApplicationTests.java".to_string()],
+            "the Javadoc example is not a declaration"
         );
-        assert!(message.contains("fix:"), "{message}");
+        assert_eq!(
+            desired
+                .edits
+                .iter()
+                .filter(|edit| matches!(edit, SemanticEdit::SpringTestImport { .. }))
+                .count(),
+            1
+        );
+    }
+
+    /// A test in another package needs the import statement as well as the
+    /// annotation; one in the same package must not get a self-import, which
+    /// is what keeps a flat project compiling.
+    #[test]
+    fn the_import_statement_is_only_rendered_when_the_packages_differ() {
+        let (scratch, project) = project();
+        jails_support::apply::put(
+            scratch
+                .path()
+                .join("src/test/java/com/example/web/RoutesTest.java"),
+            "package com.example.web;\n\n@SpringBootTest\nclass RoutesTest {}\n",
+        )
+        .unwrap();
+        let change = Change {
+            spring_test_import: Some(jails_project::model::SpringTestImport {
+                pkg: "com.example".to_string(),
+                class: "TestcontainersConfig",
+            }),
+            ..Change::default()
+        };
+
+        let desired = contribution(&owner(), &change, &project).unwrap();
+
+        let statement = desired.edits.iter().find_map(|edit| match edit {
+            SemanticEdit::SpringTestImport { statement, .. } => Some(statement.clone()),
+            _ => None,
+        });
+        assert_eq!(
+            statement,
+            Some("import com.example.TestcontainersConfig;\n".to_string())
+        );
     }
 
     #[test]

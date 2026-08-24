@@ -106,7 +106,9 @@ pub fn remove(
             find_spring_boot_tests(&root.join("src/test/java"))
                 .into_iter()
                 .filter(|p| {
-                    fs::read_to_string(p).is_ok_and(|s| s.contains(&import_annotation(cfg.class)))
+                    fs::read_to_string(p).is_ok_and(|s| {
+                        s.contains(&jails_java::annotate::import_annotation(cfg.class))
+                    })
                 })
                 .collect()
         })

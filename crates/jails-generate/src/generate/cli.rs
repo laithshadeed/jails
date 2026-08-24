@@ -414,15 +414,7 @@ pub fn is_dispatcher(source: &str) -> bool {
     source.contains("SequencedMap<String, Command>") && source.contains("return commands;")
 }
 
-pub fn package_of(source: &str) -> Option<String> {
-    source.lines().find_map(|line| {
-        line.trim()
-            .strip_prefix("package ")?
-            .trim()
-            .strip_suffix(';')
-            .map(|s| s.trim().to_string())
-    })
-}
+pub use jails_java::java::package_of;
 
 /// Insert the registration immediately above `return commands;`, matching that
 /// line's indentation, and add `import` if the command lives elsewhere.

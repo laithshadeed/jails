@@ -1221,8 +1221,8 @@ reject.
 | `ResourceOwner` | entity `0`, one-shot `1` |
 | `MavenVersion` | managed `0`, pinned `1` |
 | `MavenScope` | compile `0`, runtime `1`, test `2` |
-| `ResourceKey` | whole file `0`, Maven dependency `1`, Maven plugin `2`, compose service `3`, property `4`, marked block `5`, command registration `6`, human-config capability `7` |
-| `ResourceValue` | whole file `0`, Maven dependency `1`, Maven plugin `2`, compose service `3`, property `4`, marked block `5`, command registration `6`, human-config capability `7` |
+| `ResourceKey` | whole file `0`, Maven dependency `1`, Maven plugin `2`, compose service `3`, property `4`, marked block `5`, command registration `6`, human-config capability `7`, Spring test import `8` |
+| `ResourceValue` | whole file `0`, Maven dependency `1`, Maven plugin `2`, compose service `3`, property `4`, marked block `5`, command registration `6`, human-config capability `7`, Spring test import `8` |
 | `LegacyOwnerHint` | direct CLI `0`, unknown `1` |
 | `LegacySourceKind` | schema-1 ledger `0`, schema-1 applied `1`, schema-1 model `2`, app-state header `3`, app-state row `4`, intent files `5`, model files `6`, global files `7`, version file `8` |
 | `LegacySourcePath` | schema-1 ledger `0`, app state `1`, intent files `2`, model files `3`, global files `4`, version file `5` |
@@ -2134,6 +2134,10 @@ enum SemanticEdit {
     CommandRegistration { key: ResourceKey, command: JavaType },
     HumanConfigCapability { key: ResourceKey, spec: CapabilitySpec },
     HumanConfigLayout { layer: Layer, directory: String }, // one validated relative component
+    // One `@TestConfiguration` imported into one `@SpringBootTest`. `statement`
+    // is the `import` line the annotation needs when the config lives in
+    // another package, already rendered, and empty when it does not.
+    SpringTestImport { key: ResourceKey, class: JavaType, statement: String },
 }
 
 enum SemanticPrecondition {
@@ -2178,6 +2182,10 @@ enum ResourceKey {
     MarkedBlock { path: ProjectPath, marker: MarkerId },
     CommandRegistration { dispatcher: JavaType, command: JavaType },
     HumanConfigCapability(CapabilityId),
+    // Keyed by the file *and* the class: the same capability imports the same
+    // config into every `@SpringBootTest` there is, and each of those is an
+    // independent claim.
+    SpringTestImport { path: ProjectPath, class: JavaType },
 }
 
 struct DesiredResource {
@@ -5239,7 +5247,7 @@ command uses it", and dispatch is still V1 for every command.
 |---|---|---|
 | 1. Land the executor dark | done | `jails-engine` is a library crate precisely so nothing in `main.rs` calls it; the workspace `dead_code` denial makes dark code in the binary impossible rather than merely discouraged. |
 | 2. Capability `add`/`remove`/`sync` on V2 | done | `route::{install,remove,sync}`; `tests/desired.rs` compares 21 capabilities against V1 on dependencies, effective property values and file bytes; `tests/engine.rs` sweeps 21 failpoints through a real install. `sync` is one transition, not a loop. |
-| 3. Persistent `generate`, then the one-shots | partial | `generate::plan_recipe` separates planning from writing and `route::generate` commits it; 22 scenarios match V1 byte-for-byte. `route::destroy` retires an entity from the recorded exact state, and `every_persistent_kind_destroys_back_to_where_it_started` round-trips 17 scenarios to a byte-identical project. The `field`/`migration`/`cases` policies are not started, and `plan_recipe` refuses those three by name. |
+| 3. Persistent `generate`, then the one-shots | partial | `generate::plan_recipe` separates planning from writing and `route::generate` commits it; 22 scenarios match V1 byte-for-byte. `route::destroy` retires an entity from the recorded exact state, and `every_persistent_kind_destroys_back_to_where_it_started` round-trips 22 of the 25 scenarios to a byte-identical project. The three it does not are the one-shots: the `field`/`migration`/`cases` policies are not started, and `plan_recipe` refuses those three by name. |
 | 4. `app init/plan/apply/reconcile` as one aggregate | not started | — |
 | 5. Maintenance mutations | not started | — |
 | 6. New-project bootstrap through publish | done | §R6.5; `new`/`new-cli` build in a scratch sibling under `<parent>/.jails-new.lock` and become real in one rename, `--app` included. |
@@ -5258,11 +5266,16 @@ discovered:
   reads to decide whether a template moved. Until it is written, an update to
   jails' own earlier output refuses rather than replaces, which is the safe
   direction and matches what V1 does.
-- `add db` and anything else contributing a Spring test import cannot yet be
-  stated as desired state: the protocol has no semantic edit for it (§R6.3's
-  `add::test_wiring` row). `desire::contribution` refuses it **by name** rather
-  than dropping it, because a translator that silently loses a contribution
-  produces a project that compiles and does not start.
+- ~~`add db` and anything else contributing a Spring test import cannot yet be
+  stated as desired state.~~ Closed. §R6.3's `add::test_wiring` row landed as
+  `ResourceKey`/`ResourceValue`/`SemanticEdit::SpringTestImport`: one claim per
+  `@SpringBootTest` the capability edits, keyed by that file, so a test written
+  later is not silently covered by a claim about a file it is not in. The
+  target list is read while planning and every path is declared, which turns
+  the read into a precondition the executor rechecks under the lock. `add db`'s
+  `spring.datasource.*` block became ordinary plan properties in the same
+  change, so the V2 install produces a project that starts rather than one that
+  merely compiles.
 
 
 Schema 2 and command-by-command production switching cannot coexist: once one

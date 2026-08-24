@@ -401,6 +401,31 @@ impl ProjectedProject {
                 self.write_text(&path, updated);
                 Ok(Some(path))
             }
+            SemanticEdit::SpringTestImport {
+                key,
+                class,
+                statement,
+            } => {
+                let ResourceKey::SpringTestImport { path, class: keyed } = key else {
+                    return Err("a test-import edit filed under another key".to_string());
+                };
+                if keyed != class {
+                    return Err(format!("test import {class} filed under key {keyed}"));
+                }
+                // Absent rather than an error: the reader may have deleted the
+                // test since this was planned, and the recheck under the lock
+                // is where that becomes a refusal -- not here, where it would
+                // be a refusal against a stale read.
+                let Some(text) = self.text(path)? else {
+                    return Ok(None);
+                };
+                match jails_java::annotate::splice_import(&text, class.name().as_str(), statement) {
+                    Some(spliced) => self.write_text(path, spliced),
+                    // No `@SpringBootTest` anchor any more. Same reasoning.
+                    None => return Ok(None),
+                }
+                Ok(Some(path.clone()))
+            }
             // The dispatcher's source file is a Java file the recipe rewrites
             // as a whole, so the registration reaches the projection as that
             // file rather than as a keyed splice. What is recorded here is
@@ -514,6 +539,29 @@ impl ProjectedProject {
                     self.write_text(&path, without);
                 }
                 Ok(Some(path))
+            }
+            ResourceKey::SpringTestImport { path, class } => {
+                let Some(text) = self.text(path)? else {
+                    return Ok(None);
+                };
+                // The `import` statement to drop is a fact about how this was
+                // *installed* -- whether the config lived in another package
+                // -- so it is read back off the recorded resource rather than
+                // recomputed. Recomputing it against today's layout would
+                // leave a stale import behind after a rename.
+                let statement = match self.recorded.get(key) {
+                    Some(ResourceValue::SpringTestImport { statement, .. }) => statement.clone(),
+                    _ => String::new(),
+                };
+                match jails_java::annotate::unsplice_import(
+                    &text,
+                    class.name().as_str(),
+                    &statement,
+                ) {
+                    Some(without) => self.write_text(path, without),
+                    None => return Ok(None),
+                }
+                Ok(Some(path.clone()))
             }
             ResourceKey::CommandRegistration { .. } | ResourceKey::WholeFile(_) => Err(format!(
                 "{key:?} is not retired by an edit.\n       fix: a whole file leaves as an \

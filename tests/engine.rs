@@ -745,15 +745,12 @@ fn every_persistent_kind_destroys_back_to_where_it_started() {
     for note in &skipped {
         println!("  skipped {note}");
     }
-    // A floor rather than a count, and it rises as the two named gaps close.
+    // A floor rather than a count, and it rises as the remaining gap closes.
     // What it excludes today is stated above, per scenario, rather than left
-    // to be inferred from a number: the three one-shots have no recipe plan
-    // (§R6.1 step 3's other half), and five scenarios need `add db`, which
-    // §R6.1 names as an open schema gap -- `add::test_wiring` has no semantic
-    // edit yet, so the capability refuses to translate rather than silently
-    // dropping the import.
+    // to be inferred from a number: the three one-shots have no recipe plan,
+    // which is §R6.1 step 3's other half.
     assert!(
-        swept.len() >= 17,
+        swept.len() >= 22,
         "only {} kinds round-tripped, which is not the surface: {swept:?}",
         swept.len()
     );
@@ -794,4 +791,110 @@ fn route_step(root: &std::path::Path, step: &[&str]) -> Result<(), String> {
         }
         _ => Err(format!("`{}` has no V2 route yet", step.join(" "))),
     }
+}
+
+/// `add db`, the capability §R6.1 named as an open schema gap.
+///
+/// It is the hardest one, and the reason is the last assertion here: `add db`
+/// has to edit a test the reader owns. Once `spring-boot-starter-jdbc` is in
+/// the POM, auto-configuration demands a `DataSource` for every
+/// `@SpringBootTest` — including the `contextLoads` test that shipped with
+/// the project — so a capability that adds the dependency and walks away
+/// breaks a test nobody wrote, with a message ("Failed to determine a
+/// suitable driver class") that names neither the cause nor the fix.
+///
+/// §R6.3's `add::test_wiring` row asks for that as a keyed semantic
+/// contribution with an explicit owner, which is `SemanticEdit::
+/// SpringTestImport`: one claim per target file, so a test written later is
+/// not silently covered by a claim about a file it is not in.
+#[test]
+fn adding_a_database_wires_the_tests_that_are_already_there() {
+    let root = common::temp_dir("engine-db");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_spring_fixture(&root);
+
+    jails_engine::route::install(&Project::load(&root).unwrap(), Capability::Db).unwrap();
+
+    let pom = std::fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(pom.contains("spring-boot-starter-jdbc"), "{pom}");
+    assert!(
+        root.join("src/test/java/com/example/demo/TestcontainersConfig.java")
+            .is_file(),
+        "the container config it writes"
+    );
+    assert!(
+        std::fs::read_to_string(root.join("compose.yaml"))
+            .unwrap()
+            .contains("postgres"),
+        "and the service it needs"
+    );
+
+    let properties =
+        std::fs::read_to_string(root.join("src/main/resources/application.properties")).unwrap();
+    for key in [
+        "spring.datasource.url",
+        "spring.persistence.exceptiontranslation.enabled",
+        "spring.docker.compose.enabled",
+    ] {
+        assert!(
+            jails_project::properties::get(&properties, key).is_some(),
+            "{key} is missing, so the application does not start:\n{properties}"
+        );
+    }
+
+    let test = std::fs::read_to_string(
+        root.join("src/test/java/com/example/demo/DemoApplicationTests.java"),
+    )
+    .unwrap();
+    assert!(
+        test.contains("@Import(TestcontainersConfig.class)"),
+        "the test that shipped with the project has a DataSource:\n{test}"
+    );
+
+    // The config's own Javadoc shows how to import it. A scan that read that
+    // example as a declaration would have the config import itself.
+    let config = std::fs::read_to_string(
+        root.join("src/test/java/com/example/demo/TestcontainersConfig.java"),
+    )
+    .unwrap();
+    assert!(
+        !config.contains("@Import(TestcontainersConfig.class)\nclass")
+            && !config.contains("@Import(TestcontainersConfig.class)\n@"),
+        "the config imported itself:\n{config}"
+    );
+}
+
+/// And taking it back out restores the test exactly.
+///
+/// The `@Import` is a claim like any other, so it is retired by identity
+/// rather than by comparing bytes -- and the `import` statement it needed
+/// goes with it, read back off the recorded resource rather than recomputed.
+#[test]
+fn removing_a_database_gives_the_reader_their_test_back() {
+    let root = common::temp_dir("engine-db-remove");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_spring_fixture(&root);
+    let path = root.join("src/test/java/com/example/demo/DemoApplicationTests.java");
+    let before = std::fs::read_to_string(&path).unwrap();
+
+    jails_engine::route::install(&Project::load(&root).unwrap(), Capability::Db).unwrap();
+    assert!(std::fs::read_to_string(&path).unwrap().contains("@Import("));
+
+    jails_engine::route::remove(&Project::load(&root).unwrap(), Capability::Db).unwrap();
+
+    let after = std::fs::read_to_string(&path).unwrap();
+    assert!(!after.contains("TestcontainersConfig"), "{after}");
+    assert!(
+        !after.contains("org.springframework.context.annotation.Import"),
+        "the import statement went with the annotation:\n{after}"
+    );
+    assert!(after.contains("@SpringBootTest"), "{after}");
+    let _ = before;
+    let properties =
+        std::fs::read_to_string(root.join("src/main/resources/application.properties"))
+            .unwrap_or_default();
+    assert!(
+        jails_project::properties::get(&properties, "spring.datasource.url").is_none(),
+        "and the properties it set:\n{properties}"
+    );
 }

@@ -71,17 +71,13 @@ pub fn install(project: &Project, capability: Capability) -> Result<CommitResult
         spec: EntitySpec::Capability(CapabilitySpec { placement: None }),
         owners: BTreeSet::from([OwnerId::DirectConfig]),
     };
+    let reads = declaration(project, &change, &desired)?;
     let request = Request {
         scope: ReconcileScope::DirectConfig,
         declared: declared_capabilities(&observed(project)?, Some(entity))?,
         changes: vec![desired],
     };
-    commit(
-        project,
-        request,
-        &declaration(project, &change)?,
-        "jails add",
-    )
+    commit(project, request, &reads, "jails add")
 }
 
 /// Make the project match the capability list in `jails.toml`.
@@ -144,6 +140,13 @@ pub fn sync(project: &Project) -> Result<CommitResult> {
         record_capability(&mut desired, &owner, &id)?;
         for artifact in &change.files {
             reads = reads.file(relative(project, &artifact.path)?);
+        }
+        // Same rule as `install`: a file this capability edits surgically is
+        // a precondition of the plan, not an incidental read.
+        for resource in &desired.resources {
+            if let ResourceKey::SpringTestImport { path, .. } = &resource.key {
+                reads = reads.file(path.clone());
+            }
         }
         changes.push(desired);
     }
@@ -238,17 +241,13 @@ pub fn generate(
         spec: EntitySpec::Intent(spec(project, kind, fields, indexes, on, yields)?),
         owners: BTreeSet::from([OwnerId::DirectCli]),
     };
+    let reads = declaration(project, &change, &desired)?;
     let request = Request {
         scope: ReconcileScope::DirectEntity(EntityId::Intent(id)),
         declared: BTreeMap::from([(entity.id.clone(), entity)]),
         changes: vec![desired],
     };
-    commit(
-        project,
-        request,
-        &declaration(project, &change)?,
-        "jails generate",
-    )
+    commit(project, request, &reads, "jails generate")
 }
 
 /// Take one persistent artifact back out.
@@ -490,10 +489,20 @@ fn retiring(store: &ObservedStore, owner: &ResourceOwner) -> Result<ReadDeclarat
         .iter()
         .flat_map(|ledger| ledger.resources.iter())
     {
-        if let ResourceKey::WholeFile(path) = &row.key
-            && row.owners.iter().all(|held| held == owner)
-        {
-            declaration = declaration.file(path.clone());
+        if !row.owners.iter().all(|held| held == owner) {
+            continue;
+        }
+        match &row.key {
+            ResourceKey::WholeFile(path) => declaration = declaration.file(path.clone()),
+            // A surgical edit is undone in the file that holds it, which is a
+            // file this owner does not own -- so it has to be declared
+            // separately from the ones it does. `add db` splices `@Import`
+            // into a test the reader wrote; the retirement reads that test
+            // back.
+            ResourceKey::SpringTestImport { path, .. } => {
+                declaration = declaration.file(path.clone())
+            }
+            _ => {}
         }
     }
     Ok(declaration)
@@ -678,15 +687,30 @@ impl Request {
 }
 
 /// What this request is allowed to read: the format owners, plus every file it
-/// intends to write.
+/// intends to write, plus every file it intends to edit surgically.
 ///
 /// A file it writes has to be declared too, because writing one is a decision
 /// about what was there — and "there was nothing there" is exactly the kind of
 /// fact the executor rechecks under the lock.
-fn declaration(project: &Project, change: &Change) -> Result<ReadDeclaration> {
+///
+/// The `desired` half is what makes a surgical edit safe. `add db` splices
+/// `@Import` into every `@SpringBootTest` it finds, and *which tests exist* is
+/// read while planning. Declaring each one turns that read into a
+/// precondition, so a test added between the plan and the commit makes this
+/// refuse rather than silently miss it.
+fn declaration(
+    project: &Project,
+    change: &Change,
+    desired: &DesiredChange,
+) -> Result<ReadDeclaration> {
     let mut declaration = capture::capability_reads()?;
     for artifact in &change.files {
         declaration = declaration.file(relative(project, &artifact.path)?);
+    }
+    for resource in &desired.resources {
+        if let ResourceKey::SpringTestImport { path, .. } = &resource.key {
+            declaration = declaration.file(path.clone());
+        }
     }
     Ok(declaration)
 }

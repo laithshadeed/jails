@@ -642,6 +642,7 @@ const LAYERS: &[(&str, usize)] = &[
     ("json", 0),
     ("lock", 0),
     // jails-java: reading Java and rendering templates into it.
+    ("annotate", 1),
     ("tidy", 1),
     ("java", 1),
     ("classfile", 1),

@@ -55,6 +55,25 @@ pub enum SemanticEdit {
         key: ResourceKey,
         spec: CapabilitySpec,
     },
+    /// Import one `@TestConfiguration` into one `@SpringBootTest`.
+    ///
+    /// `add db` cannot skip this and cannot state it as a whole file: the
+    /// classes it edits are the reader's, and one of them is the
+    /// `contextLoads` test that shipped with the project. Once
+    /// `spring-boot-starter-jdbc` is in the POM, auto-configuration demands a
+    /// `DataSource` for every `@SpringBootTest`, so a capability that adds
+    /// the dependency and walks away breaks a test nobody wrote.
+    ///
+    /// One edit per target file, keyed by that file, because each is an
+    /// independent claim: a test written later gets its own row rather than
+    /// being silently covered by a claim made about a file it is not in.
+    SpringTestImport {
+        key: ResourceKey,
+        class: JavaType,
+        /// The `import` statement the annotation needs when the config lives
+        /// in another package, already rendered. Empty when it does not.
+        statement: String,
+    },
     /// The one edit with no resource key: a layout line names a layer, and the
     /// layer *is* the key. `directory` is one validated relative component.
     HumanConfigLayout {
@@ -89,6 +108,7 @@ impl SemanticEdit {
             Self::HumanConfigCapability { .. } => 6,
             Self::HumanConfigLayout { .. } => 7,
             Self::Retire { .. } => 8,
+            Self::SpringTestImport { .. } => 9,
         }
     }
 
@@ -102,6 +122,7 @@ impl SemanticEdit {
             | Self::MarkedBlock { key, .. }
             | Self::CommandRegistration { key, .. }
             | Self::HumanConfigCapability { key, .. }
+            | Self::SpringTestImport { key, .. }
             | Self::Retire { key } => Some(key),
             Self::HumanConfigLayout { .. } => None,
         }
@@ -119,6 +140,7 @@ impl SemanticEdit {
             Self::MarkedBlock { .. } => 5,
             Self::CommandRegistration { .. } => 6,
             Self::HumanConfigCapability { .. } => 7,
+            Self::SpringTestImport { .. } => 8,
             Self::HumanConfigLayout { directory, .. } => {
                 return validate_layout_directory(directory);
             }
@@ -175,6 +197,15 @@ impl SemanticEdit {
                 encoder.string(layer.package())?;
                 encoder.string(directory)
             }
+            Self::SpringTestImport {
+                key,
+                class,
+                statement,
+            } => {
+                key.encode(encoder)?;
+                class.encode(encoder)?;
+                encoder.string(statement)
+            }
         }
     }
 
@@ -215,6 +246,11 @@ impl SemanticEdit {
                 layer: Layer::by_package(&decoder.string()?)
                     .ok_or_else(|| "unknown layout layer".to_string())?,
                 directory: decoder.string()?,
+            },
+            9 => Self::SpringTestImport {
+                key: ResourceKey::decode(decoder)?,
+                class: JavaType::decode(decoder)?,
+                statement: decoder.string()?,
             },
             other => Err(format!("unknown semantic edit tag {other}"))?,
         };

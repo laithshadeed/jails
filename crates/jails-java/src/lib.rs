@@ -8,7 +8,11 @@
 //! reader that can answer "which types does this class name", constant pool
 //! only. [`template`] is substitution, not a template engine: anything
 //! structural stays in the generator layer and arrives already rendered.
+//! [`annotate`] is the one *writer*: a surgical edit to one annotation on a
+//! class the reader owns, here rather than in a recipe because two engines
+//! now perform it and a second copy of a surgical edit drifts.
 
+pub mod annotate;
 pub mod classfile;
 pub mod java;
 pub mod template;

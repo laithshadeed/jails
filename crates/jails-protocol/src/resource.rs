@@ -167,6 +167,17 @@ pub enum ResourceKey {
         command: JavaType,
     },
     HumanConfigCapability(crate::entity::CapabilityId),
+    /// One `@TestConfiguration` imported into one `@SpringBootTest`.
+    ///
+    /// Keyed by the file *and* the class, because the same capability imports
+    /// the same config into every such test in the project and each of those
+    /// is an independent claim: a test added later gets its own row, and a
+    /// second capability importing a different config into the same file does
+    /// not collide with this one.
+    SpringTestImport {
+        path: ProjectPath,
+        class: JavaType,
+    },
 }
 
 impl ResourceKey {
@@ -180,6 +191,7 @@ impl ResourceKey {
             Self::MarkedBlock { .. } => 5,
             Self::CommandRegistration { .. } => 6,
             Self::HumanConfigCapability(_) => 7,
+            Self::SpringTestImport { .. } => 8,
         }
     }
 
@@ -207,6 +219,10 @@ impl ResourceKey {
                 command.encode(encoder)
             }
             Self::HumanConfigCapability(id) => id.encode(encoder),
+            Self::SpringTestImport { path, class } => {
+                path.encode(encoder)?;
+                class.encode(encoder)
+            }
         }
     }
 
@@ -229,6 +245,10 @@ impl ResourceKey {
                 command: JavaType::decode(decoder)?,
             },
             7 => Self::HumanConfigCapability(crate::entity::CapabilityId::decode(decoder)?),
+            8 => Self::SpringTestImport {
+                path: ProjectPath::decode(decoder)?,
+                class: JavaType::decode(decoder)?,
+            },
             other => Err(format!("unknown resource key tag {other}"))?,
         })
     }
@@ -318,6 +338,12 @@ pub enum ResourceValue {
         command: JavaType,
     },
     HumanConfigCapability(CapabilitySpec),
+    SpringTestImport {
+        class: JavaType,
+        /// The `import` statement the annotation needs when the config lives
+        /// in another package, already rendered. Empty when it does not.
+        statement: String,
+    },
 }
 
 impl ResourceValue {
@@ -331,6 +357,7 @@ impl ResourceValue {
             Self::MarkedBlock(_) => 5,
             Self::CommandRegistration { .. } => 6,
             Self::HumanConfigCapability(_) => 7,
+            Self::SpringTestImport { .. } => 8,
         }
     }
 
@@ -376,6 +403,10 @@ impl ResourceValue {
             ) if command != keyed => Err(format!(
                 "command registration {command} recorded under key {keyed}"
             )),
+            (
+                ResourceKey::SpringTestImport { class: keyed, .. },
+                Self::SpringTestImport { class, .. },
+            ) if class != keyed => Err(format!("test import {class} recorded under key {keyed}")),
             _ => Ok(()),
         }
     }
@@ -391,6 +422,10 @@ impl ResourceValue {
             Self::MarkedBlock(value) => encoder.string(value),
             Self::CommandRegistration { command } => command.encode(encoder),
             Self::HumanConfigCapability(spec) => spec.encode(encoder),
+            Self::SpringTestImport { class, statement } => {
+                class.encode(encoder)?;
+                encoder.string(statement)
+            }
         }
     }
 
@@ -406,6 +441,10 @@ impl ResourceValue {
                 command: JavaType::decode(decoder)?,
             },
             7 => Self::HumanConfigCapability(CapabilitySpec::decode(decoder)?),
+            8 => Self::SpringTestImport {
+                class: JavaType::decode(decoder)?,
+                statement: decoder.string()?,
+            },
             other => Err(format!("unknown resource value tag {other}"))?,
         })
     }

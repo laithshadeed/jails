@@ -27,16 +27,17 @@ use jails_spec::spec::kind::Capability;
 
 /// Why a capability is not yet expressible as desired state.
 ///
-/// Both reasons are contributions the closed protocol has no value for yet.
-/// They are listed by name so that adding the missing `SemanticEdit` variant
-/// shows up here as a row that has to move, rather than as a silent change in
-/// behaviour.
+/// A reason listed here is a contribution the closed protocol has no value
+/// for. Listing it by name is what makes adding the missing `SemanticEdit`
+/// variant show up as a row that has to move, rather than as a silent change
+/// in behaviour -- which is exactly what happened to `NeedsTestWiring`:
+/// §R6.3's `add::test_wiring` row landed as
+/// `SemanticEdit::SpringTestImport`, `db` moved to `Translates`, and this
+/// test is what said so.
 #[derive(Debug, PartialEq, Eq)]
 enum Verdict {
     /// Fully stated as owned resources today.
     Translates,
-    /// Contributes a Spring test import (plan.md §R6.3, `add::test_wiring`).
-    NeedsTestWiring,
     /// The capability refuses to plan against this fixture because the fixture
     /// does not meet its precondition — no HTTP routes to load-test, no
     /// actuator to probe. Nothing to do with the translation.
@@ -51,7 +52,7 @@ const BOARD: &[(&str, Verdict)] = &[
     ("cors", Verdict::Translates),
     ("coverage", Verdict::Translates),
     ("csv", Verdict::Translates),
-    ("db", Verdict::NeedsTestWiring),
+    ("db", Verdict::Translates),
     ("docker", Verdict::Translates),
     ("fake", Verdict::Translates),
     ("format", Verdict::Translates),
@@ -92,7 +93,6 @@ fn verdict(capability: Capability, project: &Project) -> Verdict {
     };
     match desire::contribution(&owner(capability), &change, project) {
         Ok(_) => Verdict::Translates,
-        Err(message) if message.contains("Spring test import") => Verdict::NeedsTestWiring,
         Err(message) => panic!(
             "{} refused for an unlisted reason: {message}",
             capability.label()
@@ -193,6 +193,16 @@ fn what_v2_desires_is_what_v1_installs() {
             declaration = declaration.file(
                 jails_protocol::identity::ProjectPath::parse(relative.to_str().unwrap()).unwrap(),
             );
+        }
+        // And every file it edits surgically. `add db` splices `@Import` into
+        // the tests already on disk, and a projection can only overlay a path
+        // its snapshot captured.
+        for resource in &desired.resources {
+            if let jails_protocol::resource::ResourceKey::SpringTestImport { path, .. } =
+                &resource.key
+            {
+                declaration = declaration.file(path.clone());
+            }
         }
         let (_snapshot, mut projection) =
             jails_project::capture::projected(&planned, &declaration).unwrap();

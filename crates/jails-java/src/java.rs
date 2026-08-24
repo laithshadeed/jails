@@ -600,6 +600,21 @@ pub fn first_string(text: &str) -> Option<String> {
     Some(rest[..close].to_string())
 }
 
+/// The package a source file declares, if it declares one.
+///
+/// Read off the `package` line rather than derived from the path, for the
+/// same reason `jails src` does it: a checkout's directory layout does not
+/// always match its packages.
+pub fn package_of(source: &str) -> Option<String> {
+    source.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("package ")?
+            .trim()
+            .strip_suffix(';')
+            .map(|text| text.trim().to_string())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

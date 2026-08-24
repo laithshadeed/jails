@@ -711,6 +711,13 @@ jails knows nothing about.
 - **`jails check` is `mvn clean verify`.** Incremental `verify` leaves deleted
   tests in `target/`, and Surefire still runs the leftover `.class`. Don't
   "optimize" it back to bare verify.
+- **The `@Import` splice lives in `jails-java`, not in `add`.** Two engines
+  perform it now -- `add/test_wiring.rs` and the V2 projection -- and a second
+  copy of a surgical edit to a file the reader owns is a copy that drifts.
+  `jails_java::annotate` is text in and text out: `splice_import`,
+  `unsplice_import`, and `is_spring_boot_test`, which reads through
+  `java::blanked()` so the `@SpringBootTest` in `TestcontainersConfig`'s own
+  Javadoc example is not mistaken for one on a class.
 - **`add db`'s test wiring is an imported `@TestConfiguration`, and both
   halves are load-bearing.** The container is declared as a `@Bean` with
   `@ServiceConnection` in `TestcontainersConfig` (not a
