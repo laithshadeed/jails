@@ -66,11 +66,14 @@ pub fn cors_slice(slice: &Slice) -> Change {
         deps: Vec::new(),
         files: vec![
             artifact(main.join("CorsConfig.java"), cors_config_java(pkg)),
-            artifact(test.join("CorsConfigTest.java"), cors_config_test_java(pkg)),
+            artifact(
+                test.join("CorsConfigTest.java"),
+                cors_config_test_java(pkg, slice.project().mockmvc_autoconfigure_import()),
+            ),
         ],
         properties: vec![
             "# Exact browser origins; never use `*` together with credentials.".to_string(),
-            "app.cors.allowed-origins=http://localhost:3000".to_string(),
+            format!("app.cors.allowed-origins={PLACEHOLDER_ORIGIN}"),
         ],
         ..Change::default()
     }
@@ -83,10 +86,26 @@ fn cors_config_java(pkg: &str) -> String {
     )
 }
 
-fn cors_config_test_java(pkg: &str) -> String {
+/// The origin `add cors` writes, and the one its test asserts.
+///
+/// `.invalid` is reserved by RFC 2606 and can never resolve, so this is
+/// unmistakably a value somebody has to replace. The previous placeholder was
+/// `http://localhost:3000`, which is worse than useless: it looks like a real
+/// setting and survives review, and 3000 is the *application's own port* --
+/// never a browser origin, so it could not have been right anywhere.
+pub(crate) const PLACEHOLDER_ORIGIN: &str = "https://example.invalid";
+
+fn cors_config_test_java(pkg: &str, mockmvc_import: &str) -> String {
     crate::template::render(
         crate::template_here!("spring/cors_config_test_java.java"),
-        &[("pkg", pkg)],
+        &[
+            ("pkg", pkg),
+            ("mockmvc_import", mockmvc_import),
+            // One source for the origin: a test asserting a different value
+            // from the one the properties declare would fail on a fresh
+            // project, which is the first thing anybody runs.
+            ("origin", PLACEHOLDER_ORIGIN),
+        ],
     )
 }
 
