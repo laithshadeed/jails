@@ -113,6 +113,12 @@ capabilities = []
 /// captured listing, and a rename that would silently skip it fails instead.
 pub fn rename(run: &Run, old: &str, new: &str, force: bool) -> Result<Outcome> {
     let project = run.project();
+    // Refused by name before anything is read. `JavaType::parse` accepts a
+    // qualified name by splitting at the last dot, so without this a
+    // `com.example.Reward` would be quietly read as the simple name `Reward`
+    // in package `com.example` -- and then matched textually against every
+    // source, which is not what the caller asked for at all.
+    validate(old, new)?;
     let from = jails_protocol::identity::JavaType::parse(old)?;
     let to = jails_protocol::identity::JavaType::parse(new)?;
 
@@ -199,7 +205,13 @@ pub fn rename(run: &Run, old: &str, new: &str, force: bool) -> Result<Outcome> {
             change.absences.push(jails_protocol::render::ManagedPath {
                 path: source.clone(),
                 resource: ResourceKey::WholeFile(source.clone()),
-                force,
+                // Never the caller's `--force`, which means "do not ask me".
+                // This one overrides the *preimage guard*, and a rename that
+                // skipped it could delete a source somebody changed while the
+                // plan was being made -- while recreating stale bytes under
+                // the new name. Two different meanings for one word is how
+                // that gets shipped.
+                force: false,
             });
         }
         // A file the store already owns keeps its owner, at its new key.
@@ -291,6 +303,34 @@ pub fn rename(run: &Run, old: &str, new: &str, force: bool) -> Result<Outcome> {
             },
         ),
     )
+}
+
+/// One simple Java type name, in and out.
+fn validate(old: &str, new: &str) -> Result<()> {
+    for (label, name) in [("old", old), ("new", new)] {
+        if name.is_empty() {
+            return Err(format!("the {label} name is empty"));
+        }
+        if !name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_alphabetic() || c == '_')
+        {
+            return Err(format!(
+                "`{name}` is not a Java identifier -- the {label} name must start with a letter"
+            ));
+        }
+        if !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            return Err(format!(
+                "`{name}` is not a Java identifier. `jails rename` renames one type, not a \
+                 package path -- pass the simple name (`Reward`, not `com.example.Reward`)"
+            ));
+        }
+    }
+    if old == new {
+        return Err("the old and new names are the same".into());
+    }
+    Ok(())
 }
 
 /// The claim a moved file carries forward, if the store had one.
@@ -406,7 +446,10 @@ pub fn adopt_layout(run: &Run) -> Result<Outcome> {
         }
     }
     let names: Vec<String> = names.into_iter().collect();
-    let (snapshot, _) = capture::projected(project, &reads)?;
+    // Captured rather than read: the layout edit rewrites `jails.toml`, so
+    // its preimage has to be under the recheck even though nothing here looks
+    // at the bytes -- the splice happens in the projection.
+    capture::projected(project, &reads)?;
     let readings = jails_project::synonyms::readings(&names);
     let resolved = jails_project::synonyms::resolve(&readings);
 

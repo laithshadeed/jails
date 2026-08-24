@@ -14,6 +14,7 @@ pub(crate) use jails_tooling::{
     bench, commands, console, doctor, explain, kafka, lint, migrate, rename, run, source, testd,
     why,
 };
+mod adopt;
 mod app;
 mod new;
 
@@ -537,56 +538,6 @@ enum Command {
 /// flight -- `migrate` creates a scratch database it is responsible for
 /// dropping -- and anything staging a file beside its destination would be in
 /// the same position. Returning lets the stack unwind normally first.
-/// Run one V2 route and say what it did.
-///
-/// The split is deliberate: a route decides and commits, and the binary
-/// reports. That is why `--pretend` needs no branch here beyond choosing the
-/// `Run` -- the operations it names are the ones the commit would have
-/// performed, so printing them is printing the plan rather than describing it
-/// a second time.
-fn routed(
-    pretend: bool,
-    plan: impl FnOnce(&jails_engine::route::Run) -> Result<jails_engine::route::Outcome>,
-) -> Result<()> {
-    let project = jails_project::model::Project::discover()?;
-    let run = match pretend {
-        true => jails_engine::route::Run::pretending(&project),
-        false => jails_engine::route::Run::committing(&project),
-    };
-    match plan(&run)? {
-        jails_engine::route::Outcome::Planned(operations) => {
-            for operation in &operations {
-                println!("  {:7} {}", operation.verb, operation.path);
-            }
-            println!();
-            println!("--pretend: nothing was written.");
-        }
-        jails_engine::route::Outcome::Committed(result) => match result {
-            jails_commit::outcome::CommitResult::NoOp => println!("already up to date."),
-            jails_commit::outcome::CommitResult::Committed(_) => {}
-            // Durable, and then something structural failed. Reporting it as
-            // an error would tell the caller to retry work that has already
-            // happened, so it is said plainly and the exit stays zero.
-            jails_commit::outcome::CommitResult::CommittedRecoveryRequired(what) => {
-                println!("committed, but some bookkeeping did not finish: {what:?}");
-                println!("       fix: the next jails command recovers it.");
-            }
-            // The plan was made against state recovery has since changed.
-            // Also not an error -- but nothing was applied, so say so rather
-            // than letting silence read as success.
-            jails_commit::outcome::CommitResult::RecoveredPriorTransaction(_) => {
-                return Err(
-                    "an interrupted transaction was recovered first, so this plan was made \
-                     against state that has since moved.\n       fix: run the same command \
-                     again."
-                        .to_string(),
-                );
-            }
-        },
-    }
-    Ok(())
-}
-
 fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
     let debug = cli.debug;
@@ -682,7 +633,7 @@ fn main() -> std::process::ExitCode {
         } => generate::destroy(kind, &name, force, package.as_deref(), pretend),
         Command::Start { services } => compose::start(&services, debug),
         Command::Stop { services } => compose::stop_cmd(&services, debug),
-        Command::Adopt => routed(pretend, jails_engine::route::adopt_layout),
+        Command::Adopt => adopt::adopt(pretend),
         Command::Src { type_name, json } => source::src(&type_name, json),
         Command::Bench {
             vus,
