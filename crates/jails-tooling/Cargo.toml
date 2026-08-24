@@ -11,6 +11,7 @@ jails-support = { path = "../jails-support" }
 jails-java = { path = "../jails-java" }
 jails-spec = { path = "../jails-spec" }
 jails-project = { path = "../jails-project" }
+jails-protocol = { path = "../jails-protocol" }
 jails-generate = { path = "../jails-generate" }
 
 [lints]

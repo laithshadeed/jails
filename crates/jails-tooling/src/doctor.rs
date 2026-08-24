@@ -178,6 +178,14 @@ fn run_checks(project: &Project) -> Vec<Check> {
     let mut checks = Vec::new();
 
     checks.push(project_check(project));
+    // Unowned schema-1 rows, keyed and with a copyable claim command. The
+    // derivation lives in `compat::adoptable`, beside the route that accepts
+    // them, so a printed command cannot drift out of working.
+    checks.extend(
+        jails_project::compat::adoptable(project)
+            .into_iter()
+            .map(|row| Check::new(Status::Warn, row.what, row.detail).fix(row.command)),
+    );
     // Nothing below reads a pom that is not there, and the first check has
     // already said why. Fifteen greens over a build jails cannot see is the
     // failure `plan.md` §8.9 names, in a new disguise.

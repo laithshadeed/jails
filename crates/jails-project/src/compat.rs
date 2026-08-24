@@ -214,6 +214,69 @@ pub fn translate(schema1: &Ledger) -> jails_protocol::envelope::LedgerV2 {
     }
 }
 
+/// Every legacy row this project carries, whichever schema its ledger is in.
+///
+/// The discovery half of §R2.5's adoption: a row can only be claimed by its
+/// stable `LegacyKey`, so something has to say what the keys *are*. Reading it
+/// here rather than through the transaction store keeps `doctor` read-only by
+/// contract and keeps the executor out of a layer that only asks questions.
+///
+/// Both schemas answer. A project still on schema 1 has its rows translated on
+/// the way through, which is the same translation the first V2 commit will
+/// perform -- so the keys a reader is shown before migrating are the keys they
+/// will adopt with afterwards.
+pub fn legacy_rows(project: &crate::model::Project) -> Vec<jails_protocol::envelope::LegacyEntry> {
+    let path = project.root().join(".jails/ledger.toml");
+    let Ok(source) = std::fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    match jails_protocol::envelope::LedgerV2::parse_file(&source) {
+        Ok(ledger) => ledger.legacy,
+        Err(_) => match ledger::parse_source(&source) {
+            Ok(schema1) => translate(&schema1).legacy,
+            Err(_) => Vec::new(),
+        },
+    }
+}
+
+/// One unowned schema-1 row, and the command that claims it.
+pub struct Adoptable {
+    pub what: String,
+    pub detail: String,
+    pub command: String,
+}
+
+/// Every unowned row, ready to report.
+///
+/// The key derivation and the command skeleton live here rather than at the
+/// reporting site because `adopt_legacy` is the thing that accepts them: a
+/// second copy of "which key, spelled how" is exactly the drift that makes a
+/// printed command not work when somebody pastes it.
+pub fn adoptable(project: &crate::model::Project) -> Vec<Adoptable> {
+    legacy_rows(project)
+        .iter()
+        .filter_map(|row| {
+            let key = row
+                .legacy_key(jails_protocol::envelope::LegacySourceKind::Schema1Applied)
+                .ok()?;
+            Some(Adoptable {
+                what: format!("{} {}", row.recipe, row.name),
+                detail: format!(
+                    "{} file(s) from a schema-1 ledger, with no recorded owner -- so `destroy` \
+                     and `sync` cannot act on them",
+                    row.paths.len()
+                ),
+                command: format!(
+                    "jails adopt --legacy-key {} --intent {}:{}",
+                    key.to_label(),
+                    row.recipe,
+                    row.name
+                ),
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -410,7 +410,17 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // difference between a build and a registry error before Maven
                 // starts, and the report is what makes that answerable without
                 // reading jails' source.
-                ceiling: 1402,
+                //
+                // 1402 -> 1407 for the unowned schema-1 rows §R2.5's adoption
+                // needs a reader to be able to *find*: a `LegacyKey` is 64 hex
+                // characters nobody will retype from a hash they computed
+                // themselves, so something has to print it with the command
+                // that claims it. Five lines, and the direction is this rung's
+                // own: the key and the skeleton are derived in
+                // `compat::adoptable`, beside the route that accepts them,
+                // rather than re-derived here where a second copy would make a
+                // printed command stop working.
+                ceiling: 1407,
                 // Withdrawn, not reached. abstract.md §8.0.1 audits all ten
                 // checks: none is a re-encoded dependency fact, so the 700
                 // measured a saving that is not there. Ratchet against growth.
