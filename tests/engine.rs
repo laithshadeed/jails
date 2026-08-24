@@ -1844,6 +1844,12 @@ fn an_overlapping_edit_refuses_without_writing_anything() {
 
     assert!(error.contains("overlap"), "{error}");
     assert!(error.contains("§R5.4") || error.contains("R5.4"), "{error}");
+    // Named, so the reader knows which file to look at rather than being told
+    // only that something overlapped.
+    assert!(
+        error.contains("src/main/java/com/example/demo/domain/Note.java"),
+        "{error}"
+    );
     assert_eq!(
         std::fs::read_to_string(&at).unwrap(),
         mine,

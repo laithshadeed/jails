@@ -21,6 +21,29 @@ pub(super) struct Diffed {
     pub(super) outputs: BTreeMap<ProjectPath, (StoredFileImage, LiveFileImage)>,
     /// Outputs whose file is going, so their row goes with it.
     pub(super) retired: BTreeSet<ProjectPath>,
+    /// Paths where both sides changed the same lines.
+    ///
+    /// Carried out rather than raised, because a conflict is not an error:
+    /// §R5.4 makes it a valid transition that commits marker bytes and one
+    /// pending candidate. Erroring here would throw away the merge output the
+    /// reader is supposed to resolve, and would refuse the *whole* transition
+    /// over one file when every other path in it merged cleanly.
+    pub(super) conflicts: Vec<Conflict>,
+}
+
+/// One path where both sides changed the same lines.
+///
+/// Deliberately only what a *report* needs. §R5.4's `PendingConflictPath`
+/// carries far more -- both bases, the marker image, the tokens -- and is
+/// frozen into an identity that includes an `InvocationFingerprint`. Nothing
+/// builds one of those yet (`OperationIdentityV1.invocation` is `None` on
+/// every route), so assembling a pending candidate now would mean inventing
+/// the half of its identity that exists to prove a resumption is the same
+/// request. That is worse than refusing: a conflict frozen under a made-up
+/// fingerprint is one no resume can honestly match.
+pub(super) struct Conflict {
+    pub(super) path: ProjectPath,
+    pub(super) hunks: usize,
 }
 
 /// Step 8: every path whose projected state differs from what was captured.
@@ -36,6 +59,7 @@ pub(super) fn diff(
     let mut objects: BTreeMap<ObjectId, Arc<[u8]>> = BTreeMap::new();
     let mut outputs: BTreeMap<ProjectPath, (StoredFileImage, LiveFileImage)> = BTreeMap::new();
     let mut retired: BTreeSet<ProjectPath> = BTreeSet::new();
+    let mut conflicts: Vec<Conflict> = Vec::new();
 
     for (path, entry) in projection.overlay() {
         let before = base.read(path)?;
@@ -180,14 +204,32 @@ pub(super) fn diff(
                                     });
                                     continue;
                                 }
-                                crate::merge::Merged::Conflicted { hunks } => {
-                                    return Err(format!(
-                                        "`{path}` has {hunks} place(s) where your edit and the \
-                                         generator's change overlap.\n       fix: committing \
-                                         marker bytes with a resumable pending conflict is \
-                                         plan.md §R5.4, which is not wired to this route yet. \
-                                         Move your version aside, or destroy and regenerate."
-                                    ));
+                                crate::merge::Merged::Conflicted {
+                                    hunks,
+                                    bytes,
+                                    tokens,
+                                } => {
+                                    // Collected rather than raised. A merge
+                                    // conflict is one path's problem, and
+                                    // erroring here would refuse the whole
+                                    // transition on the *first* one -- so a
+                                    // reader fixes a file, runs again, and is
+                                    // told about the next. Every conflicting
+                                    // path is reported together.
+                                    //
+                                    // The marker bytes are produced and
+                                    // dropped, which is the honest thing until
+                                    // §R5.4's pending half exists: writing
+                                    // them without a pending candidate would
+                                    // record markers as the entity's output,
+                                    // and the *next* generate would merge
+                                    // against them.
+                                    let _ = (bytes, tokens);
+                                    conflicts.push(Conflict {
+                                        path: path.clone(),
+                                        hunks,
+                                    });
+                                    continue;
                                 }
                             }
                         }
@@ -216,6 +258,7 @@ pub(super) fn diff(
         objects,
         outputs,
         retired,
+        conflicts,
     })
 }
 

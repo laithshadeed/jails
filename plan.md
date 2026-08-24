@@ -5285,6 +5285,28 @@ discovered:
 
 The two schema gaps this section used to name are closed:
 
+  What the remaining half needs, named so it is not rediscovered: a
+  `PendingConflict`'s identity includes an `InvocationFingerprint`, which
+  carries the `CanonicalMutationRequest` that stalled — and that is what a
+  resume proves it is the same request *by*. No route builds one:
+  `OperationIdentityV1.invocation` is `None` on every path. So the pending
+  candidate cannot be assembled honestly today, and assembling it with an
+  invented fingerprint would be worse than refusing — a conflict frozen under
+  a made-up identity is one no resumption can match. The types are all there
+  (`PendingConflict`, `PendingLedgerState`, `PendingConflictPath`,
+  `PendingMarker`, `PreparedKind::Conflict`, and `CommitPlan::{Finalise,
+  Abort}` with their prepare paths and tests); what is missing is the request
+  layer underneath them.
+
+  Two things did land in the meantime. `Merged::Conflicted` keeps the marker
+  bytes and the tokens git was told to write, rather than discarding them —
+  a conflict that threw away its own resolution would leave the reader nothing
+  to resolve, and this is the value §R5.4 freezes. And the refusal now names
+  **every** conflicting path with its hunk count in one message, instead of
+  erroring on the first: a merge conflict is one path's problem, and refusing
+  the whole transition on the first one made a reader fix a file, run again,
+  and be told about the next.
+
 - ~~`LedgerV2.outputs` is written empty.~~ Closed. Every managed output now
   records the exact bytes jails wrote, so §R5.3's three-way rule has the base
   it needs: only-the-generator-moved replaces, only-the-reader-moved keeps

@@ -41,7 +41,16 @@ pub enum Merged {
     /// these, so the reader's edit stays a delta from the newest render.
     Clean(Vec<u8>),
     /// The same lines, differently.
-    Conflicted { hunks: usize },
+    ///
+    /// `bytes` is the marker output, kept rather than discarded: §R5.4 commits
+    /// it, and a conflict that threw its own resolution away would leave the
+    /// reader with nothing to resolve. `tokens` is what git was told to write,
+    /// so a resumption can find the regions without re-deriving a convention.
+    Conflicted {
+        hunks: usize,
+        bytes: Vec<u8>,
+        tokens: MarkerTokens,
+    },
 }
 
 /// The label the desired side carries in conflict output.
@@ -138,7 +147,11 @@ pub fn three_way(path: &ProjectPath, base: &[u8], live: &[u8], desired: &[u8]) -
             let text = String::from_utf8(merged)
                 .map_err(|_| format!("`{path}`: git produced merge output that is not UTF-8"))?;
             let hunks = validate_conflict(&text, &tokens, code)?;
-            Ok(Merged::Conflicted { hunks })
+            Ok(Merged::Conflicted {
+                hunks,
+                bytes: text.into_bytes(),
+                tokens,
+            })
         }
         other => Err(format!(
             "`{path}`: git merge-file ended as {other:?}, which is neither a clean merge nor \
@@ -211,7 +224,22 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(merged, Merged::Conflicted { hunks: 1 });
+        let Merged::Conflicted {
+            hunks,
+            bytes,
+            tokens,
+        } = merged
+        else {
+            panic!("the same line changed twice merged cleanly: {merged:?}");
+        };
+        assert_eq!(hunks, 1);
+        // The marker output is kept, not discarded: §R5.4 commits it, and a
+        // conflict that threw away its own resolution would leave the reader
+        // nothing to resolve.
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(text.contains(&tokens.start), "{text}");
+        assert!(text.contains(&tokens.separator), "{text}");
+        assert!(text.contains(&tokens.end), "{text}");
     }
 
     /// Binary data is refused rather than merged into nonsense.

@@ -205,6 +205,7 @@ fn apply(
         objects,
         outputs,
         retired,
+        conflicts,
     } = diff::diff(
         &base,
         &projection,
@@ -222,6 +223,25 @@ fn apply(
         ledger_intent: set.ledger_intent.clone(),
         migration: None,
     }));
+    // §R5.4 makes this a committed transition with marker postimages and one
+    // frozen candidate; that half is not wired, and the reason is in
+    // `diff::Conflict`. What *is* fixed here is the reporting: every
+    // conflicting path at once, rather than the first one and then the next
+    // one on the run after that.
+    if !conflicts.is_empty() {
+        let mut lines = String::new();
+        for one in &conflicts {
+            lines.push_str(&format!("\n         {} ({} place(s))", one.path, one.hunks));
+        }
+        return Err(format!(
+            "{} file(s) have places where your edit and the generator's change overlap:{lines}\n\
+             \x20      fix: committing marker bytes with a resumable pending conflict is \
+             plan.md §R5.4, which is not wired to this route yet. Move your version aside, or \
+             destroy and regenerate.",
+            conflicts.len()
+        ));
+    }
+
     assemble(
         base,
         semantics,
