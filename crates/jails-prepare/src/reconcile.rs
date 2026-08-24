@@ -85,28 +85,20 @@ pub enum Decision {
 }
 
 /// Decide one path.
-///
-/// `claimed` is the caller saying, of this exact path, that the deliberate
-/// decision the unowned rule asks for has been made -- `jails adopt
-/// --legacy-key ... --replace --force` and nothing else. A set of paths rather
-/// than a flag on the transition, because a claim is about the files being
-/// taken over: a switch would also lift the rule for every unrelated path the
-/// same transition happens to touch.
 pub fn reconcile(
     path: &ProjectPath,
     prior: Option<PriorOutput>,
     live: FileImage,
     desired: FileImage,
-    claimed: bool,
 ) -> Result<Decision> {
     match prior {
-        None => Ok(unowned(path, live, desired, claimed)),
+        None => Ok(unowned(path, live, desired)),
         Some(prior) => owned(path, prior, live, desired),
     }
 }
 
 /// A path jails has never written.
-fn unowned(path: &ProjectPath, live: FileImage, desired: FileImage, claimed: bool) -> Decision {
+fn unowned(path: &ProjectPath, live: FileImage, desired: FileImage) -> Decision {
     match (live, desired) {
         (FileImage::Absent, FileImage::Absent) => Decision::Nothing,
         (FileImage::Absent, FileImage::Present { object, mode }) => Decision::Create {
@@ -117,20 +109,12 @@ fn unowned(path: &ProjectPath, live: FileImage, desired: FileImage, claimed: boo
         // it: recording an output nothing generated would make `destroy`
         // delete it later.
         (FileImage::Present { .. }, FileImage::Absent) => Decision::Nothing,
-        // Claimed: the reader named this exact path and asked for jails'
-        // rendering in its place. The live bytes still leave as a guarded
-        // preimage, so what was discarded is recorded rather than merely gone.
-        (live, FileImage::Present { object, mode }) if claimed => Decision::Replace {
-            before: live,
-            after: object,
-            mode,
-        },
         // Even when the bytes match. Ownership is a decision, not a
         // coincidence — see this module's header.
         (FileImage::Present { .. }, FileImage::Present { .. }) => Decision::Refuse(format!(
-            "`{path}` already exists and jails did not write it.\n       fix: `jails adopt` \
-             takes it over deliberately. Claiming it because the bytes happen to match would \
-             mean a later `destroy` deletes something you wrote."
+            "`{path}` already exists and jails did not write it.\n       fix: move it aside and \
+             run this again, or generate into a different package. Claiming it because the \
+             bytes happen to match would mean a later `destroy` deletes something you wrote."
         )),
     }
 }
@@ -365,7 +349,7 @@ mod tests {
     #[test]
     fn a_new_file_is_created() {
         assert_eq!(
-            reconcile(&path(), None, FileImage::Absent, present("N"), false).unwrap(),
+            reconcile(&path(), None, FileImage::Absent, present("N")).unwrap(),
             Decision::Create {
                 after: object("N"),
                 mode: mode()
@@ -377,54 +361,17 @@ mod tests {
     /// would mean a later `destroy` deletes something the user wrote.
     #[test]
     fn an_existing_file_jails_did_not_write_is_refused_even_when_it_matches() {
-        let decision = reconcile(&path(), None, present("N"), present("N"), false).unwrap();
+        let decision = reconcile(&path(), None, present("N"), present("N")).unwrap();
         match decision {
-            Decision::Refuse(why) => assert!(why.contains("jails adopt"), "{why}"),
+            Decision::Refuse(why) => assert!(why.contains("jails did not write it"), "{why}"),
             other => panic!("expected a refusal, got {other:?}"),
         }
-    }
-
-    /// And a claim is what lifts that -- for the exact path claimed, with the
-    /// discarded bytes leaving as a guarded preimage rather than vanishing.
-    #[test]
-    fn a_claimed_file_is_replaced_against_its_own_bytes() {
-        assert_eq!(
-            reconcile(&path(), None, present("theirs"), present("N"), true).unwrap(),
-            Decision::Replace {
-                before: present("theirs"),
-                after: object("N"),
-                mode: mode(),
-            }
-        );
-    }
-
-    /// A claim on a path with nothing there is still a create: `--replace`
-    /// says "jails' rendering belongs here", not "something must be here now".
-    #[test]
-    fn a_claimed_file_that_is_missing_is_created() {
-        assert_eq!(
-            reconcile(&path(), None, FileImage::Absent, present("N"), true).unwrap(),
-            Decision::Create {
-                after: object("N"),
-                mode: mode(),
-            }
-        );
-    }
-
-    /// A claim never turns a removal into one: nothing about `--replace` says
-    /// a file the generator stopped producing should be deleted.
-    #[test]
-    fn a_claim_does_not_delete_a_file_the_generator_no_longer_wants() {
-        assert_eq!(
-            reconcile(&path(), None, present("theirs"), FileImage::Absent, true).unwrap(),
-            Decision::Nothing
-        );
     }
 
     #[test]
     fn an_unmanaged_file_the_generator_does_not_want_is_left_alone() {
         assert_eq!(
-            reconcile(&path(), None, present("theirs"), FileImage::Absent, false).unwrap(),
+            reconcile(&path(), None, present("theirs"), FileImage::Absent).unwrap(),
             Decision::Nothing
         );
     }
@@ -432,7 +379,7 @@ mod tests {
     #[test]
     fn an_unchanged_owned_file_the_generator_changed_is_replaced() {
         assert_eq!(
-            reconcile(&path(), Some(prior("B")), present("B"), present("N"), false).unwrap(),
+            reconcile(&path(), Some(prior("B")), present("B"), present("N")).unwrap(),
             Decision::Replace {
                 before: present("B"),
                 after: object("N"),
@@ -444,7 +391,7 @@ mod tests {
     #[test]
     fn nobody_moving_produces_no_churn_at_all() {
         assert_eq!(
-            reconcile(&path(), Some(prior("B")), present("B"), present("B"), false).unwrap(),
+            reconcile(&path(), Some(prior("B")), present("B"), present("B")).unwrap(),
             Decision::Nothing
         );
     }
@@ -454,14 +401,7 @@ mod tests {
     #[test]
     fn a_user_edit_the_generator_did_not_touch_is_kept() {
         assert_eq!(
-            reconcile(
-                &path(),
-                Some(prior("B")),
-                present("mine"),
-                present("B"),
-                false
-            )
-            .unwrap(),
+            reconcile(&path(), Some(prior("B")), present("mine"), present("B")).unwrap(),
             Decision::KeepUserBytes
         );
     }
@@ -472,7 +412,7 @@ mod tests {
     #[test]
     fn a_file_that_already_holds_the_desired_bytes_advances_the_base() {
         assert_eq!(
-            reconcile(&path(), Some(prior("B")), present("N"), present("N"), false).unwrap(),
+            reconcile(&path(), Some(prior("B")), present("N"), present("N")).unwrap(),
             Decision::AdvanceBase {
                 after: object("N"),
                 mode: mode()
@@ -483,14 +423,7 @@ mod tests {
     #[test]
     fn all_three_differing_is_a_merge() {
         assert_eq!(
-            reconcile(
-                &path(),
-                Some(prior("B")),
-                present("mine"),
-                present("N"),
-                false
-            )
-            .unwrap(),
+            reconcile(&path(), Some(prior("B")), present("mine"), present("N")).unwrap(),
             Decision::Merge {
                 base: object("B"),
                 live: object("mine"),
@@ -503,15 +436,7 @@ mod tests {
     /// Recreating a file somebody deleted would undo a deliberate removal.
     #[test]
     fn a_deleted_owned_output_is_refused_rather_than_recreated() {
-        match reconcile(
-            &path(),
-            Some(prior("B")),
-            FileImage::Absent,
-            present("N"),
-            false,
-        )
-        .unwrap()
-        {
+        match reconcile(&path(), Some(prior("B")), FileImage::Absent, present("N")).unwrap() {
             Decision::Refuse(why) => assert!(why.contains("--replace"), "{why}"),
             other => panic!("expected a refusal, got {other:?}"),
         }
@@ -520,14 +445,7 @@ mod tests {
     #[test]
     fn an_unchanged_owned_file_the_generator_dropped_is_deleted() {
         assert_eq!(
-            reconcile(
-                &path(),
-                Some(prior("B")),
-                present("B"),
-                FileImage::Absent,
-                false
-            )
-            .unwrap(),
+            reconcile(&path(), Some(prior("B")), present("B"), FileImage::Absent).unwrap(),
             Decision::Delete {
                 before: present("B")
             }
@@ -541,7 +459,6 @@ mod tests {
             Some(prior("B")),
             present("mine"),
             FileImage::Absent,
-            false,
         )
         .unwrap()
         {

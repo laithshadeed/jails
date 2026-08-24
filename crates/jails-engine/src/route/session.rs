@@ -45,14 +45,6 @@ pub struct Run<'a> {
     /// route used to hardcode `no_start: false`, which made the fingerprint
     /// describe a command nobody typed.
     start: bool,
-    /// The exact paths this invocation claims from an unowned state.
-    ///
-    /// Empty on every run a caller can construct. Only `adopt_legacy` fills it,
-    /// from the row it was asked to claim, because only that command has been
-    /// told the deliberate decision §R5.3 asks for. Keeping it here rather than
-    /// on the request is what lets `--pretend` describe the same transition:
-    /// the claim is part of what was asked, not of what is written.
-    pub(super) claimed: BTreeSet<ProjectPath>,
 }
 
 impl<'a> Run<'a> {
@@ -63,7 +55,6 @@ impl<'a> Run<'a> {
             write: true,
             start: true,
             debug: false,
-            claimed: BTreeSet::new(),
         }
     }
 
@@ -74,7 +65,6 @@ impl<'a> Run<'a> {
             write: false,
             start: true,
             debug: false,
-            claimed: BTreeSet::new(),
         }
     }
 
@@ -93,17 +83,6 @@ impl<'a> Run<'a> {
     /// What the canonical request records, which is the caller's word for it.
     pub(super) fn no_start(&self) -> bool {
         !self.start
-    }
-
-    /// The same run, claiming these exact paths from an unowned state.
-    pub(super) fn claiming(&self, claimed: BTreeSet<ProjectPath>) -> Run<'a> {
-        Run {
-            project: self.project,
-            write: self.write,
-            start: self.start,
-            debug: self.debug,
-            claimed,
-        }
     }
 
     /// Whether this run may write. `--pretend` is the only reason it may not.
@@ -237,10 +216,7 @@ impl Outcome {
             .files
             .iter()
             .filter(|file| matches!(file.after, jails_protocol::conflict::FileImage::Absent))
-            .filter_map(|file| match &file.path {
-                jails_prepare::prepare::OperationTarget::Project(path) => Some(path.to_string()),
-                jails_prepare::prepare::OperationTarget::LegacyMachine(_) => None,
-            })
+            .map(|file| file.path.to_string())
             .collect()
     }
 

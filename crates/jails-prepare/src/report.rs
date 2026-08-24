@@ -10,12 +10,11 @@
 //! a report two identical runs disagree about.
 
 use crate::Result;
-use crate::prepare::{
-    DirectoryOp, FileOp, GuardedImage, OperationTarget, PreparedChange, PreparedKind,
-};
+use crate::prepare::{DirectoryOp, FileOp, GuardedImage, PreparedChange, PreparedKind};
 use crate::receipt::AppliedReceipt;
 use jails_protocol::conflict::{FileImage, FileMode};
 use jails_protocol::effect::{EffectState, PostCommitEffect};
+use jails_protocol::identity::ProjectPath;
 use jails_protocol::identity::{ObjectId, OperationId, TransactionId};
 use jails_protocol::resource::ResourceOwner;
 use std::collections::BTreeSet;
@@ -62,7 +61,7 @@ impl ReportedOpKind {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReportedOp {
     pub kind: ReportedOpKind,
-    pub path: OperationTarget,
+    pub path: ProjectPath,
     pub before: Option<ObjectId>,
     pub after: Option<ObjectId>,
     pub bytes: Option<u64>,
@@ -109,7 +108,6 @@ pub struct ReportedEffect {
 /// Something the reader should know that is not a failure.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum WarningCode {
-    LegacyUntrusted,
     UnmanagedRetained,
     PostCommitDeferred,
     EnvironmentConstrained,
@@ -118,7 +116,6 @@ pub enum WarningCode {
 impl WarningCode {
     pub fn label(self) -> &'static str {
         match self {
-            Self::LegacyUntrusted => "legacy-untrusted",
             Self::UnmanagedRetained => "unmanaged-retained",
             Self::PostCommitDeferred => "post-commit-deferred",
             Self::EnvironmentConstrained => "environment-constrained",
@@ -129,7 +126,7 @@ impl WarningCode {
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Warning {
     pub code: WarningCode,
-    pub paths: Vec<OperationTarget>,
+    pub paths: Vec<ProjectPath>,
     pub message: String,
 }
 
@@ -186,7 +183,7 @@ impl Report {
 fn directory_op(directory: &DirectoryOp) -> ReportedOp {
     ReportedOp {
         kind: ReportedOpKind::CreateDirectory,
-        path: OperationTarget::Project(directory.path().clone()),
+        path: directory.path().clone(),
         before: None,
         after: None,
         bytes: None,
@@ -265,13 +262,11 @@ fn ledger_of(before: FileImage, after: FileImage) -> ReportedLedger {
 pub fn render(report: &Report) -> String {
     let mut out = format!("plan {} {}\n", report.transaction, kind_label(&report.kind));
     for operation in &report.operations {
-        let subject = match &operation.path {
-            OperationTarget::Project(path) => path.to_string(),
-            // Never disguised as an ordinary project output: this is machine
-            // state being retired, not a file the user asked to remove.
-            OperationTarget::LegacyMachine(path) => format!("legacy-machine {path:?}"),
-        };
-        out.push_str(&format!("  {:<7} {subject}\n", operation.kind.verb()));
+        out.push_str(&format!(
+            "  {:<7} {}\n",
+            operation.kind.verb(),
+            operation.path
+        ));
     }
     if report.ledger.kind != ReportedLedgerKind::Unchanged {
         out.push_str(&format!("  ledger  {}\n", report.ledger.kind.label()));
@@ -560,21 +555,17 @@ fn wrap(rows: &str) -> String {
     }
 }
 
-/// A `LegacyMachine` target is never disguised as a project path, in JSON for
-/// the same reason it is not in the human rendering: it is machine state being
-/// retired, not a file the reader asked to remove.
-fn target_json(target: &OperationTarget) -> String {
-    use jails_support::json;
-    match target {
-        OperationTarget::Project(path) => format!(
-            "{{\"kind\": \"project\", \"path\": {}}}",
-            json::string(&path.to_string())
-        ),
-        OperationTarget::LegacyMachine(path) => format!(
-            "{{\"kind\": \"legacy-machine\", \"path\": {}}}",
-            json::string(&format!("{path:?}"))
-        ),
-    }
+/// A target is always a project path, and says so.
+///
+/// The `kind` key survives the one thing that used to vary -- machine state
+/// being retired by a schema-1 migration, which no longer exists -- because a
+/// consumer reading `operations[].path.kind` should not have to change when
+/// something else is added beside it.
+fn target_json(target: &ProjectPath) -> String {
+    format!(
+        "{{\"kind\": \"project\", \"path\": {}}}",
+        jails_support::json::string(&target.to_string())
+    )
 }
 
 fn ledger_label(kind: ReportedLedgerKind) -> Option<String> {
@@ -599,11 +590,7 @@ pub fn render_receipt(receipt: &AppliedReceipt) -> String {
         out.push_str(&format!("  {:<7} {}\n", "mkdir", directory.path));
     }
     for file in &receipt.files {
-        let subject = match &file.path {
-            OperationTarget::Project(path) => path.to_string(),
-            OperationTarget::LegacyMachine(path) => format!("legacy-machine {path:?}"),
-        };
-        out.push_str(&format!("  {:<7} {subject}\n", verb_of(file)));
+        out.push_str(&format!("  {:<7} {}\n", verb_of(file), file.path));
     }
     let ledger = ledger_of(receipt.ledger_before, receipt.ledger_after);
     if ledger.kind != ReportedLedgerKind::Unchanged {
@@ -682,10 +669,7 @@ mod tests {
         let rendered: Vec<String> = report
             .operations
             .iter()
-            .map(|op| match &op.path {
-                OperationTarget::Project(path) => path.to_string(),
-                other => format!("{other:?}"),
-            })
+            .map(|op| op.path.to_string())
             .collect();
         assert_eq!(
             rendered,
@@ -752,37 +736,19 @@ mod tests {
         assert_eq!(report.ledger.before, FileImage::Absent);
     }
 
-    /// Machine state being retired is not a file the user asked to remove.
-    #[test]
-    fn a_legacy_target_is_labelled_rather_than_disguised() {
-        let mut report = Report::of(&change_with(Vec::new())).unwrap();
-        report.operations.push(ReportedOp {
-            kind: ReportedOpKind::Delete,
-            path: OperationTarget::LegacyMachine(
-                jails_protocol::snapshot::LegacySourcePath::VersionFile,
-            ),
-            before: None,
-            after: None,
-            bytes: None,
-            mode: None,
-            contributors: BTreeSet::new(),
-        });
-        assert!(render(&report).contains("legacy-machine"));
-    }
-
     #[test]
     fn warnings_sort_by_code_then_path_then_message() {
         let mut report = Report::of(&change_with(Vec::new())).unwrap();
+        report.warn(Warning {
+            code: WarningCode::PostCommitDeferred,
+            paths: Vec::new(),
+            message: "the compose reconcile has not been attempted".to_string(),
+        });
         report.warn(Warning {
             code: WarningCode::UnmanagedRetained,
             paths: Vec::new(),
             message: "kept two hand-written properties".to_string(),
         });
-        report.warn(Warning {
-            code: WarningCode::LegacyUntrusted,
-            paths: Vec::new(),
-            message: "one row of unknown origin".to_string(),
-        });
-        assert_eq!(report.warnings[0].code, WarningCode::LegacyUntrusted);
+        assert_eq!(report.warnings[0].code, WarningCode::UnmanagedRetained);
     }
 }

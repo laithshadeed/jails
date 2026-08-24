@@ -44,7 +44,7 @@ use crate::outcome::{
 };
 use crate::store::{self, Store};
 use jails_prepare::pipeline::PreparedBundle;
-use jails_prepare::prepare::{FileOp, OperationTarget, PreparedChange, PreparedIdentityV1};
+use jails_prepare::prepare::{FileOp, PreparedChange, PreparedIdentityV1};
 use jails_prepare::receipt::{
     AppliedReceipt, ApplyOutcome, DirectoryReceipt, EffectReceipt, FileReceipt,
 };
@@ -325,59 +325,8 @@ pub(crate) fn write_ledger(
     }
     // The rename is the commit point. Everything after it is durable.
     crate::fault::trip("after-ledger-rename").map_err(LedgerFailure::AfterCommit)?;
-    retire_legacy(locked, change).map_err(LedgerFailure::AfterCommit)?;
     store::sync_dir(locked.handle.store.root()).map_err(LedgerFailure::AfterCommit)?;
     crate::fault::trip("after-ledger-dirsync").map_err(LedgerFailure::AfterCommit)
-}
-
-/// Remove the pre-schema-2 sources this migration claimed, after the commit.
-///
-/// §R2.5 makes cleanup atomic with the first schema-2 ledger write, and the
-/// order is the half that matters: the sources go *after* the rename, never
-/// before it. Before, a crash would leave a project whose old registry is
-/// half-deleted and whose new one was never written -- which is losing rows.
-/// After, a crash leaves files nothing reads any more, which is untidy and
-/// costs nothing.
-///
-/// Deleting what is already gone is success, because that is what a retried
-/// migration finds.
-fn retire_legacy(
-    locked: &LockedProject,
-    change: &PreparedIdentityV1,
-) -> std::result::Result<(), String> {
-    let jails_prepare::operation::OperationSemanticsV1::Apply(apply) =
-        &change.operation_identity.semantics
-    else {
-        return Ok(());
-    };
-    let Some(migration) = &apply.migration else {
-        return Ok(());
-    };
-    let machine = locked.handle.store.root();
-    for path in migration.deletable() {
-        let at = jails_project::compat::legacy_source_at(machine, &path);
-        match std::fs::remove_file(&at) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => {
-                return Err(format!(
-                    "could not remove legacy machine state at {}: {error}",
-                    at.display()
-                ));
-            }
-        }
-    }
-    // The directories go last and only when empty. A `remove_dir` that refused
-    // because somebody put something else in `intents/` is not an error: this
-    // migration promised to remove the sources it found, not the directory.
-    for directory in &migration.snapshot.directories {
-        let at = machine.join(match directory {
-            jails_protocol::snapshot::LegacyDirectoryKind::Intents => "intents",
-            jails_protocol::snapshot::LegacyDirectoryKind::Models => "models",
-        });
-        let _ = std::fs::remove_dir(&at);
-    }
-    Ok(())
 }
 
 /// Step 11: complete the journal, build and publish the receipt, and move the
@@ -600,9 +549,7 @@ fn recheck(
 ) -> std::result::Result<(), CommitError> {
     let root = &locked.handle.root;
     for operation in &change.operations {
-        let OperationTarget::Project(path) = operation.target() else {
-            continue;
-        };
+        let path = operation.target();
         let at = root.join(path.as_str());
         match crate::activate::classify(&at, operation) {
             // `After` is acceptable: the work is already done, and step 8
@@ -622,54 +569,8 @@ fn recheck(
             }
         }
     }
-    recheck_legacy(locked, change)?;
     recheck_inputs(locked, change)?;
     check_ledger(locked, change.ledger_before)
-}
-
-/// The same guard for the legacy sources a migration will delete.
-///
-/// They are not `Project` targets and so are skipped by the loop above, which
-/// left them the one class of operation that reached the commit point with no
-/// under-lock check at all. A source that changed after the plan was made is
-/// stale for exactly the same reason a project file would be: the migration
-/// recorded the bytes it translated, and deleting different ones would discard
-/// something it never read.
-fn recheck_legacy(
-    locked: &LockedProject,
-    change: &PreparedChange,
-) -> std::result::Result<(), CommitError> {
-    for operation in &change.operations {
-        let OperationTarget::LegacyMachine(path) = operation.target() else {
-            continue;
-        };
-        let FileOp::Delete { before, .. } = operation else {
-            continue;
-        };
-        let at = jails_project::compat::legacy_source_at(locked.handle.store.root(), path);
-        match std::fs::read(&at) {
-            // Already gone is acceptable, and is the ordinary shape of a
-            // retried migration: the delete is idempotent and step 8 skips it.
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => {
-                return Err(CommitError::StaleInput(format!(
-                    "legacy machine state at {} could not be read ({error})",
-                    at.display()
-                )));
-            }
-            Ok(bytes) => {
-                let found = jails_support::codec::sha256(&bytes);
-                if ObjectId::from_bytes(found) != before.object.id {
-                    return Err(CommitError::StaleInput(format!(
-                        "legacy machine state at {} changed after this migration read it.\n                                fix: replan. Deleting bytes the migration never translated would \
-                         discard something nothing recorded.",
-                        at.display()
-                    )));
-                }
-            }
-        }
-    }
-    Ok(())
 }
 
 /// §R4.3 step 2: recheck every project input the plan depended on.
@@ -765,9 +666,6 @@ fn recheck_inputs(
             }
             InputPrecondition::ExternalAbsent { .. }
             | InputPrecondition::ExternalFile { .. }
-            | InputPrecondition::LegacyAbsent { .. }
-            | InputPrecondition::LegacyFile { .. }
-            | InputPrecondition::LegacyDirectory { .. }
             | InputPrecondition::MachineReceipt { .. } => {}
         }
     }
@@ -881,9 +779,7 @@ mod tests {
                     one_shots_after: Vec::new(),
                     resources_after: Vec::new(),
                     entities_removed: Vec::new(),
-                    legacy_after: Vec::new(),
                 },
-                migration: None,
             })),
         };
         let mut operations = operations;
@@ -913,7 +809,7 @@ mod tests {
 
     fn create_op(at: &str, body: &[u8]) -> FileOp {
         FileOp::Create {
-            path: OperationTarget::Project(ProjectPath::parse(at).unwrap()),
+            path: ProjectPath::parse(at).unwrap(),
             after: object(body),
             mode: mode(),
             contributors: BTreeSet::new(),
@@ -1004,7 +900,7 @@ mod tests {
 
         let change = change_of(
             vec![FileOp::Replace {
-                path: OperationTarget::Project(ProjectPath::parse("pom.xml").unwrap()),
+                path: ProjectPath::parse("pom.xml").unwrap(),
                 before: GuardedImage {
                     object: object(b"<project/>"),
                     mode: mode(),
@@ -1032,7 +928,7 @@ mod tests {
 
         let change = change_of(
             vec![FileOp::Replace {
-                path: OperationTarget::Project(ProjectPath::parse("pom.xml").unwrap()),
+                path: ProjectPath::parse("pom.xml").unwrap(),
                 before: GuardedImage {
                     object: object(b"<project/>"),
                     mode: mode(),

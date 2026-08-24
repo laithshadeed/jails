@@ -249,106 +249,6 @@ class {class}Test {{
 
 // ---- registering a generated command with the dispatcher ----
 
-/// Splice `commands.put(FooCommand.NAME, FooCommand::run);` into the
-/// project's `*Cli.java`.
-///
-/// jails' rule used to be that only `pom.rs` edits a file the user owns, and
-/// so `generate command` merely *documented* the dispatch line for you to
-/// paste. But that rule was always a proxy for the real one -- an edit must be
-/// surgical and leave every other byte alone -- and pasting a line by hand
-/// after every single `generate` is exactly the plumbing this tool exists to
-/// remove. The splice is idempotent and touches one line inside one method.
-///
-/// No dispatcher means jails cannot know where it goes: it says so and leaves
-/// the Javadoc instructions as the fallback.
-///
-/// **More than one is the normal case, not an exotic one.** `new-cli` writes
-/// `App.java`, and the obvious next command -- `g cli Ledger` -- writes a
-/// second dispatcher, so any project with its own CLI has two. Guessing
-/// between them would produce a command wired into the wrong entry point, so
-/// `--on <Dispatcher>` names it: `jails g command Reconcile --on Ledger`,
-/// which is also what `strategy_on` carries in a manifest. Without it the
-/// note names every candidate, since "add it to the one you meant" without
-/// saying which ones exist is a refusal that teaches nothing (plan.md §9.6).
-pub(super) fn register_command(
-    root: &Path,
-    base: &str,
-    name: &str,
-    into: Option<&str>,
-) -> Result<()> {
-    let dispatchers = find_dispatchers(&root.join("src/main/java"));
-    let chosen;
-    let dispatcher = match (dispatchers.as_slice(), into) {
-        ([], _) => {
-            println!(
-                "note: no *Cli.java dispatcher found -- see {name}Command's Javadoc for the dispatch line,\n      \
-                 or run `jails generate cli <Name>` to get one that registers commands for you"
-            );
-            return Ok(());
-        }
-        (_, Some(wanted)) => {
-            let Some(found) = dispatchers
-                .iter()
-                .find(|path| matches_dispatcher(path, wanted))
-            else {
-                return Err(format!(
-                    "--on {wanted} does not name a dispatcher in this project.\n       \
-                     fix: use one of {}, or `jails generate cli {wanted}` to create it",
-                    dispatcher_names(&dispatchers).join(", ")
-                ));
-            };
-            chosen = found.clone();
-            &chosen
-        }
-        ([one], None) => one,
-        (many, None) => {
-            println!(
-                "note: {name}Command was not registered -- this project has {} dispatchers ({}).\n      \
-                 fix: rerun with `--on <Dispatcher>`, or add the line from {name}Command's Javadoc by hand",
-                many.len(),
-                dispatcher_names(many).join(", ")
-            );
-            return Ok(());
-        }
-    };
-
-    let source = fs::read_to_string(dispatcher)
-        .map_err(|e| format!("failed to read {}: {e}", dispatcher.display()))?;
-    let command_class = format!("{name}Command");
-    // Scoped to the registry body, not the whole file: the dispatcher's own
-    // Javadoc shows an example `commands.put(...)` line, and a whole-file
-    // `contains` matched *that* -- so generating a command with the same name
-    // as the example silently skipped registration.
-    if registry_body(&source).is_some_and(|body| body.contains(&format!("{command_class}::run"))) {
-        println!(
-            "  exists  {command_class} is already registered in {}",
-            dispatcher.display()
-        );
-        return Ok(());
-    }
-
-    // The dispatcher and the command can be in different packages once
-    // `--package` is involved, so the registration may need an import too.
-    let dispatcher_pkg = package_of(&source).unwrap_or_else(|| base.to_string());
-    let command_pkg = subpackage(base, layout::CLI);
-
-    let Some(spliced) = splice_registration(
-        &source,
-        &command_class,
-        &import_of(&dispatcher_pkg, &command_pkg, &command_class),
-    ) else {
-        println!(
-            "note: could not find the `return commands;` line in {} -- add {command_class} by hand",
-            dispatcher.display()
-        );
-        return Ok(());
-    };
-
-    crate::apply::put(dispatcher, spliced)?;
-    println!("registered {command_class} in {}", dispatcher.display());
-    Ok(())
-}
-
 /// Does this dispatcher answer to `wanted`? `Ledger`, `LedgerCli` and
 /// `App` all name a file, and a reader will type whichever they are
 /// thinking of.
@@ -360,43 +260,6 @@ fn matches_dispatcher(path: &Path, wanted: &str) -> bool {
         || stem.eq_ignore_ascii_case(&format!("{wanted}Cli"))
         || stem.eq_ignore_ascii_case(&crate::generate::capitalize(wanted))
         || stem.eq_ignore_ascii_case(&format!("{}Cli", crate::generate::capitalize(wanted)))
-}
-
-fn dispatcher_names(dispatchers: &[PathBuf]) -> Vec<String> {
-    dispatchers
-        .iter()
-        .filter_map(|p| p.file_stem().and_then(|s| s.to_str()))
-        .map(|s| s.to_string())
-        .collect()
-}
-
-/// Every dispatcher under the source root.
-///
-/// Recognised by shape, not by filename: `new-cli` writes one called
-/// `App.java` and `generate cli` writes one called `<Name>Cli.java`, and both
-/// have to be findable. A file merely *named* like one is not enough to edit.
-pub(super) fn find_dispatchers(dir: &Path) -> Vec<PathBuf> {
-    let mut found = Vec::new();
-    let mut stack = vec![dir.to_path_buf()];
-    while let Some(current) = stack.pop() {
-        let Ok(entries) = fs::read_dir(&current) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
-            } else if path.extension().is_some_and(|e| e == "java")
-                && fs::read_to_string(&path)
-                    .map(|s| is_dispatcher(&s))
-                    .unwrap_or(false)
-            {
-                found.push(path);
-            }
-        }
-    }
-    found.sort();
-    found
 }
 
 pub use jails_java::dispatch::{
@@ -453,25 +316,6 @@ fn qualified(package: &str, name: &str) -> String {
 }
 pub use jails_java::java::package_of;
 
-/// Undo `register_command`, so `destroy command` is its true inverse.
-///
-/// Without this, destroying a command deleted the class and left the
-/// dispatcher calling it -- the project then stops compiling, on the one
-/// operation whose whole job is to leave no trace.
-pub(super) fn unregister_command(root: &Path, name: &str) -> Result<()> {
-    let command_class = format!("{name}Command");
-    for dispatcher in find_dispatchers(&root.join("src/main/java")) {
-        let source = fs::read_to_string(&dispatcher)
-            .map_err(|e| format!("failed to read {}: {e}", dispatcher.display()))?;
-        let Some(unspliced) = unsplice_registration(&source, &command_class) else {
-            continue;
-        };
-        crate::apply::put(&dispatcher, unspliced)?;
-        println!("unregistered {command_class} from {}", dispatcher.display());
-    }
-    Ok(())
-}
-
 /// Point the packaged jar at a dispatcher that supersedes jails' own stub.
 ///
 /// `new-cli` writes `App.java` -- a real dispatcher, not a Hello World -- and
@@ -527,38 +371,4 @@ pub(super) fn planned_entry_point(
         return None;
     }
     Some(qualified(cli_package, &format!("{name}Cli")))
-}
-
-pub(super) fn adopt_as_entry_point(project: &Project, cli_package: &str, name: &str) -> Result<()> {
-    let pom_path = project.root().join("pom.xml");
-    let Ok(pom) = fs::read_to_string(&pom_path) else {
-        return Ok(());
-    };
-    let Some(current) = crate::pom::main_class(&pom) else {
-        // No declared entry point: a Spring Boot project, where the plugin
-        // finds `@SpringBootApplication` itself.
-        return Ok(());
-    };
-    let stub = format!("{}.App", project.base());
-    if current != stub {
-        return Ok(());
-    }
-    let app = crate::generate::main_dir(project.root(), project.base()).join("App.java");
-    let registers_something = fs::read_to_string(&app)
-        .map(|source| jails_java::java::blanked(&source).contains("commands.put("))
-        .unwrap_or(true);
-    if registers_something {
-        return Ok(());
-    }
-    let fqcn = if cli_package.is_empty() {
-        format!("{name}Cli")
-    } else {
-        format!("{cli_package}.{name}Cli")
-    };
-    let Some(updated) = crate::pom::with_main_class(&pom, &fqcn) else {
-        return Ok(());
-    };
-    crate::apply::put_named(&pom_path, &updated, "pom.xml")?;
-    println!("  main    {fqcn} is now what the packaged jar starts");
-    Ok(())
 }

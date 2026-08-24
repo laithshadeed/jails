@@ -252,7 +252,7 @@ mod tests {
     use crate::execute::ProjectHandle;
     use crate::journal::{ActualImage, BlockReason, RootIdentity};
     use jails_prepare::operation::{ApplySemantics, OperationIdentityV1, OperationSemanticsV1};
-    use jails_prepare::prepare::{FileOp, OperationTarget, PreparedIdentityV1, PreparedKind};
+    use jails_prepare::prepare::{FileOp, PreparedIdentityV1, PreparedKind};
     use jails_prepare::tool::{OperationContextFingerprint, PreparationContextFingerprint};
     use jails_protocol::conflict::{FileImage, FileMode};
     use jails_protocol::identity::{ObjectId, ObjectRef, ProjectPath};
@@ -277,9 +277,7 @@ mod tests {
                     one_shots_after: Vec::new(),
                     resources_after: Vec::new(),
                     entities_removed: Vec::new(),
-                    legacy_after: Vec::new(),
                 },
-                migration: None,
             })),
         };
         PreparedIdentityV1 {
@@ -288,7 +286,7 @@ mod tests {
             preparation: PreparationContextFingerprint::default(),
             input_preconditions: Vec::new(),
             operations: vec![FileOp::Create {
-                path: OperationTarget::Project(ProjectPath::parse("App.java").unwrap()),
+                path: ProjectPath::parse("App.java").unwrap(),
                 after,
                 mode: FileMode::new(0o644).unwrap(),
                 contributors: BTreeSet::new(),

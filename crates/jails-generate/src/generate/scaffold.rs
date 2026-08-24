@@ -618,14 +618,6 @@ pub fn generate_field(
 
     let mut model_spec = stored.unwrap_or_else(|| old_fields.iter().map(field_spec).collect());
     model_spec.push(fields[0].clone());
-    crate::generated_files::record_model(root, name, package, &model_spec)?;
-    crate::generated_files::record(
-        root,
-        "field",
-        &format!("{name}.{}", field.name),
-        package,
-        &written,
-    )?;
     Ok(())
 }
 

@@ -32,9 +32,8 @@
 use crate::Result;
 use crate::entity::{
     CapabilityId, CapabilityInstance, CapabilitySpec, EntityId, EntitySpec, ExternalPathId,
-    IntentId, OneShotId, OneShotSpec, ToolFeature,
+    OneShotId, OneShotSpec, ToolFeature,
 };
-use crate::envelope::LegacyKey;
 use crate::identity::{JavaType, ObjectId, ProjectPath};
 use jails_support::codec::{self, Decoder, Encoder, ordered};
 use std::collections::{BTreeMap, BTreeSet};
@@ -265,14 +264,6 @@ pub enum CanonicalMutationRequest {
         force: bool,
     },
     AdoptLayout,
-    /// Resolve one legacy row into a typed intent. `replace` says an existing
-    /// entity of that identity is to be taken over rather than collided with.
-    AdoptLegacy {
-        legacy_key: LegacyKey,
-        intent: IntentId,
-        replace: bool,
-        force: bool,
-    },
     FastTest,
     Format {
         scopes: BTreeSet<ProjectPath>,
@@ -411,7 +402,6 @@ impl CanonicalMutationRequest {
             Self::AppApply { .. } => 6,
             Self::Rename { .. } => 7,
             Self::AdoptLayout => 8,
-            Self::AdoptLegacy { .. } => 9,
             Self::FastTest => 10,
             Self::Format { .. } => 11,
             Self::RemoveToolFeature { .. } => 12,
@@ -452,17 +442,6 @@ impl CanonicalMutationRequest {
                 encoder.bool(*force);
             }
             Self::AdoptLayout | Self::FastTest => {}
-            Self::AdoptLegacy {
-                legacy_key,
-                intent,
-                replace,
-                force,
-            } => {
-                legacy_key.encode(encoder)?;
-                intent.encode(encoder)?;
-                encoder.bool(*replace);
-                encoder.bool(*force);
-            }
             Self::Format { scopes } => {
                 encoder.count(scopes.len())?;
                 let mut previous: Option<&ProjectPath> = None;
@@ -518,12 +497,6 @@ impl CanonicalMutationRequest {
                 force: decoder.bool()?,
             },
             8 => Self::AdoptLayout,
-            9 => Self::AdoptLegacy {
-                legacy_key: LegacyKey::decode(decoder)?,
-                intent: IntentId::decode(decoder)?,
-                replace: decoder.bool()?,
-                force: decoder.bool()?,
-            },
             10 => Self::FastTest,
             11 => {
                 let count = decoder.count()?;

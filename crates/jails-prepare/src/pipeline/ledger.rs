@@ -27,14 +27,12 @@ pub(super) fn unchanged(store: &LedgerV2, observed: &Option<LedgerV2>) -> bool {
             && store.one_shots.is_empty()
             && store.resources.is_empty()
             && store.outputs.is_empty()
-            && store.legacy.is_empty()
             && store.pending_conflict.is_none();
     };
     store.applied == observed.applied
         && store.one_shots == observed.one_shots
         && store.resources == observed.resources
         && store.outputs == observed.outputs
-        && store.legacy == observed.legacy
         && store.pending_conflict == observed.pending_conflict
 }
 
@@ -66,7 +64,6 @@ pub(super) fn record_store(
         one_shots: Vec::new(),
         resources: Vec::new(),
         outputs: Vec::new(),
-        legacy: Vec::new(),
         pending_conflict: None,
     });
     store.written_by = env!("CARGO_PKG_VERSION").to_string();
@@ -158,26 +155,6 @@ pub(super) fn record_store(
     }
     store.one_shots.sort_by(|a, b| a.id.cmp(&b.id));
 
-    // Added to, never replaced -- the same rule as `resources` above, and for
-    // the same reason. A legacy row is the *only* record that a schema-1 entry
-    // existed, and it survives until `jails adopt --legacy-key` resolves it
-    // explicitly. Assigning the intent's list here would have every ordinary
-    // route erase them, because a route that is not a migration has nothing to
-    // say about legacy rows and passes an empty vector.
-    //
-    // That is not hypothetical: it is what the first schema-1 translation
-    // found. `jails generate` in a migrated project dropped every row the
-    // migration had preserved, and the only record of what the old ledger held
-    // was gone.
-    //
-    // Sorted by the encoder's own rule rather than by a second one here: the
-    // legacy key is private to the envelope, and a copy of the ordering would
-    // be a second authority on what canonical means.
-    for entry in &intent.legacy_after {
-        if !store.legacy.contains(entry) {
-            store.legacy.push(entry.clone());
-        }
-    }
     Ok(store)
 }
 
@@ -205,9 +182,7 @@ pub(super) fn record_outputs(
         // two disagree about who wrote a file.
         let contributors = operations
             .iter()
-            .find(|operation| {
-                matches!(operation.target(), OperationTarget::Project(at) if at == path)
-            })
+            .find(|operation| matches!(operation.target(), at if at == path))
             .map(|operation| operation.contributors().clone())
             .unwrap_or_default();
         let row = jails_protocol::record::OutputRecord {

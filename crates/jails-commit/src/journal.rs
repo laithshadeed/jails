@@ -692,10 +692,11 @@ impl ReceiptV1 {
 mod tests {
     use super::*;
     use jails_prepare::operation::{ApplySemantics, OperationIdentityV1, OperationSemanticsV1};
-    use jails_prepare::prepare::{FileOp, OperationTarget, PreparedKind};
+    use jails_prepare::prepare::{FileOp, PreparedKind};
     use jails_prepare::tool::{OperationContextFingerprint, PreparationContextFingerprint};
     use jails_protocol::conflict::FileImage;
     use jails_protocol::identity::ObjectRef;
+    use jails_protocol::identity::ProjectPath;
     use jails_protocol::plan::{LedgerIntent, PlannedSubject};
     use jails_support::scratch::ScratchDir;
     use std::collections::BTreeSet;
@@ -720,9 +721,7 @@ mod tests {
                     one_shots_after: Vec::new(),
                     resources_after: Vec::new(),
                     entities_removed: Vec::new(),
-                    legacy_after: Vec::new(),
                 },
-                migration: None,
             })),
         };
         PreparedIdentityV1 {
@@ -731,7 +730,7 @@ mod tests {
             preparation: PreparationContextFingerprint::default(),
             input_preconditions: Vec::new(),
             operations: vec![FileOp::Create {
-                path: OperationTarget::Project(ProjectPath::parse("pom.xml").unwrap()),
+                path: ProjectPath::parse("pom.xml").unwrap(),
                 after,
                 mode: FileMode::new(0o644).unwrap(),
                 contributors: BTreeSet::new(),

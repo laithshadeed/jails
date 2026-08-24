@@ -183,15 +183,15 @@ pub(super) fn parse_manifest(text: &str) -> Result<(Manifest, Vec<ResolvedIntent
         // AcquirerFetcher` are caught as the one entity they generate into
         // rather than accepted as two and applied over each other.
         let name = intent.recorded_name();
-        let key = intent.key(&recipe, &name);
-        if !seen.insert((
-            key.recipe.to_string(),
-            key.name.to_string(),
-            key.package.to_string(),
-        )) {
+        let package = intent.package.clone().unwrap_or_default();
+        if !seen.insert((recipe.clone(), name.clone(), package.clone())) {
             return Err(format!(
-                "`{key}` is declared twice.\n       fix: one entity has one declaration; give \
-                 the second a different name or package, or merge the two."
+                "`{recipe} {name}{}` is declared twice.\n       fix: one entity has one \
+                 declaration; give the second a different name or package, or merge the two.",
+                match package.is_empty() {
+                    true => String::new(),
+                    false => format!(" --package {package}"),
+                }
             ));
         }
     }

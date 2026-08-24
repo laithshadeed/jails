@@ -73,7 +73,6 @@ capabilities = []
             one_shots_after: Vec::new(),
             resources_after: Vec::new(),
             entities_removed: Vec::new(),
-            legacy_after: Vec::new(),
         },
         ordered: vec![change],
         subject: PlannedSubject::AppInit { target },
@@ -274,7 +273,6 @@ pub fn rename(run: &Run, old: &str, new: &str, force: bool) -> Result<Outcome> {
             one_shots_after: Vec::new(),
             resources_after: change.resources.clone(),
             entities_removed: renamed_entities.keys().cloned().collect(),
-            legacy_after: Vec::new(),
         },
         ordered: vec![change],
         subject: PlannedSubject::Rename {
@@ -506,7 +504,6 @@ pub fn adopt_layout(run: &Run) -> Result<Outcome> {
             one_shots_after: Vec::new(),
             resources_after: Vec::new(),
             entities_removed: Vec::new(),
-            legacy_after: Vec::new(),
         },
         ordered: vec![change],
         subject: PlannedSubject::AdoptLayout,
@@ -665,7 +662,6 @@ pub fn format(run: &Run) -> Result<Outcome> {
             one_shots_after: Vec::new(),
             resources_after: Vec::new(),
             entities_removed: Vec::new(),
-            legacy_after: Vec::new(),
         },
         ordered: vec![change],
         subject: PlannedSubject::Format {
@@ -678,220 +674,5 @@ pub fn format(run: &Run) -> Result<Outcome> {
         set,
         &reads,
         &Asked::plain(CanonicalMutationRequest::Format { scopes }, &["fmt"], &[]),
-    )
-}
-
-/// Claim one schema-1 row as a named owner.
-///
-/// §R2.5: *"the only route from unknowable legacy manifest origin to a named
-/// owner, and every row is handled explicitly rather than heuristically
-/// joined."* Migration deliberately claims nothing -- the old format never
-/// recorded who asked for a row -- so this is how a reader says which row is
-/// which, one at a time and by a stable key rather than by "the first thing
-/// that matches".
-///
-/// The safety rule is the whole feature. jails re-renders the intent and
-/// requires the files on disk to be **byte-identical** to what it would write
-/// now. Only then does the row become an owned entity with a truthful
-/// renderer stamp. That is what stops adoption claiming that an arbitrary
-/// legacy byte was renderer-produced -- a claim every later three-way merge
-/// would measure from, so a wrong one silently corrupts every future update
-/// of that file.
-///
-/// A mismatch refuses and says which file differs -- unless the caller has
-/// said `--replace --force`, which is the destructive choice made explicitly.
-/// `replace` then installs the freshly rendered candidate over whatever is
-/// there, with the current bytes as guarded preimages, so the row still ends
-/// up with a base jails really produced. §R6.4 makes `--force` mandatory
-/// alongside it and refuses either flag alone: adopting is a repair, and a
-/// repair that silently overwrote an edit nobody looked at would be the same
-/// corruption by a different route.
-pub fn adopt_legacy(
-    run: &Run,
-    key: &str,
-    kind: ArtifactKind,
-    name: &str,
-    replace: bool,
-) -> Result<Outcome> {
-    let project = run.project();
-    let wanted = jails_protocol::envelope::LegacyKey::parse_label(key)?;
-    let store = observed(project)?;
-
-    let mut found = None;
-    for row in store.ledger.iter().flat_map(|ledger| ledger.legacy.iter()) {
-        if row.legacy_key(jails_protocol::envelope::LegacySourceKind::Schema1Applied)? == wanted {
-            found = Some(row.clone());
-            break;
-        }
-    }
-    let row = found.ok_or_else(|| {
-        format!(
-            "no legacy row has the key `{key}`.\n       fix: `jails doctor` lists every key this \
-             project has. A key names one exact decoded row, never the first one that looks \
-             similar."
-        )
-    })?;
-
-    // The intent the caller says this row is. Checked against the row rather
-    // than trusted: adopting `record Reward` onto a row that says `service
-    // Reward` would put an owner on files that recipe never wrote.
-    if row.recipe != label(kind) || row.name != name {
-        return Err(format!(
-            "`{key}` is `{} {}`, not `{} {name}`.\n       fix: pass the intent the row actually \
-             names. Adopting one row under another's identity would put an owner on files that \
-             recipe never wrote.",
-            row.recipe,
-            row.name,
-            label(kind)
-        ));
-    }
-
-    let fields: Vec<String> = row.fields.clone();
-    let package = match row.package.is_empty() {
-        true => None,
-        false => Some(row.package.as_str()),
-    };
-    let change = with_test_support(
-        project,
-        jails_generate::generate::plan_recipe(
-            project,
-            kind,
-            name,
-            &fields,
-            package,
-            &row.indexes,
-            (!row.on.is_empty()).then_some(row.on.as_str()),
-            (!row.yields.is_empty()).then_some(row.yields.as_str()),
-        )?,
-    );
-
-    // Every file the re-render produces must already be there, byte for byte.
-    let id = super::intent(
-        project,
-        kind,
-        name,
-        package,
-        &fields,
-        &row.indexes,
-        (!row.on.is_empty()).then_some(row.on.as_str()),
-        (!row.yields.is_empty()).then_some(row.yields.as_str()),
-    )?;
-    let spec = super::spec(
-        project,
-        kind,
-        &fields,
-        &row.indexes,
-        (!row.on.is_empty()).then_some(row.on.as_str()),
-        (!row.yields.is_empty()).then_some(row.yields.as_str()),
-    )?;
-    let owner = ResourceOwner::Entity(EntityId::Intent(id.clone()));
-    let mut desired = desire::contribution(&owner, &change, project)?;
-
-    // Compared against the *projection*, not against the recipe's artifacts
-    // and not against the contribution either. Import order is normalised and
-    // blank lines are tidied on the way to disk -- CLAUDE.md keeps both out of
-    // the templates deliberately -- so a recipe's output is not what
-    // `generate` writes. Comparing anything earlier refuses every row jails
-    // itself produced, which is the only kind adoption is for.
-    let mut reads = capture::capability_reads()?;
-    for file in &desired.files {
-        reads = reads.file(file.path.clone());
-    }
-    //
-    // `--replace` is the one case that skips it, and skips only this: the
-    // transition it commits is the same one, so the differing bytes leave as
-    // guarded preimages rather than as an unrecorded overwrite.
-    if !replace {
-        let (snapshot, mut projection) = capture::projected(project, &reads)?;
-        projection.advance(&desired)?;
-        let mut differ = Vec::new();
-        for (path, entry) in projection.overlay() {
-            let jails_project::projection::ProjectedEntry::File(projected) = entry else {
-                continue;
-            };
-            match snapshot.read(path)? {
-                jails_protocol::snapshot::Captured::Present(live)
-                    if live.bytes == projected.bytes => {}
-                jails_protocol::snapshot::Captured::Present(_) => {
-                    differ.push(format!("         {path} differs"))
-                }
-                jails_protocol::snapshot::Captured::Absent => {
-                    differ.push(format!("         {path} is missing"))
-                }
-            }
-        }
-        if !differ.is_empty() {
-            return Err(format!(
-                "`{key}` cannot be adopted as it stands: what jails would render now is not what \
-                 is on disk.\n{}\n       fix: adoption records the rendered bytes as this row's \
-                 base, and every later update measures from it -- so claiming bytes jails did \
-                 not produce would corrupt every future merge of these files. Reconcile them by \
-                 hand first, or overwrite them with\n         jails adopt --legacy-key {key} \
-                 --intent {}:{name} --replace --force",
-                differ.join("\n"),
-                label(kind)
-            ));
-        }
-    }
-
-    let entity = DesiredEntity {
-        id: EntityId::Intent(id.clone()),
-        spec: EntitySpec::Intent(spec),
-        // The row said nothing about who asked for it, and this command is the
-        // reader saying so. `DirectCli` is the truthful answer: they asked,
-        // just now, through this command.
-        owners: BTreeSet::from([OwnerId::DirectCli]),
-    };
-    provenance::stamp_files(
-        &mut desired,
-        project,
-        RendererId::Recipe(kind),
-        Some(RenderedSubjectContext::Entity {
-            id: entity.id.clone(),
-            spec: entity.spec.clone(),
-        }),
-    )?;
-    // What `--replace` claims: exactly the files this row's re-render produces,
-    // and nothing else. §R5.3 refuses to write over a file jails never wrote,
-    // and this is the command that has been told the decision was made -- said
-    // about these paths rather than about the transition, so an unrelated file
-    // the same commit happens to touch keeps the protection.
-    let claimed: BTreeSet<jails_protocol::identity::ProjectPath> = match replace {
-        true => desired.files.iter().map(|file| file.path.clone()).collect(),
-        false => BTreeSet::new(),
-    };
-    let reads = declaration(project, &change, &desired)?;
-    let request = Request {
-        scope: ReconcileScope::DirectEntity(EntityId::Intent(id)),
-        declared: BTreeMap::from([(entity.id.clone(), entity)]),
-        changes: vec![desired],
-    };
-    commit(
-        &run.claiming(claimed),
-        request,
-        &reads,
-        &Asked::new(
-            CanonicalMutationRequest::AdoptLegacy {
-                legacy_key: wanted,
-                intent: super::intent(
-                    project,
-                    kind,
-                    name,
-                    package,
-                    &fields,
-                    &row.indexes,
-                    (!row.on.is_empty()).then_some(row.on.as_str()),
-                    (!row.yields.is_empty()).then_some(row.yields.as_str()),
-                )?,
-                // §R3's validation row: `replace` implies `force`, so the
-                // two move together and neither is reachable alone.
-                replace,
-                force: replace,
-            },
-            &["adopt"],
-            vec![label(kind).to_string(), name.to_string()],
-            BTreeMap::from([("legacy-key".to_string(), vec![key.to_string()])]),
-            BTreeSet::new(),
-        ),
     )
 }

@@ -19,26 +19,18 @@
 //! overwrite that edit and report success, which is the failure the whole
 //! transaction exists to prevent.
 //!
-//! ## Why the legacy machine target is fenced off so hard
-//!
-//! `OperationTarget::LegacyMachine` can delete files under `.jails/` — the
-//! namespace `ProjectPath` refuses by construction. It is allowed only inside
-//! a validated migration, only as a delete, only with an exact preimage, and
-//! only for a legacy source that is not the schema-1 ledger (which the
-//! guarded ledger create/replace consumes separately). Everything else in the
-//! plan must be a `Project` target, and [`PreparedChange::validate`] is where
-//! that is enforced rather than at each construction site.
+//! Every operation names a `ProjectPath`, which refuses `.jails/` by
+//! construction: machine state is the executor's, and a plan that could name a
+//! path inside it would be able to rewrite the record of what it was doing.
 
 use crate::Result;
-use crate::migration::LegacyMigrationIdentity;
-use crate::operation::{OperationIdentityV1, OperationSemanticsV1};
+use crate::operation::OperationIdentityV1;
 use crate::tool::PreparationContextFingerprint;
 use jails_protocol::conflict::{FileImage, FileMode};
 use jails_protocol::effect::PostCommitEffect;
-use jails_protocol::envelope::LegacySourceKind;
 use jails_protocol::identity::{ObjectId, ObjectRef, OperationId, ProjectPath, TransactionId};
 use jails_protocol::resource::ResourceOwner;
-use jails_protocol::snapshot::{InputPrecondition, LegacySourcePath, ReadSet};
+use jails_protocol::snapshot::{InputPrecondition, ReadSet};
 use jails_support::codec::{self, Decoder, Encoder, ordered};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -70,72 +62,31 @@ impl GuardedImage {
     }
 }
 
-/// What a file operation is about.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub enum OperationTarget {
-    Project(ProjectPath),
-    /// A pre-schema-2 machine file. Reachable only from a validated
-    /// migration, and only to delete — see this module's header.
-    LegacyMachine(LegacySourcePath),
-}
-
-impl OperationTarget {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        match self {
-            Self::Project(path) => {
-                encoder.tag(0);
-                path.encode(encoder)
-            }
-            Self::LegacyMachine(path) => {
-                encoder.tag(1);
-                path.encode(encoder)
-            }
-        }
-    }
-
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Project(ProjectPath::decode(decoder)?),
-            1 => Self::LegacyMachine(LegacySourcePath::decode(decoder)?),
-            other => Err(format!("unknown operation target tag {other}"))?,
-        })
-    }
-}
-
-impl std::fmt::Display for OperationTarget {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Project(path) => write!(f, "{path}"),
-            Self::LegacyMachine(path) => write!(f, "{path:?}"),
-        }
-    }
-}
-
 /// One file's transition, with the guard that makes it safe.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FileOp {
     Create {
-        path: OperationTarget,
+        path: ProjectPath,
         after: ObjectRef,
         mode: FileMode,
         contributors: BTreeSet<ResourceOwner>,
     },
     Replace {
-        path: OperationTarget,
+        path: ProjectPath,
         before: GuardedImage,
         after: ObjectRef,
         mode: FileMode,
         contributors: BTreeSet<ResourceOwner>,
     },
     Delete {
-        path: OperationTarget,
+        path: ProjectPath,
         before: GuardedImage,
         contributors: BTreeSet<ResourceOwner>,
     },
 }
 
 impl FileOp {
-    pub fn target(&self) -> &OperationTarget {
+    pub fn target(&self) -> &ProjectPath {
         match self {
             Self::Create { path, .. } | Self::Replace { path, .. } | Self::Delete { path, .. } => {
                 path
@@ -209,20 +160,20 @@ impl FileOp {
     pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::Create {
-                path: OperationTarget::decode(decoder)?,
+                path: ProjectPath::decode(decoder)?,
                 after: ObjectRef::decode(decoder)?,
                 mode: FileMode::decode(decoder)?,
                 contributors: decode_contributors(decoder)?,
             },
             1 => Self::Replace {
-                path: OperationTarget::decode(decoder)?,
+                path: ProjectPath::decode(decoder)?,
                 before: GuardedImage::decode(decoder)?,
                 after: ObjectRef::decode(decoder)?,
                 mode: FileMode::decode(decoder)?,
                 contributors: decode_contributors(decoder)?,
             },
             2 => Self::Delete {
-                path: OperationTarget::decode(decoder)?,
+                path: ProjectPath::decode(decoder)?,
                 before: GuardedImage::decode(decoder)?,
                 contributors: decode_contributors(decoder)?,
             },
@@ -577,51 +528,10 @@ impl PreparedChange {
             }
         }
 
-        self.validate_legacy_targets()?;
         self.validate_effects()?;
 
         if self.transaction_id != self.identity()?.transaction_id()? {
             return Err("the transaction id does not hash its own prepared identity".to_string());
-        }
-        Ok(())
-    }
-
-    /// The rule this module's header is about: a legacy machine target is
-    /// reachable only inside a validated migration, only as a delete, only
-    /// with an empty contributor set, and only for a source that migration
-    /// actually found.
-    fn validate_legacy_targets(&self) -> Result<()> {
-        let migration = match &self.operation_identity.semantics {
-            OperationSemanticsV1::Apply(apply) => apply.migration.as_ref(),
-            _ => None,
-        };
-        let deletable = migration
-            .map(LegacyMigrationIdentity::deletable)
-            .unwrap_or_default();
-
-        for operation in &self.operations {
-            let OperationTarget::LegacyMachine(path) = operation.target() else {
-                continue;
-            };
-            let FileOp::Delete { contributors, .. } = operation else {
-                return Err(format!(
-                    "legacy machine state at {path:?} may only be deleted.\n       fix: it is \
-                     outside `ProjectPath`'s reserved namespace on purpose; cleanup is atomic \
-                     with the first schema-2 commit and nothing else."
-                ));
-            };
-            if !contributors.is_empty() {
-                return Err(format!(
-                    "legacy machine state at {path:?} has contributors; nobody owns a row of \
-                     unknown origin"
-                ));
-            }
-            if !deletable.contains(path) {
-                return Err(format!(
-                    "legacy machine state at {path:?} is deleted by a transaction whose \
-                     migration did not find it"
-                ));
-            }
         }
         Ok(())
     }
@@ -685,22 +595,15 @@ pub fn preconditions_of(read_set: &ReadSet) -> Vec<InputPrecondition> {
     read_set.inputs().to_vec()
 }
 
-/// The legacy sources a migration may not touch, named for a message.
-pub fn ledger_source_kind() -> LegacySourceKind {
-    LegacySourceKind::Schema1Ledger
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::migration::{LegacyMigrationIdentity, LegacySnapshotIdentity, LegacySourceImage};
-    use crate::operation::ApplySemantics;
+    use crate::operation::{ApplySemantics, OperationSemanticsV1};
     use crate::tool::tests::identity;
     use crate::tool::{OperationContextFingerprint, OperationToolFingerprint, ToolArgTemplate};
     use jails_protocol::entity::{EntityId, IntentId, Recipe};
     use jails_protocol::identity::{Name, Package};
     use jails_protocol::plan::{LedgerIntent, PlannedSubject};
-    use jails_protocol::snapshot::{LegacyDirectoryKind, LegacyFileName};
     use jails_support::codec::sha256;
 
     pub(crate) fn path(text: &str) -> ProjectPath {
@@ -724,7 +627,7 @@ pub(crate) mod tests {
         let id = ObjectId::from_bytes(sha256(body));
         (
             FileOp::Create {
-                path: OperationTarget::Project(path(at)),
+                path: path(at),
                 after: ObjectRef::new(id, body.len() as u64),
                 mode: mode(),
                 contributors: BTreeSet::from([owner("Note")]),
@@ -742,9 +645,7 @@ pub(crate) mod tests {
                 one_shots_after: Vec::new(),
                 resources_after: Vec::new(),
                 entities_removed: Vec::new(),
-                legacy_after: Vec::new(),
             },
-            migration: None,
         }))
     }
 
@@ -869,138 +770,6 @@ pub(crate) mod tests {
         let one = change_with(vec![create("pom.xml", b"<project/>")]);
         let other = change_with(vec![create("pom.xml", b"<project></project>")]);
         assert_ne!(one.transaction_id, other.transaction_id);
-    }
-
-    fn legacy_migration(present: bool) -> LegacyMigrationIdentity {
-        let name = LegacyFileName::parse("record-note.files").unwrap();
-        let source = if present {
-            LegacySourceImage::Present {
-                path: LegacySourcePath::IntentFiles { name },
-                object: ObjectRef::new(ObjectId::from_bytes(sha256(b"rows")), 4),
-                mode: mode(),
-            }
-        } else {
-            LegacySourceImage::Absent {
-                path: LegacySourcePath::IntentFiles { name },
-            }
-        };
-        LegacyMigrationIdentity {
-            snapshot: LegacySnapshotIdentity {
-                sources: vec![source],
-                directories: vec![LegacyDirectoryKind::Intents],
-            },
-            translated_before: ObjectId::from_bytes(sha256(b"translated")),
-        }
-    }
-
-    fn legacy_delete() -> FileOp {
-        FileOp::Delete {
-            path: OperationTarget::LegacyMachine(LegacySourcePath::IntentFiles {
-                name: LegacyFileName::parse("record-note.files").unwrap(),
-            }),
-            before: GuardedImage {
-                object: ObjectRef::new(ObjectId::from_bytes(sha256(b"rows")), 4),
-                mode: mode(),
-            },
-            contributors: BTreeSet::new(),
-        }
-    }
-
-    fn with_migration(migration: Option<LegacyMigrationIdentity>, op: FileOp) -> PreparedChange {
-        let semantics = OperationSemanticsV1::Apply(Box::new(ApplySemantics {
-            subject: PlannedSubject::AdoptLayout,
-            ledger_intent: LedgerIntent {
-                generation_before: 3,
-                entities_after: Vec::new(),
-                one_shots_after: Vec::new(),
-                resources_after: Vec::new(),
-                entities_removed: Vec::new(),
-                legacy_after: Vec::new(),
-            },
-            migration,
-        }));
-        assemble(
-            operation_identity(semantics),
-            PreparedKind::Apply,
-            vec![(op, Vec::new())],
-        )
-    }
-
-    /// Cleanup is atomic with the first schema-2 commit and nothing else.
-    #[test]
-    fn a_legacy_delete_inside_its_migration_is_allowed() {
-        with_migration(Some(legacy_migration(true)), legacy_delete())
-            .validate()
-            .unwrap();
-    }
-
-    #[test]
-    fn a_legacy_delete_without_a_migration_is_refused() {
-        let error = with_migration(None, legacy_delete())
-            .validate()
-            .unwrap_err();
-        assert!(error.contains("did not find it"), "{error}");
-    }
-
-    #[test]
-    fn a_legacy_delete_of_a_source_the_migration_did_not_find_is_refused() {
-        let error = with_migration(Some(legacy_migration(false)), legacy_delete())
-            .validate()
-            .unwrap_err();
-        assert!(error.contains("did not find it"), "{error}");
-    }
-
-    /// The schema-1 ledger is consumed by the guarded ledger replace, not by
-    /// a delete — deleting it here would drop the very rows being migrated.
-    #[test]
-    fn the_schema_one_ledger_is_not_a_deletable_legacy_source() {
-        let migration = LegacyMigrationIdentity {
-            snapshot: LegacySnapshotIdentity {
-                sources: vec![LegacySourceImage::Present {
-                    path: LegacySourcePath::Schema1Ledger,
-                    object: ObjectRef::new(ObjectId::from_bytes(sha256(b"ledger")), 6),
-                    mode: mode(),
-                }],
-                directories: Vec::new(),
-            },
-            translated_before: ObjectId::from_bytes(sha256(b"translated")),
-        };
-        assert!(migration.deletable().is_empty());
-    }
-
-    #[test]
-    fn a_legacy_target_may_only_be_deleted() {
-        let create = FileOp::Create {
-            path: OperationTarget::LegacyMachine(LegacySourcePath::VersionFile),
-            after: ObjectRef::new(ObjectId::from_bytes(sha256(b"1")), 1),
-            mode: mode(),
-            contributors: BTreeSet::new(),
-        };
-        let mut change = with_migration(Some(legacy_migration(true)), create);
-        change
-            .objects
-            .insert(ObjectId::from_bytes(sha256(b"1")), Arc::from(b"1".to_vec()));
-        change.transaction_id = change.identity().unwrap().transaction_id().unwrap();
-        let error = change.validate().unwrap_err();
-        assert!(error.contains("may only be deleted"), "{error}");
-    }
-
-    /// Nobody owns a row of unknown origin, which is the whole reason legacy
-    /// rows are separate from applied ones.
-    #[test]
-    fn a_legacy_delete_with_contributors_is_refused() {
-        let FileOp::Delete { path, before, .. } = legacy_delete() else {
-            unreachable!()
-        };
-        let owned = FileOp::Delete {
-            path,
-            before,
-            contributors: BTreeSet::from([owner("Note")]),
-        };
-        let error = with_migration(Some(legacy_migration(true)), owned)
-            .validate()
-            .unwrap_err();
-        assert!(error.contains("nobody owns"), "{error}");
     }
 
     /// A conflict cannot carry an executable effect: the resolved postimage

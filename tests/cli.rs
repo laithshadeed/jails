@@ -838,65 +838,41 @@ fn app_manifest_formats_the_complete_generated_tree_once() {
     );
 }
 
-/// Reading is not a migration.
+/// Reading is not writing.
 ///
-/// `app plan`, `--pretend` and inspection all reach the provenance store, and
-/// it used to fold a pre-ledger `.jails/` and **delete the old files** from
-/// inside the read. Asking jails what it would do therefore consumed the only
-/// record of what it had done -- and if the answer was "nothing to destroy",
-/// the evidence for that answer had just been thrown away.
+/// `app plan`, `--pretend` and inspection all reach the store, and a reader
+/// that also tidied up would make asking jails what it would do change what it
+/// had done. It is not a hypothetical: the provenance reader used to fold a
+/// pre-ledger `.jails/` and delete the old files from inside the read, so
+/// asking "is there anything to destroy" consumed the evidence for the answer.
 #[test]
-fn plan_pretend_and_inspection_leave_a_pre_ledger_project_byte_for_byte() {
-    let root = temp_dir("legacy-read-purity");
+fn planning_pretending_and_inspecting_leave_machine_state_byte_for_byte() {
+    let root = temp_dir("read-purity");
     write_plain_fixture(&root);
-    fs::create_dir_all(root.join(".jails/intents")).unwrap();
-    fs::create_dir_all(root.join(".jails/models")).unwrap();
-    fs::write(
-        root.join(".jails/intents/record-note-44c464a9777ec2f0.files"),
-        "src/main/java/com/example/demo/domain/Note.java\n",
-    )
-    .unwrap();
-    fs::write(
-        root.join(".jails/models/model-note-70ab6d016b346e7e.files"),
-        "title:string!\n",
-    )
-    .unwrap();
-    fs::write(root.join(".jails/version"), "0.0.1\n").unwrap();
+    fs::create_dir_all(root.join(".jails")).unwrap();
     fs::write(
         root.join(".jails/app.toml"),
         "schema = 1\ncapabilities = []\n\n[[generate]]\nkind = \"record\"\nname = \"Note\"\n\
          fields = [\"title:string!\"]\n",
     )
     .unwrap();
-    let before = snapshot_tree(&root.join(".jails"));
 
-    // `destroy --pretend` *refuses* here rather than succeeding, and that is
-    // the documented answer: a schema-1 row records what a file is but never
-    // recorded who asked for it, so nothing owns it and `destroy` acts on
-    // ownership. What this test is about is the other half -- a refusal must
-    // not write either, and neither must a plan or a report.
-    for (arguments, must_succeed) in [
-        (vec!["app", "plan"], true),
-        (vec!["destroy", "record", "Note", "--pretend"], false),
-        (
-            vec!["generate", "record", "Other", "title:string!", "--pretend"],
-            true,
-        ),
-        (vec!["routes"], true),
-    ] {
-        let output = jails_cmd(&root, None).args(&arguments).output().unwrap();
-        assert!(
-            output.status.success() || !must_succeed,
-            "`jails {}` failed: {}{}",
-            arguments.join(" "),
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
+    // A project with no store yet. No read may create one -- an empty `.jails`
+    // would make a project that has never been touched look like one that has.
+    let arguments = [
+        vec!["app", "plan"],
+        vec!["destroy", "record", "Note", "--pretend"],
+        vec!["generate", "record", "Other", "title:string!", "--pretend"],
+        vec!["routes"],
+    ];
+    let before = snapshot_tree(&root.join(".jails"));
+    for argv in &arguments {
+        jails_cmd(&root, None).args(argv).output().unwrap();
         assert_eq!(
             before,
             snapshot_tree(&root.join(".jails")),
             "`jails {}` changed machine state while only being asked to report",
-            arguments.join(" ")
+            argv.join(" ")
         );
     }
     assert!(
@@ -904,8 +880,8 @@ fn plan_pretend_and_inspection_leave_a_pre_ledger_project_byte_for_byte() {
         "and no read created the ledger either"
     );
 
-    // The first mutating command migrates, and only then is the old layout
-    // retired -- after the ledger that replaces it is durable.
+    // The same once there *is* a store, which is the case with something to
+    // lose: a read that rewrote it would move the generation nothing committed.
     let applied = jails_cmd(&root, None)
         .args(["app", "apply", "--no-start"])
         .output()
@@ -917,9 +893,16 @@ fn plan_pretend_and_inspection_leave_a_pre_ledger_project_byte_for_byte() {
         String::from_utf8_lossy(&applied.stderr)
     );
     assert!(root.join(".jails/ledger.toml").is_file());
-    assert!(!root.join(".jails/intents").exists());
-    assert!(!root.join(".jails/models").exists());
-    assert!(!root.join(".jails/version").exists());
+    let before = snapshot_tree(&root.join(".jails"));
+    for argv in &arguments {
+        jails_cmd(&root, None).args(argv).output().unwrap();
+        assert_eq!(
+            before,
+            snapshot_tree(&root.join(".jails")),
+            "`jails {}` changed a committed store while only being asked to report",
+            argv.join(" ")
+        );
+    }
 }
 
 /// Every file under a directory with its bytes, so "left it alone" is a claim

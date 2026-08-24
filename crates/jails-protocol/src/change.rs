@@ -71,7 +71,6 @@ pub enum MaintenanceAttribution {
     AppInit,
     Rename,
     AdoptLayout,
-    AdoptLegacy,
     Format,
 }
 
@@ -81,17 +80,18 @@ impl MaintenanceAttribution {
             Self::AppInit => 0,
             Self::Rename => 1,
             Self::AdoptLayout => 2,
-            Self::AdoptLegacy => 3,
             Self::Format => 4,
         }
     }
 
+    /// Tag 3 was `AdoptLegacy`, and is not reused: a tag reaches a recovered
+    /// journal, so a number that meant one thing must not come to mean
+    /// another.
     fn from_tag(tag: u8) -> Result<Self> {
         Ok(match tag {
             0 => Self::AppInit,
             1 => Self::Rename,
             2 => Self::AdoptLayout,
-            3 => Self::AdoptLegacy,
             4 => Self::Format,
             other => Err(format!("unknown maintenance attribution tag {other}"))?,
         })

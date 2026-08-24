@@ -18,11 +18,11 @@
 //! registry's `stale-input` would break every consumer that matched on the
 //! spelling it had.
 
-use crate::prepare::OperationTarget;
 use crate::receipt::{AppliedReceipt, ApplyOutcome};
 use crate::recovery::RecoveryOutcome;
 use crate::report::Report;
 use jails_protocol::effect::{EffectId, EffectState, PostCommitEffect};
+use jails_protocol::identity::ProjectPath;
 use jails_protocol::identity::{OperationId, TransactionId};
 use jails_protocol::transition::EffectResumeReason;
 
@@ -113,7 +113,6 @@ pub enum ErrorCode {
     InputUnreadable,
     InputInvalid,
     UnsupportedProject,
-    LegacyAmbiguous,
     PlanRefused,
     PrepareRefused,
     ToolFailed,
@@ -128,12 +127,11 @@ pub enum ErrorCode {
 
 impl ErrorCode {
     /// Every code, so a test can assert the registry is complete.
-    pub const ALL: [ErrorCode; 15] = [
+    pub const ALL: [ErrorCode; 14] = [
         Self::InvalidRequest,
         Self::InputUnreadable,
         Self::InputInvalid,
         Self::UnsupportedProject,
-        Self::LegacyAmbiguous,
         Self::PlanRefused,
         Self::PrepareRefused,
         Self::ToolFailed,
@@ -153,7 +151,6 @@ impl ErrorCode {
             Self::InputUnreadable => "input-unreadable",
             Self::InputInvalid => "input-invalid",
             Self::UnsupportedProject => "unsupported-project",
-            Self::LegacyAmbiguous => "legacy-ambiguous",
             Self::PlanRefused => "plan-refused",
             Self::PrepareRefused => "prepare-refused",
             Self::ToolFailed => "tool-failed",
@@ -172,7 +169,7 @@ impl ErrorCode {
 pub struct ErrorReport {
     pub code: ErrorCode,
     pub message: String,
-    pub paths: Vec<OperationTarget>,
+    pub paths: Vec<ProjectPath>,
 }
 
 impl ErrorReport {
@@ -184,7 +181,7 @@ impl ErrorReport {
         }
     }
 
-    pub fn about(mut self, mut paths: Vec<OperationTarget>) -> Self {
+    pub fn about(mut self, mut paths: Vec<ProjectPath>) -> Self {
         paths.sort();
         self.paths = paths;
         self

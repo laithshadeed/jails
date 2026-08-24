@@ -53,9 +53,6 @@ pub(super) fn diff(
     rendered: &BTreeMap<ProjectPath, Vec<u8>>,
     prior: &BTreeMap<ProjectPath, crate::reconcile::PriorOutput>,
     previously_owned: &BTreeSet<ProjectPath>,
-    // The exact paths this invocation claims from an unowned state. Empty for
-    // every route but `adopt --legacy-key ... --replace --force`.
-    claimed: &BTreeSet<ProjectPath>,
     read_object: &super::ObjectReader,
 ) -> Result<Diffed> {
     let mut operations = Vec::new();
@@ -89,7 +86,7 @@ pub(super) fn diff(
                     record_output(&mut outputs, path, object, mode);
                 }
                 operations.push(FileOp::Create {
-                    path: OperationTarget::Project(path.clone()),
+                    path: path.clone(),
                     after: object,
                     mode,
                     contributors,
@@ -98,7 +95,7 @@ pub(super) fn diff(
             (Captured::Present(file), None) => {
                 retired.insert(path.clone());
                 operations.push(FileOp::Delete {
-                    path: OperationTarget::Project(path.clone()),
+                    path: path.clone(),
                     before: GuardedImage {
                         object: ObjectRef::new(file.sha256, file.len),
                         mode: file.mode,
@@ -142,13 +139,7 @@ pub(super) fn diff(
                         mode: file.mode,
                     };
                     let desired = FileImage::Present { object, mode };
-                    match crate::reconcile::reconcile(
-                        path,
-                        recorded,
-                        live_image,
-                        desired,
-                        claimed.contains(path),
-                    )? {
+                    match crate::reconcile::reconcile(path, recorded, live_image, desired)? {
                         crate::reconcile::Decision::Refuse(why) => return Err(why),
                         // Nobody moved, or only the reader did. Either way no
                         // operation, and the base stays where it was -- which
@@ -202,7 +193,7 @@ pub(super) fn diff(
                                         ),
                                     );
                                     operations.push(FileOp::Replace {
-                                        path: OperationTarget::Project(path.clone()),
+                                        path: path.clone(),
                                         before: GuardedImage {
                                             object: live,
                                             mode: file.mode,
@@ -249,7 +240,7 @@ pub(super) fn diff(
                     record_output(&mut outputs, path, object, mode);
                 }
                 operations.push(FileOp::Replace {
-                    path: OperationTarget::Project(path.clone()),
+                    path: path.clone(),
                     before: GuardedImage {
                         object: live,
                         mode: file.mode,

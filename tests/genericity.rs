@@ -48,14 +48,9 @@ const ALLOWED: &[AllowedConcept] = &[
     AllowedConcept {
         word: "ledger",
         files: &[
-            "crates/jails-project/src/ledger.rs",
             "crates/jails-project/src/generated_files.rs",
-            // The read-only machine-state facade classifies the ledger file
-            // and the legacy sources a migration will retire.
+            // The read-only machine-state facade classifies the ledger file.
             "crates/jails-project/src/compat.rs",
-            // The crate root has to declare `pub mod ledger;` and say what it
-            // is for. Same word, same reason, one level up.
-            "crates/jails-project/src/lib.rs",
             // `ProjectPath` must refuse `.jails/ledger.toml` by name, and the
             // test that proves it has to spell the path it is refusing.
             "crates/jails-protocol/src/identity.rs",
@@ -112,11 +107,6 @@ const ALLOWED: &[AllowedConcept] = &[
             // The failpoint names are the commit protocol's own steps, and
             // three of them are the ledger transition.
             "crates/jails-commit/src/fault.rs",
-            "src/app.rs",
-            // The typed shadow reads the schema-1 store's rows to build its
-            // observed side, so it names the module they live in.
-            "crates/jails-generate/src/generate/remove.rs",
-            "src/main.rs",
         ],
         reason: "jails' own bookkeeping file (`abstract.md` §6.3 names it), which collides \
                  with App D's domain by accident -- the word is the storage's, not the \

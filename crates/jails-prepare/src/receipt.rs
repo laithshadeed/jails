@@ -12,7 +12,6 @@
 //! from the shape crash recovery depends on.
 
 use crate::Result;
-use crate::prepare::OperationTarget;
 use jails_protocol::conflict::FileImage;
 use jails_protocol::effect::{EffectId, EffectState, PostCommitEffect};
 use jails_protocol::identity::{OperationId, ProjectPath, TransactionId};
@@ -42,7 +41,7 @@ impl ApplyOutcome {
 /// One path's transition, with both images.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FileReceipt {
-    pub path: OperationTarget,
+    pub path: ProjectPath,
     pub before: FileImage,
     pub after: FileImage,
     pub contributors: BTreeSet<ResourceOwner>,
@@ -109,8 +108,8 @@ mod tests {
     use jails_protocol::identity::ObjectRef;
     use jails_support::codec::sha256;
 
-    fn path(text: &str) -> OperationTarget {
-        OperationTarget::Project(ProjectPath::parse(text).unwrap())
+    fn path(text: &str) -> ProjectPath {
+        ProjectPath::parse(text).unwrap()
     }
 
     fn present(seed: &str) -> FileImage {

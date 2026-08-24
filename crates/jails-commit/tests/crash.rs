@@ -22,7 +22,7 @@ use jails_commit::outcome::{CommitResult, RecoveryError};
 use jails_commit::recover::recover_locked;
 use jails_prepare::operation::{ApplySemantics, OperationIdentityV1, OperationSemanticsV1};
 use jails_prepare::pipeline::PreparedBundle;
-use jails_prepare::prepare::{DirectoryOp, FileOp, OperationTarget, PreparedChange, PreparedKind};
+use jails_prepare::prepare::{DirectoryOp, FileOp, PreparedChange, PreparedKind};
 use jails_prepare::tool::{OperationContextFingerprint, PreparationContextFingerprint};
 use jails_protocol::conflict::{FileImage, FileMode};
 use jails_protocol::identity::{ObjectId, ObjectRef, ProjectPath, TransactionId};
@@ -51,9 +51,7 @@ fn one_create() -> PreparedChange {
                 one_shots_after: Vec::new(),
                 resources_after: Vec::new(),
                 entities_removed: Vec::new(),
-                legacy_after: Vec::new(),
             },
-            migration: None,
         })),
     };
     let mut change = PreparedChange {
@@ -63,7 +61,7 @@ fn one_create() -> PreparedChange {
         preparation: PreparationContextFingerprint::default(),
         input_preconditions: Vec::new(),
         operations: vec![FileOp::Create {
-            path: OperationTarget::Project(ProjectPath::parse(AT).unwrap()),
+            path: ProjectPath::parse(AT).unwrap(),
             after,
             mode: FileMode::new(0o644).unwrap(),
             contributors: BTreeSet::new(),

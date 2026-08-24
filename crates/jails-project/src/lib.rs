@@ -25,7 +25,6 @@ pub mod config;
 pub mod generated_files;
 pub mod inspect;
 pub mod junit;
-pub mod ledger;
 pub mod maven;
 pub mod model;
 pub mod pom;

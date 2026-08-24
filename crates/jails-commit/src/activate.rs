@@ -13,7 +13,7 @@
 
 use std::path::{Path, PathBuf};
 
-use jails_prepare::prepare::{FileOp, GuardedImage, OperationTarget, PreparedIdentityV1};
+use jails_prepare::prepare::{FileOp, GuardedImage, PreparedIdentityV1};
 use jails_protocol::conflict::FileMode;
 use jails_protocol::identity::{ObjectId, ObjectRef, ProjectPath};
 
@@ -77,11 +77,7 @@ pub(crate) fn apply_operations(
         })?;
 
     for (index, operation) in change.operations.iter().enumerate() {
-        let OperationTarget::Project(path) = operation.target() else {
-            // A legacy machine delete touches machine state, not the live
-            // tree, and is applied with the ledger transition.
-            continue;
-        };
+        let path = operation.target();
         let at = root.join(path.as_str());
         match classify(&at, operation) {
             ObservedImage::After => continue,

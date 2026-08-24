@@ -12,7 +12,6 @@
 //! contain its own hash.
 
 use crate::Result;
-use crate::migration::LegacyMigrationIdentity;
 use crate::prepare::PreparedKind;
 use crate::tool::OperationContextFingerprint;
 use jails_protocol::conflict::{PendingIdentity, ResolutionIdentity, RestoreIdentity};
@@ -21,13 +20,11 @@ use jails_protocol::plan::{LedgerIntent, PlannedSubject};
 use jails_protocol::request::InvocationFingerprint;
 use jails_support::codec::{self, Decoder, Encoder};
 
-/// An apply's meaning: what is wanted, what the store should say, and the
-/// legacy state being migrated if this is the first schema-2 commit.
+/// An apply's meaning: what is wanted, and what the store should say after.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ApplySemantics {
     pub subject: PlannedSubject,
     pub ledger_intent: LedgerIntent,
-    pub migration: Option<LegacyMigrationIdentity>,
 }
 
 /// What this operation *means*, as opposed to what it does to files.
@@ -84,7 +81,7 @@ impl OperationSemanticsV1 {
             Self::Apply(apply) => {
                 apply.subject.encode(encoder)?;
                 apply.ledger_intent.encode(encoder)?;
-                encoder.option(apply.migration.as_ref(), |e, one| one.encode(e))
+                Ok(())
             }
             Self::Finalise {
                 origin,
@@ -122,7 +119,6 @@ impl OperationSemanticsV1 {
             0 => Self::Apply(Box::new(ApplySemantics {
                 subject: PlannedSubject::decode(decoder)?,
                 ledger_intent: LedgerIntent::decode(decoder)?,
-                migration: decoder.option(LegacyMigrationIdentity::decode)?,
             })),
             1 => {
                 let origin = OperationId::decode(decoder)?;

@@ -103,168 +103,6 @@ impl ExternalInputId {
     }
 }
 
-/// One pre-schema-2 machine file.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
-pub enum LegacySourcePath {
-    Schema1Ledger,
-    AppState,
-    IntentFiles { name: LegacyFileName },
-    ModelFiles { name: LegacyFileName },
-    GlobalFiles,
-    VersionFile,
-}
-
-/// One UTF-8 component ending `.files`.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
-pub struct LegacyFileName(String);
-
-impl LegacyFileName {
-    pub fn parse(text: &str) -> Result<Self> {
-        if !text.ends_with(".files") {
-            return Err(format!("`{text}` is not a legacy `.files` component"));
-        }
-        if text.contains('/') || text.contains('\\') || text.contains("..") {
-            return Err(format!("`{text}` is a path, not one component"));
-        }
-        if text.len() <= ".files".len() {
-            return Err("a legacy component has no stem".to_string());
-        }
-        Ok(Self(text.to_string()))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl LegacyFileName {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.string(&self.0)
-    }
-
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Self::parse(&decoder.string()?)
-    }
-}
-
-impl LegacySourcePath {
-    fn tag(&self) -> u8 {
-        match self {
-            Self::Schema1Ledger => 0,
-            Self::AppState => 1,
-            Self::IntentFiles { .. } => 2,
-            Self::ModelFiles { .. } => 3,
-            Self::GlobalFiles => 4,
-            Self::VersionFile => 5,
-        }
-    }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(self.tag());
-        match self {
-            Self::IntentFiles { name } | Self::ModelFiles { name } => name.encode(encoder),
-            _ => Ok(()),
-        }
-    }
-
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Schema1Ledger,
-            1 => Self::AppState,
-            2 => Self::IntentFiles {
-                name: LegacyFileName::decode(decoder)?,
-            },
-            3 => Self::ModelFiles {
-                name: LegacyFileName::decode(decoder)?,
-            },
-            4 => Self::GlobalFiles,
-            5 => Self::VersionFile,
-            other => Err(format!("unknown legacy source path tag {other}"))?,
-        })
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum LegacyDirectoryKind {
-    Intents,
-    Models,
-}
-
-impl LegacyDirectoryKind {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(match self {
-            Self::Intents => 0,
-            Self::Models => 1,
-        });
-        Ok(())
-    }
-
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Intents,
-            1 => Self::Models,
-            other => Err(format!("unknown legacy directory kind tag {other}"))?,
-        })
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum LegacyDirectoryState {
-    Absent,
-    Present {
-        entries: Vec<LegacyFileName>,
-        entries_sha256: ObjectId,
-    },
-}
-
-impl LegacyDirectoryState {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        match self {
-            Self::Absent => {
-                encoder.tag(0);
-                Ok(())
-            }
-            Self::Present {
-                entries,
-                entries_sha256,
-            } => {
-                encoder.tag(1);
-                encoder.count(entries.len())?;
-                let mut previous: Option<&LegacyFileName> = None;
-                for entry in entries {
-                    ordered(previous, entry)?;
-                    previous = Some(entry);
-                    entry.encode(encoder)?;
-                }
-                entries_sha256.encode(encoder);
-                Ok(())
-            }
-        }
-    }
-
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Absent,
-            1 => {
-                let count = decoder.count()?;
-                let mut entries = Vec::new();
-                let mut previous: Option<LegacyFileName> = None;
-                for _ in 0..count {
-                    let entry = LegacyFileName::decode(decoder)?;
-                    ordered(previous.as_ref(), &entry)?;
-                    previous = Some(entry.clone());
-                    entries.push(entry);
-                }
-                Self::Present {
-                    entries,
-                    entries_sha256: ObjectId::decode(decoder)?,
-                }
-            }
-            other => Err(format!("unknown legacy directory state tag {other}"))?,
-        })
-    }
-}
-
 impl MachineRootPresence {
     pub fn encode(&self, encoder: &mut Encoder) {
         encoder.tag(match self {
@@ -317,19 +155,6 @@ pub enum InputPrecondition {
         sha256: ObjectId,
         len: u64,
     },
-    LegacyAbsent {
-        path: LegacySourcePath,
-    },
-    LegacyFile {
-        path: LegacySourcePath,
-        sha256: ObjectId,
-        len: u64,
-        mode: FileMode,
-    },
-    LegacyDirectory {
-        kind: LegacyDirectoryKind,
-        state: LegacyDirectoryState,
-    },
     MachineRoot {
         presence: MachineRootPresence,
     },
@@ -341,8 +166,10 @@ pub enum InputPrecondition {
 }
 
 impl InputPrecondition {
-    /// The fixed wire tag. §R3.1 numbers these; the gaps are the
-    /// machine-object and machine-receipt-directory variants R4 adds.
+    /// The fixed wire tag. The gaps are variants that have been and gone:
+    /// 5-7 were pre-schema-2 machine state, back when a first commit migrated
+    /// a store this binary no longer reads. A tag is never reused, so a number
+    /// that meant one thing cannot come to mean another.
     pub fn tag(&self) -> u8 {
         match self {
             Self::Absent { .. } => 0,
@@ -350,9 +177,6 @@ impl InputPrecondition {
             Self::Directory { .. } => 2,
             Self::ExternalAbsent { .. } => 3,
             Self::ExternalFile { .. } => 4,
-            Self::LegacyAbsent { .. } => 5,
-            Self::LegacyFile { .. } => 6,
-            Self::LegacyDirectory { .. } => 7,
             Self::MachineReceipt { .. } => 9,
             Self::MachineRoot { .. } => 11,
         }
@@ -396,22 +220,6 @@ impl InputPrecondition {
                 sha256.encode(encoder);
                 encoder.u64(*len);
             }
-            Self::LegacyAbsent { path } => path.encode(encoder)?,
-            Self::LegacyFile {
-                path,
-                sha256,
-                len,
-                mode,
-            } => {
-                path.encode(encoder)?;
-                sha256.encode(encoder);
-                encoder.u64(*len);
-                encoder.u32(mode.bits());
-            }
-            Self::LegacyDirectory { kind, state } => {
-                kind.encode(encoder)?;
-                state.encode(encoder)?;
-            }
             Self::MachineReceipt {
                 transaction,
                 generation,
@@ -433,8 +241,6 @@ impl InputPrecondition {
                 path.as_str().to_string()
             }
             Self::ExternalAbsent { id } | Self::ExternalFile { id, .. } => format!("{id:?}"),
-            Self::LegacyAbsent { path } | Self::LegacyFile { path, .. } => format!("{path:?}"),
-            Self::LegacyDirectory { kind, .. } => format!("{kind:?}"),
             Self::MachineReceipt { transaction, .. } => transaction.to_hex(),
             Self::MachineRoot { .. } => String::new(),
         };
@@ -742,19 +548,6 @@ pub fn decode_precondition(decoder: &mut Decoder<'_>) -> Result<InputPreconditio
             sha256: ObjectId::decode(decoder)?,
             len: decoder.u64()?,
         },
-        5 => InputPrecondition::LegacyAbsent {
-            path: LegacySourcePath::decode(decoder)?,
-        },
-        6 => InputPrecondition::LegacyFile {
-            path: LegacySourcePath::decode(decoder)?,
-            sha256: ObjectId::decode(decoder)?,
-            len: decoder.u64()?,
-            mode: FileMode::new(decoder.u32()?)?,
-        },
-        7 => InputPrecondition::LegacyDirectory {
-            kind: LegacyDirectoryKind::decode(decoder)?,
-            state: LegacyDirectoryState::decode(decoder)?,
-        },
         9 => InputPrecondition::MachineReceipt {
             transaction: TransactionId::decode(decoder)?,
             generation: decoder.u64()?,
@@ -992,13 +785,5 @@ mod tests {
         let mut decoder = Decoder::new(&bytes).unwrap();
         assert_eq!(decode_precondition(&mut decoder).unwrap(), input);
         decoder.finish().unwrap();
-    }
-
-    #[test]
-    fn a_legacy_component_is_one_dot_files_name() {
-        assert!(LegacyFileName::parse("record-note-abc.files").is_ok());
-        for bad in ["", ".files", "record.txt", "a/b.files", "../x.files"] {
-            assert!(LegacyFileName::parse(bad).is_err(), "{bad}");
-        }
     }
 }

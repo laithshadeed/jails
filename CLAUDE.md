@@ -34,7 +34,7 @@ compiler cannot see, and assigns every module its crate.
 | `jails-support` | writing, running, splicing, encoding. Nothing here knows what a Java project is. `Result`, `debug_cmd` and `CWD_LOCK` live here. |
 | `jails-java` | reading Java (`java`, `classfile`) and rendering templates into it (`template`). |
 | `jails-spec` | where a project is and how it is laid out (`build`, `spec::paths`, `spec::layout`), what a field spec means (`spec::field`), and the closed CLI vocabularies (`spec::kind`). |
-| `jails-project` | one resolved `model::Project`, plus every file jails writes *about* a project — the reader's (`config`, `compose`) and jails' own (`ledger`, `generated_files`). |
+| `jails-project` | one resolved `model::Project`, plus every file jails writes *about* a project — the reader's (`config`, `compose`) and the read-only view of jails' own (`compat`, `projection`). |
 | `jails-generate` | everything that decides what Java to write: `generate`, `spring`, `add`, `sql`. |
 | `jails-tooling` | commands that drive a toolchain or report on a project: `run`, `testd`, `doctor`, `why` and the rest. |
 | `jails` (root) | the binary: `main`, `new`, `app`, `adopt`, and `tests/`. |
@@ -94,7 +94,6 @@ Four things to know before touching it:
     remember. Import normalisation, `package-info.java` planning,
     `ensure_failsafe`, `ensure_assertj`, `tidy_blank_lines`.
   - `generate/scaffold.rs` — `scaffold` and its evolution step `g field`.
-  - `generate/remove.rs` — `destroy`, and `recomputed_paths` (see below).
 
   **The test module still lives in `generate.rs`**, not beside each
   submodule, which is the one place this tree does not follow the colocated
@@ -204,13 +203,14 @@ Four things to know before touching it:
   which shape it chose and names the dependencies it could not splice. `add`
   is **not** exempted: a capability that installs the code and skips the
   dependency is worse than one that refuses.
-- `src/adopt.rs` — `jails adopt`: a closed synonym table mapping directory
-  names onto `LAYERS_IN_ORDER`, written out as `[layout]` through
-  `config::record_layout`. **Configuration, not machinery** — everything
-  downstream already reads `Config::layers()`. Three rules, each load-bearing:
-  an unrecognised directory is reported not guessed; two candidates for one
-  layer writes neither; and it never touches `[project] capabilities`, because
-  that is the list `sync` acts on.
+- `crates/jails-engine/src/route/maintenance.rs` — `jails adopt`: a closed
+  synonym table mapping directory names onto `LAYERS_IN_ORDER`, committed as
+  `SemanticEdit::HumanConfigLayout` rows in the `[layout]` table.
+  **Configuration, not machinery** — everything downstream already reads
+  `Config::layers()`. Three rules, each load-bearing: an unrecognised directory
+  is reported not guessed; two candidates for one layer writes neither; and it
+  never touches `[project] capabilities`, because that is the list `sync` acts
+  on.
 - `crates/jails-project/src/config.rs` — `jails.toml`, the per-project layout override. Hand-parsed
   (jails' only dependency is clap), understands one `[layout]` table of
   `key = "value"` pairs, and the keys are a **closed set** matching
@@ -418,10 +418,10 @@ Four things to know before touching it:
 - `src/new.rs` also owns **`--app <manifest>`** on both `new` and `new-cli`:
   create the project, seed `.jails/app.toml`, apply it. One command from an
   empty directory to a project that passes `mvn clean verify`. Making it work
-  meant removing every `Project::discover()` from the apply path —
-  `add::add_in`, `add::preflight_in` and `ResolvedIntent::apply_to` take an
-  explicit project — because `discover` reads the **process CWD**, which is the
-  parent directory, not the project just created.
+  meant removing every `Project::discover()` from the apply path — every route
+  takes an explicit `Run` carrying a resolved `Project` — because `discover`
+  reads the **process CWD**, which is the parent directory, not the project
+  just created.
 - `src/app.rs` — `jails app plan|apply`: a declarative manifest at
   `.jails/app.toml` (`schema`, `capabilities`, and a closed `[[generate]]`
   schema of `kind`/`name`/`fields`/`timestamps`/`indexes`/`package`/`on`/
@@ -430,36 +430,38 @@ Four things to know before touching it:
   under both spellings is an error, not a last-one-wins). **Deliberately domain-blind** — the module docs say it,
   and it is load-bearing: a crawler, a support inbox and a payments gateway
   are three lists of the same generic intents, and none of them gets a
-  command, branch, enum or template in core. `apply` installs capabilities,
-  runs each unapplied intent, **records it in `.jails/ledger.toml` after every
-  one** (so an interrupted apply resumes), then **reconciles every capability a
-  second time** — because a generator can create a new integration point for
-  an already-installed capability.
-- `crates/jails-project/src/ledger.rs` — `.jails/ledger.toml`, the **one** file jails keeps its own
-  bookkeeping in. It replaced five (`app-state-v1`, `intents/*`, `models/*`,
-  `files`, `version`), two of which were intent registries keyed differently —
-  which is what made an edited `fields` line arrive as a *new* intent against
-  files that already existed. **Identity is `(recipe, name, package)`;
-  everything else is content**, so an edit is an update to a known entity and
-  `app apply` three-way merges it.
+  command, branch, enum or template in core. `apply` is **one transition** over
+  the whole manifest: capabilities and intents are declared together and
+  reconciliation works out the difference, so an interrupted apply resumes from
+  the journal rather than from a half-written registry.
 
-  Two writers reach the same row and neither owns the other's columns:
-  `generate` sets `files`, `app apply` sets the spec. Both go through
-  `ledger::entry_mut` — a whole-row replace erases the other half, and the
-  erasure is indistinguishable from a manifest whose `fields` line was
-  emptied. `Applied::has_spec()` is what tells those two apart.
+  It used to reconcile every capability a *second* time, because a generator
+  can create an integration point an already-installed capability needs — the
+  case being `add db` wiring a `@SpringBootTest` that a later row writes. That
+  is fixed where it belongs instead: the capability writing the test puts the
+  container import in itself (`route::support::with_test_support`), so there is
+  nothing for a second pass to catch and the formatter runs once.
+- `.jails/ledger.toml` — the **one** file jails keeps its own bookkeeping in,
+  and it is the transaction store's, not a module's. `jails-protocol`'s
+  `envelope.rs` owns the file format (magic, schema number, checksum, and a
+  hex-encoded canonical payload); `jails-commit`'s `store.rs` reads and writes
+  it; `crates/jails-project/src/compat.rs` is the **read-only** classifier
+  every command goes through — absent, current, or unreadable, and never a
+  fourth answer that quietly repairs something.
 
-  The schema is **closed** (unknown key = error, same rule as `config.rs`),
-  because `destroy` acts on this file and a silently-ignored key would make it
-  delete the wrong set. Arrays are split on their *separating* commas, not on
-  every comma: `totals:map<string,double>` is a documented field type, and the
-  old format hex-encoded each element precisely to dodge that — the dodge is
-  why nobody had noticed a naive split could not hold it.
+  It replaced five files (`app-state-v1`, `intents/*`, `models/*`, `files`,
+  `version`), two of which were intent registries keyed differently — which is
+  what made an edited `fields` line arrive as a *new* intent against files that
+  already existed. **Identity is the `EntityId`; everything else is content**,
+  so an edit is an update to a known entity and `app apply` three-way merges
+  it.
 
-  A pre-ledger `.jails/` is folded in on first read and the old files removed;
-  leaving them would leave a second registry to drift. The legacy field list
-  was comma-joined and therefore ambiguous, so the fold prefers the recorded
-  model where one exists.
+  **A store this binary cannot decode is an error, never an absence.** Treating
+  it as empty would silently offer to regenerate a project's whole contents.
+  There is no second format and no translation: jails is not released, so a
+  ledger this binary did not write was written by a different jails, and the
+  honest instruction is to say which file rather than guess at an older schema.
+
 - `examples/` — the proof applications, and the reason the generic machinery
   can be trusted. `examples/web-crawler/` and `examples/support-inbox/` are
   manifests built from the same generic intents; `ACCEPTANCE.md` is the
@@ -562,29 +564,28 @@ templates:
   parameter holding the imports that costs. `import_of` returns an empty
   string when the two packages match, which is what keeps `--package ''`
   (everything flat) compiling.
-- **`destroy` has to resolve the same subpackage `generate` used**, so both
-  build their paths through the same `place()` closure. A kind added to one
-  and not the other silently strands files.
+- **`destroy` acts on what the store recorded, and nothing else.** It stops
+  declaring the entity and reconciliation works out what that means: a file
+  only that entity owned becomes an absence, a dependency another entity still
+  claims stays. There is no path table and no recomputation — `KIND_FILES`, 672
+  lines of hand-written `(tree, layer, placement, filename)` rows, is deleted,
+  and so is the `recomputed_paths` trick that replaced it. **Adding a kind
+  therefore needs no destroy arm at all.**
 
-  **`destroy` no longer transcribes paths.** It reads the record first
-  (`.jails/ledger.toml`), and where there is none it recomputes through
-  `generate::artifacts_for` — the same function `generate` writes from.
-  `KIND_FILES`, 672 lines of hand-written `(tree, layer, placement, filename)`
-  rows, is deleted.
+  A kind with no recorded row prints why, naming the generate command that
+  would record it — not a bare "nothing to destroy" over files that are right
+  there. `tests/agreement.rs` runs every scenario forward and back and fails
+  both ways: a path `destroy` names that nothing generated, and a file
+  `generate` wrote that `destroy` would strand. A file that is *deliberately*
+  kept — a migration, a fixture, a shared `SchedulingConfig` — goes in
+  `ALLOWED_LEFTOVER` **with its reason**.
 
-  The trick that made that possible: `destroy` is given a kind and a name and
-  never the arguments, and most generators refuse without them — but **those
-  arguments decide the file contents, not the file names**. So
-  `recomputed_paths` offers each generator a short list of argument *shapes*
-  and keeps the paths of the first it accepts. **Adding a kind therefore needs
-  no destroy arm at all**; if it demands an argument no shape supplies, it
-  shows up in `tests/agreement.rs`'s `SILENT_WITHOUT_A_RECORD`, which must
-  name it with the reason. That test now runs both directions twice: once with
-  the record, and once over a project whose `.jails/` has been deleted, which
-  is the only way the recomputed path is exercised at all.
-
-  A kind with no answer prints why, naming the generate command that would
-  record it — not a bare "nothing to destroy" over files that are right there.
+  The one sweep that goes beyond the record is `destroy strategy`: a strategy
+  is an interface plus a bean per implementation, and an implementation written
+  by hand afterwards is still one of its classes. Leaving it behind
+  implementing a deleted interface stops the project compiling, so it is
+  declared as an absence with `force` — the flag that means "the bytes are not
+  jails'" — and the deletion prompt is the human ask that authorises it.
 
 ## Import order is normalised at write time, not in templates
 

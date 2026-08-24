@@ -29,7 +29,6 @@ use crate::conflict::{
 };
 use crate::effect::DeferredEffectIntent;
 use crate::entity::{OneShotId, OneShotSpec, SourceInputId};
-use crate::envelope::LegacyEntry;
 use crate::identity::{ObjectId, OperationId, ProjectPath};
 use crate::provenance::RendererStamp;
 use crate::record::AppliedEntity;
@@ -252,7 +251,6 @@ pub struct PendingLedgerState {
     pub one_shots: Vec<PendingOneShot>,
     pub resources: Vec<PendingResource>,
     pub outputs: Vec<PendingOutput>,
-    pub legacy: Vec<LegacyEntry>,
 }
 
 impl PendingLedgerState {
@@ -273,10 +271,6 @@ impl PendingLedgerState {
         for output in &self.outputs {
             output.encode(encoder)?;
         }
-        encoder.count(self.legacy.len())?;
-        for entry in &self.legacy {
-            entry.encode(encoder)?;
-        }
         Ok(())
     }
 
@@ -293,9 +287,6 @@ impl PendingLedgerState {
         }
         for _ in 0..decoder.count()? {
             state.outputs.push(PendingOutput::decode(decoder)?);
-        }
-        for _ in 0..decoder.count()? {
-            state.legacy.push(LegacyEntry::decode(decoder)?);
         }
         Ok(state)
     }

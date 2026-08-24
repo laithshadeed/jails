@@ -16,13 +16,11 @@
 //! `jails add <TAB>`, and the doc comment on each variant becomes its
 //! completion description.
 
-use crate::compose::{self, Service as ComposeService};
-use crate::generate::{base_package, import_of, main_dir, package_of, test_dir, write_new_file};
+use crate::compose::{self};
+use crate::generate::{base_package, main_dir, test_dir};
 use crate::model::{Artifact, Change, Layer, Project, Slice, SpringTestImport};
 use crate::pom::{self, Dependency, Flavor, MIN_RELEASE, TARGET_RELEASE};
 use jails_support::Result;
-use std::fs;
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 mod messaging;
@@ -55,383 +53,9 @@ pub fn drop_compiled_shadow(project: &Project, deleted: &std::path::Path) {
     database::delete_maven_output(project.root(), &project.root().join(deleted));
 }
 
-mod shrink;
-mod test_wiring;
 use database::*;
-pub use shrink::*;
-use test_wiring::*;
 
 pub use crate::spec::kind::Capability;
-
-/// Change every requested capability before any of them is applied.
-///
-/// `jails add db kafka` applied them in turn, so a project that cannot have
-/// the second was left with the first: `add` reported a failure over a
-/// half-changed pom, and the obvious retry then had to skip `db` by hand.
-/// Planning is pure, and it is where the refusals live (`require_spring`, a
-/// release too old, an unreadable pom), so building all the plans first
-/// turns that class of failure back into "nothing happened".
-///
-/// This is not a transaction and does not claim to be: an I/O error part-way
-/// through the apply still leaves a partial change. It removes the failure
-/// jails can actually see coming.
-pub fn preflight(
-    capabilities: &[Capability],
-    name: Option<&str>,
-    package: Option<&str>,
-) -> Result<()> {
-    if capabilities.len() < 2 {
-        return Ok(());
-    }
-    preflight_in(&Project::discover()?, capabilities, name, package)
-}
-
-/// The same check against a project the caller already resolved.
-pub fn preflight_in(
-    project: &Project,
-    capabilities: &[Capability],
-    name: Option<&str>,
-    package: Option<&str>,
-) -> Result<()> {
-    if capabilities.len() < 2 {
-        return Ok(());
-    }
-    require_java_release(project.java_release())?;
-    let mut combined = Change::default();
-    for &capability in capabilities {
-        let planned = build_plan(capability, project, name, package).map_err(|e| {
-            format!(
-                "{e}\n\nnothing was written -- `{}` was refused, so none of the {} \
-                 requested capabilities were applied.",
-                capability.label(),
-                capabilities.len()
-            )
-        })?;
-        combined = combined.merge(planned).map_err(|e| {
-            format!(
-                "{e}\n\nnothing was written -- the {} requested capabilities conflict.",
-                capabilities.len()
-            )
-        })?;
-    }
-    Ok(())
-}
-
-pub fn add(
-    capability: Capability,
-    name: Option<&str>,
-    dry_run: bool,
-    package: Option<&str>,
-    debug: bool,
-    no_start: bool,
-) -> Result<()> {
-    add_in(
-        &Project::discover()?,
-        capability,
-        name,
-        dry_run,
-        package,
-        debug,
-        no_start,
-    )
-}
-
-/// Apply a capability to a project the caller has already resolved.
-///
-/// `Project::discover()` reads the process CWD, which is the right default at
-/// the CLI boundary and wrong everywhere else: `jails new --app <manifest>`
-/// applies to the project it just created, not to whatever encloses the
-/// directory the user happens to be standing in. Resolving once at the top and
-/// threading the value is rung 1's whole shape.
-#[allow(clippy::too_many_arguments)]
-pub fn add_in(
-    project: &Project,
-    capability: Capability,
-    name: Option<&str>,
-    dry_run: bool,
-    package: Option<&str>,
-    debug: bool,
-    no_start: bool,
-) -> Result<()> {
-    // Not exempted, on purpose (`plan.md` §12): a capability is a dependency
-    // plus code plus a test, and jails will not edit a build file it refuses to
-    // read. A capability that installs the code and silently skips the
-    // dependency is worse than one that refuses -- the reader gets a compile
-    // error for a file they did not write.
-    project.require_maven(capability.label())?;
-    let root = project.root().to_path_buf();
-    let pom_text = project.pom().to_string();
-    let flavor = project.flavor();
-    require_java_release(project.java_release())?;
-    let plan = build_plan(capability, project, name, package)?;
-
-    let mut updated_pom = pom_text.clone();
-    let mut spliced: Vec<&Dependency> = Vec::new();
-    for dep in &plan.deps {
-        match pom::add_dependency(&updated_pom, dep)? {
-            Some(next) => {
-                updated_pom = next;
-                spliced.push(dep);
-            }
-            None => println!("  exists  {}:{}", dep.group_id, dep.artifact_id),
-        }
-    }
-
-    let mut spliced_plugins: Vec<&str> = Vec::new();
-    for (artifact_id, body) in &plan.plugins {
-        match pom::add_plugin(&updated_pom, artifact_id, body)? {
-            Some(next) => {
-                updated_pom = next;
-                spliced_plugins.push(artifact_id);
-            }
-            None => println!("  exists  plugin {artifact_id}"),
-        }
-    }
-
-    let mut compose_text = compose::read(&root)?;
-    let mut compose_added: Vec<&ComposeService> = Vec::new();
-    for svc in &plan.compose {
-        match compose::add_service(&compose_text, svc) {
-            Some(next) => {
-                compose_text = next;
-                compose_added.push(svc);
-            }
-            None => println!("  exists  compose service {}", svc.name),
-        }
-    }
-
-    let mut docker_compose_dep = false;
-    if flavor == Flavor::SpringBoot
-        && !plan.compose.is_empty()
-        && compose::has_services(&compose_text)
-    {
-        match pom::add_dependency(&updated_pom, &crate::pom::SPRING_DOCKER_COMPOSE)? {
-            Some(next) => {
-                updated_pom = next;
-                docker_compose_dep = true;
-            }
-            None => println!(
-                "  exists  {}:{}",
-                crate::pom::SPRING_DOCKER_COMPOSE.group_id,
-                crate::pom::SPRING_DOCKER_COMPOSE.artifact_id
-            ),
-        }
-    }
-
-    if dry_run {
-        for dep in &spliced {
-            println!(
-                "  would add dependency  {}:{}",
-                dep.group_id, dep.artifact_id
-            );
-        }
-        if docker_compose_dep {
-            println!(
-                "  would add dependency  {}:{} (optional)",
-                crate::pom::SPRING_DOCKER_COMPOSE.group_id,
-                crate::pom::SPRING_DOCKER_COMPOSE.artifact_id
-            );
-        }
-        for artifact_id in &spliced_plugins {
-            println!("  would add plugin  {artifact_id}");
-        }
-        for file in &plan.files {
-            let verb = if file.path.exists() {
-                "would skip (exists)"
-            } else {
-                "would create"
-            };
-            println!("  {verb}  {}", rel(&root, &file.path));
-        }
-        for svc in &compose_added {
-            println!("  would add compose service  {}", svc.name);
-        }
-        if let Some(cfg) = &plan.spring_test_import {
-            install_db_properties(&root, true)?;
-            install_test_container_import(&root, cfg, true)?;
-        }
-        install_capability_properties(&root, capability.label(), &plan.properties, true)?;
-        return Ok(());
-    }
-
-    let pom_changed = !spliced.is_empty() || !spliced_plugins.is_empty() || docker_compose_dep;
-    if pom_changed {
-        crate::apply::put_named(root.join("pom.xml"), &updated_pom, "pom.xml")?;
-        for dep in &spliced {
-            println!("     dep  {}:{}", dep.group_id, dep.artifact_id);
-        }
-        if docker_compose_dep {
-            println!(
-                "     dep  {}:{} (optional)",
-                crate::pom::SPRING_DOCKER_COMPOSE.group_id,
-                crate::pom::SPRING_DOCKER_COMPOSE.artifact_id
-            );
-        }
-        for artifact_id in &spliced_plugins {
-            println!("  plugin  {artifact_id}");
-        }
-    }
-
-    let mut created = 0;
-    for file in &plan.files {
-        if file.path.exists() {
-            if should_replace_postgres_test_config(&file.path) {
-                let contents = if file.path.extension().is_some_and(|e| e == "java") {
-                    jails_java::tidy::normalize_imports(&file.contents)
-                } else {
-                    file.contents.clone()
-                };
-                // This is the write plan.md §11 names: a capability updating a
-                // file it wrote before, which used to go straight past the
-                // collision check with a bare `fs::write`. `replace` says so.
-                crate::apply::replace(&file.path, &contents)?;
-                println!("  update  {}", rel(&root, &file.path));
-                created += 1;
-            } else {
-                println!("  exists  {}", rel(&root, &file.path));
-            }
-            continue;
-        }
-        write_new_file(&root, &file.path, &file.contents)?;
-        println!("  create  {}", rel(&root, &file.path));
-        created += 1;
-    }
-
-    if !compose_added.is_empty() {
-        compose::write(&root, &compose_text)?;
-        println!("  compose {}", rel(&root, &compose::path(&root)));
-        for svc in &compose_added {
-            println!("  service {}", svc.name);
-        }
-    }
-
-    let mut tests_wired = false;
-    if let Some(cfg) = &plan.spring_test_import {
-        tests_wired = install_db_properties(&root, false)?;
-        tests_wired |= remove_legacy_spring_factories(&root)?;
-        tests_wired |= install_test_container_import(&root, cfg, false)?;
-    }
-    tests_wired |=
-        install_capability_properties(&root, capability.label(), &plan.properties, false)?;
-
-    // Same rule as Failsafe: a capability that writes a test writes it
-    // against AssertJ, so the project has to have AssertJ. `add testkit` on a
-    // plain Maven project jails did not create is where this showed up --
-    // six `cannot find symbol: method assertThat` for a file the reader never
-    // wrote.
-    crate::generate::ensure_assertj(
-        project,
-        plan.files
-            .iter()
-            .any(|f| f.path.to_string_lossy().contains("src/test/java")),
-    )?;
-
-    // And the same rule for Boot 4's servlet test slice. `add security`
-    // generates a `@WebMvcTest`, and `spring-boot-starter-test` does not
-    // bring the module that holds it -- so without this, `mvn verify` stops
-    // while compiling the generated test and no test in the project runs.
-    crate::generate::ensure_webmvc_test(
-        project,
-        crate::generate::writes_a_webmvc_test(&plan.files),
-    )?;
-
-    // Same rule as the generators: a capability that writes an `*IT` has to
-    // make sure something runs it. Failsafe is not in the Spring Boot
-    // parent's default build, so without this `mvn verify` completes,
-    // reports success, and executes none of them.
-    if plan.files.iter().any(|f| {
-        f.path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|n| n.ends_with("IT.java"))
-    }) && let Some(next) = pom::add_plugin(
-        &updated_pom,
-        crate::spring::FAILSAFE_ARTIFACT,
-        crate::spring::failsafe_plugin(pom::flavor(&updated_pom)),
-    )? {
-        crate::apply::put_named(root.join("pom.xml"), &next, "pom.xml")?;
-        println!("  plugin  {}", crate::spring::FAILSAFE_ARTIFACT);
-        tests_wired = true;
-    }
-
-    if created == 0 && !pom_changed && compose_added.is_empty() && !tests_wired {
-        // Still recorded: the capability *is* part of this project, and a
-        // manifest that omits it because it happened to be installed before
-        // the manifest existed is a manifest `sync` would act on wrongly.
-        crate::config::record_capability(&root, capability.label())?;
-        // `format` is the one capability whose work is not finished by its
-        // pom edit: it also has to leave the sources formatted. Code written
-        // *after* it was installed has never been through the formatter, and
-        // that is the normal case rather than an odd one -- `jails app apply`
-        // installs every capability first and then runs the generate intents,
-        // so on a manifest naming `format` every generated file arrives after
-        // the plugin does. Returning early here is what made App D fail
-        // `jails check` on a project whose every line jails wrote.
-        if matches!(capability, Capability::Format) {
-            if crate::maven::format_quietly(&root) {
-                println!("  format  applied to the sources generated since");
-            } else {
-                println!("  note    could not run the formatter on this toolchain");
-            }
-            return Ok(());
-        }
-        println!("{} is already set up -- nothing to do", capability.label());
-        return Ok(());
-    }
-
-    // Installing a formatter that immediately fails `mvn verify` is a bad
-    // trade: the wrapping it wants is not something a template can predict, so
-    // run it once and leave the project green.
-    //
-    // And if it cannot run at all, undo the pom edit. A formatter bound to
-    // `verify` that crashes on this toolchain turns a working project into one
-    // that cannot build -- palantir-java-format does exactly that when its
-    // pinned version predates the JDK on PATH, which is a bad thing for a
-    // scaffolding tool to leave behind.
-    if matches!(capability, Capability::Format) {
-        if crate::maven::format_quietly(&root) {
-            println!("  format  applied to the existing sources");
-        } else {
-            crate::apply::put_named(root.join("pom.xml"), &pom_text, "pom.xml")?;
-            return Err(
-                "the formatter could not run on this toolchain, so pom.xml was left unchanged.\n       \
-                 palantir-java-format needs a JDK it was built against -- try a current LTS (Java 25),\n       \
-                 or configure Spotless yourself if you need a different formatter."
-                    .to_string(),
-            );
-        }
-    }
-
-    if !compose_added.is_empty() && !no_start {
-        let names: Vec<&str> = compose_added.iter().map(|s| s.name).collect();
-        if compose::up(&root, &names, debug) {
-            println!("  start   {}", names.join(", "));
-        } else {
-            println!(
-                "  note    start with `{}`",
-                compose::missing_docker_hint(&names)
-            );
-        }
-    } else if !compose_added.is_empty() {
-        let names: Vec<&str> = compose_added.iter().map(|s| s.name).collect();
-        println!(
-            "  note    start with `{}`",
-            compose::missing_docker_hint(&names)
-        );
-    }
-
-    // The manifest is written last, so it records what actually landed.
-    crate::config::record_capability(&root, capability.label())?;
-    println!(
-        "added {} ({})",
-        capability.label(),
-        match flavor {
-            Flavor::SpringBoot => "spring boot",
-            Flavor::PlainMaven => "plain maven",
-        }
-    );
-    Ok(())
-}
 
 /// The project must be able to compile what a capability installs.
 ///
@@ -450,6 +74,50 @@ pub fn require_java_release(release: Option<u32>) -> Result<()> {
         )),
         Some(_) => Ok(()),
     }
+}
+
+/// Refuse the whole `add` before any of it is applied.
+///
+/// `jails add db security` on a plain Maven project used to install the
+/// database and *then* refuse the second capability, leaving a half-changed
+/// project and an obvious retry that had to skip `db` by hand. Each capability
+/// is its own transition -- `add db kafka` is two entities, and a scope
+/// speaking for both would relinquish one when the other is the subject -- so
+/// the guard has to be here rather than inside one of them.
+///
+/// Planning is pure and is where the refusals live (`require_spring`, a
+/// release too old, an unreadable pom), so building every plan first turns
+/// that class of failure back into "nothing happened". Merging them is the
+/// second half: two capabilities that would write different bytes to one path
+/// are a conflict worth naming before either lands.
+pub fn preflight_in(
+    project: &Project,
+    capabilities: &[Capability],
+    name: Option<&str>,
+    package: Option<&str>,
+) -> Result<()> {
+    if capabilities.len() < 2 {
+        return Ok(());
+    }
+    require_java_release(project.java_release())?;
+    let mut combined = Change::default();
+    for &capability in capabilities {
+        let planned = plan_named(capability, project, name, package).map_err(|why| {
+            format!(
+                "{why}\n\nnothing was written -- `{}` was refused, so none of the {} \
+                 requested capabilities were applied.",
+                capability.label(),
+                capabilities.len()
+            )
+        })?;
+        combined = combined.merge(planned).map_err(|why| {
+            format!(
+                "{why}\n\nnothing was written -- the {} requested capabilities conflict.",
+                capabilities.len()
+            )
+        })?;
+    }
+    Ok(())
 }
 
 /// The `Change` a capability would make to this project, computed and not applied.
@@ -550,13 +218,6 @@ fn spring_slice_plan(
 ) -> Result<Change> {
     crate::spring::require_spring(slice.flavor(), capability)?;
     Ok(build(slice))
-}
-
-fn rel(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
-        .unwrap_or(path)
-        .display()
-        .to_string()
 }
 
 fn capitalize(s: &str) -> String {
@@ -878,122 +539,6 @@ mod tests {
         assert_eq!(cfg.pkg, "com.example.demo");
         assert_eq!(cfg.class, "TestcontainersConfig");
         assert_eq!(cfg.fqcn(), "com.example.demo.TestcontainersConfig");
-    }
-
-    /// A real project tuned Kafka inside jails' own marked block -- an
-    /// ErrorHandlingDeserializer, acks=all, a KIP-848 opt-in. `remove kafka`
-    /// would have deleted all of it without a word.
-    #[test]
-    fn hand_written_properties_inside_a_marked_block_are_reported() {
-        let owned = vec![
-            "spring.kafka.bootstrap-servers=localhost:9092".to_string(),
-            "spring.kafka.consumer.group-id=rewards".to_string(),
-        ];
-        let existing = "spring.application.name=rewards\n\
-                        # jails:kafka\n\
-                        spring.kafka.bootstrap-servers=localhost:9092\n\
-                        spring.kafka.consumer.group-id=rewards\n\
-                        # a comment jails wrote\n\
-                        spring.kafka.producer.acks=all\n\
-                        spring.kafka.consumer.properties.group.protocol=consumer\n\
-                        # /jails:kafka\n";
-        let unowned = unowned_properties(existing, "kafka", &owned);
-        assert_eq!(
-            unowned,
-            vec![
-                "spring.kafka.producer.acks=all",
-                "spring.kafka.consumer.properties.group.protocol=consumer"
-            ]
-        );
-    }
-
-    #[test]
-    fn properties_outside_the_block_are_not_reported_as_unowned() {
-        let owned = vec!["a=1".to_string()];
-        let existing = "untouched=yes\n# jails:db\na=1\n# /jails:db\nalso.untouched=yes\n";
-        assert!(unowned_properties(existing, "db", &owned).is_empty());
-    }
-
-    #[test]
-    fn spring_factories_block_is_idempotent_to_remove() {
-        let fqcn = "com.example.demo.PostgresContainerConfig";
-        let block = spring_factories_block(fqcn);
-        assert!(block.contains("# jails:db"));
-        assert!(block.contains(SPRING_FACTORIES_KEY));
-        assert!(block.contains(fqcn));
-
-        let gone = remove_jails_db_block(&block, fqcn).unwrap();
-        assert!(gone.trim().is_empty());
-
-        let other =
-            format!("org.springframework.context.ApplicationListener=com.example.Other\n{block}");
-        let next = remove_jails_db_block(&other, fqcn).unwrap();
-        assert!(next.contains("com.example.Other"));
-        assert!(!next.contains(fqcn));
-        assert!(!next.contains("# jails:db"));
-        assert!(remove_jails_db_block("unrelated\n", fqcn).is_none());
-    }
-
-    #[test]
-    fn application_properties_block_disables_exception_translation() {
-        let block = application_properties_block(&compose::PostgresConnect::defaults());
-        assert!(block.contains(EXCEPTION_TRANSLATION_PROPERTY));
-        let gone = remove_jails_db_block(&block, EXCEPTION_TRANSLATION_PROPERTY).unwrap();
-        assert!(gone.trim().is_empty());
-
-        let existing = format!("spring.application.name=demo\n{block}");
-        let next = remove_jails_db_block(&existing, EXCEPTION_TRANSLATION_PROPERTY).unwrap();
-        assert!(next.contains("spring.application.name=demo"));
-        assert!(!next.contains("exceptiontranslation"));
-    }
-
-    #[test]
-    fn application_properties_carry_the_compose_datasource() {
-        // The app needs its own connection: Spring's docker-compose module
-        // supplies one where it works, but it cannot drive every provider,
-        // and a dead datasource kills startup before any code runs.
-        let block = application_properties_block(&compose::PostgresConnect::defaults());
-        assert!(
-            block.contains("spring.datasource.url=jdbc:postgresql://localhost:5432/app"),
-            "{block}"
-        );
-        assert!(block.contains("spring.datasource.username=app"), "{block}");
-        assert!(block.contains("spring.datasource.password=app"), "{block}");
-        for expected in [
-            "spring.datasource.hikari.pool-name=primary",
-            "spring.datasource.hikari.maximum-pool-size=20",
-            "spring.datasource.hikari.connection-timeout=1000",
-            "spring.datasource.hikari.initialization-fail-timeout=1",
-            "spring.datasource.hikari.transaction-isolation=TRANSACTION_READ_COMMITTED",
-            "spring.datasource.hikari.connection-init-sql=SELECT 1/(1-pg_is_in_recovery()::int)",
-            "server.shutdown=graceful",
-            "spring.lifecycle.timeout-per-shutdown-phase=30s",
-        ] {
-            assert!(block.contains(expected), "missing {expected}: {block}");
-        }
-        // Spring's compose module duplicates what `jails run`/`jails start`
-        // already do, and cannot drive every compose provider.
-        assert!(block.contains(COMPOSE_DISABLED_PROPERTY), "{block}");
-    }
-
-    #[test]
-    fn the_datasource_follows_an_edited_compose_file() {
-        let connect = compose::PostgresConnect {
-            host: "localhost".into(),
-            port: 5544,
-            user: "rewards".into(),
-            password: "secret".into(),
-            database: "rewards".into(),
-        };
-        let block = application_properties_block(&connect);
-        assert!(
-            block.contains("spring.datasource.url=jdbc:postgresql://localhost:5544/rewards"),
-            "{block}"
-        );
-        assert!(
-            block.contains("spring.datasource.username=rewards"),
-            "{block}"
-        );
     }
 
     #[test]

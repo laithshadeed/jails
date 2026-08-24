@@ -83,7 +83,6 @@ pub fn migration(run: &Run, description: &str) -> Result<Outcome> {
             }],
             resources_after: change.resources.clone(),
             entities_removed: Vec::new(),
-            legacy_after: Vec::new(),
         },
         ordered: vec![change],
         subject: PlannedSubject::ApplyOneShot {
@@ -187,7 +186,6 @@ pub fn cases(run: &Run, brief: &str, package: Option<&str>) -> Result<Outcome> {
             }],
             resources_after: desired.resources.clone(),
             entities_removed: Vec::new(),
-            legacy_after: Vec::new(),
         },
         ordered: vec![desired],
         subject: PlannedSubject::ApplyOneShot {

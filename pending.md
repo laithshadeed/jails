@@ -10,24 +10,24 @@ This file is only what is **not done**. What the code already is belongs in
 
 ---
 
-## 1. The V2 cutover — in flight, on branch `v2-dispatch-flip`
+## 1. The V2 cutover — done
 
 ### What this is, plainly
 
-jails has two engines for writing files into a project.
+jails had two engines for writing files into a project.
 
-- **V1** is the direct one: each command opens files and writes them.
+- **V1** was the direct one: each command opened files and wrote them.
 - **V2** is transactional: a command computes the whole change, takes a lock,
   writes it as one unit, and records enough to finish or undo an interrupted
   run.
 
-V2 has been built and tested for a long time but was never switched on. The
-remaining work is the switch.
+V2 had been built and tested for a long time but was never switched on. That
+switch is made, and V1 is deleted.
 
-**It has to happen all at once.** Both engines keep their bookkeeping in
-`.jails/ledger.toml`, in formats neither can read. The moment `jails generate`
-uses V2, `jails destroy` on V1 cannot read what it wrote. So every command
-flips together, in one commit, or none do.
+**It had to happen all at once**, which is why it is worth recording how. Both
+engines kept their bookkeeping in `.jails/ledger.toml` in formats neither could
+read, so the moment `jails generate` used V2, `jails destroy` on V1 could not
+read what it wrote. Every command flipped in one commit.
 
 ### Where it stands
 
@@ -84,51 +84,56 @@ better one:
 - **The `spring.factories` migration is gone.** It deleted a registration *an
   earlier jails* had written. There is no earlier jails.
 
-### Rip out legacy support — decided, not yet done
+### Legacy support — ripped out
 
-**jails is not released, so there are no old projects to be compatible with.**
-Everything below exists only to carry a schema-1 project forward and should be
-deleted outright:
+**jails is not released, so there were no old projects to be compatible with.**
+Everything that existed only to carry a schema-1 project forward is gone, and
+so is the direct write path it was welded to:
 
-- `compat::translate` and the whole `MachineState::Legacy` path — a
-  `.jails/ledger.toml` that is not schema 2 becomes an error telling the
-  reader to delete `.jails` and regenerate.
-- `LegacyEntry`, `legacy_after`, and every legacy row in the schema-2 ledger.
-- `route::adopt_legacy`, and `jails adopt`'s `--legacy-key` / `--intent` /
-  `--replace` / `--force` options. `adopt` goes back to being layout adoption
-  only.
-- `doctor`'s adoptable-row listing. On the four example applications this is
-  **77 of 77 warnings** — every entity of a freshly generated project is
-  reported as adoptable, purely because the binary still writes schema 1.
-- `crates/jails-project/src/ledger.rs` (the schema-1 parser) and
-  `generated_files`' fold of `.jails/app-state-v1`, `.jails/intents/*` and
-  `.jails/models/*`.
-- The schema-1 half of `generated_files::model_fields`.
+- `compat::translate`, `MachineState::Legacy` and `crates/jails-project/src/ledger.rs`
+  (the schema-1 parser). A `.jails/ledger.toml` this binary cannot decode is an
+  **error** now, naming the file and saying it was written by a different
+  jails.
+- `LegacyEntry`, `LegacyKey`, `LegacySourceKind`, `legacy_after`, and the
+  `legacy` table in the schema-2 ledger. `SpecPresence` went with them —
+  "unknown origin" was a schema-1 answer.
+- `LegacySourcePath` / `LegacyFileName` / `LegacyDirectoryKind`, the
+  `LegacyMachine` operation target, `LegacyMigrationIdentity` and the whole
+  `jails-prepare::migration` module. Nothing under `.jails/` is a plan's target
+  any more, so `OperationTarget` collapsed into `ProjectPath`.
+- `route::adopt_legacy` and `jails adopt`'s `--legacy-key` / `--intent` /
+  `--replace` / `--force`. `adopt` is layout adoption only. The `claimed` path
+  set went with it — it existed so that one command could write over a file
+  jails had not written, and nothing else ever set it.
+- `doctor`'s adoptable-row listing: **77 of 77 warnings** on the example
+  applications, every one of them because the binary still wrote schema 1.
+- `generated_files`' registry half and its fold of `.jails/app-state-v1`,
+  `.jails/intents/*` and `.jails/models/*`. What is left is one function:
+  which fields a recorded intent declared.
 
-This deletes far more than it adds and removes the single largest source of
-noise in `doctor`. It is the next commit: the cutover is done, so there is no
-longer a moving target to churn against.
+V1 itself went in the same commit, because the two could not be separated —
+`generated_files` *was* the schema-1 registry, and V1's write path *was* its
+only writer. `add::add`/`add_in`, `generate::generate_in_project`,
+`generate/remove.rs`, `add/shrink.rs` and `add/test_wiring.rs` are deleted.
+`add::preflight_in` survives, re-expressed over the pure planner: it is what
+makes `jails add db security` refuse before either is installed.
 
-### Still to do after the tests pass
+### Still to do
 
-1. **Delete what is left of V1** in the library crates. The binary's copy is
-   already gone; `jails-generate`'s `add::add`, `generate::destroy` and
-   friends are still compiled because a library's unused public function is
-   not dead code.
-2. **Prove it on the four example applications** — regenerate
+1. **Prove it on the four example applications** — regenerate
    `examples/{payments-gateway,support-inbox,web-crawler,ledger-cli}` through
    the flipped binary and confirm `jails check` is still green in all four.
    The three Spring ones already pass the generated verification gate inside
    the test suite; this is the same thing against a checked-in tree.
-3. **Hosted CI**, which has never been set up.
+2. **Hosted CI**, which has never been set up.
 
 ---
 
 ## 2. V1 against V2, as the cutover actually found them
 
 Every row is a difference a failing test named, so this is the migration's
-evidence rather than a design summary. It is also the checklist for finishing:
-anything here that is not yet true of V2 is work.
+evidence rather than a design summary. V1 no longer exists; the table is kept
+because each row is a decision somebody may want the reason for.
 
 | | V1 — the direct write path | V2 — the transaction protocol |
 |---|---|---|
@@ -154,18 +159,13 @@ anything here that is not yet true of V2 is work.
 | **`add format`** | Shelled out to `spotless:apply` after its own write path | A second transition — the same one `jails fmt` is — so the formatter runs in a scratch tree and commits only what it changed |
 | **A deleted source's `.class`** | Swept by `shrink.rs`, per capability | Swept from the receipt's own delete list, so every route gets it and no route knows about `target/` |
 | **`app plan`** | A separate walk printing `pending`/`update`/`applied` per row | `app apply --pretend`. It names files, not rows, and an entity that changes nothing is not listed |
-| **A pre-schema-2 project** | n/a | Translated in memory. Every schema-1 row becomes a *legacy* row with files and no owner, because the old format never recorded who asked for it |
-| **Claiming a legacy row** | n/a | `jails adopt --legacy-key <key> --intent <kind>:<Name>`, with `--replace --force` for a row whose files have drifted. `doctor` prints the exact command per row |
+| **A store this binary cannot decode** | Read by whichever parser matched | An error naming the file. There is one format, so a ledger jails cannot read was written by a different jails — guessing at an older schema and translating what it thought it found is how a wrong answer looks right |
 
 ### Three V1 behaviours deliberately not carried over
 
 Each is an answer, not an oversight, but each is a loss and is recorded as one.
 
 - **`destroy cases`** — above.
-- **`adopt --manifest <path>`** — the specification has it, for claiming a row
-  as owned by an application manifest rather than by the command line. The
-  route has no manifest-owner path, so the flag is not wired at all rather
-  than wired to nothing.
 - **`remove`'s `changed since jails wrote` note** — V1 named which generated
   files had been edited before deleting them. The confirmation prompt now
   lists every deletion and takes no for an answer, which covers the risk;

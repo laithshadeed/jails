@@ -1,8 +1,8 @@
 //! What the store says was applied.
 //!
 //! Split out of `envelope.rs` by secret: that module is about a *file* -- its
-//! magic, its schema number, its checksum, and the legacy stores it can still
-//! read -- while these three types are about what a project contains. R1.4's
+//! magic, its schema number, its checksum -- while these three types are about
+//! what a project contains. R1.4's
 //! schema names them together (`applied`, `one_shots`, `outputs`) and they
 //! change together, for reasons that have nothing to do with framing bytes.
 //!

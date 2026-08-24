@@ -29,7 +29,7 @@
 //! satisfied second apply emit nothing.
 
 use crate::Result;
-use crate::prepare::{FileOp, OperationTarget};
+use crate::prepare::FileOp;
 use jails_protocol::effect::PostCommitEffect;
 use jails_protocol::identity::{ObjectId, ProjectPath, ServiceName};
 use jails_protocol::resource::{ResourceKey, ResourceValue};
@@ -194,7 +194,7 @@ fn committed(
     operations: &[FileOp],
     objects: &BTreeMap<ObjectId, Arc<[u8]>>,
 ) -> Option<Document> {
-    let target = OperationTarget::Project(path.clone());
+    let target = path.clone();
     operations.iter().find_map(|operation| {
         if *operation.target() != target {
             return None;

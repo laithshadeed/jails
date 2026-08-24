@@ -10,8 +10,7 @@ use crate::Result;
 use crate::change::{
     ChangeAttribution, DesiredChange, MaintenanceAttribution, decode_all, encode_all,
 };
-use crate::entity::{EntityId, EntitySpec, IntentId, OneShotId, OneShotSpec, OwnerId};
-use crate::envelope::{LegacyEntry, LegacyKey};
+use crate::entity::{EntityId, EntitySpec, OneShotId, OneShotSpec, OwnerId};
 use crate::identity::{JavaType, ProjectPath};
 use crate::ownership::{DesiredEntity, DesiredState, ReconcileScope};
 use crate::resource::{DesiredResource, OneShotLifecycle, OneShotState};
@@ -47,7 +46,6 @@ pub struct LedgerIntent {
     /// derivable rather than declarable. Two lists that could disagree about
     /// the same fact is exactly the drift this schema exists to remove.
     pub entities_removed: Vec<EntityId>,
-    pub legacy_after: Vec<LegacyEntry>,
 }
 
 impl LedgerIntent {
@@ -105,10 +103,6 @@ impl LedgerIntent {
         )?;
         encode_all(encoder, &self.resources_after, DesiredResource::encode)?;
         encode_all(encoder, &self.entities_removed, |id, e| id.encode(e))?;
-        encoder.count(self.legacy_after.len())?;
-        for entry in &self.legacy_after {
-            entry.encode(encoder)?;
-        }
         Ok(())
     }
 
@@ -118,18 +112,12 @@ impl LedgerIntent {
         let one_shots_after = decode_all(decoder, DesiredOneShotReceipt::decode)?;
         let resources_after = decode_all(decoder, DesiredResource::decode)?;
         let entities_removed = decode_all(decoder, EntityId::decode)?;
-        let count = decoder.count()?;
-        let mut legacy_after = Vec::new();
-        for _ in 0..count {
-            legacy_after.push(LegacyEntry::decode(decoder)?);
-        }
         let intent = Self {
             generation_before,
             entities_after,
             one_shots_after,
             resources_after,
             entities_removed,
-            legacy_after,
         };
         intent.validate()?;
         Ok(intent)
@@ -224,12 +212,6 @@ pub enum PlannedSubject {
         force: bool,
     },
     AdoptLayout,
-    AdoptLegacy {
-        legacy_key: LegacyKey,
-        intent: IntentId,
-        replace: bool,
-        force: bool,
-    },
     Format {
         scopes: BTreeSet<ProjectPath>,
     },
@@ -243,7 +225,6 @@ impl PlannedSubject {
             Self::AppInit { .. } => MaintenanceAttribution::AppInit,
             Self::Rename { .. } => MaintenanceAttribution::Rename,
             Self::AdoptLayout => MaintenanceAttribution::AdoptLayout,
-            Self::AdoptLegacy { .. } => MaintenanceAttribution::AdoptLegacy,
             Self::Format { .. } => MaintenanceAttribution::Format,
             Self::Reconcile(_) | Self::ApplyOneShot { .. } | Self::DestroyCases { .. } => {
                 return None;
@@ -316,7 +297,6 @@ impl PlannedSubject {
             Self::AppInit { .. } => 3,
             Self::Rename { .. } => 4,
             Self::AdoptLayout => 5,
-            Self::AdoptLegacy { .. } => 6,
             Self::Format { .. } => 7,
         }
     }
@@ -342,18 +322,6 @@ impl PlannedSubject {
                 Ok(())
             }
             Self::AdoptLayout => Ok(()),
-            Self::AdoptLegacy {
-                legacy_key,
-                intent,
-                replace,
-                force,
-            } => {
-                legacy_key.encode(encoder)?;
-                intent.encode(encoder)?;
-                encoder.bool(*replace);
-                encoder.bool(*force);
-                Ok(())
-            }
             Self::Format { scopes } => {
                 encoder.count(scopes.len())?;
                 let mut previous: Option<&ProjectPath> = None;
@@ -387,12 +355,6 @@ impl PlannedSubject {
                 force: decoder.bool()?,
             },
             5 => Self::AdoptLayout,
-            6 => Self::AdoptLegacy {
-                legacy_key: LegacyKey::decode(decoder)?,
-                intent: IntentId::decode(decoder)?,
-                replace: decoder.bool()?,
-                force: decoder.bool()?,
-            },
             7 => {
                 let count = decoder.count()?;
                 let mut scopes = BTreeSet::new();
@@ -475,7 +437,6 @@ pub(crate) mod tests {
                 one_shots_after: Vec::new(),
                 resources_after: Vec::new(),
                 entities_removed: Vec::new(),
-                legacy_after: Vec::new(),
             },
         }
     }
@@ -547,7 +508,6 @@ pub(crate) mod tests {
             one_shots_after: Vec::new(),
             resources_after: Vec::new(),
             entities_removed: Vec::new(),
-            legacy_after: Vec::new(),
         };
         assert!(
             intent_rows

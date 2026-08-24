@@ -84,7 +84,7 @@ pub use artifact::{destroy, generate, recipe};
 pub use capability::{install, remove, sync};
 pub use feature::{install_fast_test, remove_fast_test};
 pub use field::field;
-pub use maintenance::{adopt_layout, adopt_legacy, app_init, format, rename};
+pub use maintenance::{adopt_layout, app_init, format, rename};
 pub use oneshot::{cases, migration};
 pub use session::{Outcome, Run};
 
@@ -433,7 +433,6 @@ impl Request {
                 one_shots_after: Vec::new(),
                 resources_after,
                 entities_removed: reconciled.removed,
-                legacy_after: Vec::new(),
             },
             ordered: changes,
             subject: PlannedSubject::Reconcile(DesiredState::new(self.scope, self.declared)?),
@@ -651,7 +650,6 @@ fn prepare_set(
         observed_store: observed,
         operation_context: Default::default(),
         preparation: Default::default(),
-        claimed: run.claimed.clone(),
         // Derived from the canonical request, not from the flag alone: §R3.3
         // makes every request variant without a `no_start` field ineligible
         // and says it behaves as `no_start == true`, so a maintenance action

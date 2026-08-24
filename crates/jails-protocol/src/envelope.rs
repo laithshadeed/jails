@@ -224,255 +224,12 @@ fn decimal(value: &str) -> Result<usize> {
 // The payload
 // ---------------------------------------------------------------------------
 
-use crate::entity::{EntityId, EntitySpec, OneShotId, OwnerId};
-use crate::identity::{ObjectId, OperationId, ProjectPath};
-use crate::record::{AppliedEntity, AppliedVersion, OneShotReceipt, OutputRecord};
+use crate::entity::{EntityId, EntitySpec, OneShotId};
+use crate::identity::{OperationId, ProjectPath};
+use crate::record::{AppliedEntity, OneShotReceipt, OutputRecord};
 use crate::resource::{ResourceKey, ResourceOwner, ResourceRecord, ResourceValue};
 use jails_support::codec::{Decoder, Encoder, ordered};
 use std::collections::BTreeSet;
-
-/// Which pre-schema-2 store a row came out of.
-///
-/// The kind is part of the key, not decoration: two stores could hold rows
-/// with identical bytes, and adopting "the row" would then be ambiguous about
-/// which one is being resolved.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
-pub enum LegacySourceKind {
-    Schema1Ledger,
-    Schema1Applied,
-    Schema1Model,
-    AppStateHeader,
-    AppState,
-    IntentFiles,
-    ModelFiles,
-    GlobalFiles,
-    VersionFile,
-}
-
-impl LegacySourceKind {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Schema1Ledger => "schema1-ledger",
-            Self::Schema1Applied => "schema1-applied",
-            Self::Schema1Model => "schema1-model",
-            Self::AppStateHeader => "app-state-header",
-            Self::AppState => "app-state",
-            Self::IntentFiles => "intent-files",
-            Self::ModelFiles => "model-files",
-            Self::GlobalFiles => "global-files",
-            Self::VersionFile => "version-file",
-        }
-    }
-
-    fn tag(self) -> u8 {
-        match self {
-            Self::Schema1Ledger => 0,
-            Self::Schema1Applied => 1,
-            Self::Schema1Model => 2,
-            Self::AppStateHeader => 3,
-            Self::AppState => 4,
-            Self::IntentFiles => 5,
-            Self::ModelFiles => 6,
-            Self::GlobalFiles => 7,
-            Self::VersionFile => 8,
-        }
-    }
-
-    fn from_tag(tag: u8) -> Result<Self> {
-        Ok(match tag {
-            0 => Self::Schema1Ledger,
-            1 => Self::Schema1Applied,
-            2 => Self::Schema1Model,
-            3 => Self::AppStateHeader,
-            4 => Self::AppState,
-            5 => Self::IntentFiles,
-            6 => Self::ModelFiles,
-            7 => Self::GlobalFiles,
-            8 => Self::VersionFile,
-            other => Err(format!("unknown legacy source kind tag {other}"))?,
-        })
-    }
-}
-
-/// A stable name for one legacy row, so a human can adopt exactly it.
-///
-/// plan.md §R1.4: the digest is `SHA256("JAILS-LEGACY-1" || row_bytes)`. It is
-/// **derived, never stored** — a recorded key would be a second authority for
-/// what the row says, and the failure mode is adopting a row whose content has
-/// since changed under a key that still matches.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
-pub struct LegacyKey {
-    pub source_kind: LegacySourceKind,
-    pub digest: ObjectId,
-}
-
-impl LegacyKey {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(self.source_kind.tag());
-        self.digest.encode(encoder);
-        Ok(())
-    }
-
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            source_kind: LegacySourceKind::from_tag(decoder.tag()?)?,
-            digest: ObjectId::decode(decoder)?,
-        })
-    }
-
-    /// The short spelling `jails doctor` prints and `jails adopt` accepts.
-    pub fn to_label(self) -> String {
-        format!("{}:{}", self.source_kind.label(), self.digest.to_hex())
-    }
-
-    pub fn parse_label(text: &str) -> Result<Self> {
-        let (kind, digest) = text
-            .split_once(':')
-            .ok_or_else(|| format!("`{text}` is not a legacy key: expected <source>:<digest>"))?;
-        let source_kind = [
-            LegacySourceKind::Schema1Ledger,
-            LegacySourceKind::Schema1Applied,
-            LegacySourceKind::Schema1Model,
-            LegacySourceKind::AppStateHeader,
-            LegacySourceKind::AppState,
-            LegacySourceKind::IntentFiles,
-            LegacySourceKind::ModelFiles,
-            LegacySourceKind::GlobalFiles,
-            LegacySourceKind::VersionFile,
-        ]
-        .into_iter()
-        .find(|candidate| candidate.label() == kind)
-        .ok_or_else(|| format!("unknown legacy source `{kind}`"))?;
-        Ok(Self {
-            source_kind,
-            digest: ObjectId::parse_hex(digest)?,
-        })
-    }
-}
-
-impl std::fmt::Display for LegacyKey {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.to_label())
-    }
-}
-
-/// A row carried forward from a pre-schema-2 store, origin unresolved.
-///
-/// plan.md §R1.4 keeps these deliberately separate from `applied`. A schema-1
-/// row records paths and, sometimes, a spec — but never *who wanted it*, and
-/// inventing an owner would turn machine state into human desire, which is the
-/// one thing the desired/observed boundary exists to prevent. So a legacy row
-/// stays a legacy row until a user-requested adoption resolves it.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LegacyEntry {
-    pub recipe: String,
-    pub name: String,
-    pub package: String,
-    pub fields: Vec<String>,
-    pub indexes: Vec<String>,
-    pub timestamps: bool,
-    pub on: String,
-    pub yields: String,
-    /// Whether anyone ever recorded *what* this was built from.
-    pub spec_presence: SpecPresence,
-    pub paths: Vec<String>,
-}
-
-/// Whether a legacy row's origin is known. Not inferable from content: a row
-/// whose fields happen to match today's manifest is still a row of unknown
-/// origin.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SpecPresence {
-    Present,
-    Absent,
-    UnknownLegacy,
-}
-
-impl SpecPresence {
-    fn tag(self) -> u8 {
-        match self {
-            Self::Present => 0,
-            Self::Absent => 1,
-            Self::UnknownLegacy => 2,
-        }
-    }
-
-    fn from_tag(tag: u8) -> Result<Self> {
-        match tag {
-            0 => Ok(Self::Present),
-            1 => Ok(Self::Absent),
-            2 => Ok(Self::UnknownLegacy),
-            other => Err(format!("unknown spec presence tag {other}")),
-        }
-    }
-}
-
-impl LegacyEntry {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.string(&self.recipe)?;
-        encoder.string(&self.name)?;
-        encoder.string(&self.package)?;
-        encode_strings(encoder, &self.fields)?;
-        encode_strings(encoder, &self.indexes)?;
-        encoder.bool(self.timestamps);
-        encoder.string(&self.on)?;
-        encoder.string(&self.yields)?;
-        encoder.tag(self.spec_presence.tag());
-        encode_strings(encoder, &self.paths)
-    }
-
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            recipe: decoder.string()?,
-            name: decoder.string()?,
-            package: decoder.string()?,
-            fields: decode_strings(decoder)?,
-            indexes: decode_strings(decoder)?,
-            timestamps: decoder.bool()?,
-            on: decoder.string()?,
-            yields: decoder.string()?,
-            spec_presence: SpecPresence::from_tag(decoder.tag()?)?,
-            paths: decode_strings(decoder)?,
-        })
-    }
-
-    /// This row's stable adoption key, derived from its canonical bytes.
-    pub fn legacy_key(&self, source_kind: LegacySourceKind) -> Result<LegacyKey> {
-        let mut encoder = Encoder::new();
-        self.encode(&mut encoder)?;
-        let bytes = encoder.finish()?;
-        Ok(LegacyKey {
-            source_kind,
-            digest: ObjectId::from_bytes(jails_support::codec::domain_hash(
-                "JAILS-LEGACY-1",
-                &bytes,
-            )),
-        })
-    }
-
-    /// This row's identity, for ordering. Legacy rows have no typed identity
-    /// by construction, so the canonical order is on the recorded strings.
-    fn key(&self) -> (&str, &str, &str) {
-        (&self.recipe, &self.name, &self.package)
-    }
-}
-
-fn encode_strings(encoder: &mut Encoder, values: &[String]) -> Result<()> {
-    encoder.count(values.len())?;
-    for value in values {
-        encoder.string(value)?;
-    }
-    Ok(())
-}
-
-fn decode_strings(decoder: &mut Decoder<'_>) -> Result<Vec<String>> {
-    let count = decoder.count()?;
-    let mut out = Vec::new();
-    for _ in 0..count {
-        out.push(decoder.string()?);
-    }
-    Ok(out)
-}
 
 /// The schema-2 ledger payload.
 ///
@@ -494,7 +251,6 @@ pub struct LedgerV2 {
     pub resources: Vec<ResourceRecord>,
     /// One canonical row per path jails has written.
     pub outputs: Vec<OutputRecord>,
-    pub legacy: Vec<LegacyEntry>,
     /// A reconciliation that stopped with conflicts still in the tree.
     ///
     /// Its presence is what makes the ordinary bootstrap parsers unsafe: a
@@ -595,13 +351,6 @@ impl LedgerV2 {
             previous = Some(&output.path);
             output.encode(&mut encoder)?;
         }
-        encoder.count(self.legacy.len())?;
-        let mut previous: Option<(&str, &str, &str)> = None;
-        for entry in &self.legacy {
-            ordered(previous.as_ref(), &entry.key())?;
-            previous = Some(entry.key());
-            entry.encode(&mut encoder)?;
-        }
         encoder.option(self.pending_conflict.as_ref(), |e, marker| marker.encode(e))?;
         encoder.finish()
     }
@@ -653,15 +402,6 @@ impl LedgerV2 {
             ordered(outputs.last().map(|last| &last.path), &output.path)?;
             outputs.push(output);
         }
-        let count = decoder.count()?;
-        let mut legacy: Vec<LegacyEntry> = Vec::new();
-        for _ in 0..count {
-            let entry = LegacyEntry::decode(&mut decoder)?;
-            if let Some(last) = legacy.last() {
-                ordered(Some(&last.key()), &entry.key())?;
-            }
-            legacy.push(entry);
-        }
         let pending_conflict = decoder.option(PendingMarker::decode)?;
         decoder.finish()?;
         Ok(Self {
@@ -672,7 +412,6 @@ impl LedgerV2 {
             one_shots,
             resources,
             outputs,
-            legacy,
             pending_conflict,
         })
     }
@@ -709,134 +448,6 @@ impl LedgerV2 {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Schema-1 migration
-// ---------------------------------------------------------------------------
-
-/// One schema-1 `[[applied]]` row, as plain data.
-///
-/// Deliberately not the schema-1 `Applied` type: that lives in `jails-project`,
-/// which is *above* this crate. The caller adapts, and the migration stays a
-/// pure function of values — which is also what makes it testable without a
-/// filesystem.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct Schema1Row {
-    pub recipe: String,
-    pub name: String,
-    pub package: String,
-    pub fields: Vec<String>,
-    pub indexes: Vec<String>,
-    pub timestamps: bool,
-    pub on: String,
-    pub yields: String,
-    /// `Some(true)` for an app row, `Some(false)` for a direct one, `None` for
-    /// a row written before the key existed.
-    pub has_spec: Option<bool>,
-    pub paths: Vec<String>,
-}
-
-/// Fold a schema-1 ledger into schema 2, **in memory**.
-///
-/// Two rules, and both are refusals to guess:
-///
-/// - A row whose origin is unknown stays unknown. It becomes a `LegacyEntry`
-///   with `UnknownLegacy`, never an `AppliedEntity` with an invented owner —
-///   inventing one would turn machine state into human desire, which is the
-///   boundary the whole phase is built on.
-/// - A row is only promoted when its origin *and* its identity are both
-///   representable. A name that predates the protocol's validation is carried
-///   forward as legacy rather than refused, because refusing would strand
-///   `destroy` on the projects with the most history to lose.
-///
-/// `generation` starts at one: zero would make "never committed" and
-/// "committed once" the same recorded value.
-pub fn migrate_schema1(written_by: &str, rows: &[Schema1Row]) -> Result<LedgerV2> {
-    use crate::entity::{IntentId, Recipe};
-    use crate::identity::{Name, Package};
-    use clap::ValueEnum;
-
-    let mut applied: Vec<AppliedEntity> = Vec::new();
-    let mut legacy: Vec<LegacyEntry> = Vec::new();
-
-    for row in rows {
-        let typed = Recipe::from_str(&row.recipe, false)
-            .ok()
-            .zip(Name::parse(&row.name).ok())
-            .zip(Package::parse(&row.package).ok())
-            .map(|((recipe, name), package)| IntentId::new(recipe, name, package));
-
-        let owner = match row.has_spec {
-            Some(true) => Some(OwnerId::AppManifest),
-            Some(false) => Some(OwnerId::DirectCli),
-            None => None,
-        };
-
-        if let (Some(id), Some(owner)) = (typed, owner) {
-            // A capitalised field type resolves against the row's own
-            // package, which is where a type it names would have been
-            // generated.
-            let base = id.package.clone();
-            let spec = crate::declaration::IntentSpec::parse(
-                id.recipe,
-                &row.fields,
-                &row.indexes,
-                row.timestamps,
-                &base,
-            );
-            if let Ok(spec) = spec {
-                applied.push(AppliedEntity {
-                    id: EntityId::Intent(id),
-                    owners: BTreeSet::from([owner]),
-                    version: AppliedVersion {
-                        spec: EntitySpec::Intent(spec),
-                        operation: OperationId::from_bytes([0; 32]),
-                    },
-                });
-                continue;
-            }
-            // A spec this binary cannot parse is not evidence that the row
-            // is wrong -- it is evidence that the row predates a rule.
-            // Carried forward as legacy rather than dropped.
-        }
-        legacy.push(LegacyEntry {
-            recipe: row.recipe.clone(),
-            name: row.name.clone(),
-            package: row.package.clone(),
-            fields: row.fields.clone(),
-            indexes: row.indexes.clone(),
-            timestamps: row.timestamps,
-            on: row.on.clone(),
-            yields: row.yields.clone(),
-            spec_presence: match row.has_spec {
-                Some(true) => SpecPresence::Present,
-                Some(false) => SpecPresence::Absent,
-                None => SpecPresence::UnknownLegacy,
-            },
-            paths: row.paths.clone(),
-        });
-    }
-
-    applied.sort_by(|a, b| a.id.cmp(&b.id));
-    legacy.sort_by(|a, b| a.key().cmp(&b.key()));
-
-    Ok(LedgerV2 {
-        written_by: written_by.to_string(),
-        generation: 1,
-        last_operation: None,
-        applied,
-        // A schema-1 store recorded none of these three. Translating them into
-        // empty tables is the honest reading: nothing was claimed, nothing was
-        // stamped, and the first schema-2 command to touch a resource records
-        // it then. Inventing rows here would give `destroy` a list of files to
-        // delete that nothing had actually written.
-        one_shots: Vec::new(),
-        resources: Vec::new(),
-        outputs: Vec::new(),
-        legacy,
-        pending_conflict: None,
-    })
-}
-
 #[cfg(test)]
 mod tests {
 
@@ -867,7 +478,6 @@ mod tests {
                 row("spring-boot-starter-web"),
             ],
             outputs: Vec::new(),
-            legacy: Vec::new(),
             pending_conflict: None,
         };
         let bytes = ledger.encode().unwrap();
@@ -1044,8 +654,10 @@ mod tests {
     // -----------------------------------------------------------------------
 
     use crate::declaration::IntentSpec;
+    use crate::entity::OwnerId;
     use crate::entity::{IntentId, Recipe};
     use crate::identity::{Name, Package};
+    use crate::record::AppliedVersion;
 
     fn intent(name: &str, fields: &[&str]) -> AppliedEntity {
         let owned: Vec<String> = fields.iter().map(|f| f.to_string()).collect();
@@ -1082,7 +694,6 @@ mod tests {
             one_shots: Vec::new(),
             resources: Vec::new(),
             outputs: Vec::new(),
-            legacy: vec![],
             pending_conflict: None,
         };
         let source = ledger.render().unwrap();
@@ -1132,7 +743,6 @@ mod tests {
             one_shots: Vec::new(),
             resources: Vec::new(),
             outputs: Vec::new(),
-            legacy: vec![],
             pending_conflict: None,
         };
         assert!(
@@ -1166,7 +776,6 @@ mod tests {
             one_shots: Vec::new(),
             resources: Vec::new(),
             outputs: Vec::new(),
-            legacy: vec![],
             pending_conflict: None,
         };
         let models = ledger.models();
@@ -1175,157 +784,5 @@ mod tests {
         assert_eq!(models[1].1, vec!["b:int"]);
         // Sorted by identity, so two runs derive the same view.
         assert!(models[0].0 < models[1].0);
-    }
-
-    /// A row whose origin is unknown stays unknown. Inventing an owner would
-    /// turn machine state into human desire.
-    #[test]
-    fn a_row_of_unknown_origin_migrates_to_legacy_not_to_applied() {
-        let ledger = migrate_schema1(
-            "0.1.0",
-            &[Schema1Row {
-                recipe: "record".to_string(),
-                name: "Note".to_string(),
-                fields: vec!["title:string".to_string()],
-                has_spec: None,
-                paths: vec!["src/main/java/Note.java".to_string()],
-                ..Default::default()
-            }],
-        )
-        .unwrap();
-
-        assert!(ledger.applied.is_empty(), "no invented owner");
-        assert_eq!(ledger.legacy.len(), 1);
-        assert_eq!(ledger.legacy[0].spec_presence, SpecPresence::UnknownLegacy);
-        assert_eq!(ledger.legacy[0].paths, vec!["src/main/java/Note.java"]);
-    }
-
-    /// A known origin promotes, and the owner follows `has_spec`.
-    #[test]
-    fn a_row_with_a_known_origin_becomes_an_applied_entity() {
-        let ledger = migrate_schema1(
-            "0.1.0",
-            &[
-                Schema1Row {
-                    recipe: "record".to_string(),
-                    name: "FromManifest".to_string(),
-                    fields: vec!["a:string".to_string()],
-                    has_spec: Some(true),
-                    ..Default::default()
-                },
-                Schema1Row {
-                    recipe: "record".to_string(),
-                    name: "FromCli".to_string(),
-                    has_spec: Some(false),
-                    ..Default::default()
-                },
-            ],
-        )
-        .unwrap();
-
-        assert_eq!(ledger.applied.len(), 2);
-        assert!(ledger.legacy.is_empty());
-        let owners: Vec<&BTreeSet<OwnerId>> =
-            ledger.applied.iter().map(|entity| &entity.owners).collect();
-        assert!(owners.iter().any(|set| set.contains(&OwnerId::AppManifest)));
-        assert!(owners.iter().any(|set| set.contains(&OwnerId::DirectCli)));
-        // Sorted by identity: `FromCli` before `FromManifest`.
-        assert!(ledger.applied[0].id < ledger.applied[1].id);
-    }
-
-    /// Refusing a row this binary cannot fully parse would strand `destroy` on
-    /// exactly the projects with the most history to lose.
-    #[test]
-    fn a_row_this_binary_cannot_represent_is_carried_forward_not_dropped() {
-        let ledger = migrate_schema1(
-            "0.1.0",
-            &[
-                Schema1Row {
-                    // A recipe no current binary knows.
-                    recipe: "widget".to_string(),
-                    name: "Thing".to_string(),
-                    has_spec: Some(true),
-                    paths: vec!["src/main/java/Thing.java".to_string()],
-                    ..Default::default()
-                },
-                Schema1Row {
-                    recipe: "record".to_string(),
-                    // A name that is a Java keyword: it cannot be an identity.
-                    name: "class".to_string(),
-                    has_spec: Some(true),
-                    ..Default::default()
-                },
-                Schema1Row {
-                    recipe: "record".to_string(),
-                    name: "Broken".to_string(),
-                    // A field spec no current parser accepts.
-                    fields: vec!["not a field".to_string()],
-                    has_spec: Some(true),
-                    ..Default::default()
-                },
-            ],
-        )
-        .unwrap();
-
-        assert!(ledger.applied.is_empty());
-        assert_eq!(ledger.legacy.len(), 3, "every row survives");
-        let widget = ledger
-            .legacy
-            .iter()
-            .find(|entry| entry.recipe == "widget")
-            .expect("the unknown recipe survived");
-        assert_eq!(
-            widget.paths,
-            vec!["src/main/java/Thing.java"],
-            "and keeps the paths destroy would need"
-        );
-    }
-
-    /// Migration is deterministic: the same input gives the same bytes,
-    /// whatever order the rows arrived in.
-    #[test]
-    fn migration_is_deterministic_and_order_independent() {
-        let rows = [
-            Schema1Row {
-                recipe: "record".to_string(),
-                name: "Beta".to_string(),
-                has_spec: Some(false),
-                ..Default::default()
-            },
-            Schema1Row {
-                recipe: "record".to_string(),
-                name: "Alpha".to_string(),
-                has_spec: Some(false),
-                ..Default::default()
-            },
-        ];
-        let one = migrate_schema1("0.1.0", &rows).unwrap().render().unwrap();
-        let reversed: Vec<Schema1Row> = rows.iter().rev().cloned().collect();
-        let other = migrate_schema1("0.1.0", &reversed)
-            .unwrap()
-            .render()
-            .unwrap();
-        assert_eq!(one, other);
-    }
-
-    /// A migrated ledger is a valid schema-2 file end to end.
-    #[test]
-    fn a_migrated_ledger_renders_and_parses() {
-        let ledger = migrate_schema1(
-            "0.1.0",
-            &[Schema1Row {
-                recipe: "record".to_string(),
-                name: "Note".to_string(),
-                fields: vec!["id:uuid@pk".to_string(), "title:string!".to_string()],
-                has_spec: Some(true),
-                paths: vec!["src/main/java/Note.java".to_string()],
-                ..Default::default()
-            }],
-        )
-        .unwrap();
-        let source = ledger.render().unwrap();
-        assert_eq!(LedgerV2::parse_file(&source).unwrap(), ledger);
-        assert_eq!(ledger.generation, 1);
-        assert_eq!(ledger.models().len(), 1);
     }
 }

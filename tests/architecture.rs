@@ -127,7 +127,13 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // `src/app/reconcile.rs`, `src/app/shadow.rs` and V1's
                 // app-state reader were all root-taking and all went, because
                 // the routes take a resolved `Project`.
-                ceiling: 126,
+                //
+                // 126 -> 100 when V1 and the schema-1 reader were deleted.
+                // The direct write path was where a bare root travelled
+                // furthest: `add::add_in`, `generate::generate_in_project`,
+                // `destroy`, `shrink`, `test_wiring` and the whole
+                // `generated_files` registry all took one.
+                ceiling: 100,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;
@@ -417,14 +423,10 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 //
                 // 1402 -> 1407 for the unowned schema-1 rows §R2.5's adoption
                 // needs a reader to be able to *find*: a `LegacyKey` is 64 hex
-                // characters nobody will retype from a hash they computed
-                // themselves, so something has to print it with the command
-                // that claims it. Five lines, and the direction is this rung's
-                // own: the key and the skeleton are derived in
-                // `compat::adoptable`, beside the route that accepts them,
-                // rather than re-derived here where a second copy would make a
-                // printed command stop working.
-                ceiling: 1407,
+                // 1407 -> 1402 when the adoptable-row listing went with the
+                // rest of the schema-1 handling. It was five lines here and 77
+                // of 77 warnings on the example applications.
+                ceiling: 1402,
                 // Withdrawn, not reached. abstract.md §8.0.1 audits all ten
                 // checks: none is a re-encoded dependency fact, so the 700
                 // measured a saving that is not there. Ratchet against growth.

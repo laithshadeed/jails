@@ -147,16 +147,21 @@ fn every_capability_states_where_it_is_in_the_v2_migration() {
 
 /// What V1 installs and what V2 desires have to be the same project.
 ///
-/// plan.md §R6.2 gates the capability switch on "golden parity for every
-/// capability", and this is the shape that check has to take. It is
-/// deliberately *not* a byte comparison of the whole file: V1 writes a
-/// capability's properties inside a `# jails:<label>` marked block and V2
-/// writes each key as a resource somebody owns, which is the point of the
-/// change -- removing one capability's key can no longer take another's prose
-/// with it. So what is compared is what the project ends up meaning: which
-/// dependencies the POM declares, and what value each property has in force.
+/// Does the projection of a capability's plan hold what the command installs?
+///
+/// It began as V1-against-V2 while both engines existed. What it still asks is
+/// the question that outlived the migration, and it is the same one the
+/// generator test below asks: the tree a plan *says* it will leave has to be
+/// the tree the executor leaves, or `--pretend` describes work that does not
+/// happen.
+///
+/// Deliberately *not* a byte comparison of the whole file. What is compared is
+/// what the project ends up meaning: which dependencies the POM declares, and
+/// what value each property has in force. A capability's properties are keyed
+/// resources, so the lines around them belong to whoever wrote them and are
+/// not this capability's to reproduce.
 #[test]
-fn what_v2_desires_is_what_v1_installs() {
+fn what_a_capability_desires_is_what_installing_it_leaves() {
     let mut compared = 0;
     for &capability in Capability::value_variants() {
         let label = capability.label();
@@ -170,10 +175,11 @@ fn what_v2_desires_is_what_v1_installs() {
         let v1 = common::temp_dir(&format!("parity-v1-{label}"));
         std::fs::create_dir_all(&v1).unwrap();
         common::write_spring_fixture(&v1);
-        let installed = Project::load(&v1).unwrap();
-        if jails_generate::add::add_in(&installed, capability, None, false, None, false, true)
-            .is_err()
-        {
+        let installed = common::jails_cmd(&v1, None)
+            .args(["add", label, "--no-start"])
+            .output()
+            .unwrap();
+        if !installed.status.success() {
             // A capability that cannot install against the bare fixture has
             // nothing to compare; the board already records why.
             continue;
@@ -230,12 +236,12 @@ fn what_v2_desires_is_what_v1_installs() {
             let coordinate = format!("<artifactId>{}</artifactId>", dependency.artifact_id);
             assert!(
                 v1_pom.contains(&coordinate),
-                "{label}: V1 did not install {}",
+                "{label}: installing it did not put {} in the POM",
                 dependency.artifact_id
             );
             assert!(
                 v2_pom.contains(&coordinate),
-                "{label}: V2 desires {} and the projected POM does not declare it",
+                "{label}: the plan desires {} and the projected POM does not declare it",
                 dependency.artifact_id
             );
         }
@@ -251,7 +257,7 @@ fn what_v2_desires_is_what_v1_installs() {
             assert_eq!(
                 jails_project::properties::get(&v1_properties, key).as_deref(),
                 Some(value),
-                "{label}: V1 did not set {key}"
+                "{label}: installing it did not set {key}"
             );
             assert_eq!(
                 jails_project::properties::get(&v2_properties, key).as_deref(),
@@ -261,13 +267,16 @@ fn what_v2_desires_is_what_v1_installs() {
         }
         for artifact in &change.files {
             let relative = artifact.path.strip_prefix(&v2).unwrap();
-            let v1_bytes = std::fs::read_to_string(v1.join(relative)).unwrap_or_else(|error| {
-                panic!("{label}: V1 did not write {}: {error}", relative.display())
+            let written = std::fs::read_to_string(v1.join(relative)).unwrap_or_else(|error| {
+                panic!(
+                    "{label}: installing it did not write {}: {error}",
+                    relative.display()
+                )
             });
             assert_eq!(
                 after(relative.to_str().unwrap()),
-                v1_bytes,
-                "{label}: {} differs between the two paths",
+                written,
+                "{label}: {} differs between the projection and the commit",
                 relative.display()
             );
         }
@@ -277,15 +286,12 @@ fn what_v2_desires_is_what_v1_installs() {
         compared >= 10,
         "only {compared} capabilities were actually compared; the check is not covering the surface"
     );
-    println!("capabilities compared V1 against V2: {compared}");
+    println!("capabilities compared: {compared}");
 }
 
-/// The same parity question for persistent generators.
-///
-/// plan.md §R6.2's generator row wants "golden parity for every persistent
-/// `ArtifactKind`" before the switch, and this is the half that can be checked
-/// without an executor: what the V1 command writes to disk and what the V2
-/// desired change projects have to be the same bytes at the same paths.
+/// The same question for persistent generators: what the command writes to
+/// disk and what the plan's projection holds have to be the same bytes at the
+/// same paths.
 ///
 /// Single-step scenarios only. A scenario that installs a capability first
 /// runs those steps identically on both sides, so the question stays narrow.

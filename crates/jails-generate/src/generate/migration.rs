@@ -9,26 +9,6 @@ use super::*;
 
 // ---- migration: the next forward-only SQL file. ----
 
-pub(super) fn generate_migration(root: &Path, description: &str, pretend: bool) -> Result<()> {
-    let description = sql_name(description)?;
-    let dir = root.join("src/main/resources/db/migration");
-    let version = next_migration_version(&dir)?;
-    let path = dir.join(format!("V{version:03}__{description}.sql"));
-    if pretend {
-        println!("would create migration {}", path.display());
-        println!();
-        println!("--pretend: nothing was written.");
-        return Ok(());
-    }
-    write_new_file(
-        root,
-        &path,
-        "-- Forward-only migration. Write explicit SQL below.\n",
-    )?;
-    println!("created migration {}", path.display());
-    Ok(())
-}
-
 /// Where a migration with this description goes.
 ///
 /// **The one already there, if there is one.** A migration's file name carries
@@ -159,48 +139,6 @@ pub fn plan_cases(project: &Project, pkg: &str, brief: &Path) -> Result<(Change,
         },
         text,
     ))
-}
-
-/// How many cases a plan carries, for the line `generate` prints.
-fn case_count(change: &Change) -> usize {
-    change
-        .files
-        .first()
-        .map(|artifact| artifact.contents.matches("@Disabled").count())
-        .unwrap_or(0)
-}
-
-pub(super) fn generate_cases(
-    project: &Project,
-    pkg: &str,
-    brief: &Path,
-    pretend: bool,
-) -> Result<()> {
-    let (change, _) = plan_cases(project, pkg, brief)?;
-    let path = change.files[0].path.clone();
-    let cases = std::iter::repeat_n((), case_count(&change)).collect::<Vec<_>>();
-    if path.exists() {
-        return Err(format!("{} already exists", path.display()));
-    }
-    if pretend {
-        println!(
-            "would create cases {} ({} case{})",
-            path.display(),
-            cases.len(),
-            if cases.len() == 1 { "" } else { "s" }
-        );
-        println!();
-        println!("--pretend: nothing was written.");
-        return Ok(());
-    }
-    write_new_file(project.root(), &path, &change.files[0].contents)?;
-    println!(
-        "created cases {} ({} case{})",
-        path.display(),
-        cases.len(),
-        if cases.len() == 1 { "" } else { "s" }
-    );
-    Ok(())
 }
 
 /// Bullets under an acceptance/criteria/cases/checklist heading if the brief

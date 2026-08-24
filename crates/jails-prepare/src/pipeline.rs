@@ -25,11 +25,8 @@
 //! exactly what the guarded preimage exists to refuse.
 
 use crate::Result;
-use crate::migration::LegacyMigrationIdentity;
 use crate::operation::{ApplySemantics, OperationIdentityV1, OperationSemanticsV1};
-use crate::prepare::{
-    DirectoryOp, FileOp, GuardedImage, OperationTarget, PreparedChange, PreparedKind,
-};
+use crate::prepare::{DirectoryOp, FileOp, GuardedImage, PreparedChange, PreparedKind};
 use crate::tool::{OperationContextFingerprint, PreparationContextFingerprint};
 use jails_project::projection::{ProjectedEntry, ProjectedProject};
 use jails_protocol::bootstrap::LoadedProject;
@@ -62,14 +59,6 @@ mod ledger;
 pub struct ObservedStore {
     pub image: FileImage,
     pub ledger: Option<LedgerV2>,
-    /// The pre-schema-2 sources this store was translated from, when it was.
-    ///
-    /// `None` for a store that was already schema 2 and for a project with no
-    /// store at all. `Some` is what makes the next commit a *migration*:
-    /// §R2.5 makes cleanup of the old sources atomic with the first schema-2
-    /// ledger write, so the sources have to be observed at the same moment the
-    /// ledger is, or the two could describe different machine states.
-    pub legacy: Option<crate::migration::LegacySnapshotIdentity>,
 }
 
 impl Default for ObservedStore {
@@ -78,7 +67,6 @@ impl Default for ObservedStore {
         Self {
             image: FileImage::Absent,
             ledger: None,
-            legacy: None,
         }
     }
 }
@@ -131,15 +119,6 @@ pub struct PreparationContext {
     /// `no_start == true` rather than defaulting on, so a maintenance action
     /// cannot start a container by accident.
     pub start_services: bool,
-    /// The exact paths this invocation claims from an unowned state.
-    ///
-    /// `jails adopt --legacy-key ... --replace --force` and nothing else. §R5.3
-    /// refuses to write over a file jails has never written, deliberately; this
-    /// is the one route that says the deliberate decision has been made, and it
-    /// says it about named paths rather than about the whole transition -- a
-    /// switch would lift the rule for every unrelated path the same transition
-    /// touches.
-    pub claimed: BTreeSet<ProjectPath>,
     /// The exact bytes of an object the store already holds, by id.
     ///
     /// A closure rather than a path, because reading the object store is
@@ -247,34 +226,15 @@ fn apply(
         &rendered,
         &prior,
         &previously_owned,
-        &context.claimed,
         &context.objects,
     )?;
 
     // Step 9. Parents for creates only, stopping at the machine root.
     let directories = parents(&base, &operations)?;
 
-    // §R2.5: the first schema-2 commit on a pre-schema-2 project carries the
-    // migration, and the migration's deletions are part of *this* transaction
-    // rather than a tidy-up afterwards. A cleanup that could fail separately
-    // would leave two registries, and a second registry is what makes a store
-    // drift from the project it describes.
-    let migration = match &context.observed_store.legacy {
-        Some(snapshot) => Some(LegacyMigrationIdentity {
-            snapshot: snapshot.clone(),
-            translated_before: translated_image(&context.observed_store)?,
-        }),
-        None => None,
-    };
-    let mut operations = operations;
-    if let Some(migration) = &migration {
-        operations.extend(retire_legacy(&migration.snapshot));
-    }
-
     let semantics = OperationSemanticsV1::Apply(Box::new(ApplySemantics {
         subject: set.subject.clone(),
         ledger_intent: set.ledger_intent.clone(),
-        migration,
     }));
     // §R5.4 makes this a committed transition with marker postimages and one
     // frozen candidate; that half is not wired, and the reason is in
@@ -332,72 +292,6 @@ fn apply(
         post_commit,
         context,
     )
-}
-
-/// The exact translated value this plan was computed against.
-///
-/// Recorded so preparation can re-run the translation from the immutable
-/// sources and require the same answer: a migration that could produce a
-/// different result on a retry would silently rewrite the store it was meant
-/// to preserve.
-///
-/// Hashed over the *rows the translation produced*, not over the whole draft.
-/// §R2.5 makes translation total and conservative -- every schema-1 row
-/// becomes a `LegacyEntry` and none becomes an `AppliedEntity` -- so those rows
-/// are the entire answer, and the draft's other fields are constants of the
-/// shape rather than results. Encoding the draft itself is not even possible:
-/// it is generation 0 by construction and the envelope's own validation
-/// refuses to write a generation that has never been committed.
-fn translated_image(observed: &ObservedStore) -> Result<jails_protocol::identity::ObjectId> {
-    // No store beside the sources is a legitimate shape: legacy files with no
-    // schema-1 ledger translate to nothing, and nothing is an answer a retry
-    // can reproduce.
-    let rows = observed
-        .ledger
-        .as_ref()
-        .map(|ledger| ledger.legacy.as_slice())
-        .unwrap_or_default();
-    let mut encoder = jails_support::codec::Encoder::new();
-    encoder.count(rows.len())?;
-    for row in rows {
-        row.encode(&mut encoder)?;
-    }
-    Ok(jails_protocol::identity::ObjectId::from_bytes(
-        jails_support::codec::domain_hash("JAILS-LEGACY-TRANSLATION-1", &encoder.finish()?),
-    ))
-}
-
-/// One guarded delete per legacy source the migration found.
-///
-/// Never a directory and never the schema-1 ledger: the first is not a source
-/// with an image, and the second is consumed by the guarded ledger replace as
-/// `ledger_before -> ledger_after`. Deleting it here would drop the very rows
-/// being migrated.
-fn retire_legacy(snapshot: &crate::migration::LegacySnapshotIdentity) -> Vec<FileOp> {
-    snapshot
-        .sources
-        .iter()
-        .filter_map(|source| match source {
-            crate::migration::LegacySourceImage::Present { path, object, mode }
-                if !matches!(
-                    path,
-                    jails_protocol::snapshot::LegacySourcePath::Schema1Ledger
-                ) =>
-            {
-                Some(FileOp::Delete {
-                    path: OperationTarget::LegacyMachine(path.clone()),
-                    before: GuardedImage {
-                        object: *object,
-                        mode: *mode,
-                    },
-                    // Nobody owns a row of unknown origin. §R2.5's whole point
-                    // is that the old format never recorded who asked for one.
-                    contributors: BTreeSet::new(),
-                })
-            }
-            _ => None,
-        })
-        .collect()
 }
 
 /// What the store already knows about the bytes jails wrote at each path.
@@ -488,7 +382,7 @@ fn abort_plan(
         // checking it would overwrite an edit made after the conflict froze.
         let op = match (restore.guarded_from, restore.restore_to) {
             (FileImage::Present { object, mode }, FileImage::Absent) => FileOp::Delete {
-                path: OperationTarget::Project(restore.path.clone()),
+                path: restore.path.clone(),
                 before: GuardedImage { object, mode },
                 contributors: BTreeSet::new(),
             },
@@ -501,7 +395,7 @@ fn abort_plan(
             ) => {
                 objects.insert(after.id, Arc::from(Vec::new().into_boxed_slice()));
                 FileOp::Replace {
-                    path: OperationTarget::Project(restore.path.clone()),
+                    path: restore.path.clone(),
                     before: GuardedImage { object, mode },
                     after,
                     mode: after_mode,
@@ -509,7 +403,7 @@ fn abort_plan(
                 }
             }
             (FileImage::Absent, FileImage::Present { object, mode }) => FileOp::Create {
-                path: OperationTarget::Project(restore.path.clone()),
+                path: restore.path.clone(),
                 after: object,
                 mode,
                 contributors: BTreeSet::new(),
@@ -671,9 +565,6 @@ fn parents(base: &ProjectSnapshot, operations: &[FileOp]) -> Result<Vec<Director
         let FileOp::Create { path, .. } = operation else {
             continue;
         };
-        let OperationTarget::Project(path) = path else {
-            continue;
-        };
         let mut components: Vec<&str> = path.as_str().split('/').collect();
         components.pop();
         while !components.is_empty() {
@@ -790,14 +681,6 @@ pub fn subject_of(change: &PreparedChange) -> Option<&PlannedSubject> {
     }
 }
 
-/// The migration a prepared apply carries, if it is a first schema-2 commit.
-pub fn migration_of(change: &PreparedChange) -> Option<&LegacyMigrationIdentity> {
-    match &change.operation_identity.semantics {
-        OperationSemanticsV1::Apply(apply) => apply.migration.as_ref(),
-        _ => None,
-    }
-}
-
 /// The owners a file operation is charged to, for a report.
 pub fn contributors_of(operation: &FileOp) -> &BTreeSet<ResourceOwner> {
     operation.contributors()
@@ -887,7 +770,6 @@ mod tests {
             preparation: PreparationContextFingerprint::default(),
             // Nothing here is an adoption: these tests are about the ordinary
             // rules, and a claim would quietly lift one of them.
-            claimed: BTreeSet::new(),
             // And nothing here reconciles a runtime: these tests are about
             // the file transition.
             start_services: false,
@@ -904,7 +786,6 @@ mod tests {
             generation: 3,
             last_operation: None,
             applied: Vec::new(),
-            legacy: Vec::new(),
             pending_conflict: None,
             one_shots: Vec::new(),
             resources: Vec::new(),
@@ -974,7 +855,6 @@ mod tests {
                     .unwrap(),
                 ],
                 entities_removed: Vec::new(),
-                legacy_after: Vec::new(),
             },
         }
     }
@@ -1246,7 +1126,6 @@ mod tests {
             generation: 3,
             last_operation: None,
             applied: Vec::new(),
-            legacy: Vec::new(),
             pending_conflict: Some(jails_protocol::envelope::PendingMarker {
                 operation: jails_protocol::identity::OperationId::from_bytes(sha256(b"op")),
                 generation: 3,

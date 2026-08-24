@@ -4,7 +4,7 @@
 // and Cargo enforces the boundary either way.
 pub(crate) use jails_generate::{add, generate};
 pub(crate) use jails_java::template;
-pub(crate) use jails_project::{compose, inspect, ledger, model, pom, project};
+pub(crate) use jails_project::{compose, inspect, model, pom, project};
 pub(crate) use jails_support::apply;
 pub(crate) use jails_tooling::{
     bench, commands, console, doctor, explain, kafka, lint, migrate, run, source, testd, why,
@@ -332,33 +332,7 @@ enum Command {
     /// base package, maps the ones it recognises onto jails' layers, and
     /// reports the ones it does not rather than guessing. Never touches
     /// [project] capabilities -- `jails sync` acts on that list.
-    Adopt {
-        /// The stable key of one decoded legacy row, from `jails doctor`
-        ///
-        /// Names one exact row, never the first one that looks similar. With
-        /// it, `adopt` claims that row for an owner instead of mapping the
-        /// project's directories onto jails' layers.
-        #[arg(long, requires = "intent")]
-        legacy_key: Option<String>,
-        /// Which intent that row is: `<kind>:<Name>`
-        ///
-        /// Checked against the row rather than trusted -- adopting `record
-        /// Reward` onto a row that says `service Reward` would put an owner on
-        /// files that recipe never wrote.
-        #[arg(long, requires = "legacy_key")]
-        intent: Option<String>,
-        /// Adopt a row whose files have drifted, discarding what is there
-        ///
-        /// The freshly rendered candidate is installed and the current bytes
-        /// are recorded as guarded preimages, so what was discarded is
-        /// recoverable rather than merely gone. Requires `--force`, because
-        /// this is the one adoption that does not preserve what it finds.
-        #[arg(long, requires = "force")]
-        replace: bool,
-        /// Confirm a `--replace`
-        #[arg(long)]
-        force: bool,
-    },
+    Adopt,
     /// Check everything that has to be true before the app can start
     Doctor {
         /// Emit the checks as JSON: {version, failures, warnings, checks[]}
@@ -722,21 +696,7 @@ fn main() -> std::process::ExitCode {
         }),
         Command::Start { services } => compose::start(&services, debug),
         Command::Stop { services } => compose::stop_cmd(&services, debug),
-        Command::Adopt {
-            legacy_key,
-            intent,
-            replace,
-            force,
-        } => {
-            let _ = force;
-            match (legacy_key, intent) {
-                (Some(key), Some(intent)) => invoke::mutate(invocation, false, |run| {
-                    let (kind, name) = invoke::parse_intent(&intent)?;
-                    jails_engine::route::adopt_legacy(run, &key, kind, &name, replace)
-                }),
-                _ => invoke::mutate(invocation, false, jails_engine::route::adopt_layout),
-            }
-        }
+        Command::Adopt => invoke::mutate(invocation, false, jails_engine::route::adopt_layout),
         Command::Src { type_name, json } => source::src(&type_name, json),
         Command::Bench {
             vus,

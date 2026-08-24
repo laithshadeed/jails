@@ -166,21 +166,6 @@ impl ResolvedIntent {
             .to_string()
     }
 
-    /// This intent's identity, and only its identity.
-    ///
-    /// The recipe label and the recorded name are owned `String`s the caller
-    /// holds for the call, so the key borrows rather than allocating a fourth
-    /// copy of each.
-    ///
-    /// The name is the one **`generate` records under**, not the one the
-    /// manifest spells: `generate` strips a suffix its kind already implies, so
-    /// a manifest asking for `fetcher AcquirerFetcher` keyed the spec to
-    /// `AcquirerFetcher` while the files landed on `Acquirer`. Two half-rows for
-    /// one entity, which is the thing this ledger exists to stop.
-    fn key<'a>(&'a self, recipe: &'a str, name: &'a str) -> crate::ledger::EntityKey<'a> {
-        crate::ledger::EntityKey::new(recipe, name, self.package.as_deref())
-    }
-
     /// The name the ledger row carries. See `key`.
     fn recorded_name(&self) -> String {
         generate::recorded_name(self.kind, &self.name)

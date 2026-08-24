@@ -14,7 +14,6 @@
 //! one place and a command cannot forget one.
 
 use crate::{Capability, Invocation, Output, add, model};
-use jails_generate::generate::ArtifactKind;
 use jails_support::Result;
 
 /// Run one mutation through the transaction protocol, and report it once.
@@ -102,12 +101,7 @@ fn accepted(planned: &jails_engine::route::Outcome) -> Result<bool> {
         .operations()
         .iter()
         .filter(|op| op.kind == jails_prepare::report::ReportedOpKind::Delete)
-        .map(|op| match &op.path {
-            jails_prepare::prepare::OperationTarget::Project(path) => path.to_string(),
-            jails_prepare::prepare::OperationTarget::LegacyMachine(path) => {
-                format!("legacy-machine {path:?}")
-            }
-        })
+        .map(|op| op.path.to_string())
         .collect();
     if deleting.is_empty() {
         return Ok(true);
@@ -143,29 +137,6 @@ fn drop_compiled_shadows(project: &model::Project, outcome: &jails_engine::route
     for deleted in outcome.deleted_files() {
         add::drop_compiled_shadow(project, std::path::Path::new(&deleted));
     }
-}
-
-/// `<kind>:<Name>`, as `--intent` takes it.
-///
-/// Two segments, not three. The key already names one exact decoded row, and
-/// the row carries its own package -- a third segment would be a second
-/// opinion about the same fact, and the interesting case is the two
-/// disagreeing.
-pub(crate) fn parse_intent(intent: &str) -> Result<(ArtifactKind, String)> {
-    let mut parts = intent.splitn(3, ':');
-    let (Some(kind), Some(name), None) = (parts.next(), parts.next(), parts.next()) else {
-        return Err(format!(
-            "`--intent {intent}` is not `<kind>:<Name>`.\n       fix: `jails doctor` prints the \
-             exact command for every row this project can adopt."
-        ));
-    };
-    let kind = <ArtifactKind as clap::ValueEnum>::from_str(kind, false).map_err(|_| {
-        format!(
-            "`{kind}` is not a generator kind.\n       fix: `jails commands --json` lists every \
-             kind this binary accepts."
-        )
-    })?;
-    Ok((kind, name.to_string()))
 }
 
 /// One `Declaration` per capability the caller named.

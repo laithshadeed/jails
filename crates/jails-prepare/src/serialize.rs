@@ -26,11 +26,12 @@
 use crate::command::{
     CommandEnvelope, CommandReport, EffectRetryReport, ErrorReport, SCHEMA as COMMAND_SCHEMA,
 };
-use crate::prepare::{OperationTarget, PreparedKind};
+use crate::prepare::PreparedKind;
 use crate::receipt::AppliedReceipt;
 use crate::report::{Report, ReportedLedger, ReportedOp, SCHEMA as REPORT_SCHEMA, Warning};
 use jails_protocol::conflict::FileImage;
 use jails_protocol::effect::{EffectState, PostCommitEffect};
+use jails_protocol::identity::ProjectPath;
 use jails_protocol::identity::{ObjectId, ObjectRef};
 use jails_protocol::resource::ResourceOwner;
 
@@ -205,27 +206,8 @@ fn owner_of(owner: &&ResourceOwner) -> String {
     }
 }
 
-fn target(value: &OperationTarget) -> String {
-    match value {
-        OperationTarget::Project(path) => variant("project", &quoted(path.as_str())),
-        // Never disguised as an ordinary project output.
-        OperationTarget::LegacyMachine(path) => {
-            variant("legacy-machine", &quoted(&legacy_spelling(path)))
-        }
-    }
-}
-
-/// The exact `.jails/...` spelling §R3.4 requires.
-fn legacy_spelling(path: &jails_protocol::snapshot::LegacySourcePath) -> String {
-    use jails_protocol::snapshot::LegacySourcePath as L;
-    match path {
-        L::Schema1Ledger => ".jails/ledger.toml".to_string(),
-        L::AppState => ".jails/app-state-v1".to_string(),
-        L::IntentFiles { name } => format!(".jails/intents/{}", name.as_str()),
-        L::ModelFiles { name } => format!(".jails/models/{}", name.as_str()),
-        L::GlobalFiles => ".jails/files".to_string(),
-        L::VersionFile => ".jails/version".to_string(),
-    }
+fn target(value: &ProjectPath) -> String {
+    variant("project", &quoted(value.as_str()))
 }
 
 fn ledger(value: &ReportedLedger) -> String {
@@ -670,29 +652,6 @@ mod tests {
         );
         assert!(json.contains("\"receipt\":null"), "{json}");
         assert!(json.contains("\"exit_code\":1"), "{json}");
-    }
-
-    /// Machine state being retired renders as its exact `.jails/...` spelling
-    /// and says what it is.
-    #[test]
-    fn a_legacy_target_renders_as_its_exact_spelling() {
-        let mut report = Report::of(&change_with(Vec::new())).unwrap();
-        report.operations.push(crate::report::ReportedOp {
-            kind: crate::report::ReportedOpKind::Delete,
-            path: OperationTarget::LegacyMachine(
-                jails_protocol::snapshot::LegacySourcePath::GlobalFiles,
-            ),
-            before: None,
-            after: None,
-            bytes: None,
-            mode: None,
-            contributors: Default::default(),
-        });
-        let json = envelope(&CommandEnvelope::preview(report));
-        assert!(
-            json.contains("{\"legacy-machine\":\".jails/files\"}"),
-            "{json}"
-        );
     }
 
     #[test]
