@@ -1,5 +1,6 @@
 use crate::model::{Artifact, Change, Layer, Project};
 use jails_support::Result;
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
@@ -55,11 +56,34 @@ pub fn report_degraded_shape(project: &Project, change: &Change) {
     println!("note: this is a {tool} project, and jails does not read {tool} build files.");
     println!("      Generated code therefore assumes plain JDBC (no Spring `JdbcClient`)");
     println!("      and no JSpecify, because those are read off a pom.xml that is not here.");
+    // Deduplicated, because the write path applies its rules independently:
+    // AssertJ is required by anything writing a test *and* by the scaffold's
+    // own companion tests, so a scaffold listed it twice and the reader was
+    // left wondering which of the two they had missed.
+    let mut said = BTreeSet::new();
     for dep in &change.deps {
-        println!("      Add yourself: {}:{}", dep.group_id, dep.artifact_id);
+        let coordinate = format!("{}:{}", dep.group_id, dep.artifact_id);
+        if said.insert(coordinate.clone()) {
+            println!("      Add yourself: {coordinate}");
+        }
     }
+    // Named by what it *does*, not by the Maven artifact that would have done
+    // it. A Gradle project cannot add `maven-failsafe-plugin`, so printing its
+    // name is an instruction the reader cannot carry out -- and the thing they
+    // actually have to arrange is that `*IT` classes get run at all, which
+    // every build spells differently.
     for (artifact_id, _) in &change.plugins {
-        println!("      Add yourself: the {artifact_id} plugin.");
+        if !said.insert(artifact_id.to_string()) {
+            continue;
+        }
+        match *artifact_id {
+            crate::spring::FAILSAFE_ARTIFACT => println!(
+                "      Arrange yourself: your build must run `*IT` classes. Maven needs \
+                 Failsafe for that; whatever {tool} calls it, an integration test nothing \
+                 executes is a green build that proves nothing."
+            ),
+            other => println!("      Arrange yourself: what `{other}` does for a Maven build."),
+        }
     }
 }
 
