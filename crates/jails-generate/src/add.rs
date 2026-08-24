@@ -450,6 +450,23 @@ pub fn plan_for(capability: Capability, project: &Project) -> Result<Change> {
     build_plan(capability, project, None, None)
 }
 
+/// The same, for the capabilities that take a subject.
+///
+/// `csv`, `sqlite`, `json` and `http` are about *something* -- a reader for one
+/// record, a database, a server class -- so they take the name the caller gave,
+/// and plan.md §R1.1 makes those parameters part of which capability it is.
+/// Which capability accepts which parameter is refused at
+/// `CapabilityId::resolve`, not here: this is one entry point rather than a
+/// second table saying which recipes read a name.
+pub fn plan_named(
+    capability: Capability,
+    project: &Project,
+    name: Option<&str>,
+    package: Option<&str>,
+) -> Result<Change> {
+    build_plan(capability, project, name, package)
+}
+
 fn build_plan(
     capability: Capability,
     project: &Project,

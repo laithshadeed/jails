@@ -254,6 +254,13 @@ pub struct Project {
     layers: Layers,
     pom: String,
     installed: Vec<String>,
+    /// The same list with the parameters each capability was declared with.
+    ///
+    /// Kept beside `installed` rather than replacing it: a label is what most
+    /// readers want and two named instances of one capability are two
+    /// declarations and one label, so deriving either from the other at the
+    /// call site is how the two counts come to disagree.
+    declared: Vec<crate::capability::Declaration>,
     build: crate::build::Build,
     /// Files this project has, as a plan says it will have them.
     ///
@@ -293,6 +300,7 @@ impl Project {
             java_release: pom::release_level(&pom),
             layers: Layers::from_config(&config),
             installed: config.capabilities().to_vec(),
+            declared: config.declarations().to_vec(),
             overlay: None,
             build,
             pom,
@@ -322,12 +330,20 @@ impl Project {
         // holds -- which is what a projection *is*, and is why this takes a
         // project rather than a root.
         let pom = text("pom.xml").unwrap_or_else(|| live.pom.clone());
-        let (layers, installed) = match text("jails.toml") {
+        let (layers, installed, declared) = match text("jails.toml") {
             Some(projected) => {
                 let config = Config::parse(&projected)?;
-                (Layers::from_config(&config), config.capabilities().to_vec())
+                (
+                    Layers::from_config(&config),
+                    config.capabilities().to_vec(),
+                    config.declarations().to_vec(),
+                )
             }
-            None => (live.layers.clone(), live.installed.clone()),
+            None => (
+                live.layers.clone(),
+                live.installed.clone(),
+                live.declared.clone(),
+            ),
         };
         Ok(Self {
             root: live.root.clone(),
@@ -339,6 +355,7 @@ impl Project {
             java_release: pom::release_level(&pom),
             layers,
             installed,
+            declared,
             overlay: Some(std::sync::Arc::new(overlay)),
             build: live.build,
             pom,
@@ -369,6 +386,7 @@ impl Project {
             java_release: pom::release_level(&pom),
             layers: Layers::from_config(&config),
             installed: config.capabilities().to_vec(),
+            declared: config.declarations().to_vec(),
             overlay: None,
             build: crate::build::detect(root),
             pom,
@@ -416,6 +434,12 @@ impl Project {
 
     pub fn capabilities(&self) -> &[String] {
         &self.installed
+    }
+
+    /// Every capability this project declares, with the parameters it was
+    /// declared with -- the view anything forming an identity needs.
+    pub fn declarations(&self) -> &[crate::capability::Declaration] {
+        &self.declared
     }
 
     /// Resolve a package override, or the configured conventional layer.

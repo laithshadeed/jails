@@ -120,23 +120,17 @@ fn layers(project: &Project) -> Result<Vec<jails_protocol::context::LayerContext
 }
 
 /// Every capability the project declares, sorted by identity.
+///
+/// Resolved through the one constructor the routes use, so the context a
+/// render is stamped with names the same entities the transition declares. A
+/// label rebuilt as a singleton would describe a project whose named
+/// capabilities are all the default instance -- true of no project that has
+/// one.
 fn capabilities(project: &Project) -> Result<Vec<CanonicalCapability>> {
     let mut out: Vec<CanonicalCapability> = Vec::new();
-    for label in project.capabilities() {
-        let Some(kind) = Capability::value_variants()
-            .iter()
-            .copied()
-            .find(|candidate| candidate.label() == label)
-        else {
-            continue;
-        };
-        out.push(CanonicalCapability {
-            id: CapabilityId {
-                kind,
-                instance: CapabilityInstance::Singleton,
-            },
-            spec: CapabilitySpec { placement: None },
-        });
+    for declaration in project.declarations() {
+        let (id, spec) = declaration.resolve(project)?;
+        out.push(CanonicalCapability { id, spec });
     }
     out.sort_by(|a, b| a.id.cmp(&b.id));
     out.dedup_by(|a, b| a.id == b.id);

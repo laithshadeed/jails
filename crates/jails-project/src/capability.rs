@@ -40,32 +40,6 @@ pub fn layer(kind: Capability) -> Option<Layer> {
     }
 }
 
-/// Resolve `--name`/`--package` into the identity and spec of one capability.
-///
-/// The refusals come from [`CapabilityId::resolve`], so a parameter a class
-/// has no meaning for is reported at the constructor rather than ignored by
-/// the recipe that happens not to read it.
-pub fn identity(
-    project: &Project,
-    kind: Capability,
-    name: Option<&str>,
-    package: Option<&str>,
-) -> Result<(CapabilityId, CapabilitySpec)> {
-    let name = name.map(Name::parse).transpose()?;
-    let placement = package.map(Package::parse).transpose()?;
-    // Only a named capability needs the resolved answer, and only a named
-    // capability has a layer to resolve it against.
-    let resolved = layer(kind)
-        .map(|layer| Package::parse(&project.package(layer, package)))
-        .transpose()?;
-    let id = CapabilityId::resolve(
-        kind,
-        name.as_ref(),
-        resolved.as_ref().or(placement.as_ref()),
-    )?;
-    Ok((id, CapabilitySpec { placement }))
-}
-
 /// What `jails.toml` says about one capability: the kind, plus the parameters
 /// the caller actually passed.
 ///
@@ -88,6 +62,20 @@ impl Declaration {
             kind,
             name: None,
             package: None,
+        }
+    }
+
+    /// What a command line asked for, before it has been resolved.
+    ///
+    /// The CLI's `--name`/`--package` and the file's `name`/`package` are the
+    /// same two values, so they are the same type: one shape reaches
+    /// [`Self::resolve`] and there is no second place a parameter can be
+    /// dropped on the way.
+    pub fn asked(kind: Capability, name: Option<&str>, package: Option<&str>) -> Self {
+        Self {
+            kind,
+            name: name.map(str::to_string),
+            package: package.map(str::to_string),
         }
     }
 
@@ -116,6 +104,31 @@ impl Declaration {
     /// True when this is the bare form, which is the array's shape.
     pub fn is_plain(&self) -> bool {
         self.name.is_none() && self.package.is_none()
+    }
+
+    /// Resolve this declaration into the identity and spec it names.
+    ///
+    /// The refusals come from [`CapabilityId::resolve`], so a parameter a
+    /// class has no meaning for is reported at the constructor rather than
+    /// ignored by the recipe that happens not to read it.
+    ///
+    /// The package a `Named` identity carries is the **resolved** one, never
+    /// the raw override: see this module's own docs for why the two cannot
+    /// share a slot.
+    pub fn resolve(&self, project: &Project) -> Result<(CapabilityId, CapabilitySpec)> {
+        let name = self.name.as_deref().map(Name::parse).transpose()?;
+        let placement = self.package.as_deref().map(Package::parse).transpose()?;
+        // Only a named capability needs the resolved answer, and only a named
+        // capability has a layer to resolve it against.
+        let resolved = layer(self.kind)
+            .map(|layer| Package::parse(&project.package(layer, self.package.as_deref())))
+            .transpose()?;
+        let id = CapabilityId::resolve(
+            self.kind,
+            name.as_ref(),
+            resolved.as_ref().or(placement.as_ref()),
+        )?;
+        Ok((id, CapabilitySpec { placement }))
     }
 
     /// Refuse a parameter this capability's class has no meaning for.

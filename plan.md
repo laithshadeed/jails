@@ -485,7 +485,7 @@ enum CapabilityInstance {
 }
 
 struct CapabilitySpec {
-    placement: Option<Package>,       // only singleton-placed capabilities
+    placement: Option<Package>,       // the `--package` the caller passed, or None
 }
 
 enum TypeTargetId {
@@ -639,10 +639,27 @@ ambiguous, wrong-kind or malformed ID refuses. The CLI never attempts to
 canonicalise a missing external leaf and guess its former absolute identity.
 
 `Recipe`, `Name`, `Package`, `FieldSpec`, `IndexSpec`, `CapabilityId` and
-`ProjectPath` are types, not string aliases. `CapabilitySpec.placement` is
-`Some` only for the singleton-placed class; named identity carries its package
-in `CapabilityInstance`, and conventional singletons use `None`. Reject every
-other shape at decoding and resolution boundaries. `ProjectPath` is UTF-8,
+`ProjectPath` are types, not string aliases. `CapabilitySpec.placement` is the
+`--package` the caller passed and `None` when they passed none; named identity
+carries its **resolved** package in `CapabilityInstance`, and conventional
+singletons accept neither parameter and so have neither. Reject every other
+shape at decoding and resolution boundaries.
+
+This last is an amendment under §1.1 step 7, and the reason is the one that
+type comment used to hide. `placement` was specified as `Some` only for the
+singleton-placed class, on the reading that a named capability's package is
+already in its identity. It is -- but the identity's `Package` is *resolved*,
+because `--package ''` is a real placement (the base package) and an identity
+storing the raw override would put "the caller said nothing" and "the caller
+said flat" in one slot, so two installs into two different packages would share
+one identity and reconcile each other's files away. Resolving it costs the
+inverse: `com.example.demo.adapters` cannot say whether anybody asked for it.
+`jails.toml` needs that answer, since a capability nobody parameterised is one
+string in an array and a parameterised one is a `[[capability]]` table, and
+retirement has to find the same line the install wrote. So `placement` keeps
+the override for every class that accepts one, and the identity keeps the
+resolved package. Two fields, two questions, neither answerable from the
+other. `ProjectPath` is UTF-8,
 project-relative and `/`-normalised; it rejects empty, `.`, `..`, absolute and
 platform-prefix components and every path beneath `.git` or `target`.
 Everything beneath `.jails` is reserved by default. The constructor's complete
@@ -5261,7 +5278,7 @@ command uses it", and dispatch is still V1 for every command.
 | 6. New-project bootstrap through publish | done | §R6.5; `new`/`new-cli` build in a scratch sibling under `<parent>/.jails-new.lock` and become real in one rename, `--app` included. |
 | 7. Read-only `StateCompatibility` facade | done | `compat::read` classifies absent/current/legacy/unreadable without mutating, `ledger::parse` refuses a newer schema with a no-downgrade message, and `compat::translate` now turns a schema-1 ledger into a schema-2 draft in memory — so `Store::observe` reads a project V1 built instead of refusing it. §R2.5's conservatism is the design: every schema-1 row becomes a `LegacyEntry` and **none** becomes an `AppliedEntity`, because the old format did not record who asked for a row and one whose fields match today's manifest is still of unknown origin. The draft is generation 0 with empty applied/one-shot/resource/output tables, so the first V2 mutation writes generation 1 with the schema-1 bytes as its guarded before-image. `jails.toml` is not translated: its capabilities become `DirectConfig` claims during ordinary resolution and migration never touches the file. What is still missing is the explicit deletion of the *other* legacy sources (`app-state-v1`, `files`, `version`) through a `LegacyMigrationIdentity`; V1's own fold already removes them, so only a project that skipped that path still carries them. |
 | 8. Classify every remaining mutating path | done | Filesystem: the write-layer ratchet is at zero and counts deletes, copies, renames, links, directory creation and permissions. Subprocesses: §R6.6's table is enforced by a test that fails on stale rows too. |
-| 9. Flip the single dispatch point | ready, with one bill to settle first | The translation that blocked it exists (step 7). What settled *how* it must happen still holds: **all at once**, because one V2 command in a V1 project shares a ledger path with thirteen V1 ones and each writes a schema the other cannot read. Formerly: **blocked on the V1→V2 ledger translation, which did not exist.** The bill §R2.5's conservatism runs up is now visible and priced: after migrating, a schema-1 row has files and no owner, so `destroy` refuses it. That refusal names the row, says the old format never recorded who asked for it, and hands over the exact paths it will not delete — but the route out is `jails adopt --legacy-key`, which does not exist. Flipping before it does would ship a release where `jails destroy` stops working on every project that predates schema 2. So step 5's remaining half is not optional new surface: it is what makes the flip non-destructive. `.jails/ledger.toml` is one path with two incompatible schemas: `ledger::load` parses V1 and `LedgerV2::parse_file` parses V2, and neither reads the other. So a V2 route refuses any project that has ever run a V1 command — which is every real project — with `ledger has N line(s); schema 2 is exactly five`. This was found by flipping `adopt` and `rename` and running them against a project built by V1; both were reverted. It also settles *how* the flip must happen: **all at once**, since one V2 command in a V1 project is the same collision. Everything else is ready — every existing V1 mutation path is routed and `--pretend` is a `Run` mode honoured in one place. What remains at the boundary is mechanical: `--name`/`--package` for capability instances, `no_start`/`debug` post-commit behaviour, and reporting what was written. |
+| 9. Flip the single dispatch point | ready, with one bill to settle first | The translation that blocked it exists (step 7). What settled *how* it must happen still holds: **all at once**, because one V2 command in a V1 project shares a ledger path with thirteen V1 ones and each writes a schema the other cannot read. Formerly: **blocked on the V1→V2 ledger translation, which did not exist.** The bill §R2.5's conservatism runs up is now visible and priced: after migrating, a schema-1 row has files and no owner, so `destroy` refuses it. That refusal names the row, says the old format never recorded who asked for it, and hands over the exact paths it will not delete — but the route out is `jails adopt --legacy-key`, which does not exist. Flipping before it does would ship a release where `jails destroy` stops working on every project that predates schema 2. So step 5's remaining half is not optional new surface: it is what makes the flip non-destructive. `.jails/ledger.toml` is one path with two incompatible schemas: `ledger::load` parses V1 and `LedgerV2::parse_file` parses V2, and neither reads the other. So a V2 route refuses any project that has ever run a V1 command — which is every real project — with `ledger has N line(s); schema 2 is exactly five`. This was found by flipping `adopt` and `rename` and running them against a project built by V1; both were reverted. It also settles *how* the flip must happen: **all at once**, since one V2 command in a V1 project is the same collision. Everything else is ready — every existing V1 mutation path is routed and `--pretend` is a `Run` mode honoured in one place. `--name`/`--package` for capability instances is **done**: §R1.1's three classes are enforced at `CapabilityId::resolve`, every route that forms a capability identity now goes through one `Declaration` rather than hardcoding `Singleton`, and `jails.toml` grew the `[[capability]]` table those parameters need. That table was not optional decoration — without it a named capability could be installed and the next `sync` would retire it, because `DirectConfig` speaks for the *whole* list and a label rebuilt as a singleton is a different entity from the row `add` recorded. What remains at the boundary is `no_start`/`debug` post-commit behaviour and reporting what was written. |
 | 10. Delete V1, then prove the product | not started | §R6.8 owns the proof-app sweep and hosted CI; both remain unclaimed. |
 
 One gap is open, and it is named where it bites rather than left to be

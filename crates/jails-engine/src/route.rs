@@ -33,6 +33,7 @@ use jails_commit::execute::{self, LockedProject, ProjectHandle};
 use jails_commit::outcome::{CommitError, CommitResult};
 use jails_prepare::desire;
 use jails_prepare::pipeline::{self, ObservedStore, PreparationContext};
+use jails_project::capability::Declaration;
 use jails_project::capture::{self, ReadDeclaration};
 use jails_project::model::{Change, Project};
 use jails_protocol::bootstrap::Bootstrap;
@@ -41,8 +42,8 @@ use jails_protocol::context::RenderedSubjectContext;
 use jails_protocol::declaration::{FieldSpec, IntentArguments, IntentSpec};
 use jails_protocol::edit::SemanticEdit;
 use jails_protocol::entity::{
-    CapabilityId, CapabilityInstance, CapabilitySpec, EntityId, EntitySpec, IntentId, OneShotId,
-    OneShotSpec, OwnerId, SourceInputId,
+    CapabilityId, CapabilitySpec, EntityId, EntitySpec, IntentId, OneShotId, OneShotSpec, OwnerId,
+    SourceInputId,
 };
 use jails_protocol::identity::{JavaType, Name, ObjectId, Package, ProjectPath};
 use jails_protocol::ownership::{DesiredEntity, DesiredState, ObservedEntity, ReconcileScope};
@@ -250,9 +251,10 @@ fn record_capability(
     change: &mut DesiredChange,
     owner: &ResourceOwner,
     id: &CapabilityId,
+    spec: &CapabilitySpec,
 ) -> Result<()> {
     let key = ResourceKey::HumanConfigCapability(id.clone());
-    let spec = CapabilitySpec { placement: None };
+    let spec = spec.clone();
     change.resources.push(DesiredResource::new(
         key.clone(),
         BTreeSet::from([owner.clone()]),
@@ -833,12 +835,30 @@ impl Asked {
 /// name, spelled as `Capability::label()` rather than whatever alias was
 /// typed, so `jails add postgres` and `jails add db` are recognised as the
 /// same request by anything comparing fingerprints.
+/// The canonical syntax of a capability command, parameters included.
+///
+/// A fingerprint proves two invocations are the same command, so `add csv
+/// --name Order` and `add csv --name Invoice` must not render the same
+/// syntax. Built here from the resolved declaration rather than re-parsed out
+/// of `argv`, for the reason §R6.1 gives: a route knows what it was asked far
+/// more exactly than a re-parse does, and there is no second implementation to
+/// disagree with.
 fn asked_capabilities(
     command: &[&str],
-    capability: Capability,
+    declaration: &Declaration,
     request: CanonicalMutationRequest,
 ) -> Asked {
-    Asked::plain(request, command, &[capability.label()])
+    let mut syntax: Vec<String> = vec![declaration.kind.label().to_string()];
+    if let Some(name) = &declaration.name {
+        syntax.push("--name".to_string());
+        syntax.push(name.clone());
+    }
+    if let Some(package) = &declaration.package {
+        syntax.push("--package".to_string());
+        syntax.push(package.clone());
+    }
+    let syntax: Vec<&str> = syntax.iter().map(String::as_str).collect();
+    Asked::plain(request, command, &syntax)
 }
 
 /// One file operation, as a person reads it.

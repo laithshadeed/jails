@@ -86,31 +86,31 @@ fn declare(
 
     for &capability in capabilities {
         let planned = projected(project, &reads, &changes)?;
-        let id = CapabilityId {
-            kind: capability,
-            instance: CapabilityInstance::Singleton,
-        };
+        // The same resolution `add` performs, so a manifest row and a command
+        // line naming one capability reach one identity. `app.toml` cannot yet
+        // carry `--name`/`--package`; when it can, this is where they arrive.
+        let (id, spec) = Declaration::plain(capability).resolve(&planned)?;
         let owner = ResourceOwner::Entity(EntityId::Capability(id.clone()));
         let change = with_test_support(
             &planned,
             jails_generate::add::plan_for(capability, &planned)?,
         );
         let mut desired = desire::contribution(&owner, &change, &planned)?;
-        record_capability(&mut desired, &owner, &id)?;
+        record_capability(&mut desired, &owner, &id, &spec)?;
         provenance::stamp_files(
             &mut desired,
             &planned,
             RendererId::Capability(capability),
             Some(RenderedSubjectContext::Entity {
                 id: EntityId::Capability(id.clone()),
-                spec: EntitySpec::Capability(CapabilitySpec { placement: None }),
+                spec: EntitySpec::Capability(spec.clone()),
             }),
         )?;
         declared.insert(
             EntityId::Capability(id.clone()),
             DesiredEntity {
                 id: EntityId::Capability(id),
-                spec: EntitySpec::Capability(CapabilitySpec { placement: None }),
+                spec: EntitySpec::Capability(spec),
                 // The manifest is the owner, not `jails.toml`'s list: absence
                 // *there* really does mean relinquished, which is what makes
                 // a removed row a removal rather than silence.

@@ -12,28 +12,43 @@ use super::*;
 /// The direct counterpart of `add::add_in`, and deliberately the same subject:
 /// `ReconcileScope::DirectConfig` speaks for the capability list in
 /// `jails.toml`, which is what `sync` later reconciles against.
-pub fn install(run: &Run, capability: Capability) -> Result<Outcome> {
+///
+/// `--name` and `--package` are not passed through to the recipe and forgotten:
+/// they decide *which* capability this is. `add csv --name Order` and `add csv
+/// --name Invoice` are two, and a singleton identity would make the second look
+/// like the first already installed. Which parameters a capability accepts is
+/// [`jails_project::capability::identity`]'s to refuse, so a parameter that has
+/// no meaning is reported rather than quietly dropped by a recipe that happens
+/// not to read it.
+pub fn install(run: &Run, asked: &Declaration) -> Result<Outcome> {
     let project = run.project();
-    let id = CapabilityId {
-        kind: capability,
-        instance: CapabilityInstance::Singleton,
-    };
+    let capability = asked.kind;
+    let (id, spec) = asked.resolve(project)?;
+    let declared_as = Declaration::of(&id, &spec);
     let owner = ResourceOwner::Entity(EntityId::Capability(id.clone()));
-    let change = with_test_support(project, jails_generate::add::plan_for(capability, project)?);
+    let change = with_test_support(
+        project,
+        jails_generate::add::plan_named(
+            capability,
+            project,
+            asked.name.as_deref(),
+            asked.package.as_deref(),
+        )?,
+    );
     let mut desired = desire::contribution(&owner, &change, project)?;
-    record_capability(&mut desired, &owner, &id)?;
+    record_capability(&mut desired, &owner, &id, &spec)?;
     provenance::stamp_files(
         &mut desired,
         project,
         RendererId::Capability(capability),
         Some(RenderedSubjectContext::Entity {
             id: EntityId::Capability(id.clone()),
-            spec: EntitySpec::Capability(CapabilitySpec { placement: None }),
+            spec: EntitySpec::Capability(spec.clone()),
         }),
     )?;
     let entity = DesiredEntity {
-        id: EntityId::Capability(id),
-        spec: EntitySpec::Capability(CapabilitySpec { placement: None }),
+        id: EntityId::Capability(id.clone()),
+        spec: EntitySpec::Capability(spec.clone()),
         owners: BTreeSet::from([OwnerId::DirectConfig]),
     };
     let reads = declaration(project, &change, &desired)?;
@@ -48,14 +63,11 @@ pub fn install(run: &Run, capability: Capability) -> Result<Outcome> {
         &reads,
         &asked_capabilities(
             &["add"],
-            capability,
+            &declared_as,
             CanonicalMutationRequest::Add {
                 capabilities: CanonicalMutationRequest::capabilities(vec![CanonicalCapability {
-                    id: CapabilityId {
-                        kind: capability,
-                        instance: CapabilityInstance::Singleton,
-                    },
-                    spec: CapabilitySpec { placement: None },
+                    id,
+                    spec,
                 }])?,
                 no_start: false,
             },
@@ -79,32 +91,20 @@ pub fn sync(run: &Run) -> Result<Outcome> {
     let mut declared = BTreeMap::new();
     let mut changes = Vec::new();
     let mut reads = capture::capability_reads()?;
-    for label in project.capabilities() {
-        // The manifest stores `Capability::label()` spellings, never clap
-        // aliases -- CLAUDE.md's rule, so that one capability cannot be listed
-        // twice under two names. An unknown one is an error rather than a
-        // skipped line: silently ignoring it would make `sync` report success
-        // over a project it did not finish.
-        let capability = Capability::value_variants()
-            .iter()
-            .copied()
-            .find(|candidate| candidate.label() == label)
-            .ok_or_else(|| {
-                format!(
-                    "`{label}` in jails.toml is not a capability this jails knows.\n       fix: \
-                     run `jails commands --json` for the list, or use a newer jails."
-                )
-            })?;
-        let id = CapabilityId {
-            kind: capability,
-            instance: CapabilityInstance::Singleton,
-        };
+    // The declarations, not the labels: a `[[capability]]` table carries the
+    // `--name`/`--package` that decide which capability its row is, and
+    // reconstructing a singleton from the label alone would declare a
+    // different entity from the one `add` recorded -- so this transition would
+    // retire the named row it was meant to keep.
+    for declaration in project.declarations() {
+        let capability = declaration.kind;
+        let (id, spec) = declaration.resolve(project)?;
         let owner = ResourceOwner::Entity(EntityId::Capability(id.clone()));
         declared.insert(
             EntityId::Capability(id.clone()),
             DesiredEntity {
                 id: EntityId::Capability(id.clone()),
-                spec: EntitySpec::Capability(CapabilitySpec { placement: None }),
+                spec: EntitySpec::Capability(spec.clone()),
                 owners: BTreeSet::from([OwnerId::DirectConfig]),
             },
         );
@@ -118,17 +118,24 @@ pub fn sync(run: &Run) -> Result<Outcome> {
         }) {
             continue;
         }
-        let change =
-            with_test_support(project, jails_generate::add::plan_for(capability, project)?);
+        let change = with_test_support(
+            project,
+            jails_generate::add::plan_named(
+                capability,
+                project,
+                declaration.name.as_deref(),
+                declaration.package.as_deref(),
+            )?,
+        );
         let mut desired = desire::contribution(&owner, &change, project)?;
-        record_capability(&mut desired, &owner, &id)?;
+        record_capability(&mut desired, &owner, &id, &spec)?;
         provenance::stamp_files(
             &mut desired,
             project,
             RendererId::Capability(capability),
             Some(RenderedSubjectContext::Entity {
                 id: EntityId::Capability(id.clone()),
-                spec: EntitySpec::Capability(CapabilitySpec { placement: None }),
+                spec: EntitySpec::Capability(spec.clone()),
             }),
         )?;
         for artifact in &change.files {
@@ -178,13 +185,11 @@ pub fn sync(run: &Run) -> Result<Outcome> {
 /// other one still claims it. A file only this capability owned becomes an
 /// absence. The line in `jails.toml` goes, because it was a resource this
 /// entity owned like any other.
-pub fn remove(run: &Run, capability: Capability) -> Result<Outcome> {
+pub fn remove(run: &Run, asked: &Declaration) -> Result<Outcome> {
     let project = run.project();
-    let id = CapabilityId {
-        kind: capability,
-        instance: CapabilityInstance::Singleton,
-    };
-    let entity = EntityId::Capability(id);
+    let (id, spec) = asked.resolve(project)?;
+    let declared_as = Declaration::of(&id, &spec);
+    let entity = EntityId::Capability(id.clone());
     let store = observed(project)?;
     if !store
         .ledger
@@ -195,7 +200,7 @@ pub fn remove(run: &Run, capability: Capability) -> Result<Outcome> {
             "`{}` is not recorded as installed in this project.\n       fix: `jails doctor` says \
              what is installed. Removing something the store never recorded would mean guessing \
              which lines to take out of files jails does not own.",
-            capability.label()
+            declared_as.display()
         ));
     }
     let mut declared = declared_capabilities(&store, None)?;
@@ -216,14 +221,11 @@ pub fn remove(run: &Run, capability: Capability) -> Result<Outcome> {
         &retiring(&store, &owner)?,
         &asked_capabilities(
             &["remove"],
-            capability,
+            &declared_as,
             CanonicalMutationRequest::Remove {
                 capabilities: CanonicalMutationRequest::capabilities(vec![CanonicalCapability {
-                    id: CapabilityId {
-                        kind: capability,
-                        instance: CapabilityInstance::Singleton,
-                    },
-                    spec: CapabilitySpec { placement: None },
+                    id,
+                    spec,
                 }])?,
                 force: false,
                 no_start: false,

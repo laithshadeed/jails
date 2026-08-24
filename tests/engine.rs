@@ -8,6 +8,7 @@
 
 mod common;
 
+use jails_project::capability::Declaration;
 use jails_project::model::Project;
 use jails_spec::spec::kind::Capability;
 
@@ -20,7 +21,7 @@ fn a_capability_installs_through_the_transaction_protocol() {
 
     jails_engine::route::install(
         &jails_engine::route::Run::committing(&project),
-        Capability::Actuator,
+        &Declaration::plain(Capability::Actuator),
     )
     .unwrap();
 
@@ -67,7 +68,7 @@ fn a_capability_that_writes_a_test_brings_something_to_assert_with() {
 
     jails_engine::route::install(
         &jails_engine::route::Run::committing(&project),
-        Capability::Csv,
+        &Declaration::plain(Capability::Csv),
     )
     .unwrap();
 
@@ -94,7 +95,7 @@ fn a_refusal_before_the_lock_leaves_the_project_untouched() {
 
     let error = jails_engine::route::install(
         &jails_engine::route::Run::committing(&project),
-        Capability::K8s,
+        &Declaration::plain(Capability::K8s),
     )
     .unwrap_err();
 
@@ -248,7 +249,7 @@ fn a_capability_install_converges_from_every_failpoint() {
             let _armed = jails_commit::fault::Armed::at(point);
             let _ = jails_engine::route::install(
                 &jails_engine::route::Run::committing(&project),
-                Capability::Actuator,
+                &Declaration::plain(Capability::Actuator),
             );
         }
 
@@ -305,7 +306,7 @@ fn each_transition_records_what_it_claimed_and_leaves_the_rest_alone() {
 
     jails_engine::route::install(
         &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
-        Capability::Actuator,
+        &Declaration::plain(Capability::Actuator),
     )
     .unwrap();
     let store = jails_commit::store::Store::at(&root).observe().unwrap();
@@ -324,7 +325,7 @@ fn each_transition_records_what_it_claimed_and_leaves_the_rest_alone() {
 
     jails_engine::route::install(
         &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
-        Capability::Cache,
+        &Declaration::plain(Capability::Cache),
     )
     .unwrap();
     let second = jails_commit::store::Store::at(&root)
@@ -352,13 +353,13 @@ fn installing_a_capability_twice_leaves_the_store_where_it_was() {
 
     jails_engine::route::install(
         &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
-        Capability::Actuator,
+        &Declaration::plain(Capability::Actuator),
     )
     .unwrap();
     let before = jails_commit::store::Store::at(&root).observe().unwrap();
     let outcome = jails_engine::route::install(
         &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
-        Capability::Actuator,
+        &Declaration::plain(Capability::Actuator),
     )
     .unwrap();
     let after = jails_commit::store::Store::at(&root).observe().unwrap();
@@ -385,7 +386,7 @@ fn removing_a_capability_takes_back_exactly_what_it_installed() {
 
     jails_engine::route::install(
         &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
-        Capability::Actuator,
+        &Declaration::plain(Capability::Actuator),
     )
     .unwrap();
     let file = root.join("src/test/java/com/example/demo/ActuatorEndpointsTest.java");
@@ -393,7 +394,7 @@ fn removing_a_capability_takes_back_exactly_what_it_installed() {
 
     jails_engine::route::remove(
         &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
-        Capability::Actuator,
+        &Declaration::plain(Capability::Actuator),
     )
     .unwrap();
 
@@ -440,17 +441,17 @@ fn a_shared_claim_survives_one_owner_leaving() {
     // Both of these want `spring-boot-starter-actuator`.
     jails_engine::route::install(
         &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
-        Capability::Actuator,
+        &Declaration::plain(Capability::Actuator),
     )
     .unwrap();
     jails_engine::route::install(
         &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
-        Capability::Observability,
+        &Declaration::plain(Capability::Observability),
     )
     .unwrap();
     jails_engine::route::remove(
         &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
-        Capability::Observability,
+        &Declaration::plain(Capability::Observability),
     )
     .unwrap();
 
@@ -469,7 +470,7 @@ fn removing_what_was_never_installed_is_refused() {
     common::write_spring_fixture(&root);
     let error = jails_engine::route::remove(
         &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
-        Capability::Actuator,
+        &Declaration::plain(Capability::Actuator),
     )
     .unwrap_err();
     assert!(error.contains("not recorded as installed"), "{error}");
@@ -489,7 +490,7 @@ fn sync_brings_the_project_to_the_list_in_the_manifest() {
 
     jails_engine::route::install(
         &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
-        Capability::Actuator,
+        &Declaration::plain(Capability::Actuator),
     )
     .unwrap();
     let file = root.join("src/test/java/com/example/demo/ActuatorEndpointsTest.java");
@@ -832,7 +833,7 @@ fn route_step(root: &std::path::Path, step: &[&str]) -> Result<(), String> {
                 .map_err(|_| format!("`{}` is not a capability", step[1]))?;
             jails_engine::route::install(
                 &jails_engine::route::Run::committing(&project),
-                capability,
+                &Declaration::plain(capability),
             )
             .map(|_| ())
         }
@@ -879,7 +880,7 @@ fn adding_a_database_wires_the_tests_that_are_already_there() {
 
     jails_engine::route::install(
         &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
-        Capability::Db,
+        &Declaration::plain(Capability::Db),
     )
     .unwrap();
 
@@ -947,14 +948,14 @@ fn removing_a_database_gives_the_reader_their_test_back() {
 
     jails_engine::route::install(
         &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
-        Capability::Db,
+        &Declaration::plain(Capability::Db),
     )
     .unwrap();
     assert!(std::fs::read_to_string(&path).unwrap().contains("@Import("));
 
     jails_engine::route::remove(
         &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
-        Capability::Db,
+        &Declaration::plain(Capability::Db),
     )
     .unwrap();
 
@@ -2243,7 +2244,7 @@ fn adopting_a_foreign_layout_records_every_layer_in_one_write() {
     // nor the reverse.
     jails_engine::route::install(
         &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
-        Capability::Json,
+        &Declaration::plain(Capability::Json),
     )
     .unwrap();
     let both = std::fs::read_to_string(root.join("jails.toml")).unwrap();
@@ -2358,7 +2359,7 @@ fn formatting_runs_against_a_copy_and_commits_only_what_changed() {
     common::write_spring_fixture(&root);
     jails_engine::route::install(
         &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
-        Capability::Format,
+        &Declaration::plain(Capability::Format),
     )
     .unwrap();
 
@@ -2571,7 +2572,7 @@ fn pretending_writes_nothing_and_names_what_a_commit_would_write() {
     // maintenance subject.
     let project = Project::load(&root).unwrap();
     let pretend = jails_engine::route::Run::pretending(&project);
-    let capability = jails_engine::route::install(&pretend, Capability::Json)
+    let capability = jails_engine::route::install(&pretend, &Declaration::plain(Capability::Json))
         .unwrap()
         .operations();
     let artifact = jails_engine::route::generate(
@@ -3018,5 +3019,139 @@ fn adoption_refuses_bytes_jails_did_not_produce() {
         std::fs::read_to_string(&at).unwrap(),
         "package com.example.demo.domain;\n\n// mine\n",
         "the refusal rewrote the file"
+    );
+}
+
+/// Two names are two capabilities.
+///
+/// plan.md §R1.1 classes `csv` as multi-instance named: `add csv --name Order`
+/// and `add csv --name Invoice` are two readers over two records, and a
+/// singleton identity would make the second look like the first was already
+/// installed -- a no-op over a class the caller asked for and never got.
+#[test]
+fn two_named_instances_of_one_capability_are_two_capabilities() {
+    let root = common::temp_dir("engine-named-capability");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+
+    for name in ["Order", "Invoice"] {
+        jails_engine::route::install(
+            &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+            &Declaration::asked(Capability::Csv, Some(name), None),
+        )
+        .unwrap();
+    }
+
+    let adapters = root.join("src/main/java/com/example/demo/adapters");
+    assert!(adapters.join("OrderReader.java").is_file());
+    assert!(adapters.join("InvoiceReader.java").is_file());
+
+    // Both are declared, and neither could have been written as a bare string.
+    let manifest = std::fs::read_to_string(root.join("jails.toml")).unwrap();
+    assert!(manifest.contains("name = \"Order\""), "{manifest}");
+    assert!(manifest.contains("name = \"Invoice\""), "{manifest}");
+    let store = jails_commit::store::Store::at(&root).observe().unwrap();
+    let ledger = store.ledger.unwrap();
+    assert_eq!(
+        ledger
+            .applied
+            .iter()
+            .filter(|row| matches!(
+                &row.id,
+                jails_protocol::entity::EntityId::Capability(id)
+                    if id.kind == Capability::Csv
+            ))
+            .count(),
+        2,
+        "two names are two rows"
+    );
+}
+
+/// Removing one named instance leaves the other, its class and its line.
+#[test]
+fn removing_one_named_instance_leaves_its_sibling_alone() {
+    let root = common::temp_dir("engine-named-remove");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+    for name in ["Order", "Invoice"] {
+        jails_engine::route::install(
+            &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+            &Declaration::asked(Capability::Csv, Some(name), None),
+        )
+        .unwrap();
+    }
+
+    jails_engine::route::remove(
+        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &Declaration::asked(Capability::Csv, Some("Order"), None),
+    )
+    .unwrap();
+
+    let adapters = root.join("src/main/java/com/example/demo/adapters");
+    assert!(!adapters.join("OrderReader.java").exists());
+    assert!(adapters.join("InvoiceReader.java").is_file());
+    let manifest = std::fs::read_to_string(root.join("jails.toml")).unwrap();
+    assert!(!manifest.contains("\"Order\""), "{manifest}");
+    assert!(manifest.contains("name = \"Invoice\""), "{manifest}");
+}
+
+/// A parameter the capability has no meaning for is refused, not dropped.
+///
+/// `ci` writes a workflow file at a fixed path; `--name` would change nothing
+/// about what it installs, so accepting it silently would leave the caller
+/// believing they had named something.
+#[test]
+fn a_parameter_with_no_meaning_refuses_before_anything_is_written() {
+    let root = common::temp_dir("engine-named-refusal");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+    let before = common::scenarios::file_set(&root);
+
+    let error = jails_engine::route::install(
+        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &Declaration::asked(Capability::Ci, Some("Nightly"), None),
+    )
+    .unwrap_err();
+
+    assert!(error.contains("--name"), "{error}");
+    assert_eq!(common::scenarios::file_set(&root), before);
+}
+
+/// `sync` reads the table, not just the array.
+///
+/// The manifest is the authority for `sync`, so a `[[capability]]` row has to
+/// arrive as the capability it names. Rebuilding a singleton from the label
+/// would declare a different entity from the one the row means -- and because
+/// `DirectConfig` speaks for the whole list, the named row would be retired by
+/// the very transition meant to install it.
+#[test]
+fn sync_installs_a_capability_the_manifest_named() {
+    let root = common::temp_dir("engine-named-sync");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+    std::fs::write(
+        root.join("jails.toml"),
+        "[[capability]]\nkind = \"csv\"\nname = \"Order\"\n",
+    )
+    .unwrap();
+
+    jails_engine::route::sync(&jails_engine::route::Run::committing(
+        &Project::load(&root).unwrap(),
+    ))
+    .unwrap();
+    let reader = root.join("src/main/java/com/example/demo/adapters/OrderReader.java");
+    assert!(reader.is_file(), "sync installed nothing");
+
+    // And a second sync is a no-op rather than a retirement.
+    let before = jails_commit::store::Store::at(&root).observe().unwrap();
+    jails_engine::route::sync(&jails_engine::route::Run::committing(
+        &Project::load(&root).unwrap(),
+    ))
+    .unwrap();
+    let after = jails_commit::store::Store::at(&root).observe().unwrap();
+    assert!(reader.is_file(), "the second sync took the class back out");
+    assert_eq!(
+        before.ledger.map(|l| l.applied.len()),
+        after.ledger.map(|l| l.applied.len())
     );
 }
