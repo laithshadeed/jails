@@ -754,6 +754,7 @@ const LAYERS: &[(&str, usize)] = &[
     ("receipt", 5),
     ("merge", 5),
     ("reconcile", 5),
+    ("recovery", 5),
     ("report", 5),
     ("sandbox", 5),
     ("serialize", 5),

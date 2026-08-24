@@ -54,7 +54,12 @@ pub fn envelope(envelope: &CommandEnvelope) -> String {
     );
     // Always present, and ordinarily empty: an observationally clean recovery
     // is omitted from the list rather than from the field.
-    field(&mut out, "recovery", "[]", false);
+    field(
+        &mut out,
+        "recovery",
+        &array(&envelope.recovery, recovery),
+        false,
+    );
     field(
         &mut out,
         "report",
@@ -361,6 +366,97 @@ fn effect_retry(value: &EffectRetryReport) -> String {
         &option(value.after.as_ref(), effect_state),
         false,
     );
+    out.push('}');
+    out
+}
+
+/// One recovery outcome, as §R3.4 orders it: the changes in invocation order,
+/// then the effects recovery reported and did not run.
+fn recovery(value: &crate::recovery::RecoveryOutcome) -> String {
+    let mut out = String::new();
+    out.push('{');
+    field(
+        &mut out,
+        "changes",
+        &array(&value.changes, recovery_change),
+        true,
+    );
+    field(
+        &mut out,
+        "pending_effects",
+        &array(&value.pending_effects, recoverable_effect),
+        false,
+    );
+    out.push('}');
+    out
+}
+
+fn recovery_change(value: &crate::recovery::RecoveryChange) -> String {
+    use crate::recovery::RecoveryChange;
+    let mut out = String::new();
+    out.push('{');
+    match value {
+        RecoveryChange::Transaction {
+            operation,
+            transaction,
+            generation,
+            action,
+        } => {
+            field(&mut out, "kind", &quoted("transaction"), true);
+            field(&mut out, "operation", &quoted(&operation.to_hex()), false);
+            field(
+                &mut out,
+                "transaction",
+                &quoted(&transaction.to_hex()),
+                false,
+            );
+            field(&mut out, "generation", &generation.to_string(), false);
+            field(&mut out, "action", &quoted(action.label()), false);
+        }
+        RecoveryChange::EffectStateChanged {
+            operation,
+            transaction,
+            generation,
+            effect,
+            before,
+            after,
+        } => {
+            field(&mut out, "kind", &quoted("effect-state-changed"), true);
+            field(&mut out, "operation", &quoted(&operation.to_hex()), false);
+            field(
+                &mut out,
+                "transaction",
+                &quoted(&transaction.to_hex()),
+                false,
+            );
+            field(&mut out, "generation", &generation.to_string(), false);
+            field(&mut out, "effect", &quoted(&effect.to_hex()), false);
+            field(&mut out, "before", &effect_state(before), false);
+            field(&mut out, "after", &effect_state(after), false);
+        }
+    }
+    out.push('}');
+    out
+}
+
+fn recoverable_effect(value: &crate::recovery::RecoverableEffect) -> String {
+    let mut out = String::new();
+    out.push('{');
+    field(
+        &mut out,
+        "operation",
+        &quoted(&value.operation.to_hex()),
+        true,
+    );
+    field(
+        &mut out,
+        "transaction",
+        &quoted(&value.transaction.to_hex()),
+        false,
+    );
+    field(&mut out, "generation", &value.generation.to_string(), false);
+    field(&mut out, "effect", &quoted(&value.effect.to_hex()), false);
+    field(&mut out, "state", &effect_state(&value.state), false);
     out.push('}');
     out
 }

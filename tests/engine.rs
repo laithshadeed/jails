@@ -3328,6 +3328,74 @@ fn a_commit_with_no_container_reports_no_runtime_attempt() {
     );
 }
 
+/// One envelope, from both sides, with the status derived rather than told.
+///
+/// §R3.4's `CommandEnvelope` is what a mutation command returns. The preview
+/// side is projected from the prepared report and the committed side from the
+/// receipt the executor published -- so a caller cannot report an apply as a
+/// conflict or a no-op as an apply, because neither is a word anybody writes.
+#[test]
+fn a_commit_and_a_plan_are_the_same_envelope() {
+    use jails_prepare::command::{CommandStatus, ProjectCommitDisposition};
+
+    let root = common::temp_dir("engine-envelope");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+
+    let record = |run: &jails_engine::route::Run| {
+        jails_engine::route::generate(
+            run,
+            jails_spec::spec::kind::ArtifactKind::Record,
+            "Note",
+            &["title:string!".to_string()],
+            None,
+            &[],
+            None,
+            None,
+        )
+        .unwrap()
+        .envelope()
+        .expect("every mutation route returns one envelope")
+    };
+
+    let project = Project::load(&root).unwrap();
+    let preview = record(&jails_engine::route::Run::pretending(&project));
+    assert_eq!(preview.status, CommandStatus::Preview);
+    assert_eq!(preview.project_commit, ProjectCommitDisposition::None);
+    assert!(preview.receipt.is_none());
+    assert!(preview.recovery.is_empty());
+
+    let applied = record(&committing(&Project::load(&root).unwrap()));
+    assert_eq!(applied.status, CommandStatus::Applied);
+    assert_eq!(applied.project_commit, ProjectCommitDisposition::Existing);
+    assert!(applied.report.is_none(), "a commit reports its receipt");
+    let receipt = applied.receipt.expect("an apply publishes a receipt");
+    assert!(
+        receipt
+            .files
+            .iter()
+            .any(|file| file.path.to_string().ends_with("Note.java")),
+        "the receipt names nothing this generated"
+    );
+
+    // Running it again is a no-op, and §R4.2 gives a no-op no receipt:
+    // "nothing happened" and "everything happened and changed nothing" are
+    // different answers, and only the second has files to name.
+    let settled = record(&committing(&Project::load(&root).unwrap()));
+    assert_eq!(settled.status, CommandStatus::NoOp);
+    assert!(settled.receipt.is_none());
+    assert_eq!(settled.exit_code(), 0);
+
+    // And the JSON rendering is the same value, not a second description.
+    let json = jails_prepare::serialize::envelope(&settled);
+    assert!(
+        json.contains("\"schema\":\"jails.command-result.v1\""),
+        "{json}"
+    );
+    assert!(json.contains("\"status\":\"no-op\""), "{json}");
+    assert!(json.contains("\"recovery\":[]"), "{json}");
+}
+
 /// `--no-start` is part of what was asked, not a printing decision.
 ///
 /// The canonical request is what §R5.4's fingerprint is taken over, and the

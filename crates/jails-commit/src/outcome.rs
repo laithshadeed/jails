@@ -21,8 +21,17 @@
 //! cleanup look like a failure.
 
 use crate::journal::BlockReason;
+// The recovery *report* types live in `jails-prepare` beside the other report
+// shapes, because §R3.4 puts them in `CommandEnvelope` and the envelope is
+// below this crate. They are re-exported here so every existing caller keeps
+// its spelling.
 use jails_prepare::receipt::AppliedReceipt;
-use jails_protocol::effect::{EffectId, EffectState};
+pub use jails_prepare::recovery::{
+    RecoverableEffect, RecoveryChange, RecoveryOutcome, RecoveryTransactionAction,
+};
+use jails_protocol::effect::EffectId;
+#[cfg(test)]
+use jails_protocol::effect::EffectState;
 use jails_protocol::identity::{OperationId, TransactionId};
 
 /// Why a commit did not happen. Nothing was written.
@@ -116,68 +125,6 @@ pub enum CommittedEffectError {
 pub struct CommittedResult {
     pub receipt: AppliedReceipt,
     pub effect: CommitEffectOutcome,
-}
-
-/// What one recovery call actually changed.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RecoveryOutcome {
-    /// Every authoritative change this call made, in canonical order. Empty
-    /// means recovery was observationally clean — which is the ordinary case
-    /// and the one that lets a commit continue.
-    pub changes: Vec<RecoveryChange>,
-    /// Executable effects recovery reported and did not run.
-    pub pending_effects: Vec<RecoverableEffect>,
-}
-
-impl RecoveryOutcome {
-    pub fn clean() -> Self {
-        Self {
-            changes: Vec::new(),
-            pending_effects: Vec::new(),
-        }
-    }
-
-    /// Whether the caller's plan is stale because of what recovery did.
-    ///
-    /// An empty `changes` with a nonempty `pending_effects` is still clean:
-    /// reporting an effect nobody ran changed nothing.
-    pub fn is_clean(&self) -> bool {
-        self.changes.is_empty()
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum RecoveryChange {
-    Transaction {
-        operation: OperationId,
-        transaction: TransactionId,
-        generation: u64,
-        action: RecoveryTransactionAction,
-    },
-    EffectStateChanged {
-        operation: OperationId,
-        transaction: TransactionId,
-        generation: u64,
-        effect: EffectId,
-        before: EffectState,
-        after: EffectState,
-    },
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RecoveryTransactionAction {
-    AbandonedPrepared,
-    RolledForwardAndPublished,
-    PublishedCommittedReceipt,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RecoverableEffect {
-    pub operation: OperationId,
-    pub transaction: TransactionId,
-    pub generation: u64,
-    pub effect: EffectId,
-    pub state: EffectState,
 }
 
 /// What a commit did.

@@ -31,9 +31,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use clap::ValueEnum;
 use jails_commit::execute::{self, LockedProject, ProjectHandle};
 use jails_commit::outcome::{CommitError, CommitResult};
-use jails_prepare::command::CommandEnvelope;
+use jails_prepare::command::{CommandEnvelope, ProjectCommitDisposition};
 use jails_prepare::desire;
 use jails_prepare::pipeline::{self, ObservedStore, PreparationContext};
+use jails_prepare::recovery::RecoveryOutcome;
 use jails_prepare::report::{Report, ReportedOp};
 use jails_project::capability::Declaration;
 use jails_project::capture::{self, ReadDeclaration};
@@ -75,6 +76,7 @@ mod field;
 mod maintenance;
 mod oneshot;
 mod provenance;
+mod session;
 
 pub use app::{AppIntent, app_apply};
 pub use artifact::{destroy, generate};
@@ -83,6 +85,7 @@ pub use feature::{install_fast_test, remove_fast_test};
 pub use field::field;
 pub use maintenance::{adopt_layout, adopt_legacy, app_init, format, rename};
 pub use oneshot::{cases, migration};
+pub use session::{Outcome, Run};
 
 /// A kind as the word somebody types, taken from the same `ValueEnum` clap
 /// parses -- so a refusal naming `jails g <kind>` names a command that exists.
@@ -345,11 +348,16 @@ fn declared_capabilities(
 
 /// One request, before it is measured against the store.
 ///
+/// `Clone` because §R3.4's replan-once loop measures the same request against
+/// the store twice when recovery moves it in between -- the *request* is what
+/// was asked and does not change; only what the store makes of it does.
+///
 /// Deliberately not a `DesiredChangeSet` yet. That value states what the store
 /// looks like afterwards, and afterwards is a function of what is there now --
 /// which exactly one place may read (see [`commit`]). A field filled with a
 /// placeholder here and corrected there is two authorities on one number, and
 /// the executor refuses when they disagree.
+#[derive(Clone)]
 struct Request {
     scope: ReconcileScope,
     /// What this scope declares. Empty is a real declaration: it says this
@@ -529,6 +537,14 @@ fn relative_path(project: &Project, path: &std::path::Path) -> Result<ProjectPat
 }
 
 /// Steps 3 and 5 to 7: capture, prepare, lock, commit.
+///
+/// Replans exactly once, and §R3.4 says why once: recovery may have finished
+/// an interrupted earlier transaction between the read and the lock, which
+/// makes this plan describe a store that has moved. That is not an error --
+/// nothing is wrong, the plan is simply stale -- so the store is reread and
+/// the request measured against it again. A *second* such answer is
+/// `RecoveryBlocked` rather than a third attempt: recovery changing
+/// authoritative state twice in one invocation is a loop, not a race.
 fn commit(
     run: &Run,
     request: Request,
@@ -536,12 +552,28 @@ fn commit(
     asked: &Asked,
 ) -> Result<Outcome> {
     let project = run.project();
-    // Read once, and let the same value decide the generation the plan claims
-    // and the image the commit guards under the lock. Reading them apart is
-    // how a plan comes to be written against a store that moved in between.
-    let observed = observed(project)?;
-    let set = request.against(&observed)?;
-    commit_set(run, set, declaration, asked)
+    let mut recovery = Vec::new();
+    for attempt in 0..2 {
+        // Read once per attempt, and let the same value decide the generation
+        // the plan claims and the image the commit guards under the lock.
+        // Reading them apart is how a plan comes to be written against a store
+        // that moved in between.
+        let observed = observed(project)?;
+        let set = request.clone().against(&observed)?;
+        let outcome = commit_set(run, set, declaration, asked)?;
+        match outcome.replanned() {
+            Some(outcome) if attempt == 0 => recovery.push(outcome),
+            Some(_) => {
+                return Err(
+                    "recovery changed this project twice while one command was running.\n                            fix: run `jails doctor`. Replanning again would be a loop rather than a \
+                     race, so jails stops and says so instead."
+                        .to_string(),
+                );
+            }
+            None => return Ok(outcome.after_recovery(recovery)),
+        }
+    }
+    unreachable!("the loop returns on every path")
 }
 
 /// The same steps, for a request that already knows what the store becomes.
@@ -673,162 +705,6 @@ fn prepare_set(
         projection,
         context,
     )
-}
-
-/// One run of one route: the project, and whether it may write.
-///
-/// A parameter object rather than a mode argument on every route, and the
-/// reason is arity: `generate` already takes eight, and a ninth that most of
-/// the body never mentions is exactly the shape abstract.md's first rung is
-/// about. It also puts the decision in one place -- a route cannot forget to
-/// honour `--pretend`, because it never sees it.
-///
-/// `--pretend` is not a weaker commit that stops early by luck. It runs the
-/// same computation and stops one step before the lock, so what it reports is
-/// the bundle the commit would have activated rather than a second
-/// implementation hoping to agree with the first.
-pub struct Run<'a> {
-    project: &'a Project,
-    write: bool,
-    /// Whether jails prints the commands it shells out to.
-    ///
-    /// Observability only, and it reaches the effect attempt because that is
-    /// the one subprocess a mutation route runs -- a `--debug` that stopped at
-    /// the file transition would go quiet exactly where a person is trying to
-    /// see what happened.
-    debug: bool,
-    /// Whether this invocation may start what it installs.
-    ///
-    /// `--no-start` is the caller declining the runtime half of a capability
-    /// that brings a compose service, and it is part of *what was asked*: the
-    /// canonical request carries it, so the fingerprint two invocations are
-    /// compared by distinguishes `add db` from `add db --no-start`. Every
-    /// route used to hardcode `no_start: false`, which made the fingerprint
-    /// describe a command nobody typed.
-    start: bool,
-    /// The exact paths this invocation claims from an unowned state.
-    ///
-    /// Empty on every run a caller can construct. Only `adopt_legacy` fills it,
-    /// from the row it was asked to claim, because only that command has been
-    /// told the deliberate decision §R5.3 asks for. Keeping it here rather than
-    /// on the request is what lets `--pretend` describe the same transition:
-    /// the claim is part of what was asked, not of what is written.
-    claimed: BTreeSet<ProjectPath>,
-}
-
-impl<'a> Run<'a> {
-    /// A run that commits.
-    pub fn committing(project: &'a Project) -> Self {
-        Self {
-            project,
-            write: true,
-            start: true,
-            debug: false,
-            claimed: BTreeSet::new(),
-        }
-    }
-
-    /// A run that computes everything and writes nothing.
-    pub fn pretending(project: &'a Project) -> Self {
-        Self {
-            project,
-            write: false,
-            start: true,
-            debug: false,
-            claimed: BTreeSet::new(),
-        }
-    }
-
-    /// The same run, with `--no-start`: nothing this installs is started.
-    pub fn without_start(mut self) -> Self {
-        self.start = false;
-        self
-    }
-
-    /// The same run, printing every command it shells out to.
-    pub fn with_debug(mut self) -> Self {
-        self.debug = true;
-        self
-    }
-
-    /// What the canonical request records, which is the caller's word for it.
-    fn no_start(&self) -> bool {
-        !self.start
-    }
-
-    /// The same run, claiming these exact paths from an unowned state.
-    fn claiming(&self, claimed: BTreeSet<ProjectPath>) -> Run<'a> {
-        Run {
-            project: self.project,
-            write: self.write,
-            start: self.start,
-            debug: self.debug,
-            claimed,
-        }
-    }
-
-    pub fn project(&self) -> &'a Project {
-        self.project
-    }
-}
-
-/// What a route did, or would have done.
-///
-/// One type rather than two entry points per route: the caller asked for a
-/// pretend run or a real one and gets back the matching answer, so there is no
-/// way to run the wrong one by picking the wrong function.
-#[derive(Debug)]
-pub enum Outcome {
-    Committed(CommitResult),
-    /// Nothing was written. This is the prepared transition, projected.
-    ///
-    /// §R3.4's `Report`, not a second description of it. There used to be a
-    /// hand-rolled list here, and it had already drifted from the normative
-    /// projection in three ways: it called a replace an `update`, it sorted by
-    /// path where the report keeps the executor's order, and it dropped
-    /// directory creation entirely. A `--pretend` that describes the work in
-    /// different words from the receipt is the failure the one-projection rule
-    /// exists to prevent.
-    Planned(Box<Report>),
-}
-
-impl Outcome {
-    /// The commit, when the caller knows it asked for one.
-    pub fn committed(self) -> Result<CommitResult> {
-        match self {
-            Self::Committed(result) => Ok(result),
-            Self::Planned(_) => {
-                Err("this run was asked to pretend, so there is no commit".to_string())
-            }
-        }
-    }
-
-    /// The prepared transition, for a run that planned one.
-    pub fn report(&self) -> Option<&Report> {
-        match self {
-            Self::Planned(report) => Some(report),
-            Self::Committed(_) => None,
-        }
-    }
-
-    /// The one value a mutation command returns, per §R3.4.
-    ///
-    /// Only the planned side is projected here. The committed side needs the
-    /// recovery vector and the replan-once loop the same section specifies,
-    /// and both belong with the dispatch flip -- projecting half of it now
-    /// would mean a `status` that is right for a preview and invented for
-    /// everything else.
-    pub fn envelope(&self) -> Option<CommandEnvelope> {
-        self.report().cloned().map(CommandEnvelope::preview)
-    }
-
-    /// Every operation a plan would perform, in the report's order.
-    pub fn operations(&self) -> Vec<ReportedOp> {
-        match self {
-            Self::Planned(report) => report.operations.clone(),
-            Self::Committed(_) => Vec::new(),
-        }
-    }
 }
 
 /// What was asked for, canonically -- both halves of §R5.4's invocation.

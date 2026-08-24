@@ -19,7 +19,8 @@
 //! spelling it had.
 
 use crate::prepare::OperationTarget;
-use crate::receipt::AppliedReceipt;
+use crate::receipt::{AppliedReceipt, ApplyOutcome};
+use crate::recovery::RecoveryOutcome;
 use crate::report::Report;
 use jails_protocol::effect::{EffectId, EffectState, PostCommitEffect};
 use jails_protocol::identity::{OperationId, TransactionId};
@@ -252,6 +253,14 @@ pub enum CommandReport {
 pub struct CommandEnvelope {
     pub status: CommandStatus,
     pub project_commit: ProjectCommitDisposition,
+    /// What recovery changed on the way here, in invocation order.
+    ///
+    /// Ordinarily empty, and empty is the *interesting* case: §R3.4 omits an
+    /// observationally clean recovery entirely, so a nonempty list means an
+    /// earlier interrupted run left work that this invocation finished. A
+    /// caller that could not see that would have no way to tell an ordinary
+    /// command from one that also rolled a stranger's transaction forward.
+    pub recovery: Vec<RecoveryOutcome>,
     pub report: Option<CommandReport>,
     pub receipt: Option<AppliedReceipt>,
     pub error: Option<ErrorReport>,
@@ -271,10 +280,53 @@ impl CommandEnvelope {
         Self {
             status,
             project_commit: ProjectCommitDisposition::None,
+            recovery: Vec::new(),
             report: Some(CommandReport::Prepared(Box::new(report))),
             receipt: None,
             error: None,
         }
+    }
+
+    /// A commit that happened. The status is the receipt's own outcome, so a
+    /// conflict, a finalisation and an abort cannot be reported as an
+    /// ordinary apply by a caller that forgot which it asked for.
+    pub fn applied(receipt: AppliedReceipt, project_commit: ProjectCommitDisposition) -> Self {
+        let status = match receipt.outcome {
+            ApplyOutcome::Applied => CommandStatus::Applied,
+            ApplyOutcome::Conflicted => CommandStatus::Conflicted,
+            ApplyOutcome::Finalised => CommandStatus::Finalised,
+            ApplyOutcome::Aborted => CommandStatus::Aborted,
+        };
+        Self {
+            status,
+            project_commit,
+            recovery: Vec::new(),
+            report: None,
+            receipt: Some(receipt),
+            error: None,
+        }
+    }
+
+    /// Nothing to do, decided under the lock.
+    ///
+    /// §R4.2: a no-op has no receipt. Projecting an empty one would make
+    /// "nothing happened" indistinguishable from "everything happened and
+    /// changed nothing", and only the second has files to name.
+    pub fn no_op() -> Self {
+        Self {
+            status: CommandStatus::NoOp,
+            project_commit: ProjectCommitDisposition::None,
+            recovery: Vec::new(),
+            report: None,
+            receipt: None,
+            error: None,
+        }
+    }
+
+    /// The same envelope, carrying what recovery changed on the way.
+    pub fn after_recovery(mut self, recovery: Vec<RecoveryOutcome>) -> Self {
+        self.recovery = recovery;
+        self
     }
 
     /// A refusal. Nothing was committed, so there is no receipt to carry.
@@ -288,6 +340,7 @@ impl CommandEnvelope {
         Self {
             status,
             project_commit: ProjectCommitDisposition::None,
+            recovery: Vec::new(),
             report: None,
             receipt: None,
             error: Some(error),
