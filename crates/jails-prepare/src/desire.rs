@@ -151,6 +151,7 @@ pub fn contribution(
             body: DesiredBody::Bytes(artifact.contents.as_bytes().into()),
             mode: None,
             resource: Some(key),
+            renderer: None,
         });
     }
     // Superseded artifacts are claimed, never written. See

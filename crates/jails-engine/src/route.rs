@@ -37,6 +37,7 @@ use jails_project::capture::{self, ReadDeclaration};
 use jails_project::model::{Change, Project};
 use jails_protocol::bootstrap::Bootstrap;
 use jails_protocol::change::DesiredChange;
+use jails_protocol::context::RenderedSubjectContext;
 use jails_protocol::declaration::{FieldSpec, IntentArguments, IntentSpec};
 use jails_protocol::edit::SemanticEdit;
 use jails_protocol::entity::{
@@ -48,6 +49,7 @@ use jails_protocol::ownership::{DesiredEntity, DesiredState, ObservedEntity, Rec
 use jails_protocol::plan::{
     DesiredAppliedEntity, DesiredChangeSet, DesiredOneShotReceipt, LedgerIntent, PlannedSubject,
 };
+use jails_protocol::provenance::{OneShotKind, RendererId};
 use jails_protocol::render::{DesiredBody, DesiredFile, ManagedPath};
 use jails_protocol::resource::{
     DesiredResource, OneShotLifecycle, OneShotState, ResourceKey, ResourceOwner, ResourceValue,
@@ -60,6 +62,7 @@ use jails_support::Result;
 mod artifact;
 mod capability;
 mod oneshot;
+mod provenance;
 
 pub use artifact::{destroy, generate};
 pub use capability::{install, remove, sync};

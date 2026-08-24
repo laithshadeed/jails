@@ -890,6 +890,7 @@ mod tests {
             },
             mode: None,
             resource: None,
+            renderer: None,
         });
         projected.advance(&change).unwrap();
 
@@ -957,6 +958,7 @@ mod tests {
             ),
             mode: None,
             resource: None,
+            renderer: None,
         });
         projected.advance(&change).unwrap();
         assert_eq!(projected.flavor(), Some(Flavor::SpringBoot));

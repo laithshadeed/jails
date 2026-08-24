@@ -298,6 +298,7 @@ pub(crate) mod tests {
             resource: Some(ResourceKey::WholeFile(path(
                 "src/main/java/com/example/demo/domain/Note.java",
             ))),
+            renderer: None,
         });
         change.edits.push(SemanticEdit::MavenDependency {
             key,

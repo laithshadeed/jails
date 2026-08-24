@@ -48,6 +48,7 @@ pub fn migration(project: &Project, description: &str) -> Result<CommitResult> {
         body: DesiredBody::Bytes(BODY.as_bytes().into()),
         mode: None,
         resource: Some(key),
+        renderer: None,
     });
 
     let spec = OneShotSpec::Migration {
@@ -56,6 +57,15 @@ pub fn migration(project: &Project, description: &str) -> Result<CommitResult> {
         path: path.clone(),
         body: ObjectId::from_bytes(jails_support::codec::sha256(BODY.as_bytes())),
     };
+    provenance::stamp_files(
+        &mut change,
+        project,
+        RendererId::OneShot(OneShotKind::Migration),
+        Some(RenderedSubjectContext::OneShot {
+            id: id.clone(),
+            spec: spec.clone(),
+        }),
+    )?;
     let observed = observed(project)?;
     let set = DesiredChangeSet {
         ledger_intent: LedgerIntent {
@@ -133,13 +143,22 @@ pub fn cases(project: &Project, brief: &str, package: Option<&str>) -> Result<Co
         source: SourceInputId::Project(source.clone()),
     };
     let owner = ResourceOwner::OneShot(id.clone());
-    let desired = desire::contribution(&owner, &change, project)?;
+    let mut desired = desire::contribution(&owner, &change, project)?;
 
     let spec = OneShotSpec::Cases {
         source: SourceInputId::Project(source.clone()),
         source_sha256: ObjectId::from_bytes(jails_support::codec::sha256(markdown.as_bytes())),
         output,
     };
+    provenance::stamp_files(
+        &mut desired,
+        project,
+        RendererId::OneShot(OneShotKind::Cases),
+        Some(RenderedSubjectContext::OneShot {
+            id: id.clone(),
+            spec: spec.clone(),
+        }),
+    )?;
     let observed = observed(project)?;
     let set = DesiredChangeSet {
         ledger_intent: LedgerIntent {

@@ -32,12 +32,21 @@ pub fn generate(
     );
     let id = intent(project, kind, name, package, fields, indexes, on, yields)?;
     let owner = ResourceOwner::Entity(EntityId::Intent(id.clone()));
-    let desired = desire::contribution(&owner, &change, project)?;
+    let mut desired = desire::contribution(&owner, &change, project)?;
     let entity = DesiredEntity {
         id: EntityId::Intent(id.clone()),
         spec: EntitySpec::Intent(spec(project, kind, fields, indexes, on, yields)?),
         owners: BTreeSet::from([OwnerId::DirectCli]),
     };
+    provenance::stamp_files(
+        &mut desired,
+        project,
+        RendererId::Recipe(kind),
+        Some(RenderedSubjectContext::Entity {
+            id: entity.id.clone(),
+            spec: entity.spec.clone(),
+        }),
+    )?;
     let reads = declaration(project, &change, &desired)?;
     let request = Request {
         scope: ReconcileScope::DirectEntity(EntityId::Intent(id)),

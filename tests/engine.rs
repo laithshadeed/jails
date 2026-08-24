@@ -1026,24 +1026,30 @@ fn cases_records_the_brief_it_read_and_reconciles_a_re_run() {
         jails_commit::outcome::CommitResult::NoOp
     ));
 
-    // An edited source would rewrite the output, and that is the half §R6.2
-    // calls "same-source updates reconcile the immutable output path". It is
-    // blocked on the *other* gap §R6.1 names -- `LedgerV2.outputs` is written
-    // empty, so there is no recorded base to measure an edit against. What
-    // must not happen meanwhile is a refusal that says something false.
+    // An edited source rewrites the output it recorded: §R6.2's "same-source
+    // updates reconcile the immutable output path". It works because the
+    // store now records the exact bytes jails wrote, so "the generator moved"
+    // is a different observation from "the reader edited it".
     jails_support::apply::put(
         root.join("docs/behaviour.md"),
         "# Acceptance\n\n- it accepts a valid card\n- it refuses an expired one\n- it retries once\n",
     )
     .unwrap();
-    let error =
-        jails_engine::route::cases(&Project::load(&root).unwrap(), "docs/behaviour.md", None)
-            .unwrap_err();
-    assert!(
-        error.contains("is jails' own output") && error.contains("LedgerV2.outputs"),
-        "the refusal names the gap rather than claiming jails did not write the file: {error}"
-    );
-    let _ = recorded;
+    jails_engine::route::cases(&Project::load(&root).unwrap(), "docs/behaviour.md", None).unwrap();
+
+    let second = std::fs::read_to_string(&output).unwrap();
+    assert!(second.contains("itRetriesOnce"), "{second}");
+    let store = jails_commit::store::Store::at(&root)
+        .observe()
+        .unwrap()
+        .ledger
+        .unwrap();
+    assert_eq!(store.one_shots.len(), 1, "one receipt, updated in place");
+    let now = match &store.one_shots[0].spec {
+        jails_protocol::entity::OneShotSpec::Cases { source_sha256, .. } => *source_sha256,
+        other => panic!("{other:?}"),
+    };
+    assert_ne!(now, recorded, "the receipt records what it actually read");
 }
 
 /// An external brief is refused by name rather than recorded under an

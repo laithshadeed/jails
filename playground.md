@@ -34,6 +34,38 @@ The three Spring projects produce executable jars with tests skipped. That is
 useful compile evidence, but it is deliberately **not** called a passing
 production gate. `jails check` is red for all three.
 
+## What worked and what did not
+
+The following distinction matters:
+
+- **Generation worked.** Jails created all four directory trees, applied every
+  manifest intent, generated routes/migrations/tests/CI/container files, and
+  repeated the operation without changing file contents.
+- **Main-source compilation worked.** The 85 payment, 168 Intercom, and 68
+  crawler production Java files compile. They package only when Maven is told
+  not to compile tests at all.
+- **The ledger build gate worked.** Its jar was produced and Maven reported 54
+  tests, 0 failures, and 6 deliberately skipped tests.
+- **The Spring production gate did not work.** All three `jails check` runs
+  stop at generated test compilation. No Spring test executes.
+- **Real infrastructure was not proved.** PostgreSQL, Kafka, Flyway, application
+  startup, and container images could not run in this sandbox.
+- **End-to-end business behavior was not complete.** The ledger strategies and
+  the generated Kafka consumer reactions still contain TODO behavior.
+
+### Problem summary
+
+| ID | Severity | Classification | Affected | Short version |
+|---|---|---|---|---|
+| P1 | Blocker | Confirmed Jails defect | All Spring apps | Generated `SecurityConfigTest` needs a Boot 4 test dependency that the generated POM omits |
+| P2 | High | Confirmed `doctor` failure; runtime effect unverified | All Spring apps | Many broad Spring tests are reported without Kafka Testcontainers wiring, and the suggested fix names the wrong capability |
+| P3 | Medium | Confirmed Jails diagnostic defect | All Spring apps | `doctor` mistakes a generated CORS comment for a required property |
+| P4 | Blocker for this run | Environment limitation | All Spring apps | The sandbox cannot operate the Podman/Docker runtime, so integration evidence is unavailable |
+| P5 | Medium | Jails portability/UX defect exposed by environment | Ledger apply | Jails selects unusable `mvnd` and provides no explicit Maven override or fallback |
+| P6 | Blocker | Confirmed Jails packaging defect | Ledger CLI | The jar and `jails run` start `App`, not the generated `LedgerCli` dispatcher |
+| P7 | Blocker for production semantics | Intentional scaffolding gap | All four | Generated strategies/listeners do not implement the application-specific reaction |
+| P8 | Low | Warnings/workflow | Ledger and this exercise | Future-JDK warnings and one incorrect relative copy path |
+
 ## Commands run
 
 Build the Jails binary used by the exercise:
@@ -163,100 +195,273 @@ Audit obvious unfinished generated behavior:
 rg -n --glob '!target/**' --glob '!*.http' 'TODO|@Disabled|UnsupportedOperationException|localhost:|change.?me|example\.com|return null' payments-gateway intercom web-crawler ledger-cli
 ```
 
-## Problems and difficulties
+## Detailed problem reports
 
-### 1. Spring test compilation is broken
+### P1 — generated Spring tests do not compile
 
-`jails check` compiles all production sources (85 payment, 168 Intercom, 68
-crawler), then all three fail while compiling `SecurityConfigTest.java`:
+**Classification:** confirmed Jails defect and release blocker.
+
+**Affected:** payments gateway, Intercom-style inbox, and web crawler.
+
+**Reproduction:** run `jails check` in any of the three Spring projects.
+
+**Expected:** generated production and test sources compile, then unit and
+integration tests run.
+
+**Actual:** Maven successfully compiles every production source and then stops
+while compiling the generated `SecurityConfigTest.java`:
 
 ```text
 package org.springframework.boot.webmvc.test.autoconfigure does not exist
 cannot find symbol: class WebMvcTest
 ```
 
-The generated Spring Boot 4.1.0 projects have
-`spring-boot-starter-test`, but not the split
-`spring-boot-starter-webmvc-test` dependency which supplies that package.
-This is a generic Jails security-capability/dependency defect and blocks all
-Spring tests before container-backed tests can run. It also makes the
-generated CI workflow fail (`mvn clean verify`). The generated Dockerfile uses
-`-DskipTests`, which still compiles test sources, so the image build is blocked
-by the same error; the successful packaging probe above had to use the stronger
-`-Dmaven.test.skip=true` workaround.
+The generated test imports
+`org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest`; for example,
+see
+[`SecurityConfigTest.java`](playground/payments-gateway/src/test/java/com/example/paymentsgateway/SecurityConfigTest.java).
+The generated Spring Boot 4.1.0 POM contains
+`spring-boot-starter-test`, but does not contain the split
+`spring-boot-starter-webmvc-test` artifact that provides that package; see
+[`pom.xml`](playground/payments-gateway/pom.xml).
 
-### 2. `doctor` reports generated reconciliation failures
+**Production impact:**
 
-Each Spring project reports 31 checks with five failures. Three are local
-infrastructure failures (Docker/Podman daemon, Compose provider, and no
-PostgreSQL on port 5432). Two are generated-output/tooling failures:
+- no generated Spring test executes, including security, repository, Kafka,
+  outbox, migration, workflow, and HTTP tests;
+- the generated CI job runs `mvn clean verify`, so CI fails;
+- the generated Dockerfile runs `mvn -DskipTests package`. `-DskipTests`
+  suppresses test execution but still compiles test sources, so the image
+  build fails too;
+- only `-Dmaven.test.skip=true package`, which skips both compilation and
+  execution of tests, produced jars. Those jars are compile evidence, not
+  release evidence.
 
-- the test-datasource check says 12 payment, 30 Intercom, and 9 crawler
-  `@SpringBootTest` classes lack `KafkaTestcontainersConfig`, even after two
-  manifest applies;
-- the CORS capability check treats the generated explanatory comment as a
-  required property and reports it missing.
+**Likely Jails fix:** when the security capability generates a Boot 4
+`@WebMvcTest`, add `org.springframework.boot:spring-boot-starter-webmvc-test`
+with test scope, or ensure the offline project baseline supplies the complete
+test slice. Add a regression test which creates a fresh offline Spring app,
+adds security, and runs `mvn clean test`.
 
-The suggested `jails add db` cannot match the first message: it concerns a
-Kafka test configuration, and the manifest has already reconciled `db`
-twice.
+### P2 — Testcontainers wiring reported incomplete after reconciliation
 
-### 3. Container-backed proof is unavailable in this sandbox
+**Classification:** confirmed `doctor` failure; the eventual runtime failure
+is not verified because P1 stops test compilation and P4 prevents containers.
 
-`jails migrate --check` cannot start PostgreSQL because the Docker command is
-a Podman shim whose runtime directory is read-only here:
+**Affected:** all three Spring projects.
+
+**Expected:** after `app apply --no-start` and its reconciliation pass,
+`jails doctor` should either report complete generated wiring or give an
+accurate command that adds the missing wiring.
+
+**Actual:** after applying every manifest twice with identical output hashes,
+`doctor` reports that these `@SpringBootTest` classes do not import
+`KafkaTestcontainersConfig`:
+
+- payments gateway: 12 classes;
+- Intercom-style inbox: 30 classes;
+- web crawler: 9 classes.
+
+The check is labelled **test datasource**, but the missing type it names is
+the Kafka configuration. Its proposed fix is `jails add db`, even though the
+database capability is already installed and reconciled. That message mixes
+database and Kafka responsibilities, so a user cannot confidently tell
+whether the generator or the diagnostic is wrong.
+
+**Production impact:** `doctor` cannot become green on Jails' own untouched
+output. If those broad Spring contexts really start Kafka listeners, their
+tests may also try to reach `localhost:9092` instead of a Testcontainers
+broker. That runtime consequence remains unproved in this run.
+
+**Likely Jails fix:** split the database and Kafka checks; inspect which
+auto-configurations each test actually activates; generate only the necessary
+`@Import` members; and make the remediation name the capability responsible
+for the missing type. Pin a second-apply test so reconciliation itself must
+make `doctor` green.
+
+### P3 — CORS capability is present but `doctor` says it is missing
+
+**Classification:** confirmed Jails diagnostic false-positive, not an observed
+runtime CORS failure.
+
+**Affected:** all three Spring projects.
+
+The generated properties contain both lines:
+
+```properties
+# Exact browser origins; never use `*` together with credentials.
+app.cors.allowed-origins=http://localhost:3000
+```
+
+Nevertheless `doctor` reports:
+
+```text
+FAIL capability cors  1 missing: property # Exact browser origins; never use `*` together with credentials.
+```
+
+The wording shows that the verifier is treating Jails' explanatory comment as
+if it were a required property key.
+
+**Production impact:** the generated runtime property exists, but readiness
+automation and deployment gates that trust `doctor` remain red. Re-running
+`app apply` does not fix it.
+
+**Likely Jails fix:** ignore blank/comment lines when deriving required
+properties from a capability recipe, and test the generated CORS block against
+the same parser used by `doctor`.
+
+### P4 — container-backed acceptance could not run here
+
+**Classification:** environment limitation, not evidence of a Jails code
+defect.
+
+**Affected:** all Spring integration evidence.
+
+`doctor` reports that the Docker daemon is unavailable, its Compose provider
+does not support the required Compose v2 invocation, and PostgreSQL is not
+listening on port 5432. `jails migrate --check` reaches the installed Docker
+command, which is a Podman shim, and fails with:
 
 ```text
 Failed to obtain podman configuration: set sticky bit on:
 chmod /run/user/1000/libpod: read-only file system
 ```
 
-Therefore migrations, real PostgreSQL/Kafka integration tests, application
-startup, and image builds are not proven in this run. This is an environment
-limit, separate from the compile defect above.
+**What this prevented:**
 
-### 4. Jails prefers `mvnd` without a usable-daemon check or override
+- applying every Flyway migration to PostgreSQL;
+- repository/query/association integration tests;
+- Kafka publish/consume and transactional-outbox tests;
+- durable-job and crawler-workflow recovery tests;
+- real application startup and API smoke tests;
+- OCI image build and non-root runtime inspection.
 
-The ledger manifest initially failed while adding `format` because `mvnd`
-was present but could not write `/home/laith/.m2/mvnd/.../registry.bin`.
-Restricting `PATH` so Jails selected ordinary `mvn` fixed it. Jails should
-offer an explicit Maven-command override or fall back when `mvnd` cannot
-start.
+**Required follow-up:** after P1 is fixed, rerun on a host with a responding
+Docker-compatible daemon, a Compose v2 provider, and writable container runtime
+directories. The exact commands are `jails migrate --check`, `jails check`,
+the generated Docker build, and application/API smoke tests. Until that occurs,
+the database and broker behavior is **unverified**, not passing or failing.
 
-### 5. The generated ledger is not the packaged/default CLI
+### P5 — Jails chooses an unusable `mvnd` and does not fall back
 
-`java -jar target/ledger-cli.jar` and `jails run -- ...` select the original
-`App` dispatcher, whose help only lists `help`. The manifest-generated
-`LedgerCli` contains `reconcile`, but it is reachable only by naming its main
-class manually. `jails run --no-build -- reconcile` fails with `unknown
-command: reconcile`.
+**Classification:** Jails portability/UX defect exposed by the sandbox's
+read-only home directory.
 
-Jails needs a default-dispatcher/main-class concept so `generate cli Ledger`
-can become the executable selected by packaging and `jails run`.
+**Affected:** ledger manifest application while reconciling the `format`
+capability. The same selection could affect any Maven-backed Jails command.
 
-### 6. The ledger business logic is explicitly unfinished
+**Expected:** use a project wrapper when present; otherwise allow the user to
+choose Maven, or fall back from an unusable daemon to ordinary `mvn`.
 
-The successful ledger gate runs 54 tests but skips six. The three matching
-strategies contain TODO implementations and their generated tests are
-`@Disabled`; the generated sealed ledger errors also contain TODO payloads.
-The `reconcile statement.csv` command currently echoes `statement.csv`.
-This is honest scaffolding, but it is not a production ledger.
+**Actual:** because `mvnd` existed on `PATH`, Jails selected it. `mvnd` then
+failed before Maven ran because it could not write:
 
-### 7. Generated message consumers still contain TODO behavior
+```text
+/home/laith/.m2/mvnd/registry/1.0.6/registry.bin: Read-only file system
+```
 
-The payment authorisation, Intercom message, and crawler page Kafka listeners
-all say `TODO: hand this to the application service that owns the reaction`.
-The outbox and Kafka transport are production-shaped, but the consumer-side
-business reaction remains user work.
+The manifest stopped after generating files but before completing format
+reconciliation. There is no documented Jails flag in this workflow to select
+`mvn`. Removing `mvnd` from the command's `PATH` allowed the same apply to
+resume and finish successfully.
 
-### 8. Minor workflow mistakes and warnings
+**Production impact:** generation depends on whichever Maven executable happens
+to appear first on a machine, and a failed daemon can leave an interrupted
+apply which must be resumed.
 
-- The first manifest copy attempt used `../../examples/...` from
-  `playground/` and failed; the correct path is `../examples/...`.
-- The ledger build emits a Jackson deprecation note, a future Java native
-  access warning from SQLite JDBC, and a future `Unsafe` warning from
-  Spotless. They do not fail the current build, but should be tracked for JDK
-  upgrades.
+**Likely Jails fix:** support a stable Maven-command setting/flag and, when
+auto-selecting `mvnd`, probe it before use or retry ordinary `mvn` when daemon
+initialisation fails.
+
+### P6 — the intended ledger command is not the executable entry point
+
+**Classification:** confirmed Jails packaging/run-selection defect.
+
+**Expected:** the manifest's generated `LedgerCli` dispatcher, containing the
+generated `reconcile` command, should be what `java -jar` and `jails run`
+execute.
+
+**Actual:** [`pom.xml`](playground/ledger-cli/pom.xml) fixes the jar main class
+to `com.example.ledgercli.App`. Consequently:
+
+```text
+$ java -jar target/ledger-cli.jar
+usage: ledger-cli <command> [args]
+commands:
+  help
+
+$ jails run --no-build -- reconcile
+unknown command: reconcile
+```
+
+The generated dispatcher itself works only when invoked by its class name:
+
+```text
+$ java -cp target/ledger-cli.jar com.example.ledgercli.cli.LedgerCli
+usage: ledger <command> [args]
+commands:
+  help
+  reconcile
+```
+
+**Production impact:** the produced jar does not expose the application the
+manifest describes. A deployment or shell user naturally invoking the jar
+cannot reach `reconcile`.
+
+**Likely Jails fix:** record a default dispatcher in project metadata, let the
+manifest designate it explicitly, update the Maven main class during
+generation, and make `jails run` resolve the same entry point as the packaged
+jar.
+
+### P7 — generated application-specific behavior remains unfinished
+
+**Classification:** intentional scaffolding gap, but a blocker for the user's
+production-grade goal.
+
+**Ledger evidence:**
+
+- `ExactReferenceMatchRule`, `AmountAndDateMatchRule`, and
+  `FuzzyMemoMatchRule` contain TODO decision bodies;
+- each strategy has two `@Disabled` tests, producing the six skipped tests in
+  the otherwise successful gate;
+- `LedgerError` variants contain TODO payload descriptions;
+- `reconcile statement.csv` currently prints `statement.csv`; it does not read,
+  match, persist, report, or reconcile ledger entries.
+
+**Spring evidence:**
+
+- `PaymentAuthorisedListener` contains `TODO: hand this to the application
+  service that owns the reaction`;
+- `MessageReceivedListener` contains the same TODO;
+- `PageDiscoveredListener` contains the same TODO.
+
+Jails did generate useful production mechanisms around these points: typed
+events, Kafka configuration, transactional outboxes, persistent jobs, bounded
+fetching, repositories, migrations, HTTP endpoints, security, metrics, CI, and
+containers. What is missing is the application-specific decision or reaction.
+
+**Production impact:** passing compilation would still not mean the requested
+business systems work end to end. The ledger does not reconcile; received
+events do not drive downstream application behavior.
+
+**Required follow-up:** either implement these decisions as user-owned domain
+code, or extend Jails' manifests/generators with enough declarative semantics
+to generate and test them. Remove disabled tests only by replacing them with
+executable behavior and assertions.
+
+### P8 — non-blocking workflow mistakes and upgrade warnings
+
+**Classification:** low severity; does not explain any main gate failure.
+
+- The first manifest-copy command used `../../examples/...` from
+  `playground/`. It was an operator path mistake; `../examples/...` succeeded.
+- Jackson-generated test code emits a deprecation note.
+- SQLite JDBC warns that future Java releases will require explicit native
+  access.
+- Spotless warns about an internal `Unsafe` call that a future JDK will remove.
+
+These warnings should be tracked during dependency/JDK upgrades, but none
+caused the current ledger build or Spring compile failure.
 
 ## Production-readiness verdict
 

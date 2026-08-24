@@ -34,10 +34,11 @@ use crate::tool::{OperationContextFingerprint, PreparationContextFingerprint};
 use jails_project::projection::{ProjectedEntry, ProjectedProject};
 use jails_protocol::bootstrap::LoadedProject;
 use jails_protocol::change::DesiredChange;
-use jails_protocol::conflict::{FileImage, FileMode};
+use jails_protocol::conflict::{FileImage, FileMode, LiveFileImage, StoredFileImage};
 use jails_protocol::envelope::LedgerV2;
 use jails_protocol::identity::{ObjectId, ObjectRef, ProjectPath, TemplateKey};
 use jails_protocol::plan::{LedgerIntent, PlannedSubject};
+use jails_protocol::render::DesiredProvenance;
 use jails_protocol::render::{DesiredBody, TemplateValue};
 use jails_protocol::resource::ResourceOwner;
 use jails_protocol::snapshot::{Captured, ProjectSnapshot, ReadSet, TemplateStore};
@@ -53,6 +54,9 @@ use std::sync::Arc;
 /// under the lock, and the value that was decoded from it. An absent file with
 /// a decoded store, or the reverse, would let a plan be written against a
 /// store nobody saw.
+mod diff;
+mod ledger;
+
 #[derive(Clone, Debug)]
 pub struct ObservedStore {
     pub image: FileImage,
@@ -161,10 +165,12 @@ fn apply(
     let rendered = materialise(&projection, &set.ordered, &context.templates)?;
 
     // Step 8. Diff the final projection against the snapshot images.
-    // Which paths the store already records as somebody's output. It is not
-    // the same question as "does this change claim it", and telling the two
-    // apart is what lets a refusal say something true: jails wrote this
-    // before, versus jails has never seen it.
+    //
+    // Two things the diff needs from the store. The bases jails recorded, so
+    // an update to its own output is a three-way question rather than a
+    // refusal; and which paths it already owns, so a refusal that cannot
+    // answer that question says which of the two situations it is in.
+    let prior = prior_outputs(&context.observed_store);
     let previously_owned: BTreeSet<ProjectPath> = context
         .observed_store
         .ledger
@@ -175,7 +181,13 @@ fn apply(
             _ => None,
         })
         .collect();
-    let (operations, objects) = diff(&base, &projection, &rendered, &previously_owned)?;
+    let stamps = stamps(&set.ordered);
+    let diff::Diffed {
+        operations,
+        objects,
+        outputs,
+        retired,
+    } = diff::diff(&base, &projection, &rendered, &prior, &previously_owned)?;
 
     // Step 9. Parents for creates only, stopping at the machine root.
     let directories = parents(&base, &operations)?;
@@ -192,8 +204,52 @@ fn apply(
         operations,
         directories,
         objects,
+        ledger::Recorded {
+            outputs,
+            retired,
+            stamps,
+        },
         context,
     )
+}
+
+/// What the store already knows about the bytes jails wrote at each path.
+///
+/// This is the whole point of `LedgerV2.outputs`: without it, "the generator
+/// changed" and "the reader edited it" are the same observation, and acting on
+/// the first when only the second is true overwrites somebody's work.
+fn prior_outputs(store: &ObservedStore) -> BTreeMap<ProjectPath, crate::reconcile::PriorOutput> {
+    store
+        .ledger
+        .iter()
+        .flat_map(|ledger| ledger.outputs.iter())
+        .map(|row| {
+            (
+                row.path.clone(),
+                crate::reconcile::PriorOutput {
+                    base: row.base.object,
+                    base_mode: row.base.mode,
+                },
+            )
+        })
+        .collect()
+}
+
+/// Where each managed output's bytes came from, keyed by path.
+///
+/// One stamp per file rather than per change, because §R5.2 asks the question
+/// of the output: *this* file was rendered by *that* renderer. A change that
+/// writes six files under one recipe supplies six stamps that happen to agree.
+fn stamps(changes: &[DesiredChange]) -> BTreeMap<ProjectPath, DesiredProvenance> {
+    let mut out = BTreeMap::new();
+    for change in changes {
+        for file in &change.files {
+            if let Some(stamp) = &file.renderer {
+                out.insert(file.path.clone(), stamp.clone());
+            }
+        }
+    }
+    out
 }
 
 fn finalise(
@@ -220,6 +276,10 @@ fn finalise(
         Vec::new(),
         Vec::new(),
         BTreeMap::new(),
+        // A finalisation or an abort writes no new managed output: it
+        // resolves one that already exists, and the row it resolves is
+        // already in the store.
+        ledger::Recorded::default(),
         context,
     )
 }
@@ -287,6 +347,10 @@ fn abort_plan(
         operations,
         Vec::new(),
         objects,
+        // A finalisation or an abort writes no new managed output: it
+        // resolves one that already exists, and the row it resolves is
+        // already in the store.
+        ledger::Recorded::default(),
         context,
     )
 }
@@ -394,262 +458,6 @@ fn flat(value: Option<&TemplateValue>, key: &TemplateKey) -> Result<String> {
 /// The bodies a prepared change will write, keyed by content address.
 pub type ObjectBundle = BTreeMap<ObjectId, Arc<[u8]>>;
 
-/// Step 8: every path whose projected state differs from what was captured.
-fn diff(
-    base: &ProjectSnapshot,
-    projection: &ProjectedProject,
-    rendered: &BTreeMap<ProjectPath, Vec<u8>>,
-    previously_owned: &BTreeSet<ProjectPath>,
-) -> Result<(Vec<FileOp>, ObjectBundle)> {
-    let mut operations = Vec::new();
-    let mut objects: BTreeMap<ObjectId, Arc<[u8]>> = BTreeMap::new();
-
-    for (path, entry) in projection.overlay() {
-        let before = base.read(path)?;
-        let contributors = projection.contributors(path);
-        let after: Option<(Vec<u8>, FileMode)> = match entry {
-            ProjectedEntry::File(file) => Some((file.bytes.to_vec(), file.mode)),
-            ProjectedEntry::Deferred { .. } => {
-                let body = rendered.get(path).ok_or_else(|| {
-                    format!("`{path}` is still a deferred render after materialisation")
-                })?;
-                Some((body.clone(), default_mode()))
-            }
-            ProjectedEntry::Deleted => None,
-        };
-
-        match (before, after) {
-            (Captured::Absent, None) => {
-                // A create that a later change deleted collapses to nothing,
-                // which is §R3.2 step 8's rule and not an omission.
-            }
-            (Captured::Absent, Some((body, mode))) => {
-                let object = intern(&mut objects, body);
-                operations.push(FileOp::Create {
-                    path: OperationTarget::Project(path.clone()),
-                    after: object,
-                    mode,
-                    contributors,
-                });
-            }
-            (Captured::Present(file), None) => operations.push(FileOp::Delete {
-                path: OperationTarget::Project(path.clone()),
-                before: GuardedImage {
-                    object: ObjectRef::new(file.sha256, file.len),
-                    mode: file.mode,
-                },
-                contributors,
-            }),
-            (Captured::Present(file), Some((body, mode))) => {
-                let object = intern(&mut objects, body);
-                // Equal bytes *and* mode emit no operation. A file with the
-                // right bytes and the wrong mode is not the file that was
-                // meant, so mode is part of the comparison.
-                if object.id == file.sha256 && mode == file.mode {
-                    continue;
-                }
-                // An *owned output* -- a file some entity claims, as opposed
-                // to a shared file this change merely edits -- goes through
-                // R5.3's reconciliation, which is where "jails did not write
-                // this" is decided. Without this the preparation happily
-                // planned a replace over a file somebody had written by hand,
-                // and the receipt recorded the entity as its contributor.
-                //
-                // `prior` is `None` until applied outputs are read back from
-                // the ledger (§R6.1's `LedgerV2.outputs` gap). That makes an
-                // update to jails' own earlier output refuse rather than
-                // replace, which is the safe direction to be wrong in while
-                // the plumbing lands -- but the refusal has to say which of
-                // the two situations it is in. "jails did not write it" is
-                // the truth for a file nothing recorded and a lie for one the
-                // store already owns.
-                if !contributors.is_empty() {
-                    if previously_owned.contains(path) {
-                        return Err(format!(
-                            "`{path}` is jails' own output and its bytes differ from what this \
-                             would write, but the store has not recorded the bytes jails wrote \
-                             -- so it cannot tell your edits from a regeneration.\n       fix: \
-                             destroy and regenerate, or keep the file. plan.md §R6.1 names this \
-                             as the open `LedgerV2.outputs` gap."
-                        ));
-                    }
-                    let live = FileImage::Present {
-                        object: ObjectRef::new(file.sha256, file.len),
-                        mode: file.mode,
-                    };
-                    let desired = FileImage::Present { object, mode };
-                    match crate::reconcile::reconcile(path, None, live, desired)? {
-                        crate::reconcile::Decision::Refuse(why) => return Err(why),
-                        crate::reconcile::Decision::Nothing => continue,
-                        _ => {}
-                    }
-                }
-                operations.push(FileOp::Replace {
-                    path: OperationTarget::Project(path.clone()),
-                    before: GuardedImage {
-                        object: ObjectRef::new(file.sha256, file.len),
-                        mode: file.mode,
-                    },
-                    after: object,
-                    mode,
-                    contributors,
-                });
-            }
-        }
-    }
-    operations.sort_by(|a, b| a.target().cmp(b.target()));
-    Ok((operations, objects))
-}
-
-/// Whether a computed store says anything the observed one did not.
-///
-/// Only the rows are compared. `written_by`, `generation` and
-/// `last_operation` change on every commit by construction, so including them
-/// would make every store differ from itself.
-fn unchanged(store: &LedgerV2, observed: &Option<LedgerV2>) -> bool {
-    let Some(observed) = observed else {
-        return store.applied.is_empty()
-            && store.one_shots.is_empty()
-            && store.resources.is_empty()
-            && store.outputs.is_empty()
-            && store.legacy.is_empty()
-            && store.pending_conflict.is_none();
-    };
-    store.applied == observed.applied
-        && store.one_shots == observed.one_shots
-        && store.resources == observed.resources
-        && store.outputs == observed.outputs
-        && store.legacy == observed.legacy
-        && store.pending_conflict == observed.pending_conflict
-}
-
-/// The store this transition will leave behind.
-///
-/// An *update* of what was observed, never a fresh construction: a row this
-/// request says nothing about -- another capability's dependency, an entity it
-/// has never heard of -- survives untouched. Rebuilding the store from one
-/// request's intent would quietly delete everything the request did not
-/// mention, which is the opposite of what a scope means.
-///
-/// `outputs` is deliberately not written here. §R1.4's `OutputRecord` carries
-/// a `RendererStamp`, and this route's bytes arrive already rendered by a
-/// recipe that never produced one. An output row with an invented stamp would
-/// claim provenance that did not happen, and provenance is what R5.2's upgrade
-/// path reads to decide whether a template moved. It lands with that stamp.
-fn record_store(
-    observed: &ObservedStore,
-    intent: &LedgerIntent,
-    operation: jails_protocol::identity::OperationId,
-    generation: u64,
-) -> Result<LedgerV2> {
-    observed.validate()?;
-    let mut store = observed.ledger.clone().unwrap_or_else(|| LedgerV2 {
-        written_by: String::new(),
-        generation: 0,
-        last_operation: None,
-        applied: Vec::new(),
-        one_shots: Vec::new(),
-        resources: Vec::new(),
-        outputs: Vec::new(),
-        legacy: Vec::new(),
-        pending_conflict: None,
-    });
-    store.written_by = env!("CARGO_PKG_VERSION").to_string();
-    store.generation = generation;
-    store.last_operation = Some(operation);
-
-    for entity in &intent.entities_after {
-        let applied = jails_protocol::record::AppliedEntity {
-            id: entity.id.clone(),
-            owners: entity.owners.clone(),
-            version: jails_protocol::record::AppliedVersion {
-                spec: entity.spec.clone(),
-                operation,
-            },
-        };
-        match store.applied.iter_mut().find(|row| row.id == applied.id) {
-            // An entity whose owners and spec are unchanged keeps the
-            // operation that applied it. Stamping the current one would say a
-            // transition happened to it when none did, and the store would
-            // then differ from itself on every repeat -- which is exactly how
-            // "already set up" stops being reachable.
-            Some(row)
-                if row.owners == applied.owners && row.version.spec == applied.version.spec => {}
-            Some(row) => *row = applied,
-            None => store.applied.push(applied),
-        }
-    }
-    store
-        .applied
-        .retain(|row| !intent.entities_removed.contains(&row.id));
-    store.applied.sort_by(|a, b| a.id.cmp(&b.id));
-
-    for desired in &intent.resources_after {
-        match store
-            .resources
-            .iter_mut()
-            .find(|row| row.key == desired.key)
-        {
-            // Owners union rather than replace: two capabilities wanting one
-            // dependency both own it, and a request that stated only its own
-            // claim must not erase the other's.
-            // Owners union rather than replace. An intent states the claims
-            // *this request* makes, which is all a scope may speak for; the
-            // other owners of a shared dependency are none of its business,
-            // and replacing the set would drop them.
-            Some(row) => {
-                row.owners.extend(desired.owners.iter().cloned());
-                row.value = desired.value.clone();
-            }
-            None => store
-                .resources
-                .push(jails_protocol::resource::ResourceRecord {
-                    key: desired.key.clone(),
-                    owners: desired.owners.clone(),
-                    value: desired.value.clone(),
-                }),
-        }
-    }
-    // Derived, never declared: a resource is owned, so a resource whose last
-    // owner just left has lost its last owner. A second list saying which
-    // resources to delete could disagree with the first about the same fact.
-    for id in &intent.entities_removed {
-        let owner = jails_protocol::resource::ResourceOwner::Entity(id.clone());
-        for row in &mut store.resources {
-            row.owners.remove(&owner);
-        }
-    }
-    store.resources.retain(|row| !row.owners.is_empty());
-    store.resources.sort_by(|a, b| a.key.cmp(&b.key));
-
-    for desired in &intent.one_shots_after {
-        let receipt = jails_protocol::record::OneShotReceipt {
-            id: desired.id.clone(),
-            spec: desired.spec.clone(),
-            state: desired.state,
-            lifecycle: desired.lifecycle.clone(),
-            operation,
-        };
-        match store.one_shots.iter_mut().find(|row| row.id == receipt.id) {
-            // Same rule as an entity: a receipt whose content is unchanged
-            // keeps the operation that wrote it.
-            Some(row)
-                if row.spec == receipt.spec
-                    && row.state == receipt.state
-                    && row.lifecycle == receipt.lifecycle => {}
-            Some(row) => *row = receipt,
-            None => store.one_shots.push(receipt),
-        }
-    }
-    store.one_shots.sort_by(|a, b| a.id.cmp(&b.id));
-
-    // Sorted by the encoder's own rule rather than by a second one here: the
-    // legacy key is private to the envelope, and a copy of the ordering would
-    // be a second authority on what canonical means.
-    store.legacy = intent.legacy_after.clone();
-    Ok(store)
-}
-
 fn intern(objects: &mut ObjectBundle, body: Vec<u8>) -> ObjectRef {
     let id = ObjectId::from_bytes(sha256(&body));
     let len = body.len() as u64;
@@ -699,8 +507,6 @@ fn parents(base: &ProjectSnapshot, operations: &[FileOp]) -> Result<Vec<Director
         .map(|path| DirectoryOp::Create { path })
         .collect())
 }
-
-#[allow(clippy::too_many_arguments)]
 fn assemble(
     base: Arc<ProjectSnapshot>,
     semantics: OperationSemanticsV1,
@@ -708,6 +514,7 @@ fn assemble(
     operations: Vec<FileOp>,
     directories: Vec<DirectoryOp>,
     objects: ObjectBundle,
+    recorded: ledger::Recorded,
     context: PreparationContext,
 ) -> Result<PreparedBundle> {
     let operation_identity = OperationIdentityV1 {
@@ -734,18 +541,27 @@ fn assemble(
         kind,
     };
     if let OperationSemanticsV1::Apply(apply) = &change.operation_identity.semantics {
-        let store = record_store(
+        let mut store = ledger::record_store(
             &context.observed_store,
             &apply.ledger_intent,
             change.operation_id,
             change.operation_identity.proposed_generation,
         )?;
+        ledger::record_outputs(&mut store, &recorded, &change.operations)?;
+        // The context object a stamp names has to be in the store before the
+        // ledger that references it (§R5.1), or the next GC cycle collects a
+        // row's own provenance.
+        for row in &store.outputs {
+            if let Some(provenance) = recorded.stamps.get(&row.path) {
+                intern(&mut change.objects, provenance.context.to_vec());
+            }
+        }
         // A store whose rows are all unchanged is not rewritten. Bumping the
         // generation and stamping a new operation id for a run that did
         // nothing would make every `--pretend`-shaped repeat look like a
         // transition, and `is_no_op` -- which is what the caller reports as
         // "already set up" -- would never be true again.
-        if unchanged(&store, &context.observed_store.ledger)
+        if ledger::unchanged(&store, &context.observed_store.ledger)
             && change.operations.is_empty()
             && change.directories.is_empty()
         {
@@ -929,6 +745,7 @@ mod tests {
             body: DesiredBody::Bytes(body.to_vec().into()),
             mode: None,
             resource: Some(key.clone()),
+            renderer: None,
         });
         DesiredChangeSet {
             ordered: vec![change],

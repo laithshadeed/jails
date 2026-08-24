@@ -21,6 +21,15 @@ pub fn install(project: &Project, capability: Capability) -> Result<CommitResult
     let change = with_test_support(project, jails_generate::add::plan_for(capability, project)?);
     let mut desired = desire::contribution(&owner, &change, project)?;
     record_capability(&mut desired, &owner, &id)?;
+    provenance::stamp_files(
+        &mut desired,
+        project,
+        RendererId::Capability(capability),
+        Some(RenderedSubjectContext::Entity {
+            id: EntityId::Capability(id.clone()),
+            spec: EntitySpec::Capability(CapabilitySpec { placement: None }),
+        }),
+    )?;
     let entity = DesiredEntity {
         id: EntityId::Capability(id),
         spec: EntitySpec::Capability(CapabilitySpec { placement: None }),
@@ -93,6 +102,15 @@ pub fn sync(project: &Project) -> Result<CommitResult> {
             with_test_support(project, jails_generate::add::plan_for(capability, project)?);
         let mut desired = desire::contribution(&owner, &change, project)?;
         record_capability(&mut desired, &owner, &id)?;
+        provenance::stamp_files(
+            &mut desired,
+            project,
+            RendererId::Capability(capability),
+            Some(RenderedSubjectContext::Entity {
+                id: EntityId::Capability(id.clone()),
+                spec: EntitySpec::Capability(CapabilitySpec { placement: None }),
+            }),
+        )?;
         for artifact in &change.files {
             reads = reads.file(relative_path(project, &artifact.path)?);
         }

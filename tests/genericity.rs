@@ -81,6 +81,7 @@ const ALLOWED: &[AllowedConcept] = &[
             // Preparation guards the ledger generation the plan was computed
             // against, and renders the image the commit will write.
             "crates/jails-prepare/src/pipeline.rs",
+            "crates/jails-prepare/src/pipeline/ledger.rs",
             // A report, a receipt and a command envelope each say what
             // happened to the ledger file, which is the name of the thing.
             "crates/jails-prepare/src/report.rs",

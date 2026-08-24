@@ -17,6 +17,7 @@
 use crate::Result;
 use crate::conflict::FileMode;
 use crate::identity::{JavaType, Name, Package, ProjectPath, TemplateId, TemplateKey};
+use crate::provenance::RendererStamp;
 use crate::resource::ResourceKey;
 use jails_support::codec::{Decoder, Encoder, MAX_CODEC_DEPTH, ordered};
 use std::collections::BTreeMap;
@@ -215,6 +216,51 @@ pub struct DesiredFile {
     pub body: DesiredBody,
     pub mode: Option<FileMode>,
     pub resource: Option<ResourceKey>,
+    /// Where these bytes came from, for the `OutputRecord` the commit writes.
+    ///
+    /// §R5.2 requires every *managed output* to carry a non-optional renderer,
+    /// and this is where the answer travels. It is `Option` here and not there
+    /// for one reason: a `DesiredFile` is also how a change states bytes for a
+    /// file nobody owns, and stamping one of those would claim provenance for
+    /// a path that has no output row. A file with a `resource` and no stamp
+    /// records no base, which is the pre-R5 behaviour and is what the update
+    /// path refuses against.
+    pub renderer: Option<DesiredProvenance>,
+}
+
+/// A stamp and the context object it names.
+///
+/// The bytes travel with the stamp rather than being fetched later, because
+/// the commit has to store the object *before* the ledger that references it
+/// -- §R5.1's rule -- and a stamp whose context object is not in the store is
+/// a dangling reference the next GC cycle would collect.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DesiredProvenance {
+    pub stamp: RendererStamp,
+    /// Exactly `encode(RendererContextV1)`, which is what
+    /// `RendererStamp::context_object` hashes.
+    pub context: Arc<[u8]>,
+}
+
+impl DesiredProvenance {
+    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        self.stamp.encode(encoder)?;
+        encoder.object(
+            &self.context,
+            jails_support::codec::DEFAULT_MAX_OBJECT_BYTES,
+        )
+    }
+
+    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(Self {
+            stamp: RendererStamp::decode(decoder)?,
+            context: Arc::from(
+                decoder
+                    .object(jails_support::codec::DEFAULT_MAX_OBJECT_BYTES)?
+                    .as_slice(),
+            ),
+        })
+    }
 }
 
 impl DesiredFile {
@@ -225,7 +271,8 @@ impl DesiredFile {
             mode.encode(e);
             Ok(())
         })?;
-        encoder.option(self.resource.as_ref(), |e, key| key.encode(e))
+        encoder.option(self.resource.as_ref(), |e, key| key.encode(e))?;
+        encoder.option(self.renderer.as_ref(), |e, provenance| provenance.encode(e))
     }
 
     pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
@@ -234,6 +281,7 @@ impl DesiredFile {
             body: DesiredBody::decode(decoder)?,
             mode: decoder.option(FileMode::decode)?,
             resource: decoder.option(ResourceKey::decode)?,
+            renderer: decoder.option(DesiredProvenance::decode)?,
         })
     }
 }

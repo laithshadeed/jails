@@ -5259,20 +5259,29 @@ command uses it", and dispatch is still V1 for every command.
 Two schema gaps are open and named where they bite rather than left to be
 discovered:
 
-- `LedgerV2.outputs` is written empty. §R1.4's `OutputRecord` carries a
-  `RendererStamp`, and these routes' bytes arrive already rendered by a recipe
-  that never produced one. An output row with an invented stamp would claim
-  provenance that did not happen, and provenance is what §R5.2's upgrade path
-  reads to decide whether a template moved. Until it is written, an update to
-  jails' own earlier output refuses rather than replaces, which is the safe
-  direction and matches what V1 does. **The refusal now says which situation it
-  is in**: a path the store already records as jails' own output names this gap,
-  and only a path nothing recorded gets "jails did not write it". They had one
-  message, and it was a lie in one of the two cases.
+- ~~`LedgerV2.outputs` is written empty.~~ Closed. Every managed output now
+  records the exact bytes jails wrote, so §R5.3's three-way rule has the base
+  it needs: only-the-generator-moved replaces, only-the-reader-moved keeps
+  their bytes and holds the base still, and both-moved-to-the-same-bytes
+  advances the base with no write. Both sides moving *differently* refuses,
+  naming §R5.4 — the committed conflict protocol is not wired to these routes.
 
-  This is what blocks every "update" gate in §R6.2 — the generator row's, the
-  `generate_field` row's overlay reapplication, and `generate_cases`'s
-  same-source reconcile. It is one gap, not three.
+  `RendererStamp` is honest about two fields rather than plausible. `template`
+  is `None`: §R5.2 allows `Some` only when template bytes contributed and
+  carries exactly one `TemplateStamp`, while a recipe here renders one output
+  from several built-in templates, whose bytes are pinned by `jails_version`
+  because they are `include_str!`d. `relevant_inputs` is the canonical empty
+  set: §R5.2 says a renderer records what it consumed *through `SnapshotView`*
+  and these recipes read the project directly, so hashing the request's whole
+  read set would make every unrelated edit appear to explain a change — the
+  exact failure the field exists to prevent. Both become answerable when
+  §R6.3's `template::{install,resolve}` row lands.
+
+  An output row whose images this transition did not move keeps every field,
+  the stamp included. Restamping a file it did not write would make the store
+  differ from itself on a repeat run, and "already set up" would stop being
+  reachable.
+
 - ~~`add db` and anything else contributing a Spring test import cannot yet be
   stated as desired state.~~ Closed. §R6.3's `add::test_wiring` row landed as
   `ResourceKey`/`ResourceValue`/`SemanticEdit::SpringTestImport`: one claim per
