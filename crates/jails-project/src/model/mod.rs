@@ -470,13 +470,42 @@ impl Project {
     /// the recipes above it stay pure. Recipes reach it through
     /// `spring::Slice::record`, which knows which layer owns the resource.
     pub fn record_in(&self, package: &str, ty: &str) -> Option<Vec<crate::spec::Field>> {
-        match self.projected_source(&format!(
-            "src/main/java/{}/{ty}.java",
-            package.replace('.', "/")
-        )) {
-            Some(source) => crate::spec::fields_of_record(&source),
-            None => crate::spec::fields_from_record(&self.root, package, ty),
+        crate::spec::fields_of_record(&self.source_of(package, ty)?)
+    }
+
+    /// The source of a type this project owns, through the projection first.
+    ///
+    /// The one window, widened from "the components of a record" to "the
+    /// text", because an aggregate transition has more than one question to
+    /// ask about a type that exists only in the plan -- an enum's first
+    /// constant is the other one.
+    pub fn source_of(&self, package: &str, ty: &str) -> Option<String> {
+        let relative = format!("src/main/java/{}/{ty}.java", package.replace('.', "/"));
+        match self.projected_source(&relative) {
+            Some(projected) => Some(projected),
+            None => std::fs::read_to_string(self.root.join(&relative)).ok(),
         }
+    }
+
+    /// Whether this project has a type at all, as the plan leaves it.
+    ///
+    /// A recipe that checks `Path::is_file` instead refuses a manifest row
+    /// whose prerequisite is two rows above it -- present in the plan, absent
+    /// on disk, and about to be written by the same commit.
+    pub fn has_type(&self, package: &str, ty: &str) -> bool {
+        self.source_of(package, ty).is_some()
+    }
+
+    /// Whether a type this project owns is an enum.
+    ///
+    /// Through the same window as [`Project::record_in`], and for the same
+    /// reason: a manifest declares an enum and then a scaffold whose column
+    /// is that enum, and in one transition neither has been written when the
+    /// second one plans. Reading past the projection would refuse a manifest
+    /// that is perfectly well ordered.
+    pub fn declares_enum(&self, package: &str, ty: &str) -> bool {
+        self.source_of(package, ty)
+            .is_some_and(|text| crate::java::blanked(&text).contains(&format!("enum {ty}")))
     }
 
     /// A file's text as the plan leaves it, when this project is projected.

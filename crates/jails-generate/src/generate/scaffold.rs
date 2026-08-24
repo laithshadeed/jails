@@ -27,9 +27,9 @@ pub fn scaffold_artifacts(
     fields: &[String],
     indexes: &[String],
 ) -> Result<Vec<Artifact>> {
-    let root: &Path = slice.project().root();
     let domain = slice.placed(Layer::Domain);
-    let (parsed, reusing_record) = fields_from_spec_or_record(root, &domain, name, fields)?;
+    let (parsed, reusing_record) =
+        fields_from_spec_or_record(slice.project(), &domain, name, fields)?;
     // The unmapped-component refusal deliberately lives in
     // `scaffold_artifacts_from_fields`, which reads the referenced record's
     // stored `@pk` and names the two commands that do the job. A generic
@@ -119,7 +119,7 @@ pub fn scaffold_artifacts_from_fields(
         path: root
             .join("requests")
             .join(format!("{}.http", crate::sql::snake_case(name))),
-        contents: scaffold_requests(root, &domain, name, parsed),
+        contents: scaffold_requests(slice.project(), &domain, name, parsed),
     });
 
     // A fixture file, on the same rule as the migration: only when the
@@ -129,7 +129,7 @@ pub fn scaffold_artifacts_from_fields(
     let fixtures_dir = root.join("src/test/resources/fixtures");
     if fixtures_dir.is_dir() && !columns.is_empty() {
         let table = crate::sql::table_name(name);
-        let constant = |type_name: &str| first_enum_constant(root, &domain, type_name);
+        let constant = |type_name: &str| first_enum_constant(slice.project(), &domain, type_name);
         artifacts.push(Artifact {
             kind: "fixture",
             path: fixtures_dir.join(format!("{table}.json")),
@@ -161,7 +161,7 @@ pub fn scaffold_artifacts_from_fields(
             Artifact {
                 kind: "record test",
                 path: test_dir(root, &domain).join(format!("{name}Test.java")),
-                contents: record_test(root, &domain, name, parsed),
+                contents: record_test(slice.project(), &domain, name, parsed),
             },
         ]);
     }
@@ -295,7 +295,7 @@ pub fn scaffold_artifacts_from_fields(
     Ok(artifacts)
 }
 
-pub fn scaffold_requests(root: &Path, domain: &str, name: &str, fields: &[Field]) -> String {
+pub fn scaffold_requests(project: &Project, domain: &str, name: &str, fields: &[Field]) -> String {
     let body = fields
         .iter()
         .map(|field| {
@@ -318,7 +318,7 @@ pub fn scaffold_requests(root: &Path, domain: &str, name: &str, fields: &[Field]
                     "LocalDate" => "\"2026-01-01\"".to_string(),
                     "LocalDateTime" => "\"2026-01-01T00:00:00\"".to_string(),
                     "Instant" => "\"2026-01-01T00:00:00Z\"".to_string(),
-                    other if field.owned => first_enum_constant(root, domain, other)
+                    other if field.owned => first_enum_constant(project, domain, other)
                         .map(|constant| format!("\"{constant}\""))
                         .unwrap_or_else(|| "null".to_string()),
                     _ => "null".to_string(),
@@ -411,7 +411,7 @@ pub fn generate_field(
     let old_fields = if let Some(spec) = stored.as_ref() {
         parse_fields(spec)?
     } else {
-        fields_from_record(root, &domain, name).ok_or_else(|| {
+        project.record_in(&domain, name).ok_or_else(|| {
             format!(
                 "no {name} record found under {domain}.\n       \
                  fix: generate the record/scaffold first, then run `jails g field {name} {}`.",

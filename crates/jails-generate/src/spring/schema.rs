@@ -381,6 +381,7 @@ pub fn http_sink_files(
     event: &str,
 ) -> jails_support::Result<Vec<Artifact>> {
     let root: &Path = slice.project().root();
+    let project = slice.project();
     let jobs: &str = &slice.placed(Layer::Jobs);
     let messaging: &str = &slice.owned(Layer::Messaging);
     let adapters: &str = &slice.owned(Layer::Adapters);
@@ -391,7 +392,9 @@ pub fn http_sink_files(
         ));
     }
     let event_class = format!("{event}Event");
-    let fields = crate::generate::fields_from_record(root, messaging, &event_class)
+    let fields = slice
+        .project()
+        .record_in(messaging, &event_class)
         .ok_or_else(|| format!("http-sink {name} cannot read {event_class}.java"))?;
     let id = fields
         .iter()
@@ -435,7 +438,7 @@ pub fn http_sink_files(
 
     let samples = fields
         .iter()
-        .map(|field| crate::generate::sample_value(field, root, messaging))
+        .map(|field| crate::generate::sample_value(field, project, messaging))
         .collect::<Vec<_>>();
     let disabled = samples.iter().any(Option::is_none);
     // A disabled test must still compile. Preserve the constructor arity and

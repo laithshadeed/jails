@@ -331,7 +331,7 @@ fn jdbc_transition_it_java(
     resource: &Target,
     fields: &[crate::generate::Field],
 ) -> String {
-    let root: &Path = slice.project().root();
+    let project = slice.project();
     let pkg: &str = &slice.owned(Layer::Adapters);
     let service: &str = &slice.placed(Layer::Service);
     let domain: &str = &slice.owned(Layer::Domain);
@@ -340,11 +340,11 @@ fn jdbc_transition_it_java(
     let target: &str = &resource.name;
     let command_samples = fields
         .iter()
-        .map(|field| crate::generate::sample_value(field, root, domain))
+        .map(|field| crate::generate::sample_value(field, project, domain))
         .collect::<Option<Vec<_>>>();
     let target_samples = target_fields
         .iter()
-        .map(|field| crate::generate::sample_value(field, root, domain))
+        .map(|field| crate::generate::sample_value(field, project, domain))
         .collect::<Option<Vec<_>>>();
     let disabled = command_samples.is_none() || target_samples.is_none();
     let command_values = command_samples.unwrap_or_default();
@@ -439,7 +439,7 @@ fn transition_controller_test_java(
     resource: &Target,
     fields: &[crate::generate::Field],
 ) -> String {
-    let root: &Path = slice.project().root();
+    let project = slice.project();
     let security: &str = slice.base();
     let service: &str = &slice.placed(Layer::Service);
     let web: &str = &slice.placed(Layer::Web);
@@ -454,7 +454,7 @@ fn transition_controller_test_java(
         .collect::<Option<Vec<_>>>();
     let target_samples = target_fields
         .iter()
-        .map(|field| crate::generate::sample_value(field, root, domain))
+        .map(|field| crate::generate::sample_value(field, project, domain))
         .collect::<Option<Vec<_>>>();
     let disabled = json.is_none() || target_samples.is_none();
     let json = json.unwrap_or_default().join(",\n");

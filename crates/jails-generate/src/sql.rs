@@ -114,7 +114,7 @@ fn column(field: &Field, project: &crate::model::Project, pkg: &str, receiver: &
     }
 
     // The one owned type with a knowable representation.
-    if field.owned && crate::generate::is_enum_type(project.root(), pkg, &inner) {
+    if field.owned && project.declares_enum(pkg, &inner) {
         let read = format!("{inner}.valueOf(rows.getString(\"{name}\"))");
         let write = if optional {
             format!("{accessor}.map({inner}::name).orElse(null)")

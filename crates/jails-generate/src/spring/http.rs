@@ -129,16 +129,22 @@ pub fn http_workflow_files(
     let jobs: &str = &slice.placed(Layer::Jobs);
     let clients: &str = &slice.owned(Layer::Clients);
     let web: &str = &slice.owned(Layer::Web);
-    let pom = std::fs::read_to_string(root.join("pom.xml"))
-        .map_err(|e| format!("failed to read pom.xml: {e}"))?;
-    if !crate::pom::has_dependency(&pom, "org.springframework.boot", "spring-boot-starter-jdbc") {
+    // Through the resolved project rather than a fresh read: in an aggregate
+    // `app apply` the manifest's own `add db` has not been written yet, and a
+    // recipe that reaches past the projection refuses a manifest that is
+    // perfectly well ordered.
+    if !slice.project().has_jdbc() {
         return Err(format!(
             "http-workflow {name} needs PostgreSQL/JDBC for its durable frontier.\n       fix: run `jails add db` first."
         ));
     }
-    let fetcher_port =
-        crate::generate::main_dir(root, clients).join(format!("{fetcher}Fetcher.java"));
-    if !fetcher_port.is_file() {
+    // Through the project, so a fetcher this same manifest declares two rows
+    // above counts. `Path::is_file` answers about disk, and in one transition
+    // nothing has been written yet.
+    if !slice
+        .project()
+        .has_type(clients, &format!("{fetcher}Fetcher"))
+    {
         return Err(format!(
             "http-workflow {name} cannot find {fetcher}Fetcher.java.\n       fix: generate fetcher {fetcher} first."
         ));

@@ -35,7 +35,7 @@ pub fn outbox_files(
         ));
     }
     let event_class = format!("{event}Event");
-    let event_fields = crate::generate::fields_from_record(root, messaging, &event_class)
+    let event_fields = slice.project().record_in(messaging, &event_class)
         .ok_or_else(|| {
             format!(
                 "usecase {usecase} yields {event}, but {event_class}.java does not exist or is not a record. Generate the typed event first."
@@ -294,7 +294,7 @@ fn outbox_it_java(
     property: &str,
     fields: &[crate::generate::Field],
 ) -> String {
-    let root: &Path = slice.project().root();
+    let project = slice.project();
     let pkg: &str = &slice.owned(Layer::Jobs);
     let service: &str = &slice.placed(Layer::Service);
     let domain: &str = &slice.owned(Layer::Domain);
@@ -302,7 +302,7 @@ fn outbox_it_java(
     let base: String = slice.root_package();
     let samples = fields
         .iter()
-        .map(|field| crate::generate::sample_value(field, root, domain))
+        .map(|field| crate::generate::sample_value(field, project, domain))
         .collect::<Option<Vec<_>>>();
     let disabled = samples.is_none();
     let args = samples.unwrap_or_default().join(",\n                ");

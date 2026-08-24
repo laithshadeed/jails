@@ -1286,6 +1286,7 @@ fn a_manifest_applies_as_one_transition_that_each_step_can_see() {
         &[
             jails_engine::route::AppIntent {
                 kind: jails_spec::spec::kind::ArtifactKind::Scaffold,
+                timestamps: false,
                 name: "Article".to_string(),
                 fields: vec![
                     "id:uuid@pk".to_string(),
@@ -1301,6 +1302,7 @@ fn a_manifest_applies_as_one_transition_that_each_step_can_see() {
             // which exists on disk while this plans.
             jails_engine::route::AppIntent {
                 kind: jails_spec::spec::kind::ArtifactKind::Search,
+                timestamps: false,
                 name: "Article".to_string(),
                 fields: vec!["title".to_string(), "body".to_string()],
                 indexes: Vec::new(),
@@ -1362,6 +1364,7 @@ fn a_manifest_that_drops_a_row_takes_it_back_out() {
     common::write_plain_fixture(&root);
     let note = |name: &str| jails_engine::route::AppIntent {
         kind: jails_spec::spec::kind::ArtifactKind::Record,
+        timestamps: false,
         name: name.to_string(),
         fields: vec!["title:string!".to_string()],
         indexes: Vec::new(),
@@ -1409,6 +1412,7 @@ fn applying_a_manifest_twice_leaves_the_store_where_it_was() {
             &[],
             &[jails_engine::route::AppIntent {
                 kind: jails_spec::spec::kind::ArtifactKind::Record,
+                timestamps: false,
                 name: "Note".to_string(),
                 fields: vec!["title:string!".to_string()],
                 indexes: Vec::new(),
@@ -1426,4 +1430,191 @@ fn applying_a_manifest_twice_leaves_the_store_where_it_was() {
         matches!(outcome, jails_commit::outcome::CommitResult::NoOp),
         "the second apply has nothing to do, got {outcome:?}"
     );
+}
+
+/// The web-crawler proof application, applied as one transition.
+///
+/// `examples/` is the reason the generic machinery can be trusted, and this
+/// is the falsifier for the aggregate: eleven intents with real dependencies
+/// between them. `scaffold CrawlRun` uses the enum the row above it declares;
+/// four intents point `--on` at a scaffold two rows earlier; `durable-job`
+/// points at a use case *and* at a scaffold. None of it is on disk while it
+/// plans.
+///
+/// Transcribed from `examples/web-crawler/.jails/app.toml` rather than parsed,
+/// because the parser lives in the binary. The count is asserted against the
+/// file so the transcription cannot drift away from it.
+#[test]
+fn the_web_crawler_manifest_applies_as_one_transition() {
+    use jails_spec::spec::kind::ArtifactKind as K;
+
+    let intent = |kind: K, name: &str, fields: &[&str]| jails_engine::route::AppIntent {
+        kind,
+        name: name.to_string(),
+        fields: fields.iter().map(|f| f.to_string()).collect(),
+        timestamps: false,
+        indexes: Vec::new(),
+        package: None,
+        on: None,
+        yields: None,
+    };
+    let on = |mut i: jails_engine::route::AppIntent, target: &str| {
+        i.on = Some(target.to_string());
+        i
+    };
+    let stamped = |mut i: jails_engine::route::AppIntent, indexes: &[&str]| {
+        i.timestamps = true;
+        i.indexes = indexes.iter().map(|x| x.to_string()).collect();
+        i
+    };
+
+    let intents = vec![
+        intent(
+            K::Enum,
+            "CrawlStatus",
+            &["QUEUED", "RUNNING", "SUCCEEDED", "FAILED", "CANCELLED"],
+        ),
+        stamped(
+            intent(
+                K::Scaffold,
+                "CrawlRun",
+                &[
+                    "id:uuid@pk",
+                    "seedUrl:uri",
+                    "status:CrawlStatus@index",
+                    "pagesVisited:long@nonnegative",
+                    "startedAt:instant?",
+                    "finishedAt:instant?",
+                ],
+            ),
+            &["status, id"],
+        ),
+        stamped(
+            intent(
+                K::Scaffold,
+                "CrawledPage",
+                &[
+                    "id:uuid@pk",
+                    "crawlRunId:uuid@index",
+                    "url:uri",
+                    "statusCode:int",
+                    "discoveredAt:instant",
+                ],
+            ),
+            &["crawl_run_id, discovered_at desc"],
+        ),
+        on(
+            intent(K::Usecase, "QueueCrawl", &["id:uuid", "seedUrl:uri"]),
+            "CrawlRun",
+        ),
+        on(
+            intent(
+                K::Usecase,
+                "RecordCrawledPage",
+                &["id:uuid", "crawlRunId:uuid", "url:uri", "statusCode:int"],
+            ),
+            "CrawledPage",
+        ),
+        on(
+            intent(K::Query, "CrawlRunsByStatus", &["status:CrawlStatus"]),
+            "CrawlRun",
+        ),
+        on(
+            intent(K::Query, "PagesByCrawlRun", &["crawlRunId:uuid"]),
+            "CrawledPage",
+        ),
+        intent(K::Fetcher, "PageFetcher", &[]),
+        on(intent(K::HttpWorkflow, "SiteTraversal", &[]), "PageFetcher"),
+        intent(
+            K::Event,
+            "PageDiscovered",
+            &[
+                "id:uuid",
+                "crawlRunId:uuid",
+                "url:uri",
+                "occurredAt:instant",
+            ],
+        ),
+        {
+            let mut job = on(
+                intent(
+                    K::DurableJob,
+                    "CrawlDispatcher",
+                    &["id:uuid", "seedUrl:uri"],
+                ),
+                "QueueCrawl",
+            );
+            job.yields = Some("CrawlRun".to_string());
+            job
+        },
+    ];
+
+    let declared = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("examples/web-crawler/.jails/app.toml"),
+    )
+    .unwrap()
+    .matches("[[generate]]")
+    .count();
+    assert_eq!(
+        intents.len(),
+        declared,
+        "the transcription has drifted from examples/web-crawler/.jails/app.toml"
+    );
+
+    let root = common::temp_dir("engine-app-crawler");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_spring_fixture(&root);
+
+    jails_engine::route::app_apply(
+        &Project::load(&root).unwrap(),
+        &[
+            Capability::Db,
+            Capability::Api,
+            Capability::Actuator,
+            Capability::Observability,
+            Capability::Security,
+            Capability::Cors,
+            Capability::Json,
+            Capability::Testkit,
+            Capability::Kafka,
+            Capability::Docker,
+            Capability::Ci,
+        ],
+        &intents,
+    )
+    .unwrap();
+
+    let store = jails_commit::store::Store::at(&root)
+        .observe()
+        .unwrap()
+        .ledger
+        .unwrap();
+    assert_eq!(
+        store.generation, 1,
+        "eleven capabilities and eleven intents, one commit"
+    );
+    assert_eq!(store.applied.len(), 22, "{:?}", store.applied.len());
+    assert!(
+        root.join("src/main/java/com/example/demo/domain/CrawlRun.java")
+            .is_file()
+    );
+    // The use case points `--on` at a scaffold two rows above it, and the
+    // durable job points at *this* use case as well as at that scaffold.
+    // Neither existed on disk while either planned.
+    for at in [
+        "src/main/java/com/example/demo/service/QueueCrawlUseCase.java",
+        "src/main/java/com/example/demo/service/QueueCrawlCommand.java",
+        "src/main/java/com/example/demo/jobs/CrawlDispatcherWorker.java",
+        "src/test/java/com/example/demo/jobs/CrawlDispatcherJobIT.java",
+    ] {
+        assert!(
+            root.join(at).is_file(),
+            "{at} is missing: {:?}",
+            common::scenarios::file_set(&root)
+                .into_iter()
+                .filter(|p| p.contains("CrawlDispatcher") || p.contains("QueueCrawl"))
+                .collect::<Vec<_>>()
+        );
+    }
 }

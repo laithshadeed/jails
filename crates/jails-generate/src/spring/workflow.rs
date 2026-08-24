@@ -235,7 +235,7 @@ pub fn usecase_files(
 }
 
 fn usecase_default(slice: &Slice, field: &crate::generate::Field) -> Option<(String, Vec<String>)> {
-    let root: &Path = slice.project().root();
+    let project = slice.project();
     let domain: &str = &slice.owned(Layer::Domain);
     use crate::generate::Optionality;
     if field.optionality == Optionality::Nullable {
@@ -273,7 +273,7 @@ fn usecase_default(slice: &Slice, field: &crate::generate::Field) -> Option<(Str
         "byte" | "Byte" => Some(("(byte) 0".to_string(), Vec::new())),
         "boolean" | "Boolean" => Some(("false".to_string(), Vec::new())),
         owned if field.owned && field.name == "status" => {
-            crate::generate::first_enum_constant(root, domain, owned).map(|_| {
+            crate::generate::first_enum_constant(project, domain, owned).map(|_| {
                 (
                     format!("{owned}.values()[0]"),
                     vec![format!("{domain}.{owned}")],
@@ -382,7 +382,7 @@ fn usecase_test_java(
     fields: &[crate::generate::Field],
     id: &crate::generate::Field,
 ) -> String {
-    let root: &Path = slice.project().root();
+    let project = slice.project();
     let pkg: &str = &slice.placed(Layer::Service);
     let domain: &str = &slice.owned(Layer::Domain);
     let adapters: &str = &slice.owned(Layer::Adapters);
@@ -390,7 +390,7 @@ fn usecase_test_java(
     let target: &str = &target.name;
     let samples = fields
         .iter()
-        .map(|field| crate::generate::sample_value(field, root, domain))
+        .map(|field| crate::generate::sample_value(field, project, domain))
         .collect::<Vec<_>>();
     let missing = fields
         .iter()
@@ -505,7 +505,7 @@ fn usecase_controller_java(
 }
 
 pub(super) fn json_sample(slice: &Slice, field: &crate::generate::Field) -> Option<String> {
-    let root: &Path = slice.project().root();
+    let project = slice.project();
     let domain: &str = &slice.owned(Layer::Domain);
     if field.optionality == crate::generate::Optionality::Nullable {
         return Some("null".to_string());
@@ -527,7 +527,7 @@ pub(super) fn json_sample(slice: &Slice, field: &crate::generate::Field) -> Opti
         "URI" => Some("https://example.test/items/1".to_string()),
         "Path" => Some("/tmp/example".to_string()),
         "ZoneId" => Some("UTC".to_string()),
-        owned if field.owned => crate::generate::first_enum_constant(root, domain, owned),
+        owned if field.owned => crate::generate::first_enum_constant(project, domain, owned),
         _ => None,
     };
     if let Some(value) = quoted {
@@ -548,7 +548,7 @@ fn usecase_controller_test_java(
     target: &Target,
     fields: &[crate::generate::Field],
 ) -> String {
-    let root: &Path = slice.project().root();
+    let project = slice.project();
     let security: &str = slice.base();
     let service: &str = &slice.placed(Layer::Service);
     let web: &str = &slice.placed(Layer::Web);
@@ -563,7 +563,7 @@ fn usecase_controller_test_java(
         .collect::<Option<Vec<_>>>();
     let target_samples = target_fields
         .iter()
-        .map(|field| crate::generate::sample_value(field, root, domain))
+        .map(|field| crate::generate::sample_value(field, project, domain))
         .collect::<Option<Vec<_>>>();
     let disabled_reason = if json.is_none() {
         Some("Jails cannot serialize one of the command field samples")

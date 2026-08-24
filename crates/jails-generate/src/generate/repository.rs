@@ -809,7 +809,7 @@ fn jdbc_repository_test_with_wiring(
 
     let sampled = fields
         .iter()
-        .map(|field| sample_in_package(field, project.root(), domain))
+        .map(|field| sample_in_package(field, project, domain))
         .collect::<Vec<_>>();
     let unfabricable = fields
         .iter()

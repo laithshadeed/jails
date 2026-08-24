@@ -295,7 +295,7 @@ fn messaging_it_java(
     topic: &str,
     fields: &[crate::generate::Field],
 ) -> String {
-    let root: &Path = slice.project().root();
+    let project = slice.project();
     let pkg: &str = &slice.placed(Layer::Messaging);
     let base: String = slice.root_package();
     let domain: &str = &slice.placed(Layer::Domain);
@@ -310,7 +310,7 @@ fn messaging_it_java(
     } else {
         let samples = fields
             .iter()
-            .map(|field| crate::generate::sample_value(field, root, domain))
+            .map(|field| crate::generate::sample_value(field, project, domain))
             .collect::<Vec<_>>();
         let missing = fields
             .iter()

@@ -199,6 +199,40 @@ pub fn plan_recipe(
     Ok(change)
 }
 
+/// `--timestamps` as the two components it means.
+///
+/// Expanded once, here, because a recipe never sees the flag: by the time
+/// there is a spec the two extra components are ordinary ones, and recording
+/// the flag as well would make one request two facts. Both the CLI and a
+/// manifest row go through this, so the two cannot disagree about what the
+/// flag expands to.
+pub fn with_timestamps(kind: ArtifactKind, fields: &[String]) -> Result<Vec<String>> {
+    if !matches!(kind, ArtifactKind::Scaffold) {
+        return Err(
+            "--timestamps belongs to scaffold, where the record, DDL, adapter, and HTTP contracts can evolve together.\n       \
+             fix: use `jails g scaffold <Name> ... --timestamps`."
+                .to_string(),
+        );
+    }
+    let parsed = parse_fields(fields)?;
+    for conventional in ["createdAt", "updatedAt"] {
+        if parsed.iter().any(|field| field.name == conventional) {
+            return Err(format!(
+                "--timestamps would duplicate `{conventional}`.\n       \
+                 fix: remove the hand-declared timestamp or omit --timestamps."
+            ));
+        }
+    }
+    Ok(fields
+        .iter()
+        .cloned()
+        .chain([
+            "createdAt:instant".to_string(),
+            "updatedAt:instant".to_string(),
+        ])
+        .collect())
+}
+
 /// A brief as the project-relative path the receipt records.
 ///
 /// Falls back to the argument exactly as typed when it cannot be placed under
@@ -243,30 +277,7 @@ pub fn generate_in_project(
 
     let expanded_fields;
     let fields = if timestamps {
-        if !matches!(kind, ArtifactKind::Scaffold) {
-            return Err(
-                "--timestamps belongs to scaffold, where the record, DDL, adapter, and HTTP contracts can evolve together.\n       \
-                 fix: use `jails g scaffold <Name> ... --timestamps`."
-                    .to_string(),
-            );
-        }
-        let parsed = parse_fields(fields)?;
-        for conventional in ["createdAt", "updatedAt"] {
-            if parsed.iter().any(|field| field.name == conventional) {
-                return Err(format!(
-                    "--timestamps would duplicate `{conventional}`.\n       \
-                     fix: remove the hand-declared timestamp or omit --timestamps."
-                ));
-            }
-        }
-        expanded_fields = fields
-            .iter()
-            .cloned()
-            .chain([
-                "createdAt:instant".to_string(),
-                "updatedAt:instant".to_string(),
-            ])
-            .collect::<Vec<_>>();
+        expanded_fields = with_timestamps(kind, fields)?;
         expanded_fields.as_slice()
     } else {
         fields
@@ -1031,7 +1042,8 @@ mod tests {
             .unwrap()
             .remove(0);
 
-        let (sample, imports) = sample_in_package(&field, &root, pkg).unwrap();
+        let project = crate::model::Project::inspect(&root).unwrap();
+        let (sample, imports) = sample_in_package(&field, &project, pkg).unwrap();
 
         assert_eq!(sample, "new Outcome.Accepted()");
         assert!(imports.is_empty());
@@ -1276,7 +1288,7 @@ mod tests {
         let fields =
             parse_fields(&["amount:long".to_string(), "currency:string".to_string()]).unwrap();
         let test = record_test(
-            Path::new("/nonexistent"),
+            &crate::model::Project::inspect(Path::new("/tmp/does-not-matter")).unwrap(),
             "com.example.demo",
             "Money",
             &fields,
@@ -1304,7 +1316,7 @@ mod tests {
     fn a_record_with_no_validation_gets_a_disabled_todo_rather_than_a_tick() {
         let fields = parse_fields(&["amount:long".to_string()]).unwrap();
         let test = record_test(
-            Path::new("/nonexistent"),
+            &crate::model::Project::inspect(Path::new("/tmp/does-not-matter")).unwrap(),
             "com.example.demo",
             "Money",
             &fields,
@@ -1322,7 +1334,12 @@ mod tests {
     /// rejection would not compile -- it must not be emitted.
     #[test]
     fn record_test_skips_the_null_case_for_a_no_field_record() {
-        let test = record_test(Path::new("/nonexistent"), "com.example.demo", "Marker", &[]);
+        let test = record_test(
+            &crate::model::Project::inspect(Path::new("/tmp/does-not-matter")).unwrap(),
+            "com.example.demo",
+            "Marker",
+            &[],
+        );
 
         assert!(!test.contains("assertThatNullPointerException"));
         assert!(!test.contains(

@@ -84,7 +84,13 @@ pub fn record_java(pkg: &str, name: &str, fields: &[Field]) -> String {
 /// table as generated tests and fixtures. Unknown project types remain null
 /// and `build()` names them; silently guessing would produce a factory that
 /// compiles and lies.
-pub fn factory_java(root: &Path, pkg: &str, domain: &str, name: &str, fields: &[Field]) -> String {
+pub fn factory_java(
+    project: &Project,
+    pkg: &str,
+    domain: &str,
+    name: &str,
+    fields: &[Field],
+) -> String {
     let mut imports: Vec<&str> = fields
         .iter()
         .flat_map(|field| field.imports.clone())
@@ -112,7 +118,7 @@ pub fn factory_java(root: &Path, pkg: &str, domain: &str, name: &str, fields: &[
 
     let samples = fields
         .iter()
-        .map(|field| sample_value(field, root, domain))
+        .map(|field| sample_value(field, project, domain))
         .collect::<Vec<_>>();
     for (field, sample) in fields.iter().zip(&samples) {
         out.push_str(&format!(
@@ -160,7 +166,7 @@ pub fn factory_java(root: &Path, pkg: &str, domain: &str, name: &str, fields: &[
 
 /// A companion test asserting the accessors return what was passed and that
 /// the compact constructor actually rejects a null.
-pub(super) fn record_test(root: &Path, pkg: &str, name: &str, fields: &[Field]) -> String {
+pub(super) fn record_test(project: &Project, pkg: &str, name: &str, fields: &[Field]) -> String {
     let mut imports: Vec<&str> = fields.iter().flat_map(|f| f.imports.clone()).collect();
     imports.sort();
     imports.dedup();
@@ -171,7 +177,7 @@ pub(super) fn record_test(root: &Path, pkg: &str, name: &str, fields: &[Field]) 
     // test is generated in full and disabled, naming exactly what it needs.
     let sampled: Vec<Option<(String, Vec<&'static str>)>> = fields
         .iter()
-        .map(|f| sample_in_package(f, root, pkg))
+        .map(|f| sample_in_package(f, project, pkg))
         .collect();
     imports.extend(sampled.iter().flatten().flat_map(|(_, needed)| needed));
     imports.sort();
@@ -290,7 +296,7 @@ pub(super) fn record_test(root: &Path, pkg: &str, name: &str, fields: &[Field]) 
 /// have any constructor at all, and guessing produces a test that does not
 /// compile. The one case it *can* solve is an enum -- hence `generate enum`
 /// pulling its weight twice.
-pub fn sample_value(field: &Field, root: &Path, pkg: &str) -> Option<String> {
+pub fn sample_value(field: &Field, project: &Project, pkg: &str) -> Option<String> {
     // An absent Optional is a sample of anything, so `?` rescues even a type
     // jails knows nothing about.
     if field.optionality == Optionality::Nullable {
@@ -307,7 +313,9 @@ pub fn sample_value(field: &Field, root: &Path, pkg: &str) -> Option<String> {
     if !field.owned {
         return Some(sample_literal(&field.java_type).to_string());
     }
-    is_enum_type(root, pkg, &field.java_type).then(|| format!("{}.values()[0]", field.java_type))
+    project
+        .declares_enum(pkg, &field.java_type)
+        .then(|| format!("{}.values()[0]", field.java_type))
 }
 
 /// `sample_value`, plus the one case it cannot answer for callers outside the
@@ -331,18 +339,19 @@ pub fn sample_value(field: &Field, root: &Path, pkg: &str) -> Option<String> {
 /// nested literals are not otherwise visible to the file's import list.
 pub fn sample_in_package(
     field: &Field,
-    root: &Path,
+    project: &Project,
     pkg: &str,
 ) -> Option<(String, Vec<&'static str>)> {
-    if let Some(direct) = sample_value(field, root, pkg) {
+    if let Some(direct) = sample_value(field, project, pkg) {
         return Some((direct, Vec::new()));
     }
     let sealed_source =
-        fs::read_to_string(main_dir(root, pkg).join(format!("{}.java", field.java_type))).ok();
+        fs::read_to_string(main_dir(project.root(), pkg).join(format!("{}.java", field.java_type)))
+            .ok();
     sealed_source
         .as_deref()
         .and_then(|source| owned_sealed_sample(source, &field.java_type))
-        .or_else(|| owned_record_sample(root, pkg, &field.java_type, 3))
+        .or_else(|| owned_record_sample(project, pkg, &field.java_type, 3))
 }
 
 /// Construct the first zero-component variant of a sealed type Jails wrote.
@@ -371,7 +380,7 @@ fn owned_sealed_sample(source: &str, type_name: &str) -> Option<(String, Vec<&'s
 /// anyway -- but a *pair* of records referring to each other can, and an
 /// unbounded walk would not return.
 fn owned_record_sample(
-    root: &Path,
+    project: &Project,
     pkg: &str,
     type_name: &str,
     depth: usize,
@@ -379,16 +388,16 @@ fn owned_record_sample(
     if depth == 0 {
         return None;
     }
-    let components = fields_from_record(root, pkg, type_name)?;
+    let components = project.record_in(pkg, type_name)?;
     let mut imports: Vec<&'static str> = Vec::new();
     let mut args: Vec<String> = Vec::new();
     for component in &components {
         // Every component has to be fabricable: one that is not would make
         // the whole expression a guess, and a guess that does not compile is
         // worse than a disabled test that says why.
-        let (arg, needed) = match sample_value(component, root, pkg) {
+        let (arg, needed) = match sample_value(component, project, pkg) {
             Some(direct) => (direct, Vec::new()),
-            None => owned_record_sample(root, pkg, &component.java_type, depth - 1)?,
+            None => owned_record_sample(project, pkg, &component.java_type, depth - 1)?,
         };
         imports.extend(component.imports.iter().copied());
         imports.extend(needed);
@@ -414,7 +423,7 @@ fn owned_record_sample(
 /// fact lets a spanning generator such as `scaffold` reuse the model without
 /// claiming (or later destroying) a file it did not create.
 pub fn fields_from_spec_or_record(
-    root: &Path,
+    project: &Project,
     pkg: &str,
     name: &str,
     spec: &[String],
@@ -424,7 +433,8 @@ pub fn fields_from_spec_or_record(
         return Ok((parsed, false));
     }
 
-    fields_from_record(root, pkg, name)
+    project
+        .record_in(pkg, name)
         .map(|fields| (fields, true))
         .ok_or_else(|| {
             format!(
@@ -437,9 +447,10 @@ pub fn fields_from_spec_or_record(
 /// The first constant of a project enum, for a fixture sample. Reads the
 /// file rather than guessing: a made-up constant produces a fixture that
 /// looks right and fails on the first `valueOf`.
-pub fn first_enum_constant(root: &Path, pkg: &str, type_name: &str) -> Option<String> {
-    let source = fs::read_to_string(main_dir(root, pkg).join(format!("{type_name}.java"))).ok()?;
-    let text = crate::java::blanked(&source);
+pub fn first_enum_constant(project: &Project, pkg: &str, type_name: &str) -> Option<String> {
+    let source = project.source_of(pkg, type_name)?;
+    let source = source.as_str();
+    let text = crate::java::blanked(source);
     let body = text.find(&format!("enum {type_name}"))?;
     let open = text[body..].find('{')? + body + 1;
     // Constants come first in an enum body and end at the first `;` or `}`.
@@ -472,12 +483,6 @@ pub fn first_enum_constant(root: &Path, pkg: &str, type_name: &str) -> Option<St
 /// Whether `<Type>.java` in this package declares an enum. Reading the file is
 /// the only honest way to know: jails has no type model, and guessing from the
 /// name would be worse than admitting ignorance.
-pub fn is_enum_type(root: &Path, pkg: &str, type_name: &str) -> bool {
-    fs::read_to_string(main_dir(root, pkg).join(format!("{type_name}.java")))
-        .map(|src| src.contains(&format!("enum {type_name}")))
-        .unwrap_or(false)
-}
-
 pub(super) fn sample_literal(java_type: &str) -> &'static str {
     match java_type {
         "String" => "\"sample\"",
@@ -584,7 +589,7 @@ pub(super) fn value_java(pkg: &str, name: &str, fields: &[Field]) -> String {
     out
 }
 
-pub(super) fn value_test(root: &Path, pkg: &str, name: &str, fields: &[Field]) -> String {
+pub(super) fn value_test(project: &Project, pkg: &str, name: &str, fields: &[Field]) -> String {
     // Only `!` fields are trimmed and blank-checked, so only they have those
     // behaviours to assert.
     let strings: Vec<&Field> = fields.iter().filter(|f| needs_blank_check(f)).collect();
@@ -595,7 +600,7 @@ pub(super) fn value_test(root: &Path, pkg: &str, name: &str, fields: &[Field]) -
 
     let sampled: Vec<Option<(String, Vec<&'static str>)>> = fields
         .iter()
-        .map(|f| sample_in_package(f, root, pkg))
+        .map(|f| sample_in_package(f, project, pkg))
         .collect();
     imports.extend(sampled.iter().flatten().flat_map(|(_, needed)| needed));
     imports.sort();

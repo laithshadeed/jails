@@ -263,7 +263,7 @@ fn dto_test_java(
     fields: &[crate::generate::Field],
     domain_import: &str,
 ) -> String {
-    let root: &Path = slice.project().root();
+    let project = slice.project();
     let pkg: &str = &slice.placed(Layer::Web);
     let domain: &str = &slice.placed(Layer::Domain);
     let var = crate::generate::lower_first(name);
@@ -276,7 +276,7 @@ fn dto_test_java(
             if is_optional(field) {
                 Some("null".to_string())
             } else {
-                crate::generate::sample_value(field, root, domain)
+                crate::generate::sample_value(field, project, domain)
             }
         })
         .collect();

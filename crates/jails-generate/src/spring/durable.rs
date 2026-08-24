@@ -213,7 +213,7 @@ pub fn durable_job_files(
     let service: &str = &slice.owned(Layer::Service);
     let domain: &str = &slice.owned(Layer::Domain);
     let command_name = format!("{usecase}Command");
-    let command_fields = crate::generate::fields_from_record(root, service, &command_name)
+    let command_fields = slice.project().record_in(service, &command_name)
         .ok_or_else(|| {
             format!(
                 "durable-job {name} cannot read {command_name}.java. Generate usecase {usecase} first."
@@ -492,13 +492,13 @@ fn durable_job_it_java(
     table: &str,
     fields: &[crate::generate::Field],
 ) -> String {
-    let root: &Path = slice.project().root();
+    let project = slice.project();
     let pkg: &str = &slice.placed(Layer::Jobs);
     let app: &str = &slice.owned(Layer::App);
     let domain: &str = &slice.owned(Layer::Domain);
     let samples = fields
         .iter()
-        .map(|field| crate::generate::sample_value(field, root, domain))
+        .map(|field| crate::generate::sample_value(field, project, domain))
         .collect::<Option<Vec<_>>>();
     let disabled = samples.is_none();
     let args = samples.unwrap_or_default().join(",\n                ");
@@ -516,7 +516,7 @@ fn durable_job_it_java(
                 if index == changed {
                     alternate.clone()
                 } else {
-                    crate::generate::sample_value(field, root, domain).unwrap()
+                    crate::generate::sample_value(field, project, domain).unwrap()
                 }
             })
             .collect::<Vec<_>>()

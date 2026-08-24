@@ -332,7 +332,7 @@ pub fn artifacts_for(
         }
         ArtifactKind::Dto => {
             let domain = place(layout::DOMAIN);
-            let (components, _) = fields_from_spec_or_record(&root, &domain, name, fields)?;
+            let (components, _) = fields_from_spec_or_record(project, &domain, name, fields)?;
             crate::spring::dto_files(
                 &crate::model::Slice::new(project, package),
                 name,
@@ -351,7 +351,7 @@ pub fn artifacts_for(
                 Artifact {
                     kind: "record test",
                     path: test_dir(&root, &domain).join(format!("{name}Test.java")),
-                    contents: record_test(&root, &domain, name, &parsed),
+                    contents: record_test(project, &domain, name, &parsed),
                 },
             ]
         }
@@ -365,7 +365,7 @@ pub fn artifacts_for(
             }
             let domain = subpackage(&base, config.layer(layout::DOMAIN));
             let testkit = place(layout::TESTKIT);
-            let components = fields_from_record(&root, &domain, name).ok_or_else(|| {
+            let components = project.record_in(&domain, name).ok_or_else(|| {
                 format!(
                     "no {name} record found under {domain}.\n       \
                      fix: generate the record/scaffold first, then run `jails g factory {name}`."
@@ -374,7 +374,7 @@ pub fn artifacts_for(
             vec![Artifact {
                 kind: "test factory",
                 path: test_dir(&root, &testkit).join(format!("{name}Factory.java")),
-                contents: factory_java(&root, &testkit, &domain, name, &components),
+                contents: factory_java(project, &testkit, &domain, name, &components),
             }]
         }
         ArtifactKind::Value => {
@@ -392,7 +392,7 @@ pub fn artifacts_for(
                 Artifact {
                     kind: "value test",
                     path: test_dir(&root, &domain).join(format!("{name}Test.java")),
-                    contents: value_test(&root, &domain, name, &parsed),
+                    contents: value_test(project, &domain, name, &parsed),
                 },
             ]
         }
@@ -420,7 +420,7 @@ pub fn artifacts_for(
             // One source rule shared with scaffold/dto: explicit fields,
             // otherwise the record on disk, otherwise a refusal that names
             // the fix. A TODO-shaped adapter silently loses data.
-            let (record_fields, _) = fields_from_spec_or_record(&root, &domain, name, fields)?;
+            let (record_fields, _) = fields_from_spec_or_record(project, &domain, name, fields)?;
             let columns = crate::sql::columns(&record_fields, project, &domain, &lower_first(name));
 
             // A repository of a type that does not exist is meaningless, and
@@ -444,7 +444,7 @@ pub fn artifacts_for(
                 artifacts.push(Artifact {
                     kind: "record test",
                     path: test_dir(&root, &domain).join(format!("{name}Test.java")),
-                    contents: record_test(&root, &domain, name, &id),
+                    contents: record_test(project, &domain, name, &id),
                 });
             }
 
@@ -505,7 +505,7 @@ pub fn artifacts_for(
                 artifacts.push(Artifact {
                     kind: "error envelope test",
                     path: test_dir(&root, &domain).join("ApiErrorTest.java"),
-                    contents: value_test(&root, &domain, "ApiError", &fields),
+                    contents: value_test(project, &domain, "ApiError", &fields),
                 });
             }
 

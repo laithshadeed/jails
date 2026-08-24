@@ -111,7 +111,18 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // handle every commit step then takes. That is the cure this
                 // rung asks for, not the disease -- nothing downstream of it
                 // sees a `&Path` at all.
-                ceiling: 147,
+                // 147 -> 137: ten recipes that read a file off disk to
+                // decide what to generate -- `sample_value`, `factory_java`,
+                // `record_test`, `value_test`, `scaffold_requests`,
+                // `first_enum_constant`, `fields_from_spec_or_record` and the
+                // two http-workflow preconditions -- now ask the resolved
+                // `Project` instead. That is not a cosmetic signature change:
+                // in an aggregate `app apply` the file they were reading has
+                // not been written yet, so a disk read refuses a manifest
+                // whose steps are perfectly well ordered. The projection is
+                // the only thing that can answer, and taking a `Project` is
+                // what reaching it looks like.
+                ceiling: 137,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;

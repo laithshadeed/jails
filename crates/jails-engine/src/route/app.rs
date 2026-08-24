@@ -38,6 +38,9 @@ pub struct AppIntent {
     pub kind: ArtifactKind,
     pub name: String,
     pub fields: Vec<String>,
+    /// Expanded into two ordinary components before anything plans, through
+    /// the same helper the CLI flag uses.
+    pub timestamps: bool,
     pub indexes: Vec<String>,
     pub package: Option<String>,
     pub on: Option<String>,
@@ -94,13 +97,21 @@ pub fn app_apply(
 
     for intent in intents {
         let planned = projected(project, &reads, &changes)?;
+        let expanded;
+        let fields = match intent.timestamps {
+            true => {
+                expanded = jails_generate::generate::with_timestamps(intent.kind, &intent.fields)?;
+                expanded.as_slice()
+            }
+            false => intent.fields.as_slice(),
+        };
         let change = with_test_support(
             &planned,
             jails_generate::generate::plan_recipe(
                 &planned,
                 intent.kind,
                 &intent.name,
-                &intent.fields,
+                fields,
                 intent.package.as_deref(),
                 &intent.indexes,
                 intent.on.as_deref(),
@@ -112,7 +123,7 @@ pub fn app_apply(
             intent.kind,
             &intent.name,
             intent.package.as_deref(),
-            &intent.fields,
+            fields,
             &intent.indexes,
             intent.on.as_deref(),
             intent.yields.as_deref(),
@@ -120,7 +131,7 @@ pub fn app_apply(
         let spec = super::spec(
             &planned,
             intent.kind,
-            &intent.fields,
+            fields,
             &intent.indexes,
             intent.on.as_deref(),
             intent.yields.as_deref(),
