@@ -57,7 +57,7 @@ pub(super) fn compose_reconcile(
     desired_rows: &[jails_protocol::resource::DesiredResource],
     base: &ProjectSnapshot,
     operations: &[FileOp],
-    objects: &BTreeMap<ObjectId, Arc<[u8]>>,
+    objects: &mut BTreeMap<ObjectId, Arc<[u8]>>,
 ) -> Result<Option<PostCommitEffect>> {
     if !start_services {
         return Ok(None);
@@ -128,6 +128,18 @@ pub(super) fn compose_reconcile(
                  with.\n       fix: pass `--no-start`, or put the service block back before \
                  removing it."
             ));
+        }
+    }
+
+    // Both documents have to survive as objects: an attempt hands `--file`
+    // one of them, and the preimage of a replaced file is guarded rather than
+    // interned, so nothing else would have kept it.
+    for (id, bytes) in [
+        (before_document, before_bytes),
+        (after_document, after_bytes.clone()),
+    ] {
+        if let (Some(id), Some(bytes)) = (id, bytes) {
+            objects.entry(id).or_insert(bytes);
         }
     }
 

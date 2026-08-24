@@ -10,6 +10,19 @@ mod common;
 
 use jails_project::capability::Declaration;
 use jails_project::model::Project;
+
+/// A run that commits files and leaves the runtime alone.
+///
+/// Every test in this file is about what reaches disk and what reaches the
+/// store. `add db` really does start its container now -- that is the point of
+/// §R3.3's post-commit effect -- so a test that used the plain committing run
+/// would depend on a container engine being installed, running and able to
+/// pull an image, and would leave a database behind when it passed. The
+/// runtime half has its own test, which plans the effect rather than running
+/// it.
+fn committing(project: &Project) -> jails_engine::route::Run<'_> {
+    jails_engine::route::Run::committing(project).without_start()
+}
 use jails_spec::spec::kind::Capability;
 
 #[test]
@@ -20,7 +33,7 @@ fn a_capability_installs_through_the_transaction_protocol() {
     let project = Project::load(&root).unwrap();
 
     jails_engine::route::install(
-        &jails_engine::route::Run::committing(&project),
+        &committing(&project),
         &Declaration::plain(Capability::Actuator),
     )
     .unwrap();
@@ -66,11 +79,8 @@ fn a_capability_that_writes_a_test_brings_something_to_assert_with() {
     common::write_plain_fixture(&root);
     let project = Project::load(&root).unwrap();
 
-    jails_engine::route::install(
-        &jails_engine::route::Run::committing(&project),
-        &Declaration::plain(Capability::Csv),
-    )
-    .unwrap();
+    jails_engine::route::install(&committing(&project), &Declaration::plain(Capability::Csv))
+        .unwrap();
 
     let pom = std::fs::read_to_string(root.join("pom.xml")).unwrap();
     assert!(pom.contains("assertj-core"), "{pom}");
@@ -93,11 +103,9 @@ fn a_refusal_before_the_lock_leaves_the_project_untouched() {
     let project = Project::load(&root).unwrap();
     let before = common::scenarios::file_set(&root);
 
-    let error = jails_engine::route::install(
-        &jails_engine::route::Run::committing(&project),
-        &Declaration::plain(Capability::K8s),
-    )
-    .unwrap_err();
+    let error =
+        jails_engine::route::install(&committing(&project), &Declaration::plain(Capability::K8s))
+            .unwrap_err();
 
     assert!(!error.is_empty(), "a refusal says something");
     assert_eq!(
@@ -121,7 +129,7 @@ fn a_record_generates_through_the_transaction_protocol() {
     let project = Project::load(&root).unwrap();
 
     jails_engine::route::generate(
-        &jails_engine::route::Run::committing(&project),
+        &committing(&project),
         jails_spec::spec::kind::ArtifactKind::Record,
         "Note",
         &["title:string!".to_string(), "at:instant".to_string()],
@@ -161,7 +169,7 @@ fn generating_the_same_record_twice_is_one_artifact_and_a_no_op() {
     common::write_plain_fixture(&root);
     let generate = || {
         jails_engine::route::generate(
-            &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+            &committing(&Project::load(&root).unwrap()),
             jails_spec::spec::kind::ArtifactKind::Record,
             "Note",
             &["title:string!".to_string()],
@@ -199,7 +207,7 @@ fn a_file_the_request_does_not_own_is_not_overwritten() {
     .unwrap();
 
     let outcome = jails_engine::route::generate(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         jails_spec::spec::kind::ArtifactKind::Record,
         "Note",
         &["title:string!".to_string()],
@@ -248,7 +256,7 @@ fn a_capability_install_converges_from_every_failpoint() {
         {
             let _armed = jails_commit::fault::Armed::at(point);
             let _ = jails_engine::route::install(
-                &jails_engine::route::Run::committing(&project),
+                &committing(&project),
                 &Declaration::plain(Capability::Actuator),
             );
         }
@@ -305,7 +313,7 @@ fn each_transition_records_what_it_claimed_and_leaves_the_rest_alone() {
     common::write_spring_fixture(&root);
 
     jails_engine::route::install(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         &Declaration::plain(Capability::Actuator),
     )
     .unwrap();
@@ -324,7 +332,7 @@ fn each_transition_records_what_it_claimed_and_leaves_the_rest_alone() {
     assert!(actuator_rows > 0, "and so are the resources it claimed");
 
     jails_engine::route::install(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         &Declaration::plain(Capability::Cache),
     )
     .unwrap();
@@ -352,13 +360,13 @@ fn installing_a_capability_twice_leaves_the_store_where_it_was() {
     common::write_spring_fixture(&root);
 
     jails_engine::route::install(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         &Declaration::plain(Capability::Actuator),
     )
     .unwrap();
     let before = jails_commit::store::Store::at(&root).observe().unwrap();
     let outcome = jails_engine::route::install(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         &Declaration::plain(Capability::Actuator),
     )
     .unwrap();
@@ -385,7 +393,7 @@ fn removing_a_capability_takes_back_exactly_what_it_installed() {
     let before = std::fs::read_to_string(root.join("pom.xml")).unwrap();
 
     jails_engine::route::install(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         &Declaration::plain(Capability::Actuator),
     )
     .unwrap();
@@ -393,7 +401,7 @@ fn removing_a_capability_takes_back_exactly_what_it_installed() {
     assert!(file.is_file());
 
     jails_engine::route::remove(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         &Declaration::plain(Capability::Actuator),
     )
     .unwrap();
@@ -440,17 +448,17 @@ fn a_shared_claim_survives_one_owner_leaving() {
 
     // Both of these want `spring-boot-starter-actuator`.
     jails_engine::route::install(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         &Declaration::plain(Capability::Actuator),
     )
     .unwrap();
     jails_engine::route::install(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         &Declaration::plain(Capability::Observability),
     )
     .unwrap();
     jails_engine::route::remove(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         &Declaration::plain(Capability::Observability),
     )
     .unwrap();
@@ -469,7 +477,7 @@ fn removing_what_was_never_installed_is_refused() {
     std::fs::create_dir_all(&root).unwrap();
     common::write_spring_fixture(&root);
     let error = jails_engine::route::remove(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         &Declaration::plain(Capability::Actuator),
     )
     .unwrap_err();
@@ -489,7 +497,7 @@ fn sync_brings_the_project_to_the_list_in_the_manifest() {
     common::write_spring_fixture(&root);
 
     jails_engine::route::install(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         &Declaration::plain(Capability::Actuator),
     )
     .unwrap();
@@ -503,10 +511,7 @@ fn sync_brings_the_project_to_the_list_in_the_manifest() {
     )
     .unwrap();
 
-    jails_engine::route::sync(&jails_engine::route::Run::committing(
-        &Project::load(&root).unwrap(),
-    ))
-    .unwrap();
+    jails_engine::route::sync(&committing(&Project::load(&root).unwrap())).unwrap();
 
     let pom = std::fs::read_to_string(root.join("pom.xml")).unwrap();
     assert!(
@@ -566,7 +571,7 @@ fn destroying_a_record_takes_back_exactly_what_generating_it_wrote() {
     common::write_plain_fixture(&root);
 
     jails_engine::route::generate(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         jails_spec::spec::kind::ArtifactKind::Record,
         "Note",
         &["title:string!".to_string()],
@@ -581,7 +586,7 @@ fn destroying_a_record_takes_back_exactly_what_generating_it_wrote() {
     assert!(record.is_file() && test.is_file());
 
     jails_engine::route::destroy(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         jails_spec::spec::kind::ArtifactKind::Record,
         "Note",
         None,
@@ -610,7 +615,7 @@ fn destroying_one_record_leaves_another_alone() {
     common::write_plain_fixture(&root);
     let generate = |name: &str| {
         jails_engine::route::generate(
-            &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+            &committing(&Project::load(&root).unwrap()),
             jails_spec::spec::kind::ArtifactKind::Record,
             name,
             &["title:string!".to_string()],
@@ -625,7 +630,7 @@ fn destroying_one_record_leaves_another_alone() {
     generate("Memo");
 
     jails_engine::route::destroy(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         jails_spec::spec::kind::ArtifactKind::Record,
         "Note",
         None,
@@ -659,7 +664,7 @@ fn destroying_what_was_never_generated_names_the_command_that_records_it() {
     common::write_plain_fixture(&root);
 
     let error = jails_engine::route::destroy(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         jails_spec::spec::kind::ArtifactKind::Record,
         "Note",
         None,
@@ -748,7 +753,7 @@ fn every_persistent_kind_destroys_back_to_where_it_started() {
         let pom_before = std::fs::read_to_string(root.join("pom.xml")).unwrap();
 
         let generated = jails_engine::route::generate(
-            &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+            &committing(&Project::load(&root).unwrap()),
             kind,
             step[2],
             &invocation.fields,
@@ -774,7 +779,7 @@ fn every_persistent_kind_destroys_back_to_where_it_started() {
         );
 
         jails_engine::route::destroy(
-            &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+            &committing(&Project::load(&root).unwrap()),
             kind,
             step[2],
             invocation.package.as_deref(),
@@ -831,11 +836,8 @@ fn route_step(root: &std::path::Path, step: &[&str]) -> Result<(), String> {
         Some("add") => {
             let capability = Capability::from_str(step[1], true)
                 .map_err(|_| format!("`{}` is not a capability", step[1]))?;
-            jails_engine::route::install(
-                &jails_engine::route::Run::committing(&project),
-                &Declaration::plain(capability),
-            )
-            .map(|_| ())
+            jails_engine::route::install(&committing(&project), &Declaration::plain(capability))
+                .map(|_| ())
         }
         Some("g") | Some("generate") => {
             let kind = jails_spec::spec::kind::ArtifactKind::from_str(step[1], true)
@@ -843,7 +845,7 @@ fn route_step(root: &std::path::Path, step: &[&str]) -> Result<(), String> {
             let invocation = common::scenarios::invocation(step)
                 .ok_or_else(|| "unrecognised flag".to_string())?;
             jails_engine::route::generate(
-                &jails_engine::route::Run::committing(&project),
+                &committing(&project),
                 kind,
                 step[2],
                 &invocation.fields,
@@ -879,7 +881,7 @@ fn adding_a_database_wires_the_tests_that_are_already_there() {
     common::write_spring_fixture(&root);
 
     jails_engine::route::install(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         &Declaration::plain(Capability::Db),
     )
     .unwrap();
@@ -947,14 +949,14 @@ fn removing_a_database_gives_the_reader_their_test_back() {
     let before = std::fs::read_to_string(&path).unwrap();
 
     jails_engine::route::install(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         &Declaration::plain(Capability::Db),
     )
     .unwrap();
     assert!(std::fs::read_to_string(&path).unwrap().contains("@Import("));
 
     jails_engine::route::remove(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         &Declaration::plain(Capability::Db),
     )
     .unwrap();
@@ -990,15 +992,12 @@ fn a_migration_allocates_the_next_serial_and_records_that_it_did() {
     common::write_spring_fixture(&root);
 
     jails_engine::route::migration(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         "create rewards",
     )
     .unwrap();
-    jails_engine::route::migration(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
-        "add index",
-    )
-    .unwrap();
+    jails_engine::route::migration(&committing(&Project::load(&root).unwrap()), "add index")
+        .unwrap();
 
     let dir = root.join("src/main/resources/db/migration");
     assert!(dir.join("V001__create_rewards.sql").is_file());
@@ -1057,11 +1056,7 @@ fn a_migration_number_already_in_the_directory_is_not_handed_out_again() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("V001__theirs.sql"), "-- theirs\n").unwrap();
 
-    jails_engine::route::migration(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
-        "mine",
-    )
-    .unwrap();
+    jails_engine::route::migration(&committing(&Project::load(&root).unwrap()), "mine").unwrap();
 
     assert!(dir.join("V002__mine.sql").is_file());
     assert!(!dir.join("V001__mine.sql").exists());
@@ -1091,7 +1086,7 @@ fn cases_records_the_brief_it_read_and_reconciles_a_re_run() {
     .unwrap();
 
     jails_engine::route::cases(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         "docs/behaviour.md",
         None,
     )
@@ -1116,7 +1111,7 @@ fn cases_records_the_brief_it_read_and_reconciles_a_re_run() {
     // The same source again is a no-op, not a collision.
     assert!(matches!(
         jails_engine::route::cases(
-            &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+            &committing(&Project::load(&root).unwrap()),
             "docs/behaviour.md",
             None
         )
@@ -1136,7 +1131,7 @@ fn cases_records_the_brief_it_read_and_reconciles_a_re_run() {
     )
     .unwrap();
     jails_engine::route::cases(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         "docs/behaviour.md",
         None,
     )
@@ -1166,7 +1161,7 @@ fn a_brief_outside_the_project_is_refused_with_the_reason() {
     common::write_plain_fixture(&root);
 
     let error = jails_engine::route::cases(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         "../elsewhere.md",
         None,
     )
@@ -1192,7 +1187,7 @@ fn a_field_evolves_the_record_and_migrates_the_table_for_it() {
     std::fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
 
     jails_engine::route::generate(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         jails_spec::spec::kind::ArtifactKind::Record,
         "Note",
         &["id:uuid@pk".to_string(), "title:string!".to_string()],
@@ -1204,7 +1199,7 @@ fn a_field_evolves_the_record_and_migrates_the_table_for_it() {
     .unwrap();
 
     jails_engine::route::field(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         "Note",
         "archivedAt:instant?",
         None,
@@ -1274,7 +1269,7 @@ fn a_field_merges_an_edit_the_generator_also_touched() {
     common::write_spring_fixture(&root);
 
     jails_engine::route::generate(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         jails_spec::spec::kind::ArtifactKind::Record,
         "Note",
         &["id:uuid@pk".to_string(), "title:string!".to_string()],
@@ -1295,7 +1290,7 @@ fn a_field_merges_an_edit_the_generator_also_touched() {
     jails_support::apply::put(&test, &mine).unwrap();
 
     jails_engine::route::field(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         "Note",
         "archivedAt:instant?",
         None,
@@ -1349,7 +1344,7 @@ fn a_field_refuses_a_duplicate_and_an_unrecorded_target() {
     common::write_spring_fixture(&root);
 
     let error = jails_engine::route::field(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         "Note",
         "x:int",
         None,
@@ -1359,7 +1354,7 @@ fn a_field_refuses_a_duplicate_and_an_unrecorded_target() {
     assert!(error.contains("jails g scaffold Note"), "{error}");
 
     jails_engine::route::generate(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         jails_spec::spec::kind::ArtifactKind::Record,
         "Note",
         &["title:string!".to_string()],
@@ -1371,7 +1366,7 @@ fn a_field_refuses_a_duplicate_and_an_unrecorded_target() {
     .unwrap();
 
     let error = jails_engine::route::field(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         "Note",
         "title:string!",
         None,
@@ -1395,7 +1390,7 @@ fn a_manifest_applies_as_one_transition_that_each_step_can_see() {
     common::write_spring_fixture(&root);
 
     jails_engine::route::app_apply(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         &[Capability::Db],
         &[
             jails_engine::route::AppIntent {
@@ -1488,7 +1483,7 @@ fn a_manifest_that_drops_a_row_takes_it_back_out() {
     };
 
     jails_engine::route::app_apply(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         &[],
         &[note("Note"), note("Memo")],
     )
@@ -1500,7 +1495,7 @@ fn a_manifest_that_drops_a_row_takes_it_back_out() {
 
     // The reader deletes the `Memo` row from the manifest.
     jails_engine::route::app_apply(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         &[],
         &[note("Note")],
     )
@@ -1527,7 +1522,7 @@ fn applying_a_manifest_twice_leaves_the_store_where_it_was() {
     common::write_plain_fixture(&root);
     let manifest = || {
         jails_engine::route::app_apply(
-            &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+            &committing(&Project::load(&root).unwrap()),
             &[],
             &[jails_engine::route::AppIntent {
                 kind: jails_spec::spec::kind::ArtifactKind::Record,
@@ -1686,7 +1681,7 @@ fn the_web_crawler_manifest_applies_as_one_transition() {
     common::write_spring_fixture(&root);
 
     jails_engine::route::app_apply(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         &[
             Capability::Db,
             Capability::Api,
@@ -1751,11 +1746,7 @@ fn app_init_seeds_a_manifest_once_and_refuses_to_land_on_it_twice() {
     std::fs::create_dir_all(&root).unwrap();
     common::write_spring_fixture(&root);
 
-    jails_engine::route::app_init(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
-        None,
-    )
-    .unwrap();
+    jails_engine::route::app_init(&committing(&Project::load(&root).unwrap()), None).unwrap();
     let seeded = std::fs::read_to_string(root.join(".jails/app.toml")).unwrap();
     assert!(seeded.contains("schema = 1"), "{seeded}");
     assert!(seeded.contains("capabilities = []"), "{seeded}");
@@ -1768,10 +1759,7 @@ fn app_init_seeds_a_manifest_once_and_refuses_to_land_on_it_twice() {
         "schema = 1\ncapabilities = [\"db\"]\n",
     )
     .unwrap();
-    let again = jails_engine::route::app_init(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
-        None,
-    );
+    let again = jails_engine::route::app_init(&committing(&Project::load(&root).unwrap()), None);
     assert!(again.is_err(), "a second seed landed on the reader's file");
     assert_eq!(
         std::fs::read_to_string(root.join(".jails/app.toml")).unwrap(),
@@ -1819,7 +1807,7 @@ fn a_plan_names_exactly_the_files_the_apply_then_writes() {
     );
 
     jails_engine::route::app_apply(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         &[],
         &[note("Note")],
     )
@@ -1901,7 +1889,7 @@ fn a_manifest_row_that_changes_merges_with_what_the_reader_wrote() {
     let at = root.join("src/main/java/com/example/demo/domain/Note.java");
 
     jails_engine::route::app_apply(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         &[],
         &[note(&["title:string!"])],
     )
@@ -1920,7 +1908,7 @@ fn a_manifest_row_that_changes_merges_with_what_the_reader_wrote() {
 
     // The manifest now asks for a second component.
     jails_engine::route::app_apply(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         &[],
         &[note(&["title:string!", "body:string"])],
     )
@@ -1967,7 +1955,7 @@ fn an_overlapping_edit_refuses_without_writing_anything() {
     let at = root.join("src/main/java/com/example/demo/domain/Note.java");
 
     jails_engine::route::app_apply(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         &[],
         &[note(&["title:string!"])],
     )
@@ -1984,7 +1972,7 @@ fn an_overlapping_edit_refuses_without_writing_anything() {
     let before = common::scenarios::file_set(&root);
 
     let error = jails_engine::route::app_apply(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         &[],
         &[note(&["title:string!", "body:string"])],
     )
@@ -2026,7 +2014,7 @@ fn a_rename_moves_the_type_its_companions_and_every_reference_at_once() {
     common::write_plain_fixture(&root);
 
     jails_engine::route::generate(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         jails_spec::spec::kind::ArtifactKind::Record,
         "Reward",
         &["title:string!".to_string()],
@@ -2052,7 +2040,7 @@ fn a_rename_moves_the_type_its_companions_and_every_reference_at_once() {
     .unwrap();
 
     jails_engine::route::rename(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         "Reward",
         "Bonus",
         true,
@@ -2111,7 +2099,7 @@ fn a_rename_is_one_generation_and_will_not_land_on_an_occupied_name() {
     common::write_plain_fixture(&root);
     let generate = |name: &str| {
         jails_engine::route::generate(
-            &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+            &committing(&Project::load(&root).unwrap()),
             jails_spec::spec::kind::ArtifactKind::Record,
             name,
             &["title:string!".to_string()],
@@ -2130,7 +2118,7 @@ fn a_rename_is_one_generation_and_will_not_land_on_an_occupied_name() {
         .unwrap()
         .generation();
     let error = jails_engine::route::rename(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         "Reward",
         "Bonus",
         true,
@@ -2153,7 +2141,7 @@ fn a_rename_is_one_generation_and_will_not_land_on_an_occupied_name() {
 
     // Now with a free destination: many files, one generation.
     jails_engine::route::rename(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         "Reward",
         "Reward2",
         true,
@@ -2201,10 +2189,7 @@ fn adopting_a_foreign_layout_records_every_layer_in_one_write() {
         .observe()
         .unwrap()
         .generation();
-    jails_engine::route::adopt_layout(&jails_engine::route::Run::committing(
-        &Project::load(&root).unwrap(),
-    ))
-    .unwrap();
+    jails_engine::route::adopt_layout(&committing(&Project::load(&root).unwrap())).unwrap();
 
     let config = std::fs::read_to_string(root.join("jails.toml")).unwrap();
     for entry in [
@@ -2245,7 +2230,7 @@ fn adopting_a_foreign_layout_records_every_layer_in_one_write() {
     // installed after adoption must not take the `[layout]` table with it --
     // nor the reverse.
     jails_engine::route::install(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         &Declaration::plain(Capability::Json),
     )
     .unwrap();
@@ -2269,10 +2254,8 @@ fn two_directories_for_one_layer_adopt_neither() {
         std::fs::create_dir_all(base.join(name)).unwrap();
     }
 
-    let error = jails_engine::route::adopt_layout(&jails_engine::route::Run::committing(
-        &Project::load(&root).unwrap(),
-    ))
-    .unwrap_err();
+    let error =
+        jails_engine::route::adopt_layout(&committing(&Project::load(&root).unwrap())).unwrap_err();
     assert!(error.contains("nothing to adopt"), "{error}");
     assert!(
         !root.join("jails.toml").exists(),
@@ -2293,10 +2276,7 @@ fn fast_test_claims_its_dependency_and_remove_gives_it_back() {
     std::fs::create_dir_all(&root).unwrap();
     common::write_spring_fixture(&root);
 
-    jails_engine::route::install_fast_test(&jails_engine::route::Run::committing(
-        &Project::load(&root).unwrap(),
-    ))
-    .unwrap();
+    jails_engine::route::install_fast_test(&committing(&Project::load(&root).unwrap())).unwrap();
     let pom = std::fs::read_to_string(root.join("pom.xml")).unwrap();
     assert!(pom.contains("junit-platform-console"), "{pom}");
     // The fixture has a Spring Boot parent, so the version is managed. A
@@ -2313,20 +2293,14 @@ fn fast_test_claims_its_dependency_and_remove_gives_it_back() {
         .observe()
         .unwrap()
         .generation();
-    jails_engine::route::install_fast_test(&jails_engine::route::Run::committing(
-        &Project::load(&root).unwrap(),
-    ))
-    .unwrap();
+    jails_engine::route::install_fast_test(&committing(&Project::load(&root).unwrap())).unwrap();
     assert_eq!(
         std::fs::read_to_string(root.join("pom.xml")).unwrap(),
         pom,
         "a second --fast changed the pom"
     );
 
-    jails_engine::route::remove_fast_test(&jails_engine::route::Run::committing(
-        &Project::load(&root).unwrap(),
-    ))
-    .unwrap();
+    jails_engine::route::remove_fast_test(&committing(&Project::load(&root).unwrap())).unwrap();
     let after = std::fs::read_to_string(root.join("pom.xml")).unwrap();
     assert!(
         !after.contains("junit-platform-console"),
@@ -2360,7 +2334,7 @@ fn formatting_runs_against_a_copy_and_commits_only_what_changed() {
     std::fs::create_dir_all(&root).unwrap();
     common::write_spring_fixture(&root);
     jails_engine::route::install(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         &Declaration::plain(Capability::Format),
     )
     .unwrap();
@@ -2375,10 +2349,7 @@ fn formatting_runs_against_a_copy_and_commits_only_what_changed() {
     let outside = root.join("notes.md");
     std::fs::write(&outside, "# untouched\n").unwrap();
 
-    jails_engine::route::format(&jails_engine::route::Run::committing(
-        &Project::load(&root).unwrap(),
-    ))
-    .unwrap();
+    jails_engine::route::format(&committing(&Project::load(&root).unwrap())).unwrap();
 
     let formatted = std::fs::read_to_string(&at).unwrap();
     assert_ne!(
@@ -2399,10 +2370,7 @@ fn formatting_runs_against_a_copy_and_commits_only_what_changed() {
         .observe()
         .unwrap()
         .generation();
-    jails_engine::route::format(&jails_engine::route::Run::committing(
-        &Project::load(&root).unwrap(),
-    ))
-    .unwrap();
+    jails_engine::route::format(&committing(&Project::load(&root).unwrap())).unwrap();
     assert_eq!(
         std::fs::read_to_string(&at).unwrap(),
         formatted,
@@ -2423,7 +2391,7 @@ fn renaming_a_generated_type_moves_what_the_store_says_it_owns() {
     std::fs::create_dir_all(&root).unwrap();
     common::write_plain_fixture(&root);
     jails_engine::route::generate(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         jails_spec::spec::kind::ArtifactKind::Record,
         "Reward",
         &["title:string!".to_string()],
@@ -2434,7 +2402,7 @@ fn renaming_a_generated_type_moves_what_the_store_says_it_owns() {
     )
     .unwrap();
     jails_engine::route::rename(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         "Reward",
         "Bonus",
         true,
@@ -2463,7 +2431,7 @@ fn renaming_a_generated_type_moves_what_the_store_says_it_owns() {
     // The property all of that is for: the entity is called `Bonus` now, so
     // destroying it finds the files that are actually there.
     jails_engine::route::destroy(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         jails_spec::spec::kind::ArtifactKind::Record,
         "Bonus",
         None,
@@ -2496,7 +2464,7 @@ fn an_operation_records_the_request_that_produced_it() {
     common::write_plain_fixture(&root);
 
     jails_engine::route::generate(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         jails_spec::spec::kind::ArtifactKind::Record,
         "Note",
         &["title:string!".to_string()],
@@ -2528,7 +2496,7 @@ fn an_operation_records_the_request_that_produced_it() {
     // different operation. If the invocation were not in the identity, two
     // requests whose file effects happened to coincide would be one operation.
     jails_engine::route::generate(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         jails_spec::spec::kind::ArtifactKind::Record,
         "Memo",
         &["title:string!".to_string()],
@@ -2614,7 +2582,7 @@ fn pretending_writes_nothing_and_names_what_a_commit_would_write() {
     // And the plan is the commit's own answer: what `generate` named is
     // exactly what committing it makes appear.
     jails_engine::route::generate(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         jails_spec::spec::kind::ArtifactKind::Record,
         "Note",
         &["title:string!".to_string()],
@@ -2696,7 +2664,7 @@ fn a_plan_is_reported_through_the_one_projection() {
     // Committing it, then planning it again, is a no-op -- and the envelope
     // says so as a status rather than as an empty list the caller has to read.
     jails_engine::route::generate(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         jails_spec::spec::kind::ArtifactKind::Record,
         "Note",
         &["title:string!".to_string()],
@@ -2751,10 +2719,7 @@ fn adoption_ignores_a_file_named_like_a_layer_and_a_package_with_no_java() {
     // A *file* that looks like a layer.
     std::fs::write(base.join("dto"), "not java\n").unwrap();
 
-    jails_engine::route::adopt_layout(&jails_engine::route::Run::committing(
-        &Project::load(&root).unwrap(),
-    ))
-    .unwrap();
+    jails_engine::route::adopt_layout(&committing(&Project::load(&root).unwrap())).unwrap();
 
     let config = std::fs::read_to_string(root.join("jails.toml")).unwrap();
     assert!(config.contains("web = \"controllers\""), "{config}");
@@ -2819,7 +2784,7 @@ fn a_schema_one_ledger_is_translated_rather_than_refused() {
 
     // And a V2 route now runs against it rather than refusing the project.
     jails_engine::route::generate(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         jails_spec::spec::kind::ArtifactKind::Record,
         "Memo",
         &["title:string!".to_string()],
@@ -2932,7 +2897,7 @@ fn destroying_a_legacy_row_refuses_by_name_rather_than_claiming_it_is_absent() {
     .unwrap();
 
     let error = jails_engine::route::destroy(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         jails_spec::spec::kind::ArtifactKind::Record,
         "Reward",
         None,
@@ -2971,7 +2936,7 @@ fn adopting_a_legacy_row_claims_it_only_when_the_bytes_are_jails_own() {
     // the same row. That gives files jails really did render, under a row
     // that records no owner -- which is exactly the migrated shape.
     jails_engine::route::generate(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         jails_spec::spec::kind::ArtifactKind::Record,
         "Reward",
         &["title:string!".to_string()],
@@ -3016,7 +2981,7 @@ fn adopting_a_legacy_row_claims_it_only_when_the_bytes_are_jails_own() {
 
     // A key that names no row refuses, rather than adopting something similar.
     let wrong = jails_engine::route::adopt_legacy(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         "schema1-applied:0000000000000000000000000000000000000000000000000000000000000000",
         jails_spec::spec::kind::ArtifactKind::Record,
         "Reward",
@@ -3027,7 +2992,7 @@ fn adopting_a_legacy_row_claims_it_only_when_the_bytes_are_jails_own() {
 
     // The right key, with the wrong intent, refuses too.
     let mismatched = jails_engine::route::adopt_legacy(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         &key,
         jails_spec::spec::kind::ArtifactKind::Record,
         "Bonus",
@@ -3037,7 +3002,7 @@ fn adopting_a_legacy_row_claims_it_only_when_the_bytes_are_jails_own() {
     assert!(mismatched.contains("not `record Bonus`"), "{mismatched}");
 
     jails_engine::route::adopt_legacy(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         &key,
         jails_spec::spec::kind::ArtifactKind::Record,
         "Reward",
@@ -3047,7 +3012,7 @@ fn adopting_a_legacy_row_claims_it_only_when_the_bytes_are_jails_own() {
 
     // Owned now, so `destroy` works -- which is the whole point of adopting.
     jails_engine::route::destroy(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         jails_spec::spec::kind::ArtifactKind::Record,
         "Reward",
         None,
@@ -3097,7 +3062,7 @@ fn adoption_refuses_bytes_jails_did_not_produce() {
     };
 
     let error = jails_engine::route::adopt_legacy(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         &key,
         jails_spec::spec::kind::ArtifactKind::Record,
         "Reward",
@@ -3123,7 +3088,7 @@ fn adoption_refuses_bytes_jails_did_not_produce() {
 
     // Which, said explicitly, claims the row and installs what jails renders.
     jails_engine::route::adopt_legacy(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         &key,
         jails_spec::spec::kind::ArtifactKind::Record,
         "Reward",
@@ -3139,7 +3104,7 @@ fn adoption_refuses_bytes_jails_did_not_produce() {
     // The row is owned, so the base it recorded is the one jails wrote -- which
     // is what makes `destroy` able to take it back out.
     jails_engine::route::destroy(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         jails_spec::spec::kind::ArtifactKind::Record,
         "Reward",
         None,
@@ -3157,7 +3122,7 @@ fn replace_over_a_row_that_already_matches_changes_nothing() {
     std::fs::create_dir_all(&root).unwrap();
     common::write_plain_fixture(&root);
     jails_engine::route::generate(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         jails_spec::spec::kind::ArtifactKind::Record,
         "Reward",
         &["title:string!".to_string()],
@@ -3202,7 +3167,7 @@ fn replace_over_a_row_that_already_matches_changes_nothing() {
     };
 
     jails_engine::route::adopt_legacy(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         &key,
         jails_spec::spec::kind::ArtifactKind::Record,
         "Reward",
@@ -3296,7 +3261,7 @@ fn a_capability_with_a_container_plans_one_runtime_reconciliation() {
     // mirrored: the stop set is what the *prior* map held and the committed
     // document no longer names, so a block the reader kept by hand survives.
     jails_engine::route::install(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         &Declaration::plain(Capability::Db),
     )
     .unwrap();
@@ -3321,6 +3286,45 @@ fn a_capability_with_a_container_plans_one_runtime_reconciliation() {
     assert!(
         before_document.is_some(),
         "stopping a service needs the document that declared it"
+    );
+}
+
+/// A commit with nothing to reconcile says so, rather than saying nothing.
+///
+/// The wiring §R6.6 asks for: the project lock is released, then the effect is
+/// attempted. A capability with no container has no effect to attempt, and the
+/// answer is `NotApplicable` -- which is a different claim from "an attempt
+/// was made and we are not saying how it went".
+///
+/// The attempt itself is deliberately not exercised here. Running it starts a
+/// real container, and a test suite that leaves a PostgreSQL behind when it
+/// passes is worse than one that says which half it covers. The argument
+/// vector, the identity and the settled-state rules have unit tests in
+/// `jails_commit::runtime`; this pins the route that reaches them.
+#[test]
+fn a_commit_with_no_container_reports_no_runtime_attempt() {
+    let root = common::temp_dir("engine-no-runtime");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_spring_fixture(&root);
+
+    let project = Project::load(&root).unwrap();
+    let outcome = jails_engine::route::install(
+        // Started, deliberately: the point is that nothing was attempted
+        // because there was nothing to attempt.
+        &jails_engine::route::Run::committing(&project),
+        &Declaration::plain(Capability::Actuator),
+    )
+    .unwrap()
+    .committed()
+    .unwrap();
+
+    let jails_commit::outcome::CommitResult::Committed(committed) = outcome else {
+        panic!("an install committed nothing");
+    };
+    assert!(committed.receipt.post_commit.is_empty());
+    assert_eq!(
+        committed.effect,
+        jails_commit::outcome::CommitEffectOutcome::NotApplicable
     );
 }
 
@@ -3371,7 +3375,7 @@ fn two_named_instances_of_one_capability_are_two_capabilities() {
 
     for name in ["Order", "Invoice"] {
         jails_engine::route::install(
-            &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+            &committing(&Project::load(&root).unwrap()),
             &Declaration::asked(Capability::Csv, Some(name), None),
         )
         .unwrap();
@@ -3410,14 +3414,14 @@ fn removing_one_named_instance_leaves_its_sibling_alone() {
     common::write_plain_fixture(&root);
     for name in ["Order", "Invoice"] {
         jails_engine::route::install(
-            &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+            &committing(&Project::load(&root).unwrap()),
             &Declaration::asked(Capability::Csv, Some(name), None),
         )
         .unwrap();
     }
 
     jails_engine::route::remove(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         &Declaration::asked(Capability::Csv, Some("Order"), None),
     )
     .unwrap();
@@ -3443,7 +3447,7 @@ fn a_parameter_with_no_meaning_refuses_before_anything_is_written() {
     let before = common::scenarios::file_set(&root);
 
     let error = jails_engine::route::install(
-        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &committing(&Project::load(&root).unwrap()),
         &Declaration::asked(Capability::Ci, Some("Nightly"), None),
     )
     .unwrap_err();
@@ -3470,19 +3474,13 @@ fn sync_installs_a_capability_the_manifest_named() {
     )
     .unwrap();
 
-    jails_engine::route::sync(&jails_engine::route::Run::committing(
-        &Project::load(&root).unwrap(),
-    ))
-    .unwrap();
+    jails_engine::route::sync(&committing(&Project::load(&root).unwrap())).unwrap();
     let reader = root.join("src/main/java/com/example/demo/adapters/OrderReader.java");
     assert!(reader.is_file(), "sync installed nothing");
 
     // And a second sync is a no-op rather than a retirement.
     let before = jails_commit::store::Store::at(&root).observe().unwrap();
-    jails_engine::route::sync(&jails_engine::route::Run::committing(
-        &Project::load(&root).unwrap(),
-    ))
-    .unwrap();
+    jails_engine::route::sync(&committing(&Project::load(&root).unwrap())).unwrap();
     let after = jails_commit::store::Store::at(&root).observe().unwrap();
     assert!(reader.is_file(), "the second sync took the class back out");
     assert_eq!(

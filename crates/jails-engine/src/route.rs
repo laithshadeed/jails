@@ -564,9 +564,42 @@ fn commit_set(
     }
     let handle = ProjectHandle::at(project.root())?;
     let locked = LockedProject::acquire(handle, &asked.display()).map_err(describe)?;
-    Ok(Outcome::Committed(
-        execute::commit(&locked, &bundle).map_err(describe)?,
-    ))
+    let result = execute::commit(&locked, &bundle).map_err(describe)?;
+    // The project lock goes *before* the runtime reconciliation, which is
+    // §R6.6's rule and not an optimisation: `docker compose up -d` can take a
+    // minute pulling an image, and holding the mutation lock across it would
+    // make every other jails command in the tree wait on a container.
+    drop(locked);
+    Ok(Outcome::Committed(reconciled(run, result)?))
+}
+
+/// Attempt the effect the commit recorded, if it recorded one.
+///
+/// The commit is already durable when this runs. A failed attempt is
+/// therefore reported, never unwound: the project is in the state it was
+/// asked for, and what is missing is a container -- which the receipt now
+/// carries a retryable descriptor for.
+fn reconciled(run: &Run, result: CommitResult) -> Result<CommitResult> {
+    let CommitResult::Committed(committed) = result else {
+        return Ok(result);
+    };
+    if committed.receipt.post_commit.is_empty() {
+        return Ok(CommitResult::Committed(committed));
+    }
+    let store = jails_commit::store::Store::at(run.project().root());
+    let effect = jails_commit::runtime::reconcile(
+        &store,
+        run.project().root(),
+        &committed.receipt.transaction_id,
+        run.debug,
+    )
+    .map_err(describe)?;
+    Ok(CommitResult::Committed(Box::new(
+        jails_commit::outcome::CommittedResult {
+            effect,
+            ..*committed
+        },
+    )))
 }
 
 /// Everything a commit does except taking the lock and activating.
@@ -657,6 +690,13 @@ fn prepare_set(
 pub struct Run<'a> {
     project: &'a Project,
     write: bool,
+    /// Whether jails prints the commands it shells out to.
+    ///
+    /// Observability only, and it reaches the effect attempt because that is
+    /// the one subprocess a mutation route runs -- a `--debug` that stopped at
+    /// the file transition would go quiet exactly where a person is trying to
+    /// see what happened.
+    debug: bool,
     /// Whether this invocation may start what it installs.
     ///
     /// `--no-start` is the caller declining the runtime half of a capability
@@ -683,6 +723,7 @@ impl<'a> Run<'a> {
             project,
             write: true,
             start: true,
+            debug: false,
             claimed: BTreeSet::new(),
         }
     }
@@ -693,6 +734,7 @@ impl<'a> Run<'a> {
             project,
             write: false,
             start: true,
+            debug: false,
             claimed: BTreeSet::new(),
         }
     }
@@ -700,6 +742,12 @@ impl<'a> Run<'a> {
     /// The same run, with `--no-start`: nothing this installs is started.
     pub fn without_start(mut self) -> Self {
         self.start = false;
+        self
+    }
+
+    /// The same run, printing every command it shells out to.
+    pub fn with_debug(mut self) -> Self {
+        self.debug = true;
         self
     }
 
@@ -714,6 +762,7 @@ impl<'a> Run<'a> {
             project: self.project,
             write: self.write,
             start: self.start,
+            debug: self.debug,
             claimed,
         }
     }

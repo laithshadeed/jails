@@ -763,6 +763,7 @@ const LAYERS: &[(&str, usize)] = &[
     ("execute", 6),
     ("fault", 6),
     ("gc", 6),
+    ("runtime", 6),
     ("journal", 6),
     ("outcome", 6),
     ("recover", 6),

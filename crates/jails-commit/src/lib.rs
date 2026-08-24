@@ -14,6 +14,7 @@ pub mod gc;
 pub mod journal;
 pub mod outcome;
 pub mod recover;
+pub mod runtime;
 pub mod store;
 
 pub(crate) use jails_support::Result;

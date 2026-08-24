@@ -45,7 +45,9 @@ use crate::outcome::{
 use crate::store::{self, Store};
 use jails_prepare::pipeline::PreparedBundle;
 use jails_prepare::prepare::{FileOp, OperationTarget, PreparedChange, PreparedIdentityV1};
-use jails_prepare::receipt::{AppliedReceipt, ApplyOutcome, DirectoryReceipt, FileReceipt};
+use jails_prepare::receipt::{
+    AppliedReceipt, ApplyOutcome, DirectoryReceipt, EffectReceipt, FileReceipt,
+};
 use jails_protocol::conflict::FileImage;
 use jails_protocol::identity::{ObjectId, ProjectPath};
 use jails_protocol::snapshot::{CanonicalRoot, InputPrecondition};
@@ -368,12 +370,20 @@ fn publish(
         Ok(witness) => witness,
         Err(error) => return required(PostCommitStage::ReceiptPublication, error),
     };
+    let post_commit = match effect_receipts(change) {
+        Ok(rows) => rows,
+        Err(error) => return required(PostCommitStage::ReceiptPublication, error),
+    };
     let receipt = ReceiptV1 {
         transaction: complete.transaction,
         generation: complete.generation,
         prepared: complete.prepared.clone(),
         complete_journal_checksum: witness,
-        post_commit: Vec::new(),
+        // Recorded `Deferred`, never run here. The attempt happens after the
+        // project lock is released -- §R6.6 -- and this is the durable
+        // descriptor it works from, so a crash between the commit and the
+        // attempt leaves something a retry can act on.
+        post_commit,
     };
     if let Err(error) = receipt
         .persist(directory)
@@ -424,8 +434,27 @@ fn publish(
 
     CommitResult::Committed(Box::new(CommittedResult {
         receipt: applied_receipt(change),
+        // Whether an effect ran is decided after the lock is released; a
+        // commit that claimed an outcome here would be claiming one for an
+        // attempt that has not happened.
         effect: CommitEffectOutcome::NotApplicable,
     }))
+}
+
+/// The prepared effects, each with the identity §R4.2 gives it.
+fn effect_receipts(change: &PreparedChange) -> Result<Vec<EffectReceipt>> {
+    change
+        .post_commit
+        .iter()
+        .enumerate()
+        .map(|(index, effect)| {
+            Ok(EffectReceipt {
+                id: crate::runtime::identify(change.operation_id, index as u32, effect)?,
+                effect: effect.clone(),
+                state: jails_protocol::effect::EffectState::Deferred,
+            })
+        })
+        .collect()
 }
 
 /// The public projection of what happened.
@@ -461,7 +490,10 @@ fn applied_receipt(change: &PreparedChange) -> AppliedReceipt {
             jails_prepare::prepare::PreparedKind::Finalise { .. } => ApplyOutcome::Finalised,
             jails_prepare::prepare::PreparedKind::Abort { .. } => ApplyOutcome::Aborted,
         },
-        post_commit: Vec::new(),
+        // The same rows the durable receipt carries. A projection that showed
+        // no effect while the receipt held one would let a caller believe the
+        // transition had no runtime half.
+        post_commit: effect_receipts(change).unwrap_or_default(),
     }
 }
 

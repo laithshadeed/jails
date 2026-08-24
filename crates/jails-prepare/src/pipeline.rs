@@ -274,6 +274,7 @@ fn apply(
     // route because only preparation knows what was actually committed at
     // `compose.yaml` -- a route knows what it asked for, and a clean
     // three-way merge means those are not the same bytes.
+    let mut objects = objects;
     let post_commit = effect::compose_reconcile(
         context.start_services,
         context
@@ -285,7 +286,7 @@ fn apply(
         &set.ledger_intent.resources_after,
         &base,
         &operations,
-        &objects,
+        &mut objects,
     )?
     .into_iter()
     .collect();
