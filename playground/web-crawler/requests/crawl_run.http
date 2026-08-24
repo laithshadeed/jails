@@ -1,0 +1,20 @@
+@baseUrl = http://localhost:8080
+
+### Create CrawlRun
+POST {{baseUrl}}/crawl-runs
+Content-Type: application/json
+
+{
+  "id": "00000000-0000-0000-0000-000000000001",
+  "seedUrl": null,
+  "status": "QUEUED",
+  "pagesVisited": 1,
+  "startedAt": null,
+  "finishedAt": null,
+  "createdAt": "2026-01-01T00:00:00Z",
+  "updatedAt": "2026-01-01T00:00:00Z"
+}
+
+### List CrawlRun
+GET {{baseUrl}}/crawl-runs
+Accept: application/json

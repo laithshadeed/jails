@@ -388,13 +388,20 @@ impl EntitySpec {
     /// context, pending candidate. A matching outer Rust shape is not
     /// sufficient: `EntityId::Capability` beside `EntitySpec::Intent` type-
     /// checks and means nothing.
+    /// The intent arm carries one extra check, from §R1.1's argument-shape
+    /// amendment: the positional list a spec holds has to be the shape the
+    /// identity's recipe takes. `enum Status` paired with record components,
+    /// or `record Note` paired with bare names, type-checks and describes an
+    /// artifact that cannot be rendered.
     pub fn matches(&self, id: &EntityId) -> bool {
-        matches!(
-            (id, self),
+        match (id, self) {
+            (EntityId::Intent(intent), Self::Intent(spec)) => {
+                spec.arguments.shape() == crate::recipe::argument_shape(intent.recipe)
+            }
             (EntityId::Capability(_), Self::Capability(_))
-                | (EntityId::Intent(_), Self::Intent(_))
-                | (EntityId::ToolFeature(_), Self::ToolFeature(_))
-        )
+            | (EntityId::ToolFeature(_), Self::ToolFeature(_)) => true,
+            _ => false,
+        }
     }
 
     pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {

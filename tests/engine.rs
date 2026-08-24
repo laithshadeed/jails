@@ -490,3 +490,308 @@ fn a_manifest_naming_an_unknown_capability_is_refused_before_anything_plans() {
     assert!(error.contains("telepathy"), "{error}");
     assert!(error.contains("Known:"), "{error}");
 }
+
+/// `destroy` is the inverse of `generate`, worked out from the record.
+///
+/// plan.md §R6.2 asks the V2 destroy to "forward-plan remaining resources
+/// from recorded exact state" instead of rebuilding a path table. That is
+/// what makes the deletion exact: every file the entity owned goes, and
+/// nothing else does -- including the dependency the write path added on its
+/// behalf, which no hand-written destroy arm ever knew about.
+#[test]
+fn destroying_a_record_takes_back_exactly_what_generating_it_wrote() {
+    let root = common::temp_dir("engine-destroy");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+
+    jails_engine::route::generate(
+        &Project::load(&root).unwrap(),
+        jails_spec::spec::kind::ArtifactKind::Record,
+        "Note",
+        &["title:string!".to_string()],
+        None,
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+    let record = root.join("src/main/java/com/example/demo/domain/Note.java");
+    let test = root.join("src/test/java/com/example/demo/domain/NoteTest.java");
+    assert!(record.is_file() && test.is_file());
+
+    jails_engine::route::destroy(
+        &Project::load(&root).unwrap(),
+        jails_spec::spec::kind::ArtifactKind::Record,
+        "Note",
+        None,
+    )
+    .unwrap();
+
+    assert!(!record.exists(), "the record it owned is gone");
+    assert!(!test.exists(), "and its companion test");
+    let store = jails_commit::store::Store::at(&root)
+        .observe()
+        .unwrap()
+        .ledger
+        .unwrap();
+    assert!(store.applied.is_empty(), "{:?}", store.applied);
+    assert!(store.resources.is_empty(), "{:?}", store.resources);
+}
+
+/// One `destroy` speaks for one identity and says nothing about any other.
+///
+/// `DirectEntity` is the narrow scope, and this is the case it exists for:
+/// silence about `record Memo` must not be read as absence.
+#[test]
+fn destroying_one_record_leaves_another_alone() {
+    let root = common::temp_dir("engine-destroy-scope");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+    let generate = |name: &str| {
+        jails_engine::route::generate(
+            &Project::load(&root).unwrap(),
+            jails_spec::spec::kind::ArtifactKind::Record,
+            name,
+            &["title:string!".to_string()],
+            None,
+            &[],
+            None,
+            None,
+        )
+        .unwrap();
+    };
+    generate("Note");
+    generate("Memo");
+
+    jails_engine::route::destroy(
+        &Project::load(&root).unwrap(),
+        jails_spec::spec::kind::ArtifactKind::Record,
+        "Note",
+        None,
+    )
+    .unwrap();
+
+    assert!(
+        root.join("src/main/java/com/example/demo/domain/Memo.java")
+            .is_file(),
+        "the identity nobody named is still there"
+    );
+    assert!(
+        !root
+            .join("src/main/java/com/example/demo/domain/Note.java")
+            .exists()
+    );
+    let store = jails_commit::store::Store::at(&root)
+        .observe()
+        .unwrap()
+        .ledger
+        .unwrap();
+    assert_eq!(store.applied.len(), 1, "{:?}", store.applied);
+}
+
+/// Destroying something the store never recorded refuses and says what would
+/// have recorded it.
+#[test]
+fn destroying_what_was_never_generated_names_the_command_that_records_it() {
+    let root = common::temp_dir("engine-destroy-absent");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+
+    let error = jails_engine::route::destroy(
+        &Project::load(&root).unwrap(),
+        jails_spec::spec::kind::ArtifactKind::Record,
+        "Note",
+        None,
+    )
+    .unwrap_err();
+
+    assert!(error.contains("no `record Note` is recorded"), "{error}");
+    assert!(error.contains("jails g record Note"), "{error}");
+}
+
+/// §R6.2's destroy gate, asked of every persistent kind at once.
+///
+/// Generate through the V2 route, destroy through it, and require the project
+/// to be byte-for-byte what it was before -- the same question
+/// `tests/agreement.rs` asks of V1, but answered from the recorded exact
+/// state rather than from a recomputed path table. A kind that strands a file
+/// fails here with the file named.
+///
+/// The scenario table is the source of kinds, per CLAUDE.md's rule that a new
+/// kind adds a `Scenario` and not a fourth list. Single-step scenarios only:
+/// a scenario that installs a capability first is asking about two owners
+/// interacting, which the shared-claim tests cover separately.
+#[test]
+fn every_persistent_kind_destroys_back_to_where_it_started() {
+    use clap::ValueEnum;
+    use jails_spec::spec::kind::ArtifactKind;
+
+    let mut swept: Vec<&str> = Vec::new();
+    let mut skipped: Vec<String> = Vec::new();
+    for scenario in common::scenarios::SCENARIOS {
+        // The last step is the one under test; everything before it is
+        // set-up, run through the binary exactly as the golden snapshots run
+        // it. That keeps the question narrow -- does *this* generate undo
+        // itself -- rather than making every scenario a test of two engines.
+        let Some((step, prerequisites)) = scenario.steps.split_last() else {
+            continue;
+        };
+        if !matches!(step.first(), Some(&"g") | Some(&"generate")) {
+            continue;
+        }
+        let Ok(kind) = ArtifactKind::from_str(step[1], true) else {
+            skipped.push(format!("{}: `{}` is an alias", scenario.name, step[1]));
+            continue;
+        };
+        let Some(invocation) = common::scenarios::invocation(step) else {
+            skipped.push(format!("{}: unrecognised flag", scenario.name));
+            continue;
+        };
+        if invocation.timestamps {
+            // `--timestamps` expands to two extra fields before a recipe sees
+            // them, and the route takes fields already expanded. Comparing
+            // that here would be testing the expansion, not the round trip.
+            skipped.push(format!("{}: --timestamps", scenario.name));
+            continue;
+        }
+
+        let root = common::temp_dir(&format!("engine-roundtrip-{}", scenario.name));
+        std::fs::create_dir_all(&root).unwrap();
+        match scenario.fixture {
+            common::scenarios::Fixture::Plain => common::write_plain_fixture(&root),
+            common::scenarios::Fixture::Spring => common::write_spring_fixture(&root),
+        }
+        for (path, contents) in scenario.seed {
+            jails_support::apply::put(root.join(path), *contents).unwrap();
+        }
+        let mut unroutable = None;
+        for earlier in prerequisites {
+            // Set-up runs through the V2 routes too, not through the binary.
+            // A V1 step would leave a schema-1 ledger behind, and this route
+            // has no migration yet (§R6.1 step 9) -- so the whole scenario
+            // would be skipped for a reason that says nothing about destroy.
+            if let Err(why) = route_step(&root, earlier) {
+                unroutable = Some(format!(
+                    "{}: set-up `{}`: {why}",
+                    scenario.name,
+                    earlier.join(" ")
+                ));
+                break;
+            }
+        }
+        if let Some(note) = unroutable {
+            skipped.push(note);
+            continue;
+        }
+        let before = common::scenarios::file_set(&root);
+        let pom_before = std::fs::read_to_string(root.join("pom.xml")).unwrap();
+
+        let generated = jails_engine::route::generate(
+            &Project::load(&root).unwrap(),
+            kind,
+            step[2],
+            &invocation.fields,
+            invocation.package.as_deref(),
+            &invocation.indexes,
+            invocation.on.as_deref(),
+            invocation.yields.as_deref(),
+        );
+        match generated {
+            Ok(_) => {}
+            Err(why) => {
+                // A one-shot has no recipe plan, and a kind whose precondition
+                // this fixture does not meet is not a round-trip question.
+                skipped.push(format!("{}: {why}", scenario.name));
+                continue;
+            }
+        }
+        assert_ne!(
+            common::scenarios::file_set(&root),
+            before,
+            "{}: the generate wrote nothing, so the round trip proves nothing",
+            scenario.name
+        );
+
+        jails_engine::route::destroy(
+            &Project::load(&root).unwrap(),
+            kind,
+            step[2],
+            invocation.package.as_deref(),
+        )
+        .unwrap_or_else(|why| panic!("{}: destroy refused: {why}", scenario.name));
+
+        let after: std::collections::BTreeSet<String> = common::scenarios::file_set(&root)
+            .into_iter()
+            // `.jails/` is the transaction's own bookkeeping, which exists
+            // from the first commit onward and is not something `destroy` is
+            // asked to take back.
+            .filter(|path| !path.starts_with(".jails"))
+            .collect();
+        assert_eq!(
+            after, before,
+            "{}: destroy did not return the project to where it started",
+            scenario.name
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("pom.xml")).unwrap(),
+            pom_before,
+            "{}: the POM still carries something the destroyed entity brought in",
+            scenario.name
+        );
+        swept.push(scenario.name);
+    }
+
+    println!("kinds swept through generate/destroy: {}", swept.len());
+    for note in &skipped {
+        println!("  skipped {note}");
+    }
+    // A floor rather than a count, and it rises as the two named gaps close.
+    // What it excludes today is stated above, per scenario, rather than left
+    // to be inferred from a number: the three one-shots have no recipe plan
+    // (§R6.1 step 3's other half), and five scenarios need `add db`, which
+    // §R6.1 names as an open schema gap -- `add::test_wiring` has no semantic
+    // edit yet, so the capability refuses to translate rather than silently
+    // dropping the import.
+    assert!(
+        swept.len() >= 17,
+        "only {} kinds round-tripped, which is not the surface: {swept:?}",
+        swept.len()
+    );
+}
+
+/// One scenario step, run through the V2 route rather than the binary.
+///
+/// Only `add` and `g` appear as set-up in the scenario table, which is what
+/// makes this a two-arm match rather than a second dispatcher. Anything else
+/// is reported, never quietly run through V1 -- a mixed-engine project is
+/// exactly the state §R6.1 says cannot exist.
+fn route_step(root: &std::path::Path, step: &[&str]) -> Result<(), String> {
+    use clap::ValueEnum;
+
+    let project = Project::load(root)?;
+    match step.first().copied() {
+        Some("add") => {
+            let capability = Capability::from_str(step[1], true)
+                .map_err(|_| format!("`{}` is not a capability", step[1]))?;
+            jails_engine::route::install(&project, capability).map(|_| ())
+        }
+        Some("g") | Some("generate") => {
+            let kind = jails_spec::spec::kind::ArtifactKind::from_str(step[1], true)
+                .map_err(|_| format!("`{}` is not a kind", step[1]))?;
+            let invocation = common::scenarios::invocation(step)
+                .ok_or_else(|| "unrecognised flag".to_string())?;
+            jails_engine::route::generate(
+                &project,
+                kind,
+                step[2],
+                &invocation.fields,
+                invocation.package.as_deref(),
+                &invocation.indexes,
+                invocation.on.as_deref(),
+                invocation.yields.as_deref(),
+            )
+            .map(|_| ())
+        }
+        _ => Err(format!("`{}` has no V2 route yet", step.join(" "))),
+    }
+}

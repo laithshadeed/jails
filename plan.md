@@ -387,12 +387,23 @@ struct IntentId {
 
 #[derive(Clone, Eq, PartialEq)]
 struct IntentSpec {
-    fields: Vec<FieldSpec>,
+    arguments: IntentArguments,
     indexes: Vec<IndexSpec>,
     timestamps: bool,
     on: Option<ResolvedRef>,
     yields: Option<ResolvedRef>,
 }
+
+// The positional list means three different things, and which one is decided
+// by the recipe alone -- never by looking at the tokens. See the argument
+// shape table below.
+enum IntentArguments {
+    Fields(Vec<FieldSpec>),
+    Names(Vec<Name>),
+    Mappings(Vec<FieldMapping>),
+}
+
+struct FieldMapping { child: Name, parent: Name }
 
 struct FieldSpec {
     name: Name,
@@ -688,6 +699,33 @@ order is irrelevant and duplicate/conflicting numeric markers reject.
 column must name a declared field and may have only optional `asc` or `desc`.
 Column order is semantic and never sorted. Arbitrary SQL after an index column
 is deliberately rejected instead of persisted as trusted generated SQL.
+
+**The positional argument list is not always fields, and the recipe is the
+only thing that says what it is.** This is an amendment made under §1.1 step 7:
+the original `IntentSpec` had `fields: Vec<FieldSpec>` alone, and four shipped
+kinds do not take fields at all. `jails g enum Status ACTIVE CLOSED` names enum
+constants; `g sealed`/`g strategy` name types; `g search Article title body`
+names components of a record that already exists; and `g association` takes
+`childField=parentField` mappings. Parsing any of those as `name:type` refuses
+a command that works today, and a spec that stored them as fields would be
+claiming a record component that does not exist.
+
+The shape is a total function of the recipe, and it is a closed table:
+
+| Shape | Kinds |
+|---|---|
+| `Fields` | every persistent kind not named below, including those that take no positional argument at all |
+| `Names` | `enum`, `sealed`, `strategy`, `search` |
+| `Mappings` | `association` |
+
+Two rules follow, and both are load-bearing. The shape is chosen from the
+recipe **before** a token is read, so a mis-typed constant is refused as a bad
+constant rather than reinterpreted as a field. And a spec whose shape
+disagrees with its identity's recipe is refused at the constructor and at the
+decoder, so a ledger row cannot claim `enum Status` holds record components.
+Order inside each list is semantic and is never sorted, exactly as §R1.4 says
+for sealed variants, strategy implementations and association mappings —
+which is the same statement, now with a type that can hold them.
 
 There is one persistent app-manifest namespace, not one owner per path.
 `--manifest` selects the human input for this invocation; its canonical source
@@ -1173,6 +1211,7 @@ reject.
 | `Optionality` | required `0`, nonblank `1`, nullable `2` |
 | `NumericConstraint` | positive `0`, nonnegative `1` |
 | `IndexDirection` | ascending `0`, descending `1` |
+| `IntentArguments` | fields `0`, names `1`, mappings `2` |
 | `TypeTargetId` | managed `0`, existing `1` |
 | `SourceInputId` | project `0`, external `1` |
 | `ExternalInputId` | app manifest `0`, user template `1`, cases brief `2` |
@@ -5200,7 +5239,7 @@ command uses it", and dispatch is still V1 for every command.
 |---|---|---|
 | 1. Land the executor dark | done | `jails-engine` is a library crate precisely so nothing in `main.rs` calls it; the workspace `dead_code` denial makes dark code in the binary impossible rather than merely discouraged. |
 | 2. Capability `add`/`remove`/`sync` on V2 | done | `route::{install,remove,sync}`; `tests/desired.rs` compares 21 capabilities against V1 on dependencies, effective property values and file bytes; `tests/engine.rs` sweeps 21 failpoints through a real install. `sync` is one transition, not a loop. |
-| 3. Persistent `generate`, then the one-shots | partial | `generate::plan_recipe` separates planning from writing and `route::generate` commits it; 22 scenarios match V1 byte-for-byte. `destroy` and the `field`/`migration`/`cases` policies are not started, and `plan_recipe` refuses those three by name. |
+| 3. Persistent `generate`, then the one-shots | partial | `generate::plan_recipe` separates planning from writing and `route::generate` commits it; 22 scenarios match V1 byte-for-byte. `route::destroy` retires an entity from the recorded exact state, and `every_persistent_kind_destroys_back_to_where_it_started` round-trips 17 scenarios to a byte-identical project. The `field`/`migration`/`cases` policies are not started, and `plan_recipe` refuses those three by name. |
 | 4. `app init/plan/apply/reconcile` as one aggregate | not started | — |
 | 5. Maintenance mutations | not started | — |
 | 6. New-project bootstrap through publish | done | §R6.5; `new`/`new-cli` build in a scratch sibling under `<parent>/.jails-new.lock` and become real in one rename, `--app` included. |

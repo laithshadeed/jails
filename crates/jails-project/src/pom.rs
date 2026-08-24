@@ -282,6 +282,9 @@ fn versionless_dependencies(pom: &str) -> Vec<(String, String)> {
 struct Tag {
     name: String,
     start: usize,
+    /// One past the `>`, so `xml[open.end..close.start]` is exactly the
+    /// element's content.
+    end: usize,
     closing: bool,
     self_closing: bool,
 }
@@ -324,6 +327,7 @@ fn scan_tags(xml: &str) -> Vec<Tag> {
             tags.push(Tag {
                 name,
                 start: i,
+                end: i + gt + 1,
                 closing,
                 self_closing,
             });
@@ -488,11 +492,77 @@ pub fn remove_dependency(pom: &str, group_id: &str, artifact_id: &str) -> Result
 }
 
 /// Remove a `project/build/plugins` `<plugin>` whose artifactId matches.
+///
+/// Taking the last plugin out also takes the nest out, because `add_plugin`
+/// creates `<build><plugins>` when a POM has neither -- and an inverse that
+/// removes only half of what it added leaves an empty scaffold behind after
+/// every `destroy`. Only an element that is genuinely empty is collapsed, and
+/// never past `<build>`: a `<build>` still holding `<finalName>`,
+/// `<resources>` or `<pluginManagement>` stays exactly as it was.
+///
+/// The one case this is not a byte-exact inverse of is a POM that already
+/// carried an empty `<plugins>` before jails ever touched it. That is a
+/// scaffold with no meaning to Maven, and distinguishing it would need to know
+/// which branch `add_plugin` took, which is state this format owner does not
+/// keep.
 pub fn remove_plugin(pom: &str, artifact_id: &str) -> Result<Option<String>> {
     let Some((start, end)) = plugin_span(pom, artifact_id) else {
         return Ok(None);
     };
-    Ok(Some(cut(pom, start, end)))
+    let mut out = cut(pom, start, end);
+    if let Some((start, end)) = empty_element_span(&out, "plugins", &["project", "build"]) {
+        out = cut(&out, start, end);
+    }
+    if let Some((start, end)) = empty_element_span(&out, "build", &["project"]) {
+        out = cut(&out, start, end);
+    }
+    Ok(Some(out))
+}
+
+/// Byte span of `parent_path/name` when it holds nothing at all.
+///
+/// "Nothing at all" is whitespace only. A comment inside it counts as content
+/// and keeps the element, which is the safe direction: a reader who wrote a
+/// note there meant to keep the element it is in.
+fn empty_element_span(xml: &str, name: &str, parent_path: &[&str]) -> Option<(usize, usize)> {
+    let tags = scan_tags(xml);
+    let mut stack: Vec<&str> = Vec::new();
+    let mut open: Option<&Tag> = None;
+
+    for tag in &tags {
+        if tag.closing {
+            if tag.name == name
+                && let Some(start) = open
+                && stack.len() == parent_path.len() + 1
+            {
+                let inner = &xml[start.end..tag.start];
+                if inner.trim().is_empty() {
+                    let close_end = tag.start + format!("</{name}>").len();
+                    return Some(span_including_line(
+                        xml,
+                        start.start,
+                        close_end.min(xml.len()),
+                    ));
+                }
+                open = None;
+            }
+            stack.pop();
+            continue;
+        }
+        if tag.self_closing {
+            // `<plugins/>` is already the collapsed form and holds nothing, so
+            // it is removed whole rather than looked into.
+            if tag.name == name && stack.as_slice() == parent_path {
+                return Some(span_including_line(xml, tag.start, tag.end));
+            }
+            continue;
+        }
+        if tag.name == name && stack.as_slice() == parent_path {
+            open = Some(tag);
+        }
+        stack.push(&tag.name);
+    }
+    None
 }
 
 fn cut(xml: &str, start: usize, end: usize) -> String {
@@ -1091,6 +1161,54 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(removed, pom);
+    }
+
+    /// The branch the old inverse test never reached: `add_plugin` created
+    /// the whole `<build><plugins>` nest, so removing the plugin has to take
+    /// it back out. Otherwise every `destroy` leaves an empty scaffold in a
+    /// POM the reader owns.
+    #[test]
+    fn remove_plugin_takes_back_the_nest_add_plugin_created() {
+        let pom = "<project>\n    <artifactId>demo</artifactId>\n</project>\n";
+        let added = add_plugin(pom, "spotless-maven-plugin", SPOTLESS)
+            .unwrap()
+            .unwrap();
+        assert!(added.contains("<build>"), "{added}");
+        let removed = remove_plugin(&added, "spotless-maven-plugin")
+            .unwrap()
+            .unwrap();
+        assert_eq!(removed, pom);
+    }
+
+    /// A `<build>` that holds anything else keeps it. The collapse is of what
+    /// became empty, never of the element it happened to be inside.
+    #[test]
+    fn remove_plugin_keeps_a_build_that_still_says_something() {
+        let pom = "<project>\n    <build>\n        <finalName>demo</finalName>\n        \
+                   <plugins>\n            <plugin>\n                \
+                   <artifactId>spotless-maven-plugin</artifactId>\n            </plugin>\n        \
+                   </plugins>\n    </build>\n</project>\n";
+        let out = remove_plugin(pom, "spotless-maven-plugin")
+            .unwrap()
+            .unwrap();
+        assert!(out.contains("<finalName>demo</finalName>"), "{out}");
+        assert!(out.contains("<build>"), "{out}");
+        assert!(!out.contains("<plugins>"), "the empty nest went:\n{out}");
+    }
+
+    /// A comment inside the nest is content, and keeps it. Deleting the
+    /// element a reader wrote a note in would be deleting the note.
+    #[test]
+    fn remove_plugin_keeps_a_nest_someone_left_a_note_in() {
+        let pom = "<project>\n    <build>\n        <plugins>\n            <plugin>\n                \
+                   <artifactId>spotless-maven-plugin</artifactId>\n            </plugin>\n            \
+                   <!-- the formatter used to live here -->\n        </plugins>\n    \
+                   </build>\n</project>\n";
+        let out = remove_plugin(pom, "spotless-maven-plugin")
+            .unwrap()
+            .unwrap();
+        assert!(out.contains("the formatter used to live here"), "{out}");
+        assert!(out.contains("<plugins>"), "{out}");
     }
 
     #[test]

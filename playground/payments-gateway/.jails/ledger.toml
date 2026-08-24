@@ -1,0 +1,404 @@
+# jails' own bookkeeping. Written by jails, never hand-edited -- `jails.toml`
+# and `.jails/app.toml` are the files that are yours.
+#
+# Identity is (recipe, name, package). Everything else is content, which is
+# what makes an edited intent an update to a known entity rather than a new
+# one arriving against files that already exist.
+version = "0.1.0"
+
+[[applied]]
+recipe = "association"
+name = "PaymentMerchant"
+package = ""
+fields = [
+  "merchantId=id",
+]
+on = "Payment"
+yields = "Merchant"
+has_spec = true
+files = [
+  "src/main/resources/db/migration/V004__add_payment_merchant_association.sql",
+  "src/test/java/com/example/paymentsgateway/adapters/PaymentMerchantAssociationIT.java",
+]
+
+[[applied]]
+recipe = "association"
+name = "RefundPayment"
+package = ""
+fields = [
+  "paymentId=id",
+]
+on = "Refund"
+yields = "Payment"
+has_spec = true
+files = [
+  "src/main/resources/db/migration/V005__add_refund_payment_association.sql",
+  "src/test/java/com/example/paymentsgateway/adapters/RefundPaymentAssociationIT.java",
+]
+
+[[applied]]
+recipe = "durable-job"
+name = "SettlementDispatcher"
+package = ""
+fields = [
+  "id:uuid",
+  "merchantId:uuid@scope",
+  "idempotencyKey:string!",
+  "amountMinor:long",
+  "currency:string!",
+  "method:PaymentMethod",
+]
+on = "AuthorisePayment"
+yields = "Payment"
+has_spec = true
+files = [
+  "src/main/java/com/example/paymentsgateway/jobs/JdbcSettlementDispatcherStore.java",
+  "src/main/java/com/example/paymentsgateway/jobs/SettlementDispatcherQueue.java",
+  "src/main/java/com/example/paymentsgateway/jobs/SettlementDispatcherWork.java",
+  "src/main/java/com/example/paymentsgateway/jobs/SettlementDispatcherWorker.java",
+  "src/main/java/com/example/paymentsgateway/web/SettlementDispatcherJobController.java",
+  "src/main/resources/db/migration/V007__create_settlement_dispatcher_jobs.sql",
+  "src/test/java/com/example/paymentsgateway/jobs/SettlementDispatcherJobIT.java",
+]
+
+[[applied]]
+recipe = "enum"
+name = "PaymentMethod"
+package = ""
+fields = [
+  "CARD",
+  "BANK_TRANSFER",
+  "WALLET",
+]
+has_spec = true
+files = [
+  "src/main/java/com/example/paymentsgateway/domain/PaymentMethod.java",
+  "src/test/java/com/example/paymentsgateway/domain/PaymentMethodTest.java",
+]
+
+[[applied]]
+recipe = "enum"
+name = "PaymentStatus"
+package = ""
+fields = [
+  "AUTHORISED",
+  "CAPTURED",
+  "REFUNDED",
+  "REVERSED",
+  "DECLINED",
+  "FAILED",
+]
+has_spec = true
+files = [
+  "src/main/java/com/example/paymentsgateway/domain/PaymentStatus.java",
+  "src/main/java/com/example/paymentsgateway/domain/package-info.java",
+  "src/test/java/com/example/paymentsgateway/domain/PaymentStatusTest.java",
+]
+
+[[applied]]
+recipe = "event"
+name = "PaymentAuthorised"
+package = ""
+fields = [
+  "id:uuid",
+  "merchantId:uuid",
+  "paymentId:uuid",
+  "occurredAt:instant",
+]
+has_spec = true
+files = [
+  "src/main/java/com/example/paymentsgateway/messaging/PaymentAuthorisedEvent.java",
+  "src/main/java/com/example/paymentsgateway/messaging/PaymentAuthorisedListener.java",
+  "src/main/java/com/example/paymentsgateway/messaging/PaymentAuthorisedPublisher.java",
+  "src/test/java/com/example/paymentsgateway/messaging/PaymentAuthorisedMessagingIT.java",
+]
+
+[[applied]]
+recipe = "fetcher"
+name = "Acquirer"
+package = ""
+has_spec = false
+files = [
+  "src/main/java/com/example/paymentsgateway/clients/AcquirerFetcher.java",
+  "src/main/java/com/example/paymentsgateway/clients/SafeAcquirerFetcher.java",
+  "src/main/java/com/example/paymentsgateway/clients/package-info.java",
+  "src/test/java/com/example/paymentsgateway/clients/SafeAcquirerFetcherTest.java",
+]
+
+[[applied]]
+recipe = "fetcher"
+name = "AcquirerFetcher"
+package = ""
+has_spec = true
+
+[[applied]]
+recipe = "http-sink"
+name = "AcquirerSettlement"
+package = ""
+on = "AuthorisePayment"
+yields = "PaymentAuthorised"
+has_spec = true
+files = [
+  "src/main/java/com/example/paymentsgateway/jobs/AcquirerSettlementHttpOutboxSink.java",
+  "src/test/java/com/example/paymentsgateway/jobs/AcquirerSettlementHttpOutboxSinkTest.java",
+]
+
+[[applied]]
+recipe = "query"
+name = "PaymentsByMerchant"
+package = ""
+fields = [
+  "merchantId:uuid@scope",
+]
+on = "Payment"
+has_spec = true
+files = [
+  "src/main/java/com/example/paymentsgateway/adapters/JdbcPaymentsByMerchantQuery.java",
+  "src/main/java/com/example/paymentsgateway/service/PaymentsByMerchantQuery.java",
+  "src/main/java/com/example/paymentsgateway/service/PaymentsByMerchantQueryPort.java",
+  "src/main/java/com/example/paymentsgateway/web/PaymentsByMerchantQueryController.java",
+  "src/test/java/com/example/paymentsgateway/adapters/JdbcPaymentsByMerchantQueryIT.java",
+  "src/test/java/com/example/paymentsgateway/web/PaymentsByMerchantQueryControllerTest.java",
+]
+
+[[applied]]
+recipe = "query"
+name = "PaymentsByStatus"
+package = ""
+fields = [
+  "merchantId:uuid@scope",
+  "status:PaymentStatus",
+]
+on = "Payment"
+has_spec = true
+files = [
+  "src/main/java/com/example/paymentsgateway/adapters/JdbcPaymentsByStatusQuery.java",
+  "src/main/java/com/example/paymentsgateway/service/PaymentsByStatusQuery.java",
+  "src/main/java/com/example/paymentsgateway/service/PaymentsByStatusQueryPort.java",
+  "src/main/java/com/example/paymentsgateway/web/PaymentsByStatusQueryController.java",
+  "src/test/java/com/example/paymentsgateway/adapters/JdbcPaymentsByStatusQueryIT.java",
+  "src/test/java/com/example/paymentsgateway/web/PaymentsByStatusQueryControllerTest.java",
+]
+
+[[applied]]
+recipe = "scaffold"
+name = "Merchant"
+package = ""
+fields = [
+  "id:uuid@pk@scope",
+  "reference:string!@unique",
+  "displayName:string!",
+]
+timestamps = true
+has_spec = true
+files = [
+  "requests/merchant.http",
+  "src/main/java/com/example/paymentsgateway/adapters/InMemoryMerchantRepository.java",
+  "src/main/java/com/example/paymentsgateway/adapters/JdbcMerchantRepository.java",
+  "src/main/java/com/example/paymentsgateway/app/MerchantRepository.java",
+  "src/main/java/com/example/paymentsgateway/app/package-info.java",
+  "src/main/java/com/example/paymentsgateway/domain/Merchant.java",
+  "src/main/java/com/example/paymentsgateway/service/MerchantService.java",
+  "src/main/java/com/example/paymentsgateway/service/package-info.java",
+  "src/main/java/com/example/paymentsgateway/web/MerchantController.java",
+  "src/main/java/com/example/paymentsgateway/web/MerchantRequest.java",
+  "src/main/java/com/example/paymentsgateway/web/MerchantResponse.java",
+  "src/main/java/com/example/paymentsgateway/web/package-info.java",
+  "src/main/resources/db/migration/V001__create_merchants.sql",
+  "src/test/java/com/example/paymentsgateway/adapters/JdbcMerchantRepositoryIT.java",
+  "src/test/java/com/example/paymentsgateway/domain/MerchantTest.java",
+  "src/test/java/com/example/paymentsgateway/service/MerchantServiceTest.java",
+  "src/test/java/com/example/paymentsgateway/web/MerchantControllerTest.java",
+  "src/test/resources/fixtures/merchants.json",
+]
+
+[[applied]]
+recipe = "scaffold"
+name = "Payment"
+package = ""
+fields = [
+  "id:uuid@pk",
+  "merchantId:uuid@index@scope",
+  "idempotencyKey:string!@unique",
+  "amountMinor:long@positive",
+  "currency:string!",
+  "method:PaymentMethod",
+  "status:PaymentStatus@index",
+  "version:long@nonnegative",
+  "authorisedAt:instant?",
+  "capturedAt:instant?",
+]
+indexes = [
+  "merchant_id, created_at desc",
+  "status, created_at",
+]
+timestamps = true
+has_spec = true
+files = [
+  "requests/payment.http",
+  "src/main/java/com/example/paymentsgateway/adapters/InMemoryPaymentRepository.java",
+  "src/main/java/com/example/paymentsgateway/adapters/JdbcPaymentRepository.java",
+  "src/main/java/com/example/paymentsgateway/app/PaymentRepository.java",
+  "src/main/java/com/example/paymentsgateway/domain/Payment.java",
+  "src/main/java/com/example/paymentsgateway/service/PaymentService.java",
+  "src/main/java/com/example/paymentsgateway/web/PaymentController.java",
+  "src/main/java/com/example/paymentsgateway/web/PaymentRequest.java",
+  "src/main/java/com/example/paymentsgateway/web/PaymentResponse.java",
+  "src/main/resources/db/migration/V002__create_payments.sql",
+  "src/test/java/com/example/paymentsgateway/adapters/JdbcPaymentRepositoryIT.java",
+  "src/test/java/com/example/paymentsgateway/domain/PaymentTest.java",
+  "src/test/java/com/example/paymentsgateway/service/PaymentServiceTest.java",
+  "src/test/java/com/example/paymentsgateway/web/PaymentControllerTest.java",
+  "src/test/resources/fixtures/payments.json",
+]
+
+[[applied]]
+recipe = "scaffold"
+name = "Refund"
+package = ""
+fields = [
+  "id:uuid@pk",
+  "merchantId:uuid@index@scope",
+  "paymentId:uuid@index",
+  "amountMinor:long@positive",
+  "reason:string?",
+]
+indexes = [
+  "payment_id, created_at",
+]
+timestamps = true
+has_spec = true
+files = [
+  "requests/refund.http",
+  "src/main/java/com/example/paymentsgateway/adapters/InMemoryRefundRepository.java",
+  "src/main/java/com/example/paymentsgateway/adapters/JdbcRefundRepository.java",
+  "src/main/java/com/example/paymentsgateway/app/RefundRepository.java",
+  "src/main/java/com/example/paymentsgateway/domain/Refund.java",
+  "src/main/java/com/example/paymentsgateway/service/RefundService.java",
+  "src/main/java/com/example/paymentsgateway/web/RefundController.java",
+  "src/main/java/com/example/paymentsgateway/web/RefundRequest.java",
+  "src/main/java/com/example/paymentsgateway/web/RefundResponse.java",
+  "src/main/resources/db/migration/V003__create_refunds.sql",
+  "src/test/java/com/example/paymentsgateway/adapters/JdbcRefundRepositoryIT.java",
+  "src/test/java/com/example/paymentsgateway/domain/RefundTest.java",
+  "src/test/java/com/example/paymentsgateway/service/RefundServiceTest.java",
+  "src/test/java/com/example/paymentsgateway/web/RefundControllerTest.java",
+  "src/test/resources/fixtures/refunds.json",
+]
+
+[[applied]]
+recipe = "transition"
+name = "CapturePayment"
+package = ""
+fields = [
+  "id:uuid",
+  "merchantId:uuid@scope",
+  "status:PaymentStatus",
+  "version:long@nonnegative",
+]
+on = "Payment"
+has_spec = true
+files = [
+  "src/main/java/com/example/paymentsgateway/adapters/JdbcCapturePaymentTransition.java",
+  "src/main/java/com/example/paymentsgateway/service/CapturePaymentCommand.java",
+  "src/main/java/com/example/paymentsgateway/service/CapturePaymentUseCase.java",
+  "src/main/java/com/example/paymentsgateway/web/CapturePaymentController.java",
+  "src/test/java/com/example/paymentsgateway/adapters/JdbcCapturePaymentTransitionIT.java",
+  "src/test/java/com/example/paymentsgateway/web/CapturePaymentControllerTest.java",
+]
+
+[[applied]]
+recipe = "usecase"
+name = "AuthorisePayment"
+package = ""
+fields = [
+  "id:uuid",
+  "merchantId:uuid@scope",
+  "idempotencyKey:string!",
+  "amountMinor:long",
+  "currency:string!",
+  "method:PaymentMethod",
+]
+on = "Payment"
+yields = "PaymentAuthorised"
+has_spec = true
+files = [
+  "src/main/java/com/example/paymentsgateway/jobs/AuthorisePaymentKafkaOutboxSink.java",
+  "src/main/java/com/example/paymentsgateway/jobs/AuthorisePaymentOutboxSink.java",
+  "src/main/java/com/example/paymentsgateway/jobs/AuthorisePaymentOutboxWorker.java",
+  "src/main/java/com/example/paymentsgateway/jobs/JdbcAuthorisePaymentOutbox.java",
+  "src/main/java/com/example/paymentsgateway/jobs/SchedulingConfig.java",
+  "src/main/java/com/example/paymentsgateway/jobs/package-info.java",
+  "src/main/java/com/example/paymentsgateway/service/AuthorisePaymentCommand.java",
+  "src/main/java/com/example/paymentsgateway/service/AuthorisePaymentUseCase.java",
+  "src/main/java/com/example/paymentsgateway/service/DefaultAuthorisePaymentUseCase.java",
+  "src/main/java/com/example/paymentsgateway/service/OutboxAuthorisePaymentUseCase.java",
+  "src/main/java/com/example/paymentsgateway/web/AuthorisePaymentController.java",
+  "src/main/resources/db/migration/V006__create_authorise_payment_outbox.sql",
+  "src/test/java/com/example/paymentsgateway/jobs/AuthorisePaymentOutboxIT.java",
+  "src/test/java/com/example/paymentsgateway/service/AuthorisePaymentUseCaseTest.java",
+  "src/test/java/com/example/paymentsgateway/web/AuthorisePaymentControllerTest.java",
+]
+
+[[applied]]
+recipe = "usecase"
+name = "RefundPaymentRequest"
+package = ""
+fields = [
+  "id:uuid",
+  "merchantId:uuid@scope",
+  "paymentId:uuid",
+  "amountMinor:long",
+]
+on = "Refund"
+has_spec = true
+files = [
+  "src/main/java/com/example/paymentsgateway/service/DefaultRefundPaymentRequestUseCase.java",
+  "src/main/java/com/example/paymentsgateway/service/RefundPaymentRequestCommand.java",
+  "src/main/java/com/example/paymentsgateway/service/RefundPaymentRequestUseCase.java",
+  "src/main/java/com/example/paymentsgateway/web/RefundPaymentRequestController.java",
+  "src/test/java/com/example/paymentsgateway/service/RefundPaymentRequestUseCaseTest.java",
+  "src/test/java/com/example/paymentsgateway/web/RefundPaymentRequestControllerTest.java",
+]
+
+[[model]]
+name = "Merchant"
+package = ""
+fields = [
+  "id:uuid@pk@scope",
+  "reference:string!@unique",
+  "displayName:string!",
+  "createdAt:instant",
+  "updatedAt:instant",
+]
+
+[[model]]
+name = "Payment"
+package = ""
+fields = [
+  "id:uuid@pk",
+  "merchantId:uuid@index@scope",
+  "idempotencyKey:string!@unique",
+  "amountMinor:long@positive",
+  "currency:string!",
+  "method:PaymentMethod",
+  "status:PaymentStatus@index",
+  "version:long@nonnegative",
+  "authorisedAt:instant?",
+  "capturedAt:instant?",
+  "createdAt:instant",
+  "updatedAt:instant",
+]
+
+[[model]]
+name = "Refund"
+package = ""
+fields = [
+  "id:uuid@pk",
+  "merchantId:uuid@index@scope",
+  "paymentId:uuid@index",
+  "amountMinor:long@positive",
+  "reason:string?",
+  "createdAt:instant",
+  "updatedAt:instant",
+]

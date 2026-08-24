@@ -37,7 +37,7 @@ use jails_project::capture::{self, ReadDeclaration};
 use jails_project::model::{Change, Project};
 use jails_protocol::bootstrap::Bootstrap;
 use jails_protocol::change::DesiredChange;
-use jails_protocol::declaration::{FieldSpec, IndexSpec, IntentSpec};
+use jails_protocol::declaration::{FieldSpec, IntentArguments, IntentSpec};
 use jails_protocol::edit::SemanticEdit;
 use jails_protocol::entity::{
     CapabilityId, CapabilityInstance, CapabilitySpec, EntityId, EntitySpec, IntentId, OwnerId,
@@ -235,7 +235,7 @@ pub fn generate(
     let desired = desire::contribution(&owner, &change, project)?;
     let entity = DesiredEntity {
         id: EntityId::Intent(id.clone()),
-        spec: EntitySpec::Intent(spec(project, fields, indexes, on, yields)?),
+        spec: EntitySpec::Intent(spec(project, kind, fields, indexes, on, yields)?),
         owners: BTreeSet::from([OwnerId::DirectCli]),
     };
     let request = Request {
@@ -249,6 +249,70 @@ pub fn generate(
         &declaration(project, &change)?,
         "jails generate",
     )
+}
+
+/// Take one persistent artifact back out.
+///
+/// The counterpart of [`generate`], and the same shape as [`remove`] is to
+/// [`install`]: nothing is described, the request simply stops declaring the
+/// entity, and reconciliation works out what that means. §R6.2 asks
+/// `destroy` to "forward-plan remaining resources from recorded exact state"
+/// rather than rebuild a path list, which is what this is -- the store says
+/// which resources this owner holds, and a resource nobody claims any more is
+/// retired.
+///
+/// `ReconcileScope::DirectEntity` is the narrow scope for exactly this
+/// reason: `jails destroy record Note` says nothing about `record Memo`, so
+/// declaring nothing here retires one entity rather than every intent in the
+/// project.
+pub fn destroy(
+    project: &Project,
+    kind: ArtifactKind,
+    name: &str,
+    package: Option<&str>,
+) -> Result<CommitResult> {
+    let id = intent(project, kind, name, package, &[], &[], None, None)?;
+    let entity = EntityId::Intent(id.clone());
+    let store = observed(project)?;
+    if !store
+        .ledger
+        .as_ref()
+        .is_some_and(|ledger| ledger.applied.iter().any(|row| row.id == entity))
+    {
+        // Naming the command that *would* have recorded it is the whole
+        // difference between this and a bare "nothing to destroy" printed
+        // over files that are right there. CLAUDE.md keeps that rule for the
+        // V1 path; the reason is the same here.
+        return Err(format!(
+            "no `{} {}` is recorded in this project.\n       fix: `jails g {} {}` is what \
+             records one. A destroy that guessed at paths would delete files jails never wrote.",
+            label(kind),
+            id.name,
+            label(kind),
+            id.name,
+        ));
+    }
+    let owner = ResourceOwner::Entity(entity.clone());
+    let request = Request {
+        scope: ReconcileScope::DirectEntity(entity),
+        declared: BTreeMap::new(),
+        changes: Vec::new(),
+    };
+    commit(
+        project,
+        request,
+        &retiring(&store, &owner)?,
+        "jails destroy",
+    )
+}
+
+/// A kind as the word somebody types, taken from the same `ValueEnum` clap
+/// parses -- so a refusal naming `jails g <kind>` names a command that exists.
+fn label(kind: ArtifactKind) -> String {
+    kind.to_possible_value()
+        .expect("every ArtifactKind has a clap value")
+        .get_name()
+        .to_string()
 }
 
 /// `(recipe, name, resolved package)` — the identity everything about this
@@ -281,30 +345,72 @@ fn intent(
 /// What the artifact was asked for, as the content of its identity.
 fn spec(
     project: &Project,
-    fields: &[String],
+    kind: ArtifactKind,
+    arguments: &[String],
     indexes: &[String],
     on: Option<&str>,
     yields: Option<&str>,
 ) -> Result<IntentSpec> {
     let base = Package::parse(project.base())?;
-    let mut parsed = Vec::new();
-    for token in fields {
-        parsed.push(FieldSpec::parse(token, &base)?);
-    }
-    let mut declared = Vec::new();
-    for index in indexes {
-        declared.push(IndexSpec::parse(index, &parsed)?);
-    }
-    Ok(IntentSpec {
-        fields: parsed,
-        indexes: declared,
+    // Parsed once to translate the index spelling, then again inside
+    // `IntentSpec::parse`, which stays the one authority on what a valid
+    // declaration is. Two parses of a handful of tokens is cheaper than two
+    // places that decide whether a declaration is well formed.
+    let parsed = IntentArguments::parse(kind, arguments, &base)?;
+    let translated: Vec<String> = indexes
+        .iter()
+        .map(|index| as_field_names(index, parsed.fields()))
+        .collect();
+    let mut spec = IntentSpec::parse(
+        kind,
+        arguments,
+        &translated,
         // `--timestamps` is expanded into fields before a recipe ever sees it,
         // so by the time there is a spec the two extra components are ordinary
         // ones. Recording it again would make one request two facts.
-        timestamps: false,
-        on: on.map(JavaType::parse).transpose()?,
-        yields: yields.map(JavaType::parse).transpose()?,
-    })
+        false,
+        &base,
+    )?;
+    spec.on = on.map(JavaType::parse).transpose()?;
+    spec.yields = yields.map(JavaType::parse).transpose()?;
+    Ok(spec)
+}
+
+/// An `--index` token as the RFC's canonical spelling.
+///
+/// `IndexSpec` names *fields*, which plan.md §R1.1 fixes deliberately -- the
+/// column name is derived, and a spec that stored the derived form would be a
+/// second authority on it. But the shipped CLI spelling is the column:
+/// `--index "created_at desc"` is what `README.md` documents and what every
+/// scenario types, because that is the name the reader sees in the DDL.
+///
+/// So the column spelling is translated here, at the boundary, rather than
+/// either spelling being taught to the protocol or the CLI being changed
+/// under people. A token that already names a field passes through untouched,
+/// and one that names neither is left exactly as typed so `IndexSpec::parse`
+/// produces the refusal that lists the declared fields.
+fn as_field_names(token: &str, fields: &[FieldSpec]) -> String {
+    token
+        .split(',')
+        .map(|part| {
+            let mut words = part.split_whitespace();
+            let Some(first) = words.next() else {
+                return String::new();
+            };
+            let named = fields.iter().find(|field| {
+                field.name.as_str() != first
+                    && jails_generate::sql::snake_case(field.name.as_str()) == first
+            });
+            let rest: Vec<&str> = words.collect();
+            let head = named.map_or(first, |field| field.name.as_str());
+            if rest.is_empty() {
+                head.to_string()
+            } else {
+                format!("{head} {}", rest.join(" "))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// The two things the write path adds to any change that writes tests.

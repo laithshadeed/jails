@@ -740,3 +740,37 @@ pub fn cli_capabilities() -> BTreeSet<String> {
     );
     caps
 }
+
+/// One `g` invocation from the scenario table, as arguments a planner takes.
+#[derive(Debug, Default)]
+pub struct Invocation {
+    pub fields: Vec<String>,
+    pub indexes: Vec<String>,
+    pub package: Option<String>,
+    pub on: Option<String>,
+    pub yields: Option<String>,
+    pub timestamps: bool,
+}
+
+/// Read a scenario step rather than restating it.
+///
+/// CLAUDE.md's rule for this table is that a new kind adds a `Scenario` and
+/// not a fourth list, so this parity check reads the same steps the golden
+/// snapshots and the destroy-agreement check read. A flag it does not know is
+/// a reason to skip the step, never to guess at it.
+pub fn invocation(step: &[&str]) -> Option<Invocation> {
+    let mut parsed = Invocation::default();
+    let mut rest = step[3..].iter();
+    while let Some(argument) = rest.next() {
+        match *argument {
+            "--timestamps" => parsed.timestamps = true,
+            "--package" => parsed.package = Some((*rest.next()?).to_string()),
+            "--on" => parsed.on = Some((*rest.next()?).to_string()),
+            "--yields" => parsed.yields = Some((*rest.next()?).to_string()),
+            "--index" => parsed.indexes.push((*rest.next()?).to_string()),
+            other if other.starts_with('-') => return None,
+            other => parsed.fields.push(other.to_string()),
+        }
+    }
+    Some(parsed)
+}

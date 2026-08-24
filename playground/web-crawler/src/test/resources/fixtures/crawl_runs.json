@@ -1,0 +1,22 @@
+[
+  {
+    "id": "00000000-0000-0000-0000-000000000001",
+    "seed_url": "https://example.test/1",
+    "status": "QUEUED",
+    "pages_visited": 1,
+    "started_at": "2024-01-01T00:00:00Z",
+    "finished_at": "2024-01-01T00:00:00Z",
+    "created_at": "2024-01-01T00:00:00Z",
+    "updated_at": "2024-01-01T00:00:00Z"
+  },
+  {
+    "id": "00000000-0000-0000-0000-000000000002",
+    "seed_url": "https://example.test/2",
+    "status": "QUEUED",
+    "pages_visited": 2,
+    "started_at": null,
+    "finished_at": null,
+    "created_at": "2024-01-02T00:00:00Z",
+    "updated_at": "2024-01-02T00:00:00Z"
+  }
+]

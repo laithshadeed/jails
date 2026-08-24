@@ -1,0 +1,332 @@
+package com.example.webcrawler.clients;
+
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.DistributionSummary;
+import io.micrometer.core.instrument.MeterRegistry;
+import java.io.IOException;
+import java.net.IDN;
+import java.net.InetAddress;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.net.UnknownHostException;
+import java.time.Duration;
+import java.util.Arrays;
+import java.util.Locale;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
+import org.apache.hc.client5.http.DnsResolver;
+import org.apache.hc.client5.http.classic.methods.HttpGet;
+import org.apache.hc.client5.http.config.ConnectionConfig;
+import org.apache.hc.client5.http.config.RequestConfig;
+import org.apache.hc.client5.http.impl.classic.HttpClients;
+import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManagerBuilder;
+import org.apache.hc.core5.http.HttpEntity;
+import org.apache.hc.core5.http.io.entity.EntityUtils;
+import org.apache.hc.core5.util.Timeout;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+import org.springframework.util.unit.DataSize;
+
+/**
+ * Production outbound HTTP with a small, closed safety policy.
+ *
+ * <p>Every hop is normalized, restricted to the original host, resolved,
+ * checked for private/reserved addresses, and then connected through a DNS
+ * resolver pinned to exactly those checked addresses. Redirects are handled
+ * here rather than by the library so every target repeats the same checks.
+ */
+@Component
+public final class SafePageFetcher implements PageFetcher {
+
+    @FunctionalInterface
+    interface Resolver {
+        InetAddress[] resolve(String host) throws UnknownHostException;
+    }
+
+    private static final Set<Integer> REDIRECTS = Set.of(301, 302, 303, 307, 308);
+
+    private final Duration connectTimeout;
+    private final Duration responseTimeout;
+    private final int maxBytes;
+    private final int maxRedirects;
+    private final String userAgent;
+    private final Set<String> allowedContentTypes;
+    private final Resolver resolver;
+    private final boolean allowPrivateForTests;
+    private final MeterRegistry meters;
+
+    @Autowired
+    public SafePageFetcher(
+            @Value("${jails.fetchers.page.connect-timeout:2s}") Duration connectTimeout,
+            @Value("${jails.fetchers.page.response-timeout:10s}") Duration responseTimeout,
+            @Value("${jails.fetchers.page.max-response-size:2MB}") DataSize maxResponseSize,
+            @Value("${jails.fetchers.page.max-redirects:3}") int maxRedirects,
+            @Value("${jails.fetchers.page.user-agent:jails-page-fetcher/1.0}") String userAgent,
+            @Value("${jails.fetchers.page.allowed-content-types:text/html,application/xhtml+xml,text/plain}")
+                    String allowedContentTypes,
+            MeterRegistry meters) {
+        this(
+                connectTimeout,
+                responseTimeout,
+                Math.toIntExact(maxResponseSize.toBytes()),
+                maxRedirects,
+                userAgent,
+                allowedContentTypes,
+                InetAddress::getAllByName,
+                false,
+                meters);
+    }
+
+    SafePageFetcher(
+            Duration connectTimeout,
+            Duration responseTimeout,
+            int maxBytes,
+            int maxRedirects,
+            String userAgent,
+            String allowedContentTypes,
+            Resolver resolver,
+            boolean allowPrivateForTests,
+            MeterRegistry meters) {
+        this.connectTimeout = requirePositive(connectTimeout, "connect timeout");
+        this.responseTimeout = requirePositive(responseTimeout, "response timeout");
+        if (maxBytes < 1 || maxRedirects < 0) {
+            throw new IllegalArgumentException("response size must be positive and redirects nonnegative");
+        }
+        this.maxBytes = maxBytes;
+        this.maxRedirects = maxRedirects;
+        this.userAgent = Objects.requireNonNull(userAgent, "user agent is required");
+        this.allowedContentTypes = Arrays.stream(allowedContentTypes.split(","))
+                .map(value -> value.trim().toLowerCase(Locale.ROOT))
+                .filter(value -> !value.isEmpty())
+                .collect(Collectors.toUnmodifiableSet());
+        if (this.allowedContentTypes.isEmpty()) {
+            throw new IllegalArgumentException("at least one allowed content type is required");
+        }
+        this.resolver = Objects.requireNonNull(resolver, "resolver is required");
+        this.allowPrivateForTests = allowPrivateForTests;
+        this.meters = Objects.requireNonNull(meters, "meter registry is required");
+    }
+
+    @Override
+    public FetchedResource fetch(URI requested) {
+        return fetch(requested, Set.of());
+    }
+
+    @Override
+    public FetchedResource fetch(URI requested, Set<Integer> acceptedStatuses) {
+        Objects.requireNonNull(acceptedStatuses, "accepted statuses are required");
+        URI current = normalize(requested);
+        String originalHost = current.getHost();
+        String originalScheme = current.getScheme();
+        for (int redirects = 0; redirects <= maxRedirects; redirects++) {
+            requireSameOriginPolicy(current, originalHost, originalScheme);
+            InetAddress[] addresses = resolvePublic(current.getHost());
+            RawResponse response = exchange(current, addresses);
+            if (REDIRECTS.contains(response.statusCode())) {
+                if (redirects == maxRedirects) {
+                    throw failure("redirect limit exceeded", false);
+                }
+                if (response.location() == null) {
+                    throw failure("redirect response has no Location header", false);
+                }
+                current = normalize(current.resolve(response.location()));
+                continue;
+            }
+            if ((response.statusCode() < 200 || response.statusCode() >= 300)
+                    && !acceptedStatuses.contains(response.statusCode())) {
+                boolean retryable = response.statusCode() == 429 || response.statusCode() >= 500;
+                throw failure("upstream returned HTTP " + response.statusCode(), retryable);
+            }
+            String contentType = mediaType(response.contentType());
+            if (!allowedContentTypes.contains(contentType)) {
+                throw failure("content type is not allowed: " + contentType, false);
+            }
+            counter("success").increment();
+            DistributionSummary.builder("outbound.fetch.response.bytes")
+                    .tag("client", "page")
+                    .register(meters)
+                    .record(response.body().length);
+            return new FetchedResource(current, response.statusCode(), contentType, response.body());
+        }
+        throw new IllegalStateException("unreachable redirect loop");
+    }
+
+    private RawResponse exchange(URI uri, InetAddress[] pinned) {
+        var connection = PoolingHttpClientConnectionManagerBuilder.create()
+                .setDnsResolver(new PinnedResolver(uri.getHost(), pinned))
+                .setDefaultConnectionConfig(ConnectionConfig.custom()
+                        .setConnectTimeout(Timeout.of(connectTimeout))
+                        .setSocketTimeout(Timeout.of(responseTimeout))
+                        .build())
+                .build();
+        var request = new HttpGet(uri);
+        request.setHeader("User-Agent", userAgent);
+        request.setHeader("Accept", String.join(", ", allowedContentTypes));
+        request.setConfig(RequestConfig.custom()
+                .setConnectionRequestTimeout(Timeout.of(connectTimeout))
+                .setResponseTimeout(Timeout.of(responseTimeout))
+                .build());
+        try (var client = HttpClients.custom()
+                .setConnectionManager(connection)
+                .disableRedirectHandling()
+                .disableAutomaticRetries()
+                .build()) {
+            return client.execute(request, response -> {
+                HttpEntity entity = response.getEntity();
+                long declared = entity == null ? 0 : entity.getContentLength();
+                if (declared > maxBytes) {
+                    throw new IOException("response exceeds " + maxBytes + " bytes");
+                }
+                byte[] body = entity == null ? new byte[0] : EntityUtils.toByteArray(entity, maxBytes + 1);
+                if (body.length > maxBytes) {
+                    throw new IOException("response exceeds " + maxBytes + " bytes");
+                }
+                var contentType = response.getFirstHeader("Content-Type");
+                var location = response.getFirstHeader("Location");
+                return new RawResponse(
+                        response.getCode(),
+                        contentType == null ? "" : contentType.getValue(),
+                        location == null ? null : location.getValue(),
+                        body);
+            });
+        } catch (IOException failure) {
+            throw failure("HTTP exchange failed: " + failure.getMessage(), true, failure);
+        }
+    }
+
+    private InetAddress[] resolvePublic(String host) {
+        try {
+            InetAddress[] addresses = resolver.resolve(host);
+            if (addresses == null || addresses.length == 0) {
+                throw failure("host has no addresses", true);
+            }
+            if (!allowPrivateForTests) {
+                for (InetAddress address : addresses) {
+                    if (!isPublic(address)) {
+                        throw failure("host resolves to a private or reserved address", false);
+                    }
+                }
+            }
+            return Arrays.copyOf(addresses, addresses.length);
+        } catch (UnknownHostException failure) {
+            throw failure("DNS resolution failed", true, failure);
+        }
+    }
+
+    private static void requireSameOriginPolicy(URI uri, String originalHost, String originalScheme) {
+        if (!uri.getHost().equalsIgnoreCase(originalHost)) {
+            throw failure("redirect left the original host", false);
+        }
+        if ("https".equals(originalScheme) && !"https".equals(uri.getScheme())) {
+            throw failure("HTTPS redirect attempted a downgrade", false);
+        }
+    }
+
+    private static URI normalize(URI candidate) {
+        Objects.requireNonNull(candidate, "uri is required");
+        String scheme = candidate.getScheme() == null
+                ? ""
+                : candidate.getScheme().toLowerCase(Locale.ROOT);
+        if (!(scheme.equals("http") || scheme.equals("https"))
+                || candidate.getHost() == null
+                || candidate.getUserInfo() != null) {
+            throw failure("only absolute http(s) URIs without user-info are allowed", false);
+        }
+        String host = IDN.toASCII(candidate.getHost()).toLowerCase(Locale.ROOT);
+        try {
+            return new URI(
+                            scheme,
+                            null,
+                            host,
+                            candidate.getPort(),
+                            candidate.getRawPath().isEmpty() ? "/" : candidate.getRawPath(),
+                            candidate.getRawQuery(),
+                            null)
+                    .normalize();
+        } catch (URISyntaxException impossible) {
+            throw failure("URI cannot be normalized", false, impossible);
+        }
+    }
+
+    private static boolean isPublic(InetAddress address) {
+        if (address.isAnyLocalAddress()
+                || address.isLoopbackAddress()
+                || address.isLinkLocalAddress()
+                || address.isSiteLocalAddress()
+                || address.isMulticastAddress()) {
+            return false;
+        }
+        byte[] bytes = address.getAddress();
+        if (bytes.length == 16) {
+            return (bytes[0] & 0xfe) != 0xfc;
+        }
+        int first = Byte.toUnsignedInt(bytes[0]);
+        int second = Byte.toUnsignedInt(bytes[1]);
+        int third = Byte.toUnsignedInt(bytes[2]);
+        return first != 0
+                && !(first == 100 && second >= 64 && second <= 127)
+                && !(first == 192 && second == 0 && third == 0)
+                && !(first == 192 && second == 0 && third == 2)
+                && !(first == 198 && (second == 18 || second == 19))
+                && !(first == 198 && second == 51 && third == 100)
+                && !(first == 203 && second == 0 && third == 113)
+                && first < 224;
+    }
+
+    private Counter counter(String outcome) {
+        return Counter.builder("outbound.fetch.requests")
+                .tag("client", "page")
+                .tag("outcome", outcome)
+                .register(meters);
+    }
+
+    private static String mediaType(String value) {
+        int parameters = value.indexOf(';');
+        return (parameters < 0 ? value : value.substring(0, parameters))
+                .trim()
+                .toLowerCase(Locale.ROOT);
+    }
+
+    private static Duration requirePositive(Duration value, String label) {
+        Objects.requireNonNull(value, label + " is required");
+        if (value.isZero() || value.isNegative()) {
+            throw new IllegalArgumentException(label + " must be positive");
+        }
+        return value;
+    }
+
+    private static FetchException failure(String message, boolean retryable) {
+        return new FetchException(message, retryable);
+    }
+
+    private static FetchException failure(String message, boolean retryable, Throwable cause) {
+        return new FetchException(message, retryable, cause);
+    }
+
+    private record RawResponse(int statusCode, String contentType, String location, byte[] body) {}
+
+    private record PinnedResolver(String host, InetAddress[] addresses) implements DnsResolver {
+
+        private PinnedResolver {
+            addresses = Arrays.copyOf(addresses, addresses.length);
+        }
+
+        @Override
+        public InetAddress[] resolve(String requestedHost) throws UnknownHostException {
+            if (!host.equalsIgnoreCase(requestedHost)) {
+                throw new UnknownHostException("unexpected DNS request");
+            }
+            return Arrays.copyOf(addresses, addresses.length);
+        }
+
+        @Override
+        public String resolveCanonicalHostname(String requestedHost) throws UnknownHostException {
+            if (!host.equalsIgnoreCase(requestedHost)) {
+                throw new UnknownHostException("unexpected DNS request");
+            }
+            return host;
+        }
+    }
+}

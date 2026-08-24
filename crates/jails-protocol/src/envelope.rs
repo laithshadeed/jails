@@ -698,14 +698,9 @@ impl LedgerV2 {
             .applied
             .iter()
             .filter_map(|entity| match &entity.version.spec {
-                EntitySpec::Intent(intent) if !intent.fields.is_empty() => Some((
-                    entity.id.clone(),
-                    intent
-                        .fields
-                        .iter()
-                        .map(|field| field.canonical())
-                        .collect(),
-                )),
+                EntitySpec::Intent(intent) if !intent.arguments.is_empty() => {
+                    Some((entity.id.clone(), intent.arguments.canonical()))
+                }
                 _ => None,
             })
             .collect();
@@ -782,6 +777,7 @@ pub fn migrate_schema1(written_by: &str, rows: &[Schema1Row]) -> Result<LedgerV2
             // generated.
             let base = id.package.clone();
             let spec = crate::declaration::IntentSpec::parse(
+                id.recipe,
                 &row.fields,
                 &row.indexes,
                 row.timestamps,
@@ -1062,7 +1058,14 @@ mod tests {
             owners: BTreeSet::from([OwnerId::AppManifest]),
             version: AppliedVersion {
                 spec: EntitySpec::Intent(
-                    IntentSpec::parse(&owned, &[], false, &Package::base()).unwrap(),
+                    IntentSpec::parse(
+                        crate::entity::Recipe::Record,
+                        &owned,
+                        &[],
+                        false,
+                        &Package::base(),
+                    )
+                    .unwrap(),
                 ),
                 operation: OperationId::from_bytes(jails_support::codec::sha256(b"op")),
             },

@@ -1,0 +1,24 @@
+@baseUrl = http://localhost:8080
+
+### Create Payment
+POST {{baseUrl}}/payments
+Content-Type: application/json
+
+{
+  "id": "00000000-0000-0000-0000-000000000001",
+  "merchantId": "00000000-0000-0000-0000-000000000001",
+  "idempotencyKey": "sample-idempotencyKey",
+  "amountMinor": 1,
+  "currency": "sample-currency",
+  "method": "CARD",
+  "status": "AUTHORISED",
+  "version": 1,
+  "authorisedAt": null,
+  "capturedAt": null,
+  "createdAt": "2026-01-01T00:00:00Z",
+  "updatedAt": "2026-01-01T00:00:00Z"
+}
+
+### List Payment
+GET {{baseUrl}}/payments
+Accept: application/json

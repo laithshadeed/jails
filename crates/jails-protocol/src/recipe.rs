@@ -47,12 +47,34 @@ pub enum RefArity {
     Forbidden,
 }
 
+/// What a recipe's positional arguments are.
+///
+/// plan.md §R1.1's amendment: the list means three different things, and the
+/// recipe is the only thing that says which. `jails g enum Status ACTIVE
+/// CLOSED` names constants, not `name:type` components -- reading them as
+/// fields refuses a command that works, and storing them as fields would claim
+/// record components that do not exist.
+///
+/// The shape is chosen *before* a token is read, so a mis-typed constant is
+/// refused as a bad constant rather than reinterpreted as a field.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ArgumentShape {
+    /// `name:type[!?]@marker` components.
+    Fields,
+    /// Bare names: enum constants, sealed permits, strategy implementations,
+    /// and the components of an existing record `g search` indexes.
+    Names,
+    /// `childField=parentField`, which only `association` takes.
+    Mappings,
+}
+
 /// One recipe's contract.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RecipeMetadata {
     pub class: LifecycleClass,
     pub on: RefArity,
     pub yields: RefArity,
+    pub arguments: ArgumentShape,
 }
 
 /// The single table. Every arm is explicit so a new `ArtifactKind` fails to
@@ -93,7 +115,29 @@ pub fn metadata(recipe: ArtifactKind) -> RecipeMetadata {
             (PersistentIntent, Forbidden, Forbidden)
         }
     };
-    RecipeMetadata { class, on, yields }
+    // The positional shape, as its own closed match, because it is a
+    // different question from the reference arity and answering both in one
+    // arm list would make the table unreadable at exactly the point a new
+    // kind is added.
+    let arguments = match recipe {
+        Enum | Sealed | Strategy | Search => ArgumentShape::Names,
+        Association => ArgumentShape::Mappings,
+        Scaffold | Controller | Service | Class | Interface | Record | Factory | Value | Repo
+        | Handler | Command | Cli | Client | Fetcher | Job | Idempotency | Auth | Webhook | Dto
+        | Event | Test | IntegrationTest | Usecase | Query | Transition | HttpWorkflow
+        | HttpSink | DurableJob | Field | Migration | Cases => ArgumentShape::Fields,
+    };
+    RecipeMetadata {
+        class,
+        on,
+        yields,
+        arguments,
+    }
+}
+
+/// What this recipe's positional arguments are.
+pub fn argument_shape(recipe: ArtifactKind) -> ArgumentShape {
+    metadata(recipe).arguments
 }
 
 /// Whether a recipe is a persistent, ownable, removable entity.

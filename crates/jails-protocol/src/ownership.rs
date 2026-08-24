@@ -299,15 +299,10 @@ fn describe(id: &EntityId) -> String {
 fn summarise(spec: &EntitySpec) -> String {
     match spec {
         EntitySpec::Intent(intent) => {
-            if intent.fields.is_empty() {
-                "no fields".to_string()
+            if intent.arguments.is_empty() {
+                "no arguments".to_string()
             } else {
-                intent
-                    .fields
-                    .iter()
-                    .map(|field| field.canonical())
-                    .collect::<Vec<_>>()
-                    .join(" ")
+                intent.arguments.canonical().join(" ")
             }
         }
         EntitySpec::Capability(capability) => match &capability.placement {
@@ -340,7 +335,16 @@ mod tests {
 
     fn spec(fields: &[&str]) -> EntitySpec {
         let owned: Vec<String> = fields.iter().map(|f| f.to_string()).collect();
-        EntitySpec::Intent(IntentSpec::parse(&owned, &[], false, &Package::base()).unwrap())
+        EntitySpec::Intent(
+            IntentSpec::parse(
+                crate::entity::Recipe::Record,
+                &owned,
+                &[],
+                false,
+                &Package::base(),
+            )
+            .unwrap(),
+        )
     }
 
     fn capability_spec() -> EntitySpec {

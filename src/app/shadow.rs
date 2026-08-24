@@ -75,7 +75,9 @@ pub(super) fn typed_view(
         // A row this binary cannot represent is skipped, not guessed at.
         let Ok(id) = row.typed_id() else { continue };
         let base = id.package.clone();
-        let Ok(spec) = IntentSpec::parse(&row.fields, &row.indexes, row.timestamps, &base) else {
+        let Ok(spec) =
+            IntentSpec::parse(id.recipe, &row.fields, &row.indexes, row.timestamps, &base)
+        else {
             continue;
         };
         // The recorded owner, from the same `has_spec` fact `app plan` reads.
@@ -163,7 +165,14 @@ fn intent_spec(intent: &super::ResolvedIntent) -> Option<IntentSpec> {
         Some(text) => Package::parse(text).ok()?,
         None => Package::base(),
     };
-    IntentSpec::parse(&intent.fields, &intent.indexes, intent.timestamps, &base).ok()
+    IntentSpec::parse(
+        intent.kind,
+        &intent.fields,
+        &intent.indexes,
+        intent.timestamps,
+        &base,
+    )
+    .ok()
 }
 
 #[cfg(test)]

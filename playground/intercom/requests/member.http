@@ -1,0 +1,19 @@
+@baseUrl = http://localhost:8080
+
+### Create Member
+POST {{baseUrl}}/members
+Content-Type: application/json
+
+{
+  "id": "00000000-0000-0000-0000-000000000001",
+  "workspaceId": "00000000-0000-0000-0000-000000000001",
+  "email": "sample-email",
+  "displayName": "sample-displayName",
+  "role": "OWNER",
+  "createdAt": "2026-01-01T00:00:00Z",
+  "updatedAt": "2026-01-01T00:00:00Z"
+}
+
+### List Member
+GET {{baseUrl}}/members
+Accept: application/json

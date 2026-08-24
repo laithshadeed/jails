@@ -1,0 +1,21 @@
+@baseUrl = http://localhost:8080
+
+### Create Conversation
+POST {{baseUrl}}/conversations
+Content-Type: application/json
+
+{
+  "id": "00000000-0000-0000-0000-000000000001",
+  "workspaceId": "00000000-0000-0000-0000-000000000001",
+  "contactId": "00000000-0000-0000-0000-000000000001",
+  "inboxId": "00000000-0000-0000-0000-000000000001",
+  "status": "OPEN",
+  "lastMessageAt": "2026-01-01T00:00:00Z",
+  "version": 1,
+  "createdAt": "2026-01-01T00:00:00Z",
+  "updatedAt": "2026-01-01T00:00:00Z"
+}
+
+### List Conversation
+GET {{baseUrl}}/conversations
+Accept: application/json

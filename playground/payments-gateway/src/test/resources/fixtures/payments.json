@@ -1,0 +1,30 @@
+[
+  {
+    "id": "00000000-0000-0000-0000-000000000001",
+    "merchant_id": "00000000-0000-0000-0000-000000000001",
+    "idempotency_key": "sample-1",
+    "amount_minor": 1,
+    "currency": "sample-1",
+    "method": "CARD",
+    "status": "AUTHORISED",
+    "version": 1,
+    "authorised_at": "2024-01-01T00:00:00Z",
+    "captured_at": "2024-01-01T00:00:00Z",
+    "created_at": "2024-01-01T00:00:00Z",
+    "updated_at": "2024-01-01T00:00:00Z"
+  },
+  {
+    "id": "00000000-0000-0000-0000-000000000002",
+    "merchant_id": "00000000-0000-0000-0000-000000000002",
+    "idempotency_key": "sample-2",
+    "amount_minor": 2,
+    "currency": "sample-2",
+    "method": "CARD",
+    "status": "AUTHORISED",
+    "version": 2,
+    "authorised_at": null,
+    "captured_at": null,
+    "created_at": "2024-01-02T00:00:00Z",
+    "updated_at": "2024-01-02T00:00:00Z"
+  }
+]

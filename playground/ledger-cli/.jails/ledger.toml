@@ -1,0 +1,145 @@
+# jails' own bookkeeping. Written by jails, never hand-edited -- `jails.toml`
+# and `.jails/app.toml` are the files that are yours.
+#
+# Identity is (recipe, name, package). Everything else is content, which is
+# what makes an edited intent an update to a known entity rather than a new
+# one arriving against files that already exist.
+version = "0.1.0"
+
+[[applied]]
+recipe = "cli"
+name = "Ledger"
+package = ""
+has_spec = true
+files = [
+  "src/main/java/com/example/ledgercli/cli/LedgerCli.java",
+  "src/main/java/com/example/ledgercli/cli/package-info.java",
+  "src/test/java/com/example/ledgercli/cli/LedgerCliTest.java",
+]
+
+[[applied]]
+recipe = "command"
+name = "Reconcile"
+package = ""
+on = "Ledger"
+has_spec = true
+files = [
+  "src/main/java/com/example/ledgercli/cli/ReconcileCommand.java",
+  "src/test/java/com/example/ledgercli/cli/ReconcileCommandTest.java",
+]
+
+[[applied]]
+recipe = "enum"
+name = "MatchOutcome"
+package = ""
+fields = [
+  "MATCHED",
+  "AMOUNT_DIFFERS",
+  "DATE_DIFFERS",
+  "UNMATCHED",
+]
+has_spec = true
+files = [
+  "src/main/java/com/example/ledgercli/domain/MatchOutcome.java",
+  "src/test/java/com/example/ledgercli/domain/MatchOutcomeTest.java",
+]
+
+[[applied]]
+recipe = "record"
+name = "Entry"
+package = ""
+fields = [
+  "reference:string!",
+  "postedAt:date",
+  "amount:Money",
+  "memo:string?",
+]
+has_spec = true
+files = [
+  "src/main/java/com/example/ledgercli/domain/Entry.java",
+  "src/test/java/com/example/ledgercli/domain/EntryTest.java",
+]
+
+[[applied]]
+recipe = "record"
+name = "MatchCandidate"
+package = ""
+fields = [
+  "left:Entry",
+  "right:Entry",
+]
+has_spec = true
+files = [
+  "src/main/java/com/example/ledgercli/domain/MatchCandidate.java",
+  "src/test/java/com/example/ledgercli/domain/MatchCandidateTest.java",
+]
+
+[[applied]]
+recipe = "sealed"
+name = "LedgerError"
+package = ""
+fields = [
+  "MalformedRow",
+  "UnknownCurrency",
+  "DuplicateReference",
+]
+has_spec = true
+files = [
+  "src/main/java/com/example/ledgercli/domain/LedgerError.java",
+  "src/test/java/com/example/ledgercli/domain/LedgerErrorTest.java",
+]
+
+[[applied]]
+recipe = "strategy"
+name = "MatchRule"
+package = ""
+fields = [
+  "ExactReference",
+  "AmountAndDate",
+  "FuzzyMemo",
+]
+on = "MatchCandidate"
+yields = "MatchOutcome"
+has_spec = true
+files = [
+  "src/main/java/com/example/ledgercli/domain/AmountAndDateMatchRule.java",
+  "src/main/java/com/example/ledgercli/domain/ExactReferenceMatchRule.java",
+  "src/main/java/com/example/ledgercli/domain/FuzzyMemoMatchRule.java",
+  "src/main/java/com/example/ledgercli/domain/MatchRule.java",
+  "src/test/java/com/example/ledgercli/domain/AmountAndDateMatchRuleTest.java",
+  "src/test/java/com/example/ledgercli/domain/ExactReferenceMatchRuleTest.java",
+  "src/test/java/com/example/ledgercli/domain/FuzzyMemoMatchRuleTest.java",
+]
+
+[[applied]]
+recipe = "value"
+name = "Money"
+package = ""
+fields = [
+  "amountMinor:long",
+  "currency:string!",
+]
+has_spec = true
+files = [
+  "src/main/java/com/example/ledgercli/domain/Money.java",
+  "src/main/java/com/example/ledgercli/domain/package-info.java",
+  "src/test/java/com/example/ledgercli/domain/MoneyTest.java",
+]
+
+[[model]]
+name = "Entry"
+package = ""
+fields = [
+  "reference:string!",
+  "postedAt:date",
+  "amount:Money",
+  "memo:string?",
+]
+
+[[model]]
+name = "MatchCandidate"
+package = ""
+fields = [
+  "left:Entry",
+  "right:Entry",
+]
