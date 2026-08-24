@@ -554,11 +554,16 @@ Four things to know before touching it:
 
 Untracked siblings in this directory are **not** part of the project:
 `deps/` holds ~80 gitignored upstream checkouts (each its own repo, read-only
-research). **Never run `git` with the working directory inside `deps/`**: a
-`git add -A` from there filed 81 of those checkouts as gitlinks at the
-repository *root*, where `.gitignore`'s `/deps/` does not match them, and one
-commit went out carrying all 81. `cd` back first, or use `git -C
-~/code/jails`. `ideas/` holds reference projects — crawler implementations, the
+research). **`.gitignore` ignores `deps/`, and only `deps/`** -- which is
+worth knowing because a checkout that lands anywhere else is invisible to that
+rule and `git add -A` files it as a gitlink. `deps-update.sh` did exactly that
+once: it began life as `deps/update.sh` and cloned beside itself, so when it
+moved to the repository root it cloned all 81 repositories *there*, 15 GB of
+duplicates, and a commit went out carrying 81 pointers to repositories nobody
+can clone. The script names its two paths separately now (`MANIFEST` beside
+itself, `CHECKOUTS=deps`), and `./deps-update.sh --list` is the cheap way to
+confirm it still reads the right tree -- it reported all 81 "missing" while
+they sat in `deps/`. `ideas/` holds reference projects — crawler implementations, the
 minicom stubs — cloned for study. Never edit or document either as if it were
 jails'. `deps.tsv` and `deps-update.sh` at the repo root *are* tracked.
 
