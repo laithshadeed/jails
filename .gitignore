@@ -11,3 +11,8 @@ target/
 /deps/
 /ideas/
 /patterns/
+
+# `jails new` serialises on `<parent>/.jails-new.lock`. It holds the pid of
+# whichever run last held it, so a committed one is noise that changes on every
+# regeneration of the playground and means nothing to a clone.
+.jails-new.lock
