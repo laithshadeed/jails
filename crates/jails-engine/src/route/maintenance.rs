@@ -680,3 +680,186 @@ pub fn format(run: &Run) -> Result<Outcome> {
         &Asked::plain(CanonicalMutationRequest::Format { scopes }, &["fmt"], &[]),
     )
 }
+
+/// Claim one schema-1 row as a named owner.
+///
+/// §R2.5: *"the only route from unknowable legacy manifest origin to a named
+/// owner, and every row is handled explicitly rather than heuristically
+/// joined."* Migration deliberately claims nothing -- the old format never
+/// recorded who asked for a row -- so this is how a reader says which row is
+/// which, one at a time and by a stable key rather than by "the first thing
+/// that matches".
+///
+/// The safety rule is the whole feature. jails re-renders the intent and
+/// requires the files on disk to be **byte-identical** to what it would write
+/// now. Only then does the row become an owned entity with a truthful
+/// renderer stamp. That is what stops adoption claiming that an arbitrary
+/// legacy byte was renderer-produced -- a claim every later three-way merge
+/// would measure from, so a wrong one silently corrupts every future update
+/// of that file.
+///
+/// A mismatch refuses and says which file differs. Regenerating over the
+/// reader's version is not offered here: that is a destructive choice and it
+/// belongs to `--replace --force`, which is not wired.
+pub fn adopt_legacy(run: &Run, key: &str, kind: ArtifactKind, name: &str) -> Result<Outcome> {
+    let project = run.project();
+    let wanted = jails_protocol::envelope::LegacyKey::parse_label(key)?;
+    let store = observed(project)?;
+
+    let mut found = None;
+    for row in store.ledger.iter().flat_map(|ledger| ledger.legacy.iter()) {
+        if row.legacy_key(jails_protocol::envelope::LegacySourceKind::Schema1Applied)? == wanted {
+            found = Some(row.clone());
+            break;
+        }
+    }
+    let row = found.ok_or_else(|| {
+        format!(
+            "no legacy row has the key `{key}`.\n       fix: `jails doctor` lists every key this \
+             project has. A key names one exact decoded row, never the first one that looks \
+             similar."
+        )
+    })?;
+
+    // The intent the caller says this row is. Checked against the row rather
+    // than trusted: adopting `record Reward` onto a row that says `service
+    // Reward` would put an owner on files that recipe never wrote.
+    if row.recipe != label(kind) || row.name != name {
+        return Err(format!(
+            "`{key}` is `{} {}`, not `{} {name}`.\n       fix: pass the intent the row actually \
+             names. Adopting one row under another's identity would put an owner on files that \
+             recipe never wrote.",
+            row.recipe,
+            row.name,
+            label(kind)
+        ));
+    }
+
+    let fields: Vec<String> = row.fields.clone();
+    let package = match row.package.is_empty() {
+        true => None,
+        false => Some(row.package.as_str()),
+    };
+    let change = with_test_support(
+        project,
+        jails_generate::generate::plan_recipe(
+            project,
+            kind,
+            name,
+            &fields,
+            package,
+            &row.indexes,
+            (!row.on.is_empty()).then_some(row.on.as_str()),
+            (!row.yields.is_empty()).then_some(row.yields.as_str()),
+        )?,
+    );
+
+    // Every file the re-render produces must already be there, byte for byte.
+    let id = super::intent(
+        project,
+        kind,
+        name,
+        package,
+        &fields,
+        &row.indexes,
+        (!row.on.is_empty()).then_some(row.on.as_str()),
+        (!row.yields.is_empty()).then_some(row.yields.as_str()),
+    )?;
+    let spec = super::spec(
+        project,
+        kind,
+        &fields,
+        &row.indexes,
+        (!row.on.is_empty()).then_some(row.on.as_str()),
+        (!row.yields.is_empty()).then_some(row.yields.as_str()),
+    )?;
+    let owner = ResourceOwner::Entity(EntityId::Intent(id.clone()));
+    let mut desired = desire::contribution(&owner, &change, project)?;
+
+    // Compared against the *projection*, not against the recipe's artifacts
+    // and not against the contribution either. Import order is normalised and
+    // blank lines are tidied on the way to disk -- CLAUDE.md keeps both out of
+    // the templates deliberately -- so a recipe's output is not what
+    // `generate` writes. Comparing anything earlier refuses every row jails
+    // itself produced, which is the only kind adoption is for.
+    let mut reads = capture::capability_reads()?;
+    for file in &desired.files {
+        reads = reads.file(file.path.clone());
+    }
+    let (snapshot, mut projection) = capture::projected(project, &reads)?;
+    projection.advance(&desired)?;
+    let mut differ = Vec::new();
+    for (path, entry) in projection.overlay() {
+        let jails_project::projection::ProjectedEntry::File(projected) = entry else {
+            continue;
+        };
+        match snapshot.read(path)? {
+            jails_protocol::snapshot::Captured::Present(live) if live.bytes == projected.bytes => {}
+            jails_protocol::snapshot::Captured::Present(_) => {
+                differ.push(format!("         {path} differs"))
+            }
+            jails_protocol::snapshot::Captured::Absent => {
+                differ.push(format!("         {path} is missing"))
+            }
+        }
+    }
+    if !differ.is_empty() {
+        return Err(format!(
+            "`{key}` cannot be adopted as it stands: what jails would render now is not what is \
+             on disk.\n{}\n       fix: adoption records the rendered bytes as this row's base, \
+             and every later update measures from it -- so claiming bytes jails did not produce \
+             would corrupt every future merge of these files. Reconcile them by hand first.",
+            differ.join("\n")
+        ));
+    }
+
+    let entity = DesiredEntity {
+        id: EntityId::Intent(id.clone()),
+        spec: EntitySpec::Intent(spec),
+        // The row said nothing about who asked for it, and this command is the
+        // reader saying so. `DirectCli` is the truthful answer: they asked,
+        // just now, through this command.
+        owners: BTreeSet::from([OwnerId::DirectCli]),
+    };
+    provenance::stamp_files(
+        &mut desired,
+        project,
+        RendererId::Recipe(kind),
+        Some(RenderedSubjectContext::Entity {
+            id: entity.id.clone(),
+            spec: entity.spec.clone(),
+        }),
+    )?;
+    let reads = declaration(project, &change, &desired)?;
+    let request = Request {
+        scope: ReconcileScope::DirectEntity(EntityId::Intent(id)),
+        declared: BTreeMap::from([(entity.id.clone(), entity)]),
+        changes: vec![desired],
+    };
+    commit(
+        run,
+        request,
+        &reads,
+        &Asked::new(
+            CanonicalMutationRequest::AdoptLegacy {
+                legacy_key: wanted,
+                intent: super::intent(
+                    project,
+                    kind,
+                    name,
+                    package,
+                    &fields,
+                    &row.indexes,
+                    (!row.on.is_empty()).then_some(row.on.as_str()),
+                    (!row.yields.is_empty()).then_some(row.yields.as_str()),
+                )?,
+                replace: false,
+                force: false,
+            },
+            &["adopt"],
+            vec![label(kind).to_string(), name.to_string()],
+            BTreeMap::from([("legacy-key".to_string(), vec![key.to_string()])]),
+            BTreeSet::new(),
+        ),
+    )
+}

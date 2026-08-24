@@ -2862,3 +2862,161 @@ fn destroying_a_legacy_row_refuses_by_name_rather_than_claiming_it_is_absent() {
         "the refusal claims nothing is there over a file that is: {error}"
     );
 }
+
+/// §R2.5's adoption: the only route from a legacy row to a named owner.
+///
+/// The safety rule is the feature. jails re-renders the intent and requires
+/// what is on disk to be byte-identical before claiming it, because adoption
+/// records the rendered bytes as that row's *base* and every later update
+/// measures from it — so claiming bytes jails did not produce would silently
+/// corrupt every future merge of those files.
+#[test]
+fn adopting_a_legacy_row_claims_it_only_when_the_bytes_are_jails_own() {
+    let root = common::temp_dir("engine-adopt-legacy");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+
+    // Generate through V2, then rewrite the store as a schema-1 ledger naming
+    // the same row. That gives files jails really did render, under a row
+    // that records no owner -- which is exactly the migrated shape.
+    jails_engine::route::generate(
+        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        jails_spec::spec::kind::ArtifactKind::Record,
+        "Reward",
+        &["title:string!".to_string()],
+        None,
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+    let files = common::scenarios::file_set(&root)
+        .into_iter()
+        .filter(|p| p.contains("Reward"))
+        .collect::<Vec<_>>();
+    assert_eq!(files.len(), 2, "{files:?}");
+    std::fs::remove_dir_all(root.join(".jails")).unwrap();
+    let mut schema1 = jails_project::ledger::Ledger {
+        version: "0.1.0".to_string(),
+        ..Default::default()
+    };
+    schema1.applied.push(jails_project::ledger::Applied {
+        recipe: "record".to_string(),
+        name: "Reward".to_string(),
+        package: String::new(),
+        spec: jails_project::ledger::SpecPresence::UnknownLegacy,
+        fields: vec!["title:string!".to_string()],
+        indexes: Vec::new(),
+        on: String::new(),
+        yields: String::new(),
+        timestamps: false,
+        files: files.clone(),
+    });
+    jails_project::ledger::save(&root, &schema1).unwrap();
+
+    let key = {
+        let store = jails_commit::store::Store::at(&root).observe().unwrap();
+        let ledger = store.ledger.as_ref().unwrap();
+        ledger.legacy[0]
+            .legacy_key(jails_protocol::envelope::LegacySourceKind::Schema1Applied)
+            .unwrap()
+            .to_label()
+    };
+
+    // A key that names no row refuses, rather than adopting something similar.
+    let wrong = jails_engine::route::adopt_legacy(
+        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        "schema1-applied:0000000000000000000000000000000000000000000000000000000000000000",
+        jails_spec::spec::kind::ArtifactKind::Record,
+        "Reward",
+    )
+    .unwrap_err();
+    assert!(wrong.contains("no legacy row"), "{wrong}");
+
+    // The right key, with the wrong intent, refuses too.
+    let mismatched = jails_engine::route::adopt_legacy(
+        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &key,
+        jails_spec::spec::kind::ArtifactKind::Record,
+        "Bonus",
+    )
+    .unwrap_err();
+    assert!(mismatched.contains("not `record Bonus`"), "{mismatched}");
+
+    jails_engine::route::adopt_legacy(
+        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &key,
+        jails_spec::spec::kind::ArtifactKind::Record,
+        "Reward",
+    )
+    .unwrap();
+
+    // Owned now, so `destroy` works -- which is the whole point of adopting.
+    jails_engine::route::destroy(
+        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        jails_spec::spec::kind::ArtifactKind::Record,
+        "Reward",
+        None,
+    )
+    .unwrap();
+    for path in &files {
+        assert!(
+            !root.join(path).exists(),
+            "{path} survived a destroy after adoption"
+        );
+    }
+}
+
+/// And a row whose files are not what jails would render is refused by name.
+#[test]
+fn adoption_refuses_bytes_jails_did_not_produce() {
+    let root = common::temp_dir("engine-adopt-legacy-drift");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+    let at = root.join("src/main/java/com/example/demo/domain/Reward.java");
+    std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+    std::fs::write(&at, "package com.example.demo.domain;\n\n// mine\n").unwrap();
+
+    let mut schema1 = jails_project::ledger::Ledger {
+        version: "0.1.0".to_string(),
+        ..Default::default()
+    };
+    schema1.applied.push(jails_project::ledger::Applied {
+        recipe: "record".to_string(),
+        name: "Reward".to_string(),
+        package: String::new(),
+        spec: jails_project::ledger::SpecPresence::UnknownLegacy,
+        fields: vec!["title:string!".to_string()],
+        indexes: Vec::new(),
+        on: String::new(),
+        yields: String::new(),
+        timestamps: false,
+        files: vec!["src/main/java/com/example/demo/domain/Reward.java".to_string()],
+    });
+    jails_project::ledger::save(&root, &schema1).unwrap();
+    let key = {
+        let store = jails_commit::store::Store::at(&root).observe().unwrap();
+        store.ledger.as_ref().unwrap().legacy[0]
+            .legacy_key(jails_protocol::envelope::LegacySourceKind::Schema1Applied)
+            .unwrap()
+            .to_label()
+    };
+
+    let error = jails_engine::route::adopt_legacy(
+        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &key,
+        jails_spec::spec::kind::ArtifactKind::Record,
+        "Reward",
+    )
+    .unwrap_err();
+    assert!(error.contains("differs"), "{error}");
+    assert!(
+        error.contains("Reward.java"),
+        "the refusal does not say which file: {error}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&at).unwrap(),
+        "package com.example.demo.domain;\n\n// mine\n",
+        "the refusal rewrote the file"
+    );
+}

@@ -78,7 +78,7 @@ pub use artifact::{destroy, generate};
 pub use capability::{install, remove, sync};
 pub use feature::{install_fast_test, remove_fast_test};
 pub use field::field;
-pub use maintenance::{adopt_layout, app_init, format, rename};
+pub use maintenance::{adopt_layout, adopt_legacy, app_init, format, rename};
 pub use oneshot::{cases, migration};
 
 /// A kind as the word somebody types, taken from the same `ValueEnum` clap
