@@ -609,6 +609,11 @@ fn prepare_set(
         operation_context: Default::default(),
         preparation: Default::default(),
         claimed: run.claimed.clone(),
+        // Derived from the canonical request, not from the flag alone: §R3.3
+        // makes every request variant without a `no_start` field ineligible
+        // and says it behaves as `no_start == true`, so a maintenance action
+        // cannot reconcile a runtime by accident.
+        start_services: asked.is_some_and(Asked::starts_services),
         // Computed against the same capture the plan was, so the row for
         // `jails.toml` describes the bytes this plan actually read rather
         // than whatever is on disk by the time it is asked for.
@@ -848,6 +853,23 @@ impl Asked {
             out.push_str(part);
         }
         out
+    }
+
+    /// Whether this request is one that may reconcile runtime services.
+    ///
+    /// §R3.3: only the variants carrying a `no_start` field are eligible, and
+    /// every other one behaves as though it had said `--no-start`. Read off
+    /// the canonical request rather than off a flag, so the answer is a
+    /// property of what was asked rather than of what a caller remembered to
+    /// pass.
+    fn starts_services(&self) -> bool {
+        match &self.request {
+            CanonicalMutationRequest::Add { no_start, .. }
+            | CanonicalMutationRequest::Remove { no_start, .. }
+            | CanonicalMutationRequest::Sync { no_start }
+            | CanonicalMutationRequest::AppApply { no_start } => !no_start,
+            _ => false,
+        }
     }
 
     /// §R5.4's fingerprint, over this request and the human inputs it reads.

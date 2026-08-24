@@ -55,6 +55,7 @@ use std::sync::Arc;
 /// a decoded store, or the reverse, would let a plan be written against a
 /// store nobody saw.
 mod diff;
+mod effect;
 mod ledger;
 
 #[derive(Clone, Debug)]
@@ -113,6 +114,14 @@ pub struct PreparationContext {
     /// preparation paths that are not a user request -- a finalisation or an
     /// abort resumes one rather than making one.
     pub invocation: Option<jails_protocol::request::InvocationFingerprint>,
+    /// Whether this invocation may reconcile runtime services after the
+    /// commit.
+    ///
+    /// False for `--no-start` and false for every request variant §R3.3 makes
+    /// ineligible -- the ones with no `no_start` field at all. Those behave as
+    /// `no_start == true` rather than defaulting on, so a maintenance action
+    /// cannot start a container by accident.
+    pub start_services: bool,
     /// The exact paths this invocation claims from an unowned state.
     ///
     /// `jails adopt --legacy-key ... --replace --force` and nothing else. §R5.3
@@ -260,6 +269,27 @@ fn apply(
         ));
     }
 
+    // §R3.3's one aggregate effect, decided from the same operations and
+    // objects the commit will activate. It is built here rather than by the
+    // route because only preparation knows what was actually committed at
+    // `compose.yaml` -- a route knows what it asked for, and a clean
+    // three-way merge means those are not the same bytes.
+    let post_commit = effect::compose_reconcile(
+        context.start_services,
+        context
+            .observed_store
+            .ledger
+            .as_ref()
+            .map(|ledger| ledger.resources.as_slice())
+            .unwrap_or_default(),
+        &set.ledger_intent.resources_after,
+        &base,
+        &operations,
+        &objects,
+    )?
+    .into_iter()
+    .collect();
+
     assemble(
         base,
         semantics,
@@ -272,6 +302,7 @@ fn apply(
             retired,
             stamps,
         },
+        post_commit,
         context,
     )
 }
@@ -343,6 +374,10 @@ fn finalise(
         // resolves one that already exists, and the row it resolves is
         // already in the store.
         ledger::Recorded::default(),
+        // §R3.3: a conflict freezes semantic intent only, and an abort clears
+        // it. Neither materialises an executable effect -- a finalisation is
+        // the step that does, and that half waits on §R5.4's pending state.
+        Vec::new(),
         context,
     )
 }
@@ -414,6 +449,10 @@ fn abort_plan(
         // resolves one that already exists, and the row it resolves is
         // already in the store.
         ledger::Recorded::default(),
+        // §R3.3: a conflict freezes semantic intent only, and an abort clears
+        // it. Neither materialises an executable effect -- a finalisation is
+        // the step that does, and that half waits on §R5.4's pending state.
+        Vec::new(),
         context,
     )
 }
@@ -578,6 +617,7 @@ fn assemble(
     directories: Vec<DirectoryOp>,
     objects: ObjectBundle,
     recorded: ledger::Recorded,
+    post_commit: Vec<jails_protocol::effect::PostCommitEffect>,
     context: PreparationContext,
 ) -> Result<PreparedBundle> {
     let operation_identity = OperationIdentityV1 {
@@ -600,7 +640,7 @@ fn assemble(
         ledger_before: context.observed_store.image,
         ledger_after: FileImage::Absent,
         objects,
-        post_commit: Vec::new(),
+        post_commit,
         kind,
     };
     if let OperationSemanticsV1::Apply(apply) = &change.operation_identity.semantics {
@@ -755,6 +795,9 @@ mod tests {
             // Nothing here is an adoption: these tests are about the ordinary
             // rules, and a claim would quietly lift one of them.
             claimed: BTreeSet::new(),
+            // And nothing here reconciles a runtime: these tests are about
+            // the file transition.
+            start_services: false,
         }
     }
 

@@ -202,6 +202,17 @@ pub fn has_services(text: &str) -> bool {
     service_names(text).next().is_some()
 }
 
+/// Every top-level service name a compose document declares.
+///
+/// The one reader of a compose document's service list, so §R3.3's
+/// `all_service_names` and `has_services` cannot disagree about what is in a
+/// file. Markers do not participate: a `# jails:` line is a comment, and the
+/// document a runtime reconciliation stops services from is the document as
+/// compose itself would read it.
+pub fn all_service_names(text: &str) -> Vec<&str> {
+    service_names(text).collect()
+}
+
 fn service_names(text: &str) -> impl Iterator<Item = &str> {
     let services = section_body(text, "services");
     services.lines().filter_map(|line| {

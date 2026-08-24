@@ -3217,6 +3217,113 @@ fn replace_over_a_row_that_already_matches_changes_nothing() {
     assert_eq!(before, after, "replace rewrote bytes that already matched");
 }
 
+/// A capability that brings a container plans the run that starts it.
+///
+/// §R3.3's one aggregate effect. It is a *descriptor* frozen at preparation --
+/// the exact documents and the exact service sets an attempt would act on --
+/// rather than a step in the commit, because starting a container is not a
+/// file operation and cannot be undone by restoring a preimage.
+#[test]
+fn a_capability_with_a_container_plans_one_runtime_reconciliation() {
+    let root = common::temp_dir("engine-compose-effect");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_spring_fixture(&root);
+    let project = Project::load(&root).unwrap();
+
+    let effects = |run: &jails_engine::route::Run, capability| {
+        jails_engine::route::install(run, &Declaration::plain(capability))
+            .unwrap()
+            .report()
+            .unwrap()
+            .post_commit
+            .clone()
+    };
+
+    let planned = effects(
+        &jails_engine::route::Run::pretending(&project),
+        Capability::Db,
+    );
+    assert_eq!(planned.len(), 1, "{planned:?}");
+    let jails_protocol::effect::PostCommitEffect::ComposeReconcile {
+        compose_output,
+        after_document,
+        prior_managed_services,
+        desired_services,
+        stop_services,
+        ..
+    } = &planned[0].effect;
+    assert_eq!(compose_output.to_string(), "compose.yaml");
+    assert!(
+        prior_managed_services.is_empty(),
+        "nothing was managed before: {prior_managed_services:?}"
+    );
+    assert_eq!(desired_services.len(), 1, "{desired_services:?}");
+    assert!(
+        stop_services.is_empty(),
+        "an install stops nothing: {stop_services:?}"
+    );
+    assert!(
+        after_document.is_some(),
+        "a service is wanted, so the document it is started from must be pinned"
+    );
+    assert_eq!(
+        planned[0].state,
+        jails_protocol::effect::EffectState::Deferred
+    );
+
+    // `--no-start` is the caller declining the runtime half, and it suppresses
+    // the effect rather than the file transition.
+    assert!(
+        effects(
+            &jails_engine::route::Run::pretending(&project).without_start(),
+            Capability::Db,
+        )
+        .is_empty(),
+        "`--no-start` planned a runtime reconciliation anyway"
+    );
+
+    // And a capability with no container plans none at all: an owner-only
+    // change is not a reason to touch anything that is running.
+    assert!(
+        effects(
+            &jails_engine::route::Run::pretending(&project),
+            Capability::Actuator,
+        )
+        .is_empty()
+    );
+
+    // Taking it back out is the inverse, and it is derived rather than
+    // mirrored: the stop set is what the *prior* map held and the committed
+    // document no longer names, so a block the reader kept by hand survives.
+    jails_engine::route::install(
+        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &Declaration::plain(Capability::Db),
+    )
+    .unwrap();
+    let project = Project::load(&root).unwrap();
+    let removal = jails_engine::route::remove(
+        &jails_engine::route::Run::pretending(&project),
+        &Declaration::plain(Capability::Db),
+    )
+    .unwrap();
+    let effects = &removal.report().unwrap().post_commit;
+    assert_eq!(effects.len(), 1, "{effects:?}");
+    let jails_protocol::effect::PostCommitEffect::ComposeReconcile {
+        before_document,
+        prior_managed_services,
+        desired_services,
+        stop_services,
+        ..
+    } = &effects[0].effect;
+    assert_eq!(prior_managed_services.len(), 1);
+    assert!(desired_services.is_empty(), "{desired_services:?}");
+    assert_eq!(stop_services.len(), 1, "{stop_services:?}");
+    assert!(
+        before_document.is_some(),
+        "stopping a service needs the document that declared it"
+    );
+}
+
 /// `--no-start` is part of what was asked, not a printing decision.
 ///
 /// The canonical request is what §R5.4's fingerprint is taken over, and the
