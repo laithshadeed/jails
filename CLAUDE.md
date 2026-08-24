@@ -554,7 +554,11 @@ Four things to know before touching it:
 
 Untracked siblings in this directory are **not** part of the project:
 `deps/` holds ~80 gitignored upstream checkouts (each its own repo, read-only
-research) and `ideas/` holds reference projects — crawler implementations, the
+research). **Never run `git` with the working directory inside `deps/`**: a
+`git add -A` from there filed 81 of those checkouts as gitlinks at the
+repository *root*, where `.gitignore`'s `/deps/` does not match them, and one
+commit went out carrying all 81. `cd` back first, or use `git -C
+~/code/jails`. `ideas/` holds reference projects — crawler implementations, the
 minicom stubs — cloned for study. Never edit or document either as if it were
 jails'. `deps.tsv` and `deps-update.sh` at the repo root *are* tracked.
 
