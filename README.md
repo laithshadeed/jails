@@ -68,6 +68,12 @@ their exit codes, so `jails doctor --json && deploy` behaves like
   same column names, which `add testkit`'s `Fixtures` loader reads. Two rows,
   not one: a single row cannot catch an ordering bug or a `findAll` that
   returns only the first result.
+  It also writes `requests/<name>.http`, a collection an editor can send, and
+  **the generated controller test sends the same body on every build** — one
+  builder, two readers, because a collection describing a request the record
+  refuses is a request nobody can make. The collection documents only what the
+  controller answers: a resource with an `@scope` field is create-only, since
+  every read has to carry the tenant and is therefore a `jails g query`.
 - `jails generate|g record <Name> [field:type ...]` — immutable data carrier
   with compact-constructor validation and a companion test. No persistence
   annotations are emitted.
