@@ -23,18 +23,19 @@ public record InboxRequest(
         @NotNull UUID id,
         @NotNull UUID workspaceId,
         @NotBlank String name,
-        @NotNull InboxChannel channel,
-        @NotNull Instant createdAt,
-        @NotNull Instant updatedAt) {
+        @NotNull InboxChannel channel) {
 
     /** @return the domain type this request describes. */
     public Inbox toDomain() {
+        // Set here, not received: these are audit columns, and one
+                 // instant so a freshly created row does not look already edited.
+                 Instant now = Instant.now();
         return new Inbox(
                 id,
                 workspaceId,
                 name,
                 channel,
-                createdAt,
-                updatedAt);
+                now,
+                now);
     }
 }

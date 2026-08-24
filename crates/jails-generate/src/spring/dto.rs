@@ -255,7 +255,12 @@ pub fn request_java_for(
     let components = components(&wire, true);
     let audited = wire.len() != fields.len();
     let preamble = if audited {
-        "        // Set here, not received: these are audit columns, and one\n                 // instant so a freshly created row does not look already edited.\n                 Instant now = Instant.now();\n"
+        concat!(
+            "        // Audit columns: set here rather than received, and one\n",
+            "        // instant for both, so a freshly created row does not look\n",
+            "        // already edited.\n",
+            "        Instant now = Instant.now();\n",
+        )
     } else {
         ""
     };
@@ -431,7 +436,21 @@ mod tests {
         assert!(!java.contains("Instant createdAt"), "{java}");
         assert!(!java.contains("Instant updatedAt"), "{java}");
         // One instant for both, so a freshly created row does not look edited.
-        assert!(java.contains("Instant now = Instant.now();"), "{java}");
+        // Indented as a statement in the method body: a continuation line
+        // whose leading whitespace survived into the literal put the comment
+        // and the declaration nine columns out, and nothing but reading the
+        // generated file would have said so.
+        assert!(
+            java.contains("\n        Instant now = Instant.now();\n"),
+            "{java}"
+        );
+        for line in java.lines().filter(|line| {
+            line.contains("// Audit columns")
+                || line.contains("// instant for both")
+                || line.contains("// already edited")
+        }) {
+            assert!(line.starts_with("        //"), "{line:?}");
+        }
         assert_eq!(java.matches("                now").count(), 2, "{java}");
         // Still imported: `Instant.now()` needs it even with no component.
         assert!(java.contains("import java.time.Instant;"), "{java}");

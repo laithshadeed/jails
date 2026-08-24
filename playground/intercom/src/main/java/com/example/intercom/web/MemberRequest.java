@@ -24,19 +24,20 @@ public record MemberRequest(
         @NotNull UUID workspaceId,
         @NotBlank String email,
         @NotBlank String displayName,
-        @NotNull MemberRole role,
-        @NotNull Instant createdAt,
-        @NotNull Instant updatedAt) {
+        @NotNull MemberRole role) {
 
     /** @return the domain type this request describes. */
     public Member toDomain() {
+        // Set here, not received: these are audit columns, and one
+                 // instant so a freshly created row does not look already edited.
+                 Instant now = Instant.now();
         return new Member(
                 id,
                 workspaceId,
                 email,
                 displayName,
                 role,
-                createdAt,
-                updatedAt);
+                now,
+                now);
     }
 }

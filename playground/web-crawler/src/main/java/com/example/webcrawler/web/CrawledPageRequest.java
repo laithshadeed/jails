@@ -23,19 +23,20 @@ public record CrawledPageRequest(
         @NotNull UUID crawlRunId,
         @NotNull URI url,
         @NotNull Integer statusCode,
-        @NotNull Instant discoveredAt,
-        @NotNull Instant createdAt,
-        @NotNull Instant updatedAt) {
+        @NotNull Instant discoveredAt) {
 
     /** @return the domain type this request describes. */
     public CrawledPage toDomain() {
+        // Set here, not received: these are audit columns, and one
+                 // instant so a freshly created row does not look already edited.
+                 Instant now = Instant.now();
         return new CrawledPage(
                 id,
                 crawlRunId,
                 url,
                 statusCode,
                 discoveredAt,
-                createdAt,
-                updatedAt);
+                now,
+                now);
     }
 }

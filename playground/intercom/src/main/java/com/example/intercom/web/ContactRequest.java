@@ -23,18 +23,19 @@ public record ContactRequest(
         @NotNull UUID id,
         @NotNull UUID workspaceId,
         @NotBlank String email,
-        String displayName,
-        @NotNull Instant createdAt,
-        @NotNull Instant updatedAt) {
+        String displayName) {
 
     /** @return the domain type this request describes. */
     public Contact toDomain() {
+        // Set here, not received: these are audit columns, and one
+                 // instant so a freshly created row does not look already edited.
+                 Instant now = Instant.now();
         return new Contact(
                 id,
                 workspaceId,
                 email,
                 Optional.ofNullable(displayName),
-                createdAt,
-                updatedAt);
+                now,
+                now);
     }
 }

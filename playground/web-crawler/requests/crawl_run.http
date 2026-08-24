@@ -10,11 +10,5 @@ Content-Type: application/json
   "status": "QUEUED",
   "pagesVisited": 1,
   "startedAt": null,
-  "finishedAt": null,
-  "createdAt": "2026-01-01T00:00:00Z",
-  "updatedAt": "2026-01-01T00:00:00Z"
+  "finishedAt": null
 }
-
-### List CrawlRun
-GET {{baseUrl}}/crawl-runs
-Accept: application/json

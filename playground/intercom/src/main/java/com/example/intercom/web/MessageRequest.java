@@ -24,19 +24,20 @@ public record MessageRequest(
         @NotNull UUID workspaceId,
         @NotNull UUID conversationId,
         @NotNull MessageDirection direction,
-        @NotBlank String body,
-        @NotNull Instant createdAt,
-        @NotNull Instant updatedAt) {
+        @NotBlank String body) {
 
     /** @return the domain type this request describes. */
     public Message toDomain() {
+        // Set here, not received: these are audit columns, and one
+                 // instant so a freshly created row does not look already edited.
+                 Instant now = Instant.now();
         return new Message(
                 id,
                 workspaceId,
                 conversationId,
                 direction,
                 body,
-                createdAt,
-                updatedAt);
+                now,
+                now);
     }
 }

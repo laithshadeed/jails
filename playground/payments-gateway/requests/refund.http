@@ -9,11 +9,5 @@ Content-Type: application/json
   "merchantId": "00000000-0000-0000-0000-000000000001",
   "paymentId": "00000000-0000-0000-0000-000000000001",
   "amountMinor": 1,
-  "reason": null,
-  "createdAt": "2026-01-01T00:00:00Z",
-  "updatedAt": "2026-01-01T00:00:00Z"
+  "reason": null
 }
-
-### List Refund
-GET {{baseUrl}}/refunds
-Accept: application/json

@@ -14,11 +14,5 @@ Content-Type: application/json
   "status": "AUTHORISED",
   "version": 1,
   "authorisedAt": null,
-  "capturedAt": null,
-  "createdAt": "2026-01-01T00:00:00Z",
-  "updatedAt": "2026-01-01T00:00:00Z"
+  "capturedAt": null
 }
-
-### List Payment
-GET {{baseUrl}}/payments
-Accept: application/json

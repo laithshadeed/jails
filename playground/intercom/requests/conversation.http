@@ -11,11 +11,5 @@ Content-Type: application/json
   "inboxId": "00000000-0000-0000-0000-000000000001",
   "status": "OPEN",
   "lastMessageAt": "2026-01-01T00:00:00Z",
-  "version": 1,
-  "createdAt": "2026-01-01T00:00:00Z",
-  "updatedAt": "2026-01-01T00:00:00Z"
+  "version": 1
 }
-
-### List Conversation
-GET {{baseUrl}}/conversations
-Accept: application/json

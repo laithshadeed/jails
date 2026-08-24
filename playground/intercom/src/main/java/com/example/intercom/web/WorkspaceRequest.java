@@ -20,16 +20,17 @@ import java.util.UUID;
  */
 public record WorkspaceRequest(
         @NotNull UUID id,
-        @NotBlank String name,
-        @NotNull Instant createdAt,
-        @NotNull Instant updatedAt) {
+        @NotBlank String name) {
 
     /** @return the domain type this request describes. */
     public Workspace toDomain() {
+        // Set here, not received: these are audit columns, and one
+                 // instant so a freshly created row does not look already edited.
+                 Instant now = Instant.now();
         return new Workspace(
                 id,
                 name,
-                createdAt,
-                updatedAt);
+                now,
+                now);
     }
 }

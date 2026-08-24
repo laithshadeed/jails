@@ -25,12 +25,13 @@ public record ConversationAssignmentRequest(
         @NotNull UUID memberId,
         @NotNull AssignmentStatus status,
         @NotNull Long version,
-        @NotNull Instant assignedAt,
-        @NotNull Instant createdAt,
-        @NotNull Instant updatedAt) {
+        @NotNull Instant assignedAt) {
 
     /** @return the domain type this request describes. */
     public ConversationAssignment toDomain() {
+        // Set here, not received: these are audit columns, and one
+                 // instant so a freshly created row does not look already edited.
+                 Instant now = Instant.now();
         return new ConversationAssignment(
                 id,
                 workspaceId,
@@ -39,7 +40,7 @@ public record ConversationAssignmentRequest(
                 status,
                 version,
                 assignedAt,
-                createdAt,
-                updatedAt);
+                now,
+                now);
     }
 }

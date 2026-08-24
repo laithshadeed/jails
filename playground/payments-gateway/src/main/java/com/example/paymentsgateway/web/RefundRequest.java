@@ -23,19 +23,20 @@ public record RefundRequest(
         @NotNull UUID merchantId,
         @NotNull UUID paymentId,
         @NotNull Long amountMinor,
-        String reason,
-        @NotNull Instant createdAt,
-        @NotNull Instant updatedAt) {
+        String reason) {
 
     /** @return the domain type this request describes. */
     public Refund toDomain() {
+        // Set here, not received: these are audit columns, and one
+                 // instant so a freshly created row does not look already edited.
+                 Instant now = Instant.now();
         return new Refund(
                 id,
                 merchantId,
                 paymentId,
                 amountMinor,
                 Optional.ofNullable(reason),
-                createdAt,
-                updatedAt);
+                now,
+                now);
     }
 }

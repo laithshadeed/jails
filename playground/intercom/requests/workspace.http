@@ -6,11 +6,5 @@ Content-Type: application/json
 
 {
   "id": "00000000-0000-0000-0000-000000000001",
-  "name": "sample-name",
-  "createdAt": "2026-01-01T00:00:00Z",
-  "updatedAt": "2026-01-01T00:00:00Z"
+  "name": "sample-name"
 }
-
-### List Workspace
-GET {{baseUrl}}/workspaces
-Accept: application/json

@@ -25,12 +25,13 @@ public record ConversationRequest(
         @NotNull UUID inboxId,
         @NotNull ConversationStatus status,
         @NotNull Instant lastMessageAt,
-        @NotNull Long version,
-        @NotNull Instant createdAt,
-        @NotNull Instant updatedAt) {
+        @NotNull Long version) {
 
     /** @return the domain type this request describes. */
     public Conversation toDomain() {
+        // Set here, not received: these are audit columns, and one
+                 // instant so a freshly created row does not look already edited.
+                 Instant now = Instant.now();
         return new Conversation(
                 id,
                 workspaceId,
@@ -39,7 +40,7 @@ public record ConversationRequest(
                 status,
                 lastMessageAt,
                 version,
-                createdAt,
-                updatedAt);
+                now,
+                now);
     }
 }

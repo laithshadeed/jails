@@ -26,12 +26,13 @@ public record CrawlRunRequest(
         @NotNull CrawlStatus status,
         @NotNull Long pagesVisited,
         Instant startedAt,
-        Instant finishedAt,
-        @NotNull Instant createdAt,
-        @NotNull Instant updatedAt) {
+        Instant finishedAt) {
 
     /** @return the domain type this request describes. */
     public CrawlRun toDomain() {
+        // Set here, not received: these are audit columns, and one
+                 // instant so a freshly created row does not look already edited.
+                 Instant now = Instant.now();
         return new CrawlRun(
                 id,
                 seedUrl,
@@ -39,7 +40,7 @@ public record CrawlRunRequest(
                 pagesVisited,
                 Optional.ofNullable(startedAt),
                 Optional.ofNullable(finishedAt),
-                createdAt,
-                updatedAt);
+                now,
+                now);
     }
 }

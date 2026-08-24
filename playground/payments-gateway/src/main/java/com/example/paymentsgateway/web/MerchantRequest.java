@@ -21,17 +21,18 @@ import java.util.UUID;
 public record MerchantRequest(
         @NotNull UUID id,
         @NotBlank String reference,
-        @NotBlank String displayName,
-        @NotNull Instant createdAt,
-        @NotNull Instant updatedAt) {
+        @NotBlank String displayName) {
 
     /** @return the domain type this request describes. */
     public Merchant toDomain() {
+        // Set here, not received: these are audit columns, and one
+                 // instant so a freshly created row does not look already edited.
+                 Instant now = Instant.now();
         return new Merchant(
                 id,
                 reference,
                 displayName,
-                createdAt,
-                updatedAt);
+                now,
+                now);
     }
 }

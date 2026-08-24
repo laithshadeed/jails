@@ -9,11 +9,5 @@ Content-Type: application/json
   "workspaceId": "00000000-0000-0000-0000-000000000001",
   "conversationId": "00000000-0000-0000-0000-000000000001",
   "direction": "INBOUND",
-  "body": "sample-body",
-  "createdAt": "2026-01-01T00:00:00Z",
-  "updatedAt": "2026-01-01T00:00:00Z"
+  "body": "sample-body"
 }
-
-### List Message
-GET {{baseUrl}}/messages
-Accept: application/json

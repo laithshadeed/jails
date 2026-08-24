@@ -9,11 +9,5 @@ Content-Type: application/json
   "crawlRunId": "00000000-0000-0000-0000-000000000001",
   "url": null,
   "statusCode": 1,
-  "discoveredAt": "2026-01-01T00:00:00Z",
-  "createdAt": "2026-01-01T00:00:00Z",
-  "updatedAt": "2026-01-01T00:00:00Z"
+  "discoveredAt": "2026-01-01T00:00:00Z"
 }
-
-### List CrawledPage
-GET {{baseUrl}}/crawled-pages
-Accept: application/json

@@ -31,12 +31,13 @@ public record PaymentRequest(
         @NotNull PaymentStatus status,
         @NotNull Long version,
         Instant authorisedAt,
-        Instant capturedAt,
-        @NotNull Instant createdAt,
-        @NotNull Instant updatedAt) {
+        Instant capturedAt) {
 
     /** @return the domain type this request describes. */
     public Payment toDomain() {
+        // Set here, not received: these are audit columns, and one
+                 // instant so a freshly created row does not look already edited.
+                 Instant now = Instant.now();
         return new Payment(
                 id,
                 merchantId,
@@ -48,7 +49,7 @@ public record PaymentRequest(
                 version,
                 Optional.ofNullable(authorisedAt),
                 Optional.ofNullable(capturedAt),
-                createdAt,
-                updatedAt);
+                now,
+                now);
     }
 }
