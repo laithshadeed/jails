@@ -156,7 +156,9 @@ pub fn sync(run: &Run) -> Result<Outcome> {
         // Same rule as `install`: a file this capability edits surgically is
         // a precondition of the plan, not an incidental read.
         for resource in &desired.resources {
-            if let ResourceKey::SpringTestImport { path, .. } = &resource.key {
+            if let ResourceKey::SpringTestImport { path, .. }
+            | ResourceKey::MarkedBlock { path, .. } = &resource.key
+            {
                 reads = reads.file(path.clone());
             }
         }

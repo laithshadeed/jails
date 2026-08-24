@@ -538,10 +538,21 @@ impl ProjectedProject {
                     return Ok(None);
                 };
                 let marked = Marked::new(marker.as_str());
-                match marked.strip_from(&text) {
-                    Some(without) => self.write_text(path, without),
-                    None => return Ok(None),
-                }
+                let Some(without) = marked.strip_from(&text) else {
+                    return Ok(None);
+                };
+                // The last block out takes the file with it. A property source
+                // holding nothing is not the same as one the reader keeps: it
+                // is a file jails created to have somewhere to put a block, and
+                // leaving an empty one behind would mean `destroy` did not
+                // return the project to where it started.
+                match without.trim().is_empty() {
+                    true => self.overlay.insert(path.clone(), ProjectedEntry::Deleted),
+                    false => {
+                        self.write_text(path, without);
+                        None
+                    }
+                };
                 Ok(Some(path.clone()))
             }
             ResourceKey::HumanConfigCapability(id) => {

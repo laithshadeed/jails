@@ -313,7 +313,7 @@ fn retiring(store: &ObservedStore, owner: &ResourceOwner) -> Result<ReadDeclarat
             // separately from the ones it does. `add db` splices `@Import`
             // into a test the reader wrote; the retirement reads that test
             // back.
-            ResourceKey::SpringTestImport { path, .. } => {
+            ResourceKey::SpringTestImport { path, .. } | ResourceKey::MarkedBlock { path, .. } => {
                 declaration = declaration.file(path.clone())
             }
             _ => {}
@@ -527,8 +527,16 @@ fn declaration(
         declaration = declaration.file(relative_path(project, &artifact.path)?);
     }
     for resource in &desired.resources {
-        if let ResourceKey::SpringTestImport { path, .. } = &resource.key {
-            declaration = declaration.file(path.clone());
+        match &resource.key {
+            // A surgical edit is made *in* a file this change does not own, so
+            // the file is a precondition of the plan rather than an incidental
+            // read: the executor rechecks it under the lock, and a block
+            // spliced into bytes that moved in between would be spliced into
+            // the wrong place.
+            ResourceKey::SpringTestImport { path, .. } | ResourceKey::MarkedBlock { path, .. } => {
+                declaration = declaration.file(path.clone());
+            }
+            _ => {}
         }
     }
     Ok(declaration)

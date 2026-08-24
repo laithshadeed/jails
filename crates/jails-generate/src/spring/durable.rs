@@ -75,6 +75,25 @@ fn job_test_java(pkg: &str, name: &str) -> String {
 /// same Environment and therefore keeps the same context-cache key.
 const DURABLE_JOB_TEST_PROPERTIES: &str = "src/test/resources/config/application.properties";
 
+/// One durable job's scheduler limits, as a change states them.
+///
+/// The plan's half of what `install_durable_job_test_properties` does
+/// imperatively. Stating it means a route planning from this recipe knows
+/// about the file at all -- the V1 write path wrote it as a side effect after
+/// the plan, so it was invisible to anything that reasons about a `Change`,
+/// and the file simply stopped being generated.
+pub fn durable_job_test_properties(name: &str) -> crate::model::MarkedBlock {
+    let property = crate::sql::snake_case(name).replace('_', "-");
+    crate::model::MarkedBlock {
+        path: DURABLE_JOB_TEST_PROPERTIES.to_string(),
+        marker: format!("durable-job-{property}"),
+        settings: vec![
+            format!("jobs.{property}.initial-delay=PT1H"),
+            format!("jobs.{property}.max-attempts=2"),
+        ],
+    }
+}
+
 /// Install one durable job's scheduler/retry limits into the app-wide test
 /// property source without touching another job's block or reader-owned
 /// properties around it.
@@ -618,6 +637,36 @@ mod durable_job_test_properties_tests {
             &format!("durable-properties-{tag}"),
             "<project></project>",
         )
+    }
+
+    /// The stated block and the installed one are the same bytes.
+    ///
+    /// They are two halves of one fact: the recipe states what it contributes
+    /// so a plan can carry it, and the V1 installer writes it directly. Two
+    /// spellings of one block is how a route and a direct call come to produce
+    /// projects that differ in a file neither of them owns.
+    #[test]
+    fn the_stated_block_is_the_block_that_gets_installed() {
+        let block = durable_job_test_properties("ItemDispatcher");
+        assert_eq!(block.path, DURABLE_JOB_TEST_PROPERTIES);
+        assert_eq!(block.marker, "durable-job-item-dispatcher");
+        assert_eq!(
+            block.settings,
+            [
+                "jobs.item-dispatcher.initial-delay=PT1H",
+                "jobs.item-dispatcher.max-attempts=2"
+            ]
+        );
+
+        let (root, project) = scratch("stated");
+        assert!(install_durable_job_test_properties(&project, "ItemDispatcher", false).unwrap());
+        let written = std::fs::read_to_string(root.join(DURABLE_JOB_TEST_PROPERTIES)).unwrap();
+        assert_eq!(
+            written,
+            crate::codemod::Marked::new(&block.marker).render(&block.rendered()),
+            "the recipe states a block the installer does not write"
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

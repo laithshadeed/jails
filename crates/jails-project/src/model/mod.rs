@@ -65,6 +65,46 @@ pub struct Change {
     pub properties: Vec<String>,
     pub legacy_deps: Vec<Dependency>,
     pub spring_test_import: Option<SpringTestImport>,
+    /// Marked blocks in files this change does not own whole.
+    ///
+    /// `src/test/resources/config/application.properties` is the case: one
+    /// durable job's scheduler limits, in a file every other durable job also
+    /// writes into and the reader may add to. It was a side effect of the V1
+    /// write path -- a `std::fs` call after the plan, outside the `Change` --
+    /// so a route planning from the same recipe simply did not know about it,
+    /// and the file stopped being generated.
+    pub marked: Vec<MarkedBlock>,
+}
+
+/// One `# jails:<marker>` block, as a change states it.
+///
+/// Keyed by path and marker rather than by content, because that is what makes
+/// removal exact: two durable jobs write two blocks into one file, and taking
+/// one out must leave the other and anything the reader put between them.
+///
+/// `settings` is a list of lines and deliberately not a body. abstract.md §4.1
+/// allows exactly one struct to carry the bytes of a file, and that is
+/// [`Artifact`]; this is a fragment *inside* somebody else's file, and holding
+/// its content as lines is what keeps it structurally incapable of being
+/// mistaken for the other thing. Every marked block jails writes is a list of
+/// settings, so nothing is lost by saying so.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MarkedBlock {
+    pub path: String,
+    pub marker: String,
+    pub settings: Vec<String>,
+}
+
+impl MarkedBlock {
+    /// The block's content, as `codemod` renders it between the markers.
+    pub fn rendered(&self) -> String {
+        let mut out = String::new();
+        for line in &self.settings {
+            out.push_str(line);
+            out.push('\n');
+        }
+        out
+    }
 }
 
 impl Change {
@@ -139,6 +179,22 @@ impl Change {
                 current.group_id == dep.group_id && current.artifact_id == dep.artifact_id
             }) {
                 self.legacy_deps.push(dep);
+            }
+        }
+        for block in other.marked {
+            match self
+                .marked
+                .iter()
+                .find(|current| current.path == block.path && current.marker == block.marker)
+            {
+                Some(current) if current.settings != block.settings => {
+                    return Err(format!(
+                        "conflicting `# jails:{}` block plans for {}",
+                        block.marker, block.path
+                    ));
+                }
+                Some(_) => {}
+                None => self.marked.push(block),
             }
         }
         self.spring_test_import = match (self.spring_test_import, other.spring_test_import) {

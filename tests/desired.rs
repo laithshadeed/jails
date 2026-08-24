@@ -194,6 +194,12 @@ fn what_v2_desires_is_what_v1_installs() {
                 jails_protocol::identity::ProjectPath::parse(relative.to_str().unwrap()).unwrap(),
             );
         }
+        // A block spliced into a file this change does not own is a read as
+        // much as a write: the splice lands in whatever is already there.
+        for block in &change.marked {
+            declaration = declaration
+                .file(jails_protocol::identity::ProjectPath::parse(&block.path).unwrap());
+        }
         // And every file it edits surgically. `add db` splices `@Import` into
         // the tests already on disk, and a projection can only overlay a path
         // its snapshot captured.
@@ -365,6 +371,12 @@ fn what_v2_desires_is_what_v1_generates() {
             declaration = declaration.file(
                 jails_protocol::identity::ProjectPath::parse(relative.to_str().unwrap()).unwrap(),
             );
+        }
+        // A block spliced into a file this change does not own is a read as
+        // much as a write: the splice lands in whatever is already there.
+        for block in &change.marked {
+            declaration = declaration
+                .file(jails_protocol::identity::ProjectPath::parse(&block.path).unwrap());
         }
         let (_snapshot, mut projection) =
             jails_project::capture::projected(&planned, &declaration).unwrap();

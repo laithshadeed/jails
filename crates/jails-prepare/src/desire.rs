@@ -111,6 +111,22 @@ pub fn contribution(
             .edits
             .push(SemanticEdit::ComposeService { key, value: spec });
     }
+    // A block in a file this change does not own whole: one durable job's
+    // limits in the app-wide test property source, beside another job's block
+    // and whatever the reader put between them. Keyed by path and marker, so
+    // removal takes exactly this one out.
+    for block in &change.marked {
+        let key = ResourceKey::MarkedBlock {
+            path: ProjectPath::parse(&block.path)?,
+            marker: jails_protocol::identity::MarkerId::parse(&block.marker)?,
+        };
+        let value = ResourceValue::MarkedBlock(block.rendered());
+        claim(&mut desired, owner, key.clone(), value)?;
+        desired.edits.push(SemanticEdit::MarkedBlock {
+            key,
+            body: block.rendered(),
+        });
+    }
     // A capability's property block is prose *and* settings, in the order it
     // wrote them, and a comment documents the line beneath it. Carrying the
     // pending lines forward is what lets a per-key resource own the
@@ -476,6 +492,42 @@ mod tests {
             Some(&desired.resources[0].key),
             "the file's body and its claim name the same resource"
         );
+    }
+
+    /// A block in a file the change does not own becomes a keyed claim.
+    ///
+    /// Keyed by path *and* marker, which is what makes removal exact: two
+    /// durable jobs write two blocks into one property file, and taking one
+    /// out has to leave the other and anything the reader put between them.
+    /// Owning the whole file instead would make `destroy` delete both.
+    #[test]
+    fn a_marked_block_is_claimed_by_its_path_and_its_marker() {
+        let change = Change {
+            marked: vec![jails_project::model::MarkedBlock {
+                path: "src/test/resources/config/application.properties".to_string(),
+                marker: "durable-job-item-dispatcher".to_string(),
+                settings: vec!["jobs.item-dispatcher.max-attempts=2".to_string()],
+            }],
+            ..Change::default()
+        };
+        let desired = contribution(&owner(), &change, &project().1).unwrap();
+        let ResourceKey::MarkedBlock { path, marker } = &desired.resources[0].key else {
+            panic!(
+                "expected a marked block, got {:?}",
+                desired.resources[0].key
+            );
+        };
+        assert_eq!(
+            path.to_string(),
+            "src/test/resources/config/application.properties"
+        );
+        assert_eq!(marker.as_str(), "durable-job-item-dispatcher");
+        // And the file is not claimed whole: nothing here owns it.
+        assert!(desired.files.is_empty(), "{:?}", desired.files);
+        assert!(matches!(
+            desired.edits.first(),
+            Some(SemanticEdit::MarkedBlock { .. })
+        ));
     }
 
     #[test]

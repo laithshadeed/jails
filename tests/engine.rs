@@ -3266,6 +3266,53 @@ fn migrating_a_project_removes_the_registry_it_replaced() {
     assert!(after.legacy.is_none(), "the store still claims a migration");
 }
 
+/// The block a recipe puts in somebody else's file is part of its plan.
+///
+/// `g durable-job` writes one job's scheduler limits into the app-wide test
+/// property source, beside every other job's block and whatever the reader put
+/// between them. V1 did it as a side effect *after* the plan -- a `std::fs`
+/// call outside the `Change` -- so anything reasoning about a change did not
+/// know the file existed, and the route that plans from the same recipe left
+/// it unwritten. The whole scenario runs here because that is the only way to
+/// reach the recipe: a durable job needs the use case it invokes and the
+/// resource that proves completion.
+#[test]
+fn a_recipe_states_the_block_it_puts_in_somebody_elses_file() {
+    let root = common::temp_dir("engine-marked-block");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_spring_fixture(&root);
+    let scenario = common::scenarios::SCENARIOS
+        .iter()
+        .find(|s| s.name == "association-durable-job")
+        .expect("the durable-job scenario");
+    for step in scenario.steps {
+        route_step(&root, step).unwrap_or_else(|why| panic!("{step:?}: {why}"));
+    }
+
+    let at = root.join("src/test/resources/config/application.properties");
+    let text = std::fs::read_to_string(&at).unwrap_or_else(|why| panic!("not written: {why}"));
+    assert!(
+        text.contains("# jails:durable-job-item-dispatcher"),
+        "{text}"
+    );
+    assert!(
+        text.contains("jobs.item-dispatcher.max-attempts=2"),
+        "{text}"
+    );
+
+    // And the last block out takes the file with it: an empty property source
+    // is one jails created to have somewhere to put a block, not one the
+    // reader keeps.
+    jails_engine::route::destroy(
+        &committing(&Project::load(&root).unwrap()),
+        jails_spec::spec::kind::ArtifactKind::DurableJob,
+        "ItemDispatcher",
+        None,
+    )
+    .unwrap();
+    assert!(!at.exists(), "an empty property source was left behind");
+}
+
 /// The compose block a capability writes has to be a compose file.
 ///
 /// The canonical `ComposeServiceSpec` mapping is stored dedented -- stated

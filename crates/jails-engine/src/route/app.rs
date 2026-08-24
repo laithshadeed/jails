@@ -214,7 +214,9 @@ fn declare(
         .iter()
         .flat_map(|ledger| ledger.resources.iter())
     {
-        if let ResourceKey::WholeFile(path) | ResourceKey::SpringTestImport { path, .. } = &row.key
+        if let ResourceKey::WholeFile(path)
+        | ResourceKey::SpringTestImport { path, .. }
+        | ResourceKey::MarkedBlock { path, .. } = &row.key
         {
             reads = reads.file(path.clone());
         }
@@ -267,7 +269,9 @@ fn widen(
         reads = reads.file(relative_path(project, &artifact.path)?);
     }
     for resource in &desired.resources {
-        if let ResourceKey::SpringTestImport { path, .. } = &resource.key {
+        if let ResourceKey::SpringTestImport { path, .. } | ResourceKey::MarkedBlock { path, .. } =
+            &resource.key
+        {
             reads = reads.file(path.clone());
         }
     }

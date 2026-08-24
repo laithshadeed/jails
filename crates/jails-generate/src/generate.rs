@@ -195,6 +195,12 @@ pub fn plan_recipe(
     {
         change.deps.push(crate::pom::WEBMVC_TEST_STARTER);
     }
+    // The one block a recipe contributes to a file it does not own whole.
+    if kind == ArtifactKind::DurableJob {
+        change
+            .marked
+            .push(crate::spring::durable_job_test_properties(&name));
+    }
 
     Ok(change)
 }
