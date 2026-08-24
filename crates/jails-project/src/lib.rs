@@ -23,6 +23,7 @@ pub mod compat;
 pub mod compose;
 pub mod config;
 pub mod generated_files;
+pub mod gradle;
 pub mod inspect;
 pub mod junit;
 pub mod maven;

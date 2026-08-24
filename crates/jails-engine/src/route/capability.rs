@@ -36,7 +36,7 @@ pub fn install(run: &Run, asked: &Declaration) -> Result<Outcome> {
     // here rather than at the dispatch point, because it is a property of the
     // project a capability plans against and every caller of this route --
     // `add`, `sync`, and an aggregate `app apply` -- needs it equally.
-    jails_generate::add::require_java_release(project.java_release())?;
+    jails_generate::add::require_java_release(project.build(), project.java_release())?;
     let (id, spec) = asked.resolve(project)?;
     let declared_as = Declaration::of(&id, &spec);
     let owner = ResourceOwner::Entity(EntityId::Capability(id.clone()));

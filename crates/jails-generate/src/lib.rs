@@ -22,7 +22,9 @@ pub mod sql;
 // `crate::…` wherever it ships. Only this block knows which crate a module
 // actually lives in, which is what makes moving one a one-line change.
 pub(crate) use jails_java::{java, template};
-pub(crate) use jails_project::{compose, config, generated_files, inspect, model, pom, project};
+pub(crate) use jails_project::{
+    compose, config, generated_files, gradle, inspect, model, pom, project,
+};
 pub(crate) use jails_spec::{build, spec};
 pub(crate) use jails_support::{apply, codemod, json};
 

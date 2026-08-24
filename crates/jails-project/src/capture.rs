@@ -112,6 +112,13 @@ pub fn capture(root: &CanonicalRoot, declaration: &ReadDeclaration) -> Result<Pr
 pub fn capability_reads() -> Result<ReadDeclaration> {
     Ok(ReadDeclaration::new()
         .file(ProjectPath::parse("pom.xml")?)
+        // Both build files, always. Which one a project has is not this
+        // function's to decide -- it declares what *may* be read, and a
+        // projection can only overlay a path its snapshot captured. Declaring
+        // only the one that exists would make the read set depend on the
+        // project, and two runs of one command would then guard different
+        // preconditions.
+        .file(ProjectPath::parse(crate::gradle::FILE)?)
         .file(ProjectPath::parse("compose.yaml")?)
         .file(ProjectPath::parse(
             "src/main/resources/application.properties",

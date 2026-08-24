@@ -16,6 +16,7 @@
 //! `jails add <TAB>`, and the doc comment on each variant becomes its
 //! completion description.
 
+use crate::build::Build;
 use crate::compose::{self};
 use crate::generate::{base_package, main_dir, test_dir};
 use crate::model::{Artifact, Change, Layer, Project, Slice, SpringTestImport};
@@ -59,18 +60,47 @@ pub use crate::spec::kind::Capability;
 
 /// The project must be able to compile what a capability installs.
 ///
-/// `pub` because both write paths need it and there must not be two copies:
-/// V1's `add_in` and the V2 capability route ask the same question of the same
-/// resolved `Project`.
-pub fn require_java_release(release: Option<u32>) -> Result<()> {
+/// The fix has to be spelled in the build file the reader actually has. An
+/// instruction to add `<maven.compiler.release>` is not something a Gradle
+/// project can carry out, and a refusal whose remedy does not apply is a wall
+/// rather than a route forward -- the same defect as telling a Gradle build to
+/// add a Maven plugin.
+pub fn require_java_release(build: Build, release: Option<u32>) -> Result<()> {
+    let (raise, add) = match build {
+        Build::Gradle => (
+            format!(
+                "Raise `sourceCompatibility`/`targetCompatibility` (or the `java {{ toolchain }}` \
+                 block) to at least {MIN_RELEASE} in {} and try again.",
+                crate::gradle::FILE
+            ),
+            format!(
+                "Add `sourceCompatibility = {TARGET_RELEASE}` to {} and try again.",
+                crate::gradle::FILE
+            ),
+        ),
+        _ => (
+            format!(
+                "Raise <maven.compiler.release> (or <java.version>) to at least {MIN_RELEASE} in \
+                 pom.xml and try again."
+            ),
+            format!(
+                "Add <maven.compiler.release>{TARGET_RELEASE}</maven.compiler.release> to \
+                 <properties> and try again."
+            ),
+        ),
+    };
     match release {
         Some(level) if level < MIN_RELEASE => Err(format!(
-            "this project targets Java {level}, but jails generates Java {MIN_RELEASE}+ code.\n       \
-             Raise <maven.compiler.release> (or <java.version>) to at least {MIN_RELEASE} in pom.xml and try again."
+            "this project targets Java {level}, but jails generates Java {MIN_RELEASE}+ \
+             code.\n       {raise}"
         )),
         None => Err(format!(
-            "pom.xml does not set a Java release level, and jails generates Java {MIN_RELEASE}+ code.\n       \
-             Add <maven.compiler.release>{TARGET_RELEASE}</maven.compiler.release> to <properties> and try again."
+            "{} does not set a Java release level, and jails generates Java {MIN_RELEASE}+ \
+             code.\n       {add}",
+            match build {
+                Build::Gradle => crate::gradle::FILE,
+                _ => "pom.xml",
+            }
         )),
         Some(_) => Ok(()),
     }
@@ -99,7 +129,7 @@ pub fn preflight_in(
     if capabilities.len() < 2 {
         return Ok(());
     }
-    require_java_release(project.java_release())?;
+    require_java_release(project.build(), project.java_release())?;
     let mut combined = Change::default();
     for &capability in capabilities {
         let planned = plan_named(capability, project, name, package).map_err(|why| {

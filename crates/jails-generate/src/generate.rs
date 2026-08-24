@@ -159,7 +159,7 @@ pub fn plan_recipe(
         ..Change::default()
     };
     if writes_a_test(&change.files)
-        && !crate::pom::has_dependency(project.pom(), "org.assertj", "assertj-core")
+        && project.lacks_dependency("org.assertj", "assertj-core")
         && !project.pom().contains("spring-boot-starter-test")
         && !project.pom().contains("spring-boot-starter-webmvc-test")
     {
@@ -187,8 +187,7 @@ pub fn plan_recipe(
         ));
     }
     if writes_a_webmvc_test(&change.files)
-        && !crate::pom::has_dependency(
-            project.pom(),
+        && project.lacks_dependency(
             "org.springframework.boot",
             "spring-boot-starter-webmvc-test",
         )

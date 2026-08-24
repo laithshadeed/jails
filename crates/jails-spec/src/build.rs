@@ -48,6 +48,14 @@ use std::path::Path;
 pub enum Build {
     /// A `pom.xml`. Everything works.
     Maven,
+    /// A Groovy `build.gradle` that `gradle::` can read and splice.
+    ///
+    /// Deliberately *not* every file with `gradle` in the name: a
+    /// `build.gradle.kts` is a different language, and a multi-module build
+    /// whose root holds only `settings.gradle` declares no dependencies to
+    /// read. Both of those stay `Foreign`, because naming a file is not
+    /// understanding it and this enum is what decides whether jails will act.
+    Gradle,
     /// A build jails recognises by filename and will not read.
     Foreign(&'static str),
     /// Java sources and no build file jails knows.
@@ -59,24 +67,36 @@ pub enum Build {
 /// Ordered so that a directory holding both a `pom.xml` and a `build.gradle`
 /// -- a migration in progress -- is read as Maven, which is the one of the two
 /// jails can actually act on.
-const MARKERS: &[(&str, Option<&str>)] = &[
-    ("pom.xml", None),
-    ("build.gradle", Some("Gradle")),
-    ("build.gradle.kts", Some("Gradle")),
+const MARKERS: &[(&str, Marker)] = &[
+    ("pom.xml", Marker::Maven),
+    ("build.gradle", Marker::Gradle),
+    // Kotlin DSL is a different grammar. Recognised as a root so the commands
+    // that need no build file still work, and never read.
+    ("build.gradle.kts", Marker::Foreign("Gradle")),
     // A multi-module Gradle build puts `build.gradle` in `app/` and only
     // `settings.gradle` at the top, so the settings file has to count as a
-    // root or `jails` run from the top finds nothing.
-    ("settings.gradle", Some("Gradle")),
-    ("settings.gradle.kts", Some("Gradle")),
-    ("build.xml", Some("Ant")),
-    ("BUILD.bazel", Some("Bazel")),
+    // root or `jails` run from the top finds nothing. It declares no
+    // dependencies, so there is nothing for `gradle::` to read.
+    ("settings.gradle", Marker::Foreign("Gradle")),
+    ("settings.gradle.kts", Marker::Foreign("Gradle")),
+    ("build.xml", Marker::Foreign("Ant")),
+    ("BUILD.bazel", Marker::Foreign("Bazel")),
 ];
+
+/// What finding a marker file means.
+#[derive(Clone, Copy)]
+enum Marker {
+    Maven,
+    Gradle,
+    Foreign(&'static str),
+}
 
 impl Build {
     /// What to call it in a message.
     pub fn name(self) -> &'static str {
         match self {
             Build::Maven => "Maven",
+            Build::Gradle => "Gradle",
             Build::Foreign(name) => name,
             Build::Bare => "no build tool",
         }
@@ -85,15 +105,25 @@ impl Build {
 
 /// What builds this directory. Never reads a build file, only names it.
 pub fn detect(root: &Path) -> Build {
-    for (marker, foreign) in MARKERS {
+    for (marker, kind) in MARKERS {
         if root.join(marker).is_file() {
-            return match foreign {
-                None => Build::Maven,
-                Some(name) => Build::Foreign(name),
+            return match kind {
+                Marker::Maven => Build::Maven,
+                Marker::Gradle => Build::Gradle,
+                Marker::Foreign(name) => Build::Foreign(name),
             };
         }
     }
     Build::Bare
+}
+
+/// Whether jails can read and edit this project's build file.
+///
+/// The one question every "does this work here" decision should ask. It is not
+/// the same as "is there a build file": an Ant project has one and jails will
+/// not touch it.
+pub fn is_readable(build: Build) -> bool {
+    matches!(build, Build::Maven | Build::Gradle)
 }
 
 /// Refuse a command that cannot work without Maven, and say why.
@@ -103,11 +133,12 @@ pub fn detect(root: &Path) -> Build {
 /// route forward rather than a wall -- half of jails is useful here.
 pub fn require_maven(build: Build, command: &str) -> Result<()> {
     match build {
-        Build::Maven => Ok(()),
+        Build::Maven | Build::Gradle => Ok(()),
         _ => Err(format!(
-            "`jails {command}` needs a Maven project, and this one is built by {}.\n       \
-             jails never reads, writes, parses or invokes a foreign build file -- naming one \
-             is not understanding it.\n       \
+            "`jails {command}` needs a build file jails can read, and this one is built by \
+             {}.\n       jails reads Maven and Groovy Gradle builds; naming any other file is \
+             not understanding it, and a tool that half-understands a build reports \
+             dependencies the build does not have.\n       \
              fix: `routes`, `beans`, `stats`, `notes`, `why`, `explain`, `rename`, `doctor` \
              and most of `generate` work here as they are.",
             build.name()

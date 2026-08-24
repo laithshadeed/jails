@@ -95,7 +95,7 @@ pub fn with_test_support(project: &Project, mut change: Change) -> Change {
             .any(|file| file.path.to_string_lossy().contains(suffix))
     };
     if writes("src/test/java")
-        && !jails_project::pom::has_dependency(project.pom(), "org.assertj", "assertj-core")
+        && project.lacks_dependency("org.assertj", "assertj-core")
         && !project.pom().contains("spring-boot-starter-test")
         && !project.pom().contains("spring-boot-starter-webmvc-test")
     {
@@ -115,8 +115,7 @@ pub fn with_test_support(project: &Project, mut change: Change) -> Change {
     // same reason the two above are: a rule every recipe has to remember is
     // a rule that decays.
     if jails_generate::generate::writes_a_webmvc_test(&change.files)
-        && !jails_project::pom::has_dependency(
-            project.pom(),
+        && project.lacks_dependency(
             "org.springframework.boot",
             "spring-boot-starter-webmvc-test",
         )
@@ -132,11 +131,7 @@ pub fn with_test_support(project: &Project, mut change: Change) -> Change {
     // to a broken provider, and the dependency is what the property is *about*.
     if project.flavor() == jails_project::pom::Flavor::SpringBoot
         && !change.compose.is_empty()
-        && !jails_project::pom::has_dependency(
-            project.pom(),
-            "org.springframework.boot",
-            "spring-boot-docker-compose",
-        )
+        && project.lacks_dependency("org.springframework.boot", "spring-boot-docker-compose")
     {
         change.deps.push(jails_project::pom::SPRING_DOCKER_COMPOSE);
     }

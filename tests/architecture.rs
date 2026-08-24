@@ -738,6 +738,7 @@ const LAYERS: &[(&str, usize)] = &[
     ("snapshot", 3),
     ("transition", 3),
     // jails-project: the resolved project and everything jails records about it.
+    ("gradle", 4),
     ("pom", 4),
     ("maven", 4),
     ("capability", 4),

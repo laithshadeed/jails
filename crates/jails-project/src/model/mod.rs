@@ -11,6 +11,7 @@ use jails_protocol::identity::ProjectPath;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use crate::build::Build;
 use crate::compose::Service as ComposeService;
 use crate::config::Config;
 use crate::pom::{self, Dependency, Flavor};
@@ -388,6 +389,38 @@ pub struct Project {
 }
 
 impl Project {
+    /// Whether this project is known to declare a dependency already.
+    ///
+    /// `None` is a real answer and means *the build file says something jails
+    /// cannot read*, which a Gradle build can do and a POM cannot. It is
+    /// deliberately not collapsed here, so a caller that needs certainty can
+    /// ask for it.
+    pub fn declares_dependency(&self, group_id: &str, artifact_id: &str) -> Option<bool> {
+        match self.build {
+            crate::build::Build::Gradle => {
+                crate::gradle::has_dependency(&self.pom, group_id, artifact_id)
+            }
+            _ => Some(pom::has_dependency(&self.pom, group_id, artifact_id)),
+        }
+    }
+
+    /// Whether a change should plan to add this dependency.
+    ///
+    /// **Reads may be optimistic here, because the write is authoritative.**
+    /// Planning to add something already present is a no-op -- both splices
+    /// return "nothing to do" -- and planning to add it into a build file
+    /// jails cannot read is a *refusal* raised by the splice, naming the file.
+    /// So an unreadable build resolves to "plan it" and the honest error
+    /// arrives from the one place that can be sure, rather than from a guess
+    /// made here.
+    ///
+    /// The opposite composition is what would hurt: treating "cannot read" as
+    /// "already there" silently drops a dependency the generated code needs,
+    /// and the reader meets it as a compile error in a file they did not write.
+    pub fn lacks_dependency(&self, group_id: &str, artifact_id: &str) -> bool {
+        self.declares_dependency(group_id, artifact_id) != Some(true)
+    }
+
     /// Resolve project facts exactly once from a known Maven module root.
     pub fn load(root: &Path) -> Result<Self> {
         // Every command that writes resolves a project first, so this is the
@@ -402,14 +435,21 @@ impl Project {
         // stops a command that needs the real answer from running on a guess.
         let pom = match build {
             crate::build::Build::Maven => pom::read(root)?,
+            crate::build::Build::Gradle => std::fs::read_to_string(root.join(crate::gradle::FILE))
+                .map_err(|error| {
+                    format!(
+                        "failed to read {}: {error}",
+                        root.join(crate::gradle::FILE).display()
+                    )
+                })?,
             _ => String::new(),
         };
         let config = Config::load(root)?;
         Ok(Self {
             root: root.to_path_buf(),
             base: crate::spec::base_package(root)?,
-            flavor: pom::flavor(&pom),
-            java_release: pom::release_level(&pom),
+            flavor: build_flavor(build, &pom),
+            java_release: build_release_level(build, &pom),
             layers: Layers::from_config(&config),
             installed: config.capabilities().to_vec(),
             declared: config.declarations().to_vec(),
@@ -835,6 +875,22 @@ impl<'a> Slice<'a> {
     /// dependencies and therefore whether a spliced pom is readable at all.
     pub fn flavor(&self) -> Flavor {
         self.project.flavor()
+    }
+}
+
+/// Spring Boot's dependency management, whichever build file declares it.
+fn build_flavor(build: Build, text: &str) -> Flavor {
+    match build {
+        Build::Gradle => crate::gradle::flavor(text),
+        _ => pom::flavor(text),
+    }
+}
+
+/// The Java release this project targets, whichever build file states it.
+fn build_release_level(build: Build, text: &str) -> Option<u32> {
+    match build {
+        Build::Gradle => crate::gradle::release_level(text),
+        _ => pom::release_level(text),
     }
 }
 

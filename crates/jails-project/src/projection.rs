@@ -323,7 +323,7 @@ impl ProjectedProject {
     fn apply_edit(&mut self, edit: &SemanticEdit) -> Result<Option<ProjectPath>> {
         match edit {
             SemanticEdit::MavenDependency { value, .. } => {
-                let path = pom_path()?;
+                let path = self.build_file_path()?;
                 let Some(text) = self.optional_text(&path)? else {
                     return Ok(None);
                 };
@@ -337,16 +337,23 @@ impl ProjectedProject {
                     jails_protocol::coordinate::MavenScope::Compile => None,
                     other => Some(other.label()),
                 };
-                let spliced = pom::add_dependency_ref(
-                    &text,
-                    DependencyRef {
-                        group_id: value.coordinate.group_id.as_str(),
-                        artifact_id: value.coordinate.artifact_id.as_str(),
-                        version,
-                        scope,
-                        optional: value.optional,
-                    },
-                )?;
+                let declaration = DependencyRef {
+                    group_id: value.coordinate.group_id.as_str(),
+                    artifact_id: value.coordinate.artifact_id.as_str(),
+                    version,
+                    scope,
+                    optional: value.optional,
+                };
+                // One claim, two build files. The `Maven` in the edit's name is
+                // the *coordinate's* -- `group:artifact:version` is what both
+                // tools resolve against -- not the tool's, which is why a
+                // Gradle project needs no second `SemanticEdit` variant and no
+                // second recipe. Only the rendering differs, and it differs
+                // here.
+                let spliced = match self.build {
+                    Build::Gradle => crate::gradle::add_dependency_ref(&text, declaration)?,
+                    _ => pom::add_dependency_ref(&text, declaration)?,
+                };
                 self.write_text(&path, spliced.unwrap_or(text));
                 Ok(Some(path))
             }
@@ -420,11 +427,15 @@ impl ProjectedProject {
             // entry point at all is a Spring Boot project where the plugin
             // finds `@SpringBootApplication` itself -- nothing to claim.
             SemanticEdit::MavenMainClass { class, .. } => {
-                let path = pom_path()?;
+                let path = self.build_file_path()?;
                 let Some(text) = self.optional_text(&path)? else {
                     return Ok(None);
                 };
-                match pom::with_main_class(&text, &class.qualified()) {
+                let moved = match self.build {
+                    Build::Gradle => crate::gradle::with_main_class(&text, &class.qualified()),
+                    _ => pom::with_main_class(&text, &class.qualified()),
+                };
+                match moved {
                     Some(updated) => self.write_text(&path, updated),
                     None => return Ok(None),
                 }
@@ -494,6 +505,20 @@ impl ProjectedProject {
                 self.write_text(&path, spliced);
                 Ok(Some(path))
             }
+        }
+    }
+
+    /// The build file this project's dependency and entry-point edits land in.
+    ///
+    /// One question asked once. Every arm that splices a build file goes
+    /// through it, so a project cannot have its dependency written to
+    /// `pom.xml` and its entry point to `build.gradle` -- which is exactly the
+    /// shape a per-arm `if` decays into the first time somebody adds a fourth
+    /// arm and copies the third.
+    fn build_file_path(&self) -> Result<ProjectPath> {
+        match self.build {
+            Build::Gradle => gradle_path(),
+            _ => pom_path(),
         }
     }
 
@@ -847,6 +872,10 @@ fn source_of(key: &ProjectFactKey) -> FactKind {
 
 fn pom_path() -> Result<ProjectPath> {
     ProjectPath::parse("pom.xml")
+}
+
+fn gradle_path() -> Result<ProjectPath> {
+    ProjectPath::parse(crate::gradle::FILE)
 }
 
 /// Where a type's source lives, by the convention every Java build follows.

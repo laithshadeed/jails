@@ -3030,20 +3030,25 @@ fn a_commit_with_no_container_reports_no_runtime_attempt() {
 
 /// A project whose build file jails does not read still gets the Java.
 ///
-/// `build.rs`'s whole point: recognising a filename is not understanding a
-/// build, and about ten of thirty commands need Maven at all. So `generate`
-/// emits the code and the dependency claim splices into nothing -- the claim
-/// itself survives in the store, which is what lets `doctor` say the
+/// `build.rs`'s widened door: recognising a filename is not understanding a
+/// build, and about ten of thirty commands need to read one at all. So
+/// `generate` emits the code and the dependency claim splices into nothing --
+/// the claim itself survives in the store, which is what lets `doctor` say the
 /// dependency is missing instead of the reader finding out at compile time.
 ///
 /// A capability is not exempted and refuses first: installing the code and
 /// silently skipping the dependency hands the reader a compile error for a
 /// line they did not write.
+///
+/// The fixture is Kotlin DSL deliberately. Groovy `build.gradle` is *read*
+/// now; `build.gradle.kts` is a different grammar, and a parser aimed at one
+/// that guessed at the other is the confident wrong answer this whole boundary
+/// exists to prevent.
 #[test]
 fn a_foreign_build_gets_the_code_and_a_capability_still_refuses() {
     let root = common::temp_dir("engine-foreign-build");
     std::fs::create_dir_all(root.join("src/main/java/com/example/demo")).unwrap();
-    std::fs::write(root.join("build.gradle"), "plugins { id 'java' }\n").unwrap();
+    std::fs::write(root.join("build.gradle.kts"), "plugins { java }\n").unwrap();
     std::fs::write(
         root.join("src/main/java/com/example/demo/App.java"),
         "package com.example.demo;\n\npublic class App {}\n",
@@ -3064,7 +3069,7 @@ fn a_foreign_build_gets_the_code_and_a_capability_still_refuses() {
     assert!(
         root.join("src/main/java/com/example/demo/domain/Note.java")
             .is_file(),
-        "a Gradle project got no code"
+        "a Kotlin-DSL Gradle project got no code"
     );
     assert!(!root.join("pom.xml").exists(), "jails wrote a build file");
 
@@ -3074,6 +3079,58 @@ fn a_foreign_build_gets_the_code_and_a_capability_still_refuses() {
     )
     .unwrap_err();
     assert!(refused.contains("json"), "{refused}");
+}
+
+/// A Groovy Gradle project gets the code **and** the dependency.
+///
+/// The whole point of reading `build.gradle`: before it, `add` refused here
+/// and `generate` wrote code with a note listing the coordinates the reader
+/// had to splice by hand. The claim is the same `SemanticEdit::MavenDependency`
+/// a POM gets -- `group:artifact:version` is what both tools resolve against
+/// -- so only the rendering differs.
+#[test]
+fn a_groovy_gradle_project_gets_the_code_and_the_dependency() {
+    let root = common::temp_dir("engine-gradle-build");
+    std::fs::create_dir_all(root.join("src/main/java/com/example/demo")).unwrap();
+    std::fs::write(
+        root.join("build.gradle"),
+        r#"plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.2.0'
+}
+
+sourceCompatibility = 25
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+}
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("src/main/java/com/example/demo/App.java"),
+        "package com.example.demo;\n\npublic class App {}\n",
+    )
+    .unwrap();
+
+    jails_engine::route::install(
+        &committing(&Project::load(&root).unwrap()),
+        &Declaration::plain(Capability::Json),
+    )
+    .expect("a capability jails can splice into a build file it can read");
+
+    let build = std::fs::read_to_string(root.join("build.gradle")).unwrap();
+    assert!(
+        build.contains("tools.jackson.core:jackson-databind"),
+        "the dependency was not spliced: {build}"
+    );
+    // Every other byte is the reader's and stays theirs.
+    assert!(build.starts_with("plugins {\n    id 'java'\n"), "{build}");
+    assert!(build.contains("sourceCompatibility = 25"), "{build}");
+    assert!(
+        build.contains("implementation 'org.springframework.boot:spring-boot-starter-web'"),
+        "{build}"
+    );
 }
 
 /// A plan and the commit that follows it read the same way.
