@@ -1123,6 +1123,57 @@ fn app_manifest_refuses_an_intent_update_without_git_before_writing() {
 }
 
 #[test]
+fn a_timestamped_scaffold_does_not_ask_the_caller_for_its_audit_columns() {
+    // `jails g scaffold --help` promises "the generated create path supplies
+    // both". It did not: they arrived as `@NotNull` wire components, so the
+    // documented POST answered 400 naming two fields the caller has no
+    // business setting -- found by sending it at a running application.
+    let root = temp_dir("scaffold-timestamps-wire");
+    write_spring_fixture(&root);
+    assert!(
+        jails_cmd(&root, None)
+            .args([
+                "g",
+                "scaffold",
+                "Note",
+                "id:uuid@pk",
+                "title:string!",
+                "--timestamps",
+            ])
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let request =
+        fs::read_to_string(root.join("src/main/java/com/example/demo/web/NoteRequest.java"))
+            .unwrap();
+    assert!(!request.contains("Instant createdAt"), "{request}");
+    assert!(!request.contains("Instant updatedAt"), "{request}");
+    assert!(
+        request.contains("Instant now = Instant.now();"),
+        "{request}"
+    );
+
+    // The record still declares them, and the response still returns them: the
+    // server sets these, it does not hide them.
+    let record =
+        fs::read_to_string(root.join("src/main/java/com/example/demo/domain/Note.java")).unwrap();
+    assert!(record.contains("Instant createdAt"), "{record}");
+    let response =
+        fs::read_to_string(root.join("src/main/java/com/example/demo/web/NoteResponse.java"))
+            .unwrap();
+    assert!(response.contains("Instant createdAt"), "{response}");
+
+    // And the sendable collection describes a request that can be made.
+    let requests = fs::read_to_string(root.join("requests/note.http")).unwrap();
+    assert!(!requests.contains("createdAt"), "{requests}");
+    // No `### List`: the scaffold's controller carries one @PostMapping, so
+    // that block answered 405 in every project jails has ever generated.
+    assert!(!requests.contains("GET {{baseUrl}}"), "{requests}");
+}
+
+#[test]
 fn app_apply_keys_a_suffixed_name_to_the_row_generate_writes() {
     // `generate` strips a suffix its kind already implies, so `fetcher
     // AcquirerFetcher` writes files under `Acquirer`. `app apply` records the

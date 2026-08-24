@@ -18,7 +18,7 @@ public record {{name}}Request(
 
     /** @return the domain type this request describes. */
     public {{name}} toDomain() {
-        return new {{name}}(
+{{preamble}}        return new {{name}}(
 {{arguments}});
     }
 }

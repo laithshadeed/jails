@@ -2,10 +2,8 @@ package com.example.paymentsgateway.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.example.paymentsgateway.TestcontainersConfig;
 import java.util.List;
 import org.junit.jupiter.api.Test;
-import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
 import org.springframework.test.web.servlet.setup.StandaloneMockMvcBuilder;
@@ -14,7 +12,6 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * Drives the advice through a standalone MockMvc rather than a
-@Import(TestcontainersConfig.class)
  * {@code @SpringBootTest}: no application context, no database, no port, so
  * it runs in milliseconds and keeps failing for exactly one reason.
  *

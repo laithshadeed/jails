@@ -185,6 +185,57 @@ fn needs_optional(fields: &[crate::generate::Field]) -> bool {
     fields.iter().any(is_optional)
 }
 
+/// The two components `--timestamps` adds, which a client never sends.
+///
+/// `--timestamps` deliberately expands into ordinary `createdAt`/`updatedAt`
+/// components before any recipe sees the flag, so the record, the DDL and the
+/// response treat them as spec rather than as a mode. That is right everywhere
+/// except the one artifact that says what a *caller* may send: `jails g
+/// scaffold --help` promises "the generated create path supplies both", and it
+/// did not. They arrived as `@NotNull` wire components, so the documented POST
+/// answered 400 naming two fields the caller has no business setting -- and a
+/// caller who did set them could backdate a row.
+///
+/// Recognised by name and type rather than by the flag, because the flag is
+/// gone by here on purpose. `generate::with_timestamps` refuses to expand over
+/// a hand-declared `createdAt`, so the two spellings cannot mean two different
+/// things in one scaffold.
+/// Both, or neither.
+///
+/// The **pair** is `--timestamps`' signature, and `generate::with_timestamps`
+/// refuses to expand over a hand-declared `createdAt` or `updatedAt` -- so a
+/// scaffold carrying only one of them declared it by hand and means it as data
+/// the caller sends. Reading a lone `createdAt` as an audit column would
+/// silently drop a component somebody asked for, which is a worse failure than
+/// the one this fixes.
+pub(crate) fn has_audit_pair(fields: &[crate::generate::Field]) -> bool {
+    ["createdAt", "updatedAt"].iter().all(|conventional| {
+        fields
+            .iter()
+            .any(|field| &field.name == conventional && names_an_audit_column(field))
+    })
+}
+
+fn names_an_audit_column(field: &crate::generate::Field) -> bool {
+    matches!(field.name.as_str(), "createdAt" | "updatedAt")
+        && field.java_type == "Instant"
+        && !is_optional(field)
+}
+
+pub(crate) fn is_audit_component(field: &crate::generate::Field, pair: bool) -> bool {
+    pair && names_an_audit_column(field)
+}
+
+/// The components a client may send: everything the server does not set itself.
+pub(crate) fn client_supplied(fields: &[crate::generate::Field]) -> Vec<crate::generate::Field> {
+    let pair = has_audit_pair(fields);
+    fields
+        .iter()
+        .filter(|field| !is_audit_component(field, pair))
+        .cloned()
+        .collect()
+}
+
 pub fn request_java_for(
     pkg: &str,
     name: &str,
@@ -192,16 +243,31 @@ pub fn request_java_for(
     domain_import: &str,
     domain: &str,
 ) -> String {
+    // Imports come from the full spec, not from the wire components: `Instant`
+    // is still needed by `Instant.now()` even when no component carries it.
     let imports = dto_imports(fields, true, domain, pkg);
     let optional_import = if needs_optional(fields) {
         "import java.util.Optional;\n"
     } else {
         ""
     };
-    let components = components(fields, true);
+    let wire = client_supplied(fields);
+    let components = components(&wire, true);
+    let audited = wire.len() != fields.len();
+    let preamble = if audited {
+        "        // Set here, not received: these are audit columns, and one\n                 // instant so a freshly created row does not look already edited.\n                 Instant now = Instant.now();\n"
+    } else {
+        ""
+    };
     let arguments = fields
         .iter()
-        .map(write_to_domain)
+        .map(|field| {
+            if is_audit_component(field, audited) {
+                "now".to_string()
+            } else {
+                write_to_domain(field)
+            }
+        })
         .map(|a| format!("                {a}"))
         .collect::<Vec<_>>()
         .join(",\n");
@@ -214,6 +280,7 @@ pub fn request_java_for(
             ("imports", &*imports),
             ("name", name),
             ("components", &*components),
+            ("preamble", preamble),
             ("arguments", &*arguments),
         ],
     )
@@ -267,6 +334,9 @@ fn dto_test_java(
     let pkg: &str = &slice.placed(Layer::Web);
     let domain: &str = &slice.placed(Layer::Domain);
     let var = crate::generate::lower_first(name);
+    // The same wire components the request carries -- a sample for one the
+    // record does not declare would not compile.
+    let fields = &client_supplied(fields)[..];
     // A request component is the *wire* type: an Optional domain component is
     // a plain nullable field here, so `Optional.empty()` would not compile as
     // its sample. `null` is the honest wire-level equivalent.
@@ -331,4 +401,67 @@ fn dto_test_java(
             ("arguments", &*arguments),
         ],
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fields(specs: &[&str]) -> Vec<crate::generate::Field> {
+        crate::generate::parse_fields(&specs.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+            .expect("valid field specs")
+    }
+
+    #[test]
+    fn the_audit_pair_is_set_by_the_create_path_not_sent_by_the_caller() {
+        let java = request_java_for(
+            "com.example.demo.web",
+            "Note",
+            &fields(&[
+                "id:uuid@pk",
+                "title:string!",
+                "createdAt:instant",
+                "updatedAt:instant",
+            ]),
+            "import com.example.demo.domain.Note;\n",
+            "com.example.demo.domain",
+        );
+        // Not a component: `@NotNull Instant createdAt` on the wire is a 400 on
+        // the documented POST, and a caller who supplies it backdates the row.
+        assert!(!java.contains("Instant createdAt"), "{java}");
+        assert!(!java.contains("Instant updatedAt"), "{java}");
+        // One instant for both, so a freshly created row does not look edited.
+        assert!(java.contains("Instant now = Instant.now();"), "{java}");
+        assert_eq!(java.matches("                now").count(), 2, "{java}");
+        // Still imported: `Instant.now()` needs it even with no component.
+        assert!(java.contains("import java.time.Instant;"), "{java}");
+    }
+
+    #[test]
+    fn a_hand_declared_created_at_alone_is_still_the_callers_to_send() {
+        // `--timestamps` writes the pair and refuses to expand over either
+        // name, so one on its own was declared by hand and means data.
+        let java = request_java_for(
+            "com.example.demo.web",
+            "Note",
+            &fields(&["id:uuid@pk", "title:string!", "createdAt:instant"]),
+            "import com.example.demo.domain.Note;\n",
+            "com.example.demo.domain",
+        );
+        assert!(java.contains("Instant createdAt"), "{java}");
+        assert!(!java.contains("Instant.now()"), "{java}");
+    }
+
+    #[test]
+    fn a_scaffold_with_no_timestamps_is_unchanged() {
+        let java = request_java_for(
+            "com.example.demo.web",
+            "Note",
+            &fields(&["id:uuid@pk", "title:string!"]),
+            "import com.example.demo.domain.Note;\n",
+            "com.example.demo.domain",
+        );
+        assert!(!java.contains("Instant"), "{java}");
+        assert!(java.contains("        return new Note("), "{java}");
+    }
 }

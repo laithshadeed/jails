@@ -117,19 +117,13 @@ files = [
 recipe = "fetcher"
 name = "Acquirer"
 package = ""
-has_spec = false
+has_spec = true
 files = [
   "src/main/java/com/example/paymentsgateway/clients/AcquirerFetcher.java",
   "src/main/java/com/example/paymentsgateway/clients/SafeAcquirerFetcher.java",
   "src/main/java/com/example/paymentsgateway/clients/package-info.java",
   "src/test/java/com/example/paymentsgateway/clients/SafeAcquirerFetcherTest.java",
 ]
-
-[[applied]]
-recipe = "fetcher"
-name = "AcquirerFetcher"
-package = ""
-has_spec = true
 
 [[applied]]
 recipe = "http-sink"

@@ -295,9 +295,23 @@ pub fn scaffold_artifacts_from_fields(
     Ok(artifacts)
 }
 
+/// The requests the generated controller actually answers, as a collection an
+/// editor can send.
+///
+/// **Only the ones it answers.** It used to end with a `### List` block over
+/// `GET {route}`, which the scaffold has never served -- the controller carries
+/// one `@PostMapping` -- so the second request in every generated collection
+/// answered 405. A reader sending it learns nothing about their project, only
+/// about this file. Reading is `jails g query`, and that generator writes its
+/// own collection.
 pub fn scaffold_requests(project: &Project, domain: &str, name: &str, fields: &[Field]) -> String {
+    let audited = crate::spring::has_audit_pair(fields);
     let body = fields
         .iter()
+        // The audit columns the create path sets itself. The request record
+        // does not declare them, so a body carrying them describes a request
+        // that cannot be made.
+        .filter(|field| !crate::spring::is_audit_component(field, audited))
         .map(|field| {
             let value = if field.optionality == Optionality::Nullable {
                 "null".to_string()
@@ -334,10 +348,7 @@ pub fn scaffold_requests(project: &Project, domain: &str, name: &str, fields: &[
          ### Create {name}\n\
          POST {{{{baseUrl}}}}{route}\n\
          Content-Type: application/json\n\n\
-         {{\n{body}\n}}\n\n\
-         ### List {name}\n\
-         GET {{{{baseUrl}}}}{route}\n\
-         Accept: application/json\n"
+         {{\n{body}\n}}\n"
     )
 }
 

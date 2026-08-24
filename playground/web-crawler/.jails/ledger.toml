@@ -67,19 +67,13 @@ files = [
 recipe = "fetcher"
 name = "Page"
 package = ""
-has_spec = false
+has_spec = true
 files = [
   "src/main/java/com/example/webcrawler/clients/PageFetcher.java",
   "src/main/java/com/example/webcrawler/clients/SafePageFetcher.java",
   "src/main/java/com/example/webcrawler/clients/package-info.java",
   "src/test/java/com/example/webcrawler/clients/SafePageFetcherTest.java",
 ]
-
-[[applied]]
-recipe = "fetcher"
-name = "PageFetcher"
-package = ""
-has_spec = true
 
 [[applied]]
 recipe = "http-workflow"

@@ -9,7 +9,3 @@ Content-Type: application/json
   "title": "sample-title",
   "createdAt": "2026-01-01T00:00:00Z"
 }
-
-### List Note
-GET {{baseUrl}}/notes
-Accept: application/json

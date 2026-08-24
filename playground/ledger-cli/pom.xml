@@ -73,7 +73,7 @@
                 <configuration>
                     <archive>
                         <manifest>
-                            <mainClass>com.example.ledgercli.App</mainClass>
+                            <mainClass>com.example.ledgercli.cli.LedgerCli</mainClass>
                         </manifest>
                     </archive>
                 </configuration>
