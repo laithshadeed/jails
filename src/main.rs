@@ -262,7 +262,15 @@ enum Command {
     ///   jails add security --pretend # see the plan, write nothing
     ///
     /// `jails remove <capability>` is the exact inverse.
-    #[command(visible_alias = "a", verbatim_doc_comment)]
+    ///
+    /// `jails add dependency <group:artifact>` is the escape hatch for a
+    /// library jails has never heard of.
+    #[command(
+        visible_alias = "a",
+        verbatim_doc_comment,
+        args_conflicts_with_subcommands = true,
+        subcommand_negates_reqs = true
+    )]
     Add {
         #[arg(required = true, num_args = 1..)]
         capabilities: Vec<Capability>,
@@ -277,6 +285,8 @@ enum Command {
         /// empty string to write straight into the base package.
         #[arg(long)]
         package: Option<String>,
+        #[command(subcommand)]
+        declare: Option<Declare>,
     },
     /// Apply every capability `jails.toml` declares that is not there yet
     ///
@@ -293,6 +303,7 @@ enum Command {
     },
     /// Remove what a matching add call would have created
     #[command(visible_alias = "rm")]
+    #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
     Remove {
         #[arg(required = true, num_args = 1..)]
         capabilities: Vec<Capability>,
@@ -306,6 +317,40 @@ enum Command {
         /// package -- must match the `--package` passed to `add`.
         #[arg(long)]
         package: Option<String>,
+        #[command(subcommand)]
+        undeclare: Option<Undeclare>,
+    },
+    /// Set one property in `application.properties`, as an owned setting
+    ///
+    /// The point of routing this through jails rather than a text editor is
+    /// that jails then knows it owns the key: `jails unset` takes exactly it
+    /// back out, and a later capability that wants the same key collides
+    /// visibly instead of overwriting in silence.
+    ///
+    /// Examples:
+    ///   jails set server.port=3000
+    ///   jails set spring.datasource.url=jdbc:h2:mem:test --tests
+    ///
+    /// `--tests` writes to `src/test/resources/config/application.properties`
+    /// instead. That path and not the obvious one: `classpath:/config/`
+    /// outranks `classpath:/` and is *additive*, so one key there overrides
+    /// one key here. `src/test/resources/application.properties` shadows the
+    /// main file wholesale and silently unsets everything else.
+    #[command(verbatim_doc_comment)]
+    Set {
+        /// key=value
+        setting: String,
+        /// Write the test overlay rather than the application's own config
+        #[arg(long)]
+        tests: bool,
+    },
+    /// Take one setting `jails set` wrote back out
+    Unset {
+        /// The property key
+        key: String,
+        /// The setting was written to the test overlay
+        #[arg(long)]
+        tests: bool,
     },
     /// Start compose services (`docker compose up -d`). No args starts all.
     Start {
@@ -593,6 +638,71 @@ enum Command {
     },
 }
 
+/// The one resource `add` takes that is not a capability.
+///
+/// A separate subcommand rather than another `Capability` value, because a
+/// capability is a closed vocabulary jails knows the meaning of and this is
+/// the opposite: an artifact jails has never heard of, named by the reader.
+/// Nesting it under `add` keeps one verb for "put this in the project" --
+/// `args_conflicts_with_subcommands` is what lets `jails add db` and
+/// `jails add dependency com.h2database:h2` both parse.
+#[derive(Subcommand)]
+enum Declare {
+    /// Splice one artifact into the build file, and record who asked
+    ///
+    /// For a library jails has no capability for. It writes the dependency
+    /// and nothing else -- no wiring, no test, no `jails.toml` entry -- and
+    /// `jails remove dependency <coordinate>` takes it back out.
+    ///
+    /// Examples:
+    ///   jails add dependency com.h2database:h2 --scope runtime
+    ///   jails add dependency org.jsoup:jsoup --version 1.18.3
+    ///
+    /// Omit `--version` when the project's parent or an imported BOM manages
+    /// it. Maven refuses to read a pom whose dependency has no version and
+    /// nothing manages it, so jails asks rather than guessing.
+    #[command(verbatim_doc_comment)]
+    Dependency {
+        /// group:artifact
+        coordinate: String,
+        /// Pin the version. Omit when a parent or BOM manages it.
+        #[arg(long)]
+        version: Option<String>,
+        /// compile (default), runtime, or test
+        #[arg(long, default_value = "compile")]
+        scope: DependencyScope,
+    },
+}
+
+/// The exact inverse, under `remove`.
+#[derive(Subcommand)]
+enum Undeclare {
+    /// Take one declared artifact back out of the build file
+    Dependency {
+        /// group:artifact
+        coordinate: String,
+    },
+}
+
+/// Maven's three scopes, as a closed set so `--scope <TAB>` completes.
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+enum DependencyScope {
+    Compile,
+    Runtime,
+    Test,
+}
+
+impl DependencyScope {
+    fn resolved(self) -> jails_protocol::coordinate::MavenScope {
+        use jails_protocol::coordinate::MavenScope;
+        match self {
+            Self::Compile => MavenScope::Compile,
+            Self::Runtime => MavenScope::Runtime,
+            Self::Test => MavenScope::Test,
+        }
+    }
+}
+
 /// Returns [`ExitCode`] rather than calling [`std::process::exit`].
 ///
 /// `crate::process::exit` terminates without unwinding, so destructors on the
@@ -600,6 +710,57 @@ enum Command {
 /// flight -- `migrate` creates a scratch database it is responsible for
 /// dropping -- and anything staging a file beside its destination would be in
 /// the same position. Returning lets the stack unwind normally first.
+/// `group:artifact`, refused rather than guessed at.
+///
+/// A coordinate with a third part is almost always a `group:artifact:version`
+/// pasted from somewhere -- so the refusal names `--version` rather than
+/// repeating the shape back.
+fn maven_coordinate(
+    text: &str,
+) -> jails_support::Result<jails_protocol::coordinate::MavenCoordinate> {
+    let mut parts = text.split(':');
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(group), Some(artifact), None) if !group.is_empty() && !artifact.is_empty() => {
+            jails_protocol::coordinate::MavenCoordinate::parse(group, artifact)
+        }
+        (_, _, Some(_)) => Err(format!(
+            "`{text}` names a version as well as a coordinate.\n       \
+             fix: jails add dependency <group>:<artifact> --version <version>"
+        )),
+        _ => Err(format!(
+            "`{text}` is not a Maven coordinate.\n       \
+             fix: jails add dependency <group>:<artifact>"
+        )),
+    }
+}
+
+/// `key=value`, split once so a value containing `=` survives.
+fn split_setting(text: &str) -> jails_support::Result<(String, String)> {
+    match text.split_once('=') {
+        Some((key, value)) => Ok((key.trim().to_string(), value.to_string())),
+        None => Err(format!(
+            "`{text}` is not a `key=value` setting.\n       \
+             fix: jails set server.port=3000"
+        )),
+    }
+}
+
+/// Which file a `jails set` wrote into. See `Command::Set` for why `--tests`
+/// is `config/` and not the obvious path.
+fn declared_property(
+    key: &str,
+    tests: bool,
+) -> jails_support::Result<jails_protocol::entity::DeclaredId> {
+    Ok(jails_protocol::entity::DeclaredId::Property {
+        path: jails_protocol::identity::ProjectPath::parse(if tests {
+            "src/test/resources/config/application.properties"
+        } else {
+            "src/main/resources/application.properties"
+        })?,
+        key: jails_protocol::identity::PropertyKey::parse(key)?,
+    })
+}
+
 fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
     let debug = cli.debug;
@@ -681,10 +842,29 @@ fn main() -> std::process::ExitCode {
             })
         }
         Command::Add {
+            declare:
+                Some(Declare::Dependency {
+                    coordinate,
+                    version,
+                    scope,
+                }),
+            ..
+        } => maven_coordinate(&coordinate).and_then(|coordinate| {
+            invoke::mutate(invocation, false, |run| {
+                jails_engine::route::add_dependency(
+                    run,
+                    coordinate.clone(),
+                    version.clone(),
+                    scope.resolved(),
+                )
+            })
+        }),
+        Command::Add {
             capabilities,
             name,
             no_start,
             package,
+            declare: None,
         } => invoke::mutate(invocation, no_start, |run| {
             // Every capability is checked before any is applied. Each one is
             // its own transition, so without this `jails add db security` on a
@@ -720,9 +900,35 @@ fn main() -> std::process::ExitCode {
             name,
             force,
             package,
-        } => invoke::mutate_confirmed(invocation, false, force, |run| {
-            let asked = invoke::declarations(&capabilities, name.as_deref(), package.as_deref())?;
-            invoke::one_transition_each(run, &asked, jails_engine::route::remove)
+            undeclare,
+        } => match undeclare {
+            // `mutate`, not `mutate_confirmed`: the prompt on `remove
+            // <capability>` is there because deleting generated files is a
+            // decision about bytes the reader may have edited. Retiring a
+            // declared resource unsplices exactly what jails spliced and
+            // touches nothing else, so there is nothing to authorise.
+            Some(Undeclare::Dependency { coordinate }) => maven_coordinate(&coordinate)
+                .map(jails_protocol::entity::DeclaredId::Dependency)
+                .and_then(|id| {
+                    invoke::mutate(invocation, false, |run| {
+                        jails_engine::route::undeclare(run, id.clone())
+                    })
+                }),
+            None => invoke::mutate_confirmed(invocation, false, force, |run| {
+                let asked =
+                    invoke::declarations(&capabilities, name.as_deref(), package.as_deref())?;
+                invoke::one_transition_each(run, &asked, jails_engine::route::remove)
+            }),
+        },
+        Command::Set { setting, tests } => split_setting(&setting).and_then(|(key, value)| {
+            invoke::mutate(invocation, false, |run| {
+                jails_engine::route::set_property(run, key.clone(), value.clone(), tests)
+            })
+        }),
+        Command::Unset { key, tests } => declared_property(&key, tests).and_then(|id| {
+            invoke::mutate(invocation, false, |run| {
+                jails_engine::route::undeclare(run, id.clone())
+            })
         }),
         Command::Rename { old, new, force } => invoke::mutate(invocation, false, |run| {
             jails_engine::route::rename(run, &old, &new, force)

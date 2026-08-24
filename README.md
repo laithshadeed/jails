@@ -423,6 +423,32 @@ there the unit is a whole service block rather than a setting.)
 - `jails add|a ci` — a least-privilege GitHub Actions `clean verify` gate with
   timeouts, concurrency cancellation, Maven caching, and immutable action
   commit pins.
+- `jails add dependency <group>:<artifact> [--version <v>] [--scope
+  compile|runtime|test]` — the escape hatch for a library jails has no
+  capability for. It splices the dependency and does nothing else: no wiring,
+  no test, no `jails.toml` entry, because jails does not know what the library
+  is for. `jails remove dependency <group>:<artifact>` is the exact inverse.
+
+  Omit `--version` when the project's parent or an imported BOM manages it.
+  Maven refuses to read a pom whose dependency has no version and nothing
+  manages it — every goal fails, `validate` included — so jails asks rather
+  than guessing.
+
+  The point of routing this through jails rather than an editor is that the
+  splice is then *owned*: `remove` takes exactly it back out, and a later
+  capability wanting the same artifact collides visibly.
+- `jails set <key>=<value> [--tests]` / `jails unset <key> [--tests]` — one
+  setting in `application.properties`, as an owned resource. Same reason: jails
+  knows which keys it wrote, so `remove` and `sync` keep working and two owners
+  of one key are a collision rather than a silent last-wins.
+
+  `--tests` writes `src/test/resources/config/application.properties` instead
+  — that path and not the obvious one, because `classpath:/config/` outranks
+  `classpath:/` **and is additive**, so one key there overrides one key here.
+  `src/test/resources/application.properties` shadows the main file wholesale
+  and silently unsets everything the tests did not restate. This is how a
+  project gets a test-only datasource without the suite writing to whatever
+  the application's own URL points at.
 - `jails generate|g event <Name>` — a Kafka slice: the payload record, a
   publisher keyed by event id (ordering is per partition; a null key
   round-robins), a listener that deliberately does not catch (swallowing

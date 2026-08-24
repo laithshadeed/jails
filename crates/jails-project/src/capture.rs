@@ -123,6 +123,15 @@ pub fn capability_reads() -> Result<ReadDeclaration> {
         .file(ProjectPath::parse(
             "src/main/resources/application.properties",
         )?)
+        // The test overlay, for the same reason both build files are here: a
+        // projection can only overlay a path its snapshot captured, and
+        // declaring it only when it exists would make the read set depend on
+        // the project -- so `jails set --tests` on a project that has never
+        // had one would guard a different precondition from the same command
+        // run again.
+        .file(ProjectPath::parse(
+            "src/test/resources/config/application.properties",
+        )?)
         .file(ProjectPath::parse("jails.toml")?))
 }
 

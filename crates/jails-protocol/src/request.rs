@@ -272,6 +272,22 @@ pub enum CanonicalMutationRequest {
         feature: ToolFeature,
         force: bool,
     },
+    /// `add dependency` / `set`: one resource the reader named, with the
+    /// content they asked for.
+    ///
+    /// One request for both because they are one operation over
+    /// [`crate::entity::DeclaredId`], and splitting them by the *kind* of
+    /// resource would put the same reconciliation in two places -- which is
+    /// how `add` and `remove` came to disagree about the manifest in V1.
+    Declare {
+        id: crate::entity::DeclaredId,
+        spec: crate::entity::DeclaredSpec,
+    },
+    /// `remove dependency` / `unset`: give that ownership up.
+    Undeclare {
+        id: crate::entity::DeclaredId,
+        force: bool,
+    },
 }
 
 impl CanonicalMutationRequest {
@@ -390,6 +406,27 @@ impl CanonicalMutationRequest {
         }
     }
 
+    /// `add dependency` / `set`: identity and content must describe the same
+    /// kind of resource.
+    ///
+    /// The same rule `EntitySpec::matches` carries, applied at the request
+    /// boundary so a journal cannot replay a claim that names an artifact and
+    /// carries a property value. It type-checks; it writes nothing.
+    pub fn declare(
+        id: crate::entity::DeclaredId,
+        spec: crate::entity::DeclaredSpec,
+    ) -> Result<Self> {
+        let entity = crate::entity::EntityId::Declared(id.clone());
+        if !crate::entity::EntitySpec::Declared(spec.clone()).matches(&entity) {
+            return Err(
+                "the resource being declared and the content declared for it are different \
+                 things"
+                    .to_string(),
+            );
+        }
+        Ok(Self::Declare { id, spec })
+    }
+
     /// Which variant this is, for the fixed request tags.
     pub fn tag(&self) -> u8 {
         match self {
@@ -405,6 +442,8 @@ impl CanonicalMutationRequest {
             Self::FastTest => 10,
             Self::Format { .. } => 11,
             Self::RemoveToolFeature { .. } => 12,
+            Self::Declare { .. } => 13,
+            Self::Undeclare { .. } => 14,
         }
     }
 }
@@ -453,6 +492,14 @@ impl CanonicalMutationRequest {
             }
             Self::RemoveToolFeature { feature, force } => {
                 encoder.string(feature.label())?;
+                encoder.bool(*force);
+            }
+            Self::Declare { id, spec } => {
+                id.encode(encoder)?;
+                spec.encode(encoder)?;
+            }
+            Self::Undeclare { id, force } => {
+                id.encode(encoder)?;
                 encoder.bool(*force);
             }
         }
@@ -514,6 +561,14 @@ impl CanonicalMutationRequest {
                 let feature = ToolFeature::parse(&decoder.string()?)?;
                 Self::remove_tool_feature(feature, decoder.bool()?)?
             }
+            13 => Self::declare(
+                crate::entity::DeclaredId::decode(decoder)?,
+                crate::entity::DeclaredSpec::decode(decoder)?,
+            )?,
+            14 => Self::Undeclare {
+                id: crate::entity::DeclaredId::decode(decoder)?,
+                force: decoder.bool()?,
+            },
             other => Err(format!("unknown mutation request tag {other}"))?,
         })
     }

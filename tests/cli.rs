@@ -7670,3 +7670,126 @@ fn src_resolves_a_type_and_lists_every_match() {
         "the refusal names the way to widen the search"
     );
 }
+
+/// missing.md §3: a project needing one artifact jails has never heard of had
+/// to hand-edit the pom, which is the file `pom.rs` exists to edit surgically.
+///
+/// Both directions in one test, because the value is not the splice -- V1
+/// could splice -- it is that the splice is *owned*, so `remove` takes exactly
+/// it back out and nothing else.
+#[test]
+fn a_declared_dependency_is_spliced_and_can_be_taken_back_out() {
+    let root = temp_dir("declare-dependency");
+    write_plain_fixture(&root);
+    let before = fs::read_to_string(root.join("pom.xml")).unwrap();
+
+    let output = jails_cmd(&root, None)
+        .args([
+            "add",
+            "dependency",
+            "com.h2database:h2",
+            "--version",
+            "2.3.232",
+            "--scope",
+            "runtime",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let spliced = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(spliced.contains("<artifactId>h2</artifactId>"), "{spliced}");
+    assert!(spliced.contains("<scope>runtime</scope>"), "{spliced}");
+
+    let output = jails_cmd(&root, None)
+        .args(["remove", "dependency", "com.h2database:h2"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("pom.xml")).unwrap(),
+        before,
+        "retiring a declared dependency must leave the pom byte-identical"
+    );
+}
+
+/// A coordinate with a version in it is the commonest paste, so the refusal
+/// names the flag rather than repeating the shape back.
+#[test]
+fn a_coordinate_carrying_a_version_is_refused_by_naming_the_flag() {
+    let root = temp_dir("declare-coordinate-version");
+    write_plain_fixture(&root);
+    let output = jails_cmd(&root, None)
+        .args(["add", "dependency", "com.h2database:h2:2.3.232"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--version"), "{stderr}");
+}
+
+/// missing.md §5 and §7: a setting nobody's capability owns, and the
+/// test-only override that keeps a suite off the application's own datasource.
+///
+/// `--tests` writes `config/` deliberately. The obvious spelling --
+/// `src/test/resources/application.properties` -- shadows the main file
+/// wholesale, so this asserts the main file is still standing afterwards.
+#[test]
+fn a_set_property_is_owned_and_the_test_overlay_is_additive() {
+    let root = temp_dir("declare-property");
+    write_plain_fixture(&root);
+
+    for args in [
+        vec!["set", "server.port=3000"],
+        vec!["set", "spring.datasource.url=jdbc:h2:mem:test", "--tests"],
+    ] {
+        let output = jails_cmd(&root, None).args(&args).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{args:?}: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    assert_eq!(
+        fs::read_to_string(root.join("src/main/resources/application.properties")).unwrap(),
+        "server.port=3000\n"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("src/test/resources/config/application.properties")).unwrap(),
+        "spring.datasource.url=jdbc:h2:mem:test\n"
+    );
+    assert!(
+        !root
+            .join("src/test/resources/application.properties")
+            .exists(),
+        "the overlay must not be the spelling that shadows the main file"
+    );
+
+    let output = jails_cmd(&root, None)
+        .args(["unset", "server.port"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    // The overlay is a different entity, keyed by its own path: retiring one
+    // must not reach the other.
+    assert!(
+        root.join("src/test/resources/config/application.properties")
+            .exists()
+    );
+}

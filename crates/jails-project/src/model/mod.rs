@@ -64,6 +64,17 @@ pub struct Change {
     pub files: Vec<Artifact>,
     pub compose: Vec<ComposeService>,
     pub properties: Vec<String>,
+    /// Settings for `src/test/resources/config/application.properties`.
+    ///
+    /// A separate list rather than a path on each line, because there is
+    /// exactly one other file a setting can go in and the reason is a
+    /// mechanism rather than a preference: `classpath:/config/` outranks
+    /// `classpath:/` **and is additive**, so one key here overrides one key
+    /// there and leaves the rest of the application's configuration standing.
+    /// `src/test/resources/application.properties` -- the spelling people
+    /// reach for -- shadows the main file wholesale instead, which silently
+    /// unsets everything the tests did not restate.
+    pub test_properties: Vec<String>,
     pub legacy_deps: Vec<Dependency>,
     pub spring_test_import: Option<SpringTestImport>,
     /// The dispatcher lines this change registers.

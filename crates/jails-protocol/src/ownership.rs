@@ -292,6 +292,15 @@ fn describe(id: &EntityId) -> String {
         ),
         EntityId::Capability(capability) => format!("`{}`", capability.kind.label()),
         EntityId::ToolFeature(_) => "`fast-test`".to_string(),
+        EntityId::Declared(crate::entity::DeclaredId::Dependency(coordinate)) => {
+            format!("`{}:{}`", coordinate.group_id, coordinate.artifact_id)
+        }
+        // The path as well as the key: the same key set in two files is two
+        // entities, and a report naming only the key would describe a
+        // collision between things that do not collide.
+        EntityId::Declared(crate::entity::DeclaredId::Property { path, key }) => {
+            format!("`{key}` in {path}")
+        }
     }
 }
 
@@ -313,6 +322,19 @@ fn summarise(spec: &EntitySpec) -> String {
             crate::coordinate::MavenVersion::Managed => "console (managed by the pom)".to_string(),
             crate::coordinate::MavenVersion::Pinned(version) => format!("console {version}"),
         },
+        EntitySpec::Declared(crate::entity::DeclaredSpec::Dependency(dependency)) => {
+            match &dependency.version {
+                crate::coordinate::MavenVersion::Managed => {
+                    format!("{} (managed by the pom)", dependency.scope.label())
+                }
+                crate::coordinate::MavenVersion::Pinned(version) => {
+                    format!("{version}, {}", dependency.scope.label())
+                }
+            }
+        }
+        EntitySpec::Declared(crate::entity::DeclaredSpec::Property(setting)) => {
+            format!("`{}`", setting.value)
+        }
     }
 }
 

@@ -64,6 +64,9 @@ use crate::Result;
 pub const POM: &str = "pom.xml";
 pub const COMPOSE: &str = "compose.yaml";
 pub const APPLICATION_PROPERTIES: &str = "src/main/resources/application.properties";
+/// The test overlay. See `model::Change::test_properties` for why this path
+/// and not `src/test/resources/application.properties`.
+pub const TEST_CONFIG_PROPERTIES: &str = "src/test/resources/config/application.properties";
 
 /// One planned recipe change, as the desire it expresses.
 ///
@@ -154,32 +157,37 @@ pub fn contribution(
     // wrote them, and a comment documents the line beneath it. Carrying the
     // pending lines forward is what lets a per-key resource own the
     // explanation the marked block used to hold.
-    let mut prose: Vec<String> = Vec::new();
-    for line in &change.properties {
-        if line.trim().is_empty() {
-            continue;
+    for (file, lines) in [
+        (APPLICATION_PROPERTIES, &change.properties),
+        (TEST_CONFIG_PROPERTIES, &change.test_properties),
+    ] {
+        let mut prose: Vec<String> = Vec::new();
+        for line in lines {
+            if line.trim().is_empty() {
+                continue;
+            }
+            if let Some(comment) = line.trim().strip_prefix('#') {
+                prose.push(comment.trim().to_string());
+                continue;
+            }
+            let (key, value) = property_resource(file, line, std::mem::take(&mut prose))?;
+            claim(&mut desired, owner, key.clone(), value.clone())?;
+            let ResourceValue::Property(setting) = value else {
+                unreachable!("property_resource returns a property value");
+            };
+            desired.edits.push(SemanticEdit::Property {
+                key,
+                value: setting,
+            });
         }
-        if let Some(comment) = line.trim().strip_prefix('#') {
-            prose.push(comment.trim().to_string());
-            continue;
+        if let Some(orphan) = prose.first() {
+            return Err(format!(
+                "the comment `{orphan}` is the last thing this capability's properties say, so it \
+                 documents nothing.\n       \
+                 fix: a property comment introduces the line beneath it. A trailing one would be \
+                 written above whichever property happened to be added next."
+            ));
         }
-        let (key, value) = property_resource(line, std::mem::take(&mut prose))?;
-        claim(&mut desired, owner, key.clone(), value.clone())?;
-        let ResourceValue::Property(setting) = value else {
-            unreachable!("property_resource returns a property value");
-        };
-        desired.edits.push(SemanticEdit::Property {
-            key,
-            value: setting,
-        });
-    }
-    if let Some(orphan) = prose.first() {
-        return Err(format!(
-            "the comment `{orphan}` is the last thing this capability's properties say, so it \
-             documents nothing.\n       \
-             fix: a property comment introduces the line beneath it. A trailing one would be \
-             written above whichever property happened to be added next."
-        ));
     }
     for artifact in &change.files {
         let path = project_path(&artifact.path, project)?;
@@ -414,13 +422,17 @@ fn compose_resource(service: &ComposeService) -> Result<(ResourceKey, ResourceVa
     ))
 }
 
-fn property_resource(line: &str, comment: Vec<String>) -> Result<(ResourceKey, ResourceValue)> {
+fn property_resource(
+    file: &str,
+    line: &str,
+    comment: Vec<String>,
+) -> Result<(ResourceKey, ResourceValue)> {
     let (key, value) = line.split_once('=').ok_or_else(|| {
         format!("`{line}` is not a `key=value` property line, so it names nothing to own")
     })?;
     Ok((
         ResourceKey::Property {
-            path: ProjectPath::parse(APPLICATION_PROPERTIES)?,
+            path: ProjectPath::parse(file)?,
             key: PropertyKey::parse(key.trim())?,
         },
         ResourceValue::Property(PropertySetting::new(value, comment)?),

@@ -27,6 +27,10 @@ use crate::identity::{JavaType, Name, ObjectId, Package, ProjectPath};
 use jails_spec::spec::kind::{ArtifactKind, Capability};
 use jails_support::codec::{self, Decoder, Encoder};
 
+mod declared;
+
+pub use declared::{DeclaredId, DeclaredSpec};
+
 /// The internal name for `ArtifactKind`. Clap's spelling stays at the CLI edge.
 pub type Recipe = ArtifactKind;
 
@@ -265,6 +269,7 @@ pub enum EntityId {
     Capability(CapabilityId),
     Intent(IntentId),
     ToolFeature(ToolFeature),
+    Declared(DeclaredId),
 }
 
 impl EntityId {
@@ -283,6 +288,10 @@ impl EntityId {
                 encoder.tag(0);
                 Ok(())
             }
+            Self::Declared(id) => {
+                encoder.tag(3);
+                id.encode(encoder)
+            }
         }
     }
 
@@ -294,6 +303,7 @@ impl EntityId {
                 0 => Ok(Self::ToolFeature(ToolFeature::FastTest)),
                 other => Err(format!("unknown tool feature tag {other}")),
             },
+            3 => DeclaredId::decode(decoder).map(Self::Declared),
             other => Err(format!("unknown entity tag {other}")),
         }
     }
@@ -388,6 +398,7 @@ pub enum EntitySpec {
     Capability(CapabilitySpec),
     Intent(IntentSpec),
     ToolFeature(ToolFeatureSpec),
+    Declared(DeclaredSpec),
 }
 
 impl EntitySpec {
@@ -408,6 +419,10 @@ impl EntitySpec {
             (EntityId::Intent(intent), Self::Intent(spec)) => {
                 spec.arguments.shape() == crate::recipe::argument_shape(intent.recipe)
             }
+            // The one arm whose check goes a level deeper, because a declared
+            // resource's identity and its content both name the kind. See
+            // `DeclaredSpec::matches`.
+            (EntityId::Declared(id), Self::Declared(spec)) => spec.matches(id),
             (EntityId::Capability(_), Self::Capability(_))
             | (EntityId::ToolFeature(_), Self::ToolFeature(_)) => true,
             _ => false,
@@ -428,6 +443,10 @@ impl EntitySpec {
                 encoder.tag(2);
                 spec.encode(encoder)
             }
+            Self::Declared(spec) => {
+                encoder.tag(3);
+                spec.encode(encoder)
+            }
         }
     }
 
@@ -436,6 +455,7 @@ impl EntitySpec {
             0 => Self::Capability(CapabilitySpec::decode(decoder)?),
             1 => Self::Intent(IntentSpec::decode(decoder)?),
             2 => Self::ToolFeature(ToolFeatureSpec::decode(decoder)?),
+            3 => Self::Declared(DeclaredSpec::decode(decoder)?),
             other => return Err(format!("unknown entity spec tag {other}")),
         })
     }
