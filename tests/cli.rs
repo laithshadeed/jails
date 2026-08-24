@@ -2503,7 +2503,59 @@ fn ledger_cli_manifest_builds_without_spring() {
         "the manifest named its dispatcher, so the command must be registered in it: {dispatcher}"
     );
 
+    // And the jar starts *that* dispatcher. `new-cli` writes `App.java` and
+    // names it as the entry point; a manifest that then generates `LedgerCli`
+    // and registers `reconcile` into it used to produce a jar answering only
+    // `help`, with `jails run -- reconcile` reporting "unknown command". The
+    // entry point moves when it is still jails' own stub and nobody has
+    // registered anything there.
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(
+        pom.contains("<mainClass>com.example.demo.cli.LedgerCli</mainClass>"),
+        "the packaged jar does not start the dispatcher the manifest built:\n{pom}"
+    );
+
     assert!(root.join("target/classes").is_dir());
+}
+
+/// The other direction: a dispatcher somebody is already using keeps the
+/// entry point.
+///
+/// `App.java` with a command registered in it is the project's real CLI, and
+/// a second `generate cli` must not move the jar out from under it.
+#[test]
+fn a_dispatcher_already_in_use_keeps_the_entry_point() {
+    let workdir = temp_dir("cli-entry-point-kept");
+    assert!(
+        jails_cmd(&workdir, None)
+            .args(["new-cli", "demo", "--no-git"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let root = workdir.join("demo");
+
+    // A command registered into `App` makes it the project's own CLI.
+    assert!(
+        jails_cmd(&root, None)
+            .args(["g", "command", "Import"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        jails_cmd(&root, None)
+            .args(["g", "cli", "Admin"])
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(
+        pom.contains("<mainClass>com.example.demo.App</mainClass>"),
+        "the entry point moved out from under a dispatcher in use:\n{pom}"
+    );
 }
 
 #[test]
@@ -5791,8 +5843,26 @@ fn add_security_writes_an_explicit_chain_that_denies_by_default() {
     assert!(config.contains("/management/health/**"), "{config}");
     assert!(!config.contains("/management/**"), "{config}");
 
+    // The dependency the generated test needs, spliced by the same rule that
+    // supplies AssertJ and Failsafe. Boot 4 moved `@WebMvcTest` into
+    // `spring-boot-webmvc-test`, which `spring-boot-starter-test` does not
+    // bring in -- so without this the project compiles every production
+    // source and then stops on the test jails itself wrote, `mvn verify`
+    // runs no test at all, and the generated Dockerfile fails too, because
+    // `-DskipTests` still compiles test sources.
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(pom.contains("spring-boot-starter-webmvc-test"), "{pom}");
+
     let verified = verified_spring_services_toolbox(&path);
     assert!(verified.join("target/test-classes").is_dir());
+    // And it really compiled and ran, rather than being skipped: the services
+    // toolbox runs `mvn test` over exactly this capability set.
+    assert!(
+        verified
+            .join("target/test-classes/com/example/demo/SecurityConfigTest.class")
+            .is_file(),
+        "the generated security test did not compile"
+    );
 }
 
 #[test]

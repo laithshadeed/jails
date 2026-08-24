@@ -21,18 +21,6 @@ pub fn import_annotation(class: &str) -> String {
     format!("@Import({class}.class)")
 }
 
-/// Whether this source is a `@SpringBootTest`, and therefore one of the
-/// classes that needs the container config imported into it.
-///
-/// Read through [`crate::java::blanked`], so a `@SpringBootTest` inside a
-/// Javadoc example is not mistaken for one on a class. The generated
-/// `TestcontainersConfig` is exactly that file -- its Javadoc shows how to
-/// import it -- and a plain `contains` reports it as a test that needs the
-/// config imported into itself.
-pub fn is_spring_boot_test(source: &str) -> bool {
-    crate::java::blanked(source).contains("@SpringBootTest")
-}
-
 /// The members of an `@Import(...)` line, single or braced.
 fn import_members(line: &str) -> Option<Vec<String>> {
     let inner = line

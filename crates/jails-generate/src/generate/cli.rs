@@ -502,3 +502,51 @@ pub(super) fn unregister_command(root: &Path, name: &str) -> Result<()> {
     }
     Ok(())
 }
+
+/// Point the packaged jar at a dispatcher that supersedes jails' own stub.
+///
+/// `new-cli` writes `App.java` -- a real dispatcher, not a Hello World -- and
+/// names it as the jar's `<mainClass>`. `generate cli Ledger` then writes a
+/// *second* dispatcher, and the project has two `main` methods with the jar
+/// still starting the first. A manifest that generated `LedgerCli` and
+/// registered `reconcile` into it produced a jar answering only `help`, and
+/// `jails run -- reconcile` said "unknown command".
+///
+/// So the entry point moves, but only from a stub jails wrote and nobody has
+/// used: `App.java` still registering no command of its own. Once a command
+/// is registered there, `App` is the project's real CLI and moving the entry
+/// point out from under it would break what the reader built. A `<mainClass>`
+/// pointing anywhere else is somebody's decision and is left alone.
+pub(super) fn adopt_as_entry_point(project: &Project, cli_package: &str, name: &str) -> Result<()> {
+    let pom_path = project.root().join("pom.xml");
+    let Ok(pom) = fs::read_to_string(&pom_path) else {
+        return Ok(());
+    };
+    let Some(current) = crate::pom::main_class(&pom) else {
+        // No declared entry point: a Spring Boot project, where the plugin
+        // finds `@SpringBootApplication` itself.
+        return Ok(());
+    };
+    let stub = format!("{}.App", project.base());
+    if current != stub {
+        return Ok(());
+    }
+    let app = crate::generate::main_dir(project.root(), project.base()).join("App.java");
+    let registers_something = fs::read_to_string(&app)
+        .map(|source| jails_java::java::blanked(&source).contains("commands.put("))
+        .unwrap_or(true);
+    if registers_something {
+        return Ok(());
+    }
+    let fqcn = if cli_package.is_empty() {
+        format!("{name}Cli")
+    } else {
+        format!("{cli_package}.{name}Cli")
+    };
+    let Some(updated) = crate::pom::with_main_class(&pom, &fqcn) else {
+        return Ok(());
+    };
+    crate::apply::put_named(&pom_path, &updated, "pom.xml")?;
+    println!("  main    {fqcn} is now what the packaged jar starts");
+    Ok(())
+}

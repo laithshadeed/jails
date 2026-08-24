@@ -379,7 +379,26 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // the same rule the 1404 -> 1411 step above was recorded by:
                 // an improvement nobody writes down is one the next rise
                 // silently absorbs.
-                ceiling: 1410,
+                //
+                // 1410 -> 1402, net, from one change with two halves.
+                //
+                // Down 19: `doctor` had its own walk of `src/test/java`
+                // collecting annotated classes, and so did `add`'s test wiring
+                // and the V2 translation -- three copies, two of which matched
+                // a raw substring and so read the `@SpringBootTest` in
+                // `TestcontainersConfig`'s Javadoc as a declaration. That is
+                // what made the `test datasource` check name Kafka's config
+                // and offer `jails add db` to fix it.
+                // `java::types_annotated_with` is the one reader now, and this
+                // module shrank by using it rather than by losing anything.
+                //
+                // Up 11: `maven` now reports *which* Maven it chose -- an
+                // explicit `JAILS_MAVEN`, the wrapper, or `mvn` because mvnd
+                // is installed and could not start. Which one ran is the
+                // difference between a build and a registry error before Maven
+                // starts, and the report is what makes that answerable without
+                // reading jails' source.
+                ceiling: 1402,
                 // Withdrawn, not reached. abstract.md §8.0.1 audits all ten
                 // checks: none is a re-encoded dependency fact, so the 700
                 // measured a saving that is not there. Ratchet against growth.

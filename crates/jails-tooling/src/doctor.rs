@@ -334,7 +334,17 @@ fn capability_drift_checks(project: &Project) -> Vec<Check> {
             }
         }
         for property in &plan.properties {
-            let key = property.split('=').next().unwrap_or_default().trim();
+            // A capability's property block is prose *and* settings: `add
+            // cors` writes a line saying never to pair `*` with credentials,
+            // and `add db` one saying jails starts compose itself. Reading a
+            // comment as a required key made `doctor` demand a property whose
+            // name was an English sentence, and no amount of `app apply`
+            // could satisfy it.
+            let line = property.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let key = line.split('=').next().unwrap_or_default().trim();
             // Only whole keys, and only outside comments: a commented example
             // naming the key is not the key being set.
             if !key.is_empty()
@@ -656,6 +666,56 @@ testcontainers.reuse.enable=true
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A capability's property block is prose *and* settings, and only the
+    /// settings are keys.
+    ///
+    /// `add cors` writes "Exact browser origins; never use `*` together with
+    /// credentials." above the line it explains. Reading it as a required
+    /// property made `doctor` demand a key whose name was an English
+    /// sentence, on a project where the capability was installed correctly --
+    /// and no amount of `jails sync` could satisfy it, because nothing would
+    /// ever write that key.
+    #[test]
+    fn a_property_comment_is_not_a_required_key() {
+        let root = jails_support::scratch::ScratchDir::in_temp("jails-doctor-cors")
+            .unwrap()
+            .keep();
+        std::fs::create_dir_all(root.join("src/main/java/com/example/demo")).unwrap();
+        std::fs::write(
+            root.join("src/main/java/com/example/demo/App.java"),
+            "package com.example.demo;\npublic final class App {}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("pom.xml"),
+            "<project><parent><groupId>org.springframework.boot</groupId>\
+             <artifactId>spring-boot-starter-parent</artifactId><version>4.1.0</version>\
+             </parent></project>",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("jails.toml"),
+            "[project]\ncapabilities = [\"cors\"]\n",
+        )
+        .unwrap();
+
+        let project = Project::inspect(&root).unwrap();
+        let checks = capability_drift_checks(&project);
+
+        for check in &checks {
+            assert!(
+                !check.detail.contains("property #"),
+                "a comment was read as a required key: {}",
+                check.detail
+            );
+            assert!(
+                !check.detail.contains("never use"),
+                "a comment was read as a required key: {}",
+                check.detail
+            );
+        }
+    }
 
     /// The drift class that had no test because it had no shared value.
     ///

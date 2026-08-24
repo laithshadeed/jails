@@ -398,6 +398,11 @@ impl Project {
         crate::pom::mockmvc_autoconfigure_import_for(self.boot_major())
     }
 
+    /// The `@WebMvcTest` import this project's Boot version has.
+    pub fn webmvc_test_import(&self) -> &'static str {
+        crate::pom::webmvc_test_import_for(self.boot_major())
+    }
+
     /// The components of a record that already exists in this project.
     ///
     /// Was `fields_from_record(root, pkg, name)` at thirteen call sites that

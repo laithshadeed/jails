@@ -314,6 +314,15 @@ pub fn add_in(
             .any(|f| f.path.to_string_lossy().contains("src/test/java")),
     )?;
 
+    // And the same rule for Boot 4's servlet test slice. `add security`
+    // generates a `@WebMvcTest`, and `spring-boot-starter-test` does not
+    // bring the module that holds it -- so without this, `mvn verify` stops
+    // while compiling the generated test and no test in the project runs.
+    crate::generate::ensure_webmvc_test(
+        project,
+        crate::generate::writes_a_webmvc_test(&plan.files),
+    )?;
+
     // Same rule as the generators: a capability that writes an `*IT` has to
     // make sure something runs it. Failsafe is not in the Spring Boot
     // parent's default build, so without this `mvn verify` completes,

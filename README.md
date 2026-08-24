@@ -782,6 +782,14 @@ nothing else — no template overrides, no per-kind paths, no plugin hooks.
 Every command takes `--debug`, which prints the `mvnw`/`mvn`/`mvnd`/`java`/`git`/`curl`
 command lines jails shells out to instead of running them silently.
 
+Which Maven runs is `./mvnw` when the project has one, then `mvnd` when it is
+installed and can start, then `mvn`. **`JAILS_MAVEN` overrides all three** and
+names the command to run — the escape hatch for a machine where the daemon is
+present but unusable. jails also declines to pick `mvnd` when its registry
+directory is not writable, because that failure happens *before* Maven runs and
+looks like an ordinary non-zero exit at the call site. `jails doctor` reports
+which one it chose and why.
+
 Every command that writes also takes `--pretend` (`-p`): it runs every check
 and prints what would change, then stops without touching the project. Global
 on purpose — Rails puts it on every generator rather than on the few that

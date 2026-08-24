@@ -58,6 +58,43 @@ pub fn ensure_assertj(project: &Project, writes_a_test: bool) -> Result<()> {
     ensure_dependency(project.root(), &crate::pom::assertj(project.flavor()))
 }
 
+/// The Boot 4 package `@WebMvcTest` and `@AutoConfigureMockMvc` moved to.
+///
+/// Matched in the *bytes about to be written* rather than per generator, for
+/// the same reason import normalisation and `package-info.java` planning live
+/// on the write path: a rule twenty recipes have to remember is a rule that
+/// decays. A Boot 3 project renders the legacy package, so this is false
+/// there and the dependency is not added -- which is right, since on Boot 3
+/// the class is in `spring-boot-test-autoconfigure` and already present.
+pub const WEBMVC_TEST_PACKAGE: &str = "org.springframework.boot.webmvc.test.autoconfigure";
+
+/// Did this batch write a test that needs Boot 4's servlet test slice?
+pub fn writes_a_webmvc_test(artifacts: &[Artifact]) -> bool {
+    artifacts
+        .iter()
+        .any(|artifact| artifact.contents.contains(WEBMVC_TEST_PACKAGE))
+}
+
+/// Supply the module a generated `@WebMvcTest` needs.
+///
+/// The same rule as `ensure_assertj`, and the failure it prevents is worse:
+/// without it `mvn verify` stops while *compiling* the generated test, so no
+/// test in the project runs, CI is red, and the generated Dockerfile fails
+/// too -- `-DskipTests` suppresses execution but still compiles test sources.
+pub fn ensure_webmvc_test(project: &Project, writes_one: bool) -> Result<()> {
+    if !writes_one || project.build() != crate::build::Build::Maven {
+        return Ok(());
+    }
+    if crate::pom::has_dependency(
+        project.pom(),
+        "org.springframework.boot",
+        "spring-boot-starter-webmvc-test",
+    ) {
+        return Ok(());
+    }
+    ensure_dependency(project.root(), &crate::pom::WEBMVC_TEST_STARTER)
+}
+
 /// Did this batch write anything under `src/test`?
 pub fn writes_a_test(artifacts: &[Artifact]) -> bool {
     artifacts

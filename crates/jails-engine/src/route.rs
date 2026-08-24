@@ -209,6 +209,20 @@ fn with_test_support(project: &Project, mut change: Change) -> Change {
             jails_generate::spring::failsafe_plugin(project.flavor()).to_string(),
         ));
     }
+    // Boot 4 moved `@WebMvcTest` and `@AutoConfigureMockMvc` into a module
+    // `spring-boot-starter-test` does not bring in, so a generated test that
+    // uses either compiles only when this is declared. Applied here for the
+    // same reason the two above are: a rule every recipe has to remember is
+    // a rule that decays.
+    if jails_generate::generate::writes_a_webmvc_test(&change.files)
+        && !jails_project::pom::has_dependency(
+            project.pom(),
+            "org.springframework.boot",
+            "spring-boot-starter-webmvc-test",
+        )
+    {
+        change.deps.push(jails_project::pom::WEBMVC_TEST_STARTER);
+    }
     change
 }
 

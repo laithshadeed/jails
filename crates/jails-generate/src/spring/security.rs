@@ -45,7 +45,7 @@ pub fn security_slice(slice: &Slice) -> Change {
             ),
             artifact(
                 test.join("SecurityConfigTest.java"),
-                security_test_java(pkg),
+                security_test_java(pkg, slice.project().webmvc_test_import()),
             ),
             artifact(
                 test.join("ScopeAuthorizerTest.java"),
@@ -104,10 +104,10 @@ fn production_security_config_java(pkg: &str) -> String {
     )
 }
 
-fn security_test_java(pkg: &str) -> String {
+fn security_test_java(pkg: &str, webmvc_test_import: &str) -> String {
     crate::template::render(
         crate::template_here!("spring/security_test_java.java"),
-        &[("pkg", pkg)],
+        &[("pkg", pkg), ("webmvc_test_import", webmvc_test_import)],
     )
 }
 

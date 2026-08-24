@@ -814,6 +814,68 @@ pub fn spring_boot_major_of(pom: &str) -> u32 {
         .unwrap_or(3)
 }
 
+/// `@WebMvcTest`'s package, which Boot 4 moved out of `spring-boot-test-
+/// autoconfigure` into its own module.
+///
+/// The Boot 4 spelling is not merely a rename: the class lives in
+/// `spring-boot-webmvc-test`, which `spring-boot-starter-test` does **not**
+/// bring in. A template that hardcoded it produced a test importing a package
+/// that does not exist on Boot 3 and, on Boot 4, one the POM had no dependency
+/// for -- which is why `spring::WEBMVC_TEST_STARTER` is spliced beside it.
+pub fn webmvc_test_import_for(boot_major: u32) -> &'static str {
+    const LEGACY: &str = "org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest";
+    const CURRENT: &str = "org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest";
+    if boot_major >= 4 { CURRENT } else { LEGACY }
+}
+
+/// The class the packaged jar starts, as the POM declares it.
+///
+/// Maven's own record of the entry point, which is why it is the one jails
+/// reads rather than searching source for a `main`. A project with two
+/// dispatchers -- `new-cli` writes `App.java` and `generate cli` writes a
+/// second -- has two `main` methods, and a search picks whichever the
+/// directory walk reached first. `java -jar` never guesses; neither should
+/// anything claiming to run the same application.
+pub fn main_class(pom: &str) -> Option<&str> {
+    let open = "<mainClass>";
+    let start = pom.find(open)? + open.len();
+    let end = pom[start..].find("</mainClass>")? + start;
+    let value = pom[start..end].trim();
+    (!value.is_empty()).then_some(value)
+}
+
+/// Point the packaged jar at a different class, leaving every other byte
+/// alone. `None` when the POM declares no main class at all -- a Spring Boot
+/// project, where the plugin finds `@SpringBootApplication` itself.
+pub fn with_main_class(pom: &str, fqcn: &str) -> Option<String> {
+    let open = "<mainClass>";
+    let start = pom.find(open)? + open.len();
+    let end = pom[start..].find("</mainClass>")? + start;
+    let mut out = String::with_capacity(pom.len() + fqcn.len());
+    out.push_str(&pom[..start]);
+    out.push_str(fqcn);
+    out.push_str(&pom[end..]);
+    Some(out)
+}
+
+/// The module those two annotations moved *into*.
+///
+/// The rename is the visible half and the smaller one. Boot 4 split the
+/// servlet test slice into `spring-boot-webmvc-test`, and
+/// `spring-boot-starter-test` does not bring it in -- verified in
+/// `deps/spring-boot/starter/spring-boot-starter-test/build.gradle`, which
+/// lists `spring-boot-test-autoconfigure` and not this. A generated
+/// `@WebMvcTest` compiles only when this is declared, so it lives beside the
+/// import it belongs to rather than with the capability that happens to emit
+/// one today.
+pub const WEBMVC_TEST_STARTER: Dependency = Dependency {
+    group_id: "org.springframework.boot",
+    artifact_id: "spring-boot-starter-webmvc-test",
+    version: None,
+    scope: Some("test"),
+    optional: false,
+};
+
 /// `@AutoConfigureMockMvc`'s package, moved in the same Boot 4 change.
 ///
 /// Reached through [`crate::model::Project::mockmvc_autoconfigure_import`],

@@ -231,39 +231,18 @@ fn state_test_import(
 ///
 /// Sorted because the order decides the order of the edits, and two runs of
 /// one request that produced different transactions would make the receipt
-/// depend on how the filesystem happened to enumerate a directory.
+/// depend on how the filesystem happened to enumerate a directory. Through
+/// the shared reader, which matches the annotation on the top-level type --
+/// the class `add db` is adding shows a `@SpringBootTest` in its own Javadoc,
+/// and a byte scan reads that example as a declaration.
 fn spring_boot_tests(project: &Project) -> Vec<ProjectPath> {
-    let root = project.root().join("src/test/java");
-    let mut found = Vec::new();
-    let mut stack = vec![root];
-    while let Some(current) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&current) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
-                continue;
-            }
-            if !path.extension().is_some_and(|e| e == "java") {
-                continue;
-            }
-            if !std::fs::read_to_string(&path)
-                .is_ok_and(|source| jails_java::annotate::is_spring_boot_test(&source))
-            {
-                continue;
-            }
-            if let Ok(relative) = path.strip_prefix(project.root())
-                && let Some(text) = relative.to_str()
-                && let Ok(project_path) = ProjectPath::parse(text)
-            {
-                found.push(project_path);
-            }
-        }
-    }
-    found.sort();
-    found
+    jails_java::java::types_annotated_with(&project.root().join("src/test/java"), "SpringBootTest")
+        .into_iter()
+        .filter_map(|found| {
+            let relative = found.path.strip_prefix(project.root()).ok()?;
+            ProjectPath::parse(relative.to_str()?).ok()
+        })
+        .collect()
 }
 
 /// Record one claim, refusing a second different value for one key.

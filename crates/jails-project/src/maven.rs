@@ -33,14 +33,55 @@ fn mvnd_binary() -> &'static str {
 /// it, and the two disagreeing is how you get a tool that describes a build it
 /// does not run.
 pub fn binary(root: &Path) -> PathBuf {
+    // An explicit choice wins over every rule below it. Without one, which
+    // Maven runs depends on what happens to be first on `PATH`, and a machine
+    // where the daemon cannot start had no way to say so except by editing
+    // `PATH` for every command.
+    if let Some(chosen) = std::env::var_os(MAVEN_OVERRIDE)
+        && !chosen.is_empty()
+    {
+        return PathBuf::from(chosen);
+    }
     let wrapper = root.join(if cfg!(windows) { "mvnw.cmd" } else { "mvnw" });
     if wrapper.is_file() {
         return wrapper;
     }
-    if crate::process::on_path(mvnd_binary()) {
+    if crate::process::on_path(mvnd_binary()) && mvnd_can_start() {
         PathBuf::from(mvnd_binary())
     } else {
         PathBuf::from("mvn")
+    }
+}
+
+/// The environment variable that names the Maven command to run.
+pub const MAVEN_OVERRIDE: &str = "JAILS_MAVEN";
+
+/// Whether mvnd could start at all, asked before choosing it.
+///
+/// mvnd keeps a registry under the Maven user home and writes it *before*
+/// Maven runs, so on a machine whose home is read-only it dies with
+/// `.m2/mvnd/registry/<version>/registry.bin: Read-only file system` and no
+/// build happens. That failure is indistinguishable from a failing build at
+/// the call site -- it is a non-zero exit like any other -- so a retry there
+/// would re-run a genuinely broken build. It is answerable *here*, cheaply
+/// and deterministically: if the registry's nearest existing ancestor is not
+/// writable, mvnd cannot start, and plain `mvn` is the honest choice.
+fn mvnd_can_start() -> bool {
+    let Some(home) = std::env::var_os("HOME") else {
+        // Nothing to check against; let the daemon speak for itself.
+        return true;
+    };
+    let mut at = PathBuf::from(home).join(".m2").join("mvnd");
+    loop {
+        match std::fs::metadata(&at) {
+            Ok(metadata) => return !metadata.permissions().readonly(),
+            // Not there yet: mvnd would create it, so the question moves up
+            // to whether its parent allows that.
+            Err(_) => match at.parent() {
+                Some(parent) if parent != at => at = parent.to_path_buf(),
+                _ => return true,
+            },
+        }
     }
 }
 
@@ -74,6 +115,31 @@ mod tests {
         } else {
             assert_eq!(mvnd_binary(), "mvnd");
         }
+    }
+
+    /// An explicit choice wins over the wrapper and over `PATH`.
+    ///
+    /// Without one, which Maven runs is decided by whatever happens to be
+    /// installed, and a machine whose mvnd cannot start had no way to say so
+    /// except by editing `PATH` for every command.
+    #[test]
+    fn an_explicit_maven_command_wins() {
+        let _guard = jails_support::CWD_LOCK.lock();
+        let dir = jails_support::scratch::ScratchDir::in_temp("jails-maven-override")
+            .unwrap()
+            .keep();
+        let wrapper = dir.join(if cfg!(windows) { "mvnw.cmd" } else { "mvnw" });
+        std::fs::write(&wrapper, "#!/bin/sh\n").unwrap();
+        assert_eq!(binary(&dir), wrapper);
+
+        // SAFETY: the CWD lock serialises the tests in this binary that touch
+        // process-global state, and this is one of them.
+        unsafe { std::env::set_var(MAVEN_OVERRIDE, "/opt/maven/bin/mvn") };
+        assert_eq!(binary(&dir), PathBuf::from("/opt/maven/bin/mvn"));
+        unsafe { std::env::remove_var(MAVEN_OVERRIDE) };
+
+        assert_eq!(binary(&dir), wrapper);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// The wrapper wins over anything on PATH, so a project's pinned Maven

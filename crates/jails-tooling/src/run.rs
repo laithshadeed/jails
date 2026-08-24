@@ -716,11 +716,25 @@ pub fn run(no_build: bool, args: &[String], debug: bool) -> Result<()> {
         return run_watched(cmd, debug);
     }
 
-    let (pkg, class_name) = find_main_class(&root)?;
-    let fqcn = if pkg.is_empty() {
-        class_name
-    } else {
-        format!("{pkg}.{class_name}")
+    // The POM's `<mainClass>` first, because that is the entry point the
+    // packaged jar has, and `jails run` claiming to run the application while
+    // starting a *different* class is a defect rather than a convenience: a
+    // project whose manifest generated `LedgerCli` had `reconcile` registered
+    // there, and both `java -jar` and `jails run` started the `App` stub,
+    // which answers only `help`. Searching source is the fallback for a POM
+    // that declares none -- it cannot be the primary, because a project with
+    // two dispatchers has two `main` methods and a walk picks whichever it
+    // reaches first.
+    let fqcn = match crate::pom::main_class(&pom) {
+        Some(declared) => declared.to_string(),
+        None => {
+            let (pkg, class_name) = find_main_class(&root)?;
+            if pkg.is_empty() {
+                class_name
+            } else {
+                format!("{pkg}.{class_name}")
+            }
+        }
     };
 
     if !no_build {

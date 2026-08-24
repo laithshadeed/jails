@@ -217,69 +217,56 @@ pub(super) fn imports_config(text: &str, class: &str) -> bool {
         })
 }
 
-pub(super) fn test_container_wiring(root: &Path) -> (Option<String>, Vec<String>) {
-    let mut config: Option<String> = None;
-    let mut boot_tests: Vec<(String, String)> = Vec::new();
+/// The JDBC container types Spring maps to a `DataSource`.
+///
+/// A closed list rather than "anything ending in Container", because that
+/// would read a Kafka, Redis or Toxiproxy container as a database and put the
+/// project's datasource check on the wrong class. jails itself only ever
+/// writes PostgreSQL; the rest are here because `doctor` runs on projects
+/// jails did not create.
+const JDBC_CONTAINERS: &[&str] = &[
+    "PostgreSQLContainer",
+    "MySQLContainer",
+    "MariaDBContainer",
+    "OracleContainer",
+    "MSSQLServerContainer",
+    "JdbcDatabaseContainer",
+];
 
-    let mut stack = vec![root.join("src/test/java")];
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
-                continue;
-            }
-            if !path.extension().is_some_and(|e| e == "java") {
-                continue;
-            }
-            let Ok(text) = std::fs::read_to_string(&path) else {
-                continue;
-            };
-            let stem = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or_default()
-                .to_string();
-            // Read the annotations rather than the bytes. Both facts here
-            // have a decoy in the tree: `TestcontainersConfig`'s own Javadoc
-            // shows a `@SpringBootTest` usage example inside `{@code ...}`,
-            // and `g event` writes a `Containers` @TestConfiguration *nested
-            // inside* its messaging IT. A substring scan reads the first as a
-            // test and the second as the project's container config, which is
-            // how `doctor` came to name the wrong class and then report every
-            // other test as missing an import of it.
-            let annotations = crate::java::annotations(&text);
-            let on_the_top_level_type = |name: &str| {
-                annotations
-                    .iter()
-                    .any(|a| a.name == name && a.target == crate::java::Target::Type(stem.clone()))
-            };
-            if on_the_top_level_type("TestConfiguration")
-                && annotations.iter().any(|a| a.name == "ServiceConnection")
-            {
-                config = Some(stem.clone());
-            }
-            if on_the_top_level_type("SpringBootTest") {
-                boot_tests.push((stem, text));
-            }
-        }
-    }
+pub(super) fn test_container_wiring(root: &Path) -> (Option<String>, Vec<String>) {
+    let tests = root.join("src/test/java");
+    // The config this check is about, and only that one. `add kafka` writes a
+    // `@TestConfiguration` with `@ServiceConnection` too, and taking whichever
+    // the walk saw last made `doctor` report every `@SpringBootTest` in the
+    // project as missing an import of `KafkaTestcontainersConfig` -- under the
+    // heading "test datasource", with `jails add db` as the fix, on a project
+    // where `add db` was installed and correct.
+    //
+    // The discriminator is the container's *type*, because the invariant this
+    // check exists for is specific to JDBC: once `spring-boot-starter-jdbc` is
+    // present, auto-configuration demands a `DataSource` for every
+    // `@SpringBootTest`, including ones that never touch a database. A broker
+    // has no equivalent demand.
+    let config = crate::java::types_annotated_with(&tests, "TestConfiguration")
+        .into_iter()
+        .filter(|found| {
+            crate::java::annotations(&found.source)
+                .iter()
+                .any(|annotation| annotation.name == "ServiceConnection")
+                && crate::java::declares_any_type(&found.source, JDBC_CONTAINERS)
+        })
+        .filter_map(|found| found.type_name().map(str::to_string))
+        .next_back();
 
     let unimported = match &config {
-        Some(class) => {
-            let mut missing: Vec<String> = boot_tests
-                .into_iter()
-                // The config class itself may carry @SpringBootTest in a
-                // sample snippet; it obviously does not import itself.
-                .filter(|(stem, text)| stem != class && !imports_config(text, class))
-                .map(|(stem, _)| stem)
-                .collect();
-            missing.sort();
-            missing
-        }
+        Some(class) => crate::java::types_annotated_with(&tests, "SpringBootTest")
+            .into_iter()
+            .filter_map(|found| {
+                let stem = found.type_name()?.to_string();
+                // The config class does not import itself.
+                (stem != *class && !imports_config(&found.source, class)).then_some(stem)
+            })
+            .collect(),
         None => Vec::new(),
     };
     (config, unimported)
@@ -760,4 +747,71 @@ pub(super) fn hot_reload_checks(project: &Project) -> Vec<Check> {
     }
 
     checks
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write(root: &Path, at: &str, body: &str) {
+        let path = root.join(at);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, body).unwrap();
+    }
+
+    /// The check is about the datasource, and a broker's container config is
+    /// not one.
+    ///
+    /// `add db` and `add kafka` both write a `@TestConfiguration` carrying
+    /// `@ServiceConnection`. Taking whichever the directory walk saw last made
+    /// `doctor` report every `@SpringBootTest` in the project as missing an
+    /// import of `KafkaTestcontainersConfig`, under the heading "test
+    /// datasource", and offer `jails add db` as the fix -- on a project where
+    /// `add db` was already installed and correct.
+    #[test]
+    fn the_datasource_check_ignores_a_broker_container_config() {
+        let root = jails_support::scratch::ScratchDir::in_temp("jails-wiring-kafka")
+            .unwrap()
+            .keep();
+        write(
+            &root,
+            "src/test/java/com/example/TestcontainersConfig.java",
+            "package com.example;\n\n@TestConfiguration\nclass TestcontainersConfig {\n    \
+             @Bean\n    @ServiceConnection\n    PostgreSQLContainer postgres() { return null; }\n}\n",
+        );
+        write(
+            &root,
+            "src/test/java/com/example/KafkaTestcontainersConfig.java",
+            "package com.example;\n\n@TestConfiguration\nclass KafkaTestcontainersConfig {\n    \
+             @Bean\n    @ServiceConnection\n    KafkaContainer broker() { return null; }\n}\n",
+        );
+        write(
+            &root,
+            "src/test/java/com/example/DemoApplicationTests.java",
+            "package com.example;\n\n@SpringBootTest\n@Import(TestcontainersConfig.class)\n\
+             class DemoApplicationTests {}\n",
+        );
+
+        let (config, unimported) = test_container_wiring(&root);
+
+        assert_eq!(config.as_deref(), Some("TestcontainersConfig"));
+        assert!(
+            unimported.is_empty(),
+            "the test imports the datasource config it needs: {unimported:?}"
+        );
+    }
+
+    /// A container named only in a Javadoc example does not make the class
+    /// that mentions it a datasource config.
+    #[test]
+    fn a_container_named_in_a_comment_is_not_one_the_class_declares() {
+        assert!(!crate::java::declares_any_type(
+            "// use PostgreSQLContainer here\nclass Nothing {}\n",
+            JDBC_CONTAINERS
+        ));
+        assert!(crate::java::declares_any_type(
+            "class Real { PostgreSQLContainer c; }\n",
+            JDBC_CONTAINERS
+        ));
+    }
 }

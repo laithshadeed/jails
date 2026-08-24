@@ -615,6 +615,81 @@ pub fn package_of(source: &str) -> Option<String> {
     })
 }
 
+/// Every `.java` file under `dir` whose *top-level type* carries `annotation`,
+/// with its source, in path order.
+///
+/// Three callers wanted this and each had written its own walk: `add`'s test
+/// wiring, the V2 translation, and `doctor`. Two of the three matched a raw
+/// substring, which reads `@SpringBootTest` inside a Javadoc example as a
+/// declaration -- and `TestcontainersConfig`'s Javadoc contains exactly that,
+/// so `add db` counted its own container config as a test needing the config
+/// imported into it.
+///
+/// The order is the path order, because it decides the order of whatever the
+/// caller does next, and a run whose result depended on how the filesystem
+/// enumerated a directory is not reproducible.
+pub fn types_annotated_with(dir: &std::path::Path, annotation: &str) -> Vec<JavaSource> {
+    let mut found = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&current) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if !path
+                .extension()
+                .is_some_and(|extension| extension == "java")
+            {
+                continue;
+            }
+            let Ok(source) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+                continue;
+            };
+            let on_the_type = annotations(&source).into_iter().any(|found| {
+                found.name == annotation && found.target == Target::Type(stem.to_string())
+            });
+            if on_the_type {
+                found.push(JavaSource { path, source });
+            }
+        }
+    }
+    found.sort_by(|a, b| a.path.cmp(&b.path));
+    found
+}
+
+/// One Java file and its text, named rather than a positional pair.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JavaSource {
+    pub path: std::path::PathBuf,
+    pub source: String,
+}
+
+impl JavaSource {
+    /// The top-level type's name, which for Java is always the file stem.
+    pub fn type_name(&self) -> Option<&str> {
+        self.path.file_stem().and_then(|stem| stem.to_str())
+    }
+}
+
+/// Whether this source declares a value of any of `types`.
+///
+/// Read through [`blanked`], so a type named only in a Javadoc example is not
+/// mistaken for one the class holds -- which is the difference between "this
+/// is the project's database container config" and "this is a class whose
+/// comment shows you how to write one".
+pub fn declares_any_type(source: &str, types: &[&str]) -> bool {
+    let code = blanked(source);
+    types.iter().any(|name| code.contains(name))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

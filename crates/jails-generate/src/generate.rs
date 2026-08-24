@@ -186,6 +186,15 @@ pub fn plan_recipe(
             crate::spring::failsafe_plugin(project.flavor()).to_string(),
         ));
     }
+    if writes_a_webmvc_test(&change.files)
+        && !crate::pom::has_dependency(
+            project.pom(),
+            "org.springframework.boot",
+            "spring-boot-starter-webmvc-test",
+        )
+    {
+        change.deps.push(crate::pom::WEBMVC_TEST_STARTER);
+    }
 
     Ok(change)
 }
@@ -376,6 +385,9 @@ pub fn generate_in_project(
 
     if matches!(kind, ArtifactKind::Command) {
         register_command(&root, &base, &name, strategy_on)?;
+    }
+    if matches!(kind, ArtifactKind::Cli) {
+        adopt_as_entry_point(project, &project.package_named(layout::CLI, package), &name)?;
     }
     // A generator that emits code needing a dependency has to supply it.
     // The alternative is handing the reader a compile error for a line they

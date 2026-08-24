@@ -893,6 +893,15 @@ pub fn write_spring_fixture(root: &Path) {
     .unwrap();
 }
 
+/// A Spring project shaped exactly like the one `jails new --offline` writes.
+///
+/// It used to declare `spring-boot-starter-webmvc-test`, which `new` does
+/// not, and that one line hid a release blocker: `add security` generates a
+/// `@WebMvcTest`, Boot 4 moved that class into a module
+/// `spring-boot-starter-test` does not bring in, and every real-toolchain
+/// test compiled it happily against a POM the tool never produces. A fixture
+/// that supplies what the tool is supposed to supply proves nothing about
+/// the tool.
 const SPRING_FIXTURE_POM: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0">
     <modelVersion>4.0.0</modelVersion>
@@ -915,7 +924,7 @@ const SPRING_FIXTURE_POM: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-webmvc-test</artifactId>
+            <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

@@ -24,9 +24,7 @@
 //! unsplice puts it back exactly as it was.
 
 use super::*;
-use jails_java::annotate::{
-    import_annotation, is_spring_boot_test, splice_import, unsplice_import,
-};
+use jails_java::annotate::{import_annotation, splice_import, unsplice_import};
 
 #[cfg(test)]
 pub(super) fn spring_factories_block(fqcn: &str) -> String {
@@ -176,24 +174,17 @@ pub(super) fn strip_legacy_postgres_imports(root: &Path, cfg: &SpringTestImport)
     Ok(changed)
 }
 
+/// Every `@SpringBootTest` under `dir`, in path order.
+///
+/// Through the shared reader, which matches the annotation on the top-level
+/// type rather than the bytes. The raw scan this replaces read the
+/// `@SpringBootTest` inside `TestcontainersConfig`'s own Javadoc example as a
+/// declaration, so `add db` counted its own container config as a test that
+/// needed the config imported into itself -- and was saved only by the same
+/// Javadoc happening to contain the annotation it then looked for.
 pub(super) fn find_spring_boot_tests(dir: &Path) -> Vec<PathBuf> {
-    let mut found = Vec::new();
-    let mut stack = vec![dir.to_path_buf()];
-    while let Some(current) = stack.pop() {
-        let Ok(entries) = fs::read_dir(&current) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
-            } else if path.extension().is_some_and(|e| e == "java")
-                && fs::read_to_string(&path).is_ok_and(|source| is_spring_boot_test(&source))
-            {
-                found.push(path);
-            }
-        }
-    }
-    found.sort();
-    found
+    jails_java::java::types_annotated_with(dir, "SpringBootTest")
+        .into_iter()
+        .map(|found| found.path)
+        .collect()
 }

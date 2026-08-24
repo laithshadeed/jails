@@ -25,11 +25,25 @@ use std::time::Duration;
 pub(super) fn maven_check(root: &Path) -> Check {
     let binary = crate::maven::binary(root);
     let label = binary.display().to_string();
+    // *Which* Maven, not just whether one exists. On a machine where mvnd is
+    // installed but cannot start, the difference between the two is the
+    // difference between a build and a registry error before Maven runs.
+    let from = crate::maven::MAVEN_OVERRIDE;
+    if std::env::var_os(from).is_some_and(|value| !value.is_empty()) {
+        return Check::new(Status::Ok, "maven", format!("{label} (from {from})"));
+    }
     if binary.is_absolute() || label.starts_with("./") {
         return Check::new(Status::Ok, "maven", format!("project wrapper ({label})"));
     }
     if run::find_on_path(&label) {
-        return Check::new(Status::Ok, "maven", format!("{label} on PATH (no wrapper)"));
+        return Check::new(
+            Status::Ok,
+            "maven",
+            match label == "mvn" && run::find_on_path("mvnd") {
+                true => "mvn on PATH; mvnd is installed but could not start".to_string(),
+                false => format!("{label} on PATH (no wrapper)"),
+            },
+        );
     }
     Check::new(
         Status::Fail,
