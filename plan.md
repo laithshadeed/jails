@@ -5298,12 +5298,39 @@ The two schema gaps this section used to name are closed:
   computed against the same capture the plan was so it describes the bytes
   the plan actually read.
 
-  What is left is assembling the candidate itself: turning the collected
-  `diff::Conflict` rows into `PendingConflictPath`s, building
-  `PendingLedgerState` from the store the apply would have written, writing
-  the marker postimages with `PendingMarker` in the ledger instead of the new
-  store, and routing `continue`/`abort` onto `CommitPlan::{Finalise, Abort}`
-  — all of whose types and prepare paths already exist and are tested.
+  What is left is the candidate itself, and it **lands as one piece or not at
+  all**: a project that can enter a pending conflict and not leave it is worse
+  than one that refuses the merge. Building the enter side alone was tried and
+  backed out for exactly that reason.
+
+  The *enter* side is close. `diff` already collects every conflicting path
+  with its marker bytes, both bases, the tokens and the contributors; the
+  candidate is `PendingLedgerState` built from the store the apply would have
+  written, with a conflicted row's `current` as `ResolveFromLive` (not a
+  placeholder image — what that file ends up holding is not knowable until
+  somebody resolves it) and its `base` as the *desired* image, so a reader's
+  fix stays a delta from the newest render. `ledger_after` is then the
+  observed store unchanged plus a `PendingMarker`, which is what stops markers
+  ever being recorded as an entity's output.
+
+  Two things the attempt found that the schema does not yet have:
+
+  - **A `PendingMarker` cannot address its own record.** It carries the
+    operation, generation, request syntax and display string — enough to
+    bootstrap and to check a rerun is the same command, and nothing that says
+    where the complete `PendingConflict` bytes are. `PendingIdentity` is a
+    domain-separated hash of the identity bytes, not the object's sha256, so
+    it cannot be used as an object key either. The marker needs the record's
+    `ObjectId`.
+  - **`abort` cannot reach the file results it must invert.** §R6's Abort row
+    says the operations are "the path-complete guarded inverse of the origin
+    receipt's file results", but `ReceiptV1` carries a `PreparedIdentityV1`
+    and a `complete_journal_checksum` — it *pins* the journal rather than
+    holding the results. So abort needs journal read-back for a completed
+    transaction, which `recover` has for crash paths and nothing exposes for
+    this one. The conflicted paths cannot be recovered from the pending record
+    instead: `PendingConflictPath` holds both bases and the marker image, but
+    not the reader's pre-conflict bytes, which is what a restore returns to.
 
   Two things did land in the meantime. `Merged::Conflicted` keeps the marker
   bytes and the tokens git was told to write, rather than discarding them —
