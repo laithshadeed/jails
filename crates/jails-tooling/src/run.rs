@@ -17,10 +17,33 @@ use std::process::Command;
 fn maven_root(command: &str) -> Result<PathBuf> {
     let root = find_project_root()?;
     crate::build::require_maven_at(&root, command)?;
+    if matches!(crate::build::detect(&root), crate::build::Build::Gradle) {
+        return Err(format!(
+            "`jails {command}` drives Maven, and this project is built by Gradle.\n       \
+             jails reads and splices `build.gradle` -- `add`, `generate`, `doctor` and the \
+             rest work here -- but it does not drive this command's Gradle equivalent \
+             yet.\n       fix: run it through the wrapper, `./gradlew <task>`."
+        ));
+    }
     Ok(root)
 }
 
+/// The project root for a command that can drive either build.
+///
+/// Separate from [`maven_root`] on purpose. A command that shells out to `mvn`
+/// and one that knows both tools are different commands, and collapsing them
+/// is how `jails test` came to run Maven against a Gradle project and fail
+/// with a POM error -- which is worse than the refusal it replaced, because a
+/// refusal says what to do instead.
+fn either_root(command: &str) -> Result<(PathBuf, crate::build::Build)> {
+    let root = find_project_root()?;
+    crate::build::require_maven_at(&root, command)?;
+    let build = crate::build::detect(&root);
+    Ok((root, build))
+}
+
 mod filter;
+mod gradlew;
 use filter::*;
 
 pub fn find_on_path(bin: &str) -> bool {
@@ -201,6 +224,10 @@ pub struct TestOptions {
 }
 
 pub fn test(filter: Option<&str>, options: TestOptions, debug: bool) -> Result<()> {
+    let (root, build) = either_root("test")?;
+    if build == crate::build::Build::Gradle {
+        return gradlew::test(&root, filter, options, debug);
+    }
     let root = maven_root("test")?;
 
     // `--failed` is a filter jails computes rather than one the reader types,
@@ -470,14 +497,24 @@ fn fast_path_refusal(root: &Path, options: &TestOptions) -> Option<String> {
 }
 
 pub fn build(debug: bool) -> Result<()> {
-    let root = maven_root("build")?;
+    let (root, build) = either_root("build")?;
+    if build == crate::build::Build::Gradle {
+        // `assemble` rather than `build`: Gradle's `build` runs the tests too,
+        // and `jails build` is the one that does not. `jails check` is where
+        // tests belong, and a command that quietly did more than its name says
+        // is how a slow feedback loop gets blamed on the wrong thing.
+        return gradlew::tasks(&root, &["assemble"], debug);
+    }
     let mut cmd = Command::new(crate::maven::binary(&root));
     cmd.arg("package").current_dir(&root);
     run_inherited(cmd, debug)
 }
 
 pub fn clean(debug: bool) -> Result<()> {
-    let root = maven_root("clean")?;
+    let (root, build) = either_root("clean")?;
+    if build == crate::build::Build::Gradle {
+        return gradlew::tasks(&root, &["clean"], debug);
+    }
     let mut cmd = Command::new(crate::maven::binary(&root));
     cmd.arg("clean").current_dir(&root);
     run_inherited(cmd, debug)
@@ -507,7 +544,14 @@ pub fn fmt(debug: bool) -> Result<()> {
 /// files, so a removed test (or a renamed record) would still run from
 /// `target/` and fail the check for a file that is no longer in the tree.
 pub fn check(debug: bool) -> Result<()> {
-    let root = maven_root("check")?;
+    let (root, build) = either_root("check")?;
+    if build == crate::build::Build::Gradle {
+        // `clean` first for the same reason Maven gets it: an incremental
+        // compile does not delete stale classes, so a removed test still runs
+        // from the output directory and fails the check for a file that is no
+        // longer in the tree.
+        return gradlew::tasks(&root, &["clean", "check"], debug);
+    }
     let mut cmd = Command::new(crate::maven::binary(&root));
     cmd.args(["clean", "verify"]).current_dir(&root);
     run_inherited(cmd, debug)
@@ -693,6 +737,20 @@ fn changes_between(
 /// that scaffolds CLI projects has to be able to *run* one with arguments, or
 /// the edit loop drops out to raw `mvn` the moment the program takes input.
 pub fn run(no_build: bool, args: &[String], debug: bool) -> Result<()> {
+    let (root, build) = either_root("run")?;
+    if build == crate::build::Build::Gradle {
+        compose::up(&root, &[], debug);
+        let mut tasks = vec!["bootRun".to_string()];
+        if !args.is_empty() {
+            // The Boot Gradle plugin forks a JVM, so argv reaches the
+            // application through a property rather than as arguments to
+            // Gradle -- the same shape `spring-boot:run` needs and for the
+            // same reason.
+            tasks.push(format!("--args={}", args.join(" ")));
+        }
+        let borrowed: Vec<&str> = tasks.iter().map(String::as_str).collect();
+        return gradlew::tasks(&root, &borrowed, debug);
+    }
     let root = maven_root("run")?;
     compose::up(&root, &[], debug);
     let pom = fs::read_to_string(root.join("pom.xml"))

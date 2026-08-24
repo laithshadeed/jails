@@ -133,7 +133,13 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // furthest: `add::add_in`, `generate::generate_in_project`,
                 // `destroy`, `shrink`, `test_wiring` and the whole
                 // `generated_files` registry all took one.
-                ceiling: 100,
+                //
+                // 100 -> 103 for `run/gradlew.rs`. Its three functions decide
+                // which binary to invoke and where to invoke it, which is a
+                // question about a *directory* -- the same shape
+                // `maven::binary` has had all along. A `Project` would carry
+                // no fact they read.
+                ceiling: 103,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;
@@ -507,7 +513,13 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // 666 -> 643 when `spring/resource.rs` left `spring.rs`: the
                 // largest module is no longer `spring.rs`, and the file that
                 // now holds the record is 57 lines from the target.
-                ceiling: 643,
+                //
+                // 643 -> 646 when `run.rs` learned there are two build tools.
+                // The Gradle driving itself did *not* land here -- it is
+                // `run/gradlew.rs`, split by secret -- so what is left is the
+                // three lines of dispatch that decide which of the two a
+                // command means.
+                ceiling: 646,
                 target: 700,
                 why: "The row above can be satisfied by *moving* a monolith rather than \
                       decomposing one, so this asks the question the split is actually for: \
