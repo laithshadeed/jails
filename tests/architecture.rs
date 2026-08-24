@@ -715,6 +715,7 @@ const LAYERS: &[(&str, usize)] = &[
     ("pom", 4),
     ("maven", 4),
     ("config", 4),
+    ("junit", 4),
     ("synonyms", 4),
     ("capture", 4),
     ("compat", 4),

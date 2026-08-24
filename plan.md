@@ -530,7 +530,15 @@ enum EntitySpec {
     ToolFeature(ToolFeatureSpec),
 }
 
-struct ToolFeatureSpec { console_version: ManagedVersion }
+struct ToolFeatureSpec { console_version: MavenVersion }
+// MavenVersion, not ManagedVersion: the console launcher's version must equal
+// the project's own JUnit version, and a pom that manages that version (a
+// Spring Boot parent, an imported junit-bom) must be given none at all -- a
+// redundant one pins the launcher while the BOM moves the engine, which is
+// the misalignment that dies at run time with NoSuchMethodError. A spec that
+// could only say "pinned X" could not describe the commonest project there
+// is, and recording an invented number would be a claim about bytes jails did
+// not write.
 
 #[derive(Clone, Eq, Ord, PartialEq, PartialOrd)]
 enum OwnerId {

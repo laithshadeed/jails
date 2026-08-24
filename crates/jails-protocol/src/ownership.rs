@@ -309,7 +309,10 @@ fn summarise(spec: &EntitySpec) -> String {
             Some(package) if !package.is_base() => format!("placement {package}"),
             _ => "the conventional placement".to_string(),
         },
-        EntitySpec::ToolFeature(feature) => format!("console {}", feature.console_version),
+        EntitySpec::ToolFeature(feature) => match &feature.console_version {
+            crate::coordinate::MavenVersion::Managed => "console (managed by the pom)".to_string(),
+            crate::coordinate::MavenVersion::Pinned(version) => format!("console {version}"),
+        },
     }
 }
 

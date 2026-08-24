@@ -2088,3 +2088,53 @@ fn two_directories_for_one_layer_adopt_neither() {
         "a coin toss was written anyway"
     );
 }
+
+/// §R6.2's `test --fast` row: an owned entity, not a maintenance side channel.
+///
+/// V1 splices `junit-platform-console` into the reader's POM as a side effect
+/// of running tests, records nothing, and leaves no way to take it back out.
+/// A dependency that appeared because of *how somebody ran their tests*, that
+/// nothing can name and nothing can remove, is the failure the ownership model
+/// exists to prevent.
+#[test]
+fn fast_test_claims_its_dependency_and_remove_gives_it_back() {
+    let root = common::temp_dir("engine-fast-test");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_spring_fixture(&root);
+
+    jails_engine::route::install_fast_test(&Project::load(&root).unwrap()).unwrap();
+    let pom = std::fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(pom.contains("junit-platform-console"), "{pom}");
+    // The fixture has a Spring Boot parent, so the version is managed. A
+    // redundant one would pin the launcher while the BOM moves the engine.
+    let at = pom.find("junit-platform-console").unwrap();
+    let block = &pom[at..at + 200.min(pom.len() - at)];
+    assert!(
+        !block[..block.find("</dependency>").unwrap_or(block.len())].contains("<version>"),
+        "a managed version was pinned anyway: {block}"
+    );
+
+    // Installing twice claims nothing new.
+    let generation = jails_commit::store::Store::at(&root)
+        .observe()
+        .unwrap()
+        .generation();
+    jails_engine::route::install_fast_test(&Project::load(&root).unwrap()).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(root.join("pom.xml")).unwrap(),
+        pom,
+        "a second --fast changed the pom"
+    );
+
+    jails_engine::route::remove_fast_test(&Project::load(&root).unwrap()).unwrap();
+    let after = std::fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(
+        !after.contains("junit-platform-console"),
+        "the dependency survived its own removal: {after}"
+    );
+    assert!(
+        after.contains("spring-boot-starter-test"),
+        "the removal took something it did not own: {after}"
+    );
+    let _ = generation;
+}

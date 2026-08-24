@@ -23,7 +23,7 @@
 
 use crate::Result;
 use crate::declaration::{FieldSpec, IntentSpec};
-use crate::identity::{JavaType, ManagedVersion, Name, ObjectId, Package, ProjectPath};
+use crate::identity::{JavaType, Name, ObjectId, Package, ProjectPath};
 use jails_spec::spec::kind::{ArtifactKind, Capability};
 use jails_support::codec::{self, Decoder, Encoder};
 
@@ -353,10 +353,20 @@ impl CapabilitySpec {
     }
 }
 
-/// A tool feature's content: the pinned console version it installs.
+/// A tool feature's content: the console version it installs.
+///
+/// `MavenVersion` rather than `ManagedVersion`, and the difference is the
+/// whole point. The console launcher's version **must equal the project's own
+/// JUnit version**, and a pom that manages that version -- a Spring Boot
+/// parent, or an imported `junit-bom` -- must be given **no** version at all:
+/// a redundant one pins the launcher while the BOM moves the engine, which is
+/// the misalignment that dies at run time with `NoSuchMethodError`. A spec
+/// that could only say "pinned X" could not describe the commonest project
+/// there is, and recording an invented number would be a claim about bytes
+/// jails did not write.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ToolFeatureSpec {
-    pub console_version: ManagedVersion,
+    pub console_version: crate::coordinate::MavenVersion,
 }
 
 impl ToolFeatureSpec {
@@ -366,7 +376,7 @@ impl ToolFeatureSpec {
 
     pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
-            console_version: ManagedVersion::decode(decoder)?,
+            console_version: crate::coordinate::MavenVersion::decode(decoder)?,
         })
     }
 }

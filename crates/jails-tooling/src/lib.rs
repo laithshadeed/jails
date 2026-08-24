@@ -32,6 +32,6 @@ pub mod why;
 // actually lives in, which is what makes moving one a one-line change.
 pub(crate) use jails_generate::{add, generate};
 pub(crate) use jails_java::{classfile, java, template};
-pub(crate) use jails_project::{compose, inspect, maven, model, pom};
+pub(crate) use jails_project::{compose, inspect, junit, maven, model, pom};
 pub(crate) use jails_spec::build;
 pub(crate) use jails_support::{apply, json, process};

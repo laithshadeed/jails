@@ -409,14 +409,14 @@ fn ensure_console_launcher(root: &Path, debug: bool) -> Result<()> {
     if pom.contains("junit-platform-console") {
         return Ok(());
     }
-    let version = match crate::launcher::console_version(&pom) {
-        crate::launcher::ConsoleVersion::Managed => None,
+    let version = match crate::junit::console_version(&pom) {
+        crate::junit::ConsoleVersion::Managed => None,
         // Leaked deliberately: `pom::Dependency` is a compile-time constant
         // everywhere else, this one string is derived once per process, and it
         // has to outlive the splice. Threading a lifetime through forty const
         // declarations to avoid one CLI-lifetime allocation is the worse trade.
-        crate::launcher::ConsoleVersion::Pinned(version) => Some(&*version.leak()),
-        crate::launcher::ConsoleVersion::Unknown => {
+        crate::junit::ConsoleVersion::Pinned(version) => Some(&*version.leak()),
+        crate::junit::ConsoleVersion::Unknown => {
             return Err(
                 "this project declares no JUnit version, so jails cannot align the console \
                  launcher with it.\n       \
