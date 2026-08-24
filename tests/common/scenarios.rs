@@ -226,6 +226,12 @@ pub const SCENARIOS: &[Scenario] = &[
         steps: &[&["add", "sqlite", "--no-start"]],
     },
     Scenario {
+        name: "cap-h2",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[&["add", "h2", "--no-start"]],
+    },
+    Scenario {
         name: "cap-testkit-fake",
         fixture: Fixture::Plain,
         seed: &[],

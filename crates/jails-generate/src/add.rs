@@ -38,6 +38,11 @@ use tooling::*;
 
 mod database;
 
+/// One owner for the JDBC starter's coordinate. `add h2` needs the same
+/// artifact `add db` does, and two spellings of one dependency is how a
+/// version bump comes to move only half a project.
+pub(crate) use database::SPRING_JDBC;
+
 /// Drop the compiled shadow of a source file the transition deleted.
 ///
 /// `target/` is derived output: it is outside every route's mutable scope, it
@@ -199,6 +204,7 @@ fn build_plan(
         Capability::Kafka => kafka_plan(&slice),
         Capability::Csv => csv_plan(&slice, name),
         Capability::Sqlite => sqlite_plan(&slice, name),
+        Capability::H2 => spring_slice_plan(&slice, "h2", crate::spring::h2_slice),
         Capability::Json => json_plan(&slice, name),
         Capability::Testkit => testkit_plan(&slice),
         Capability::Fake => fake_plan(&slice),

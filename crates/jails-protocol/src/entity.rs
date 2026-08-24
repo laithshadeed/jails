@@ -150,8 +150,12 @@ pub fn capability_class(kind: Capability) -> CapabilityClass {
         Api | Actuator | Cache | Security | Cors | Sse | Mail | Redis | Observability => {
             SingletonPlaced
         }
+        // `H2` is conventional rather than placed: what it installs is three
+        // dependencies, a block of properties and one test at the base
+        // package, and none of that has a placement to choose. A class that
+        // takes `--package` and ignores it is worse than one that refuses.
         Db | Kafka | Testkit | Fake | Format | Coverage | Loadtest | Ci | Docker | K8s
-        | Toxiproxy => SingletonConventional,
+        | Toxiproxy | H2 => SingletonConventional,
     }
 }
 

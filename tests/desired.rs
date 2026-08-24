@@ -56,6 +56,7 @@ const BOARD: &[(&str, Verdict)] = &[
     ("docker", Verdict::Translates),
     ("fake", Verdict::Translates),
     ("format", Verdict::Translates),
+    ("h2", Verdict::Translates),
     ("http", Verdict::Translates),
     ("json", Verdict::Translates),
     // Needs actuator before it can plan probes and burn-rate alerts.

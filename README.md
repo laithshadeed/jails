@@ -423,6 +423,17 @@ there the unit is a whole service block rather than a setting.)
 - `jails add|a ci` — a least-privilege GitHub Actions `clean verify` gate with
   timeouts, concurrency cancellation, Maven caching, and immutable action
   commit pins.
+- `jails add|a h2` — an in-process database with the browser console wired up.
+  File-backed for the application (inside the project, not `~`, so two
+  checkouts never share one file) and **in-memory for the tests**, through
+  `src/test/resources/config/application.properties`. Two details a hand-edited
+  pom gets wrong: `H2ConsoleAutoConfiguration` lives in the separate
+  `spring-boot-h2console` module in Boot 4, so without it
+  `spring.h2.console.enabled=true` is a property with nothing listening to it;
+  and a suite that inherits the file URL writes into the working tree and fails
+  on H2's file lock the moment it runs while the application is up. The
+  generated test asserts both the connection and the URL, because only the
+  second can catch the overlay silently not being read.
 - `jails add dependency <group>:<artifact> [--version <v>] [--scope
   compile|runtime|test]` — the escape hatch for a library jails has no
   capability for. It splices the dependency and does nothing else: no wiring,

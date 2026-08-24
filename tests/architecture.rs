@@ -506,7 +506,12 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // 479 -> 478: `add actuator` stopped writing
                 // `info.app.description=@project.description@`, a generated
                 // line whose value is always the empty string.
-                ceiling: 478,
+                //
+                // 478 -> 480 for `add h2`, and the two lines are the `mod h2;`
+                // and `pub use h2::*;` that declare it. The capability itself
+                // is `spring/h2.rs`; this file gains exactly the fixed cost of
+                // a split, which is the shape this ratchet is asking for.
+                ceiling: 480,
                 target: 2500,
                 why: "Logical cohesion: one file for everything sharing the `require_spring` \
                       precondition. abstract.md §6.2 says turning that precondition into data \

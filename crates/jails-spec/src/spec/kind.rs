@@ -23,6 +23,8 @@ pub enum Capability {
     Csv,
     /// SQLite persistence: JDBC connections and a migration runner (sqlite-jdbc)
     Sqlite,
+    /// H2 in-process database, file-backed, with the browser console wired up
+    H2,
     /// Read and write JSON (Jackson databind)
     Json,
     /// Deterministic test helpers: clocks, ids, fixtures, in-process CLI runs
@@ -84,6 +86,7 @@ impl Capability {
             Capability::Kafka => "kafka",
             Capability::Csv => "csv",
             Capability::Sqlite => "sqlite",
+            Capability::H2 => "h2",
             Capability::Json => "json",
             Capability::Testkit => "testkit",
             Capability::Fake => "fake",
