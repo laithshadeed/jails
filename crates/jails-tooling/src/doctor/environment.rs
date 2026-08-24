@@ -15,6 +15,7 @@
 
 use super::wiring::property_value;
 use super::{Check, Status};
+use crate::model::Project;
 use crate::pom;
 use crate::run;
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs as _};
@@ -22,7 +23,24 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-pub(super) fn maven_check(root: &Path) -> Check {
+pub(super) fn maven_check(project: &Project) -> Check {
+    let root = project.root();
+    // A Gradle project is not built by Maven, and reporting which `mvn` is on
+    // PATH would be answering a question nobody asked about a tool this build
+    // never runs. The wrapper is the thing that matters here, because Gradle
+    // pins its own version and a project without one builds differently on
+    // every machine.
+    if matches!(project.build(), crate::build::Build::Gradle) {
+        return match root.join("gradlew").is_file() {
+            true => Check::new(Status::Ok, "gradle", "project wrapper (./gradlew)"),
+            false => Check::new(
+                Status::Warn,
+                "gradle",
+                "no ./gradlew wrapper; this build uses whatever Gradle is on PATH",
+            )
+            .fix("run `gradle wrapper` so the version is pinned to the project"),
+        };
+    }
     let binary = crate::maven::binary(root);
     let label = binary.display().to_string();
     // *Which* Maven, not just whether one exists. On a machine where mvnd is
@@ -55,10 +73,27 @@ pub(super) fn maven_check(root: &Path) -> Check {
 
 /// The mismatch that produces `invalid target release` or a compile that
 /// simply never happens: a JDK older than what the pom asks javac for.
-pub(super) fn jdk_check(pom_text: &str) -> Check {
-    let target = pom::release_level(pom_text);
+pub(super) fn jdk_check(project: &Project) -> Check {
+    // Off the resolved project rather than re-read from text: `Project` already
+    // asked the right reader for this build file, and a second parse here is a
+    // second opinion that would answer "none" for every Gradle project.
+    let target = project.java_release();
     let installed = java_major();
+    let gradle = matches!(project.build(), crate::build::Build::Gradle);
     match (target, installed) {
+        (None, _) if gradle => Check::new(
+            Status::Warn,
+            "jdk",
+            format!(
+                "{} sets no Java release level; Gradle will compile against whatever JDK runs it",
+                jails_project::gradle::FILE
+            ),
+        )
+        .fix(format!(
+            "add `sourceCompatibility = {}` to {}",
+            pom::TARGET_RELEASE,
+            jails_project::gradle::FILE
+        )),
         (None, _) => Check::new(
             Status::Warn,
             "jdk",

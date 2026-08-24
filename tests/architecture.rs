@@ -426,7 +426,15 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // 1407 -> 1402 when the adoptable-row listing went with the
                 // rest of the schema-1 handling. It was five lines here and 77
                 // of 77 warnings on the example applications.
-                ceiling: 1402,
+                //
+                // 1402 -> 1443 for Gradle. Four checks had Maven baked into
+                // them as fact rather than as one build among two -- the
+                // headline flavour, the build-tool check, the JDK check and
+                // Jackson -- and each needed a branch plus the wording that
+                // makes its `fix:` line something a Gradle reader can carry
+                // out. Raised once, with the reason, rather than left to be
+                // discovered as a contradiction.
+                ceiling: 1443,
                 // Withdrawn, not reached. abstract.md §8.0.1 audits all ten
                 // checks: none is a re-encoded dependency fact, so the 700
                 // measured a saving that is not there. Ratchet against growth.
@@ -1269,6 +1277,14 @@ const A_FRESH_READ_IS_CORRECT: &[(&str, &str)] = &[
         "ensure_package_info",
         "reached from `write_new_file`, whose nine callers include `new` -- which is \
          creating the very pom this asks about, so there is no project to have resolved",
+    ),
+    (
+        "read_build_file",
+        "it is the read a `Project` is *constructed from*, not a second one taken beside \
+         it. Both `load` and `inspect` go through it precisely so there is one answer: \
+         `inspect` reading `pom.xml` unconditionally while `load` had learned about \
+         `build.gradle` is what made `doctor` report a Gradle project as having no build \
+         file at all",
     ),
 ];
 

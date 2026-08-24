@@ -398,14 +398,18 @@ pub(super) fn kafka_check(project: &Project) -> Check {
 ///   it quite happily -- different packages, no conflict, no warning. Half
 ///   the code then uses a mapper configured by nobody. This is the one that
 ///   is genuinely hard to see, so it outranks the other.
-pub(super) fn jackson_check(pom_text: &str) -> Check {
-    let jackson3 = pom::has_dependency(pom_text, "tools.jackson.core", "jackson-databind");
-    let jackson2 = pom::has_dependency(pom_text, "com.fasterxml.jackson.core", "jackson-databind");
-    let jsr310 = pom::has_dependency(
-        pom_text,
-        "com.fasterxml.jackson.datatype",
-        "jackson-datatype-jsr310",
-    );
+pub(super) fn jackson_check(project: &Project) -> Check {
+    // Through the project, so the answer comes from whichever build file this
+    // is. Parsing a `build.gradle` as XML reports every Jackson artifact
+    // absent, which reads as "not in use" directly above a capability check
+    // saying it is installed.
+    let jackson3 =
+        project.declares_dependency("tools.jackson.core", "jackson-databind") == Some(true);
+    let jackson2 =
+        project.declares_dependency("com.fasterxml.jackson.core", "jackson-databind") == Some(true);
+    let jsr310 = project
+        .declares_dependency("com.fasterxml.jackson.datatype", "jackson-datatype-jsr310")
+        == Some(true);
 
     if jackson3 && (jackson2 || jsr310) {
         return Check::new(

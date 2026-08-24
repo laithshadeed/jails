@@ -185,8 +185,8 @@ fn run_checks(project: &Project) -> Vec<Check> {
         checks.extend(template_override_checks());
         return checks;
     }
-    checks.push(maven_check(root));
-    checks.push(jdk_check(pom_text));
+    checks.push(maven_check(project));
+    checks.push(jdk_check(project));
     checks.extend(compose_checks(project));
     checks.extend(compose_provider_check(pom_text));
     checks.extend(database_checks(project));
@@ -194,7 +194,7 @@ fn run_checks(project: &Project) -> Vec<Check> {
     checks.push(testcontainers_check(pom_text));
     checks.extend(container_reuse_check(pom_text));
     checks.push(kafka_check(project));
-    checks.push(jackson_check(pom_text));
+    checks.push(jackson_check(project));
     checks.extend(management_checks(project));
     checks.extend(cors_checks(project));
     checks.extend(virtual_thread_checks(root));
@@ -318,7 +318,12 @@ fn capability_drift_checks(project: &Project) -> Vec<Check> {
 
         let mut missing = Vec::new();
         for dep in &plan.deps {
-            if !crate::pom::has_dependency(project.pom(), dep.group_id, dep.artifact_id) {
+            // `Some(false)` only. A build file jails cannot read fully answers
+            // `None`, and reporting that as a missing dependency would be
+            // doctor inventing a defect -- the failure mode this check exists
+            // to catch, pointed the wrong way. Silence is the honest report
+            // for a question that cannot be answered.
+            if project.declares_dependency(dep.group_id, dep.artifact_id) == Some(false) {
                 missing.push(format!("dependency {}:{}", dep.group_id, dep.artifact_id));
             }
         }
@@ -413,13 +418,28 @@ fn project_check(project: &Project) -> Check {
             ),
         );
     }
+    let gradle = matches!(project.build(), crate::build::Build::Gradle);
+    let build_file = match gradle {
+        true => jails_project::gradle::FILE,
+        false => "pom.xml",
+    };
     if pom_text.is_empty() {
-        return Check::new(Status::Fail, "project", "pom.xml is missing or unreadable")
-            .fix("jails new <name>");
+        return Check::new(
+            Status::Fail,
+            "project",
+            format!("{build_file} is missing or unreadable"),
+        )
+        .fix("jails new <name>");
     }
-    let flavor = match pom::flavor(pom_text) {
-        pom::Flavor::SpringBoot => "Spring Boot",
-        pom::Flavor::PlainMaven => "plain Maven",
+    // Named for the build file that was actually read. "plain Maven" over a
+    // `build.gradle` is a confident wrong answer about the one fact this check
+    // exists to state, and every reader takes the first line of `doctor` as
+    // the ground truth for the rest of it.
+    let flavor = match (project.flavor(), gradle) {
+        (pom::Flavor::SpringBoot, true) => "Spring Boot (Gradle)",
+        (pom::Flavor::SpringBoot, false) => "Spring Boot",
+        (pom::Flavor::PlainMaven, true) => "plain Gradle",
+        (pom::Flavor::PlainMaven, false) => "plain Maven",
     };
     let sources = root.join("src/main/java");
     if !sources.is_dir() {
@@ -433,7 +453,14 @@ fn project_check(project: &Project) -> Check {
     // all? `pom::read` falls back to an empty string, so without this every
     // check below happily reported on a project no goal can run against --
     // fifteen greens over a build that cannot start (plan.md §8.9).
-    if let Some((problem, fix)) = pom::problems(pom_text).into_iter().next() {
+    // `pom::problems` is an XML reader. Handing it Groovy would report
+    // fabricated defects, so a Gradle build simply is not asked -- the honest
+    // shape of "this check does not apply" is skipping it, not inventing an
+    // answer.
+    if let Some((problem, fix)) = match gradle {
+        true => None,
+        false => pom::problems(pom_text).into_iter().next(),
+    } {
         return Check::new(
             Status::Fail,
             "project",
@@ -944,11 +971,25 @@ volumes:
         assert_eq!(pom::release_level(old), Some(27));
     }
 
+    /// A Maven project holding exactly this pom, for the checks that read
+    /// dependencies through the resolved project rather than off raw text.
+    fn maven_project(pom_body: &str) -> (jails_support::scratch::ScratchDir, Project) {
+        let scratch = jails_support::scratch::ScratchDir::in_temp("jails-doctor-pom").unwrap();
+        jails_support::apply::put(
+            scratch.path().join("pom.xml"),
+            format!("<project><dependencies>{pom_body}</dependencies></project>"),
+        )
+        .unwrap();
+        let project = Project::inspect(scratch.path()).unwrap();
+        (scratch, project)
+    }
+
     #[test]
     fn jackson_databind_without_jsr310_is_a_failure() {
         let pom = "<dependency><groupId>com.fasterxml.jackson.core</groupId>\
                    <artifactId>jackson-databind</artifactId></dependency>";
-        assert_eq!(jackson_check(pom).status, Status::Fail);
+        let (_scratch, project) = maven_project(pom);
+        assert_eq!(jackson_check(&project).status, Status::Fail);
     }
 
     /// A working Jackson 2 pair still works -- it is just a version behind,
@@ -959,7 +1000,8 @@ volumes:
                    <artifactId>jackson-databind</artifactId></dependency>\
                    <dependency><groupId>com.fasterxml.jackson.datatype</groupId>\
                    <artifactId>jackson-datatype-jsr310</artifactId></dependency>";
-        assert_eq!(jackson_check(pom).status, Status::Warn);
+        let (_scratch, project) = maven_project(pom);
+        assert_eq!(jackson_check(&project).status, Status::Warn);
     }
 
     #[test]
@@ -1077,7 +1119,8 @@ volumes:
     fn jackson_3_alone_is_the_happy_path() {
         let pom = "<dependency><groupId>tools.jackson.core</groupId>\
                    <artifactId>jackson-databind</artifactId></dependency>";
-        assert_eq!(jackson_check(pom).status, Status::Ok);
+        let (_scratch, project) = maven_project(pom);
+        assert_eq!(jackson_check(&project).status, Status::Ok);
     }
 
     /// The failure nothing else reports: two majors coexist quietly because
@@ -1089,7 +1132,8 @@ volumes:
                    <artifactId>jackson-databind</artifactId></dependency>\
                    <dependency><groupId>com.fasterxml.jackson.core</groupId>\
                    <artifactId>jackson-databind</artifactId></dependency>";
-        let check = jackson_check(pom);
+        let (_scratch, project) = maven_project(pom);
+        let check = jackson_check(&project);
         assert_eq!(check.status, Status::Fail);
         assert!(
             check.detail.contains("both Jackson majors"),

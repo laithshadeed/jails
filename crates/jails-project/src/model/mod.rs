@@ -433,17 +433,7 @@ impl Project {
         // its default. That is not silent: `Project::build` is what
         // `generate` reports and `doctor` names, and `require_maven` is what
         // stops a command that needs the real answer from running on a guess.
-        let pom = match build {
-            crate::build::Build::Maven => pom::read(root)?,
-            crate::build::Build::Gradle => std::fs::read_to_string(root.join(crate::gradle::FILE))
-                .map_err(|error| {
-                    format!(
-                        "failed to read {}: {error}",
-                        root.join(crate::gradle::FILE).display()
-                    )
-                })?,
-            _ => String::new(),
-        };
+        let pom = read_build_file(build, root)?;
         let config = Config::load(root)?;
         Ok(Self {
             root: root.to_path_buf(),
@@ -529,18 +519,25 @@ impl Project {
     /// for this constructor.
     pub fn inspect(root: &Path) -> Result<Self> {
         crate::template::install(root);
-        let pom = pom::read(root).unwrap_or_default();
+        let build = crate::build::detect(root);
+        // Unreadable is tolerated here and fatal in `load`, which is the one
+        // deliberate difference between the two: doctor's whole value is that
+        // it works on a project that does not build. *Which* file to read is
+        // not a difference, and is asked once so the two cannot drift --
+        // `inspect` reading `pom.xml` unconditionally is what made `doctor`
+        // report "build.gradle is missing" about a file that was right there.
+        let pom = read_build_file(build, root).unwrap_or_default();
         let config = Config::load(root)?;
         Ok(Self {
             root: root.to_path_buf(),
             base: crate::spec::base_package(root).unwrap_or_default(),
-            flavor: pom::flavor(&pom),
-            java_release: pom::release_level(&pom),
+            flavor: build_flavor(build, &pom),
+            java_release: build_release_level(build, &pom),
             layers: Layers::from_config(&config),
             installed: config.capabilities().to_vec(),
             declared: config.declarations().to_vec(),
             overlay: None,
-            build: crate::build::detect(root),
+            build,
             pom,
         })
     }
@@ -875,6 +872,25 @@ impl<'a> Slice<'a> {
     /// dependencies and therefore whether a spliced pom is readable at all.
     pub fn flavor(&self) -> Flavor {
         self.project.flavor()
+    }
+}
+
+/// The build file's text, or an empty string when this build has none jails
+/// reads.
+///
+/// The single owner of "which file is the build file". Both constructors go
+/// through it, because they had drifted: `load` learned to read `build.gradle`
+/// and `inspect` did not, so `doctor` -- which uses `inspect` -- reported a
+/// Gradle project as having no build file at all.
+fn read_build_file(build: Build, root: &Path) -> Result<String> {
+    match build {
+        Build::Maven => pom::read(root),
+        Build::Gradle => {
+            let path = root.join(crate::gradle::FILE);
+            std::fs::read_to_string(&path)
+                .map_err(|error| format!("failed to read {}: {error}", path.display()))
+        }
+        _ => Ok(String::new()),
     }
 }
 
