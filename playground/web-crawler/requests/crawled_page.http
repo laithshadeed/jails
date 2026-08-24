@@ -11,3 +11,7 @@ Content-Type: application/json
   "statusCode": 1,
   "discoveredAt": "2026-01-01T00:00:00Z"
 }
+
+### List CrawledPage
+GET {{baseUrl}}/crawled-pages
+Accept: application/json

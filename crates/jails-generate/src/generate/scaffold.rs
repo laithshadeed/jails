@@ -114,12 +114,16 @@ pub fn scaffold_artifacts_from_fields(
     let migration_dir = root.join("src/main/resources/db/migration");
     let mut artifacts = Vec::new();
 
+    // One sample, two readers: the collection a reader sends by hand and the
+    // generated controller test that sends it on every build.
+    let sample = sampled_request(slice.project(), &domain, parsed);
+
     artifacts.push(Artifact {
         kind: "HTTP request collection",
         path: root
             .join("requests")
             .join(format!("{}.http", crate::sql::snake_case(name))),
-        contents: scaffold_requests(slice.project(), &domain, name, parsed),
+        contents: scaffold_requests(name, parsed, &sample.0),
     });
 
     // A fixture file, on the same rule as the migration: only when the
@@ -288,6 +292,7 @@ pub fn scaffold_artifacts_from_fields(
                 name,
                 &import_of(&web, &service, &format!("{name}Service")),
                 parsed,
+                (&sample.0, &sample.1[..]),
             ),
         },
     ]);
@@ -295,17 +300,16 @@ pub fn scaffold_artifacts_from_fields(
     Ok(artifacts)
 }
 
-/// The requests the generated controller actually answers, as a collection an
-/// editor can send.
+/// The body, and the types jails could not sample for it.
 ///
-/// **Only the ones it answers.** It used to end with a `### List` block over
-/// `GET {route}`, which the scaffold has never served -- the controller carries
-/// one `@PostMapping` -- so the second request in every generated collection
-/// answered 405. A reader sending it learns nothing about their project, only
-/// about this file. Reading is `jails g query`, and that generator writes its
-/// own collection.
-pub fn scaffold_requests(project: &Project, domain: &str, name: &str, fields: &[Field]) -> String {
+/// A required component with no sample is written `null`, which is a
+/// placeholder a reader replaces -- and a request that cannot be made. The
+/// generated create test is `@Disabled` naming those types rather than
+/// shipping one that fails on every build, which is the same rule
+/// `generate::sample_value` follows for the DTO round trip.
+pub fn sampled_request(project: &Project, domain: &str, fields: &[Field]) -> (String, Vec<String>) {
     let audited = crate::spring::has_audit_pair(fields);
+    let mut unsampled = Vec::new();
     let body = fields
         .iter()
         // The audit columns the create path sets itself. The request record
@@ -322,33 +326,73 @@ pub fn scaffold_requests(project: &Project, domain: &str, name: &str, fields: &[
                     "[]".to_string()
                 }
             } else {
-                match field.java_type.as_str() {
-                    "String" => format!("\"sample-{}\"", field.name),
-                    "Integer" | "int" | "Long" | "long" | "Double" | "double" | "BigDecimal" => {
-                        "1".to_string()
-                    }
-                    "Boolean" | "boolean" => "true".to_string(),
-                    "UUID" => "\"00000000-0000-0000-0000-000000000001\"".to_string(),
-                    "LocalDate" => "\"2026-01-01\"".to_string(),
-                    "LocalDateTime" => "\"2026-01-01T00:00:00\"".to_string(),
-                    "Instant" => "\"2026-01-01T00:00:00Z\"".to_string(),
-                    other if field.owned => first_enum_constant(project, domain, other)
-                        .map(|constant| format!("\"{constant}\""))
-                        .unwrap_or_else(|| "null".to_string()),
-                    _ => "null".to_string(),
-                }
+                json_sample(project, domain, field).unwrap_or_else(|| {
+                    unsampled.push(field.java_type.clone());
+                    "null".to_string()
+                })
             };
             format!("  \"{}\": {value}", field.name)
         })
         .collect::<Vec<_>>()
         .join(",\n");
+    unsampled.sort();
+    unsampled.dedup();
+    (body, unsampled)
+}
+
+/// One field as JSON, or `None` when jails has no model of the type.
+///
+/// The wire spellings are Jackson's defaults for each type, checked against
+/// `deps/jackson-databind`: `Currency` and `ZoneId` are their identifiers,
+/// `byte[]` is base64, and `Duration` accepts ISO-8601 in either direction
+/// even though it is written as decimal seconds.
+fn json_sample(project: &Project, domain: &str, field: &Field) -> Option<String> {
+    Some(match field.java_type.as_str() {
+        "String" => format!("\"sample-{}\"", field.name),
+        "Integer" | "int" | "Long" | "long" | "Double" | "double" | "BigDecimal" => "1".to_string(),
+        "Boolean" | "boolean" => "true".to_string(),
+        "UUID" => "\"00000000-0000-0000-0000-000000000001\"".to_string(),
+        "LocalDate" => "\"2026-01-01\"".to_string(),
+        "LocalDateTime" => "\"2026-01-01T00:00:00\"".to_string(),
+        "Instant" => "\"2026-01-01T00:00:00Z\"".to_string(),
+        "URI" => format!(
+            "\"https://example.invalid/{}\"",
+            crate::sql::snake_case(&field.name)
+        ),
+        "Currency" => "\"GBP\"".to_string(),
+        "ZoneId" => "\"Europe/London\"".to_string(),
+        "Duration" => "\"PT30S\"".to_string(),
+        "byte[]" => "\"amFpbHM=\"".to_string(),
+        other if field.owned => {
+            format!("\"{}\"", first_enum_constant(project, domain, other)?)
+        }
+        _ => return None,
+    })
+}
+
+/// The requests the generated controller actually answers, as a collection an
+/// editor can send.
+///
+/// **Only the ones it answers.** A scoped scaffold's controller is create-only
+/// -- every read has to be a `jails g query` with the tenant in its signature
+/// -- so the `### List` block this used to end with unconditionally answered
+/// 405 there. A reader sending it learns nothing about their project, only
+/// about this file.
+pub fn scaffold_requests(name: &str, fields: &[Field], body: &str) -> String {
     let route = resource_path(name);
+    // Scoped resources are create-only; reads go through `jails g query`,
+    // which writes its own collection.
+    let list = if fields.iter().any(|field| field.constraints.scoped) {
+        String::new()
+    } else {
+        format!("\n### List {name}\nGET {{{{baseUrl}}}}{route}\nAccept: application/json\n")
+    };
     format!(
         "@baseUrl = http://localhost:8080\n\n\
          ### Create {name}\n\
          POST {{{{baseUrl}}}}{route}\n\
          Content-Type: application/json\n\n\
-         {{\n{body}\n}}\n"
+         {{\n{body}\n}}\n{list}"
     )
 }
 

@@ -464,7 +464,12 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // and `security.rs` left, and what remains is the shared
                 // preconditions plus the three small capabilities that have no
                 // second reader.
-                ceiling: 666,
+                // 666 -> 479: `resource.rs` left, holding the Spring artifacts
+                // `g scaffold` emits -- the service, both controller shapes,
+                // their tests and the in-memory adapter. One secret nothing
+                // else here shares; `scope_controller_parts` stayed because
+                // `g query` reads it too.
+                ceiling: 479,
                 target: 2500,
                 why: "Logical cohesion: one file for everything sharing the `require_spring` \
                       precondition. abstract.md §6.2 says turning that precondition into data \
@@ -485,7 +490,10 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // relocated, and the next monolith was already the one
                 // abstract.md §3.2 calls Ousterhout's named anti-pattern
                 // verbatim: parse -> dispatch -> write -> side effects.
-                ceiling: 666,
+                // 666 -> 643 when `spring/resource.rs` left `spring.rs`: the
+                // largest module is no longer `spring.rs`, and the file that
+                // now holds the record is 57 lines from the target.
+                ceiling: 643,
                 target: 700,
                 why: "The row above can be satisfied by *moving* a monolith rather than \
                       decomposing one, so this asks the question the split is actually for: \

@@ -1165,12 +1165,62 @@ fn a_timestamped_scaffold_does_not_ask_the_caller_for_its_audit_columns() {
             .unwrap();
     assert!(response.contains("Instant createdAt"), "{response}");
 
-    // And the sendable collection describes a request that can be made.
+    // And the sendable collection describes a request that can be made -- as
+    // does the generated controller test, which sends that same body.
     let requests = fs::read_to_string(root.join("requests/note.http")).unwrap();
     assert!(!requests.contains("createdAt"), "{requests}");
-    // No `### List`: the scaffold's controller carries one @PostMapping, so
-    // that block answered 405 in every project jails has ever generated.
+    let controller_test =
+        fs::read_to_string(root.join("src/test/java/com/example/demo/web/NoteControllerTest.java"))
+            .unwrap();
+    assert!(
+        controller_test.contains("theDocumentedCreateRequestIsAccepted"),
+        "{controller_test}"
+    );
+    // The JSON key, not the word: the test's own Javadoc names the defect.
+    assert!(
+        !controller_test.contains("\"createdAt\":"),
+        "{controller_test}"
+    );
+}
+
+#[test]
+fn a_scoped_scaffold_documents_only_the_request_its_controller_answers() {
+    // A scoped resource is create-only: every read has to carry the tenant, so
+    // it is a `jails g query`. The collection used to end with a `### List`
+    // block regardless, and the generated controller test already asserted
+    // that same GET is a 405 -- the test knew and the collection did not.
+    let root = temp_dir("scoped-scaffold-requests");
+    write_spring_fixture(&root);
+    assert!(
+        jails_cmd(&root, None)
+            .args(["add", "security"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        jails_cmd(&root, None)
+            .args(["g", "scaffold", "Note", "id:uuid@pk@scope", "title:string!"])
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let requests = fs::read_to_string(root.join("requests/note.http")).unwrap();
+    assert!(requests.contains("POST {{baseUrl}}/notes"), "{requests}");
     assert!(!requests.contains("GET {{baseUrl}}"), "{requests}");
+
+    let controller_test =
+        fs::read_to_string(root.join("src/test/java/com/example/demo/web/NoteControllerTest.java"))
+            .unwrap();
+    assert!(
+        controller_test.contains("hasStatus(405)"),
+        "{controller_test}"
+    );
+    assert!(
+        controller_test.contains("theDocumentedCreateRequestIsAccepted"),
+        "{controller_test}"
+    );
 }
 
 #[test]

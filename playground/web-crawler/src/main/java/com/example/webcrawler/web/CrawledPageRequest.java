@@ -27,9 +27,10 @@ public record CrawledPageRequest(
 
     /** @return the domain type this request describes. */
     public CrawledPage toDomain() {
-        // Set here, not received: these are audit columns, and one
-                 // instant so a freshly created row does not look already edited.
-                 Instant now = Instant.now();
+        // Audit columns: set here rather than received, and one
+        // instant for both, so a freshly created row does not look
+        // already edited.
+        Instant now = Instant.now();
         return new CrawledPage(
                 id,
                 crawlRunId,

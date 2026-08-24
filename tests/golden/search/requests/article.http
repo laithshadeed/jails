@@ -9,3 +9,7 @@ Content-Type: application/json
   "title": "sample-title",
   "body": "sample-body"
 }
+
+### List Article
+GET {{baseUrl}}/articles
+Accept: application/json

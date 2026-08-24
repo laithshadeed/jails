@@ -10,3 +10,7 @@ Content-Type: application/json
   "name": "sample-name",
   "createdAt": "2026-01-01T00:00:00Z"
 }
+
+### List Item
+GET {{baseUrl}}/items
+Accept: application/json

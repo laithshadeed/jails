@@ -9,3 +9,7 @@ Content-Type: application/json
   "body": "sample-body",
   "createdAt": "2026-01-01T00:00:00Z"
 }
+
+### List Message
+GET {{baseUrl}}/messages
+Accept: application/json

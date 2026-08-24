@@ -12,3 +12,7 @@ Content-Type: application/json
   "startedAt": null,
   "finishedAt": null
 }
+
+### List CrawlRun
+GET {{baseUrl}}/crawl-runs
+Accept: application/json
