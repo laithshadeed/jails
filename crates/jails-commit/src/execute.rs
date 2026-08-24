@@ -48,7 +48,7 @@ use jails_prepare::prepare::{FileOp, OperationTarget, PreparedChange, PreparedId
 use jails_prepare::receipt::{AppliedReceipt, ApplyOutcome, DirectoryReceipt, FileReceipt};
 use jails_protocol::conflict::FileImage;
 use jails_protocol::identity::{ObjectId, ProjectPath};
-use jails_protocol::snapshot::CanonicalRoot;
+use jails_protocol::snapshot::{CanonicalRoot, InputPrecondition};
 use jails_support::lock::{Contention, Lock};
 use std::path::{Path, PathBuf};
 
@@ -539,7 +539,110 @@ fn recheck(
             }
         }
     }
+    recheck_inputs(locked, change)?;
     check_ledger(locked, change.ledger_before)
+}
+
+/// §R4.3 step 2: recheck every project input the plan depended on.
+///
+/// Not the same question as the per-operation before-image check above. That
+/// asks whether the file this transaction is about to *write* is still what it
+/// expected; this asks whether the facts it *read* to decide what to write are
+/// still true. `jails g migration` is the case that makes the difference
+/// visible: it allocates the next serial from a directory listing and writes a
+/// file whose name nothing else has, so the write guard would pass happily
+/// while another process was allocating the same number.
+///
+/// The external, legacy and machine-receipt preconditions are not rechecked
+/// here. They are resolved through a runtime `CommitContext` binding that only
+/// the manifest and migration routes produce, and no route builds one yet --
+/// so there is nothing for them to be checked against, and a check written
+/// against an empty binding table would be a check that always passes. Their
+/// rows are named in §R6.1 step 4's aggregate work.
+fn recheck_inputs(
+    locked: &LockedProject,
+    change: &PreparedChange,
+) -> std::result::Result<(), CommitError> {
+    let root = &locked.handle.root;
+    for precondition in &change.input_preconditions {
+        match precondition {
+            InputPrecondition::Absent { path } => {
+                match crate::activate::observe(&root.join(path.as_str())) {
+                    Ok(ActualImage::Absent) => {}
+                    Ok(actual) => {
+                        return Err(CommitError::StaleInput(format!(
+                            "`{path}` was absent when this plan was made and is now \
+                             {actual:?}.\n       fix: it appeared after the plan was made; \
+                             replan."
+                        )));
+                    }
+                    Err(error_kind) => {
+                        return Err(CommitError::StaleInput(format!(
+                            "`{path}` could not be read ({error_kind})"
+                        )));
+                    }
+                }
+            }
+            InputPrecondition::File {
+                path,
+                sha256,
+                len,
+                mode,
+            } => match crate::activate::observe(&root.join(path.as_str())) {
+                Ok(ActualImage::File {
+                    sha256: actual,
+                    len: actual_len,
+                    mode: actual_mode,
+                }) if actual == *sha256 && actual_len == *len && actual_mode == *mode => {}
+                Ok(_) => {
+                    return Err(CommitError::StaleInput(format!(
+                        "`{path}` is not the file this plan read.\n       fix: it changed \
+                         after the plan was made; replan."
+                    )));
+                }
+                Err(error_kind) => {
+                    return Err(CommitError::StaleInput(format!(
+                        "`{path}` could not be read ({error_kind})"
+                    )));
+                }
+            },
+            InputPrecondition::Directory {
+                path,
+                entries_sha256,
+                ..
+            } => {
+                let listed =
+                    jails_project::capture::list_directory(&root.join(path.as_str()), path)
+                        .map_err(CommitError::StaleInput)?;
+                let actual = jails_protocol::snapshot::directory_digest(&listed)
+                    .map_err(CommitError::StaleInput)?;
+                if actual != *entries_sha256 {
+                    return Err(CommitError::StaleInput(format!(
+                        "`{path}` does not hold what it held when this plan was made.\n       \
+                         fix: something was added or removed after the plan read it; replan."
+                    )));
+                }
+            }
+            InputPrecondition::MachineRoot { presence } => {
+                let present = root.join(".jails").is_dir();
+                let expected = *presence == jails_protocol::snapshot::MachineRootPresence::Present;
+                if present != expected {
+                    return Err(CommitError::StaleInput(
+                        "`.jails` appeared or disappeared after the plan was made.\n       \
+                         fix: replan."
+                            .to_string(),
+                    ));
+                }
+            }
+            InputPrecondition::ExternalAbsent { .. }
+            | InputPrecondition::ExternalFile { .. }
+            | InputPrecondition::LegacyAbsent { .. }
+            | InputPrecondition::LegacyFile { .. }
+            | InputPrecondition::LegacyDirectory { .. }
+            | InputPrecondition::MachineReceipt { .. } => {}
+        }
+    }
+    Ok(())
 }
 
 /// Where the store stands relative to a transaction's two images.

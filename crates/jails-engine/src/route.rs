@@ -40,270 +40,30 @@ use jails_protocol::change::DesiredChange;
 use jails_protocol::declaration::{FieldSpec, IntentArguments, IntentSpec};
 use jails_protocol::edit::SemanticEdit;
 use jails_protocol::entity::{
-    CapabilityId, CapabilityInstance, CapabilitySpec, EntityId, EntitySpec, IntentId, OwnerId,
+    CapabilityId, CapabilityInstance, CapabilitySpec, EntityId, EntitySpec, IntentId, OneShotId,
+    OneShotSpec, OwnerId, SourceInputId,
 };
-use jails_protocol::identity::{JavaType, Name, Package, ProjectPath};
+use jails_protocol::identity::{JavaType, Name, ObjectId, Package, ProjectPath};
 use jails_protocol::ownership::{DesiredEntity, DesiredState, ObservedEntity, ReconcileScope};
-use jails_protocol::plan::{DesiredAppliedEntity, DesiredChangeSet, LedgerIntent, PlannedSubject};
-use jails_protocol::render::ManagedPath;
-use jails_protocol::resource::{DesiredResource, ResourceKey, ResourceOwner, ResourceValue};
+use jails_protocol::plan::{
+    DesiredAppliedEntity, DesiredChangeSet, DesiredOneShotReceipt, LedgerIntent, PlannedSubject,
+};
+use jails_protocol::render::{DesiredBody, DesiredFile, ManagedPath};
+use jails_protocol::resource::{
+    DesiredResource, OneShotLifecycle, OneShotState, ResourceKey, ResourceOwner, ResourceValue,
+};
 use jails_protocol::snapshot::{MachineRootPresence, TemplateStore};
 use jails_protocol::transition::CommitPlan;
 use jails_spec::spec::kind::{ArtifactKind, Capability};
 use jails_support::Result;
 
-/// Install one capability through the transaction protocol.
-///
-/// The direct counterpart of `add::add_in`, and deliberately the same subject:
-/// `ReconcileScope::DirectConfig` speaks for the capability list in
-/// `jails.toml`, which is what `sync` later reconciles against.
-pub fn install(project: &Project, capability: Capability) -> Result<CommitResult> {
-    let id = CapabilityId {
-        kind: capability,
-        instance: CapabilityInstance::Singleton,
-    };
-    let owner = ResourceOwner::Entity(EntityId::Capability(id.clone()));
-    let change = with_test_support(project, jails_generate::add::plan_for(capability, project)?);
-    let mut desired = desire::contribution(&owner, &change, project)?;
-    record_capability(&mut desired, &owner, &id)?;
-    let entity = DesiredEntity {
-        id: EntityId::Capability(id),
-        spec: EntitySpec::Capability(CapabilitySpec { placement: None }),
-        owners: BTreeSet::from([OwnerId::DirectConfig]),
-    };
-    let reads = declaration(project, &change, &desired)?;
-    let request = Request {
-        scope: ReconcileScope::DirectConfig,
-        declared: declared_capabilities(&observed(project)?, Some(entity))?,
-        changes: vec![desired],
-    };
-    commit(project, request, &reads, "jails add")
-}
+mod artifact;
+mod capability;
+mod oneshot;
 
-/// Make the project match the capability list in `jails.toml`.
-///
-/// One transition, not a loop of installs: everything the manifest names and
-/// nothing it does not, decided in one reconciliation. A capability listed but
-/// not installed arrives; one installed but no longer listed leaves; and the
-/// two happen together or not at all, which is what stops a half-applied sync
-/// from leaving a project neither state.
-///
-/// The manifest is the authority here, not the store. That is the whole point
-/// of `sync`: somebody edited the list, and this is how the project catches up.
-pub fn sync(project: &Project) -> Result<CommitResult> {
-    let store = observed(project)?;
-    let mut declared = BTreeMap::new();
-    let mut changes = Vec::new();
-    let mut reads = capture::capability_reads()?;
-    for label in project.capabilities() {
-        // The manifest stores `Capability::label()` spellings, never clap
-        // aliases -- CLAUDE.md's rule, so that one capability cannot be listed
-        // twice under two names. An unknown one is an error rather than a
-        // skipped line: silently ignoring it would make `sync` report success
-        // over a project it did not finish.
-        let capability = Capability::value_variants()
-            .iter()
-            .copied()
-            .find(|candidate| candidate.label() == label)
-            .ok_or_else(|| {
-                format!(
-                    "`{label}` in jails.toml is not a capability this jails knows.\n       fix: \
-                     run `jails commands --json` for the list, or use a newer jails."
-                )
-            })?;
-        let id = CapabilityId {
-            kind: capability,
-            instance: CapabilityInstance::Singleton,
-        };
-        let owner = ResourceOwner::Entity(EntityId::Capability(id.clone()));
-        declared.insert(
-            EntityId::Capability(id.clone()),
-            DesiredEntity {
-                id: EntityId::Capability(id.clone()),
-                spec: EntitySpec::Capability(CapabilitySpec { placement: None }),
-                owners: BTreeSet::from([OwnerId::DirectConfig]),
-            },
-        );
-        // Already recorded means already installed, and re-planning it would
-        // ask the recipe to describe a project it has already changed.
-        if store.ledger.as_ref().is_some_and(|ledger| {
-            ledger
-                .applied
-                .iter()
-                .any(|row| row.id == EntityId::Capability(id.clone()))
-        }) {
-            continue;
-        }
-        let change =
-            with_test_support(project, jails_generate::add::plan_for(capability, project)?);
-        let mut desired = desire::contribution(&owner, &change, project)?;
-        record_capability(&mut desired, &owner, &id)?;
-        for artifact in &change.files {
-            reads = reads.file(relative(project, &artifact.path)?);
-        }
-        // Same rule as `install`: a file this capability edits surgically is
-        // a precondition of the plan, not an incidental read.
-        for resource in &desired.resources {
-            if let ResourceKey::SpringTestImport { path, .. } = &resource.key {
-                reads = reads.file(path.clone());
-            }
-        }
-        changes.push(desired);
-    }
-    for row in store
-        .ledger
-        .iter()
-        .flat_map(|ledger| ledger.resources.iter())
-    {
-        if let ResourceKey::WholeFile(path) = &row.key {
-            reads = reads.file(path.clone());
-        }
-    }
-
-    let request = Request {
-        scope: ReconcileScope::DirectConfig,
-        declared,
-        changes,
-    };
-    commit(project, request, &reads, "jails sync")
-}
-
-/// Take one capability back out.
-///
-/// The exact inverse of [`install`], and it is not a mirrored undo: the
-/// request simply stops declaring the capability, and reconciliation works out
-/// what that means. A dependency two capabilities wanted stays, because the
-/// other one still claims it. A file only this capability owned becomes an
-/// absence. The line in `jails.toml` goes, because it was a resource this
-/// entity owned like any other.
-pub fn remove(project: &Project, capability: Capability) -> Result<CommitResult> {
-    let id = CapabilityId {
-        kind: capability,
-        instance: CapabilityInstance::Singleton,
-    };
-    let entity = EntityId::Capability(id);
-    let store = observed(project)?;
-    if !store
-        .ledger
-        .as_ref()
-        .is_some_and(|ledger| ledger.applied.iter().any(|row| row.id == entity))
-    {
-        return Err(format!(
-            "`{}` is not recorded as installed in this project.\n       fix: `jails doctor` says \
-             what is installed. Removing something the store never recorded would mean guessing \
-             which lines to take out of files jails does not own.",
-            capability.label()
-        ));
-    }
-    let mut declared = declared_capabilities(&store, None)?;
-    declared.remove(&entity);
-    let owner = ResourceOwner::Entity(entity.clone());
-    let request = Request {
-        scope: ReconcileScope::DirectConfig,
-        declared,
-        // Nothing is *written* by a removal. Everything it does falls out of
-        // the claims it stops making, which is what makes `remove` the exact
-        // inverse of `add` rather than a second hand-written description of
-        // what `add` did.
-        changes: Vec::new(),
-    };
-    commit(project, request, &retiring(&store, &owner)?, "jails remove")
-}
-
-/// Generate one persistent artifact through the transaction protocol.
-///
-/// The direct counterpart of `generate_in_project`, and the subject is one
-/// entity rather than the capability list: `ReconcileScope::DirectEntity` is
-/// "exactly one direct `generate`/`destroy` request", so this route may add or
-/// remove its own claim and says nothing about anybody else's.
-#[allow(clippy::too_many_arguments)]
-pub fn generate(
-    project: &Project,
-    kind: ArtifactKind,
-    name: &str,
-    fields: &[String],
-    package: Option<&str>,
-    indexes: &[String],
-    on: Option<&str>,
-    yields: Option<&str>,
-) -> Result<CommitResult> {
-    let change = with_test_support(
-        project,
-        jails_generate::generate::plan_recipe(
-            project, kind, name, fields, package, indexes, on, yields,
-        )?,
-    );
-    let id = intent(project, kind, name, package, fields, indexes, on, yields)?;
-    let owner = ResourceOwner::Entity(EntityId::Intent(id.clone()));
-    let desired = desire::contribution(&owner, &change, project)?;
-    let entity = DesiredEntity {
-        id: EntityId::Intent(id.clone()),
-        spec: EntitySpec::Intent(spec(project, kind, fields, indexes, on, yields)?),
-        owners: BTreeSet::from([OwnerId::DirectCli]),
-    };
-    let reads = declaration(project, &change, &desired)?;
-    let request = Request {
-        scope: ReconcileScope::DirectEntity(EntityId::Intent(id)),
-        declared: BTreeMap::from([(entity.id.clone(), entity)]),
-        changes: vec![desired],
-    };
-    commit(project, request, &reads, "jails generate")
-}
-
-/// Take one persistent artifact back out.
-///
-/// The counterpart of [`generate`], and the same shape as [`remove`] is to
-/// [`install`]: nothing is described, the request simply stops declaring the
-/// entity, and reconciliation works out what that means. §R6.2 asks
-/// `destroy` to "forward-plan remaining resources from recorded exact state"
-/// rather than rebuild a path list, which is what this is -- the store says
-/// which resources this owner holds, and a resource nobody claims any more is
-/// retired.
-///
-/// `ReconcileScope::DirectEntity` is the narrow scope for exactly this
-/// reason: `jails destroy record Note` says nothing about `record Memo`, so
-/// declaring nothing here retires one entity rather than every intent in the
-/// project.
-pub fn destroy(
-    project: &Project,
-    kind: ArtifactKind,
-    name: &str,
-    package: Option<&str>,
-) -> Result<CommitResult> {
-    let id = intent(project, kind, name, package, &[], &[], None, None)?;
-    let entity = EntityId::Intent(id.clone());
-    let store = observed(project)?;
-    if !store
-        .ledger
-        .as_ref()
-        .is_some_and(|ledger| ledger.applied.iter().any(|row| row.id == entity))
-    {
-        // Naming the command that *would* have recorded it is the whole
-        // difference between this and a bare "nothing to destroy" printed
-        // over files that are right there. CLAUDE.md keeps that rule for the
-        // V1 path; the reason is the same here.
-        return Err(format!(
-            "no `{} {}` is recorded in this project.\n       fix: `jails g {} {}` is what \
-             records one. A destroy that guessed at paths would delete files jails never wrote.",
-            label(kind),
-            id.name,
-            label(kind),
-            id.name,
-        ));
-    }
-    let owner = ResourceOwner::Entity(entity.clone());
-    let request = Request {
-        scope: ReconcileScope::DirectEntity(entity),
-        declared: BTreeMap::new(),
-        changes: Vec::new(),
-    };
-    commit(
-        project,
-        request,
-        &retiring(&store, &owner)?,
-        "jails destroy",
-    )
-}
+pub use artifact::{destroy, generate};
+pub use capability::{install, remove, sync};
+pub use oneshot::{cases, migration};
 
 /// A kind as the word somebody types, taken from the same `ValueEnum` clap
 /// parses -- so a refusal naming `jails g <kind>` names a command that exists.
@@ -705,7 +465,7 @@ fn declaration(
 ) -> Result<ReadDeclaration> {
     let mut declaration = capture::capability_reads()?;
     for artifact in &change.files {
-        declaration = declaration.file(relative(project, &artifact.path)?);
+        declaration = declaration.file(relative_path(project, &artifact.path)?);
     }
     for resource in &desired.resources {
         if let ResourceKey::SpringTestImport { path, .. } = &resource.key {
@@ -720,7 +480,7 @@ fn declaration(
 /// A recipe plans in absolute paths because it writes files; a resource is
 /// named by where it sits in the project, so that the same record means the
 /// same thing on another machine.
-fn relative(project: &Project, path: &std::path::Path) -> Result<ProjectPath> {
+fn relative_path(project: &Project, path: &std::path::Path) -> Result<ProjectPath> {
     let relative = path.strip_prefix(project.root()).map_err(|_| {
         format!(
             "{} is outside {}, so this request cannot claim it",
@@ -741,15 +501,30 @@ fn commit(
     declaration: &ReadDeclaration,
     description: &str,
 ) -> Result<CommitResult> {
-    let (snapshot, mut projection) = capture::projected(project, declaration)?;
     // Read once, and let the same value decide the generation the plan claims
     // and the image the commit guards under the lock. Reading them apart is
     // how a plan comes to be written against a store that moved in between.
     let observed = observed(project)?;
+    let set = request.against(&observed)?;
+    commit_set(project, set, declaration, description)
+}
+
+/// The same steps, for a request that already knows what the store becomes.
+///
+/// A one-shot does not go through [`Request`]: there is no ownership to
+/// reconcile, so there is nothing to measure against the store. It states its
+/// receipt and its file and that is the whole transition.
+fn commit_set(
+    project: &Project,
+    set: DesiredChangeSet,
+    declaration: &ReadDeclaration,
+    description: &str,
+) -> Result<CommitResult> {
+    let (snapshot, mut projection) = capture::projected(project, declaration)?;
+    let observed = observed(project)?;
     if let Some(store) = &observed.ledger {
         projection.record(&store.resources);
     }
-    let set = request.against(&observed)?;
     let root = capture::canonical_root(project.root())?;
     let machine = if project.root().join(".jails").is_dir() {
         MachineRootPresence::Present

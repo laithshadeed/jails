@@ -52,7 +52,7 @@ pub fn next_migration_version(dir: &Path) -> Result<u32> {
         .ok_or_else(|| "migration version overflow".to_string())
 }
 
-pub(super) fn sql_name(value: &str) -> Result<String> {
+pub fn sql_name(value: &str) -> Result<String> {
     let mut out = String::new();
     let mut previous_was_lower_or_digit = false;
     for ch in value.trim().chars() {
@@ -85,9 +85,23 @@ pub(super) fn sql_name(value: &str) -> Result<String> {
 
 /// Turn a brief's checklist into a `@Disabled` test class -- the todo list you
 /// delete one `@Disabled` at a time.
-pub(super) fn generate_cases(root: &Path, pkg: &str, brief: &Path, pretend: bool) -> Result<()> {
-    let text = fs::read_to_string(brief)
-        .map_err(|e| format!("failed to read {}: {e}", brief.display()))?;
+/// What `generate cases` intends, computed without writing anything.
+///
+/// The same split `plan_recipe` makes for the persistent kinds, and for the
+/// same reason: §R6.2 turns this into a one-shot receipt plus one file, and
+/// that is only possible if what it intends can be computed apart from being
+/// carried out. The brief itself is read here, because its bytes are what the
+/// receipt hashes.
+///
+/// `brief` is **project-relative**, and stays that way: it is read from under
+/// the project root and it is the spelling the generated Javadoc names. A
+/// path resolved against the process working directory would make the same
+/// command produce two different files depending on which subdirectory it was
+/// typed in, and the receipt would record whichever one happened to win.
+pub fn plan_cases(project: &Project, pkg: &str, brief: &Path) -> Result<(Change, String)> {
+    let at = project.root().join(brief);
+    let text =
+        fs::read_to_string(&at).map_err(|e| format!("failed to read {}: {e}", brief.display()))?;
     let cases = parse_cases(&text);
     if cases.is_empty() {
         return Err(format!(
@@ -95,9 +109,39 @@ pub(super) fn generate_cases(root: &Path, pkg: &str, brief: &Path, pretend: bool
             brief.display()
         ));
     }
-
     let class = cases_class_name(brief)?;
-    let path = test_dir(root, pkg).join(format!("{class}.java"));
+    let path = test_dir(project.root(), pkg).join(format!("{class}.java"));
+    Ok((
+        Change {
+            files: vec![Artifact {
+                kind: "cases",
+                path,
+                contents: cases_java(pkg, &class, brief, &cases),
+            }],
+            ..Change::default()
+        },
+        text,
+    ))
+}
+
+/// How many cases a plan carries, for the line `generate` prints.
+fn case_count(change: &Change) -> usize {
+    change
+        .files
+        .first()
+        .map(|artifact| artifact.contents.matches("@Disabled").count())
+        .unwrap_or(0)
+}
+
+pub(super) fn generate_cases(
+    project: &Project,
+    pkg: &str,
+    brief: &Path,
+    pretend: bool,
+) -> Result<()> {
+    let (change, _) = plan_cases(project, pkg, brief)?;
+    let path = change.files[0].path.clone();
+    let cases = std::iter::repeat_n((), case_count(&change)).collect::<Vec<_>>();
     if path.exists() {
         return Err(format!("{} already exists", path.display()));
     }
@@ -112,7 +156,7 @@ pub(super) fn generate_cases(root: &Path, pkg: &str, brief: &Path, pretend: bool
         println!("--pretend: nothing was written.");
         return Ok(());
     }
-    write_new_file(root, &path, &cases_java(pkg, &class, brief, &cases))?;
+    write_new_file(project.root(), &path, &change.files[0].contents)?;
     println!(
         "created cases {} ({} case{})",
         path.display(),

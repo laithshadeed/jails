@@ -263,3 +263,70 @@ fn a_plan_prepared_elsewhere_is_refused_before_anything_is_written() {
         "and nothing of the foreign plan reached this project"
     );
 }
+
+/// §R4.3 step 2: a fact the plan *read* is rechecked under the lock, not only
+/// a file it is about to write.
+///
+/// The two are different questions, and the difference is not academic.
+/// `jails g migration` allocates the next serial from a directory listing and
+/// writes a file whose name nothing else holds, so the write guard passes
+/// happily while another process is allocating the same number. The listing
+/// is what has to be rechecked, and it was carried in the plan and never
+/// looked at.
+#[test]
+fn a_directory_that_changed_since_the_plan_read_it_refuses() {
+    let (scratch, locked) = project();
+    let listed = ProjectPath::parse("db").unwrap();
+    std::fs::create_dir_all(scratch.path().join("db")).unwrap();
+
+    let mut change = one_create();
+    change.input_preconditions = vec![jails_protocol::snapshot::InputPrecondition::Directory {
+        path: listed.clone(),
+        entries: Vec::new(),
+        entries_sha256: jails_protocol::snapshot::directory_digest(&[]).unwrap(),
+    }];
+    change.transaction_id = change.identity().unwrap().transaction_id().unwrap();
+
+    // Somebody else allocates V001 between the plan and the commit.
+    std::fs::write(scratch.path().join("db/V001__theirs.sql"), "-- theirs\n").unwrap();
+
+    let error = commit(&locked, &bundle(&locked, change)).unwrap_err();
+    assert!(
+        format!("{error:?}").contains("does not hold what it held"),
+        "the refusal says the listing moved: {error:?}"
+    );
+    assert!(
+        !scratch.path().join(AT).exists(),
+        "and nothing was written -- this is a refusal before activation"
+    );
+    scratch.close().unwrap();
+}
+
+/// The same rule for a file the plan read but does not write.
+#[test]
+fn a_file_that_changed_since_the_plan_read_it_refuses() {
+    let (scratch, locked) = project();
+    let read = ProjectPath::parse("jails.toml").unwrap();
+    std::fs::write(scratch.path().join("jails.toml"), "[project]\n").unwrap();
+
+    let mut change = one_create();
+    change.input_preconditions = vec![jails_protocol::snapshot::InputPrecondition::File {
+        path: read.clone(),
+        sha256: ObjectId::from_bytes(sha256(b"[project]\n")),
+        len: b"[project]\n".len() as u64,
+        mode: FileMode::new(0o644).unwrap(),
+    }];
+    change.transaction_id = change.identity().unwrap().transaction_id().unwrap();
+    // The plan is good against the tree as it stands.
+    assert!(commit(&locked, &bundle(&locked, change.clone())).is_ok());
+
+    // Now the file the plan read moves, and the same plan is stale.
+    std::fs::write(scratch.path().join("jails.toml"), "[project]\n# edited\n").unwrap();
+    std::fs::remove_file(scratch.path().join(AT)).unwrap();
+    let error = commit(&locked, &bundle(&locked, change)).unwrap_err();
+    assert!(
+        format!("{error:?}").contains("not the file this plan read"),
+        "{error:?}"
+    );
+    scratch.close().unwrap();
+}

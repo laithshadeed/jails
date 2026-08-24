@@ -5247,7 +5247,7 @@ command uses it", and dispatch is still V1 for every command.
 |---|---|---|
 | 1. Land the executor dark | done | `jails-engine` is a library crate precisely so nothing in `main.rs` calls it; the workspace `dead_code` denial makes dark code in the binary impossible rather than merely discouraged. |
 | 2. Capability `add`/`remove`/`sync` on V2 | done | `route::{install,remove,sync}`; `tests/desired.rs` compares 21 capabilities against V1 on dependencies, effective property values and file bytes; `tests/engine.rs` sweeps 21 failpoints through a real install. `sync` is one transition, not a loop. |
-| 3. Persistent `generate`, then the one-shots | partial | `generate::plan_recipe` separates planning from writing and `route::generate` commits it; 22 scenarios match V1 byte-for-byte. `route::destroy` retires an entity from the recorded exact state, and `every_persistent_kind_destroys_back_to_where_it_started` round-trips 22 of the 25 scenarios to a byte-identical project. The three it does not are the one-shots: the `field`/`migration`/`cases` policies are not started, and `plan_recipe` refuses those three by name. |
+| 3. Persistent `generate`, then the one-shots | partial | `generate::plan_recipe` separates planning from writing and `route::generate` commits it; 22 scenarios match V1 byte-for-byte. `route::destroy` retires an entity from the recorded exact state, and `every_persistent_kind_destroys_back_to_where_it_started` round-trips 22 of the 25 scenarios to a byte-identical project. `route::migration` allocates from a declared directory listing that §R4.3 step 2 now genuinely rechecks, and `route::cases` records a source-hash receipt. `field` is not started. The *update* half of `cases` — a re-run against an edited brief — is blocked on the `LedgerV2.outputs` gap below, and refuses saying so. |
 | 4. `app init/plan/apply/reconcile` as one aggregate | not started | — |
 | 5. Maintenance mutations | not started | — |
 | 6. New-project bootstrap through publish | done | §R6.5; `new`/`new-cli` build in a scratch sibling under `<parent>/.jails-new.lock` and become real in one rename, `--app` included. |
@@ -5265,7 +5265,14 @@ discovered:
   provenance that did not happen, and provenance is what §R5.2's upgrade path
   reads to decide whether a template moved. Until it is written, an update to
   jails' own earlier output refuses rather than replaces, which is the safe
-  direction and matches what V1 does.
+  direction and matches what V1 does. **The refusal now says which situation it
+  is in**: a path the store already records as jails' own output names this gap,
+  and only a path nothing recorded gets "jails did not write it". They had one
+  message, and it was a lie in one of the two cases.
+
+  This is what blocks every "update" gate in §R6.2 — the generator row's, the
+  `generate_field` row's overlay reapplication, and `generate_cases`'s
+  same-source reconcile. It is one gap, not three.
 - ~~`add db` and anything else contributing a Spring test import cannot yet be
   stated as desired state.~~ Closed. §R6.3's `add::test_wiring` row landed as
   `ResourceKey`/`ResourceValue`/`SemanticEdit::SpringTestImport`: one claim per

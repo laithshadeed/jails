@@ -196,6 +196,16 @@ fn read_file(at: &Path, path: &ProjectPath) -> Result<Option<SnapshotFile>> {
 /// unchanged directory must be the same value. An absent directory lists as
 /// empty rather than failing: "nothing has been generated yet" is the ordinary
 /// state of a migrations directory.
+/// One directory listing, as the snapshot records it.
+///
+/// Public because the commit-time recheck has to produce the *same* list from
+/// the same directory -- §R4.3 step 2 compares its digest against the one the
+/// plan captured, and two enumerations that sorted differently would report a
+/// change nobody made.
+pub fn list_directory(at: &Path, path: &ProjectPath) -> Result<Vec<ProjectPath>> {
+    list(at, path)
+}
+
 fn list(at: &Path, path: &ProjectPath) -> Result<Vec<ProjectPath>> {
     let entries = match std::fs::read_dir(at) {
         Ok(entries) => entries,

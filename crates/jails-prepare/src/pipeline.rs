@@ -161,7 +161,21 @@ fn apply(
     let rendered = materialise(&projection, &set.ordered, &context.templates)?;
 
     // Step 8. Diff the final projection against the snapshot images.
-    let (operations, objects) = diff(&base, &projection, &rendered)?;
+    // Which paths the store already records as somebody's output. It is not
+    // the same question as "does this change claim it", and telling the two
+    // apart is what lets a refusal say something true: jails wrote this
+    // before, versus jails has never seen it.
+    let previously_owned: BTreeSet<ProjectPath> = context
+        .observed_store
+        .ledger
+        .iter()
+        .flat_map(|ledger| ledger.resources.iter())
+        .filter_map(|row| match &row.key {
+            jails_protocol::resource::ResourceKey::WholeFile(path) => Some(path.clone()),
+            _ => None,
+        })
+        .collect();
+    let (operations, objects) = diff(&base, &projection, &rendered, &previously_owned)?;
 
     // Step 9. Parents for creates only, stopping at the machine root.
     let directories = parents(&base, &operations)?;
@@ -385,6 +399,7 @@ fn diff(
     base: &ProjectSnapshot,
     projection: &ProjectedProject,
     rendered: &BTreeMap<ProjectPath, Vec<u8>>,
+    previously_owned: &BTreeSet<ProjectPath>,
 ) -> Result<(Vec<FileOp>, ObjectBundle)> {
     let mut operations = Vec::new();
     let mut objects: BTreeMap<ObjectId, Arc<[u8]>> = BTreeMap::new();
@@ -441,10 +456,23 @@ fn diff(
                 // and the receipt recorded the entity as its contributor.
                 //
                 // `prior` is `None` until applied outputs are read back from
-                // the ledger. That makes an update to jails' own earlier
-                // output refuse rather than replace, which is the safe
-                // direction to be wrong in while the plumbing lands.
+                // the ledger (§R6.1's `LedgerV2.outputs` gap). That makes an
+                // update to jails' own earlier output refuse rather than
+                // replace, which is the safe direction to be wrong in while
+                // the plumbing lands -- but the refusal has to say which of
+                // the two situations it is in. "jails did not write it" is
+                // the truth for a file nothing recorded and a lie for one the
+                // store already owns.
                 if !contributors.is_empty() {
+                    if previously_owned.contains(path) {
+                        return Err(format!(
+                            "`{path}` is jails' own output and its bytes differ from what this \
+                             would write, but the store has not recorded the bytes jails wrote \
+                             -- so it cannot tell your edits from a regeneration.\n       fix: \
+                             destroy and regenerate, or keep the file. plan.md §R6.1 names this \
+                             as the open `LedgerV2.outputs` gap."
+                        ));
+                    }
                     let live = FileImage::Present {
                         object: ObjectRef::new(file.sha256, file.len),
                         mode: file.mode,

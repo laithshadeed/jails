@@ -898,3 +898,165 @@ fn removing_a_database_gives_the_reader_their_test_back() {
         "and the properties it set:\n{properties}"
     );
 }
+
+/// `g migration`, the first of the three one-shots.
+///
+/// §R6.2: *"snapshot allocates next number; lock rechecks directory listing;
+/// append-only file/receipt, no destroy."* A migration is not an entity —
+/// the database has already run it — so what the store records is a receipt
+/// saying this number was handed out, which is what stops the next run
+/// reusing it.
+#[test]
+fn a_migration_allocates_the_next_serial_and_records_that_it_did() {
+    let root = common::temp_dir("engine-migration");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_spring_fixture(&root);
+
+    jails_engine::route::migration(&Project::load(&root).unwrap(), "create rewards").unwrap();
+    jails_engine::route::migration(&Project::load(&root).unwrap(), "add index").unwrap();
+
+    let dir = root.join("src/main/resources/db/migration");
+    assert!(dir.join("V001__create_rewards.sql").is_file());
+    assert!(
+        dir.join("V002__add_index.sql").is_file(),
+        "the second allocation saw the first: {:?}",
+        std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok().map(|e| e.file_name()))
+            .collect::<Vec<_>>()
+    );
+
+    let store = jails_commit::store::Store::at(&root)
+        .observe()
+        .unwrap()
+        .ledger
+        .unwrap();
+    assert_eq!(store.one_shots.len(), 2, "{:?}", store.one_shots);
+    assert!(
+        store.applied.is_empty(),
+        "a migration is not an entity: {:?}",
+        store.applied
+    );
+    // Ordering is numeric, and the receipt says which number this was. A
+    // second run that read the receipts and not the directory would be a
+    // second authority on the same fact, so it reads the directory -- but the
+    // receipt is what a later `doctor` can ask about.
+    let versions: Vec<u64> = store
+        .one_shots
+        .iter()
+        .filter_map(|row| match &row.spec {
+            jails_protocol::entity::OneShotSpec::Migration {
+                allocated_version, ..
+            } => Some(*allocated_version),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(versions, vec![1, 2]);
+}
+
+/// A number somebody else already used is not handed out again.
+///
+/// The allocation reads the directory rather than the receipts, so a file a
+/// person wrote by hand counts — which is the right answer, because Flyway
+/// counts it too. The *concurrent* case, where the directory moves between
+/// the plan and the commit, is closed by the declared listing being rechecked
+/// under the lock; `crates/jails-commit/tests/crash.rs` exercises that recheck
+/// directly, because opening that window needs a plan and a commit that are
+/// separate calls.
+#[test]
+fn a_migration_number_already_in_the_directory_is_not_handed_out_again() {
+    let root = common::temp_dir("engine-migration-taken");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_spring_fixture(&root);
+    let dir = root.join("src/main/resources/db/migration");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("V001__theirs.sql"), "-- theirs\n").unwrap();
+
+    jails_engine::route::migration(&Project::load(&root).unwrap(), "mine").unwrap();
+
+    assert!(dir.join("V002__mine.sql").is_file());
+    assert!(!dir.join("V001__mine.sql").exists());
+    assert_eq!(
+        std::fs::read_to_string(dir.join("V001__theirs.sql")).unwrap(),
+        "-- theirs\n",
+        "and the file jails did not write is untouched"
+    );
+}
+
+/// `g cases`: the brief is an input, and the receipt is keyed by it.
+///
+/// §R6.2's row. The markdown is the reader's file — jails never writes it —
+/// so a re-run against the *same* source is an update to a receipt that
+/// already exists rather than a second one-shot landing on a file that is
+/// already there. That is the difference from V1, which refuses the second
+/// run with "already exists".
+#[test]
+fn cases_records_the_brief_it_read_and_reconciles_a_re_run() {
+    let root = common::temp_dir("engine-cases");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+    jails_support::apply::put(
+        root.join("docs/behaviour.md"),
+        "# Acceptance\n\n- it accepts a valid card\n- it refuses an expired one\n",
+    )
+    .unwrap();
+
+    jails_engine::route::cases(&Project::load(&root).unwrap(), "docs/behaviour.md", None).unwrap();
+
+    let output = root.join("src/test/java/com/example/demo/BehaviourTest.java");
+    let first = std::fs::read_to_string(&output).unwrap();
+    assert!(first.contains("itAcceptsAValidCard"), "{first}");
+    assert!(first.contains("@Disabled"), "{first}");
+
+    let store = jails_commit::store::Store::at(&root)
+        .observe()
+        .unwrap()
+        .ledger
+        .unwrap();
+    assert_eq!(store.one_shots.len(), 1, "{:?}", store.one_shots);
+    let recorded = match &store.one_shots[0].spec {
+        jails_protocol::entity::OneShotSpec::Cases { source_sha256, .. } => *source_sha256,
+        other => panic!("{other:?}"),
+    };
+
+    // The same source again is a no-op, not a collision.
+    assert!(matches!(
+        jails_engine::route::cases(&Project::load(&root).unwrap(), "docs/behaviour.md", None)
+            .unwrap(),
+        jails_commit::outcome::CommitResult::NoOp
+    ));
+
+    // An edited source would rewrite the output, and that is the half §R6.2
+    // calls "same-source updates reconcile the immutable output path". It is
+    // blocked on the *other* gap §R6.1 names -- `LedgerV2.outputs` is written
+    // empty, so there is no recorded base to measure an edit against. What
+    // must not happen meanwhile is a refusal that says something false.
+    jails_support::apply::put(
+        root.join("docs/behaviour.md"),
+        "# Acceptance\n\n- it accepts a valid card\n- it refuses an expired one\n- it retries once\n",
+    )
+    .unwrap();
+    let error =
+        jails_engine::route::cases(&Project::load(&root).unwrap(), "docs/behaviour.md", None)
+            .unwrap_err();
+    assert!(
+        error.contains("is jails' own output") && error.contains("LedgerV2.outputs"),
+        "the refusal names the gap rather than claiming jails did not write the file: {error}"
+    );
+    let _ = recorded;
+}
+
+/// An external brief is refused by name rather than recorded under an
+/// identity nothing can resolve.
+#[test]
+fn a_brief_outside_the_project_is_refused_with_the_reason() {
+    let root = common::temp_dir("engine-cases-external");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+
+    let error = jails_engine::route::cases(&Project::load(&root).unwrap(), "../elsewhere.md", None)
+        .unwrap_err();
+
+    assert!(error.contains("outside this project"), "{error}");
+    assert!(error.contains("fix:"), "{error}");
+}

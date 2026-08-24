@@ -101,12 +101,17 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // object would have nothing left to resolve. `capture` itself
                 // takes `&CanonicalRoot` precisely so this stays at one.
                 //
+                // 148 -> 147: `generate_cases` took a root and now takes the
+                // `Project` it was already being called with, because
+                // extracting `plan_cases` beside it would otherwise have made
+                // two functions where there was one.
+                //
                 // 145 -> 146 for `ProjectHandle::at`, which is the executor's
                 // constructor: the one place a path becomes the resolved
                 // handle every commit step then takes. That is the cure this
                 // rung asks for, not the disease -- nothing downstream of it
                 // sees a `&Path` at all.
-                ceiling: 148,
+                ceiling: 147,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;

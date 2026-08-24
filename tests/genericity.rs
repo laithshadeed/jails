@@ -90,6 +90,9 @@ const ALLOWED: &[AllowedConcept] = &[
             // A whole route ends in the ledger write, and its declared
             // intent is literally a `LedgerIntent`.
             "crates/jails-engine/src/route.rs",
+            "crates/jails-engine/src/route/artifact.rs",
+            "crates/jails-engine/src/route/capability.rs",
+            "crates/jails-engine/src/route/oneshot.rs",
             // Reading the store *is* reading `ledger.toml`, and the reader
             // cannot name the file it opens without naming it.
             "crates/jails-commit/src/store.rs",

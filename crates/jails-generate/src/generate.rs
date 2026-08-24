@@ -190,6 +190,28 @@ pub fn plan_recipe(
     Ok(change)
 }
 
+/// A brief as the project-relative path the receipt records.
+///
+/// Falls back to the argument exactly as typed when it cannot be placed under
+/// the root -- an absolute path elsewhere, or a project that does not resolve
+/// -- so the refusal comes from the read, which can say what it could not
+/// find, rather than from a silent rewrite here.
+fn project_relative_brief(project: &Project, name: &str) -> std::path::PathBuf {
+    let typed = Path::new(name);
+    let absolute = if typed.is_absolute() {
+        typed.to_path_buf()
+    } else {
+        match std::env::current_dir() {
+            Ok(cwd) => cwd.join(typed),
+            Err(_) => return typed.to_path_buf(),
+        }
+    };
+    match absolute.strip_prefix(project.root()) {
+        Ok(relative) => relative.to_path_buf(),
+        Err(_) => typed.to_path_buf(),
+    }
+}
+
 /// Generate against an explicitly resolved project.
 ///
 /// App reconciliation uses this to render old and new intents in isolated
@@ -255,10 +277,16 @@ pub fn generate_in_project(
     // These kinds use NAME as a path/description rather than a Java class
     // name. Handle them before the shared capitalisation below.
     if matches!(kind, ArtifactKind::Cases) {
+        // Typed where the reader stands, recorded relative to the project.
+        // The two are the same string in the ordinary case -- the root is
+        // where people run this -- and differ only from a subdirectory, where
+        // resolving against the working directory is what would make the
+        // command mean two things.
+        let brief = project_relative_brief(project, name);
         return generate_cases(
-            &root,
+            project,
             &subpackage(&base, package.unwrap_or("")),
-            Path::new(name),
+            &brief,
             pretend,
         );
     }
