@@ -36,7 +36,7 @@ use jails_prepare::pipeline::{self, ObservedStore, PreparationContext};
 use jails_project::capture::{self, ReadDeclaration};
 use jails_project::model::{Change, Project};
 use jails_protocol::bootstrap::Bootstrap;
-use jails_protocol::change::DesiredChange;
+use jails_protocol::change::{DesiredChange, MaintenanceAttribution};
 use jails_protocol::context::RenderedSubjectContext;
 use jails_protocol::declaration::{FieldSpec, IntentArguments, IntentSpec};
 use jails_protocol::edit::SemanticEdit;
@@ -63,6 +63,7 @@ mod app;
 mod artifact;
 mod capability;
 mod field;
+mod maintenance;
 mod oneshot;
 mod provenance;
 
@@ -70,7 +71,8 @@ pub use app::{AppIntent, app_apply, app_plan};
 pub use artifact::{destroy, generate};
 pub use capability::{install, remove, sync};
 pub use field::field;
-pub use oneshot::{app_init, cases, migration};
+pub use maintenance::{app_init, rename};
+pub use oneshot::{cases, migration};
 
 /// A kind as the word somebody types, taken from the same `ValueEnum` clap
 /// parses -- so a refusal naming `jails g <kind>` names a command that exists.

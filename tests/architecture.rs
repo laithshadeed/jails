@@ -681,6 +681,7 @@ const LAYERS: &[(&str, usize)] = &[
     ("tidy", 1),
     ("java", 1),
     ("classfile", 1),
+    ("identifier", 1),
     ("template", 1),
     // jails-spec: what a jails project is -- where it is, how it is laid out,
     // what a field means, and the closed CLI vocabularies.

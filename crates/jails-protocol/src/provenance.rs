@@ -58,7 +58,6 @@ pub enum OneShotKind {
     Field,
     Migration,
     Cases,
-    Manifest,
 }
 
 /// Where a template's bytes came from, as identity rather than location.
@@ -135,7 +134,6 @@ impl OneShotKind {
             Self::Field => 0,
             Self::Migration => 1,
             Self::Cases => 2,
-            Self::Manifest => 3,
         }
     }
 
@@ -144,7 +142,6 @@ impl OneShotKind {
             0 => Self::Field,
             1 => Self::Migration,
             2 => Self::Cases,
-            3 => Self::Manifest,
             other => return Err(format!("unknown one-shot kind tag {other}")),
         })
     }

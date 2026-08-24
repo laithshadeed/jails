@@ -14,6 +14,8 @@
 
 pub mod annotate;
 pub mod classfile;
+pub mod identifier;
 pub mod java;
+
 pub mod template;
 pub mod tidy;

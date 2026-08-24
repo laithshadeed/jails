@@ -1855,3 +1855,146 @@ fn an_overlapping_edit_refuses_without_writing_anything() {
         "the refusal left something behind"
     );
 }
+
+/// §R6.2's `rename` row: every rewrite and every move in one transition.
+///
+/// V1's own source says why this matters. It writes each file's new contents
+/// and then moves the files, with a comment explaining that this order at
+/// least leaves "one consistent state" if a write fails partway -- a defence
+/// against a partial rename, not a prevention of one. Here a move is a
+/// `Create` at the destination and a `Delete` at the source in the same
+/// operation list, so there is no moment where a file exists under both names
+/// or under neither.
+#[test]
+fn a_rename_moves_the_type_its_companions_and_every_reference_at_once() {
+    let root = common::temp_dir("engine-rename");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+
+    jails_engine::route::generate(
+        &Project::load(&root).unwrap(),
+        jails_spec::spec::kind::ArtifactKind::Record,
+        "Reward",
+        &["title:string!".to_string()],
+        None,
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+
+    // An unrelated type that merely starts with the same letters, plus a
+    // string literal naming the old type. Neither may move.
+    let dir = root.join("src/main/java/com/example/demo/domain");
+    std::fs::write(
+        dir.join("RewardHistory.java"),
+        "package com.example.demo.domain;\n\n\
+         public final class RewardHistory {\n\
+        \x20   private final Reward latest = null;\n\
+        \x20   private static final String LABEL = \"Reward archive\";\n\
+        \x20   public Reward latest() { return latest; }\n\
+         }\n",
+    )
+    .unwrap();
+
+    jails_engine::route::rename(&Project::load(&root).unwrap(), "Reward", "Bonus", true).unwrap();
+
+    assert!(dir.join("Bonus.java").is_file(), "the type did not move");
+    assert!(!dir.join("Reward.java").exists(), "the old path survived");
+    assert!(
+        root.join("src/test/java/com/example/demo/domain/BonusTest.java")
+            .is_file(),
+        "the companion did not move with it"
+    );
+    assert!(
+        !root
+            .join("src/test/java/com/example/demo/domain/RewardTest.java")
+            .exists()
+    );
+
+    let history = std::fs::read_to_string(dir.join("RewardHistory.java")).unwrap();
+    assert!(
+        dir.join("RewardHistory.java").is_file(),
+        "a type sharing a prefix was moved"
+    );
+    assert!(
+        history.contains("private final Bonus latest"),
+        "the reference was not renamed: {history}"
+    );
+    assert!(
+        history.contains("class RewardHistory"),
+        "the substring match renamed a longer identifier: {history}"
+    );
+    assert!(
+        history.contains("\"Reward archive\""),
+        "a string literal was rewritten: {history}"
+    );
+
+    assert!(
+        std::fs::read_to_string(dir.join("Bonus.java"))
+            .unwrap()
+            .contains("public record Bonus("),
+        "the moved file still declares the old type"
+    );
+}
+
+/// A rename is one generation and refuses a destination that is occupied.
+///
+/// Both come from the same place: every source *and* every destination is a
+/// declared read, so an occupied destination is a captured fact rather than a
+/// `Path::exists` the plan races with -- and the whole rename is one commit
+/// rather than a file's worth of them.
+#[test]
+fn a_rename_is_one_generation_and_will_not_land_on_an_occupied_name() {
+    let root = common::temp_dir("engine-rename-guard");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+    let generate = |name: &str| {
+        jails_engine::route::generate(
+            &Project::load(&root).unwrap(),
+            jails_spec::spec::kind::ArtifactKind::Record,
+            name,
+            &["title:string!".to_string()],
+            None,
+            &[],
+            None,
+            None,
+        )
+        .unwrap()
+    };
+    generate("Reward");
+    generate("Bonus");
+
+    let before = jails_commit::store::Store::at(&root)
+        .observe()
+        .unwrap()
+        .generation();
+    let error =
+        jails_engine::route::rename(&Project::load(&root).unwrap(), "Reward", "Bonus", true)
+            .unwrap_err();
+    assert!(error.contains("already exists"), "{error}");
+    assert!(
+        root.join("src/main/java/com/example/demo/domain/Reward.java")
+            .is_file(),
+        "the refusal moved something anyway"
+    );
+    assert_eq!(
+        jails_commit::store::Store::at(&root)
+            .observe()
+            .unwrap()
+            .generation(),
+        before,
+        "a refusal advanced the store"
+    );
+
+    // Now with a free destination: many files, one generation.
+    jails_engine::route::rename(&Project::load(&root).unwrap(), "Reward", "Reward2", true).unwrap();
+    assert_eq!(
+        jails_commit::store::Store::at(&root)
+            .observe()
+            .unwrap()
+            .generation(),
+        before + 1,
+        "a rename touching four files took more than one generation"
+    );
+}
