@@ -13,6 +13,7 @@ use crate::Result;
 use crate::prepare::{
     DirectoryOp, FileOp, GuardedImage, OperationTarget, PreparedChange, PreparedKind,
 };
+use crate::receipt::AppliedReceipt;
 use jails_protocol::conflict::{FileImage, FileMode};
 use jails_protocol::effect::{EffectState, PostCommitEffect};
 use jails_protocol::identity::{ObjectId, OperationId, TransactionId};
@@ -349,6 +350,124 @@ fn is_no_op(report: &Report) -> bool {
 
 fn plural(count: usize) -> &'static str {
     if count == 1 { "" } else { "s" }
+}
+
+/// The human rendering of one command result, per §R3.4.
+///
+/// One function for both sides, because they are one value: a preview prints
+/// what a commit would do and a commit prints what it did, in the same words
+/// and the same order. Two renderers would be two vocabularies, and a reader
+/// comparing a `--pretend` with the run that followed it would be comparing
+/// two descriptions rather than one.
+///
+/// Recovery comes first, which is §R3.4's order and not a stylistic choice:
+/// what an interrupted earlier run left behind and this invocation finished is
+/// context for the result, not part of it.
+pub fn render_envelope(envelope: &crate::command::CommandEnvelope) -> String {
+    let mut out = String::new();
+    for outcome in &envelope.recovery {
+        for change in &outcome.changes {
+            out.push_str(&format!("  recovered {}\n", recovery_line(change)));
+        }
+        for effect in &outcome.pending_effects {
+            out.push_str(&format!(
+                "  pending   effect {} from {}\n",
+                effect.effect, effect.transaction
+            ));
+        }
+    }
+    match (&envelope.report, &envelope.receipt, &envelope.error) {
+        (Some(crate::command::CommandReport::Prepared(report)), _, _) => {
+            out.push_str(&render(report));
+        }
+        (Some(crate::command::CommandReport::EffectRetry(retry)), _, _) => {
+            out.push_str(&format!(
+                "retry effect {} for {}\n",
+                retry.effect_id, retry.transaction
+            ));
+        }
+        (None, Some(receipt), _) => out.push_str(&render_receipt(receipt)),
+        (None, None, Some(error)) => {
+            out.push_str(&format!("{}: {}\n", error.code.label(), error.message));
+        }
+        // A no-op has no receipt on purpose: §R4.2 keeps "nothing happened"
+        // and "everything happened and changed nothing" apart, and only the
+        // second has files to name.
+        (None, None, None) => out.push_str("nothing to do\n"),
+    }
+    out
+}
+
+/// What a commit did, in the same shape as what a plan would have done.
+pub fn render_receipt(receipt: &AppliedReceipt) -> String {
+    let mut out = format!("{} {}\n", receipt.outcome.label(), receipt.transaction_id);
+    for directory in &receipt.directories {
+        out.push_str(&format!("  {:<7} {}\n", "mkdir", directory.path));
+    }
+    for file in &receipt.files {
+        let subject = match &file.path {
+            OperationTarget::Project(path) => path.to_string(),
+            OperationTarget::LegacyMachine(path) => format!("legacy-machine {path:?}"),
+        };
+        out.push_str(&format!("  {:<7} {subject}\n", verb_of(file)));
+    }
+    let ledger = ledger_of(receipt.ledger_before, receipt.ledger_after);
+    if ledger.kind != ReportedLedgerKind::Unchanged {
+        out.push_str(&format!("  ledger  {}\n", ledger.kind.label()));
+    }
+    for effect in &receipt.post_commit {
+        out.push_str(&format!(
+            "  effect  {} ({})\n",
+            effect_label(&effect.effect),
+            state_label(&effect.state)
+        ));
+    }
+    out
+}
+
+/// The verb a receipt row implies, from the pair of images it records.
+///
+/// Derived rather than stored, because a receipt records *what changed* and
+/// the two images already say which of the three it was -- storing the verb
+/// beside them would be a fourth value that can disagree with the other three.
+fn verb_of(file: &crate::receipt::FileReceipt) -> &'static str {
+    match (&file.before, &file.after) {
+        (FileImage::Absent, _) => ReportedOpKind::Create.verb(),
+        (_, FileImage::Absent) => ReportedOpKind::Delete.verb(),
+        _ => ReportedOpKind::Replace.verb(),
+    }
+}
+
+fn state_label(state: &EffectState) -> &'static str {
+    match state {
+        EffectState::Deferred => "deferred",
+        EffectState::Pending { .. } => "pending",
+        EffectState::Running { .. } => "running",
+        EffectState::Succeeded => "done",
+        EffectState::Failed { .. } => "failed",
+        EffectState::Superseded { .. } => "superseded",
+    }
+}
+
+fn recovery_line(change: &crate::recovery::RecoveryChange) -> String {
+    use crate::recovery::RecoveryChange;
+    match change {
+        RecoveryChange::Transaction {
+            transaction,
+            action,
+            ..
+        } => format!("{} {transaction}", action.label()),
+        RecoveryChange::EffectStateChanged {
+            effect,
+            before,
+            after,
+            ..
+        } => format!(
+            "effect {effect} {} -> {}",
+            state_label(before),
+            state_label(after)
+        ),
+    }
 }
 
 #[cfg(test)]

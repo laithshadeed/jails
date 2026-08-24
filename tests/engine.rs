@@ -3460,6 +3460,66 @@ fn a_foreign_build_gets_the_code_and_a_capability_still_refuses() {
     assert!(refused.contains("json"), "{refused}");
 }
 
+/// A plan and the commit that follows it read the same way.
+///
+/// §R3.4 gives a command result one human rendering, and the reason is what a
+/// reader does with it: they run `--pretend`, look at the lines, and then run
+/// the command. Two renderers would be two vocabularies, and comparing the two
+/// runs would be comparing two descriptions rather than one.
+#[test]
+fn a_plan_and_its_commit_are_described_in_the_same_words() {
+    let root = common::temp_dir("engine-render");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+
+    let record = |run: &jails_engine::route::Run| {
+        jails_engine::route::generate(
+            run,
+            jails_spec::spec::kind::ArtifactKind::Record,
+            "Note",
+            &["title:string!".to_string()],
+            None,
+            &[],
+            None,
+            None,
+        )
+        .unwrap()
+        .envelope()
+        .unwrap()
+    };
+
+    let project = Project::load(&root).unwrap();
+    let planned = jails_prepare::report::render_envelope(&record(
+        &jails_engine::route::Run::pretending(&project),
+    ));
+    let applied = jails_prepare::report::render_envelope(&record(&committing(
+        &Project::load(&root).unwrap(),
+    )));
+
+    // The same files, named the same way, under a heading that says which of
+    // the two this was.
+    assert!(planned.starts_with("plan "), "{planned}");
+    assert!(applied.starts_with("applied "), "{applied}");
+    for rendering in [&planned, &applied] {
+        assert!(
+            rendering.contains("create  src/main/java/com/example/demo/domain/Note.java"),
+            "{rendering}"
+        );
+        assert!(
+            rendering.contains("mkdir"),
+            "no directory named:\n{rendering}"
+        );
+        assert!(rendering.contains("ledger"), "{rendering}");
+    }
+
+    // And a settled run says nothing happened rather than printing a receipt
+    // full of files it did not touch.
+    let settled = jails_prepare::report::render_envelope(&record(&committing(
+        &Project::load(&root).unwrap(),
+    )));
+    assert_eq!(settled, "nothing to do\n");
+}
+
 /// One entry point picks the route the kind actually needs.
 ///
 /// §R6.2 gives `field`, `migration` and `cases` policies of their own -- an
