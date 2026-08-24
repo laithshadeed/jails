@@ -2930,6 +2930,7 @@ fn adopting_a_legacy_row_claims_it_only_when_the_bytes_are_jails_own() {
         "schema1-applied:0000000000000000000000000000000000000000000000000000000000000000",
         jails_spec::spec::kind::ArtifactKind::Record,
         "Reward",
+        false,
     )
     .unwrap_err();
     assert!(wrong.contains("no legacy row"), "{wrong}");
@@ -2940,6 +2941,7 @@ fn adopting_a_legacy_row_claims_it_only_when_the_bytes_are_jails_own() {
         &key,
         jails_spec::spec::kind::ArtifactKind::Record,
         "Bonus",
+        false,
     )
     .unwrap_err();
     assert!(mismatched.contains("not `record Bonus`"), "{mismatched}");
@@ -2949,6 +2951,7 @@ fn adopting_a_legacy_row_claims_it_only_when_the_bytes_are_jails_own() {
         &key,
         jails_spec::spec::kind::ArtifactKind::Record,
         "Reward",
+        false,
     )
     .unwrap();
 
@@ -3008,6 +3011,7 @@ fn adoption_refuses_bytes_jails_did_not_produce() {
         &key,
         jails_spec::spec::kind::ArtifactKind::Record,
         "Reward",
+        false,
     )
     .unwrap_err();
     assert!(error.contains("differs"), "{error}");
@@ -3020,6 +3024,107 @@ fn adoption_refuses_bytes_jails_did_not_produce() {
         "package com.example.demo.domain;\n\n// mine\n",
         "the refusal rewrote the file"
     );
+    // And it hands over the way out rather than leaving the reader to find it.
+    assert!(error.contains("--replace --force"), "{error}");
+    assert!(
+        error.contains(&key),
+        "the skeleton is not copyable: {error}"
+    );
+
+    // Which, said explicitly, claims the row and installs what jails renders.
+    jails_engine::route::adopt_legacy(
+        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &key,
+        jails_spec::spec::kind::ArtifactKind::Record,
+        "Reward",
+        true,
+    )
+    .unwrap();
+    let after = std::fs::read_to_string(&at).unwrap();
+    assert!(
+        after.contains("record Reward("),
+        "replace did not install the rendered candidate:\n{after}"
+    );
+
+    // The row is owned, so the base it recorded is the one jails wrote -- which
+    // is what makes `destroy` able to take it back out.
+    jails_engine::route::destroy(
+        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        jails_spec::spec::kind::ArtifactKind::Record,
+        "Reward",
+        None,
+    )
+    .unwrap();
+    assert!(!at.exists(), "the adopted row survived a destroy");
+}
+
+/// `--replace` is not needed when nothing drifted, and must not become the
+/// habitual spelling: a row that already matches adopts either way, and the
+/// bytes are the same either way too.
+#[test]
+fn replace_over_a_row_that_already_matches_changes_nothing() {
+    let root = common::temp_dir("engine-adopt-legacy-replace-noop");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+    jails_engine::route::generate(
+        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        jails_spec::spec::kind::ArtifactKind::Record,
+        "Reward",
+        &["title:string!".to_string()],
+        None,
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+    let files = common::scenarios::file_set(&root)
+        .into_iter()
+        .filter(|p| p.contains("Reward"))
+        .collect::<Vec<_>>();
+    let before: Vec<String> = files
+        .iter()
+        .map(|p| std::fs::read_to_string(root.join(p)).unwrap())
+        .collect();
+    std::fs::remove_dir_all(root.join(".jails")).unwrap();
+    let mut schema1 = jails_project::ledger::Ledger {
+        version: "0.1.0".to_string(),
+        ..Default::default()
+    };
+    schema1.applied.push(jails_project::ledger::Applied {
+        recipe: "record".to_string(),
+        name: "Reward".to_string(),
+        package: String::new(),
+        spec: jails_project::ledger::SpecPresence::UnknownLegacy,
+        fields: vec!["title:string!".to_string()],
+        indexes: Vec::new(),
+        on: String::new(),
+        yields: String::new(),
+        timestamps: false,
+        files: files.clone(),
+    });
+    jails_project::ledger::save(&root, &schema1).unwrap();
+    let key = {
+        let store = jails_commit::store::Store::at(&root).observe().unwrap();
+        store.ledger.as_ref().unwrap().legacy[0]
+            .legacy_key(jails_protocol::envelope::LegacySourceKind::Schema1Applied)
+            .unwrap()
+            .to_label()
+    };
+
+    jails_engine::route::adopt_legacy(
+        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        &key,
+        jails_spec::spec::kind::ArtifactKind::Record,
+        "Reward",
+        true,
+    )
+    .unwrap();
+
+    let after: Vec<String> = files
+        .iter()
+        .map(|p| std::fs::read_to_string(root.join(p)).unwrap())
+        .collect();
+    assert_eq!(before, after, "replace rewrote bytes that already matched");
 }
 
 /// Two names are two capabilities.

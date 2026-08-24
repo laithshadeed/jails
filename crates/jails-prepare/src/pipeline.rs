@@ -113,6 +113,15 @@ pub struct PreparationContext {
     /// preparation paths that are not a user request -- a finalisation or an
     /// abort resumes one rather than making one.
     pub invocation: Option<jails_protocol::request::InvocationFingerprint>,
+    /// The exact paths this invocation claims from an unowned state.
+    ///
+    /// `jails adopt --legacy-key ... --replace --force` and nothing else. §R5.3
+    /// refuses to write over a file jails has never written, deliberately; this
+    /// is the one route that says the deliberate decision has been made, and it
+    /// says it about named paths rather than about the whole transition -- a
+    /// switch would lift the rule for every unrelated path the same transition
+    /// touches.
+    pub claimed: BTreeSet<ProjectPath>,
     /// The exact bytes of an object the store already holds, by id.
     ///
     /// A closure rather than a path, because reading the object store is
@@ -220,6 +229,7 @@ fn apply(
         &rendered,
         &prior,
         &previously_owned,
+        &context.claimed,
         &context.objects,
     )?;
 
@@ -742,6 +752,9 @@ mod tests {
             objects: no_objects(),
             operation_context: OperationContextFingerprint::default(),
             preparation: PreparationContextFingerprint::default(),
+            // Nothing here is an adoption: these tests are about the ordinary
+            // rules, and a claim would quietly lift one of them.
+            claimed: BTreeSet::new(),
         }
     }
 

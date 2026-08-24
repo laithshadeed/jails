@@ -698,10 +698,21 @@ pub fn format(run: &Run) -> Result<Outcome> {
 /// would measure from, so a wrong one silently corrupts every future update
 /// of that file.
 ///
-/// A mismatch refuses and says which file differs. Regenerating over the
-/// reader's version is not offered here: that is a destructive choice and it
-/// belongs to `--replace --force`, which is not wired.
-pub fn adopt_legacy(run: &Run, key: &str, kind: ArtifactKind, name: &str) -> Result<Outcome> {
+/// A mismatch refuses and says which file differs -- unless the caller has
+/// said `--replace --force`, which is the destructive choice made explicitly.
+/// `replace` then installs the freshly rendered candidate over whatever is
+/// there, with the current bytes as guarded preimages, so the row still ends
+/// up with a base jails really produced. §R6.4 makes `--force` mandatory
+/// alongside it and refuses either flag alone: adopting is a repair, and a
+/// repair that silently overwrote an edit nobody looked at would be the same
+/// corruption by a different route.
+pub fn adopt_legacy(
+    run: &Run,
+    key: &str,
+    kind: ArtifactKind,
+    name: &str,
+    replace: bool,
+) -> Result<Outcome> {
     let project = run.project();
     let wanted = jails_protocol::envelope::LegacyKey::parse_label(key)?;
     let store = observed(project)?;
@@ -786,31 +797,41 @@ pub fn adopt_legacy(run: &Run, key: &str, kind: ArtifactKind, name: &str) -> Res
     for file in &desired.files {
         reads = reads.file(file.path.clone());
     }
-    let (snapshot, mut projection) = capture::projected(project, &reads)?;
-    projection.advance(&desired)?;
-    let mut differ = Vec::new();
-    for (path, entry) in projection.overlay() {
-        let jails_project::projection::ProjectedEntry::File(projected) = entry else {
-            continue;
-        };
-        match snapshot.read(path)? {
-            jails_protocol::snapshot::Captured::Present(live) if live.bytes == projected.bytes => {}
-            jails_protocol::snapshot::Captured::Present(_) => {
-                differ.push(format!("         {path} differs"))
-            }
-            jails_protocol::snapshot::Captured::Absent => {
-                differ.push(format!("         {path} is missing"))
+    //
+    // `--replace` is the one case that skips it, and skips only this: the
+    // transition it commits is the same one, so the differing bytes leave as
+    // guarded preimages rather than as an unrecorded overwrite.
+    if !replace {
+        let (snapshot, mut projection) = capture::projected(project, &reads)?;
+        projection.advance(&desired)?;
+        let mut differ = Vec::new();
+        for (path, entry) in projection.overlay() {
+            let jails_project::projection::ProjectedEntry::File(projected) = entry else {
+                continue;
+            };
+            match snapshot.read(path)? {
+                jails_protocol::snapshot::Captured::Present(live)
+                    if live.bytes == projected.bytes => {}
+                jails_protocol::snapshot::Captured::Present(_) => {
+                    differ.push(format!("         {path} differs"))
+                }
+                jails_protocol::snapshot::Captured::Absent => {
+                    differ.push(format!("         {path} is missing"))
+                }
             }
         }
-    }
-    if !differ.is_empty() {
-        return Err(format!(
-            "`{key}` cannot be adopted as it stands: what jails would render now is not what is \
-             on disk.\n{}\n       fix: adoption records the rendered bytes as this row's base, \
-             and every later update measures from it -- so claiming bytes jails did not produce \
-             would corrupt every future merge of these files. Reconcile them by hand first.",
-            differ.join("\n")
-        ));
+        if !differ.is_empty() {
+            return Err(format!(
+                "`{key}` cannot be adopted as it stands: what jails would render now is not what \
+                 is on disk.\n{}\n       fix: adoption records the rendered bytes as this row's \
+                 base, and every later update measures from it -- so claiming bytes jails did \
+                 not produce would corrupt every future merge of these files. Reconcile them by \
+                 hand first, or overwrite them with\n         jails adopt --legacy-key {key} \
+                 --intent {}:{name} --replace --force",
+                differ.join("\n"),
+                label(kind)
+            ));
+        }
     }
 
     let entity = DesiredEntity {
@@ -830,6 +851,15 @@ pub fn adopt_legacy(run: &Run, key: &str, kind: ArtifactKind, name: &str) -> Res
             spec: entity.spec.clone(),
         }),
     )?;
+    // What `--replace` claims: exactly the files this row's re-render produces,
+    // and nothing else. §R5.3 refuses to write over a file jails never wrote,
+    // and this is the command that has been told the decision was made -- said
+    // about these paths rather than about the transition, so an unrelated file
+    // the same commit happens to touch keeps the protection.
+    let claimed: BTreeSet<jails_protocol::identity::ProjectPath> = match replace {
+        true => desired.files.iter().map(|file| file.path.clone()).collect(),
+        false => BTreeSet::new(),
+    };
     let reads = declaration(project, &change, &desired)?;
     let request = Request {
         scope: ReconcileScope::DirectEntity(EntityId::Intent(id)),
@@ -837,7 +867,7 @@ pub fn adopt_legacy(run: &Run, key: &str, kind: ArtifactKind, name: &str) -> Res
         changes: vec![desired],
     };
     commit(
-        run,
+        &run.claiming(claimed),
         request,
         &reads,
         &Asked::new(
@@ -853,8 +883,10 @@ pub fn adopt_legacy(run: &Run, key: &str, kind: ArtifactKind, name: &str) -> Res
                     (!row.on.is_empty()).then_some(row.on.as_str()),
                     (!row.yields.is_empty()).then_some(row.yields.as_str()),
                 )?,
-                replace: false,
-                force: false,
+                // §R3's validation row: `replace` implies `force`, so the
+                // two move together and neither is reachable alone.
+                replace,
+                force: replace,
             },
             &["adopt"],
             vec![label(kind).to_string(), name.to_string()],

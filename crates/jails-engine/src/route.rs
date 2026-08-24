@@ -554,7 +554,7 @@ fn commit_set(
     asked: &Asked,
 ) -> Result<Outcome> {
     let project = run.project();
-    let bundle = prepare_set(project, set, declaration, Some(asked))?;
+    let bundle = prepare_set(run, set, declaration, Some(asked))?;
     if !run.write {
         return Ok(Outcome::Planned(planned_ops(&bundle)));
     }
@@ -573,11 +573,12 @@ fn commit_set(
 /// describes this value, which is what makes `--pretend` an answer about what
 /// will happen rather than a second implementation that hopes to agree.
 fn prepare_set(
-    project: &Project,
+    run: &Run,
     set: DesiredChangeSet,
     declaration: &ReadDeclaration,
     asked: Option<&Asked>,
 ) -> Result<pipeline::PreparedBundle> {
+    let project = run.project();
     let (snapshot, mut projection) = capture::projected(project, declaration)?;
     let observed = observed(project)?;
     if let Some(store) = &observed.ledger {
@@ -603,6 +604,7 @@ fn prepare_set(
         observed_store: observed,
         operation_context: Default::default(),
         preparation: Default::default(),
+        claimed: run.claimed.clone(),
         // Computed against the same capture the plan was, so the row for
         // `jails.toml` describes the bytes this plan actually read rather
         // than whatever is on disk by the time it is asked for.
@@ -646,6 +648,14 @@ fn prepare_set(
 pub struct Run<'a> {
     project: &'a Project,
     write: bool,
+    /// The exact paths this invocation claims from an unowned state.
+    ///
+    /// Empty on every run a caller can construct. Only `adopt_legacy` fills it,
+    /// from the row it was asked to claim, because only that command has been
+    /// told the deliberate decision §R5.3 asks for. Keeping it here rather than
+    /// on the request is what lets `--pretend` describe the same transition:
+    /// the claim is part of what was asked, not of what is written.
+    claimed: BTreeSet<ProjectPath>,
 }
 
 impl<'a> Run<'a> {
@@ -654,6 +664,7 @@ impl<'a> Run<'a> {
         Self {
             project,
             write: true,
+            claimed: BTreeSet::new(),
         }
     }
 
@@ -662,6 +673,16 @@ impl<'a> Run<'a> {
         Self {
             project,
             write: false,
+            claimed: BTreeSet::new(),
+        }
+    }
+
+    /// The same run, claiming these exact paths from an unowned state.
+    fn claiming(&self, claimed: BTreeSet<ProjectPath>) -> Run<'a> {
+        Run {
+            project: self.project,
+            write: self.write,
+            claimed,
         }
     }
 

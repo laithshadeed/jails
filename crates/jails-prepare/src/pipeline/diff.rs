@@ -53,6 +53,9 @@ pub(super) fn diff(
     rendered: &BTreeMap<ProjectPath, Vec<u8>>,
     prior: &BTreeMap<ProjectPath, crate::reconcile::PriorOutput>,
     previously_owned: &BTreeSet<ProjectPath>,
+    // The exact paths this invocation claims from an unowned state. Empty for
+    // every route but `adopt --legacy-key ... --replace --force`.
+    claimed: &BTreeSet<ProjectPath>,
     read_object: &super::ObjectReader,
 ) -> Result<Diffed> {
     let mut operations = Vec::new();
@@ -139,7 +142,13 @@ pub(super) fn diff(
                         mode: file.mode,
                     };
                     let desired = FileImage::Present { object, mode };
-                    match crate::reconcile::reconcile(path, recorded, live_image, desired)? {
+                    match crate::reconcile::reconcile(
+                        path,
+                        recorded,
+                        live_image,
+                        desired,
+                        claimed.contains(path),
+                    )? {
                         crate::reconcile::Decision::Refuse(why) => return Err(why),
                         // Nobody moved, or only the reader did. Either way no
                         // operation, and the base stays where it was -- which
