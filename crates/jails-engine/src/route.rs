@@ -652,6 +652,15 @@ fn prepare_set(
 pub struct Run<'a> {
     project: &'a Project,
     write: bool,
+    /// Whether this invocation may start what it installs.
+    ///
+    /// `--no-start` is the caller declining the runtime half of a capability
+    /// that brings a compose service, and it is part of *what was asked*: the
+    /// canonical request carries it, so the fingerprint two invocations are
+    /// compared by distinguishes `add db` from `add db --no-start`. Every
+    /// route used to hardcode `no_start: false`, which made the fingerprint
+    /// describe a command nobody typed.
+    start: bool,
     /// The exact paths this invocation claims from an unowned state.
     ///
     /// Empty on every run a caller can construct. Only `adopt_legacy` fills it,
@@ -668,6 +677,7 @@ impl<'a> Run<'a> {
         Self {
             project,
             write: true,
+            start: true,
             claimed: BTreeSet::new(),
         }
     }
@@ -677,8 +687,20 @@ impl<'a> Run<'a> {
         Self {
             project,
             write: false,
+            start: true,
             claimed: BTreeSet::new(),
         }
+    }
+
+    /// The same run, with `--no-start`: nothing this installs is started.
+    pub fn without_start(mut self) -> Self {
+        self.start = false;
+        self
+    }
+
+    /// What the canonical request records, which is the caller's word for it.
+    fn no_start(&self) -> bool {
+        !self.start
     }
 
     /// The same run, claiming these exact paths from an unowned state.
@@ -686,6 +708,7 @@ impl<'a> Run<'a> {
         Run {
             project: self.project,
             write: self.write,
+            start: self.start,
             claimed,
         }
     }

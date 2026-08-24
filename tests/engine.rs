@@ -3217,6 +3217,39 @@ fn replace_over_a_row_that_already_matches_changes_nothing() {
     assert_eq!(before, after, "replace rewrote bytes that already matched");
 }
 
+/// `--no-start` is part of what was asked, not a printing decision.
+///
+/// The canonical request is what §R5.4's fingerprint is taken over, and the
+/// operation id is a hash of an identity that carries it. Every route used to
+/// hardcode `no_start: false`, so `add db` and `add db --no-start` described
+/// the same invocation -- and a resume comparing fingerprints would have
+/// accepted one as a continuation of the other.
+#[test]
+fn declining_to_start_is_a_different_invocation() {
+    let root = common::temp_dir("engine-no-start");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+    let project = Project::load(&root).unwrap();
+
+    let plan = |run: &jails_engine::route::Run| {
+        jails_engine::route::install(run, &Declaration::plain(Capability::Csv))
+            .unwrap()
+            .report()
+            .unwrap()
+            .operation
+    };
+
+    let starting = plan(&jails_engine::route::Run::pretending(&project));
+    let again = plan(&jails_engine::route::Run::pretending(&project));
+    let declined = plan(&jails_engine::route::Run::pretending(&project).without_start());
+
+    assert_eq!(starting, again, "the same command planned two identities");
+    assert_ne!(
+        starting, declined,
+        "`--no-start` did not reach the canonical request"
+    );
+}
+
 /// Two names are two capabilities.
 ///
 /// plan.md §R1.1 classes `csv` as multi-instance named: `add csv --name Order`

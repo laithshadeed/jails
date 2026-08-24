@@ -66,7 +66,9 @@ pub fn app_apply(run: &Run, capabilities: &[Capability], intents: &[AppIntent]) 
         request,
         &reads,
         &Asked::plain(
-            CanonicalMutationRequest::AppApply { no_start: false },
+            CanonicalMutationRequest::AppApply {
+                no_start: run.no_start(),
+            },
             &["app", "apply"],
             &[],
         ),

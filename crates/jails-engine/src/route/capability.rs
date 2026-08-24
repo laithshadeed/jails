@@ -69,7 +69,7 @@ pub fn install(run: &Run, asked: &Declaration) -> Result<Outcome> {
                     id,
                     spec,
                 }])?,
-                no_start: false,
+                no_start: run.no_start(),
             },
         ),
     )
@@ -170,7 +170,9 @@ pub fn sync(run: &Run) -> Result<Outcome> {
         request,
         &reads,
         &Asked::plain(
-            CanonicalMutationRequest::Sync { no_start: false },
+            CanonicalMutationRequest::Sync {
+                no_start: run.no_start(),
+            },
             &["sync"],
             &[],
         ),
@@ -228,7 +230,7 @@ pub fn remove(run: &Run, asked: &Declaration) -> Result<Outcome> {
                     spec,
                 }])?,
                 force: false,
-                no_start: false,
+                no_start: run.no_start(),
             },
         ),
     )
