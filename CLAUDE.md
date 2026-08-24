@@ -711,6 +711,41 @@ jails knows nothing about.
 - **`jails check` is `mvn clean verify`.** Incremental `verify` leaves deleted
   tests in `target/`, and Surefire still runs the leftover `.class`. Don't
   "optimize" it back to bare verify.
+- **Boot 4 split the servlet test slice, and `spring-boot-starter-test` does
+  not bring it in.** `@WebMvcTest` and `@AutoConfigureMockMvc` live in
+  `spring-boot-webmvc-test`, so a generated test that uses either needs
+  `spring-boot-starter-webmvc-test` declared -- verified in
+  `deps/spring-boot/starter/spring-boot-starter-test/build.gradle`. The
+  dependency is supplied from the **write path** (`generate::ensure_webmvc_test`
+  and `writes_a_webmvc_test`), keyed off the emitted bytes, for the same reason
+  AssertJ and Failsafe are. `pom::webmvc_test_import_for` picks the package the
+  project's Boot version has, so a Boot 3 project renders the legacy one and
+  gets no dependency it does not need.
+
+  **The test fixture must not supply what the tool is supposed to supply.**
+  `SPRING_FIXTURE_POM` declared that module while `jails new` did not, and for
+  months every real-toolchain test compiled against a POM the tool never
+  produces -- hiding a release blocker where `mvn verify` stopped on the test
+  jails itself wrote, so no Spring test in any generated project ran.
+- **`jails run` resolves the POM's `<mainClass>`, and `g cli` moves it.** A
+  project with two dispatchers has two `main` methods, and searching source
+  picks whichever the walk reaches first -- which is how a jar and `jails run`
+  came to start a different class from each other. The POM is Maven's own
+  record of the entry point, so it is the one jails reads.
+  `cli::adopt_as_entry_point` retargets it, but **only off a stub jails wrote
+  with no command registered in it**: once `App` dispatches something it is the
+  project's real CLI, and moving the jar out from under it would break what the
+  reader built.
+- **`JAILS_MAVEN` names the Maven command, and mvnd is probed before it is
+  chosen.** mvnd writes a registry under the Maven user home *before* Maven
+  runs, so a read-only home kills it with a non-zero exit indistinguishable
+  from a failing build at the call site -- a retry there would re-run a
+  genuinely broken build. `maven::mvnd_can_start` answers it up front instead.
+- **`java::types_annotated_with` is the one walk of `src/test/java`.** There
+  were three, two matching a raw substring -- which reads the
+  `@SpringBootTest` inside `TestcontainersConfig`'s own Javadoc example as a
+  declaration. That is how `doctor` came to name the wrong container config and
+  then report every other test as missing an import of it.
 - **The `@Import` splice lives in `jails-java`, not in `add`.** Two engines
   perform it now -- `add/test_wiring.rs` and the V2 projection -- and a second
   copy of a surgical edit to a file the reader owns is a copy that drifts.
