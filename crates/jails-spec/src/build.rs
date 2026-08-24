@@ -10,20 +10,35 @@
 //! So the door widens and the commands that genuinely need Maven say so
 //! themselves, through [`require_maven`].
 //!
-//! ## The line this does not cross
+//! ## The line this used to not cross, and now does
 //!
-//! **jails never reads, writes, parses or invokes `build.gradle`.** That is
-//! strictly less than Gradle support and is worth stating in exactly those
-//! words, because the failure this prevents is a *confident wrong answer*: a
-//! tool that half-understands a build file will report a dependency the build
-//! does not have. Recognising a filename is not understanding a build.
+//! This module's header said, for a long time and in exactly these words:
+//! *"jails never reads, writes, parses or invokes `build.gradle`."* The reason
+//! was sound -- the failure it prevented is a *confident wrong answer*, a tool
+//! that half-understands a build file reporting a dependency the build does
+//! not have -- and recognising a filename is genuinely not understanding a
+//! build.
 //!
-//! The cost is real and has to be said out loud rather than discovered:
-//! generated code is shaped by what the pom says, so with no pom
+//! **That is a deliberate reversal, not an oversight.** It was decided on
+//! 2026-08-24 against a real target: `minicom-public/spring`, a Gradle + Spring
+//! Boot project that has to be worked in daily. On it, `add`, `check`, `test`,
+//! `build` and `run` all refused, and `generate` wrote code with a note saying
+//! which dependencies the reader had to add by hand. Degrading politely is
+//! worth less than working, when the project is the one you are actually in.
+//!
+//! The old rule's *reason* survives as the bar the Gradle reader has to clear:
+//! it may only answer questions it can answer exactly, and it must refuse
+//! rather than guess. `gradle.rs` states which constructs it understands and
+//! returns `None` -- never a default -- for anything else, so a dynamically
+//! computed dependency list reads as "cannot tell" rather than as "absent".
+//!
+//! A build file jails cannot read at all is still a `Foreign` build, and the
+//! cost of that is real and said out loud rather than discovered: generated
+//! code is shaped by what the build says, so with nothing readable
 //! `repository_wiring` returns `PlainJdbc` and `jspecify_available` is false.
-//! Generating into a foreign project therefore prints which shape it chose.
-//! `add` is **not** exempted -- it splices a pom, and a capability that half
-//! installs is worse than one that refuses.
+//! Generating into such a project prints which shape it chose. `add` is **not**
+//! exempted -- it splices a build file, and a capability that half installs is
+//! worse than one that refuses.
 
 use jails_support::Result;
 use std::path::Path;

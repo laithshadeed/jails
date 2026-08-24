@@ -6,9 +6,20 @@ deliberately deferred) — treat it as the spec, and update it in the same
 change as the code. The original `prompt.md` spec was deleted once the
 commands it described all shipped; don't go looking for it.
 
-The scope bar: no Gradle, no ORM, no jails runtime jar, no Lombok, no preview
-features in generated Java, and no plugin system with lifecycle hooks. Check
-`README.md`'s "Not yet" before adding a command that isn't already there.
+The scope bar: no ORM, no jails runtime jar, no Lombok, no preview features in
+generated Java, and no plugin system with lifecycle hooks. Check `README.md`'s
+"Not yet" before adding a command that isn't already there.
+
+**"No Gradle" was on that list and was deliberately removed on 2026-08-24.**
+The target that reversed it is `minicom-public/spring`, a Gradle + Spring Boot
+project that has to be worked in daily: `add`, `check`, `test`, `build` and
+`run` all refused there, and `generate` wrote code with a note listing the
+dependencies the reader had to splice by hand. Degrading politely is worth less
+than working, when the project is the one you are actually in. The old rule's
+*reason* survives as the bar `gradle.rs` has to clear -- answer exactly or
+refuse, never guess -- because a tool that half-understands a build file
+reporting a dependency the build does not have is still the worst outcome
+available.
 
 **Every idea, roadmap item and open design question lives in `pending.md`.**
 This file describes what the code *is* and the traps in it; `pending.md`
