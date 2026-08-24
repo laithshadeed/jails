@@ -139,7 +139,11 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // question about a *directory* -- the same shape
                 // `maven::binary` has had all along. A `Project` would carry
                 // no fact they read.
-                ceiling: 103,
+                //
+                // 103 -> 104 for `ProjectContext::gradle`, which *constructs*
+                // the context from a root. There is no resolved project to
+                // read it off: this is the thing being resolved.
+                ceiling: 104,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;

@@ -18,7 +18,13 @@ pub struct ProjectContext {
     pub module: MavenModule,
     pub java_release: Option<u32>,
     pub spring_boot: bool,
-    pub maven_command: PathBuf,
+    /// Which build this report is about, so the labels can say so.
+    pub build: crate::build::Build,
+    /// The command that drives this build. Named for the job rather than for
+    /// Maven: it is `gradlew` on a Gradle project, and a field called
+    /// `maven_command` holding a path to `gradlew` is a lie the JSON then
+    /// repeats to every consumer.
+    pub build_command: PathBuf,
     pub modules: Vec<MavenModule>,
 }
 
@@ -40,7 +46,16 @@ impl ProjectContext {
             start
         };
 
-        let module_root = nearest_pom(&start)?;
+        // One authority on "where does this project start", shared with every
+        // other command. `nearest_pom` was a second one that only knew
+        // `pom.xml`, so `about` was the single command that never got the
+        // widened door `build.rs` opened -- it refused on a Gradle project
+        // saying "no pom.xml found in this or any parent directory", which is
+        // both wrong and unactionable when jails works there.
+        let module_root = nearest_build_root(&start)?;
+        if crate::build::detect(&module_root) == crate::build::Build::Gradle {
+            return Self::gradle(&module_root);
+        }
         let reactor_root = reactor_root(&module_root)?;
         let module_pom = read_pom(&module_root)?;
         let reactor_pom = read_pom(&reactor_root)?;
@@ -60,8 +75,45 @@ impl ProjectContext {
             },
             java_release: inherited_java_release(&module_root, &reactor_root)?,
             spring_boot: inherited_spring_boot(&module_root, &reactor_root)?,
-            maven_command: maven_command(&reactor_root),
+            build: crate::build::Build::Maven,
+            build_command: maven_command(&reactor_root),
             modules,
+        })
+    }
+
+    /// The same report, for a Gradle build.
+    ///
+    /// Single-project only, and the module list says so rather than being
+    /// silently empty: Gradle's multi-project model is `settings.gradle`'s
+    /// `include` lines, which is a different shape from Maven's `<modules>`
+    /// and is not read here. Reporting "no modules" for a build that has ten
+    /// would be the confident wrong answer `gradle.rs` exists to avoid.
+    fn gradle(root: &Path) -> Result<Self> {
+        let text = fs::read_to_string(root.join(crate::gradle::FILE)).unwrap_or_default();
+        // `settings.gradle` first, because that is where Gradle itself gets
+        // the project name; the directory is the same fallback Gradle uses.
+        let name = fs::read_to_string(root.join("settings.gradle"))
+            .ok()
+            .and_then(|settings| rootproject_name(&settings))
+            .or_else(|| {
+                root.file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+            });
+        let module = MavenModule {
+            artifact_id: name,
+            root: root.to_path_buf(),
+        };
+        Ok(Self {
+            reactor: module.clone(),
+            module,
+            java_release: crate::gradle::release_level(&text),
+            spring_boot: crate::gradle::spring_boot_major(&text).is_some(),
+            build: crate::build::Build::Gradle,
+            build_command: match root.join("gradlew").is_file() {
+                true => root.join("gradlew"),
+                false => PathBuf::from("gradle"),
+            },
+            modules: Vec::new(),
         })
     }
 
@@ -84,15 +136,30 @@ impl ProjectContext {
                 .map(|release| release.to_string())
                 .unwrap_or_else(|| "unknown".to_string())
         );
+        let gradle = self.build == crate::build::Build::Gradle;
         println!(
             "Framework: {}",
-            if self.spring_boot {
-                "Spring Boot"
-            } else {
-                "plain Maven"
+            match (self.spring_boot, gradle) {
+                (true, _) => "Spring Boot",
+                (false, true) => "plain Gradle",
+                (false, false) => "plain Maven",
             }
         );
-        println!("Maven: {}", self.maven_command.display());
+        println!(
+            "{}: {}",
+            match gradle {
+                true => "Gradle",
+                false => "Maven",
+            },
+            self.build_command.display()
+        );
+        // Named as unread rather than counted as none: Gradle's multi-project
+        // model is `settings.gradle`'s `include` lines, and printing "(none)"
+        // for a build with ten of them is the confident wrong answer.
+        if gradle {
+            println!("Modules: not read (Gradle multi-project is `settings.gradle` includes)");
+            return;
+        }
         println!("Modules ({}):", self.modules.len());
         if self.modules.is_empty() {
             println!("  (none)");
@@ -150,7 +217,7 @@ impl ProjectContext {
         format!(
             concat!(
                 "{{\n",
-                "  \"schema_version\": 3,\n",
+                "  \"schema_version\": 4,\n",
                 "  \"reactor\": {{\"root\": {}, \"artifact_id\": {}}},\n",
                 "  \"module\": {{\"root\": {}, \"artifact_id\": {}}},\n",
                 "  \"base_package\": {},\n",
@@ -160,7 +227,7 @@ impl ProjectContext {
                 "  \"capabilities\": [{}],\n",
                 "  \"java_release\": {},\n",
                 "  \"spring_boot\": {},\n",
-                "  \"maven_command\": {},\n",
+                "  \"build\": {}, \"build_command\": {},\n",
                 "  \"modules\": [\n{}\n  ]\n",
                 "}}"
             ),
@@ -177,7 +244,8 @@ impl ProjectContext {
                 .map(|release| release.to_string())
                 .unwrap_or_else(|| "null".to_string()),
             self.spring_boot,
-            crate::json::string(&self.maven_command.to_string_lossy()),
+            crate::json::string(self.build.name()),
+            crate::json::string(&self.build_command.to_string_lossy()),
             modules
         )
     }
@@ -189,13 +257,29 @@ pub fn about(json: bool) -> Result<()> {
     Ok(())
 }
 
-fn nearest_pom(start: &Path) -> Result<PathBuf> {
+/// The nearest ancestor holding a build file jails reads.
+///
+/// Through `build::detect`, so this cannot drift from what every other command
+/// considers a project root -- which is exactly what happened while it was a
+/// private `nearest_pom`.
+fn nearest_build_root(start: &Path) -> Result<PathBuf> {
     for dir in start.ancestors() {
-        if dir.join("pom.xml").is_file() {
+        if crate::build::is_readable(crate::build::detect(dir)) {
             return Ok(dir.to_path_buf());
         }
     }
-    Err("no pom.xml found in this or any parent directory".to_string())
+    Err("no pom.xml or build.gradle found in this or any parent directory".to_string())
+}
+
+/// `rootProject.name = 'spring'` out of a `settings.gradle`.
+fn rootproject_name(settings: &str) -> Option<String> {
+    let at = settings.find("rootProject.name")?;
+    let rest = &settings[at..];
+    let open = rest.find(['\'', '"'])?;
+    let quote = rest.as_bytes()[open];
+    let tail = &rest[open + 1..];
+    let end = tail.find(quote as char)?;
+    Some(tail[..end].to_string())
 }
 
 fn reactor_root(module_root: &Path) -> Result<PathBuf> {
@@ -423,11 +507,11 @@ mod tests {
             vec!["sample-core", "sample-services", "sample-web"]
         );
         assert_eq!(
-            context.maven_command,
+            context.build_command,
             fs::canonicalize(&root).unwrap().join("mvnw")
         );
         let json = context.to_json();
-        assert!(json.contains("\"schema_version\": 3"), "{json}");
+        assert!(json.contains("\"schema_version\": 4"), "{json}");
         assert!(json.contains("\"reactor\":"), "{json}");
         assert!(json.contains("\"base_package\":"), "{json}");
         assert!(json.contains("\"layout\":"), "{json}");

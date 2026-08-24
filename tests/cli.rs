@@ -62,8 +62,13 @@ fn about_describes_a_synthetic_nested_maven_reactor() {
         .unwrap();
     assert!(output.status.success());
     let json = String::from_utf8_lossy(&output.stdout);
-    assert!(json.contains("\"schema_version\": 3"));
+    assert!(json.contains("\"schema_version\": 4"));
     assert!(json.contains("\"reactor\":"));
+    // Named for the job rather than for Maven, and stating which build it is:
+    // `maven_command` holding a path to `gradlew` was a lie the JSON repeated
+    // to every consumer.
+    assert!(json.contains("\"build\": \"Maven\""), "{json}");
+    assert!(json.contains("\"build_command\":"), "{json}");
     assert!(json.contains("\"base_package\": \"dev.example\""));
     assert!(json.contains("\"java_root\":"));
     assert!(json.contains("\"test_root\":"));
