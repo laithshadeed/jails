@@ -271,12 +271,53 @@ pub fn record_model(
 }
 
 pub fn model_fields(root: &Path, name: &str, package: Option<&str>) -> Result<Option<Vec<String>>> {
+    // Schema 2 first, and the schema-1 reader only for a project that still
+    // has one. `ledger::load` refuses a newer schema outright -- correctly, it
+    // is a downgrade -- so asking it first turned "which fields does this
+    // record declare" into a hard error on every project the current binary
+    // has written.
+    if let Some(fields) = schema_two_fields(root, name, package)? {
+        return Ok(Some(fields));
+    }
+    let path = root.join(".jails/ledger.toml");
+    if path.is_file() && crate::ledger::load(root).is_err() {
+        return Ok(None);
+    }
     let current = read(root)?.ledger;
     Ok(current
         .models
         .iter()
         .find(|model| model.name == name && model.package == package.unwrap_or_default())
         .map(|model| model.fields.clone()))
+}
+
+/// The field spec a schema-2 store records for a generated record or scaffold.
+///
+/// This is the *declared* spec, not the record read back off disk, which is
+/// what keeps `@pk`/`@unique`/`@index` alive across a compose: a Java type
+/// cannot say what its column is, and inferring a primary key from a component
+/// called `id` would put one in a schema nobody asked for.
+fn schema_two_fields(
+    root: &Path,
+    name: &str,
+    package: Option<&str>,
+) -> Result<Option<Vec<String>>> {
+    let Ok(source) = std::fs::read_to_string(root.join(".jails/ledger.toml")) else {
+        return Ok(None);
+    };
+    let Ok(ledger) = jails_protocol::envelope::LedgerV2::parse_file(&source) else {
+        return Ok(None);
+    };
+    Ok(ledger.applied.iter().find_map(|entity| {
+        let jails_protocol::entity::EntityId::Intent(id) = &entity.id else {
+            return None;
+        };
+        let jails_protocol::entity::EntitySpec::Intent(spec) = &entity.version.spec else {
+            return None;
+        };
+        (id.name.as_str() == name && id.package.as_str() == package.unwrap_or_default())
+            .then(|| spec.arguments.canonical())
+    }))
 }
 
 #[cfg(test)]

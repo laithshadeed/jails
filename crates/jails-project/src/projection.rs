@@ -174,6 +174,23 @@ impl ProjectedProject {
 
     /// Record that a fact kind was parsed from a path, so a later change to
     /// that path invalidates it.
+    /// Write what is left, or take the file with the last claim.
+    ///
+    /// A file holding nothing is not the same as one the reader keeps: it is
+    /// a file jails created to have somewhere to put a block, a service or a
+    /// property, and leaving an empty one behind would mean `remove` did not
+    /// return the project to where it started. One helper for all three
+    /// keyed-claim kinds, because the rule is the same and three copies of it
+    /// is how two of them come to disagree.
+    fn write_or_delete(&mut self, path: &ProjectPath, text: String) {
+        match text.trim().is_empty() {
+            true => {
+                self.overlay.insert(path.clone(), ProjectedEntry::Deleted);
+            }
+            false => self.write_text(path, text),
+        }
+    }
+
     pub fn depends_on(&mut self, kind: FactKind, path: ProjectPath) {
         self.fact_dependencies.entry(kind).or_default().insert(path);
     }
@@ -547,7 +564,10 @@ impl ProjectedProject {
                     },
                 );
                 match removed {
-                    Some(without) => self.write_text(&path, without),
+                    // `remove_service_ref` answers with an empty document when
+                    // the last service leaves, and an empty `compose.yaml` is
+                    // not a file anybody keeps.
+                    Some(without) => self.write_or_delete(&path, without),
                     None => return Ok(None),
                 }
                 Ok(Some(path))
@@ -556,7 +576,19 @@ impl ProjectedProject {
                 let Some(text) = self.text(path)? else {
                     return Ok(None);
                 };
-                self.write_text(path, properties::remove(&text, key.as_str()));
+                // The comment comes off the *recorded* value, for the same
+                // reason the compose marker does: what jails wrote above this
+                // key is a fact about how it was installed, and guessing at it
+                // would either strip a reader's note or leave prose describing
+                // a setting that is gone.
+                let comment = match self.recorded.get(&ResourceKey::Property {
+                    path: path.clone(),
+                    key: key.clone(),
+                }) {
+                    Some(ResourceValue::Property(setting)) => setting.comment.clone(),
+                    _ => Vec::new(),
+                };
+                self.write_or_delete(path, properties::remove(&text, key.as_str(), &comment));
                 Ok(Some(path.clone()))
             }
             ResourceKey::CommandRegistration {
@@ -583,18 +615,7 @@ impl ProjectedProject {
                 let Some(without) = marked.strip_from(&text) else {
                     return Ok(None);
                 };
-                // The last block out takes the file with it. A property source
-                // holding nothing is not the same as one the reader keeps: it
-                // is a file jails created to have somewhere to put a block, and
-                // leaving an empty one behind would mean `destroy` did not
-                // return the project to where it started.
-                match without.trim().is_empty() {
-                    true => self.overlay.insert(path.clone(), ProjectedEntry::Deleted),
-                    false => {
-                        self.write_text(path, without);
-                        None
-                    }
-                };
+                self.write_or_delete(path, without);
                 Ok(Some(path.clone()))
             }
             ResourceKey::HumanConfigCapability(id) => {

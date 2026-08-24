@@ -398,6 +398,181 @@ pub fn render_envelope(envelope: &crate::command::CommandEnvelope) -> String {
     out
 }
 
+/// The same envelope, as one JSON object.
+///
+/// **One projection, two encodings.** A preview and a commit produce the same
+/// keys -- `status`, the operation list, the ledger line, the effects -- from
+/// whichever half the envelope carries, because §R3.4's whole point is that a
+/// dry run and the run that follows it describe the work in one vocabulary.
+/// The obvious alternative, a JSON shape per report type, is how `--pretend`
+/// came to call a replace an `update` in the first place.
+///
+/// Hand-written, like every other `--json` in this tool: clap is the only
+/// dependency, and a serialiser earns its place when something has to *read*
+/// JSON, which nothing here does.
+pub fn render_envelope_json(envelope: &crate::command::CommandEnvelope) -> String {
+    use jails_support::json;
+
+    let (transaction, kind, operations, ledger, effects, warnings) = match (
+        &envelope.report,
+        &envelope.receipt,
+    ) {
+        (Some(crate::command::CommandReport::Prepared(report)), _) => (
+            Some(report.transaction.to_string()),
+            Some(kind_label(&report.kind).to_string()),
+            report
+                .operations
+                .iter()
+                .map(|op| (op.kind.label().to_string(), target_json(&op.path)))
+                .collect::<Vec<_>>(),
+            ledger_label(report.ledger.kind),
+            report
+                .post_commit
+                .iter()
+                .map(|effect| (effect_label(&effect.effect), state_label(&effect.state).to_string()))
+                .collect::<Vec<_>>(),
+            report
+                .warnings
+                .iter()
+                .map(|warning| (warning.code.label().to_string(), warning.message.clone()))
+                .collect::<Vec<_>>(),
+        ),
+        (Some(crate::command::CommandReport::EffectRetry(retry)), _) => (
+            Some(retry.transaction.to_string()),
+            Some("effect-retry".to_string()),
+            Vec::new(),
+            None,
+            vec![(retry.effect_id.to_string(), "pending".to_string())],
+            Vec::new(),
+        ),
+        (None, Some(receipt)) => (
+            Some(receipt.transaction_id.to_string()),
+            Some(receipt.outcome.label().to_string()),
+            receipt
+                .directories
+                .iter()
+                .map(|directory| {
+                    (
+                        ReportedOpKind::CreateDirectory.label().to_string(),
+                        format!("{{\"kind\": \"project\", \"path\": {}}}", json::string(&directory.path.to_string())),
+                    )
+                })
+                .chain(receipt.files.iter().map(|file| {
+                    (verb_label(file).to_string(), target_json(&file.path))
+                }))
+                .collect::<Vec<_>>(),
+            ledger_label(ledger_of(receipt.ledger_before, receipt.ledger_after).kind),
+            receipt
+                .post_commit
+                .iter()
+                .map(|effect| (effect_label(&effect.effect), state_label(&effect.state).to_string()))
+                .collect::<Vec<_>>(),
+            Vec::new(),
+        ),
+        (None, None) => (None, None, Vec::new(), None, Vec::new(), Vec::new()),
+    };
+
+    let operations = operations
+        .iter()
+        .map(|(verb, target)| format!("    {{\"kind\": {}, \"target\": {target}}}", json::string(verb)))
+        .collect::<Vec<_>>()
+        .join(",\n");
+    let effects = effects
+        .iter()
+        .map(|(effect, state)| {
+            format!(
+                "    {{\"effect\": {}, \"state\": {}}}",
+                json::string(effect),
+                json::string(state)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",\n");
+    let warnings = warnings
+        .iter()
+        .map(|(code, message)| {
+            format!(
+                "    {{\"code\": {}, \"message\": {}}}",
+                json::string(code),
+                json::string(message)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",\n");
+    let recovery = envelope
+        .recovery
+        .iter()
+        .flat_map(|outcome| outcome.changes.iter())
+        .map(|change| format!("    {}", json::string(&recovery_line(change))))
+        .collect::<Vec<_>>()
+        .join(",\n");
+    let error = match &envelope.error {
+        Some(error) => format!(
+            "{{\"code\": {}, \"message\": {}}}",
+            json::string(error.code.label()),
+            json::string(&error.message)
+        ),
+        None => "null".to_string(),
+    };
+
+    format!(
+        "{{\n  \"schema_version\": 1,\n  \"status\": {},\n  \"project_commit\": {},\n  \"transaction\": {},\n  \"kind\": {},\n  \"ledger\": {},\n  \"recovery\": [{}],\n  \"operations\": [{}],\n  \"effects\": [{}],\n  \"warnings\": [{}],\n  \"error\": {error}\n}}",
+        json::string(envelope.status.label()),
+        json::string(envelope.project_commit.label()),
+        json::optional_string(transaction.as_deref()),
+        json::optional_string(kind.as_deref()),
+        json::optional_string(ledger.as_deref()),
+        wrap(&recovery),
+        wrap(&operations),
+        wrap(&effects),
+        wrap(&warnings),
+    )
+}
+
+/// A JSON array body on its own lines, or nothing at all when it is empty.
+///
+/// `[]` rather than `[\n\n  ]`: an empty list is the common case in this
+/// output and a reader scanning for what happened should not have to skip
+/// blank brackets to find it.
+fn wrap(rows: &str) -> String {
+    match rows.is_empty() {
+        true => String::new(),
+        false => format!("\n{rows}\n  "),
+    }
+}
+
+/// A `LegacyMachine` target is never disguised as a project path, in JSON for
+/// the same reason it is not in the human rendering: it is machine state being
+/// retired, not a file the reader asked to remove.
+fn target_json(target: &OperationTarget) -> String {
+    use jails_support::json;
+    match target {
+        OperationTarget::Project(path) => format!(
+            "{{\"kind\": \"project\", \"path\": {}}}",
+            json::string(&path.to_string())
+        ),
+        OperationTarget::LegacyMachine(path) => format!(
+            "{{\"kind\": \"legacy-machine\", \"path\": {}}}",
+            json::string(&format!("{path:?}"))
+        ),
+    }
+}
+
+fn ledger_label(kind: ReportedLedgerKind) -> Option<String> {
+    match kind {
+        ReportedLedgerKind::Unchanged => None,
+        other => Some(other.label().to_string()),
+    }
+}
+
+fn verb_label(file: &crate::receipt::FileReceipt) -> &'static str {
+    match (&file.before, &file.after) {
+        (FileImage::Absent, _) => ReportedOpKind::Create.label(),
+        (_, FileImage::Absent) => ReportedOpKind::Delete.label(),
+        _ => ReportedOpKind::Replace.label(),
+    }
+}
+
 /// What a commit did, in the same shape as what a plan would have done.
 pub fn render_receipt(receipt: &AppliedReceipt) -> String {
     let mut out = format!("{} {}\n", receipt.outcome.label(), receipt.transaction_id);

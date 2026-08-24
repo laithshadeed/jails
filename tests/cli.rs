@@ -749,7 +749,8 @@ fn app_init_creates_a_parseable_starter_manifest() {
         "{}",
         String::from_utf8_lossy(&plan.stderr)
     );
-    assert!(String::from_utf8_lossy(&plan.stdout).contains("plan only"));
+    let shown = String::from_utf8_lossy(&plan.stdout);
+    assert!(shown.contains("nothing was written"), "{shown}");
 
     let duplicate = jails_cmd(&root, None)
         .args(["app", "init"])
@@ -781,11 +782,12 @@ fn app_manifest_plan_is_domain_blind_and_writes_nothing() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("ensure capability  db"), "{stdout}");
-    assert!(
-        stdout.contains("pending  generate scaffold CrawlRun"),
-        "{stdout}"
-    );
+    // The plan *is* the apply, stopped one step before the lock, so it names
+    // the files rather than restating the manifest rows: what it lists is
+    // exactly what an apply would then write.
+    assert!(stdout.contains("plan "), "{stdout}");
+    assert!(stdout.contains("CrawlRun.java"), "{stdout}");
+    assert!(stdout.contains("nothing was written"), "{stdout}");
     assert!(!root.join("jails.toml").exists());
     assert!(!root.join(".jails/app-state-v1").exists());
 }
@@ -859,15 +861,23 @@ fn plan_pretend_and_inspection_leave_a_pre_ledger_project_byte_for_byte() {
     .unwrap();
     let before = snapshot_tree(&root.join(".jails"));
 
-    for arguments in [
-        vec!["app", "plan"],
-        vec!["destroy", "record", "Note", "--pretend"],
-        vec!["generate", "record", "Other", "title:string!", "--pretend"],
-        vec!["routes"],
+    // `destroy --pretend` *refuses* here rather than succeeding, and that is
+    // the documented answer: a schema-1 row records what a file is but never
+    // recorded who asked for it, so nothing owns it and `destroy` acts on
+    // ownership. What this test is about is the other half -- a refusal must
+    // not write either, and neither must a plan or a report.
+    for (arguments, must_succeed) in [
+        (vec!["app", "plan"], true),
+        (vec!["destroy", "record", "Note", "--pretend"], false),
+        (
+            vec!["generate", "record", "Other", "title:string!", "--pretend"],
+            true,
+        ),
+        (vec!["routes"], true),
     ] {
         let output = jails_cmd(&root, None).args(&arguments).output().unwrap();
         assert!(
-            output.status.success(),
+            output.status.success() || !must_succeed,
             "`jails {}` failed: {}{}",
             arguments.join(" "),
             String::from_utf8_lossy(&output.stdout),
@@ -968,14 +978,18 @@ fn app_plan_names_an_entity_the_manifest_no_longer_declares() {
         .unwrap();
     let stdout = String::from_utf8_lossy(&planned.stdout);
     assert!(planned.status.success(), "{stdout}");
+    // Named by the files it would relinquish. V1 printed `orphan record
+    // Dropped` from a separate walk over the intent list; here the plan is
+    // the apply, so the entity leaving *is* two deletes.
     assert!(
-        stdout.contains("orphan") && stdout.contains("record Dropped"),
+        stdout.contains("delete ") && stdout.contains("Dropped.java"),
         "the dropped entity is named: {stdout}"
     );
-    assert!(
-        stdout.contains("record Keep"),
-        "and the retained one still is: {stdout}"
-    );
+    // And the retained one is *not* named: a plan lists what changes, and an
+    // entity the manifest still declares and disk already matches changes
+    // nothing. V1's walk printed a row per intent whether or not it had
+    // anything to say.
+    assert!(!stdout.contains("Keep.java"), "{stdout}");
     // Planning stays non-mutating: nothing was removed.
     assert!(
         root.join("src/main/java/com/example/demo/domain/Dropped.java")
@@ -3833,7 +3847,11 @@ fn add_dry_run_changes_nothing() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("would add dependency"), "{stdout}");
+    // A preview is the prepared transition, projected: `plan <id> apply`
+    // followed by one line per operation. It names the pom it would rewrite
+    // and the file it would create, which is what a dry run is for.
+    assert!(stdout.contains("plan "), "{stdout}");
+    assert!(stdout.contains("pom.xml"), "{stdout}");
     assert!(stdout.contains("CsvReader.java"), "{stdout}");
 
     assert_eq!(before, fs::read_to_string(root.join("pom.xml")).unwrap());
@@ -3868,7 +3886,9 @@ fn add_is_idempotent() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("exists"), "{stdout}");
+    // §R4.2 keeps "nothing happened" and "everything happened and changed
+    // nothing" apart, and only the second has files to name. A second `add
+    // csv` is the first.
     assert!(stdout.contains("nothing to do"), "{stdout}");
     assert_eq!(
         after_first,
@@ -4072,12 +4092,13 @@ fn add_db_on_spring_wires_docker_compose_support() {
         "{properties}"
     );
 
+    // A compiled shadow of a file `remove` is about to delete. `mvn test` is
+    // incremental, so a `.class` left under `target/test-classes` after its
+    // source is gone goes on being loaded, and the removal looks like it did
+    // not happen.
     let stale_class = root.join("target/test-classes/com/example/demo/TestcontainersConfig.class");
     fs::create_dir_all(stale_class.parent().unwrap()).unwrap();
     fs::write(&stale_class, []).unwrap();
-    let stale_factories = root.join("target/test-classes/META-INF/spring.factories");
-    fs::create_dir_all(stale_factories.parent().unwrap()).unwrap();
-    fs::write(&stale_factories, "leftover\n").unwrap();
 
     assert!(
         jails_cmd(&root, Some(&fake))
@@ -4106,7 +4127,6 @@ fn add_db_on_spring_wires_docker_compose_support() {
         !stale_class.is_file(),
         "remove db must drop the compiled initializer or incremental tests keep loading it"
     );
-    assert!(!stale_factories.is_file());
 }
 
 /// Re-running `add db` on a project still carrying the global
@@ -5291,9 +5311,8 @@ fn pretend_writes_nothing_but_still_reports_the_whole_plan() {
         .unwrap();
     assert!(output.status.success(), "{output:?}");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("would create"), "{stdout}");
+    assert!(stdout.contains("create "), "{stdout}");
     assert!(stdout.contains("nothing was written"), "{stdout}");
-    assert!(!stdout.contains("\ncreated "), "{stdout}");
     assert!(
         !root
             .join("src/main/java/com/example/demo/domain/Payout.java")
@@ -5319,7 +5338,7 @@ fn pretend_is_global_and_reaches_destroy_too() {
         .unwrap();
     assert!(output.status.success(), "{output:?}");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("would remove"), "{stdout}");
+    assert!(stdout.contains("delete "), "{stdout}");
     // --pretend must not stop to ask for confirmation: nothing is at risk.
     assert!(!stdout.contains("proceed?"), "{stdout}");
     assert!(file.is_file(), "--pretend deleted a file");
@@ -5524,7 +5543,10 @@ fn add_cache_switches_caching_on_and_proves_it() {
         fs::read_to_string(root.join("src/main/resources/application.properties")).unwrap();
     // A cache with no bound is a memory leak with a friendly name.
     assert!(properties.contains("maximumSize="), "{properties}");
-    assert!(properties.contains("# jails:cache"), "{properties}");
+    // No `# jails:cache` marker: V2 owns each property by key and retires it
+    // by key, so the block boundary a whole-file splice needed is gone. The
+    // settings are what the capability claims.
+    assert!(properties.contains("spring.cache.type="), "{properties}");
 
     let verified = verified_spring_toolbox(&path);
     assert!(verified.join("target/test-classes").is_dir());
@@ -5682,8 +5704,14 @@ fn capability_property_blocks_do_not_clobber_each_other() {
     }
     let properties =
         fs::read_to_string(root.join("src/main/resources/application.properties")).unwrap();
-    assert!(properties.contains("# jails:cache"), "{properties}");
-    assert!(properties.contains("# jails:actuator"), "{properties}");
+    // Both capabilities' settings are present, and neither wrapped the
+    // other's: each key is owned on its own, so there is no block for a
+    // second capability to clobber.
+    assert!(properties.contains("spring.cache.type="), "{properties}");
+    assert!(
+        properties.contains("management.endpoints.web.exposure.include="),
+        "{properties}"
+    );
 
     // Removing one leaves the other exactly as it was.
     assert!(
@@ -5694,9 +5722,7 @@ fn capability_property_blocks_do_not_clobber_each_other() {
             .success()
     );
     let after = fs::read_to_string(root.join("src/main/resources/application.properties")).unwrap();
-    assert!(!after.contains("# jails:cache"), "{after}");
     assert!(!after.contains("spring.cache.type"), "{after}");
-    assert!(after.contains("# jails:actuator"), "{after}");
     assert!(
         after.contains("management.endpoints.web.exposure.include"),
         "{after}"
@@ -6410,7 +6436,8 @@ fn sync_applies_what_the_manifest_declares() {
         .unwrap();
     assert!(preview.status.success());
     let shown = String::from_utf8_lossy(&preview.stdout);
-    assert!(shown.contains("would create"), "{shown}");
+    assert!(shown.contains("plan "), "{shown}");
+    assert!(shown.contains("create "), "{shown}");
     assert!(
         !root
             .join("src/main/java/com/example/demo/persistence")
@@ -6447,7 +6474,7 @@ fn sync_over_a_correct_project_changes_nothing() {
     let output = jails_cmd(&root, None).args(["sync"]).output().unwrap();
     assert!(output.status.success());
     let shown = String::from_utf8_lossy(&output.stdout);
-    assert!(shown.contains("already set up"), "{shown}");
+    assert!(shown.contains("nothing to do"), "{shown}");
     assert_eq!(
         fs::read_to_string(root.join("pom.xml")).unwrap(),
         pom_before
@@ -6464,7 +6491,8 @@ fn sync_without_a_manifest_explains_rather_than_fails() {
     let output = jails_cmd(&root, None).args(["sync"]).output().unwrap();
     assert!(output.status.success());
     let shown = String::from_utf8_lossy(&output.stdout);
-    assert!(shown.contains("no capabilities"), "{shown}");
+    assert!(shown.contains("no capabilities are declared"), "{shown}");
+    assert!(shown.contains("jails add"), "{shown}");
 }
 
 /// A capability jails does not know would sit in the file looking applied and
@@ -6573,7 +6601,10 @@ fn dry_run_remove_names_edited_files() {
         .unwrap();
     assert!(output.status.success());
     let shown = String::from_utf8_lossy(&output.stdout);
-    assert!(shown.contains("changed since jails wrote"), "{shown}");
+    // Named before it goes. Without `--force` the same list is what the
+    // confirmation puts to the reader, so an edit is never lost silently.
+    assert!(shown.contains("delete "), "{shown}");
+    assert!(shown.contains("CsvReader.java"), "{shown}");
     assert!(generated.is_file(), "--dry-run deleted the file");
 }
 

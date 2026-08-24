@@ -97,6 +97,37 @@ pub fn destroy(
     name: &str,
     package: Option<&str>,
 ) -> Result<Outcome> {
+    // Decided before anything is looked up: these three are *forward-only*,
+    // and "no such row" would be the wrong reason to refuse. A migration that
+    // has run cannot be unrun by deleting its file, an association's DDL is
+    // the same, and a field overlay is undone by another overlay. `why.rs`
+    // explains the migration case to anyone who hits it, so the wording is
+    // load-bearing rather than decorative.
+    if matches!(
+        kind,
+        ArtifactKind::Migration | ArtifactKind::Association | ArtifactKind::Field
+    ) {
+        return Err(
+            "migrations, associations, and field changes are forward-only; create a new \
+             migration instead of destroying one"
+                .to_string(),
+        );
+    }
+    // `cases` is the fourth one-shot and the one that used to be an
+    // exception. V1 destroyed it by rebuilding the test path from the
+    // markdown path; here a one-shot is a *receipt*, keyed by its source and
+    // the hash of that source's bytes, and the schema has no list for taking
+    // one back -- deliberately, since `entities_removed` exists because an
+    // entity can be relinquished and a one-shot cannot. Regenerating from the
+    // same source is already a no-op, so the receipt is not in the way.
+    if matches!(kind, ArtifactKind::Cases) {
+        return Err(format!(
+            "`cases` is a one-shot: it is recorded as a receipt over `{name}`'s bytes rather \
+             than as an entity jails owns.\n       fix: delete the generated test yourself. \
+             Re-running `jails g cases {name}` over the same brief changes nothing, so \
+             nothing has to be taken back first."
+        ));
+    }
     let project = run.project();
     let id = intent(project, kind, name, package, &[], &[], None, None)?;
     let entity = EntityId::Intent(id.clone());

@@ -38,6 +38,23 @@ mod tooling;
 use tooling::*;
 
 mod database;
+
+/// Drop the compiled shadow of a source file the transition deleted.
+///
+/// `target/` is derived output: it is outside every route's mutable scope, it
+/// is not guarded, and a transaction has no business rewriting it. But
+/// `mvn test` is incremental, so a deleted `TestcontainersConfig.java` whose
+/// `.class` is still under `target/test-classes` keeps being loaded -- the
+/// removal looks like it did not happen, and the failure appears in a test
+/// run rather than at the command that caused it.
+///
+/// So this runs *after* the commit, from the receipt's own delete list, and
+/// is deliberately best-effort: a `target/` jails cannot write is a `target/`
+/// the next build regenerates.
+pub fn drop_compiled_shadow(root: &std::path::Path, deleted: &std::path::Path) {
+    database::delete_maven_output(root, deleted);
+}
+
 mod shrink;
 mod test_wiring;
 use database::*;
@@ -416,7 +433,12 @@ pub fn add_in(
     Ok(())
 }
 
-fn require_java_release(release: Option<u32>) -> Result<()> {
+/// The project must be able to compile what a capability installs.
+///
+/// `pub` because both write paths need it and there must not be two copies:
+/// V1's `add_in` and the V2 capability route ask the same question of the same
+/// resolved `Project`.
+pub fn require_java_release(release: Option<u32>) -> Result<()> {
     match release {
         Some(level) if level < MIN_RELEASE => Err(format!(
             "this project targets Java {level}, but jails generates Java {MIN_RELEASE}+ code.\n       \

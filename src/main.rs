@@ -7,14 +7,12 @@ use jails_support::Result;
 pub(crate) use jails_generate::{add, generate};
 pub(crate) use jails_java::template;
 pub(crate) use jails_project::{
-    compose, config, generated_files, inspect, ledger, model, pom, project,
+    compose, inspect, ledger, model, pom, project,
 };
-pub(crate) use jails_support::{apply, scratch};
+pub(crate) use jails_support::apply;
 pub(crate) use jails_tooling::{
-    bench, commands, console, doctor, explain, kafka, lint, migrate, rename, run, source, testd,
-    why,
+    bench, commands, console, doctor, explain, kafka, lint, migrate, run, source, testd, why,
 };
-mod adopt;
 mod app;
 mod new;
 
@@ -63,6 +61,275 @@ pub(crate) struct Cli {
     /// have to remember which commands support it.
     #[arg(long, short = 'p', global = true, visible_alias = "dry-run")]
     pretend: bool,
+
+    /// How a mutation reports what it did: readable, or one JSON object
+    ///
+    /// One projection, two encodings. §R3.4 makes a command's result a
+    /// *value* -- the same status, operation list, ledger line and effects
+    /// whether the run previewed or committed -- so `--output json` is an
+    /// encoding of that value rather than a second description of the work.
+    #[arg(long, global = true, value_enum, default_value_t = Output::Human)]
+    output: Output,
+}
+
+/// How a mutation's [`CommandEnvelope`] is encoded.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
+pub(crate) enum Output {
+    Human,
+    Json,
+}
+
+/// Everything a mutation needs that is not the mutation.
+///
+/// A parameter object rather than four booleans threaded through every arm:
+/// they arrive together from the global flags, they are consumed together by
+/// [`mutate`], and three of the four are easy to swap at a call site.
+#[derive(Clone, Copy)]
+pub(crate) struct Invocation {
+    pretend: bool,
+    debug: bool,
+    output: Output,
+}
+
+impl Invocation {
+    /// The same invocation, writing nothing.
+    ///
+    /// `app plan` is `app apply --pretend` under another name, and this is
+    /// where that is said once rather than at both call sites.
+    pub(crate) fn pretending(self) -> Self {
+        Self {
+            pretend: true,
+            ..self
+        }
+    }
+}
+
+/// Run one mutation through the transaction protocol, and report it once.
+///
+/// **Every mutating command goes through here.** That is the point of the
+/// single dispatch point plan.md §R6 names: `--pretend`, `--debug`,
+/// `--no-start` and `--output` are honoured in one place, so a command cannot
+/// forget one, and the result is rendered from the envelope rather than
+/// printed as the route goes. A route that printed its own progress would be
+/// describing the work a second time, which is the drift §R3.4 exists to
+/// remove.
+pub(crate) fn mutate(
+    invocation: Invocation,
+    no_start: bool,
+    route: impl Fn(&jails_engine::route::Run) -> Result<jails_engine::route::Outcome>,
+) -> Result<()> {
+    mutate_confirmed(invocation, no_start, true, route)
+}
+
+/// The same, with the confirmation a destructive command asks for first.
+///
+/// `confirmed = false` means "ask before committing, unless `--force`", and
+/// the question is asked of the **plan**: the same computation the commit
+/// runs, stopped one step before the lock. So what the reader is shown is
+/// exactly what happens if they say yes -- not a second description of it, and
+/// not a list assembled by whichever command happened to be destructive.
+///
+/// V1 asked from inside `destroy` and again from inside `remove`, over
+/// hand-built path lists. Two implementations of one question, and neither
+/// could see what the other command would do.
+fn mutate_confirmed(
+    invocation: Invocation,
+    no_start: bool,
+    assumed: bool,
+    route: impl Fn(&jails_engine::route::Run) -> Result<jails_engine::route::Outcome>,
+) -> Result<()> {
+    let project = model::Project::discover()?;
+    fn configure(mut run: jails_engine::route::Run<'_>, no_start: bool, debug: bool) -> jails_engine::route::Run<'_> {
+        if no_start {
+            run = run.without_start();
+        }
+        if debug {
+            run = run.with_debug();
+        }
+        run
+    }
+    if !assumed && !invocation.pretend {
+        let planned = route(&configure(
+            jails_engine::route::Run::pretending(&project),
+            no_start,
+            invocation.debug,
+        ))?;
+        if !accepted(&planned)? {
+            println!("aborted");
+            return Ok(());
+        }
+    }
+    let run = configure(
+        match invocation.pretend {
+            true => jails_engine::route::Run::pretending(&project),
+            false => jails_engine::route::Run::committing(&project),
+        },
+        no_start,
+        invocation.debug,
+    );
+    let outcome = route(&run)?;
+    drop_compiled_shadows(project.root(), &outcome);
+    report(&outcome, invocation.output)
+}
+
+/// Show what a plan would delete and ask, or say yes for a plan that deletes
+/// nothing.
+///
+/// Only deletions are put to the reader. A create or a replace is what they
+/// asked for; a delete is the one operation that loses something they cannot
+/// get back from this command.
+fn accepted(planned: &jails_engine::route::Outcome) -> Result<bool> {
+    use std::io::{BufRead, Write};
+
+    let deleting: Vec<String> = planned
+        .operations()
+        .iter()
+        .filter(|op| op.kind == jails_prepare::report::ReportedOpKind::Delete)
+        .map(|op| match &op.path {
+            jails_prepare::prepare::OperationTarget::Project(path) => path.to_string(),
+            jails_prepare::prepare::OperationTarget::LegacyMachine(path) => {
+                format!("legacy-machine {path:?}")
+            }
+        })
+        .collect();
+    if deleting.is_empty() {
+        return Ok(true);
+    }
+    println!("about to delete:");
+    for path in &deleting {
+        println!("  {path}");
+    }
+    print!("proceed? [y/N] ");
+    std::io::stdout().flush().ok();
+    let mut answer = String::new();
+    std::io::stdin()
+        .lock()
+        .read_line(&mut answer)
+        .map_err(|error| format!("failed to read confirmation: {error}"))?;
+    Ok(answer.trim().eq_ignore_ascii_case("y"))
+}
+
+/// Take a deleted source file's compiled shadow with it.
+///
+/// Derived from the receipt rather than from what the command was asked to do,
+/// so it covers every route without any of them knowing about `target/`. It is
+/// deliberately **not** part of the transaction: `target/` is build output,
+/// nothing guards it, and a transition that rewrote it would be claiming
+/// ownership of something Maven owns.
+///
+/// What it prevents is narrow and real. `mvn test` is incremental, so a
+/// deleted `TestcontainersConfig.java` whose `.class` is still under
+/// `target/test-classes` goes on being loaded -- the removal looks like it did
+/// not happen, and the failure surfaces in a test run rather than at the
+/// command that caused it.
+fn drop_compiled_shadows(root: &std::path::Path, outcome: &jails_engine::route::Outcome) {
+    for deleted in outcome.deleted_files() {
+        add::drop_compiled_shadow(root, &root.join(deleted));
+    }
+}
+
+/// `<kind>:<Name>`, as `--intent` takes it.
+///
+/// Two segments, not three. The key already names one exact decoded row, and
+/// the row carries its own package -- a third segment would be a second
+/// opinion about the same fact, and the interesting case is the two
+/// disagreeing.
+fn parse_intent(intent: &str) -> Result<(ArtifactKind, String)> {
+    let mut parts = intent.splitn(3, ':');
+    let (Some(kind), Some(name), None) = (parts.next(), parts.next(), parts.next()) else {
+        return Err(format!(
+            "`--intent {intent}` is not `<kind>:<Name>`.\n       fix: `jails doctor` prints the \
+             exact command for every row this project can adopt."
+        ));
+    };
+    let kind = <ArtifactKind as clap::ValueEnum>::from_str(kind, false).map_err(|_| {
+        format!(
+            "`{kind}` is not a generator kind.\n       fix: `jails commands --json` lists every \
+             kind this binary accepts."
+        )
+    })?;
+    Ok((kind, name.to_string()))
+}
+
+/// One `Declaration` per capability the caller named.
+///
+/// `--name` and `--package` apply to every capability in the invocation,
+/// which is what makes `jails add db kafka --name orders` mean two named
+/// instances rather than one named and one anonymous.
+fn declarations(
+    capabilities: &[Capability],
+    name: Option<&str>,
+    package: Option<&str>,
+) -> Result<Vec<jails_project::capability::Declaration>> {
+    capabilities
+        .iter()
+        .map(|capability| {
+            let asked = jails_project::capability::Declaration::asked(*capability, name, package);
+            asked.validate()?;
+            Ok(asked)
+        })
+        .collect()
+}
+
+/// Each capability is its own transition, and each reports.
+///
+/// Not one transition over the list: `add db kafka` is two entities, and a
+/// scope speaking for both would relinquish one when the other is the subject.
+/// The loop stops at the first refusal, so a project is never left with half
+/// of what the reader asked for and no word about which half.
+fn one_transition_each(
+    run: &jails_engine::route::Run,
+    asked: &[jails_project::capability::Declaration],
+    route: impl Fn(
+        &jails_engine::route::Run,
+        &jails_project::capability::Declaration,
+    ) -> Result<jails_engine::route::Outcome>,
+) -> Result<jails_engine::route::Outcome> {
+    let mut last = None;
+    for declaration in asked {
+        last = Some(route(run, declaration)?);
+    }
+    last.ok_or_else(|| {
+        "name at least one capability.\n       fix: `jails add --help` lists them.".to_string()
+    })
+}
+
+/// The one rendering of what a mutation did.
+///
+/// The exit code comes from the envelope's own status, so a conflicted apply
+/// and a refusal are distinguishable by a script without parsing prose. A
+/// nonzero status returns an **empty** `Err`, the same convention `doctor`
+/// uses: the report has already been printed and a second `jails: ` line over
+/// it would say nothing.
+fn report(outcome: &jails_engine::route::Outcome, output: Output) -> Result<()> {
+    let Some(envelope) = outcome.envelope() else {
+        // §R4.3 makes an incomplete commit a success-side value carrying what
+        // is known, and it has no single status yet. Saying so is better than
+        // inventing one: the transaction is on disk and the next invocation
+        // finishes it.
+        return Err(
+            "the commit reached the ledger and left work behind. Nothing is lost -- the              transaction is recorded.
+       fix: run the same command again; it completes              the interrupted one before doing anything new."
+                .to_string(),
+        );
+    };
+    print!(
+        "{}",
+        match output {
+            Output::Human => jails_prepare::report::render_envelope(&envelope),
+            Output::Json => jails_prepare::report::render_envelope_json(&envelope),
+        }
+    );
+    // A preview reads exactly like a commit -- one line per operation, in the
+    // executor's order -- which is the whole point and also the one thing that
+    // could be misread. Said once, here, rather than by each route.
+    if matches!(outcome, jails_engine::route::Outcome::Planned(_)) && output == Output::Human {
+        println!("\nnothing was written -- run the same command without --pretend to apply it.");
+    }
+    match envelope.exit_code() {
+        0 => Ok(()),
+        _ => Err(String::new()),
+    }
 }
 
 #[derive(Subcommand)]
@@ -296,7 +563,33 @@ enum Command {
     /// base package, maps the ones it recognises onto jails' layers, and
     /// reports the ones it does not rather than guessing. Never touches
     /// [project] capabilities -- `jails sync` acts on that list.
-    Adopt,
+    Adopt {
+        /// The stable key of one decoded legacy row, from `jails doctor`
+        ///
+        /// Names one exact row, never the first one that looks similar. With
+        /// it, `adopt` claims that row for an owner instead of mapping the
+        /// project's directories onto jails' layers.
+        #[arg(long, requires = "intent")]
+        legacy_key: Option<String>,
+        /// Which intent that row is: `<kind>:<Name>`
+        ///
+        /// Checked against the row rather than trusted -- adopting `record
+        /// Reward` onto a row that says `service Reward` would put an owner on
+        /// files that recipe never wrote.
+        #[arg(long, requires = "legacy_key")]
+        intent: Option<String>,
+        /// Adopt a row whose files have drifted, discarding what is there
+        ///
+        /// The freshly rendered candidate is installed and the current bytes
+        /// are recorded as guarded preimages, so what was discarded is
+        /// recoverable rather than merely gone. Requires `--force`, because
+        /// this is the one adoption that does not preserve what it finds.
+        #[arg(long, requires = "force")]
+        replace: bool,
+        /// Confirm a `--replace`
+        #[arg(long)]
+        force: bool,
+    },
     /// Check everything that has to be true before the app can start
     Doctor {
         /// Emit the checks as JSON: {version, failures, warnings, checks[]}
@@ -543,6 +836,11 @@ fn main() -> std::process::ExitCode {
     let debug = cli.debug;
     let pretend = cli.pretend;
 
+    let invocation = Invocation {
+        pretend,
+        debug,
+        output: cli.output,
+    };
     let result = match cli.command {
         Command::About { json } => project::about(json),
         Command::New {
@@ -570,7 +868,7 @@ fn main() -> std::process::ExitCode {
             no_git,
             app,
         } => new::new_cli(&name, &release, !no_git, app.as_deref(), debug, pretend),
-        Command::App { command } => app::run(command, debug, pretend),
+        Command::App { command } => app::run(command, invocation),
         Command::Generate {
             kind,
             name,
@@ -580,60 +878,96 @@ fn main() -> std::process::ExitCode {
             indexes,
             strategy_on,
             strategy_yields,
-        } => generate::generate_with_timestamps(
-            kind,
-            &name,
-            &fields,
-            timestamps,
-            package.as_deref(),
-            &indexes,
-            strategy_on.as_deref(),
-            strategy_yields.as_deref(),
-            pretend,
-        ),
+        } => {
+            // Built once, outside the closure: a route may be called twice --
+            // a plan for a confirmation, then the commit -- and the intent is
+            // the same request both times.
+            let intent = jails_engine::route::Intent {
+                kind,
+                name,
+                fields,
+                timestamps,
+                indexes,
+                package,
+                on: strategy_on,
+                yields: strategy_yields,
+            };
+            mutate(invocation, false, |run| {
+                jails_engine::route::recipe(run, &intent)
+            })
+        }
         Command::Add {
             capabilities,
             name,
             no_start,
             package,
-        } => add::preflight(&capabilities, name.as_deref(), package.as_deref()).and_then(|()| {
-            capabilities.into_iter().try_for_each(|capability| {
-                add::add(
-                    capability,
-                    name.as_deref(),
-                    pretend,
-                    package.as_deref(),
-                    debug,
-                    no_start,
-                )
-            })
+        } => mutate(invocation, no_start, |run| {
+            // Every capability is checked before any is applied. Each one is
+            // its own transition, so without this `jails add db security` on a
+            // plain Maven project would install the database and *then* refuse
+            // -- leaving the reader with half of what they asked for and no
+            // word about which half.
+            add::preflight_in(
+                run.project(),
+                &capabilities,
+                name.as_deref(),
+                package.as_deref(),
+            )?;
+            let asked = declarations(&capabilities, name.as_deref(), package.as_deref())?;
+            one_transition_each(run, &asked, jails_engine::route::install)
         }),
-        Command::Sync { no_start } => add::sync(pretend, debug, no_start),
+        Command::Sync { no_start } => mutate(invocation, no_start, |run| {
+            // Most projects never write a manifest, so an empty list is not an
+            // error and "nothing to do" would not explain itself. Said before
+            // the transition rather than inside it: what follows is a real
+            // reconciliation of an empty list, and this is advice about the
+            // file that would give it something to do.
+            if run.project().declarations().is_empty() {
+                println!(
+                    "note: no capabilities are declared in jails.toml, so there is nothing \
+                     to reconcile.\n      `jails add <capability>` records one; `sync` then \
+                     makes the project match the list."
+                );
+            }
+            jails_engine::route::sync(run)
+        }),
         Command::Remove {
             capabilities,
             name,
             force,
             package,
-        } => capabilities.into_iter().try_for_each(|capability| {
-            add::remove(
-                capability,
-                name.as_deref(),
-                pretend,
-                force,
-                package.as_deref(),
-                debug,
-            )
+        } => mutate_confirmed(invocation, false, force, |run| {
+            let asked = declarations(&capabilities, name.as_deref(), package.as_deref())?;
+            one_transition_each(run, &asked, jails_engine::route::remove)
         }),
-        Command::Rename { old, new, force } => rename::rename(&old, &new, pretend, force),
+        Command::Rename { old, new, force } => mutate(invocation, false, |run| {
+            jails_engine::route::rename(run, &old, &new, force)
+        }),
         Command::Destroy {
             kind,
             name,
             force,
             package,
-        } => generate::destroy(kind, &name, force, package.as_deref(), pretend),
+        } => mutate_confirmed(invocation, false, force, |run| {
+            jails_engine::route::destroy(run, kind, &name, package.as_deref())
+        }),
         Command::Start { services } => compose::start(&services, debug),
         Command::Stop { services } => compose::stop_cmd(&services, debug),
-        Command::Adopt => adopt::adopt(pretend),
+        Command::Adopt {
+            legacy_key,
+            intent,
+            replace,
+            force,
+        } => {
+            let _ = force;
+            match (legacy_key, intent) {
+                (Some(key), Some(intent)) => mutate(invocation, false, |run| {
+                    let (kind, name) = parse_intent(&intent)?;
+                    jails_engine::route::adopt_legacy(run, &key, kind, &name, replace)
+                }),
+                _ => mutate(invocation, false, jails_engine::route::adopt_layout),
+            }
+        }
         Command::Src { type_name, json } => source::src(&type_name, json),
         Command::Bench {
             vus,
@@ -710,7 +1044,7 @@ fn main() -> std::process::ExitCode {
         ),
         Command::Build => run::build(debug),
         Command::Clean => run::clean(debug),
-        Command::Fmt => run::fmt(debug),
+        Command::Fmt => mutate(invocation, false, jails_engine::route::format),
         Command::Check => run::check(debug),
         Command::Mvn { args } => run::mvn(&args, debug),
         Command::Run {

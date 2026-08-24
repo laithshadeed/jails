@@ -847,7 +847,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn scratch(label: &str) -> PathBuf {
-        crate::scratch::ScratchDir::in_temp(&format!("jails-new-test-{label}"))
+        jails_support::scratch::ScratchDir::in_temp(&format!("jails-new-test-{label}"))
             .unwrap()
             .keep()
     }

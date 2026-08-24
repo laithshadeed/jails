@@ -32,6 +32,11 @@ pub fn install(run: &Run, asked: &Declaration) -> Result<Outcome> {
     // need Maven at all and refusing the rest would refuse a foreign project
     // for no reason.
     project.require_maven(capability.label())?;
+    // The project has to be able to *compile* what this installs. Checked
+    // here rather than at the dispatch point, because it is a property of the
+    // project a capability plans against and every caller of this route --
+    // `add`, `sync`, and an aggregate `app apply` -- needs it equally.
+    jails_generate::add::require_java_release(project.java_release())?;
     let (id, spec) = asked.resolve(project)?;
     let declared_as = Declaration::of(&id, &spec);
     let owner = ResourceOwner::Entity(EntityId::Capability(id.clone()));
@@ -66,7 +71,7 @@ pub fn install(run: &Run, asked: &Declaration) -> Result<Outcome> {
         declared: declared_capabilities(&observed(project)?, Some(entity))?,
         changes: vec![desired],
     };
-    commit(
+    let installed = commit(
         run,
         request,
         &reads,
@@ -81,7 +86,40 @@ pub fn install(run: &Run, asked: &Declaration) -> Result<Outcome> {
                 no_start: run.no_start(),
             },
         ),
-    )
+    )?;
+    reformat_after(run, matches!(capability, Capability::Format), installed)
+}
+
+/// Installing a formatter leaves the project failing its own `verify`, unless
+/// the formatter runs.
+///
+/// A formatter has an opinion about line wrapping that no amount of careful
+/// templating can predict, so the only way to hand back a project that passes
+/// `jails check` is to actually run it once over what is already there.
+///
+/// **Two transitions, deliberately.** V1 shelled out to `spotless:apply` after
+/// its own write path, which is precisely the shape this migration exists to
+/// remove: a write the routes do not know about. Here the reformat is
+/// `route::format` -- the same transition `jails fmt` is -- so it runs in a
+/// scratch tree synthesised from the projection, declares its mutable scopes,
+/// and commits only what it changed. It cannot happen inside the install,
+/// because the plugin it needs is what the install just put in the pom.
+///
+/// Best-effort on the toolchain, not on the transition: a machine with no
+/// Maven gets the capability and a first `jails fmt` that has work to do,
+/// which is what V1 promised too.
+pub(super) fn reformat_after(run: &Run, formats: bool, installed: Outcome) -> Result<Outcome> {
+    if !formats || !run.writes() {
+        return Ok(installed);
+    }
+    match super::format(run) {
+        Ok(_) => Ok(installed),
+        // The capability is installed and recorded; only the one-off pass over
+        // existing sources did not happen. Failing here would roll nothing
+        // back -- the commit is already published -- so it would report a
+        // failure over a project that is in exactly the state it asked for.
+        Err(_) => Ok(installed),
+    }
 }
 
 /// Make the project match the capability list in `jails.toml`.
@@ -174,12 +212,15 @@ pub fn sync(run: &Run) -> Result<Outcome> {
         }
     }
 
+    let formats = declared
+        .keys()
+        .any(|id| matches!(id, EntityId::Capability(id) if id.kind == Capability::Format));
     let request = Request {
         scope: ReconcileScope::DirectConfig,
         declared,
         changes,
     };
-    commit(
+    let synced = commit(
         run,
         request,
         &reads,
@@ -190,7 +231,8 @@ pub fn sync(run: &Run) -> Result<Outcome> {
             &["sync"],
             &[],
         ),
-    )
+    )?;
+    reformat_after(run, formats, synced)
 }
 
 /// Take one capability back out.

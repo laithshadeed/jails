@@ -123,7 +123,11 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // the only thing that can answer, and taking a `Project` is
                 // what reaching it looks like.
                 //
-                ceiling: 137,
+                // 137 -> 126 with the dispatch flip: `src/adopt.rs`,
+                // `src/app/reconcile.rs`, `src/app/shadow.rs` and V1's
+                // app-state reader were all root-taking and all went, because
+                // the routes take a resolved `Project`.
+                ceiling: 126,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;
@@ -839,10 +843,6 @@ const SUBPROCESS_CLASSIFICATION: &[(&str, &str)] = &[
     // Bootstrap, outside any project transaction: these run before a project
     // exists (§R6.5), inside a scratch tree that is published atomically.
     ("new", "new-project bootstrap"),
-    // Transaction input. R5.3 invokes Git through the bounded scratch
-    // executor and commits its exact output; it is not a renderer and not an
-    // effect. `app::reconcile` is the module that does it today.
-    ("app", "transaction input"),
     // A three-way merge is transaction preparation, not a renderer and not an
     // effect: it runs `git merge-file` over three scratch inputs to compute
     // bytes the commit then guards like any other. §R5.2 says so explicitly --
@@ -1248,10 +1248,10 @@ fn root_path_parameters(src: &[Source]) -> usize {
 /// same way.
 const A_FRESH_READ_IS_CORRECT: &[(&str, &str)] = &[
     (
-        "project_at",
-        "its own Javadoc forbids caching: `app apply` splices the pom and rewrites \
-         jails.toml between steps, so step N+1 planning against step N's snapshot is \
-         exactly the staleness bug this avoids",
+        "apply_in",
+        "`jails new --app` has just created the project on disk, so there is no earlier \
+         `Project` for this to be a second read of. Passing one in would mean resolving it \
+         at the call site instead, which is the same read one frame up",
     ),
     (
         "ensure_dependency",

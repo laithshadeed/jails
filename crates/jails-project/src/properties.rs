@@ -78,14 +78,53 @@ pub fn introduce(text: &str, key: &str, value: &str, comment: &[String]) -> Stri
     out
 }
 
-/// Remove every line stating a key. Every occurrence, because leaving an
-/// earlier one behind would make the key still set after a removal.
-pub fn remove(text: &str, key: &str) -> String {
-    let kept: Vec<&str> = text
-        .lines()
-        .filter(|line| !entry(line).map(|(name, _)| name == key).unwrap_or(false))
-        .collect();
-    let mut out = kept.join("\n");
+/// Remove every line stating a key, and the comment jails wrote above it.
+///
+/// Every occurrence of the key, because leaving an earlier one behind would
+/// make the key still set after a removal.
+///
+/// **The comment goes only when it is jails' own, byte for byte.** A capability
+/// writes prose above the setting it introduces, and prose describing a setting
+/// that is no longer there is worse than no prose -- it says the file
+/// configures something it does not. But a reader may have rewritten those
+/// lines, or written their own above jails' key, and deleting someone's note
+/// because it happened to sit in the right place is not a trade worth making.
+/// So the recorded comment is matched exactly, and anything else is left.
+///
+/// This is also what makes "the last claim out takes the file" work: without
+/// it, retiring every key leaves a file of orphaned comments, and `remove`
+/// stops being the inverse of `add`.
+pub fn remove(text: &str, key: &str, comment: &[String]) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut drop = vec![false; lines.len()];
+    for (index, line) in lines.iter().enumerate() {
+        if !entry(line).map(|(name, _)| name == key).unwrap_or(false) {
+            continue;
+        }
+        drop[index] = true;
+        // Walk up through exactly as many lines as jails wrote, last first.
+        // A mismatch stops the walk rather than skipping the line: the block
+        // is contiguous, so a changed line means the rest is not jails' any
+        // more either.
+        let mut above = index;
+        for wanted in comment.iter().rev() {
+            if above == 0 {
+                break;
+            }
+            if lines[above - 1].trim_end() != format!("# {wanted}") {
+                break;
+            }
+            above -= 1;
+            drop[above] = true;
+        }
+    }
+    let mut out = lines
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| !drop[*index])
+        .map(|(_, line)| *line)
+        .collect::<Vec<_>>()
+        .join("\n");
     if !out.is_empty() {
         out.push('\n');
     }

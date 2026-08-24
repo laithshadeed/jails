@@ -67,7 +67,7 @@ pub struct Intent {
 pub fn app_apply(run: &Run, capabilities: &[Capability], intents: &[Intent]) -> Result<Outcome> {
     let project = run.project();
     let (request, reads) = declare(project, capabilities, intents)?;
-    commit(
+    let applied = commit(
         run,
         request,
         &reads,
@@ -78,6 +78,15 @@ pub fn app_apply(run: &Run, capabilities: &[Capability], intents: &[Intent]) -> 
             &["app", "apply"],
             &[],
         ),
+    )?;
+    // A manifest that declares `format` formats what the same apply generated.
+    // The order matters and is why this is a second transition: the formatter
+    // is a plugin the apply just installed, and the sources it has an opinion
+    // about are the ones the apply just wrote.
+    super::capability::reformat_after(
+        run,
+        capabilities.contains(&Capability::Format),
+        applied,
     )
 }
 

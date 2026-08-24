@@ -106,6 +106,11 @@ impl<'a> Run<'a> {
         }
     }
 
+    /// Whether this run may write. `--pretend` is the only reason it may not.
+    pub fn writes(&self) -> bool {
+        self.write
+    }
+
     pub fn project(&self) -> &'a Project {
         self.project
     }
@@ -213,6 +218,37 @@ impl Outcome {
             | CommitResult::CommittedRecoveryRequired(_) => return None,
         };
         Some(envelope.after_recovery(recovery))
+    }
+
+    /// The project-relative paths this outcome removed from disk.
+    ///
+    /// From the receipt, so it describes what a commit *did* rather than what
+    /// a plan intended, and empty for a preview -- a `--pretend` that swept
+    /// `target/` would be writing on a run that promised not to.
+    pub fn deleted_files(&self) -> Vec<String> {
+        let receipt = match self {
+            Self::Committed(CommitResult::Committed(committed))
+            | Self::CommittedAfterRecovery(CommitResult::Committed(committed), _) => {
+                &committed.receipt
+            }
+            _ => return Vec::new(),
+        };
+        receipt
+            .files
+            .iter()
+            .filter(|file| {
+                matches!(
+                    file.after,
+                    jails_protocol::conflict::FileImage::Absent
+                )
+            })
+            .filter_map(|file| match &file.path {
+                jails_prepare::prepare::OperationTarget::Project(path) => {
+                    Some(path.to_string())
+                }
+                jails_prepare::prepare::OperationTarget::LegacyMachine(_) => None,
+            })
+            .collect()
     }
 
     /// Every operation a plan would perform, in the report's order.

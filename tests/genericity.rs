@@ -115,7 +115,6 @@ const ALLOWED: &[AllowedConcept] = &[
             "src/app.rs",
             // The typed shadow reads the schema-1 store's rows to build its
             // observed side, so it names the module they live in.
-            "src/app/shadow.rs",
             "crates/jails-generate/src/generate/remove.rs",
             "src/main.rs",
         ],

@@ -51,6 +51,43 @@ fn snapshot(dir: &Path) -> BTreeMap<String, String> {
     found
 }
 
+/// The two `.jails/` files a golden snapshot holds.
+///
+/// `ledger.toml` is jails' registry and `app.toml` is the reader's manifest.
+/// Everything else under `.jails/` is the executor's, and is listed in
+/// [`EXECUTOR_STATE`] rather than excluded by a wildcard, so a new one is a
+/// deliberate entry rather than a silent omission.
+const REGISTRY_FILES: [&str; 2] = ["ledger.toml", "app.toml"];
+
+/// The executor's own state, which is never snapshotted.
+///
+/// Named after content and transaction hashes: an object is
+/// `objects/sha256/ab/cdef...` and a receipt is keyed by a transaction id, so
+/// both change whenever any input to any scenario changes. A golden holding
+/// them would churn on every template edit and say nothing about the Java
+/// jails generated -- which is what the goldens exist to pin.
+///
+/// The locks are excluded for a different reason: they are empty files whose
+/// presence depends on whether a run was interrupted, so they are not output
+/// at all.
+const EXECUTOR_STATE: [&str; 5] = [
+    ".jails/objects/",
+    ".jails/transactions/",
+    ".jails/receipts/",
+    ".jails/lock",
+    ".jails/effects.lock",
+];
+
+/// Whether this path is the executor's bookkeeping rather than jails' output.
+fn executor_state(rel: &str) -> bool {
+    EXECUTOR_STATE.iter().any(|prefix| {
+        match prefix.ends_with('/') {
+            true => rel.starts_with(prefix),
+            false => rel == *prefix,
+        }
+    })
+}
+
 fn collect(root: &Path, dir: &Path, out: &mut BTreeMap<String, String>) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
@@ -70,6 +107,9 @@ fn collect(root: &Path, dir: &Path, out: &mut BTreeMap<String, String>) {
             .unwrap()
             .to_string_lossy()
             .replace('\\', "/");
+        if executor_state(&rel) {
+            continue;
+        }
         match fs::read_to_string(&path) {
             Ok(text) => {
                 out.insert(rel, text);
@@ -188,11 +228,21 @@ fn the_goldens_still_hold_the_properties_that_matter() {
         .collect();
     assert!(!all.is_empty(), "no goldens recorded yet");
 
-    // `abstract.md` rung 8: one ledger, not four registries. The gate is a
-    // property of the output, so it is checked here rather than as a source
+    // `abstract.md` rung 8: one *registry*, not four. The gate is a property
+    // of the output, so it is checked here rather than as a source
     // measurement -- `.jails/files`, `.jails/version`, `.jails/intents/*` and
     // `.jails/models/*` were four layouts recording one fact, and two of them
     // were intent registries keyed differently.
+    //
+    // Restated for V2, which puts the executor's own bookkeeping in the same
+    // directory: an object store, a transaction log, receipts and two locks.
+    // Those are not a second registry -- they are named after content and
+    // transaction hashes, they are how a commit is made recoverable, and
+    // snapshotting them would make every golden churn on any change to any
+    // input. So the gate is now **closed rather than counted**: every
+    // `.jails/` entry has to be one this list names, and only the registry
+    // half is snapshotted. A fifth registry growing back still fails, and so
+    // does an executor directory nobody wrote down.
     let mut bookkeeping: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for (path, _) in &all {
         if let Some((scenario, rest)) = path.split_once("/.jails/") {
@@ -204,17 +254,15 @@ fn the_goldens_still_hold_the_properties_that_matter() {
     }
     assert!(!bookkeeping.is_empty(), "no scenario recorded a .jails/");
     for (scenario, entries) in &bookkeeping {
-        assert!(
-            entries.iter().all(|entry| !entry.contains('/')),
-            "{scenario}: `.jails/` is flat -- a subdirectory is a second \
-             registry growing back: {entries:?}"
-        );
-        assert!(
-            entries.len() <= 2,
-            "{scenario}: `.jails/` holds {} files, and rung 8's gate is 2 \
-             (`app.toml` when there is a manifest, `ledger.toml` always): {entries:?}",
-            entries.len()
-        );
+        for entry in entries {
+            assert!(
+                REGISTRY_FILES.contains(&entry.as_str()),
+                "{scenario}: `.jails/{entry}` is neither the registry nor \
+                 the executor's bookkeeping. A second registry growing back \
+                 is exactly what rung 8 closed; a new executor path belongs \
+                 in EXECUTOR_STATE with the reason it is not snapshotted."
+            );
+        }
     }
 
     for (path, text) in &all {
