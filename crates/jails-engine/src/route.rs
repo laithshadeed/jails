@@ -46,11 +46,16 @@ use jails_protocol::entity::{
 };
 use jails_protocol::identity::{JavaType, Name, ObjectId, Package, ProjectPath};
 use jails_protocol::ownership::{DesiredEntity, DesiredState, ObservedEntity, ReconcileScope};
+use jails_protocol::pending::{DesiredInputGuard, DesiredInputId, FrozenDesiredInput};
 use jails_protocol::plan::{
     DesiredAppliedEntity, DesiredChangeSet, DesiredOneShotReceipt, LedgerIntent, PlannedSubject,
 };
 use jails_protocol::provenance::{OneShotKind, RendererId};
 use jails_protocol::render::{DesiredBody, DesiredFile, ManagedPath};
+use jails_protocol::request::{
+    CanonicalCapability, CanonicalGenerateRequest, CanonicalMutationRequest,
+    CanonicalRequestSyntaxV1,
+};
 use jails_protocol::resource::{
     DesiredResource, OneShotLifecycle, OneShotState, ResourceKey, ResourceOwner, ResourceValue,
 };
@@ -524,14 +529,14 @@ fn commit(
     project: &Project,
     request: Request,
     declaration: &ReadDeclaration,
-    description: &str,
+    asked: &Asked,
 ) -> Result<CommitResult> {
     // Read once, and let the same value decide the generation the plan claims
     // and the image the commit guards under the lock. Reading them apart is
     // how a plan comes to be written against a store that moved in between.
     let observed = observed(project)?;
     let set = request.against(&observed)?;
-    commit_set(project, set, declaration, description)
+    commit_set(project, set, declaration, asked)
 }
 
 /// The same steps, for a request that already knows what the store becomes.
@@ -543,11 +548,11 @@ fn commit_set(
     project: &Project,
     set: DesiredChangeSet,
     declaration: &ReadDeclaration,
-    description: &str,
+    asked: &Asked,
 ) -> Result<CommitResult> {
-    let bundle = prepare_set(project, set, declaration)?;
+    let bundle = prepare_set(project, set, declaration, Some(asked))?;
     let handle = ProjectHandle::at(project.root())?;
-    let locked = LockedProject::acquire(handle, description).map_err(describe)?;
+    let locked = LockedProject::acquire(handle, &asked.display()).map_err(describe)?;
     execute::commit(&locked, &bundle).map_err(describe)
 }
 
@@ -562,6 +567,7 @@ fn prepare_set(
     project: &Project,
     set: DesiredChangeSet,
     declaration: &ReadDeclaration,
+    asked: Option<&Asked>,
 ) -> Result<pipeline::PreparedBundle> {
     let (snapshot, mut projection) = capture::projected(project, declaration)?;
     let observed = observed(project)?;
@@ -588,6 +594,13 @@ fn prepare_set(
         observed_store: observed,
         operation_context: Default::default(),
         preparation: Default::default(),
+        // Computed against the same capture the plan was, so the row for
+        // `jails.toml` describes the bytes this plan actually read rather
+        // than whatever is on disk by the time it is asked for.
+        invocation: match asked {
+            Some(asked) => Some(asked.fingerprint(&snapshot)?),
+            None => None,
+        },
         // The durable object store, as the one question preparation asks of
         // it: given a recorded base, the bytes jails wrote. A three-way merge
         // measures the reader's edit and the generator's change from exactly
@@ -607,6 +620,148 @@ fn prepare_set(
         projection,
         context,
     )
+}
+
+/// What was asked for, canonically -- both halves of §R5.4's invocation.
+///
+/// The two are not redundant. `request` is the *meaning*: which capabilities,
+/// which recipe, which force flag, with aliases resolved and set-valued
+/// positions sorted. `syntax` is the *spelling*, and it is what a resume
+/// compares first, because two different spellings of one meaning are still
+/// two different things a person typed and a resumption that silently
+/// accepted either would be resuming the wrong one.
+///
+/// Built by the route rather than parsed out of `argv`. A route knows what it
+/// was asked far more exactly than a parser reading the command line back
+/// does, and there is no second implementation to disagree with.
+pub struct Asked {
+    request: CanonicalMutationRequest,
+    syntax: CanonicalRequestSyntaxV1,
+}
+
+impl Asked {
+    /// Name the command and the arguments that decide what it does.
+    ///
+    /// `command` is the subcommand path without dashes; `positionals` are its
+    /// arguments; `options`/`flags` carry only what was explicitly supplied
+    /// and only what is *semantic* -- §R5.4 excludes presentation flags
+    /// (`--debug`, an output format) because rerunning with colour on is the
+    /// same request.
+    pub fn new(
+        request: CanonicalMutationRequest,
+        command: &[&str],
+        positionals: Vec<String>,
+        options: BTreeMap<String, Vec<String>>,
+        flags: BTreeSet<String>,
+    ) -> Self {
+        Self {
+            request,
+            syntax: CanonicalRequestSyntaxV1 {
+                command_path: command.iter().map(|part| part.to_string()).collect(),
+                positionals,
+                options,
+                flags,
+            },
+        }
+    }
+
+    /// The shorter form: a command with positional arguments and nothing else.
+    pub fn plain(
+        request: CanonicalMutationRequest,
+        command: &[&str],
+        positionals: &[&str],
+    ) -> Self {
+        Self::new(
+            request,
+            command,
+            positionals.iter().map(|one| one.to_string()).collect(),
+            BTreeMap::new(),
+            BTreeSet::new(),
+        )
+    }
+
+    /// The line a lock, a report and a resume prompt all show.
+    fn display(&self) -> String {
+        let mut out = String::from("jails");
+        for part in self
+            .syntax
+            .command_path
+            .iter()
+            .chain(self.syntax.positionals.iter())
+        {
+            out.push(' ');
+            out.push_str(part);
+        }
+        out
+    }
+
+    /// §R5.4's fingerprint, over this request and the human inputs it reads.
+    ///
+    /// `DirectRequest` is mandatory and hashes the request's own canonical
+    /// bytes, which is what makes the fingerprint depend on *what was asked*
+    /// rather than only on how it was spelled. The other rows are the human
+    /// sources a resumption must find unchanged; `jails.toml` is the one every
+    /// route may touch, and its absence is a row too -- "there was no config"
+    /// is a fact a resume has to be able to check, not a gap.
+    fn fingerprint(
+        &self,
+        snapshot: &jails_protocol::snapshot::ProjectSnapshot,
+    ) -> Result<jails_protocol::request::InvocationFingerprint> {
+        let mut rows = vec![FrozenDesiredInput {
+            id: DesiredInputId::DirectRequest,
+            guard: {
+                let mut encoder = jails_support::codec::Encoder::new();
+                self.request.encode(&mut encoder)?;
+                let bytes = encoder.finish()?;
+                DesiredInputGuard::Exact {
+                    sha256: ObjectId::from_bytes(jails_support::codec::sha256(&bytes)),
+                    len: bytes.len() as u64,
+                }
+            },
+        }];
+        let config = ProjectPath::parse(jails_project::config::FILE)?;
+        rows.push(FrozenDesiredInput {
+            id: DesiredInputId::HumanConfig,
+            guard: match snapshot.read(&config)? {
+                jails_protocol::snapshot::Captured::Present(file) => DesiredInputGuard::Exact {
+                    sha256: ObjectId::from_bytes(jails_support::codec::sha256(&file.bytes)),
+                    len: file.bytes.len() as u64,
+                },
+                jails_protocol::snapshot::Captured::Absent => DesiredInputGuard::Absent,
+            },
+        });
+        rows.sort_by(|a, b| a.id.cmp(&b.id));
+        let mut encoder = jails_support::codec::Encoder::new();
+        encoder.count(rows.len())?;
+        for row in &rows {
+            row.encode(&mut encoder)?;
+        }
+        Ok(jails_protocol::request::InvocationFingerprint {
+            request_syntax: self.syntax.fingerprint()?,
+            request: self.request.clone(),
+            // Direct CLI: no manifest is the source. `app apply` overrides
+            // this once a manifest identity is threaded through.
+            manifest_source: None,
+            desired_input_sha256: ObjectId::from_bytes(jails_support::codec::domain_hash(
+                "JAILS-DESIRED-INPUT-1",
+                &encoder.finish()?,
+            )),
+        })
+    }
+}
+
+/// The `Asked` for a command whose whole argument is one capability.
+///
+/// The three capability routes share it because they share the shape: one
+/// name, spelled as `Capability::label()` rather than whatever alias was
+/// typed, so `jails add postgres` and `jails add db` are recognised as the
+/// same request by anything comparing fingerprints.
+fn asked_capabilities(
+    command: &[&str],
+    capability: Capability,
+    request: CanonicalMutationRequest,
+) -> Asked {
+    Asked::plain(request, command, &[capability.label()])
 }
 
 /// One file operation, as a person reads it.

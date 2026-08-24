@@ -48,12 +48,32 @@ pub fn generate(
         }),
     )?;
     let reads = declaration(project, &change, &desired)?;
+    // The request carries the resolved identity and spec, not the argument
+    // strings: `g record Note title:string!` and the same call with the
+    // package spelled out are one request, and a resume must recognise them
+    // as one. The *syntax* half keeps the spelling separately.
+    let asked = Asked::new(
+        CanonicalMutationRequest::Generate(CanonicalGenerateRequest::Entity {
+            id: entity.id.clone(),
+            spec: entity.spec.clone(),
+        }),
+        &["generate"],
+        std::iter::once(label(kind).to_string())
+            .chain(std::iter::once(name.to_string()))
+            .chain(fields.iter().cloned())
+            .collect(),
+        match package {
+            Some(package) => BTreeMap::from([("package".to_string(), vec![package.to_string()])]),
+            None => BTreeMap::new(),
+        },
+        BTreeSet::new(),
+    );
     let request = Request {
         scope: ReconcileScope::DirectEntity(EntityId::Intent(id)),
         declared: BTreeMap::from([(entity.id.clone(), entity)]),
         changes: vec![desired],
     };
-    commit(project, request, &reads, "jails generate")
+    commit(project, request, &reads, &asked)
 }
 
 /// Take one persistent artifact back out.
@@ -99,7 +119,7 @@ pub fn destroy(
     }
     let owner = ResourceOwner::Entity(entity.clone());
     let request = Request {
-        scope: ReconcileScope::DirectEntity(entity),
+        scope: ReconcileScope::DirectEntity(entity.clone()),
         declared: BTreeMap::new(),
         changes: Vec::new(),
     };
@@ -107,6 +127,10 @@ pub fn destroy(
         project,
         request,
         &retiring(&store, &owner)?,
-        "jails destroy",
+        &Asked::plain(
+            CanonicalMutationRequest::destroy_entity(entity, false)?,
+            &["destroy"],
+            &[&label(kind), name],
+        ),
     )
 }

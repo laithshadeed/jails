@@ -54,7 +54,16 @@ pub fn app_apply(
     intents: &[AppIntent],
 ) -> Result<CommitResult> {
     let (request, reads) = declare(project, capabilities, intents)?;
-    commit(project, request, &reads, "jails app apply")
+    commit(
+        project,
+        request,
+        &reads,
+        &Asked::plain(
+            CanonicalMutationRequest::AppApply { no_start: false },
+            &["app", "apply"],
+            &[],
+        ),
+    )
 }
 
 /// What `app apply` would do, computed by `app apply`'s own algorithm.
@@ -75,7 +84,12 @@ pub fn app_plan(
     let (request, reads) = declare(project, capabilities, intents)?;
     let observed = observed(project)?;
     let set = request.against(&observed)?;
-    Ok(super::planned_ops(&prepare_set(project, set, &reads)?))
+    // No invocation: a plan is not a request that could stall, so there is
+    // nothing for a resumption to prove sameness against. Passing one would
+    // put a fingerprint in a bundle nobody commits.
+    Ok(super::planned_ops(&prepare_set(
+        project, set, &reads, None,
+    )?))
 }
 
 /// The manifest as a request, and everything reading it declared.

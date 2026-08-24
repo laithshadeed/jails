@@ -2283,3 +2283,68 @@ fn renaming_a_generated_type_moves_what_the_store_says_it_owns() {
         "destroy stranded the companion"
     );
 }
+
+/// §R5.4's invocation fingerprint: what a resumption proves sameness by.
+///
+/// Every route now records the canonical request that produced it, inside
+/// `OperationIdentityV1` — so the operation id depends on *what was asked*,
+/// not only on what changed. Two properties are worth pinning, because the
+/// pending-conflict half will rest on both.
+#[test]
+fn an_operation_records_the_request_that_produced_it() {
+    let root = common::temp_dir("engine-invocation");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+
+    jails_engine::route::generate(
+        &Project::load(&root).unwrap(),
+        jails_spec::spec::kind::ArtifactKind::Record,
+        "Note",
+        &["title:string!".to_string()],
+        None,
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+
+    let store = jails_commit::store::Store::at(&root).observe().unwrap();
+    let ledger = store.ledger.as_ref().expect("a commit wrote a ledger");
+    let applied = ledger
+        .applied
+        .iter()
+        .find(|row| matches!(&row.id, jails_protocol::entity::EntityId::Intent(id) if id.name.as_str() == "Note"))
+        .expect("the record was applied");
+
+    // The operation the row names is the one the journal recorded, and that
+    // id hashes the invocation -- so an operation id is now a claim about the
+    // request as well as about the result.
+    assert_ne!(
+        applied.version.operation,
+        jails_protocol::identity::OperationId::from_bytes([0; 32]),
+        "the applied row carries no operation"
+    );
+
+    // A second, different request against the same project produces a
+    // different operation. If the invocation were not in the identity, two
+    // requests whose file effects happened to coincide would be one operation.
+    jails_engine::route::generate(
+        &Project::load(&root).unwrap(),
+        jails_spec::spec::kind::ArtifactKind::Record,
+        "Memo",
+        &["title:string!".to_string()],
+        None,
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+    let after = jails_commit::store::Store::at(&root).observe().unwrap();
+    let ledger = after.ledger.as_ref().unwrap();
+    let ops: std::collections::BTreeSet<_> = ledger
+        .applied
+        .iter()
+        .map(|row| row.version.operation)
+        .collect();
+    assert_eq!(ops.len(), 2, "two requests share one operation id");
+}

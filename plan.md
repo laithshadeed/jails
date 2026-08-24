@@ -5285,18 +5285,25 @@ discovered:
 
 The two schema gaps this section used to name are closed:
 
-  What the remaining half needs, named so it is not rediscovered: a
-  `PendingConflict`'s identity includes an `InvocationFingerprint`, which
-  carries the `CanonicalMutationRequest` that stalled — and that is what a
-  resume proves it is the same request *by*. No route builds one:
-  `OperationIdentityV1.invocation` is `None` on every path. So the pending
-  candidate cannot be assembled honestly today, and assembling it with an
-  invented fingerprint would be worse than refusing — a conflict frozen under
-  a made-up identity is one no resumption can match. The types are all there
-  (`PendingConflict`, `PendingLedgerState`, `PendingConflictPath`,
-  `PendingMarker`, `PreparedKind::Conflict`, and `CommitPlan::{Finalise,
-  Abort}` with their prepare paths and tests); what is missing is the request
-  layer underneath them.
+  The prerequisite that was missing is **now built**. A `PendingConflict`'s
+  identity includes an `InvocationFingerprint` carrying the
+  `CanonicalMutationRequest` that stalled, which is what a resume proves
+  sameness by; `OperationIdentityV1.invocation` used to be `None` on every
+  path. Every route now supplies an `Asked` — the canonical request *and* the
+  canonical syntax, built by the route rather than parsed back out of `argv`,
+  because a route knows what it was asked far more exactly than a re-parse
+  does and there is no second implementation to disagree. The fingerprint's
+  `desired_input_sha256` covers the mandatory `DirectRequest` row plus the
+  `HumanConfig` row (present, or `Absent` as a fact rather than a gap),
+  computed against the same capture the plan was so it describes the bytes
+  the plan actually read.
+
+  What is left is assembling the candidate itself: turning the collected
+  `diff::Conflict` rows into `PendingConflictPath`s, building
+  `PendingLedgerState` from the store the apply would have written, writing
+  the marker postimages with `PendingMarker` in the ledger instead of the new
+  store, and routing `continue`/`abort` onto `CommitPlan::{Finalise, Abort}`
+  — all of whose types and prepare paths already exist and are tested.
 
   Two things did land in the meantime. `Merged::Conflicted` keeps the marker
   bytes and the tokens git was told to write, rather than discarding them —

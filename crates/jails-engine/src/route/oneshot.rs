@@ -52,7 +52,7 @@ pub fn migration(project: &Project, description: &str) -> Result<CommitResult> {
     });
 
     let spec = OneShotSpec::Migration {
-        description,
+        description: description.clone(),
         allocated_version: u64::from(version),
         path: path.clone(),
         body: ObjectId::from_bytes(jails_support::codec::sha256(BODY.as_bytes())),
@@ -85,12 +85,24 @@ pub fn migration(project: &Project, description: &str) -> Result<CommitResult> {
             legacy_after: Vec::new(),
         },
         ordered: vec![change],
-        subject: PlannedSubject::ApplyOneShot { id, spec },
+        subject: PlannedSubject::ApplyOneShot {
+            id: id.clone(),
+            spec: spec.clone(),
+        },
     };
     set.validate()?;
 
     let reads = capture::capability_reads()?.file(path).directory(listing);
-    commit_set(project, set, &reads, "jails generate migration")
+    commit_set(
+        project,
+        set,
+        &reads,
+        &Asked::plain(
+            CanonicalMutationRequest::Generate(CanonicalGenerateRequest::OneShot { id, spec }),
+            &["generate", "migration"],
+            &[&description],
+        ),
+    )
 }
 
 /// Turn a brief's checklist into a pending test class, through the protocol.
@@ -135,6 +147,7 @@ pub fn cases(project: &Project, brief: &str, package: Option<&str>) -> Result<Co
             .ok_or_else(|| format!("`{brief}` is not valid UTF-8"))?,
     )?;
 
+    let requested = package;
     let package = project.package_named("", package);
     let (change, markdown) = jails_generate::generate::plan_cases(project, &package, relative)?;
     let output = relative_path(project, &change.files[0].path)?;
@@ -175,7 +188,10 @@ pub fn cases(project: &Project, brief: &str, package: Option<&str>) -> Result<Co
             legacy_after: Vec::new(),
         },
         ordered: vec![desired],
-        subject: PlannedSubject::ApplyOneShot { id, spec },
+        subject: PlannedSubject::ApplyOneShot {
+            id: id.clone(),
+            spec: spec.clone(),
+        },
     };
     set.validate()?;
 
@@ -185,5 +201,21 @@ pub fn cases(project: &Project, brief: &str, package: Option<&str>) -> Result<Co
     let reads = capture::capability_reads()?
         .file(source)
         .file(relative_path(project, &change.files[0].path)?);
-    commit_set(project, set, &reads, "jails generate cases")
+    commit_set(
+        project,
+        set,
+        &reads,
+        &Asked::new(
+            CanonicalMutationRequest::Generate(CanonicalGenerateRequest::OneShot { id, spec }),
+            &["generate", "cases"],
+            vec![brief.to_string()],
+            match requested {
+                Some(package) => {
+                    BTreeMap::from([("package".to_string(), vec![package.to_string()])])
+                }
+                None => BTreeMap::new(),
+            },
+            BTreeSet::new(),
+        ),
+    )
 }

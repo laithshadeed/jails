@@ -41,7 +41,25 @@ pub fn install(project: &Project, capability: Capability) -> Result<CommitResult
         declared: declared_capabilities(&observed(project)?, Some(entity))?,
         changes: vec![desired],
     };
-    commit(project, request, &reads, "jails add")
+    commit(
+        project,
+        request,
+        &reads,
+        &asked_capabilities(
+            &["add"],
+            capability,
+            CanonicalMutationRequest::Add {
+                capabilities: CanonicalMutationRequest::capabilities(vec![CanonicalCapability {
+                    id: CapabilityId {
+                        kind: capability,
+                        instance: CapabilityInstance::Singleton,
+                    },
+                    spec: CapabilitySpec { placement: None },
+                }])?,
+                no_start: false,
+            },
+        ),
+    )
 }
 
 /// Make the project match the capability list in `jails.toml`.
@@ -138,7 +156,16 @@ pub fn sync(project: &Project) -> Result<CommitResult> {
         declared,
         changes,
     };
-    commit(project, request, &reads, "jails sync")
+    commit(
+        project,
+        request,
+        &reads,
+        &Asked::plain(
+            CanonicalMutationRequest::Sync { no_start: false },
+            &["sync"],
+            &[],
+        ),
+    )
 }
 
 /// Take one capability back out.
@@ -180,5 +207,24 @@ pub fn remove(project: &Project, capability: Capability) -> Result<CommitResult>
         // what `add` did.
         changes: Vec::new(),
     };
-    commit(project, request, &retiring(&store, &owner)?, "jails remove")
+    commit(
+        project,
+        request,
+        &retiring(&store, &owner)?,
+        &asked_capabilities(
+            &["remove"],
+            capability,
+            CanonicalMutationRequest::Remove {
+                capabilities: CanonicalMutationRequest::capabilities(vec![CanonicalCapability {
+                    id: CapabilityId {
+                        kind: capability,
+                        instance: CapabilityInstance::Singleton,
+                    },
+                    spec: CapabilitySpec { placement: None },
+                }])?,
+                force: false,
+                no_start: false,
+            },
+        ),
+    )
 }

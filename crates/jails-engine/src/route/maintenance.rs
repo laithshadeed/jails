@@ -47,6 +47,7 @@ capabilities = []
         ));
     }
 
+    let manifest_target = target.clone();
     let mut change = DesiredChange::maintenance(MaintenanceAttribution::AppInit);
     change.files.push(DesiredFile {
         path: target.clone(),
@@ -77,7 +78,18 @@ capabilities = []
         subject: PlannedSubject::AppInit { target },
     };
     set.validate()?;
-    commit_set(project, set, &reads, "jails app init")
+    commit_set(
+        project,
+        set,
+        &reads,
+        &Asked::plain(
+            CanonicalMutationRequest::AppInit {
+                target: manifest_target,
+            },
+            &["app", "init"],
+            &[],
+        ),
+    )
 }
 
 /// Rename a Java type across the project, as one transition.
@@ -251,10 +263,32 @@ pub fn rename(project: &Project, old: &str, new: &str, force: bool) -> Result<Co
             legacy_after: Vec::new(),
         },
         ordered: vec![change],
-        subject: PlannedSubject::Rename { from, to, force },
+        subject: PlannedSubject::Rename {
+            from: from.clone(),
+            to: to.clone(),
+            force,
+        },
     };
     set.validate()?;
-    commit_set(project, set, &reads, "jails rename")
+    commit_set(
+        project,
+        set,
+        &reads,
+        &Asked::new(
+            CanonicalMutationRequest::Rename {
+                from: from.clone(),
+                to: to.clone(),
+                force,
+            },
+            &["rename"],
+            vec![old.to_string(), new.to_string()],
+            BTreeMap::new(),
+            match force {
+                true => BTreeSet::from(["force".to_string()]),
+                false => BTreeSet::new(),
+            },
+        ),
+    )
 }
 
 /// The claim a moved file carries forward, if the store had one.
@@ -422,7 +456,12 @@ pub fn adopt_layout(project: &Project) -> Result<CommitResult> {
         subject: PlannedSubject::AdoptLayout,
     };
     set.validate()?;
-    commit_set(project, set, &reads, "jails adopt")
+    commit_set(
+        project,
+        set,
+        &reads,
+        &Asked::plain(CanonicalMutationRequest::AdoptLayout, &["adopt"], &[]),
+    )
 }
 
 /// Reformat the project's sources, without letting the formatter near them.
@@ -572,8 +611,15 @@ pub fn format(project: &Project) -> Result<CommitResult> {
             legacy_after: Vec::new(),
         },
         ordered: vec![change],
-        subject: PlannedSubject::Format { scopes },
+        subject: PlannedSubject::Format {
+            scopes: scopes.clone(),
+        },
     };
     set.validate()?;
-    commit_set(project, set, &reads, "jails fmt")
+    commit_set(
+        project,
+        set,
+        &reads,
+        &Asked::plain(CanonicalMutationRequest::Format { scopes }, &["fmt"], &[]),
+    )
 }

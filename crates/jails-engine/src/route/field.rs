@@ -156,12 +156,29 @@ pub fn field(
         changes: ordered,
     };
     let mut set = request.against(&store)?;
+    let recorded_spec = OneShotSpec::Field {
+        target: TypeTargetId::Managed(id),
+        field: added,
+    };
+    // Built from the recorded spec rather than rebuilt beside it: two
+    // constructions of one value is how a fingerprint comes to describe
+    // something the receipt does not.
+    let asked = Asked::new(
+        CanonicalMutationRequest::Generate(CanonicalGenerateRequest::OneShot {
+            id: one_shot.clone(),
+            spec: recorded_spec.clone(),
+        }),
+        &["generate", "field"],
+        vec![target.to_string(), component.to_string()],
+        match package {
+            Some(package) => BTreeMap::from([("package".to_string(), vec![package.to_string()])]),
+            None => BTreeMap::new(),
+        },
+        BTreeSet::new(),
+    );
     set.ledger_intent.one_shots_after = vec![DesiredOneShotReceipt {
         id: one_shot.clone(),
-        spec: OneShotSpec::Field {
-            target: TypeTargetId::Managed(id),
-            field: added,
-        },
+        spec: recorded_spec,
         state: OneShotState::Active,
         lifecycle: OneShotLifecycle::Field {
             // The derivatives are the target's own resources, so they are
@@ -175,7 +192,7 @@ pub fn field(
         },
     }];
     set.validate()?;
-    commit_set(project, set, &reads, "jails generate field")
+    commit_set(project, set, &reads, &asked)
 }
 
 /// The artifact this field is being added to, as the store records it.

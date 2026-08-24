@@ -105,6 +105,14 @@ pub struct PreparationContext {
     pub operation_context: OperationContextFingerprint,
     /// The tools preparation actually ran, with their exact arguments.
     pub preparation: PreparationContextFingerprint,
+    /// What was asked for, canonically.
+    ///
+    /// This is what a resumption proves sameness *by*: §R5.4 freezes it into
+    /// a pending conflict, and a resume that could not compare it would be
+    /// resuming whatever the user typed the second time. `None` is for
+    /// preparation paths that are not a user request -- a finalisation or an
+    /// abort resumes one rather than making one.
+    pub invocation: Option<jails_protocol::request::InvocationFingerprint>,
     /// The exact bytes of an object the store already holds, by id.
     ///
     /// A closure rather than a path, because reading the object store is
@@ -565,7 +573,7 @@ fn assemble(
     let operation_identity = OperationIdentityV1 {
         snapshot: jails_protocol::snapshot::snapshot_digest(&context.read_set)?,
         operation_context: context.operation_context,
-        invocation: None,
+        invocation: context.invocation,
         proposed_generation: context.observed_generation + 1,
         semantics,
     };
@@ -720,6 +728,7 @@ mod tests {
         generation: u64,
     ) -> PreparationContext {
         PreparationContext {
+            invocation: None,
             read_set: read_set(base),
             templates,
             observed_generation: generation,

@@ -55,7 +55,20 @@ pub fn install_fast_test(project: &Project) -> Result<CommitResult> {
         declared: BTreeMap::from([(entity.id.clone(), entity)]),
         changes: vec![desired],
     };
-    commit(project, request, &reads, "jails test --fast")
+    commit(
+        project,
+        request,
+        &reads,
+        // The subcommand is `test`, and `--fast` is what makes it a mutation
+        // -- so the flag is part of the request rather than presentation.
+        &Asked::new(
+            CanonicalMutationRequest::FastTest,
+            &["test"],
+            Vec::new(),
+            BTreeMap::new(),
+            BTreeSet::from(["fast".to_string()]),
+        ),
+    )
 }
 
 /// Give that ownership up again.
@@ -75,7 +88,19 @@ pub fn remove_fast_test(project: &Project) -> Result<CommitResult> {
         declared: BTreeMap::new(),
         changes: Vec::new(),
     };
-    commit(project, request, &reads, "jails remove fast-test")
+    commit(
+        project,
+        request,
+        &reads,
+        &Asked::plain(
+            CanonicalMutationRequest::RemoveToolFeature {
+                feature: ToolFeature::FastTest,
+                force: false,
+            },
+            &["remove"],
+            &["fast-test"],
+        ),
+    )
 }
 
 /// The console version this project needs, as both the POM spelling and the
