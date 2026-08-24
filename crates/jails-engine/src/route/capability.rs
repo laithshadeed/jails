@@ -12,7 +12,8 @@ use super::*;
 /// The direct counterpart of `add::add_in`, and deliberately the same subject:
 /// `ReconcileScope::DirectConfig` speaks for the capability list in
 /// `jails.toml`, which is what `sync` later reconciles against.
-pub fn install(project: &Project, capability: Capability) -> Result<CommitResult> {
+pub fn install(run: &Run, capability: Capability) -> Result<Outcome> {
+    let project = run.project();
     let id = CapabilityId {
         kind: capability,
         instance: CapabilityInstance::Singleton,
@@ -42,7 +43,7 @@ pub fn install(project: &Project, capability: Capability) -> Result<CommitResult
         changes: vec![desired],
     };
     commit(
-        project,
+        run,
         request,
         &reads,
         &asked_capabilities(
@@ -72,7 +73,8 @@ pub fn install(project: &Project, capability: Capability) -> Result<CommitResult
 ///
 /// The manifest is the authority here, not the store. That is the whole point
 /// of `sync`: somebody edited the list, and this is how the project catches up.
-pub fn sync(project: &Project) -> Result<CommitResult> {
+pub fn sync(run: &Run) -> Result<Outcome> {
+    let project = run.project();
     let store = observed(project)?;
     let mut declared = BTreeMap::new();
     let mut changes = Vec::new();
@@ -157,7 +159,7 @@ pub fn sync(project: &Project) -> Result<CommitResult> {
         changes,
     };
     commit(
-        project,
+        run,
         request,
         &reads,
         &Asked::plain(
@@ -176,7 +178,8 @@ pub fn sync(project: &Project) -> Result<CommitResult> {
 /// other one still claims it. A file only this capability owned becomes an
 /// absence. The line in `jails.toml` goes, because it was a resource this
 /// entity owned like any other.
-pub fn remove(project: &Project, capability: Capability) -> Result<CommitResult> {
+pub fn remove(run: &Run, capability: Capability) -> Result<Outcome> {
+    let project = run.project();
     let id = CapabilityId {
         kind: capability,
         instance: CapabilityInstance::Singleton,
@@ -208,7 +211,7 @@ pub fn remove(project: &Project, capability: Capability) -> Result<CommitResult>
         changes: Vec::new(),
     };
     commit(
-        project,
+        run,
         request,
         &retiring(&store, &owner)?,
         &asked_capabilities(

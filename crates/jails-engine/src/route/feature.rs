@@ -25,7 +25,8 @@ use jails_protocol::entity::ToolFeature;
 /// must therefore get **no** version at all: a redundant one pins the launcher
 /// while the BOM moves the engine, which is the same misalignment by another
 /// route.
-pub fn install_fast_test(project: &Project) -> Result<CommitResult> {
+pub fn install_fast_test(run: &Run) -> Result<Outcome> {
+    let project = run.project();
     let id = EntityId::ToolFeature(ToolFeature::FastTest);
     let owner = ResourceOwner::Entity(id.clone());
     let (version, spec) = console_version(project)?;
@@ -56,7 +57,7 @@ pub fn install_fast_test(project: &Project) -> Result<CommitResult> {
         changes: vec![desired],
     };
     commit(
-        project,
+        run,
         request,
         &reads,
         // The subcommand is `test`, and `--fast` is what makes it a mutation
@@ -76,7 +77,8 @@ pub fn install_fast_test(project: &Project) -> Result<CommitResult> {
 /// The exact counterpart, through the same scope: what `--fast` claimed is
 /// what this relinquishes, and the POM edit is undone by the format's own
 /// unsplice rather than by a second hand-written removal.
-pub fn remove_fast_test(project: &Project) -> Result<CommitResult> {
+pub fn remove_fast_test(run: &Run) -> Result<Outcome> {
+    let project = run.project();
     let id = EntityId::ToolFeature(ToolFeature::FastTest);
     let owner = ResourceOwner::Entity(id.clone());
     let store = observed(project)?;
@@ -89,7 +91,7 @@ pub fn remove_fast_test(project: &Project) -> Result<CommitResult> {
         changes: Vec::new(),
     };
     commit(
-        project,
+        run,
         request,
         &reads,
         &Asked::plain(

@@ -27,12 +27,8 @@ use jails_protocol::entity::{OneShotId, OneShotSpec, TypeTargetId};
 use jails_protocol::resource::{OneShotLifecycle, OneShotState};
 
 /// Add one component to a generated artifact, and migrate the table for it.
-pub fn field(
-    project: &Project,
-    target: &str,
-    component: &str,
-    package: Option<&str>,
-) -> Result<CommitResult> {
+pub fn field(run: &Run, target: &str, component: &str, package: Option<&str>) -> Result<Outcome> {
+    let project = run.project();
     let store = observed(project)?;
     let (id, spec) = recorded_target(project, &store, target, package)?;
 
@@ -192,7 +188,7 @@ pub fn field(
         },
     }];
     set.validate()?;
-    commit_set(project, set, &reads, &asked)
+    commit_set(run, set, &reads, &asked)
 }
 
 /// The artifact this field is being added to, as the store records it.

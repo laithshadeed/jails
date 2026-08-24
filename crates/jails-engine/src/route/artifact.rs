@@ -15,7 +15,7 @@ use super::*;
 /// remove its own claim and says nothing about anybody else's.
 #[allow(clippy::too_many_arguments)]
 pub fn generate(
-    project: &Project,
+    run: &Run,
     kind: ArtifactKind,
     name: &str,
     fields: &[String],
@@ -23,7 +23,8 @@ pub fn generate(
     indexes: &[String],
     on: Option<&str>,
     yields: Option<&str>,
-) -> Result<CommitResult> {
+) -> Result<Outcome> {
+    let project = run.project();
     let change = with_test_support(
         project,
         jails_generate::generate::plan_recipe(
@@ -73,7 +74,7 @@ pub fn generate(
         declared: BTreeMap::from([(entity.id.clone(), entity)]),
         changes: vec![desired],
     };
-    commit(project, request, &reads, &asked)
+    commit(run, request, &reads, &asked)
 }
 
 /// Take one persistent artifact back out.
@@ -91,11 +92,12 @@ pub fn generate(
 /// declaring nothing here retires one entity rather than every intent in the
 /// project.
 pub fn destroy(
-    project: &Project,
+    run: &Run,
     kind: ArtifactKind,
     name: &str,
     package: Option<&str>,
-) -> Result<CommitResult> {
+) -> Result<Outcome> {
+    let project = run.project();
     let id = intent(project, kind, name, package, &[], &[], None, None)?;
     let entity = EntityId::Intent(id.clone());
     let store = observed(project)?;
@@ -124,7 +126,7 @@ pub fn destroy(
         changes: Vec::new(),
     };
     commit(
-        project,
+        run,
         request,
         &retiring(&store, &owner)?,
         &Asked::plain(

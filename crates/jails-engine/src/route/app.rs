@@ -48,14 +48,21 @@ pub struct AppIntent {
 }
 
 /// Apply a whole manifest in one transition.
-pub fn app_apply(
-    project: &Project,
-    capabilities: &[Capability],
-    intents: &[AppIntent],
-) -> Result<CommitResult> {
+///
+/// `Run::pretending` makes this `app plan`, and there is deliberately no
+/// second function for it. V1 answers `app plan` with a separate walk over the
+/// intent list that compares each row against the ledger and prints
+/// `pending`/`update`/`applied` -- a walk that cannot see a file the reader
+/// edited, cannot tell a regeneration that changes nothing from one that
+/// rewrites a class, and had to be shadowed against a typed comparison
+/// precisely because two implementations of one question disagree. Here the
+/// plan is this computation stopped one step before the lock: what it names is
+/// exactly what an apply then writes.
+pub fn app_apply(run: &Run, capabilities: &[Capability], intents: &[AppIntent]) -> Result<Outcome> {
+    let project = run.project();
     let (request, reads) = declare(project, capabilities, intents)?;
     commit(
-        project,
+        run,
         request,
         &reads,
         &Asked::plain(
@@ -64,32 +71,6 @@ pub fn app_apply(
             &[],
         ),
     )
-}
-
-/// What `app apply` would do, computed by `app apply`'s own algorithm.
-///
-/// The point of routing `plan` rather than describing the manifest a second
-/// way: V1 answers this question with a separate walk over the intent list,
-/// comparing each row against the ledger and printing `pending`/`update`/
-/// `applied`. That walk cannot see a file the reader edited, cannot tell a
-/// regeneration that changes nothing from one that rewrites a class, and had
-/// to be shadowed against a typed comparison precisely because two
-/// implementations of one question disagree. Here there is one
-/// implementation, stopped one step before the lock.
-pub fn app_plan(
-    project: &Project,
-    capabilities: &[Capability],
-    intents: &[AppIntent],
-) -> Result<Vec<PlannedOp>> {
-    let (request, reads) = declare(project, capabilities, intents)?;
-    let observed = observed(project)?;
-    let set = request.against(&observed)?;
-    // No invocation: a plan is not a request that could stall, so there is
-    // nothing for a resumption to prove sameness against. Passing one would
-    // put a fingerprint in a bundle nobody commits.
-    Ok(super::planned_ops(&prepare_set(
-        project, set, &reads, None,
-    )?))
 }
 
 /// The manifest as a request, and everything reading it declared.

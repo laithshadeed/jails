@@ -19,7 +19,8 @@ use super::*;
 /// and then writes, and anything may happen between those two statements.
 /// Here the path is a **declared read**, so the refusal is a precondition
 /// §R4.3 step 2 rechecks under the lock.
-pub fn app_init(project: &Project, manifest: Option<&str>) -> Result<CommitResult> {
+pub fn app_init(run: &Run, manifest: Option<&str>) -> Result<Outcome> {
+    let project = run.project();
     const SKELETON: &str = "\
 # Generic application intent. Add capabilities, then one [[generate]] table per slice.
 schema = 1
@@ -79,7 +80,7 @@ capabilities = []
     };
     set.validate()?;
     commit_set(
-        project,
+        run,
         set,
         &reads,
         &Asked::plain(
@@ -110,7 +111,8 @@ capabilities = []
 /// able to refuse a rename planned against a tree somebody has changed since.
 /// A file added under `src/` between planning and committing changes a
 /// captured listing, and a rename that would silently skip it fails instead.
-pub fn rename(project: &Project, old: &str, new: &str, force: bool) -> Result<CommitResult> {
+pub fn rename(run: &Run, old: &str, new: &str, force: bool) -> Result<Outcome> {
+    let project = run.project();
     let from = jails_protocol::identity::JavaType::parse(old)?;
     let to = jails_protocol::identity::JavaType::parse(new)?;
 
@@ -271,7 +273,7 @@ pub fn rename(project: &Project, old: &str, new: &str, force: bool) -> Result<Co
     };
     set.validate()?;
     commit_set(
-        project,
+        run,
         set,
         &reads,
         &Asked::new(
@@ -366,7 +368,8 @@ fn walked_directories(sources: &[ProjectPath]) -> BTreeSet<ProjectPath> {
 /// promise -- it is the type. What the classification produces is
 /// `(layer, directory)` pairs and nothing else, so there is no path by which a
 /// directory listing could reach the list `jails sync` acts on.
-pub fn adopt_layout(project: &Project) -> Result<CommitResult> {
+pub fn adopt_layout(run: &Run) -> Result<Outcome> {
+    let project = run.project();
     if project.base().is_empty() {
         return Err(
             "no Java sources found under src/main/java, so there is no package to read.\n       \
@@ -457,7 +460,7 @@ pub fn adopt_layout(project: &Project) -> Result<CommitResult> {
     };
     set.validate()?;
     commit_set(
-        project,
+        run,
         set,
         &reads,
         &Asked::plain(CanonicalMutationRequest::AdoptLayout, &["adopt"], &[]),
@@ -485,7 +488,8 @@ pub fn adopt_layout(project: &Project) -> Result<CommitResult> {
 /// what any of them mean, so nothing here claims ownership it did not have --
 /// a generated file stays its entity's, and a hand-written one stays the
 /// reader's.
-pub fn format(project: &Project) -> Result<CommitResult> {
+pub fn format(run: &Run) -> Result<Outcome> {
+    let project = run.project();
     let scope = ProjectPath::parse("src")?;
     let mut reads = capture::capability_reads()?;
     let mut sources = Vec::new();
@@ -617,7 +621,7 @@ pub fn format(project: &Project) -> Result<CommitResult> {
     };
     set.validate()?;
     commit_set(
-        project,
+        run,
         set,
         &reads,
         &Asked::plain(CanonicalMutationRequest::Format { scopes }, &["fmt"], &[]),

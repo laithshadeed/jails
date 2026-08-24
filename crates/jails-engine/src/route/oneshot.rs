@@ -24,7 +24,8 @@ use super::*;
 /// it. There is no desired ownership to reconcile, no update, and no destroy —
 /// the receipt records that this number was handed out, which is what stops
 /// the next run reusing it.
-pub fn migration(project: &Project, description: &str) -> Result<CommitResult> {
+pub fn migration(run: &Run, description: &str) -> Result<Outcome> {
+    let project = run.project();
     const DIRECTORY: &str = "src/main/resources/db/migration";
     const BODY: &str = "-- Forward-only migration. Write explicit SQL below.\n";
 
@@ -94,7 +95,7 @@ pub fn migration(project: &Project, description: &str) -> Result<CommitResult> {
 
     let reads = capture::capability_reads()?.file(path).directory(listing);
     commit_set(
-        project,
+        run,
         set,
         &reads,
         &Asked::plain(
@@ -118,7 +119,8 @@ pub fn migration(project: &Project, description: &str) -> Result<CommitResult> {
 /// keyed by the SHA-256 of its canonical path, with the absolute binding kept
 /// only in the runtime commit context — and nothing builds that context yet,
 /// so accepting one would record an identity nothing could resolve.
-pub fn cases(project: &Project, brief: &str, package: Option<&str>) -> Result<CommitResult> {
+pub fn cases(run: &Run, brief: &str, package: Option<&str>) -> Result<Outcome> {
+    let project = run.project();
     let typed = std::path::Path::new(brief);
     let outside = || {
         format!(
@@ -202,7 +204,7 @@ pub fn cases(project: &Project, brief: &str, package: Option<&str>) -> Result<Co
         .file(source)
         .file(relative_path(project, &change.files[0].path)?);
     commit_set(
-        project,
+        run,
         set,
         &reads,
         &Asked::new(

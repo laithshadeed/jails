@@ -73,7 +73,7 @@ mod maintenance;
 mod oneshot;
 mod provenance;
 
-pub use app::{AppIntent, app_apply, app_plan};
+pub use app::{AppIntent, app_apply};
 pub use artifact::{destroy, generate};
 pub use capability::{install, remove, sync};
 pub use feature::{install_fast_test, remove_fast_test};
@@ -526,17 +526,18 @@ fn relative_path(project: &Project, path: &std::path::Path) -> Result<ProjectPat
 
 /// Steps 3 and 5 to 7: capture, prepare, lock, commit.
 fn commit(
-    project: &Project,
+    run: &Run,
     request: Request,
     declaration: &ReadDeclaration,
     asked: &Asked,
-) -> Result<CommitResult> {
+) -> Result<Outcome> {
+    let project = run.project();
     // Read once, and let the same value decide the generation the plan claims
     // and the image the commit guards under the lock. Reading them apart is
     // how a plan comes to be written against a store that moved in between.
     let observed = observed(project)?;
     let set = request.against(&observed)?;
-    commit_set(project, set, declaration, asked)
+    commit_set(run, set, declaration, asked)
 }
 
 /// The same steps, for a request that already knows what the store becomes.
@@ -545,15 +546,21 @@ fn commit(
 /// reconcile, so there is nothing to measure against the store. It states its
 /// receipt and its file and that is the whole transition.
 fn commit_set(
-    project: &Project,
+    run: &Run,
     set: DesiredChangeSet,
     declaration: &ReadDeclaration,
     asked: &Asked,
-) -> Result<CommitResult> {
+) -> Result<Outcome> {
+    let project = run.project();
     let bundle = prepare_set(project, set, declaration, Some(asked))?;
+    if !run.write {
+        return Ok(Outcome::Planned(planned_ops(&bundle)));
+    }
     let handle = ProjectHandle::at(project.root())?;
     let locked = LockedProject::acquire(handle, &asked.display()).map_err(describe)?;
-    execute::commit(&locked, &bundle).map_err(describe)
+    Ok(Outcome::Committed(
+        execute::commit(&locked, &bundle).map_err(describe)?,
+    ))
 }
 
 /// Everything a commit does except taking the lock and activating.
@@ -620,6 +627,76 @@ fn prepare_set(
         projection,
         context,
     )
+}
+
+/// One run of one route: the project, and whether it may write.
+///
+/// A parameter object rather than a mode argument on every route, and the
+/// reason is arity: `generate` already takes eight, and a ninth that most of
+/// the body never mentions is exactly the shape abstract.md's first rung is
+/// about. It also puts the decision in one place -- a route cannot forget to
+/// honour `--pretend`, because it never sees it.
+///
+/// `--pretend` is not a weaker commit that stops early by luck. It runs the
+/// same computation and stops one step before the lock, so what it reports is
+/// the bundle the commit would have activated rather than a second
+/// implementation hoping to agree with the first.
+pub struct Run<'a> {
+    project: &'a Project,
+    write: bool,
+}
+
+impl<'a> Run<'a> {
+    /// A run that commits.
+    pub fn committing(project: &'a Project) -> Self {
+        Self {
+            project,
+            write: true,
+        }
+    }
+
+    /// A run that computes everything and writes nothing.
+    pub fn pretending(project: &'a Project) -> Self {
+        Self {
+            project,
+            write: false,
+        }
+    }
+
+    pub fn project(&self) -> &'a Project {
+        self.project
+    }
+}
+
+/// What a route did, or would have done.
+///
+/// One type rather than two entry points per route: the caller asked for a
+/// pretend run or a real one and gets back the matching answer, so there is no
+/// way to run the wrong one by picking the wrong function.
+#[derive(Debug)]
+pub enum Outcome {
+    Committed(CommitResult),
+    /// Nothing was written. These are the operations that would have been.
+    Planned(Vec<PlannedOp>),
+}
+
+impl Outcome {
+    /// The commit, when the caller knows it asked for one.
+    pub fn committed(self) -> Result<CommitResult> {
+        match self {
+            Self::Committed(result) => Ok(result),
+            Self::Planned(_) => {
+                Err("this run was asked to pretend, so there is no commit".to_string())
+            }
+        }
+    }
+
+    pub fn operations(&self) -> Vec<PlannedOp> {
+        match self {
+            Self::Planned(ops) => ops.clone(),
+            Self::Committed(_) => Vec::new(),
+        }
+    }
 }
 
 /// What was asked for, canonically -- both halves of §R5.4's invocation.
