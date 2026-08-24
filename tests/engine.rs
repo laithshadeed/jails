@@ -2801,3 +2801,64 @@ fn a_ledger_v1_actually_wrote_is_translated() {
         jails_protocol::envelope::SpecPresence::UnknownLegacy
     );
 }
+
+/// What migrating costs, said out loud: a legacy row cannot be destroyed.
+///
+/// This is the conservatism's bill. The schema-1 ledger recorded the files a
+/// row wrote but not who asked for it, so nothing may claim ownership of them
+/// — and `destroy` acts on ownership. The refusal must therefore *name the
+/// row* rather than saying nothing is there over files that plainly are,
+/// because "there is nothing to destroy" over a file on disk is the message
+/// that makes somebody delete it by hand.
+#[test]
+fn destroying_a_legacy_row_refuses_by_name_rather_than_claiming_it_is_absent() {
+    let root = common::temp_dir("engine-legacy-destroy");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+    let mut schema1 = jails_project::ledger::Ledger {
+        version: "0.1.0".to_string(),
+        ..Default::default()
+    };
+    schema1.applied.push(jails_project::ledger::Applied {
+        recipe: "record".to_string(),
+        name: "Reward".to_string(),
+        package: String::new(),
+        spec: jails_project::ledger::SpecPresence::UnknownLegacy,
+        fields: vec!["title:string!".to_string()],
+        indexes: Vec::new(),
+        on: String::new(),
+        yields: String::new(),
+        timestamps: false,
+        files: vec!["src/main/java/com/example/demo/domain/Reward.java".to_string()],
+    });
+    jails_project::ledger::save(&root, &schema1).unwrap();
+    let at = root.join("src/main/java/com/example/demo/domain/Reward.java");
+    std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+    std::fs::write(
+        &at,
+        "package com.example.demo.domain;\n\npublic record Reward() {}\n",
+    )
+    .unwrap();
+
+    let error = jails_engine::route::destroy(
+        &jails_engine::route::Run::committing(&Project::load(&root).unwrap()),
+        jails_spec::spec::kind::ArtifactKind::Record,
+        "Reward",
+        None,
+    )
+    .unwrap_err();
+
+    assert!(at.is_file(), "the refusal deleted something anyway");
+    assert!(
+        error.contains("schema-1"),
+        "the refusal does not say why: {error}"
+    );
+    assert!(
+        error.contains("src/main/java/com/example/demo/domain/Reward.java"),
+        "the refusal does not hand over the paths it will not delete: {error}"
+    );
+    assert!(
+        !error.contains("is recorded in this project"),
+        "the refusal claims nothing is there over a file that is: {error}"
+    );
+}

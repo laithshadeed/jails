@@ -106,6 +106,33 @@ pub fn destroy(
         .as_ref()
         .is_some_and(|ledger| ledger.applied.iter().any(|row| row.id == entity))
     {
+        // A row translated from a schema-1 ledger is the case where "not
+        // recorded" is a lie: the row is right there, and so are its files.
+        // What is missing is an *owner* -- the old format never recorded who
+        // asked for it -- and `destroy` acts on ownership. Saying so is the
+        // difference between a reader running adoption and a reader deleting
+        // the files by hand.
+        if let Some(row) = store.ledger.as_ref().and_then(|ledger| {
+            ledger
+                .legacy
+                .iter()
+                .find(|row| row.name == id.name.as_str() && row.recipe == label(kind))
+        }) {
+            return Err(format!(
+                "`{} {}` came from a schema-1 ledger, which did not record who asked for \
+                 it.\n       Its {} file(s) are still listed, but nothing owns them, and \
+                 `destroy` acts on ownership.\n       fix: adopt the row first, or delete the \
+                 files yourself:\n{}",
+                label(kind),
+                id.name,
+                row.paths.len(),
+                row.paths
+                    .iter()
+                    .map(|path| format!("         {path}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ));
+        }
         // Naming the command that *would* have recorded it is the whole
         // difference between this and a bare "nothing to destroy" printed
         // over files that are right there. CLAUDE.md keeps that rule for the
