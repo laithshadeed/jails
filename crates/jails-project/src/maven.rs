@@ -53,6 +53,26 @@ pub fn binary(root: &Path) -> PathBuf {
     }
 }
 
+/// Maven without the daemon, for a caller that must not reuse a process.
+///
+/// The wrapper and the override still win -- a project that ships `mvnw`
+/// pins its own Maven, and an explicit `JAILS_MAVEN` is a choice somebody
+/// made. What this skips is only the mvnd preference.
+pub fn plain(project: &crate::model::Project) -> PathBuf {
+    if let Some(chosen) = std::env::var_os(MAVEN_OVERRIDE)
+        && !chosen.is_empty()
+    {
+        return PathBuf::from(chosen);
+    }
+    let wrapper = project
+        .root()
+        .join(if cfg!(windows) { "mvnw.cmd" } else { "mvnw" });
+    if wrapper.is_file() {
+        return wrapper;
+    }
+    PathBuf::from("mvn")
+}
+
 /// The environment variable that names the Maven command to run.
 pub const MAVEN_OVERRIDE: &str = "JAILS_MAVEN";
 

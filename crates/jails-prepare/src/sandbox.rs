@@ -198,6 +198,16 @@ fn enumerate(tree: &Path, at: &Path) -> Result<BTreeMap<ProjectPath, SandboxFile
             ));
         }
         if metadata.is_dir() {
+            // `target/` is derived output no transaction can name, and a
+            // build tool writes into it as a matter of course -- Spotless
+            // keeps an up-to-date index there. Skipping it is the same rule
+            // that keeps `.git` and `.jails` out of the tree in the first
+            // place: what a tool does to derived output is not evidence of
+            // anything, and refusing it would make every formatter run fail
+            // over a cache file.
+            if path.file_name().is_some_and(|name| name == "target") {
+                continue;
+            }
             out.extend(enumerate(tree, &path)?);
             continue;
         }
@@ -331,20 +341,37 @@ mod tests {
         sandbox.close().unwrap();
     }
 
-    /// A build log dropped beside the sources is exactly the "surprise
+    /// A tool reaching into version-control state is exactly the "surprise
     /// output" §R3.3 names, and it lands in a directory jails refuses to name
     /// at all — so the refusal has to say the tool produced it.
     #[test]
     fn a_tool_that_writes_into_a_path_jails_will_not_name_is_refused() {
         let sandbox =
             Sandbox::lay_out(vec![file("src/main/java/App.java", "class App{}")]).unwrap();
-        let (program, args, environment) =
-            shell("mkdir -p target && printf log > target/build.log");
+        let (program, args, environment) = shell("mkdir -p .git && printf ref > .git/HEAD");
         let error = sandbox
             .run(&identity(&["src/main/java"]), program, args, environment)
             .unwrap_err();
         assert!(error.contains("the tool produced"), "{error}");
-        assert!(error.contains("target/build.log"), "{error}");
+        assert!(error.contains(".git/HEAD"), "{error}");
+        sandbox.close().unwrap();
+    }
+
+    /// `target/` is the one exception, and it has to be: a build tool writes
+    /// there as a matter of course -- Spotless keeps an up-to-date index in
+    /// it -- so refusing would make every real formatter run fail over a
+    /// cache file. It is derived output no transaction can name, which means
+    /// what a tool does to it is not evidence of anything.
+    #[test]
+    fn derived_output_is_neither_refused_nor_committed() {
+        let sandbox =
+            Sandbox::lay_out(vec![file("src/main/java/App.java", "class App{}")]).unwrap();
+        let (program, args, environment) =
+            shell("mkdir -p target && printf idx > target/spotless-index");
+        let (_, diff) = sandbox
+            .run(&identity(&["src/main/java"]), program, args, environment)
+            .unwrap();
+        assert!(diff.is_empty(), "derived output entered the plan: {diff:?}");
         sandbox.close().unwrap();
     }
 

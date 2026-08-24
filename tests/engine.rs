@@ -2138,3 +2138,65 @@ fn fast_test_claims_its_dependency_and_remove_gives_it_back() {
     );
     let _ = generation;
 }
+
+/// §R6.4's `run::fmt` row: scratch-format and commit exact changed sources.
+///
+/// V1 runs `mvn spotless:apply` against the real project, so a formatter that
+/// fails halfway leaves some files rewritten and some not, with nothing to say
+/// which -- and a formatter that rewrites something outside `src/` has already
+/// done it by the time anybody notices. Here it runs against a synthesised
+/// scratch tree and only what it changed, inside the scope its identity
+/// declared, enters the plan.
+///
+/// Real Maven, so it skips without one -- the mocked tier cannot answer the
+/// question this route exists for, which is what the formatter actually did.
+#[test]
+fn formatting_runs_against_a_copy_and_commits_only_what_changed() {
+    if !common::real_mvn_available() {
+        common::skip("mvn is not on PATH, so spotless cannot run");
+        return;
+    }
+    let root = common::temp_dir("engine-format");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_spring_fixture(&root);
+    jails_engine::route::install(&Project::load(&root).unwrap(), Capability::Format).unwrap();
+
+    let at = root.join("src/main/java/com/example/demo/Untidy.java");
+    std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+    std::fs::write(
+        &at,
+        "package com.example.demo;\npublic   final    class Untidy {\nint x=1;\npublic int x(){return x;}\n}\n",
+    )
+    .unwrap();
+    let outside = root.join("notes.md");
+    std::fs::write(&outside, "# untouched\n").unwrap();
+
+    jails_engine::route::format(&Project::load(&root).unwrap()).unwrap();
+
+    let formatted = std::fs::read_to_string(&at).unwrap();
+    assert_ne!(
+        formatted,
+        "package com.example.demo;\npublic   final    class Untidy {\nint x=1;\npublic int x(){return x;}\n}\n",
+        "the formatter's result was not committed"
+    );
+    assert!(formatted.contains("class Untidy"), "{formatted}");
+    assert_eq!(
+        std::fs::read_to_string(&outside).unwrap(),
+        "# untouched\n",
+        "a file outside the declared scope was rewritten"
+    );
+
+    // A second run changes nothing, and says so rather than rewriting every
+    // file to identical bytes.
+    let generation = jails_commit::store::Store::at(&root)
+        .observe()
+        .unwrap()
+        .generation();
+    jails_engine::route::format(&Project::load(&root).unwrap()).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&at).unwrap(),
+        formatted,
+        "the second format changed the file"
+    );
+    let _ = generation;
+}
