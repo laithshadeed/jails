@@ -135,7 +135,40 @@ purpose because they name what the reader has to write.
 
 ---
 
-## 2. V1 against V2, as the cutover actually found them
+## 2. Gradle and Maven parity
+
+**Maven stays the default.** `jails new` creates a Maven project and should go
+on doing so; parity is about jails *working on* a Gradle project somebody else
+created, which is the case `minicom-public/spring` is.
+
+Landed: `gradle.rs` reads and splices a Groovy `build.gradle`; `Build::Gradle`
+means "jails can read this"; `add`, `generate`, `doctor`, `about`, `build`,
+`clean`, `check`, `test` and `run` all work. `build.gradle.kts` and a root
+holding only `settings.gradle` stay `Foreign` on purpose.
+
+Still Maven-only, roughly in the order they hurt:
+
+| what | why it is not portable yet |
+|---|---|
+| **`*IT` tests never run** | `ensure_failsafe` splices a Maven plugin. Gradle needs an `integrationTest` task wired into `check`. Until then `jails check` on Gradle is green over integration tests nothing executed -- the exact failure Failsafe exists to prevent, one build tool over |
+| `add format` / `jails fmt` | Spotless is spliced as a Maven plugin. Gradle's is `com.diffplug.spotless` with a `spotlessApply` task |
+| `add coverage` | JaCoCo, same shape |
+| `jails watch` | `spring-boot:run` plus devtools; Gradle is `bootRun` with `--continuous` |
+| `jails mvn` | The escape hatch is Maven by definition. Gradle needs a `jails gradle` sibling rather than a branch |
+| `testd`, `test --fast`, `test --affected`, `jails console` | All need a resolved classpath, which jails gets from `dependency:build-classpath`. Gradle has no equivalent without adding a task to the build -- and adding one to a file the reader owns, for a convenience, is a different bargain from splicing a dependency they asked for |
+| `test --failed`, `--json`, `--slowest` | Read Surefire's report directory. Gradle writes its own XML elsewhere |
+
+`Change.plugins` is the shared root cause of the first three: it is
+`(artifact_id, xml_block)`, which is a Maven plugin with Maven's syntax baked
+in. A plugin claim that named the *capability* -- format, coverage, run
+integration tests -- and let each build file render it would fix all of them at
+once, and is the same move `SemanticEdit::MavenDependency` already made for
+dependencies, where `group:artifact:version` is what both tools resolve
+against.
+
+---
+
+## 3. V1 against V2, as the cutover actually found them
 
 Every row is a difference a failing test named, so this is the migration's
 evidence rather than a design summary. V1 no longer exists; the table is kept
@@ -179,7 +212,7 @@ Each is an answer, not an oversight, but each is a loss and is recorded as one.
 
 ---
 
-## 3. Open defects in what jails generates
+## 4. Open defects in what jails generates
 
 Found by generating four production applications and running them. Everything
 else that exercise found is fixed.
@@ -215,7 +248,7 @@ else that exercise found is fixed.
 
 ---
 
-## 4. Not started, and open by design
+## 5. Not started, and open by design
 
 - **Conflicted merges cannot be resumed.** When a regeneration and a reader's
   edit genuinely overlap, the three-way merge produces conflict markers. The
