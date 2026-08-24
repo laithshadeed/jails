@@ -21,6 +21,7 @@ start.spring.io	spring-io/start.spring.io
 # --- datastores / messaging / infra ---
 postgres	postgres/postgres
 pgjdbc	pgjdbc/pgjdbc
+h2database	h2database/h2database
 redis	redis/redis
 lettuce	redis/lettuce
 kafka	apache/kafka

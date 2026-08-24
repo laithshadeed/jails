@@ -358,8 +358,17 @@ Four things to know before touching it:
   failures already covered — Testcontainers caches its environment probe, so
   the *retry* message ("Previous attempts to find a Docker environment
   failed") appears more often than the original.
-- `crates/jails-generate/src/sql.rs` — the field spec -> SQL mapping: column name, Postgres type,
-  and the two JDBC expressions. One column list feeds the DDL, the select,
+- `crates/jails-generate/src/sql.rs` — the field spec -> SQL mapping: column name, column type,
+  and the two JDBC expressions. **The dialect is chosen by the driver, not by
+  `jails.toml`** (`Project::sql_dialect`): a manifest records what was asked
+  for, a driver is a fact about the database the schema will meet. Postgres
+  wins when both are present, because that is what `add db` migrates with
+  Flyway. `Dialect::column_type` rewrites exactly **one** name -- `timestamptz`
+  -> `timestamp with time zone` -- and that is the finding, not an oversight:
+  every other type jails emits is in H2's own type table verbatim
+  (`deps/h2database/.../value/DataType.java`), while `timestamptz` exists in H2
+  only inside its PostgreSQL wire-protocol server and fails to parse in a
+  `create table`. Confirmed against a real H2 2.4.240 both ways. One column list feeds the DDL, the select,
   the insert, the bind and the row mapper, which is the whole point — a
   hand-written pair drifts (`amount` in the insert against `amount_minor` in
   the select compiles and fails at runtime). **The write expression bakes in

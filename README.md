@@ -440,6 +440,9 @@ there the unit is a whole service block rather than a setting.)
   timeouts, concurrency cancellation, Maven caching, and immutable action
   commit pins.
 - `jails add|a h2` — an in-process database with the browser console wired up.
+  Generated DDL switches dialect with it: the driver decides, and the one type
+  name that differs is `timestamptz`, which H2 knows only inside its PostgreSQL
+  wire-protocol server and rejects in a `create table`.
   File-backed for the application (inside the project, not `~`, so two
   checkouts never share one file) and **in-memory for the tests**, through
   `src/test/resources/config/application.properties`. Two details a hand-edited

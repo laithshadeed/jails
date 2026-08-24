@@ -23,7 +23,11 @@ use crate::generate::{Field, Optionality};
 pub struct Column {
     /// The column name: the component name in snake_case.
     pub name: String,
-    /// The PostgreSQL type for a `create table`.
+    /// The column type for a `create table`, in the project's dialect.
+    ///
+    /// Postgres unless the project's driver says otherwise -- see
+    /// `Project::sql_dialect`. Derived once, in `columns`, so the DDL and
+    /// `add_column` cannot spell one column two ways.
     pub sql_type: String,
     /// Whether the DDL should say `not null`.
     pub not_null: bool,
@@ -66,9 +70,19 @@ pub fn columns(
     pkg: &str,
     receiver: &str,
 ) -> Vec<Column> {
+    let dialect = project.sql_dialect();
     fields
         .iter()
-        .map(|field| column(field, project, pkg, receiver))
+        .map(|field| {
+            let mut column = column(field, project, pkg, receiver);
+            // Translated here rather than in `create_table`, because this is
+            // where the type is *decided*. A dialect applied at the DDL would
+            // leave `Column.sql_type` saying one thing and the schema saying
+            // another, and `add_column` -- a second reader of the same value
+            // -- would have to remember to apply it too.
+            column.sql_type = dialect.column_type(&column.sql_type).to_string();
+            column
+        })
         .collect()
 }
 
@@ -762,6 +776,67 @@ mod tests {
         // is an enum, which needs a file that is deliberately absent here.
         let project = crate::model::Project::inspect(&PathBuf::from("/nonexistent")).unwrap();
         columns(&fields, &project, "com.example", "value")
+    }
+
+    /// The dialect reaches the DDL, and it is chosen by the driver.
+    ///
+    /// Both halves are the bug this closes: `add h2` followed by `g scaffold`
+    /// wrote `timestamptz` into a migration H2 refuses to parse -- verified
+    /// against a real H2 2.4.240, which answers `Unknown data type:
+    /// "TIMESTAMPTZ"`.
+    #[test]
+    fn a_project_on_h2_gets_the_spelling_h2_takes() {
+        let root = jails_support::scratch::ScratchDir::in_temp("jails-sql-dialect")
+            .unwrap()
+            .keep();
+        std::fs::write(
+            root.join("pom.xml"),
+            "<project><modelVersion>4.0.0</modelVersion><dependencies><dependency>\
+             <groupId>com.h2database</groupId><artifactId>h2</artifactId>\
+             </dependency></dependencies></project>",
+        )
+        .unwrap();
+        let project = crate::model::Project::inspect(&root).unwrap();
+        let fields = parse(&["at:instant".to_string()]).unwrap();
+        let columns = columns(&fields, &project, "com.example", "value");
+        assert_eq!(columns[0].sql_type, "timestamp with time zone");
+        assert!(
+            create_table("Note", &columns, &[]).contains("timestamp with time zone"),
+            "the dialect has to reach the DDL, not just the column"
+        );
+    }
+
+    /// The one type name H2 does not take, and the reason a dialect exists.
+    ///
+    /// `timestamptz` is a Postgres spelling. H2 knows it only inside its
+    /// PostgreSQL wire-protocol server, so a `create table` using it over JDBC
+    /// fails to parse -- verified against H2's own type table in
+    /// `deps/h2database/h2/src/main/org/h2/value/DataType.java`. Everything
+    /// else jails emits is in that table verbatim, which this asserts too:
+    /// a dialect that quietly started rewriting more than it had to would be
+    /// changing a schema people read.
+    #[test]
+    fn only_the_timestamptz_spelling_differs_between_the_two_dialects() {
+        use jails_spec::spec::kind::Dialect;
+        assert_eq!(
+            Dialect::H2.column_type("timestamptz"),
+            "timestamp with time zone"
+        );
+        for shared in [
+            "text",
+            "integer",
+            "bigint",
+            "boolean",
+            "double precision",
+            "numeric",
+            "uuid",
+            "date",
+            "timestamp",
+        ] {
+            assert_eq!(Dialect::H2.column_type(shared), shared);
+            assert_eq!(Dialect::Postgres.column_type(shared), shared);
+        }
+        assert_eq!(Dialect::Postgres.column_type("timestamptz"), "timestamptz");
     }
 
     #[test]

@@ -111,6 +111,43 @@ impl Capability {
     }
 }
 
+/// Which SQL the generated DDL is written in.
+///
+/// Two, and the list is closed for the reason `README.md`'s scope bar is: a
+/// dialect jails cannot check is a string it passes through. Each entry here
+/// exists because a *specific* type name differs and the difference was
+/// verified against that database's own source -- not because a database is
+/// popular.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Dialect {
+    /// The default, and what `README.md` documents.
+    Postgres,
+    /// `add h2`. In-process, and the only difference that reaches the DDL is
+    /// one type name -- see [`Dialect::column_type`].
+    H2,
+}
+
+impl Dialect {
+    /// This dialect's spelling of a column type jails names in Postgres.
+    ///
+    /// **One entry, and that is the finding, not an oversight.** Every other
+    /// type `sql.rs` emits -- `text`, `integer`, `bigint`, `boolean`,
+    /// `double precision`, `numeric`, `uuid`, `date`, `timestamp` -- is in
+    /// H2's own type table verbatim, checked in
+    /// `deps/h2database/h2/src/main/org/h2/value/DataType.java`. `timestamptz`
+    /// is not: H2 knows that name only inside its PostgreSQL *wire protocol*
+    /// server, so a `create table` using it over JDBC fails to parse. The
+    /// standard spelling is what H2 takes, and Postgres takes it too -- but
+    /// `timestamptz` is what a Postgres schema is conventionally written in,
+    /// and this module does not rewrite a schema people will read.
+    pub fn column_type(self, postgres: &str) -> &str {
+        match (self, postgres) {
+            (Self::H2, "timestamptz") => "timestamp with time zone",
+            _ => postgres,
+        }
+    }
+}
+
 /// The HTTP method a generated endpoint answers.
 ///
 /// A `ValueEnum` for the reason every closed vocabulary here is one: it is the

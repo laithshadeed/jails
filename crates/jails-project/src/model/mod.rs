@@ -626,6 +626,27 @@ impl Project {
 
     /// True once `add db` has put the JDBC starter on the classpath, which is
     /// the fact that decides transaction boundaries and adapter shape.
+    /// Which SQL this project's generated DDL should be written in.
+    ///
+    /// Read off the **driver**, not off `jails.toml`: a manifest is a record
+    /// of what was asked for and a driver is a fact about what the schema will
+    /// actually meet. Postgres wins when both are present, because that is the
+    /// database `add db` migrates with Flyway and H2 is then the test double
+    /// somebody added beside it.
+    ///
+    /// Postgres is the answer when neither is there. It is what `README.md`
+    /// documents, and a DDL guessed toward the smaller dialect would be
+    /// silently narrower than the project the reader is building.
+    pub fn sql_dialect(&self) -> jails_spec::spec::kind::Dialect {
+        use jails_spec::spec::kind::Dialect;
+        match self.has_dependency("com.h2database", "h2")
+            && !self.has_dependency("org.postgresql", "postgresql")
+        {
+            true => Dialect::H2,
+            false => Dialect::Postgres,
+        }
+    }
+
     pub fn has_jdbc(&self) -> bool {
         self.has_dependency("org.springframework.boot", "spring-boot-starter-jdbc")
     }
