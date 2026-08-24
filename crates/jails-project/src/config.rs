@@ -176,7 +176,7 @@ impl Config {
         &self.capabilities
     }
 
-    fn parse(text: &str) -> Result<Self, String> {
+    pub fn parse(text: &str) -> Result<Self, String> {
         let mut layout = HashMap::new();
         let mut capabilities = Vec::new();
         let mut table = String::new();

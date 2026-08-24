@@ -91,6 +91,7 @@ const ALLOWED: &[AllowedConcept] = &[
             // A whole route ends in the ledger write, and its declared
             // intent is literally a `LedgerIntent`.
             "crates/jails-engine/src/route.rs",
+            "crates/jails-engine/src/route/app.rs",
             "crates/jails-engine/src/route/artifact.rs",
             "crates/jails-engine/src/route/capability.rs",
             "crates/jails-engine/src/route/field.rs",

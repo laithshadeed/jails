@@ -59,12 +59,14 @@ use jails_protocol::transition::CommitPlan;
 use jails_spec::spec::kind::{ArtifactKind, Capability};
 use jails_support::Result;
 
+mod app;
 mod artifact;
 mod capability;
 mod field;
 mod oneshot;
 mod provenance;
 
+pub use app::{AppIntent, app_apply};
 pub use artifact::{destroy, generate};
 pub use capability::{install, remove, sync};
 pub use field::field;

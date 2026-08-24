@@ -1265,3 +1265,165 @@ fn a_field_refuses_a_duplicate_and_an_unrecorded_target() {
     .unwrap_err();
     assert!(error.contains("already has a `title` component"), "{error}");
 }
+
+/// A whole manifest as one transition.
+///
+/// §R6.2's `app::apply` row: "one aggregate projected plan and one commit".
+/// The two assertions that matter are the ones the per-intent loop could not
+/// make. `g search` needs the JDBC starter `add db` puts in the POM *and* the
+/// record `g scaffold` writes, and in one transition neither has been written
+/// when it plans -- so it plans against a projection of everything before it.
+/// And the whole manifest is one generation, not one per step.
+#[test]
+fn a_manifest_applies_as_one_transition_that_each_step_can_see() {
+    let root = common::temp_dir("engine-app-apply");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_spring_fixture(&root);
+
+    jails_engine::route::app_apply(
+        &Project::load(&root).unwrap(),
+        &[Capability::Db],
+        &[
+            jails_engine::route::AppIntent {
+                kind: jails_spec::spec::kind::ArtifactKind::Scaffold,
+                name: "Article".to_string(),
+                fields: vec![
+                    "id:uuid@pk".to_string(),
+                    "title:string!".to_string(),
+                    "body:string".to_string(),
+                ],
+                indexes: Vec::new(),
+                package: None,
+                on: None,
+                yields: None,
+            },
+            // Needs `add db`'s starter *and* `g scaffold`'s record, neither of
+            // which exists on disk while this plans.
+            jails_engine::route::AppIntent {
+                kind: jails_spec::spec::kind::ArtifactKind::Search,
+                name: "Article".to_string(),
+                fields: vec!["title".to_string(), "body".to_string()],
+                indexes: Vec::new(),
+                package: None,
+                on: None,
+                yields: None,
+            },
+        ],
+    )
+    .unwrap();
+
+    assert!(
+        root.join("src/main/java/com/example/demo/domain/Article.java")
+            .is_file(),
+        "the scaffold"
+    );
+    assert!(
+        root.join("src/main/java/com/example/demo/app/ArticleSearch.java")
+            .is_file()
+            || root
+                .join("src/main/java/com/example/demo/adapters/JdbcArticleSearch.java")
+                .is_file(),
+        "and the search over it: {:?}",
+        common::scenarios::file_set(&root)
+            .into_iter()
+            .filter(|p| p.contains("Search"))
+            .collect::<Vec<_>>()
+    );
+
+    let store = jails_commit::store::Store::at(&root)
+        .observe()
+        .unwrap()
+        .ledger
+        .unwrap();
+    assert_eq!(
+        store.generation, 1,
+        "one commit for the whole manifest, not one per step"
+    );
+    assert_eq!(store.applied.len(), 3, "{:?}", store.applied);
+    for row in &store.applied {
+        assert!(
+            row.owners
+                .contains(&jails_protocol::entity::OwnerId::AppManifest),
+            "the manifest owns what it declared: {:?}",
+            row.id
+        );
+    }
+}
+
+/// The manifest is authoritative, so a row it no longer names is relinquished.
+///
+/// This is what `ReconcileScope::AppManifest` means and what the per-intent
+/// loop could never express: it applied what was listed and had no opinion
+/// about what was not.
+#[test]
+fn a_manifest_that_drops_a_row_takes_it_back_out() {
+    let root = common::temp_dir("engine-app-drop");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+    let note = |name: &str| jails_engine::route::AppIntent {
+        kind: jails_spec::spec::kind::ArtifactKind::Record,
+        name: name.to_string(),
+        fields: vec!["title:string!".to_string()],
+        indexes: Vec::new(),
+        package: None,
+        on: None,
+        yields: None,
+    };
+
+    jails_engine::route::app_apply(
+        &Project::load(&root).unwrap(),
+        &[],
+        &[note("Note"), note("Memo")],
+    )
+    .unwrap();
+    assert!(
+        root.join("src/main/java/com/example/demo/domain/Memo.java")
+            .is_file()
+    );
+
+    // The reader deletes the `Memo` row from the manifest.
+    jails_engine::route::app_apply(&Project::load(&root).unwrap(), &[], &[note("Note")]).unwrap();
+
+    assert!(
+        !root
+            .join("src/main/java/com/example/demo/domain/Memo.java")
+            .exists(),
+        "the row the manifest stopped naming was relinquished"
+    );
+    assert!(
+        root.join("src/main/java/com/example/demo/domain/Note.java")
+            .is_file(),
+        "and the one it still names is still there"
+    );
+}
+
+/// Applying the same manifest twice is one transition, not two.
+#[test]
+fn applying_a_manifest_twice_leaves_the_store_where_it_was() {
+    let root = common::temp_dir("engine-app-repeat");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+    let manifest = || {
+        jails_engine::route::app_apply(
+            &Project::load(&root).unwrap(),
+            &[],
+            &[jails_engine::route::AppIntent {
+                kind: jails_spec::spec::kind::ArtifactKind::Record,
+                name: "Note".to_string(),
+                fields: vec!["title:string!".to_string()],
+                indexes: Vec::new(),
+                package: None,
+                on: None,
+                yields: None,
+            }],
+        )
+    };
+
+    manifest().unwrap();
+    let outcome = manifest().unwrap();
+
+    assert!(
+        matches!(outcome, jails_commit::outcome::CommitResult::NoOp),
+        "the second apply has nothing to do, got {outcome:?}"
+    );
+}

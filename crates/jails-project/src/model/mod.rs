@@ -7,6 +7,7 @@
 //! planning code must not reach back into the filesystem for facts already
 //! represented here.
 
+use jails_protocol::identity::ProjectPath;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -254,6 +255,17 @@ pub struct Project {
     pom: String,
     installed: Vec<String>,
     build: crate::build::Build,
+    /// Files this project has, as a plan says it will have them.
+    ///
+    /// `Project` is the one window onto disk, which is what keeps the recipes
+    /// above it pure -- so it is also the one place a *projected* tree can be
+    /// substituted for the live one. An aggregate `app apply` generates a
+    /// scaffold and then a search over it in a single transition, and the
+    /// second recipe has to see the first one's record without either having
+    /// been written yet.
+    ///
+    /// `None` is the live tree, which is every ordinary command.
+    overlay: Option<std::sync::Arc<BTreeMap<ProjectPath, Vec<u8>>>>,
 }
 
 impl Project {
@@ -281,7 +293,54 @@ impl Project {
             java_release: pom::release_level(&pom),
             layers: Layers::from_config(&config),
             installed: config.capabilities().to_vec(),
+            overlay: None,
             build,
+            pom,
+        })
+    }
+
+    /// The same project, as a plan says it will be.
+    ///
+    /// Every fact `load` reads off disk is read out of the projection instead:
+    /// the POM, the human config, and the source files a later recipe in the
+    /// same transition has to see. That is what makes one aggregate `app
+    /// apply` possible at all -- `add db` puts the JDBC starter in the POM and
+    /// `g search` refuses without it, and in one transition neither has been
+    /// written when the second one plans.
+    ///
+    /// The overlay is consulted *before* disk and only for paths the plan
+    /// touched, so a file nothing changed is still whatever is there. Reading
+    /// past it would decide on a fact the snapshot did not record, which is
+    /// the thing the whole capture exists to prevent.
+    pub fn projected(live: &Self, overlay: BTreeMap<ProjectPath, Vec<u8>>) -> Result<Self> {
+        let text = |path: &str| -> Option<String> {
+            let key = ProjectPath::parse(path).ok()?;
+            String::from_utf8(overlay.get(&key)?.clone()).ok()
+        };
+        // Nothing is re-read from disk. A path the plan touched comes from the
+        // overlay and every other fact is the resolved value `live` already
+        // holds -- which is what a projection *is*, and is why this takes a
+        // project rather than a root.
+        let pom = text("pom.xml").unwrap_or_else(|| live.pom.clone());
+        let (layers, installed) = match text("jails.toml") {
+            Some(projected) => {
+                let config = Config::parse(&projected)?;
+                (Layers::from_config(&config), config.capabilities().to_vec())
+            }
+            None => (live.layers.clone(), live.installed.clone()),
+        };
+        Ok(Self {
+            root: live.root.clone(),
+            // The base package cannot move within a transition: nothing jails
+            // writes renames the application class, and a manifest that did
+            // would be describing a different project.
+            base: live.base.clone(),
+            flavor: pom::flavor(&pom),
+            java_release: pom::release_level(&pom),
+            layers,
+            installed,
+            overlay: Some(std::sync::Arc::new(overlay)),
+            build: live.build,
             pom,
         })
     }
@@ -310,6 +369,7 @@ impl Project {
             java_release: pom::release_level(&pom),
             layers: Layers::from_config(&config),
             installed: config.capabilities().to_vec(),
+            overlay: None,
             build: crate::build::detect(root),
             pom,
         })
@@ -410,7 +470,25 @@ impl Project {
     /// the recipes above it stay pure. Recipes reach it through
     /// `spring::Slice::record`, which knows which layer owns the resource.
     pub fn record_in(&self, package: &str, ty: &str) -> Option<Vec<crate::spec::Field>> {
-        crate::spec::fields_from_record(&self.root, package, ty)
+        match self.projected_source(&format!(
+            "src/main/java/{}/{ty}.java",
+            package.replace('.', "/")
+        )) {
+            Some(source) => crate::spec::fields_of_record(&source),
+            None => crate::spec::fields_from_record(&self.root, package, ty),
+        }
+    }
+
+    /// A file's text as the plan leaves it, when this project is projected.
+    ///
+    /// `None` means "ask the disk": either there is no projection, or the
+    /// projection says nothing about this path -- and a path a change did not
+    /// touch is still whatever is on disk.
+    fn projected_source(&self, path: &str) -> Option<String> {
+        let overlay = self.overlay.as_ref()?;
+        let key = ProjectPath::parse(path).ok()?;
+        let bytes = overlay.get(&key)?;
+        String::from_utf8(bytes.clone()).ok()
     }
 
     pub fn main(&self, layer: Layer, package: Option<&str>) -> PathBuf {

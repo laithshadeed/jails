@@ -529,7 +529,17 @@ pub fn blank_checks(fields: &[&Field]) -> String {
 pub fn fields_from_record(root: &Path, pkg: &str, name: &str) -> Option<Vec<Field>> {
     let path = main_dir(root, pkg).join(format!("{name}.java"));
     let source = fs::read_to_string(path).ok()?;
-    let info = crate::java::type_info(&source)?;
+    fields_of_record(&source)
+}
+
+/// The same question, asked of source the caller already has.
+///
+/// Split out so a projected project can answer it about a record that exists
+/// only in the plan: an aggregate apply generates a scaffold and then a
+/// search over it in one transition, and the second recipe has to see the
+/// first one's record without either of them having been written.
+pub fn fields_of_record(source: &str) -> Option<Vec<Field>> {
+    let info = crate::java::type_info(source)?;
     if info.constructor_params.is_empty() {
         return None;
     }
