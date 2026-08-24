@@ -125,6 +125,35 @@ pub fn rename(project: &Project, old: &str, new: &str, force: bool) -> Result<Co
     }
     let (snapshot, _) = capture::projected(project, &reads)?;
 
+    // Which entities this rename is an identity transition *for*. An entity
+    // is named by its `IntentId`, and the name is half of that -- so
+    // `g record Reward` followed by `rename Reward Bonus` leaves a project
+    // whose `Bonus.java` is owned by an entity called `Reward`, and
+    // `destroy record Bonus` finds nothing while `destroy record Reward`
+    // strands the file it claims to delete. plan.md §R2.5 permits exactly
+    // this: a maintenance change may propose rows owned by real entities when
+    // its `LedgerIntent` describes the exact identity transition.
+    let store = observed(project)?;
+    let mut renamed_entities = BTreeMap::new();
+    for applied in store.ledger.iter().flat_map(|ledger| ledger.applied.iter()) {
+        let EntityId::Intent(id) = &applied.id else {
+            continue;
+        };
+        if id.name.as_str() != old {
+            continue;
+        }
+        let mut renamed = id.clone();
+        renamed.name = jails_protocol::identity::Name::parse(new)?;
+        renamed_entities.insert(
+            applied.id.clone(),
+            (
+                EntityId::Intent(renamed),
+                applied.version.spec.clone(),
+                applied.owners.clone(),
+            ),
+        );
+    }
+
     let mut change = DesiredChange::maintenance(MaintenanceAttribution::Rename);
     let mut moved = 0usize;
     let mut occurrences = 0usize;
@@ -159,16 +188,22 @@ pub fn rename(project: &Project, old: &str, new: &str, force: bool) -> Result<Co
                 force,
             });
         }
+        // A file the store already owns keeps its owner, at its new key.
+        // The maintenance tag is never the contributor -- what carries
+        // forward is the entity that owned it, under the renamed identity.
+        let claim = owner_of(&store, source, &destination, &renamed_entities);
+        if let Some((key, owners)) = &claim {
+            change.resources.push(DesiredResource::new(
+                key.clone(),
+                owners.clone(),
+                ResourceValue::WholeFile,
+            )?);
+        }
         change.files.push(DesiredFile {
             path: destination,
             body: DesiredBody::Bytes(updated.into_bytes().into()),
             mode: None,
-            // A rename moves bytes between paths; it does not claim them.
-            // Which entity owns a renamed file is the identity transition
-            // plan.md §R2.5 reserves for a later format -- recording an owner
-            // here would be this maintenance tag claiming authority it does
-            // not have.
-            resource: None,
+            resource: claim.map(|(key, _)| key),
             renderer: None,
         });
     }
@@ -192,14 +227,27 @@ pub fn rename(project: &Project, old: &str, new: &str, force: bool) -> Result<Co
         change.files.len()
     );
 
-    let observed = observed(project)?;
     let set = DesiredChangeSet {
         ledger_intent: LedgerIntent {
-            generation_before: observed.generation(),
-            entities_after: Vec::new(),
+            generation_before: store.generation(),
+            // The renamed identities arrive and the old ones leave, in the
+            // same intent. Removing the old is what drops its rows -- a
+            // resource whose last owner has gone has lost its last owner --
+            // so every row the renamed entity keeps has to be re-declared
+            // under the new owner, not only the ones whose path moved.
+            entities_after: renamed_entities
+                .values()
+                .map(
+                    |(id, spec, owners)| jails_protocol::plan::DesiredAppliedEntity {
+                        id: id.clone(),
+                        spec: spec.clone(),
+                        owners: owners.clone(),
+                    },
+                )
+                .collect(),
             one_shots_after: Vec::new(),
-            resources_after: Vec::new(),
-            entities_removed: Vec::new(),
+            resources_after: change.resources.clone(),
+            entities_removed: renamed_entities.keys().cloned().collect(),
             legacy_after: Vec::new(),
         },
         ordered: vec![change],
@@ -207,6 +255,35 @@ pub fn rename(project: &Project, old: &str, new: &str, force: bool) -> Result<Co
     };
     set.validate()?;
     commit_set(project, set, &reads, "jails rename")
+}
+
+/// The claim a moved file carries forward, if the store had one.
+///
+/// Keyed at the *destination*, owned by the *renamed* entity: the row moves
+/// with the file, which is what keeps `destroy` able to find it.
+fn owner_of(
+    store: &ObservedStore,
+    source: &ProjectPath,
+    destination: &ProjectPath,
+    renamed: &BTreeMap<EntityId, (EntityId, EntitySpec, BTreeSet<OwnerId>)>,
+) -> Option<(ResourceKey, BTreeSet<ResourceOwner>)> {
+    let row = store
+        .ledger
+        .iter()
+        .flat_map(|ledger| ledger.resources.iter())
+        .find(|row| row.key == ResourceKey::WholeFile(source.clone()))?;
+    let owners: BTreeSet<ResourceOwner> = row
+        .owners
+        .iter()
+        .map(|owner| match owner {
+            ResourceOwner::Entity(id) => match renamed.get(id) {
+                Some((renamed, _, _)) => ResourceOwner::Entity(renamed.clone()),
+                None => owner.clone(),
+            },
+            other => other.clone(),
+        })
+        .collect();
+    Some((ResourceKey::WholeFile(destination.clone()), owners))
 }
 
 /// Where a source ends up, as a project path.

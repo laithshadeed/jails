@@ -2200,3 +2200,69 @@ fn formatting_runs_against_a_copy_and_commits_only_what_changed() {
     );
     let _ = generation;
 }
+
+/// A renamed generated file is still its entity's, and `destroy` must find it.
+///
+/// §R6.4's `rename` row asks for exactly this: "update `OutputRecord`". A
+/// rename that moves the bytes and leaves the store pointing at the old path
+/// gives the entity an output that is not there and abandons one that is --
+/// so `destroy` strands the file it claims to have deleted.
+#[test]
+fn renaming_a_generated_type_moves_what_the_store_says_it_owns() {
+    let root = common::temp_dir("engine-rename-owned");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_plain_fixture(&root);
+    jails_engine::route::generate(
+        &Project::load(&root).unwrap(),
+        jails_spec::spec::kind::ArtifactKind::Record,
+        "Reward",
+        &["title:string!".to_string()],
+        None,
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+    jails_engine::route::rename(&Project::load(&root).unwrap(), "Reward", "Bonus", true).unwrap();
+
+    let store = jails_commit::store::Store::at(&root).observe().unwrap();
+    let paths: Vec<String> = store
+        .ledger
+        .iter()
+        .flat_map(|ledger| ledger.resources.iter())
+        .filter_map(|row| match &row.key {
+            jails_protocol::resource::ResourceKey::WholeFile(path) => Some(path.to_string()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        paths.iter().any(|p| p.ends_with("domain/Bonus.java")),
+        "the store does not own the file that is there: {paths:?}"
+    );
+    assert!(
+        !paths.iter().any(|p| p.ends_with("domain/Reward.java")),
+        "the store still owns a file that is gone: {paths:?}"
+    );
+
+    // The property all of that is for: the entity is called `Bonus` now, so
+    // destroying it finds the files that are actually there.
+    jails_engine::route::destroy(
+        &Project::load(&root).unwrap(),
+        jails_spec::spec::kind::ArtifactKind::Record,
+        "Bonus",
+        None,
+    )
+    .unwrap();
+    assert!(
+        !root
+            .join("src/main/java/com/example/demo/domain/Bonus.java")
+            .exists(),
+        "destroy stranded the file it claims to have deleted"
+    );
+    assert!(
+        !root
+            .join("src/test/java/com/example/demo/domain/BonusTest.java")
+            .exists(),
+        "destroy stranded the companion"
+    );
+}
