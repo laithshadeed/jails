@@ -5247,7 +5247,7 @@ command uses it", and dispatch is still V1 for every command.
 |---|---|---|
 | 1. Land the executor dark | done | `jails-engine` is a library crate precisely so nothing in `main.rs` calls it; the workspace `dead_code` denial makes dark code in the binary impossible rather than merely discouraged. |
 | 2. Capability `add`/`remove`/`sync` on V2 | done | `route::{install,remove,sync}`; `tests/desired.rs` compares 21 capabilities against V1 on dependencies, effective property values and file bytes; `tests/engine.rs` sweeps 21 failpoints through a real install. `sync` is one transition, not a loop. |
-| 3. Persistent `generate`, then the one-shots | partial | `generate::plan_recipe` separates planning from writing and `route::generate` commits it; 22 scenarios match V1 byte-for-byte. `route::destroy` retires an entity from the recorded exact state, and `every_persistent_kind_destroys_back_to_where_it_started` round-trips 22 of the 25 scenarios to a byte-identical project. `route::migration` allocates from a declared directory listing that §R4.3 step 2 now genuinely rechecks, and `route::cases` records a source-hash receipt. `field` is not started. The *update* half of `cases` — a re-run against an edited brief — is blocked on the `LedgerV2.outputs` gap below, and refuses saying so. |
+| 3. Persistent `generate`, then the one-shots | done | `generate::plan_recipe` separates planning from writing and `route::generate` commits it; 22 scenarios match V1 byte-for-byte. `route::destroy` retires an entity from the recorded exact state, and `every_persistent_kind_destroys_back_to_where_it_started` round-trips 22 of the 25 scenarios to a byte-identical project. `route::migration` allocates from a declared directory listing §R4.3 step 2 now genuinely rechecks; `route::cases` records a source-hash receipt and reconciles a same-source re-run; `route::field` re-desires the target at its new spec and lets §R5.3 decide each derivative, with the migration owned by the field so removing the target cannot delete it. What is *not* done is §R5.4: a derivative both sides changed refuses, naming the committed conflict protocol, rather than merging. |
 | 4. `app init/plan/apply/reconcile` as one aggregate | not started | — |
 | 5. Maintenance mutations | not started | — |
 | 6. New-project bootstrap through publish | done | §R6.5; `new`/`new-cli` build in a scratch sibling under `<parent>/.jails-new.lock` and become real in one rename, `--app` included. |
@@ -5256,8 +5256,21 @@ command uses it", and dispatch is still V1 for every command.
 | 9. Flip the single dispatch point | not started | Blocked on 3, 4 and 5. |
 | 10. Delete V1, then prove the product | not started | §R6.8 owns the proof-app sweep and hosted CI; both remain unclaimed. |
 
-Two schema gaps are open and named where they bite rather than left to be
+One gap is open, and it is named where it bites rather than left to be
 discovered:
+
+- **§R5.4's committed conflict protocol is not wired to these routes.**
+  §R5.3's decision table is complete and unit-tested, and four of its five
+  answers are acted on: create, replace, keep the reader's bytes, advance the
+  base. The fifth — both sides moved, differently — is a three-way merge whose
+  result is markers in the tree plus a `PendingConflict` in the ledger, and
+  none of that is reachable from a route. It refuses instead, naming the
+  section. That refusal is stricter than V1, which applies what it can and
+  prints "skipped -- you have edited this file"; the transaction leaves nothing
+  half-evolved, which is the premise, but a reader who added a comment to a
+  generated test currently cannot run `g field` at all.
+
+The two schema gaps this section used to name are closed:
 
 - ~~`LedgerV2.outputs` is written empty.~~ Closed. Every managed output now
   records the exact bytes jails wrote, so §R5.3's three-way rule has the base

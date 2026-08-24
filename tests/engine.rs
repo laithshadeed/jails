@@ -1066,3 +1066,182 @@ fn a_brief_outside_the_project_is_refused_with_the_reason() {
     assert!(error.contains("outside this project"), "{error}");
     assert!(error.contains("fix:"), "{error}");
 }
+
+/// `g field`: one component added to something that already exists.
+///
+/// §R6.2's `generate_field` row, and the first route that could not have been
+/// written before outputs were recorded. V1 renders the target twice -- once
+/// at the old field list and once at the new -- and compares the *old* render
+/// against disk to decide whether the reader edited a derivative. Here the
+/// target is simply re-desired at the new spec, and §R5.3 answers the question
+/// from the bytes jails actually wrote.
+#[test]
+fn a_field_evolves_the_record_and_migrates_the_table_for_it() {
+    let root = common::temp_dir("engine-field");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_spring_fixture(&root);
+    std::fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+
+    jails_engine::route::generate(
+        &Project::load(&root).unwrap(),
+        jails_spec::spec::kind::ArtifactKind::Record,
+        "Note",
+        &["id:uuid@pk".to_string(), "title:string!".to_string()],
+        None,
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+
+    jails_engine::route::field(
+        &Project::load(&root).unwrap(),
+        "Note",
+        "archivedAt:instant?",
+        None,
+    )
+    .unwrap();
+
+    let record =
+        std::fs::read_to_string(root.join("src/main/java/com/example/demo/domain/Note.java"))
+            .unwrap();
+    assert!(
+        record.contains("archivedAt"),
+        "the derivative was refreshed:\n{record}"
+    );
+
+    let store = jails_commit::store::Store::at(&root)
+        .observe()
+        .unwrap()
+        .ledger
+        .unwrap();
+    // One entity, whose recorded spec now carries three components -- which is
+    // what the *next* `g field` computes from. Reading them back off the Java
+    // could not work: `@pk` changes the DDL and nothing about the type.
+    assert_eq!(store.applied.len(), 1, "{:?}", store.applied);
+    let spec = match &store.applied[0].version.spec {
+        jails_protocol::entity::EntitySpec::Intent(spec) => spec.clone(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        spec.arguments.canonical(),
+        vec!["id:uuid@pk", "title:string!", "archivedAt:instant?"]
+    );
+
+    // And one field receipt, whose append-only half is the migration.
+    assert_eq!(store.one_shots.len(), 1, "{:?}", store.one_shots);
+    let migration = root.join("src/main/resources/db/migration/V001__add_archived_at_to_notes.sql");
+    assert!(
+        migration.is_file(),
+        "{:?}",
+        std::fs::read_dir(root.join("src/main/resources/db/migration"))
+            .unwrap()
+            .filter_map(|e| e.ok().map(|e| e.file_name()))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        std::fs::read_to_string(&migration)
+            .unwrap()
+            .contains("add column"),
+        "the migration adds the column"
+    );
+}
+
+/// A derivative the reader edited and the generator also changed refuses the
+/// whole transition, and leaves the tree exactly as it was.
+///
+/// §R5.3 calls this case a three-way `Merge`, and §R5.4 defines the committed
+/// conflict protocol that resolves one -- markers in the tree and a pending
+/// conflict in the ledger. Neither is wired to this route, so the honest
+/// answer is a refusal that names them.
+///
+/// The half worth asserting is the *second* one. V1 applies what it can and
+/// prints "skipped -- you have edited this file" for the rest, which leaves a
+/// record carrying a component its repository adapter does not persist. A
+/// transaction that refuses leaves nothing half-evolved, which is the whole
+/// premise of the protocol.
+#[test]
+fn a_field_that_would_merge_over_an_edit_refuses_and_changes_nothing() {
+    let root = common::temp_dir("engine-field-edited");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_spring_fixture(&root);
+
+    jails_engine::route::generate(
+        &Project::load(&root).unwrap(),
+        jails_spec::spec::kind::ArtifactKind::Record,
+        "Note",
+        &["id:uuid@pk".to_string(), "title:string!".to_string()],
+        None,
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+
+    let test = root.join("src/test/java/com/example/demo/domain/NoteTest.java");
+    let mine = format!(
+        "{}\n// a note I wrote by hand\n",
+        std::fs::read_to_string(&test).unwrap()
+    );
+    jails_support::apply::put(&test, &mine).unwrap();
+    let record = root.join("src/main/java/com/example/demo/domain/Note.java");
+    let before = std::fs::read_to_string(&record).unwrap();
+
+    let error = jails_engine::route::field(
+        &Project::load(&root).unwrap(),
+        "Note",
+        "archivedAt:instant?",
+        None,
+    )
+    .unwrap_err();
+
+    assert!(
+        error.contains("§R5.4"),
+        "the refusal names the protocol that resolves it: {error}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&test).unwrap(),
+        mine,
+        "the reader's bytes are still theirs"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&record).unwrap(),
+        before,
+        "and nothing else was half-applied either"
+    );
+}
+
+/// A component the artifact already has is refused, and a target the store
+/// never recorded is refused with the reason.
+#[test]
+fn a_field_refuses_a_duplicate_and_an_unrecorded_target() {
+    let root = common::temp_dir("engine-field-refusals");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_spring_fixture(&root);
+
+    let error = jails_engine::route::field(&Project::load(&root).unwrap(), "Note", "x:int", None)
+        .unwrap_err();
+    assert!(error.contains("is recorded in this project"), "{error}");
+    assert!(error.contains("jails g scaffold Note"), "{error}");
+
+    jails_engine::route::generate(
+        &Project::load(&root).unwrap(),
+        jails_spec::spec::kind::ArtifactKind::Record,
+        "Note",
+        &["title:string!".to_string()],
+        None,
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+
+    let error = jails_engine::route::field(
+        &Project::load(&root).unwrap(),
+        "Note",
+        "title:string!",
+        None,
+    )
+    .unwrap_err();
+    assert!(error.contains("already has a `title` component"), "{error}");
+}

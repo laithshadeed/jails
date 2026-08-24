@@ -93,6 +93,7 @@ const ALLOWED: &[AllowedConcept] = &[
             "crates/jails-engine/src/route.rs",
             "crates/jails-engine/src/route/artifact.rs",
             "crates/jails-engine/src/route/capability.rs",
+            "crates/jails-engine/src/route/field.rs",
             "crates/jails-engine/src/route/oneshot.rs",
             // Reading the store *is* reading `ledger.toml`, and the reader
             // cannot name the file it opens without naming it.

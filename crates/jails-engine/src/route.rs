@@ -61,11 +61,13 @@ use jails_support::Result;
 
 mod artifact;
 mod capability;
+mod field;
 mod oneshot;
 mod provenance;
 
 pub use artifact::{destroy, generate};
 pub use capability::{install, remove, sync};
+pub use field::field;
 pub use oneshot::{cases, migration};
 
 /// A kind as the word somebody types, taken from the same `ValueEnum` clap
