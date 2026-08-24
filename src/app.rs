@@ -215,19 +215,14 @@ pub(crate) fn run(command: AppCommand, invocation: crate::Invocation) -> Result<
     }
 }
 
-/// The whole manifest, declared as one transition -- and then reconciled once.
+/// The whole manifest, declared as one transition.
 ///
-/// **Two passes, and the second is not a retry.** A capability wires itself
-/// into what the project has: `add db` imports its container config into every
-/// `@SpringBootTest`. In one transition it can only see the tests that existed
-/// when it planned, so a test a *later* row writes -- `add actuator`'s
-/// `ActuatorEndpointsTest` -- is never wired, and the project comes out with a
-/// `@SpringBootTest` that has no DataSource and fails on a test nobody wrote.
-///
-/// So the manifest is applied, and then declared again against the project it
-/// produced. The second pass is a no-op for everything that was already right,
-/// which is what makes it safe to run unconditionally: an apply that changed
-/// nothing has nothing to reconcile.
+/// One pass, not two. V1 reconciled every capability a second time because a
+/// capability wires itself into what the project has, and a test a *later*
+/// row writes was invisible to the row that needed to wire it. That is fixed
+/// where it belongs -- the capability writing a `@SpringBootTest` puts the
+/// container import in itself -- so a second pass would only run the formatter
+/// twice and open a transaction with nothing in it.
 fn declared(
     run: &jails_engine::route::Run,
     requested: Option<&Path>,
@@ -236,25 +231,7 @@ fn declared(
     let (manifest, intents) = read_manifest(&path)?;
     let intents: Vec<jails_engine::route::Intent> =
         intents.iter().map(ResolvedIntent::declared).collect();
-    let applied = jails_engine::route::app_apply(run, &manifest.capabilities, &intents)?;
-    if !run.writes() {
-        return Ok(applied);
-    }
-    let root = run.project().root().to_path_buf();
-    let reloaded = crate::model::Project::load(&root)?;
-    let second = jails_engine::route::app_apply(
-        &jails_engine::route::Run::committing(&reloaded),
-        &manifest.capabilities,
-        &intents,
-    )?;
-    if !second.operations().is_empty() || second.envelope().is_some_and(|it| it.exit_code() == 0) {
-        // Said, not hidden: a reader who sees files change after the report
-        // has already been printed deserves to know which pass wrote them.
-        if !second.deleted_files().is_empty() || !second.operations().is_empty() {
-            println!("note: reconciled once more, wiring what later rows created.");
-        }
-    }
-    Ok(applied)
+    jails_engine::route::app_apply(run, &manifest.capabilities, &intents)
 }
 
 /// Apply a manifest against a project root the caller already knows.

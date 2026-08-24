@@ -166,13 +166,19 @@ their exit codes, so `jails doctor --json && deploy` behaves like
   Jackson 3) put two Jackson majors on one classpath, which does not conflict,
   does not warn, and leaves half the code on a mapper nobody configured.
   `jails doctor` reports that case.
-`remove` names every generated file that has changed since jails wrote it,
-before deleting it — at the confirmation prompt, in `--dry-run`, and under
-`--force`, which is the path that would otherwise be silent. "It exists" is
-not ownership: a `CsvReader` you spent an afternoon on looks exactly like the
-stub jails generated. It does not refuse — `remove` is the documented inverse
-of `add` — but it will not delete your work without saying so, the same line
-it already draws for hand-written properties inside a jails-owned block.
+`remove` shows you every deletion before it makes one, and takes no for an
+answer. "It exists" is not ownership: a `CsvReader` you spent an afternoon on
+looks exactly like the stub jails generated. It does not refuse — `remove` is
+the documented inverse of `add` — but it will not delete your work without
+showing you the list first, and `--force` is how you say yes in advance.
+
+**A capability's settings in `application.properties` are owned one key at a
+time.** There are no `# jails:<capability>` markers around them: jails records
+which keys it wrote, and `remove` takes back exactly those. Anything you added
+beside them is yours and stays. The comment jails writes above a key it
+introduces goes with that key — unless you have edited it, in which case it is
+your prose and it stays too. (`compose.yaml` still uses marked blocks, because
+there the unit is a whole service block rather than a setting.)
 
 - `jails remove|rm <capability>... [--force]` — the inverse of `add`: unsplices
   the same dependencies, deletes the same files, removes compose services, and

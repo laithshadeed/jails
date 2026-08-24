@@ -178,6 +178,13 @@ pub enum ResourceKey {
         path: ProjectPath,
         class: JavaType,
     },
+    /// The `<mainClass>` a build file declares.
+    ///
+    /// Keyed by the build file, because a project has exactly one packaged
+    /// entry point per POM and two claims on it are a collision the reader
+    /// has to see -- not a last-writer-wins that decides in silence which of
+    /// two `main` methods the jar starts.
+    MavenMainClass(ProjectPath),
 }
 
 impl ResourceKey {
@@ -192,6 +199,7 @@ impl ResourceKey {
             Self::CommandRegistration { .. } => 6,
             Self::HumanConfigCapability(_) => 7,
             Self::SpringTestImport { .. } => 8,
+            Self::MavenMainClass(_) => 9,
         }
     }
 
@@ -223,6 +231,7 @@ impl ResourceKey {
                 path.encode(encoder)?;
                 class.encode(encoder)
             }
+            Self::MavenMainClass(path) => path.encode(encoder),
         }
     }
 
@@ -249,6 +258,7 @@ impl ResourceKey {
                 path: ProjectPath::decode(decoder)?,
                 class: JavaType::decode(decoder)?,
             },
+            9 => Self::MavenMainClass(ProjectPath::decode(decoder)?),
             other => Err(format!("unknown resource key tag {other}"))?,
         })
     }
@@ -344,6 +354,17 @@ pub enum ResourceValue {
         /// in another package, already rendered. Empty when it does not.
         statement: String,
     },
+    /// The entry point this claim installs, and the one it displaced.
+    ///
+    /// `previous` is what makes the claim reversible. There is no way to
+    /// derive an entry point's predecessor from a POM that no longer names it,
+    /// and a retirement that guessed -- deleting the element, or writing back
+    /// whatever `App` a project happens to have -- would leave the jar
+    /// starting a class nobody chose.
+    MavenMainClass {
+        class: JavaType,
+        previous: JavaType,
+    },
 }
 
 impl ResourceValue {
@@ -358,6 +379,7 @@ impl ResourceValue {
             Self::CommandRegistration { .. } => 6,
             Self::HumanConfigCapability(_) => 7,
             Self::SpringTestImport { .. } => 8,
+            Self::MavenMainClass { .. } => 9,
         }
     }
 
@@ -426,6 +448,10 @@ impl ResourceValue {
                 class.encode(encoder)?;
                 encoder.string(statement)
             }
+            Self::MavenMainClass { class, previous } => {
+                class.encode(encoder)?;
+                previous.encode(encoder)
+            }
         }
     }
 
@@ -444,6 +470,10 @@ impl ResourceValue {
             8 => Self::SpringTestImport {
                 class: JavaType::decode(decoder)?,
                 statement: decoder.string()?,
+            },
+            9 => Self::MavenMainClass {
+                class: JavaType::decode(decoder)?,
+                previous: JavaType::decode(decoder)?,
             },
             other => Err(format!("unknown resource value tag {other}"))?,
         })

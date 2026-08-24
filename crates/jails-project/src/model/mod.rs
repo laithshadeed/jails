@@ -81,6 +81,19 @@ pub struct Change {
     /// so a route planning from the same recipe simply did not know about it,
     /// and the file stopped being generated.
     pub marked: Vec<MarkedBlock>,
+    /// The class this change wants the packaged jar to start.
+    ///
+    /// `generate cli` writes a second dispatcher, and Maven still starts
+    /// whichever class the POM names -- so without this a manifest that
+    /// generated a CLI and registered its commands into it produced a jar
+    /// answering only `help`. Stated as an intent rather than performed,
+    /// because V1 performed it with a `std::fs` write after the plan and the
+    /// routes therefore never knew the entry point had moved.
+    ///
+    /// Fully qualified, and `None` whenever the recipe decided not to claim
+    /// it: a POM naming no entry point at all is a Spring Boot project, and a
+    /// POM naming a class somebody chose is their decision.
+    pub main_class: Option<String>,
 }
 
 /// One command, registered in one dispatcher.
@@ -230,6 +243,16 @@ impl Change {
                 None => self.marked.push(block),
             }
         }
+        self.main_class = match (self.main_class, other.main_class) {
+            (Some(current), Some(next)) if current != next => {
+                return Err(format!(
+                    "two recipes would point the packaged jar at different classes: {current} and \
+                     {next}"
+                ));
+            }
+            (Some(current), _) => Some(current),
+            (None, next) => next,
+        };
         self.spring_test_import = match (self.spring_test_import, other.spring_test_import) {
             (Some(current), Some(next)) if current != next => {
                 return Err("two recipes require different Spring test imports".to_string());

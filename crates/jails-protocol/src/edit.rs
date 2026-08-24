@@ -94,6 +94,21 @@ pub enum SemanticEdit {
     Retire {
         key: ResourceKey,
     },
+    /// Point the packaged jar at the class this change generated.
+    ///
+    /// `generate cli` writes a second dispatcher, and a project with two
+    /// `main` methods still starts whichever one the POM names -- so a
+    /// manifest that generated a CLI and registered its commands produced a
+    /// jar answering only `help`. V1 did this with a `std::fs` write after the
+    /// plan, which is exactly the shape this protocol removes: the routes did
+    /// not know the POM had moved, so nothing recorded it and nothing could
+    /// put it back.
+    MavenMainClass {
+        key: ResourceKey,
+        class: JavaType,
+        /// The entry point this displaces, so retiring the claim restores it.
+        previous: JavaType,
+    },
 }
 
 impl SemanticEdit {
@@ -109,6 +124,7 @@ impl SemanticEdit {
             Self::HumanConfigLayout { .. } => 7,
             Self::Retire { .. } => 8,
             Self::SpringTestImport { .. } => 9,
+            Self::MavenMainClass { .. } => 10,
         }
     }
 
@@ -123,6 +139,7 @@ impl SemanticEdit {
             | Self::CommandRegistration { key, .. }
             | Self::HumanConfigCapability { key, .. }
             | Self::SpringTestImport { key, .. }
+            | Self::MavenMainClass { key, .. }
             | Self::Retire { key } => Some(key),
             Self::HumanConfigLayout { .. } => None,
         }
@@ -141,6 +158,7 @@ impl SemanticEdit {
             Self::CommandRegistration { .. } => 6,
             Self::HumanConfigCapability { .. } => 7,
             Self::SpringTestImport { .. } => 8,
+            Self::MavenMainClass { .. } => 9,
             Self::HumanConfigLayout { directory, .. } => {
                 return validate_layout_directory(directory);
             }
@@ -206,6 +224,15 @@ impl SemanticEdit {
                 class.encode(encoder)?;
                 encoder.string(statement)
             }
+            Self::MavenMainClass {
+                key,
+                class,
+                previous,
+            } => {
+                key.encode(encoder)?;
+                class.encode(encoder)?;
+                previous.encode(encoder)
+            }
         }
     }
 
@@ -251,6 +278,11 @@ impl SemanticEdit {
                 key: ResourceKey::decode(decoder)?,
                 class: JavaType::decode(decoder)?,
                 statement: decoder.string()?,
+            },
+            10 => Self::MavenMainClass {
+                key: ResourceKey::decode(decoder)?,
+                class: JavaType::decode(decoder)?,
+                previous: JavaType::decode(decoder)?,
             },
             other => Err(format!("unknown semantic edit tag {other}"))?,
         };

@@ -31,60 +31,58 @@ flips together, in one commit, or none do.
 
 ### Where it stands
 
-The switch is made and the code builds. `main.rs` routes `generate`,
-`destroy`, `add`, `remove`, `sync`, `rename`, `adopt`, `fmt` and the whole
-`app` aggregate through the V2 engine, with `--pretend`, `--debug`,
-`--no-start` and a new `--output human|json` honoured in one place. Because
-the workspace denies dead code, the switch also forced V1's deletion:
-`src/adopt.rs`, `src/app/reconcile.rs`, `src/app/shadow.rs` and V1's app-state
-reader are gone.
+**The switch is made and the whole suite is green** — 169 command-level tests
+and the full workspace. `main.rs` routes `generate`, `destroy`, `add`,
+`remove`, `sync`, `rename`, `adopt`, `fmt` and the whole `app` aggregate
+through the V2 engine, with `--pretend`, `--debug`, `--no-start` and a new
+`--output human|json` honoured in one place. Because the workspace denies dead
+code, the switch also forced V1's deletion from the binary: `src/adopt.rs`,
+`src/app/reconcile.rs`, `src/app/shadow.rs` and V1's app-state reader are gone.
 
-**19 of 169 command-level tests still fail**, down from 50 when it first
-compiled. That number is the honest measure of how much is left. Each failure
-is one of two things:
+Getting from 50 failures to zero fixed real defects rather than restating
+assertions. The ones worth knowing about, because each names a rule the next
+recipe will meet too:
 
-- a test checking for V1's exact wording, which needs restating against what
-  V2 says; or
-- something V2 genuinely does not do yet, which needs fixing.
+- **A `@SpringBootTest` gets its container import at birth.** V1 spliced
+  `@Import(TestcontainersConfig.class)` into every such test on disk and caught
+  later ones on a second reconciliation pass. Under the protocol the row that
+  owns a file decides its bytes, so the *capability writing the test* puts the
+  import in. That deleted the second pass — and with it a second `spotless`
+  run and an empty transaction.
+- **Two migrations in one transition both came out `V001`.** Serial numbers
+  were computed from the directory. `migration_file` computes them from the
+  projection, keyed on the description, so a re-apply finds the file it already
+  wrote instead of renumbering it.
+- **Every JDBC round-trip test was emitted `@Disabled`** in exactly the
+  projects that had asked for a database: the recipe checked disk for
+  `TestcontainersConfig.java`, and in an `app apply` the whole manifest is one
+  transition. Same fix, same rule — read the projection, not the directory.
+  Thirteen skipped integration tests across the three proof applications.
+- **`generate cli` moved the packaged entry point with a `std::fs` write after
+  the plan.** It is `SemanticEdit::MavenMainClass` now, carrying the entry point
+  it displaces so `destroy` can put it back. Without it a manifest that
+  generated a CLI and registered its commands produced a jar answering only
+  `help`.
+- **`destroy strategy` sweeps implementations it never named.** A strategy is
+  an interface plus a bean per implementation, and `destroy` is given no
+  variant list; an implementation written by hand afterwards is still one of
+  the strategy's classes, and leaving it behind implementing a deleted
+  interface stops the project compiling. Those are `absences` with `force`,
+  which is exactly the flag for "the bytes are not jails'", and the deletion
+  prompt is the human ask it requires.
 
-`main` is untouched and green. The branch cannot be merged until all 19 pass,
-because a half-flipped tool is worse than an unflipped one.
+Three tests were restated rather than fixed, each because V2's answer is the
+better one:
 
-### The 19, as of the last run
-
-```
-a_gradle_project_gets_the_commands_that_do_not_need_maven
-add_db_no_start_skips_docker_compose_up
-add_db_installs_postgres_flyway_and_testcontainers_without_an_orm
-add_db_on_spring_migrates_the_global_initializer_to_an_import
-app_apply_keys_a_suffixed_name_to_the_row_generate_writes
-app_manifest_builds_the_crawler_skeleton_and_is_resumable
-app_manifest_builds_the_support_inbox_from_the_same_generic_intents
-app_manifest_merges_an_edited_intent_over_user_changes
-app_manifest_refuses_an_intent_update_without_git_before_writing
-app_manifests_compile_without_manual_source_edits
-app_manifests_pass_the_full_generated_verification_gate
-a_generated_command_is_reachable_by_name_through_jails_run
-destroy_strategy_removes_the_implementations_it_did_not_name
-generate_errors_on_duplicate_file
-generate_field_updates_unchanged_derivatives_preserves_edits_and_adds_a_migration
-generated_http_sink_delivers_typed_json_with_a_stable_idempotency_key
-ledger_cli_manifest_builds_without_spring
-remove_names_generated_files_that_were_edited_before_deleting_them
-scaffold_refuses_to_silently_flatten_a_project_record_component
-```
-
-Two are diagnosed and not yet fixed:
-
-- **`scaffold_refuses_to_silently_flatten_a_project_record_component`** — a
-  scaffold referencing a project record looks up that record's declared field
-  spec. V2 reads it from the schema-2 store now, but the refusal message says
-  the record has no `@pk` when it plainly does, so the constraint is being
-  lost somewhere between the stored spec and the check.
-- **`generate_errors_on_duplicate_file`** — V1 refused a second identical
-  `generate`; V2 treats it as a no-op, which is *better*. The test pins the
-  old refusal and should be restated: a second identical run changes nothing,
-  and a second run over an edited file preserves the edit.
+- **A second identical `generate` is a no-op, not `already exists`.** The file
+  is owned by the intent that wrote it, so "nothing changed" is the honest
+  answer — and an edited file is three-way merged rather than refused.
+- **`docker compose --file` is handed the committed object**, not the live
+  `compose.yaml`. The effect runs after the commit publishes; running against
+  what somebody edited in between would start services this transition never
+  described, and a retry would not repeat the first attempt.
+- **The `spring.factories` migration is gone.** It deleted a registration *an
+  earlier jails* had written. There is no earlier jails.
 
 ### Rip out legacy support — decided, not yet done
 
@@ -108,24 +106,21 @@ deleted outright:
 - The schema-1 half of `generated_files::model_fields`.
 
 This deletes far more than it adds and removes the single largest source of
-noise in `doctor`. It is a separate commit from the cutover, and it comes
-after it: none of the 18 failing tests is a legacy test, so doing it first
-would be churn against a moving target.
+noise in `doctor`. It is the next commit: the cutover is done, so there is no
+longer a moving target to churn against.
 
 ### Still to do after the tests pass
 
-1. **Two documentation changes.** A capability's properties no longer sit in a
-   `# jails:<capability>` block — V2 owns each setting by key. That is a
-   user-visible change to a file people edit, and it belongs in `README.md`
-   and `CLAUDE.md` before it ships.
-2. **Delete what is left of V1** in the library crates. The binary's copy is
+1. **Delete what is left of V1** in the library crates. The binary's copy is
    already gone; `jails-generate`'s `add::add`, `generate::destroy` and
    friends are still compiled because a library's unused public function is
    not dead code.
-3. **Prove it on the four example applications** — regenerate
+2. **Prove it on the four example applications** — regenerate
    `examples/{payments-gateway,support-inbox,web-crawler,ledger-cli}` through
    the flipped binary and confirm `jails check` is still green in all four.
-4. **Hosted CI**, which has never been set up.
+   The three Spring ones already pass the generated verification gate inside
+   the test suite; this is the same thing against a checked-in tree.
+3. **Hosted CI**, which has never been set up.
 
 ---
 
@@ -143,6 +138,10 @@ anything here that is not yet true of V2 is work.
 | **What `--pretend` is** | A second walk that printed what it thought would happen | The same computation, stopped one step before the lock. There is no second function |
 | **Reporting** | Each command printed as it went, in its own words | One value per command, rendered once: `--output human` or `--output json`, the same facts either way |
 | **Re-running the same generate** | Refused: `already exists` | A no-op. The file is owned by the intent that wrote it, so nothing changed is nothing to do |
+| **`generate cli` and the packaged jar** | Rewrote `<mainClass>` with a `std::fs` call after the plan, so nothing recorded it | `SemanticEdit::MavenMainClass`, carrying the entry point it displaces so `destroy` restores it |
+| **`destroy strategy`'s unnamed implementations** | Walked the domain directory and deleted them | Same sweep, as `absences` with `force` — the bytes are not jails', so the deletion prompt is the ask that authorises it |
+| **The container import in a generated test** | Spliced into every `@SpringBootTest` on disk, plus a second pass for ones written later | Written by the row that owns the file, at birth. No second pass, so no second `spotless` run and no empty transition |
+| **Starting compose** | `docker compose --file compose.yaml`, whatever it says by then | `--file <committed object>`. The effect runs after the commit publishes, and a retry has to repeat what the first attempt did |
 | **Re-running over an edited file** | Refused, or clobbered | Three-way merged against the recorded base. Only a genuine overlap refuses |
 | **`destroy` with no record** | Recomputed the paths by offering each generator argument shapes | Refuses, and names the command that would have recorded it. Guessing at paths is how files nobody wrote get deleted |
 | **`destroy migration`/`association`/`field`** | Refused: forward-only | Same, decided before any lookup so the reason is forward-only rather than "not recorded" |

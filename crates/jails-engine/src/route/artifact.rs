@@ -101,6 +101,7 @@ pub fn destroy(
     kind: ArtifactKind,
     name: &str,
     package: Option<&str>,
+    force: bool,
 ) -> Result<Outcome> {
     // Decided before anything is looked up: these three are *forward-only*,
     // and "no such row" would be the wrong reason to refuse. A migration that
@@ -183,21 +184,118 @@ pub fn destroy(
         ));
     }
     let owner = ResourceOwner::Entity(entity.clone());
+    let mut reads = retiring(&store, &owner)?;
+    let mut changes = Vec::new();
+    if kind == ArtifactKind::Strategy {
+        let strays = unnamed_implementations(project, &store, &owner, id.name.as_str())?;
+        if !strays.is_empty() {
+            let mut change = DesiredChange::owned_by(owner.clone());
+            for path in strays {
+                reads = reads.file(path.clone());
+                change.absences.push(ManagedPath {
+                    resource: ResourceKey::WholeFile(path.clone()),
+                    path,
+                    // The bytes are not jails'. `force` is exactly the flag
+                    // that says so, and the human ask it requires is the
+                    // deletion prompt every `destroy` puts up -- or `--force`,
+                    // which is the reader answering it in advance.
+                    force: true,
+                });
+            }
+            changes.push(change);
+        }
+    }
     let request = Request {
         scope: ReconcileScope::DirectEntity(entity.clone()),
         declared: BTreeMap::new(),
-        changes: Vec::new(),
+        changes,
     };
     commit(
         run,
         request,
-        &retiring(&store, &owner)?,
+        &reads,
         &Asked::plain(
-            CanonicalMutationRequest::destroy_entity(entity, false)?,
+            CanonicalMutationRequest::destroy_entity(entity, force)?,
             &["destroy"],
             &[&label(kind), name],
         ),
     )
+}
+
+/// Every class implementing this strategy's port that the strategy does not
+/// own, and the test beside it.
+///
+/// A strategy is an interface plus a bean per implementation, and the variants
+/// are not something `destroy` is given -- it takes a kind and a name and no
+/// fields. Reading them back is therefore not a shortcut but the *better*
+/// answer: an implementation written by hand after the generate call is still
+/// one of this strategy's classes, and leaving it behind implementing a
+/// deleted interface stops the project compiling on the one operation whose
+/// whole job is to leave no trace.
+///
+/// Scoped to the package the port lives in, because `type_info` reports
+/// supertypes by simple name and a same-named interface in another package is
+/// a different type. The port's own package is read off the recorded rows
+/// rather than recomputed from `--package`, so a strategy generated into an
+/// overridden package is still swept where it actually landed.
+fn unnamed_implementations(
+    project: &Project,
+    store: &ObservedStore,
+    owner: &ResourceOwner,
+    port: &str,
+) -> Result<Vec<ProjectPath>> {
+    let owned: BTreeSet<ProjectPath> = store
+        .ledger
+        .iter()
+        .flat_map(|ledger| ledger.resources.iter())
+        .filter(|row| row.owners.iter().all(|held| held == owner))
+        .filter_map(|row| match &row.key {
+            ResourceKey::WholeFile(path) => Some(path.clone()),
+            _ => None,
+        })
+        .collect();
+    const MAIN: &str = "src/main/java/";
+    // The port's own file, found by name among the rows this entity owns. Not
+    // the first main source it owns: a strategy owns its implementations too,
+    // and taking one of those as the port would sweep every class implementing
+    // *it* instead.
+    let Some(directory) = owned.iter().find_map(|path| {
+        let stem = path.as_str().strip_suffix(".java")?;
+        let (directory, name) = stem.rsplit_once('/')?;
+        (name == port && path.as_str().starts_with(MAIN)).then(|| format!("{directory}/"))
+    }) else {
+        return Ok(Vec::new());
+    };
+    let tests = format!("src/test/java/{}", &directory[MAIN.len()..]);
+    let mut strays = Vec::new();
+    for (absolute, source) in project.projected_main_sources() {
+        let Ok(relative) = absolute.strip_prefix(project.root()) else {
+            continue;
+        };
+        let Ok(path) = ProjectPath::parse(&relative.to_string_lossy()) else {
+            continue;
+        };
+        if owned.contains(&path) || !path.as_str().starts_with(&directory) {
+            continue;
+        }
+        let Some(info) = jails_java::java::type_info(&source) else {
+            continue;
+        };
+        if info.name == port || !info.supertypes.iter().any(|held| held == port) {
+            continue;
+        }
+        strays.push(path);
+        // The companion test goes with it. It names a class that is about to
+        // stop existing, so leaving it is the same compile failure one file
+        // over.
+        let test = format!("{tests}{}Test.java", info.name);
+        if let Ok(test) = ProjectPath::parse(&test)
+            && project.root().join(test.as_str()).is_file()
+        {
+            strays.push(test);
+        }
+    }
+    Ok(strays)
 }
 
 /// The one entry point from an intent to the route that owns its kind.

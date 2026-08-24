@@ -718,7 +718,7 @@ fn main() -> std::process::ExitCode {
             force,
             package,
         } => invoke::mutate_confirmed(invocation, false, force, |run| {
-            jails_engine::route::destroy(run, kind, &name, package.as_deref())
+            jails_engine::route::destroy(run, kind, &name, package.as_deref(), force)
         }),
         Command::Start { services } => compose::start(&services, debug),
         Command::Stop { services } => compose::stop_cmd(&services, debug),

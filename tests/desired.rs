@@ -287,10 +287,18 @@ fn what_v2_desires_is_what_v1_installs() {
 /// without an executor: what the V1 command writes to disk and what the V2
 /// desired change projects have to be the same bytes at the same paths.
 ///
-/// Single-step scenarios only. A scenario that installs a capability first is
-/// asking a question about two engines interacting, which is a later step.
+/// Single-step scenarios only. A scenario that installs a capability first
+/// runs those steps identically on both sides, so the question stays narrow.
+///
+/// It began as a V1-against-V2 board while dispatch still ran V1. Both sides
+/// are the transaction protocol now, and what it still answers is the question
+/// that outlived the migration: does the *projection* -- the tree a plan says
+/// it will leave -- hold the same bytes the command actually writes? A
+/// projection that quietly disagreed with the executor would make `--pretend`
+/// describe work that does not happen, which is the split the one report value
+/// exists to close.
 #[test]
-fn what_v2_desires_is_what_v1_generates() {
+fn what_a_plan_desires_is_what_the_command_writes() {
     let mut compared: Vec<&str> = Vec::new();
     let mut skipped: Vec<String> = Vec::new();
     for scenario in scenarios::SCENARIOS {
@@ -363,6 +371,13 @@ fn what_v2_desires_is_what_v1_generates() {
             // carries "wherever the convention puts it".
             package: jails_protocol::identity::Package::parse(planned.base()).unwrap(),
         }));
+        // The same filter every route runs a planned change through before
+        // desiring it: AssertJ, Failsafe, the webmvc test slice, and the
+        // container import a `@SpringBootTest` this change writes needs from
+        // birth. Applied here for the same reason it is applied there -- a
+        // recipe does not know about it, so a comparison that skipped it would
+        // be measuring half the plan against the whole command.
+        let change = jails_engine::route::with_test_support(&planned, change);
         let desired = desire::contribution(&owner, &change, &planned).unwrap();
 
         let mut declaration = reads();

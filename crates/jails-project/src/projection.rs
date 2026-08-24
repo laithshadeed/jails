@@ -415,6 +415,21 @@ impl ProjectedProject {
                 }
                 Ok(Some(path))
             }
+            // The packaged entry point, moved rather than rewritten: every
+            // other byte of the POM is left alone, and a POM that names no
+            // entry point at all is a Spring Boot project where the plugin
+            // finds `@SpringBootApplication` itself -- nothing to claim.
+            SemanticEdit::MavenMainClass { class, .. } => {
+                let path = pom_path()?;
+                let Some(text) = self.optional_text(&path)? else {
+                    return Ok(None);
+                };
+                match pom::with_main_class(&text, &class.qualified()) {
+                    Some(updated) => self.write_text(&path, updated),
+                    None => return Ok(None),
+                }
+                Ok(Some(path))
+            }
             SemanticEdit::Retire { key } => self.retire(key),
             SemanticEdit::HumanConfigLayout { layer, directory } => {
                 let path = human_config_path()?;
@@ -656,6 +671,25 @@ impl ProjectedProject {
                     &statement,
                 ) {
                     Some(without) => self.write_text(path, without),
+                    None => return Ok(None),
+                }
+                Ok(Some(path.clone()))
+            }
+            ResourceKey::MavenMainClass(path) => {
+                let Some(text) = self.optional_text(path)? else {
+                    return Ok(None);
+                };
+                // Restored from the recorded predecessor, never derived. A POM
+                // that names `LedgerCli` says nothing about what it named
+                // before, so a retirement that recomputed would put the jar on
+                // a class nobody chose.
+                let Some(ResourceValue::MavenMainClass { previous, .. }) = self.recorded.get(key)
+                else {
+                    return Ok(None);
+                };
+                let previous = previous.qualified();
+                match pom::with_main_class(&text, &previous) {
+                    Some(updated) => self.write_text(path, updated),
                     None => return Ok(None),
                 }
                 Ok(Some(path.clone()))

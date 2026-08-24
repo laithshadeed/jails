@@ -723,13 +723,22 @@ pub(super) fn jdbc_repository_test_for(
     fields: &[Field],
     columns: &[crate::sql::Column],
 ) -> String {
-    let config_pkg = test_dir(project.root(), project.base())
-        .join("TestcontainersConfig.java")
-        .is_file()
-        .then_some(project.base());
+    // The projection, not the directory. In an `app apply` the whole manifest
+    // is one transition, so `add db`'s `TestcontainersConfig` is not on disk
+    // when the scaffold that needs it plans -- and reading disk here emitted
+    // every JDBC round trip `@Disabled` in exactly the projects that had asked
+    // for a database. The package is read off the file rather than assumed to
+    // be the base one, so a project that placed it elsewhere still imports it.
+    let config_pkg = project
+        .projected_test_sources()
+        .iter()
+        .find(|(path, _)| {
+            path.file_stem().and_then(|stem| stem.to_str()) == Some("TestcontainersConfig")
+        })
+        .and_then(|(_, source)| jails_java::java::package_of(source));
     jdbc_repository_test_with_wiring(
         repository_wiring(project),
-        config_pkg,
+        config_pkg.as_deref(),
         project,
         pkg,
         domain,

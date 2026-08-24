@@ -3,6 +3,7 @@ package com.example.demo.jobs;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.example.demo.TestcontainersConfig;
 import com.example.demo.clients.PageFetcher.FetchException;
 import com.example.demo.clients.PageFetcher.FetchedResource;
 import com.example.demo.clients.PageFetcher;
@@ -19,7 +20,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
-@Import(SiteWalkWorkflowIT.Fakes.class)
+@Import({SiteWalkWorkflowIT.Fakes.class, TestcontainersConfig.class})
 @SpringBootTest(properties = {
         "jails.http-workflows.site-walk.initial-delay=PT1H",
         "jails.http-workflows.site-walk.max-attempts=2"

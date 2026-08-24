@@ -19,3 +19,10 @@ target/
 
 # Reference checkouts cloned for study, each its own upstream repo.
 /minicom-public/
+/minicom/
+
+# Machine-generated audit notes. `refactor.md` was deliberately deleted in
+# "Remove superseded audit and refactor notes" and keeps being regenerated on
+# this checkout; committing it again resurrects a document nobody reads and
+# whose section numbers nothing resolves against.
+/refactor.md

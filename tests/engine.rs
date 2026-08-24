@@ -590,6 +590,7 @@ fn destroying_a_record_takes_back_exactly_what_generating_it_wrote() {
         jails_spec::spec::kind::ArtifactKind::Record,
         "Note",
         None,
+        false,
     )
     .unwrap();
 
@@ -634,6 +635,7 @@ fn destroying_one_record_leaves_another_alone() {
         jails_spec::spec::kind::ArtifactKind::Record,
         "Note",
         None,
+        false,
     )
     .unwrap();
 
@@ -668,6 +670,7 @@ fn destroying_what_was_never_generated_names_the_command_that_records_it() {
         jails_spec::spec::kind::ArtifactKind::Record,
         "Note",
         None,
+        false,
     )
     .unwrap_err();
 
@@ -783,6 +786,7 @@ fn every_persistent_kind_destroys_back_to_where_it_started() {
             kind,
             step[2],
             invocation.package.as_deref(),
+            false,
         )
         .unwrap_or_else(|why| panic!("{}: destroy refused: {why}", scenario.name));
 
@@ -2435,6 +2439,7 @@ fn renaming_a_generated_type_moves_what_the_store_says_it_owns() {
         jails_spec::spec::kind::ArtifactKind::Record,
         "Bonus",
         None,
+        false,
     )
     .unwrap();
     assert!(
@@ -2901,6 +2906,7 @@ fn destroying_a_legacy_row_refuses_by_name_rather_than_claiming_it_is_absent() {
         jails_spec::spec::kind::ArtifactKind::Record,
         "Reward",
         None,
+        false,
     )
     .unwrap_err();
 
@@ -3016,6 +3022,7 @@ fn adopting_a_legacy_row_claims_it_only_when_the_bytes_are_jails_own() {
         jails_spec::spec::kind::ArtifactKind::Record,
         "Reward",
         None,
+        false,
     )
     .unwrap();
     for path in &files {
@@ -3108,6 +3115,7 @@ fn adoption_refuses_bytes_jails_did_not_produce() {
         jails_spec::spec::kind::ArtifactKind::Record,
         "Reward",
         None,
+        false,
     )
     .unwrap();
     assert!(!at.exists(), "the adopted row survived a destroy");
@@ -3312,6 +3320,7 @@ fn a_generated_command_is_registered_in_the_dispatcher_that_runs_it() {
         jails_spec::spec::kind::ArtifactKind::Command,
         "Greet",
         None,
+        false,
     )
     .unwrap();
     let after = std::fs::read_to_string(&dispatcher).unwrap();
@@ -3361,6 +3370,7 @@ fn a_recipe_states_the_block_it_puts_in_somebody_elses_file() {
         jails_spec::spec::kind::ArtifactKind::DurableJob,
         "ItemDispatcher",
         None,
+        false,
     )
     .unwrap();
     assert!(!at.exists(), "an empty property source was left behind");

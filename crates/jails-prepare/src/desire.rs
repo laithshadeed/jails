@@ -81,6 +81,9 @@ pub fn contribution(
     if let Some(import) = &change.spring_test_import {
         state_test_import(&mut desired, owner, import, project)?;
     }
+    if let Some(fqcn) = &change.main_class {
+        state_main_class(&mut desired, owner, fqcn, project)?;
+    }
     for dependency in &change.deps {
         let (key, value) = dependency_resource(dependency)?;
         claim(&mut desired, owner, key.clone(), value.clone())?;
@@ -260,6 +263,47 @@ fn state_test_import(
             statement,
         });
     }
+    Ok(())
+}
+
+/// Claim the POM's `<mainClass>` for the dispatcher this change generated.
+///
+/// The predecessor is read here rather than stated by the recipe, because it
+/// is a fact about the project and not about the intent -- and it is what makes
+/// the claim reversible: retiring it puts the entry point back rather than
+/// guessing at one. A POM that names no entry point is a Spring Boot project,
+/// where the plugin finds `@SpringBootApplication` itself; there is nothing to
+/// claim and nothing to restore, so the recipe's intent is dropped rather than
+/// turned into an element jails would be inventing.
+fn state_main_class(
+    desired: &mut DesiredChange,
+    owner: &ResourceOwner,
+    fqcn: &str,
+    project: &Project,
+) -> Result<()> {
+    let Some(previous) = jails_project::pom::main_class(project.pom()) else {
+        return Ok(());
+    };
+    let class = JavaType::parse(fqcn)?;
+    let previous = JavaType::parse(previous)?;
+    if class == previous {
+        return Ok(());
+    }
+    let key = ResourceKey::MavenMainClass(ProjectPath::parse("pom.xml")?);
+    claim(
+        desired,
+        owner,
+        key.clone(),
+        ResourceValue::MavenMainClass {
+            class: class.clone(),
+            previous: previous.clone(),
+        },
+    )?;
+    desired.edits.push(SemanticEdit::MavenMainClass {
+        key,
+        class,
+        previous,
+    });
     Ok(())
 }
 

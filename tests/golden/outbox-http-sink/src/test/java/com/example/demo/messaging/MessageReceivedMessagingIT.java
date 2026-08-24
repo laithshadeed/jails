@@ -3,6 +3,7 @@ package com.example.demo.messaging;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.example.demo.KafkaTestcontainersConfig;
+import com.example.demo.TestcontainersConfig;
 import java.time.Instant;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -33,7 +34,7 @@ import org.springframework.kafka.annotation.KafkaListener;
     "spring.kafka.consumer.properties.group.protocol=classic",
     "spring.kafka.listener.auto-startup=true"
 })
-@Import({ KafkaTestcontainersConfig.class, MessageReceivedMessagingIT.ProbeConfiguration.class })
+@Import({KafkaTestcontainersConfig.class, MessageReceivedMessagingIT.ProbeConfiguration.class, TestcontainersConfig.class})
 class MessageReceivedMessagingIT {
 
     @Autowired

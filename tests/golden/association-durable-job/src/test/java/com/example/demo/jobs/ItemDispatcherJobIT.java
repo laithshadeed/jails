@@ -3,12 +3,15 @@ package com.example.demo.jobs;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.example.demo.TestcontainersConfig;
 import com.example.demo.app.ItemRepository;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 
+@Import(TestcontainersConfig.class)
 @SpringBootTest
 @org.springframework.transaction.annotation.Transactional
 class ItemDispatcherJobIT {

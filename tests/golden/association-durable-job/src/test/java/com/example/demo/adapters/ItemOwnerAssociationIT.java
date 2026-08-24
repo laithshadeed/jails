@@ -3,14 +3,17 @@ package com.example.demo.adapters;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.example.demo.TestcontainersConfig;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.annotation.Transactional;
 
 /** Executable proof that this ownership relationship is a database invariant. */
+@Import(TestcontainersConfig.class)
 @SpringBootTest
 @Transactional
 class ItemOwnerAssociationIT {

@@ -2806,19 +2806,35 @@ fn destroy_without_force_prompts_and_aborts_on_no() {
 }
 
 #[test]
-fn generate_errors_on_duplicate_file() {
+fn generate_twice_writes_nothing_the_second_time() {
     let root = temp_dir("duplicate");
     write_project_skeleton(&root);
+    let service = root.join("src/main/java/com/example/demo/service/CommentService.java");
     jails_cmd(&root, None)
         .args(["generate", "service", "comment"])
         .status()
         .unwrap();
+    let before = fs::read_to_string(&service).unwrap();
     let output = jails_cmd(&root, None)
         .args(["generate", "service", "comment"])
         .output()
         .unwrap();
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("already exists"));
+    // A second identical generate is a **no-op**, not a refusal. V1 refused
+    // because it would otherwise clobber whatever was there; here the file is
+    // owned by the intent that wrote it, so "nothing changed" is the honest
+    // answer -- and an edited file is three-way merged rather than refused,
+    // which `app_manifest_merges_an_edited_intent_over_user_changes` pins.
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("nothing to do"),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(fs::read_to_string(&service).unwrap(), before);
 }
 
 #[test]
@@ -4071,10 +4087,29 @@ fn add_db_installs_postgres_flyway_and_testcontainers_without_an_orm() {
     let compose = fs::read_to_string(root.join("compose.yaml")).unwrap();
     assert!(compose.contains("postgres:17-alpine"), "{compose}");
     assert!(compose.contains("# jails:db"), "{compose}");
+    // The compose document handed to `--file` is the **committed object**, not
+    // the live `compose.yaml`. The effect is attempted after the commit
+    // publishes, so between the two somebody may edit the file; running
+    // against what they wrote would start services this transition never
+    // described, and a retry would not repeat what the first attempt did.
+    // `--project-directory` is what keeps relative paths in that document
+    // resolving against the project.
     let invocation = read_log(&log);
     assert!(
-        invocation.contains("compose up -d postgres"),
+        invocation.contains("compose") && invocation.contains("up -d"),
         "expected docker compose up: {invocation}"
+    );
+    assert!(
+        invocation.contains("postgres"),
+        "expected the postgres service named: {invocation}"
+    );
+    assert!(
+        invocation.contains(&format!("--project-directory {}", root.display())),
+        "expected the project directory: {invocation}"
+    );
+    assert!(
+        invocation.contains(".jails/objects/"),
+        "expected the frozen document rather than the live compose.yaml: {invocation}"
     );
 }
 
@@ -4170,16 +4205,17 @@ fn add_db_on_spring_wires_docker_compose_support() {
     );
 }
 
-/// Re-running `add db` on a project still carrying the global
-/// `ApplicationContextInitializer` must migrate it: rewrite the config as an
-/// importable `@TestConfiguration`, drop the `spring.factories` registration,
-/// and splice the `@Import` into every `@SpringBootTest`.
+/// `add db` over a project whose container config is already there rewrites it
+/// as an importable `@TestConfiguration` and splices the `@Import` into every
+/// `@SpringBootTest` -- including one in a different package, which needs the
+/// import statement too.
 ///
-/// The `spring.factories` deletion is the load-bearing half. Left behind, the
-/// old initializer would keep registering a second container for every test
-/// and the migration would look like it had not worked.
+/// It used to also delete a test-classpath `spring.factories` an *earlier
+/// jails* had written to register the container globally. That migration is
+/// gone with the rest of the legacy handling: jails is not released, so there
+/// is no earlier jails whose output has to be recognised.
 #[test]
-fn add_db_on_spring_migrates_the_global_initializer_to_an_import() {
+fn add_db_on_spring_wires_every_test_through_an_imported_configuration() {
     let root = temp_dir("add-db-spring-migrate");
     write_spring_fixture(&root);
     let fake = temp_dir("add-db-spring-migrate-bin");
@@ -4222,14 +4258,6 @@ public class PostgresContainerConfig
 "#,
     )
     .unwrap();
-    let factories = root.join("src/test/resources/META-INF/spring.factories");
-    fs::create_dir_all(factories.parent().unwrap()).unwrap();
-    fs::write(
-        &factories,
-        "# jails:db\norg.springframework.context.ApplicationContextInitializer=com.example.demo.PostgresContainerConfig\n# /jails:db\n",
-    )
-    .unwrap();
-
     let api = root.join("src/test/java/com/example/demo/api");
     fs::create_dir_all(&api).unwrap();
     fs::write(
@@ -4265,11 +4293,6 @@ class ExtraSliceTest {
         "the global registration is what this migration removes: {config}"
     );
     assert!(config.contains("@ServiceConnection"), "{config}");
-
-    assert!(
-        !factories.is_file(),
-        "a leftover spring.factories would keep registering the old initializer"
-    );
 
     // Both @SpringBootTest classes get the import, including the one in a
     // different package -- which needs the extra import statement too.

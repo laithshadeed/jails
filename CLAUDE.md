@@ -240,7 +240,8 @@ Four things to know before touching it:
   (`compose.rs`, `add.rs`, `add/database.rs`, `add/test_wiring.rs`,
   `doctor.rs`) each with its own `format!`; `tests/architecture.rs` now fails
   on a `# jails:` literal outside this module, so a sixth cannot appear
-  quietly. `Marked::indented` exists because a marker at column zero inside a
+  quietly. It no longer wraps a capability's `application.properties` settings
+  — see the per-key rule in the gotchas below. `Marked::indented` exists because a marker at column zero inside a
   YAML mapping is a parse error rather than a misplaced comment. There is no
   `replace` — nothing needs one, and `remove` then `add` is the path `sync`
   takes.
@@ -930,11 +931,23 @@ jails knows nothing about.
   `DeadLetterPublishingRecoverer` defaults to `<topic>-dlt` and the source
   partition number, so a project declaring `<topic>.DLT` finds it empty with
   only a WARN to say so.
-- **`remove <capability>` deletes a marked block wholesale**, and that block
-  is where people tune the capability — it has the capability's name on it.
-  `unowned_properties` diffs it against what jails would write so `remove`
-  can name the lines it did not write before deleting them. A real project
-  had ~20 hand-written Kafka properties inside jails' own markers.
+- **A capability's properties are claimed one key at a time, not as a marked
+  block.** V1 wrapped them in `# jails:<capability>` … `# /jails:<capability>`
+  and `remove` deleted the block wholesale — which took the reader's tuning
+  with it, so `unowned_properties` existed to diff the block against what jails
+  would write and name the lines it had not written before deleting them. A
+  real project had ~20 hand-written Kafka properties inside jails' own markers.
+  Under the transaction protocol each setting is a `ResourceKey::Property`
+  owned by the capability that wrote it, so `remove` retires exactly those keys
+  and never sees the reader's. **`application.properties` therefore has no
+  `# jails:` markers in it any more.** The comment jails writes above a key it
+  introduces is removed with that key, and only when it is still byte-identical
+  to what jails wrote — an edited comment is the reader's prose.
+
+  Marked blocks are still how jails edits `compose.yaml` and the shared
+  `src/test/resources/config/application.properties` a durable job writes into:
+  those are one *block* per owner in a file with several, which is a different
+  shape from one setting per key.
 - **clap `alias` vs `visible_alias`**: hidden `alias` is invisible to
   `clap_complete`'s bash generator — `jails g <TAB>` fell back to top-level
   subcommand names instead of `generate`'s completions. Always use

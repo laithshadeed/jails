@@ -87,6 +87,14 @@ pub fn install(run: &Run, asked: &Declaration) -> Result<Outcome> {
             },
         ),
     )?;
+    note_unstarted(
+        run,
+        &change
+            .compose
+            .iter()
+            .map(|service| service.name)
+            .collect::<Vec<_>>(),
+    );
     reformat_after(run, matches!(capability, Capability::Format), installed)
 }
 
@@ -140,6 +148,7 @@ pub fn sync(run: &Run) -> Result<Outcome> {
     let store = observed(project)?;
     let mut declared = BTreeMap::new();
     let mut changes = Vec::new();
+    let mut unstarted: Vec<&str> = Vec::new();
     let mut reads = capture::capability_reads()?;
     // The declarations, not the labels: a `[[capability]]` table carries the
     // `--name`/`--package` that decide which capability its row is, and
@@ -202,6 +211,7 @@ pub fn sync(run: &Run) -> Result<Outcome> {
                 reads = reads.file(path.clone());
             }
         }
+        unstarted.extend(change.compose.iter().map(|service| service.name));
         changes.push(desired);
     }
     for row in store
@@ -234,6 +244,7 @@ pub fn sync(run: &Run) -> Result<Outcome> {
             &[],
         ),
     )?;
+    note_unstarted(run, &unstarted);
     reformat_after(run, formats, synced)
 }
 
@@ -292,4 +303,26 @@ pub fn remove(run: &Run, asked: &Declaration) -> Result<Outcome> {
             },
         ),
     )
+}
+
+/// Say what this transition committed and deliberately did not start.
+///
+/// `--no-start` makes the compose effect ineligible at preparation -- §R3.3
+/// gives the descriptor no existence at all rather than an unattempted one --
+/// so nothing downstream can report the services as pending. Without this the
+/// reader gets a `compose.yaml` with a database in it and no word that the
+/// database is not running, which is the failure they meet at the next `mvn
+/// verify` rather than here.
+///
+/// Read off the plan's own service list, so it names the capability's command
+/// (`jails start db`) rather than a bare start of everything the file happens
+/// to declare.
+fn note_unstarted(run: &Run, services: &[&str]) {
+    if !run.no_start() || !run.writes() || services.is_empty() {
+        return;
+    }
+    println!(
+        "  note    start with `{}`",
+        jails_project::compose::missing_docker_hint(services)
+    );
 }

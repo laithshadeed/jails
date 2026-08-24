@@ -486,6 +486,49 @@ pub(super) fn unregister_command(root: &Path, name: &str) -> Result<()> {
 /// is registered there, `App` is the project's real CLI and moving the entry
 /// point out from under it would break what the reader built. A `<mainClass>`
 /// pointing anywhere else is somebody's decision and is left alone.
+/// The entry point this `g cli` intends to claim, if it may claim one.
+///
+/// The same decision [`adopt_as_entry_point`] made, stated rather than
+/// performed: V1 wrote the POM itself after the plan, so the routes never knew
+/// the packaged jar had moved and nothing recorded it. Here it is one field on
+/// the `Change`, and the protocol turns it into a claim the reader can see and
+/// `destroy` can put back.
+///
+/// `None` in three cases, and each is somebody's decision rather than jails':
+/// a POM naming no entry point at all is a Spring Boot project, where the
+/// plugin finds `@SpringBootApplication` itself; a POM naming anything but the
+/// `App` stub is a choice already made; and an `App` that registers a command
+/// of its own is the project's real CLI, so moving the jar out from under it
+/// would break what the reader built.
+pub(super) fn planned_entry_point(
+    project: &Project,
+    cli_package: &str,
+    name: &str,
+) -> Option<String> {
+    let current = crate::pom::main_class(project.pom())?;
+    if current != qualified(project.base(), "App") {
+        return None;
+    }
+    // The projection, not the directory: in an aggregate apply the `App` this
+    // has to read may have been written by an earlier intent of the same
+    // transition.
+    let registers_something = project
+        .projected_main_sources()
+        .into_iter()
+        .find(|(path, source)| {
+            path.file_stem().and_then(|stem| stem.to_str()) == Some("App")
+                && package_of(source).unwrap_or_default() == project.base()
+        })
+        .map(|(_, source)| jails_java::java::blanked(&source).contains("commands.put("))
+        // No readable `App` at all. V1 declined here too, and for the reason
+        // that survives: a stub jails cannot see is not one it can call unused.
+        .unwrap_or(true);
+    if registers_something {
+        return None;
+    }
+    Some(qualified(cli_package, &format!("{name}Cli")))
+}
+
 pub(super) fn adopt_as_entry_point(project: &Project, cli_package: &str, name: &str) -> Result<()> {
     let pom_path = project.root().join("pom.xml");
     let Ok(pom) = fs::read_to_string(&pom_path) else {

@@ -212,6 +212,13 @@ pub fn plan_recipe(
     {
         change.registrations.push(registration);
     }
+    if kind == ArtifactKind::Cli {
+        change.main_class = crate::generate::cli::planned_entry_point(
+            project,
+            &project.package_named(layout::CLI, package),
+            &name,
+        );
+    }
     if kind == ArtifactKind::DurableJob {
         change
             .marked
