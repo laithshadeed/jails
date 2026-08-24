@@ -273,6 +273,17 @@ pub struct IntentSpec {
     /// until then these carry the resolved target type.
     pub on: Option<JavaType>,
     pub yields: Option<JavaType>,
+    /// The HTTP method a generated endpoint answers.
+    ///
+    /// Content rather than identity, like every other field here: changing
+    /// `g controller Foo --method post` to `--method put` is an *edit* to a
+    /// known entity, so the regenerate-and-merge repair applies and the class
+    /// is not orphaned and rewritten from nothing.
+    ///
+    /// `None` is not "GET". It is "this recipe was never asked", which is
+    /// what every recipe that has no endpoint holds -- and the renderer's
+    /// default is stated where the default belongs, at the one call site.
+    pub method: Option<jails_spec::spec::kind::HttpMethod>,
 }
 
 impl IntentSpec {
@@ -290,7 +301,11 @@ impl IntentSpec {
         }
         encoder.bool(self.timestamps);
         encoder.option(self.on.as_ref(), |e, ty| ty.encode(e))?;
-        encoder.option(self.yields.as_ref(), |e, ty| ty.encode(e))
+        encoder.option(self.yields.as_ref(), |e, ty| ty.encode(e))?;
+        // By label, not by discriminant: §R1.4's rule for every closed
+        // vocabulary on the wire, so reordering the enum cannot change a
+        // recorded value.
+        encoder.option(self.method.as_ref(), |e, method| e.string(method.label()))
     }
 
     pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
@@ -306,6 +321,7 @@ impl IntentSpec {
             timestamps: decoder.bool()?,
             on: decoder.option(JavaType::decode)?,
             yields: decoder.option(JavaType::decode)?,
+            method: decoder.option(|d| jails_spec::spec::kind::HttpMethod::parse(&d.string()?))?,
         })
     }
 
@@ -350,6 +366,7 @@ impl IntentSpec {
             timestamps,
             on: None,
             yields: None,
+            method: None,
         })
     }
 }

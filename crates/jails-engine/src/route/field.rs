@@ -58,13 +58,20 @@ pub fn field(run: &Run, target: &str, component: &str, package: Option<&str>) ->
         project,
         jails_generate::generate::plan_recipe(
             project,
-            id.recipe,
-            id.name.as_str(),
-            &tokens,
+            &jails_generate::generate::Recipe {
+                kind: id.recipe,
+                name: id.name.as_str(),
+                fields: &tokens,
+                indexes: &[],
+                strategy_on: None,
+                strategy_yields: None,
+                // A field overlay never introduces an endpoint: it re-renders
+                // a recorded intent with one more component, and the verb --
+                // like the references -- is whatever that intent already
+                // recorded.
+                method: None,
+            },
             package,
-            &[],
-            None,
-            None,
         )?,
     );
 

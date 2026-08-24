@@ -75,6 +75,13 @@ pub struct RecipeMetadata {
     pub on: RefArity,
     pub yields: RefArity,
     pub arguments: ArgumentShape,
+    /// Whether this recipe may be given `--method`.
+    ///
+    /// `RefArity` rather than a `bool` or a type of its own, because the
+    /// question is the same one the two rows above ask -- forbidden, optional,
+    /// or required -- and a second vocabulary for one question is how two
+    /// spellings of "this parameter does not apply here" come to disagree.
+    pub method: RefArity,
 }
 
 /// The single table. Every arm is explicit so a new `ArtifactKind` fails to
@@ -109,8 +116,16 @@ pub fn metadata(recipe: ArtifactKind) -> RecipeMetadata {
         // a user who typed it believes they said something they did not. This
         // table is what step 7 plans against and R6 activates; the imperative
         // path is unchanged, because R1 is shadow-only.
-        Scaffold | Controller | Service | Class | Interface | Record | Factory | Value | Enum
-        | Sealed | Repo | Handler | Command | Cli | Client | Fetcher | Job | Idempotency | Auth
+        // `Controller` moved off this list when `--method` arrived: an
+        // endpoint has a request type and a response type, which are the two
+        // references the vocabulary already has. `--on` is the `@RequestBody`
+        // and `--yields` (spelled `--returns` at the CLI) is what the handler
+        // returns. Both optional, and independently: the case this was built
+        // for is a POST with no body returning a record.
+        Controller => (PersistentIntent, Optional, Optional),
+
+        Scaffold | Service | Class | Interface | Record | Factory | Value | Enum | Sealed
+        | Repo | Handler | Command | Cli | Client | Fetcher | Job | Idempotency | Auth
         | Webhook | Search | Dto | Event | Test | IntegrationTest => {
             (PersistentIntent, Forbidden, Forbidden)
         }
@@ -127,11 +142,22 @@ pub fn metadata(recipe: ArtifactKind) -> RecipeMetadata {
         | Event | Test | IntegrationTest | Usecase | Query | Transition | HttpWorkflow
         | HttpSink | DurableJob | Field | Migration | Cases => ArgumentShape::Fields,
     };
+    // Which recipes answer HTTP, as its own closed match for the same reason
+    // the shape is one: it is a different question from the reference arity.
+    // `Controller` alone -- `handler` writes a whole CRUD surface rather than
+    // one route, and `webhook` answers a signed POST by definition, so a flag
+    // that could set either to `get` would describe something that does not
+    // work.
+    let method = match recipe {
+        Controller => RefArity::Optional,
+        _ => RefArity::Forbidden,
+    };
     RecipeMetadata {
         class,
         on,
         yields,
         arguments,
+        method,
     }
 }
 
@@ -432,6 +458,21 @@ mod tests {
             ArtifactKind::Cases,
         ] {
             assert!(one_shots.contains(&&expected), "{expected:?}");
+        }
+    }
+
+    /// Only a recipe that answers HTTP takes `--method`.
+    ///
+    /// The rule §R1.1 states as *"never silently ignore a CLI parameter"*,
+    /// held from the other side: a flag accepted by a recipe with no endpoint
+    /// would be a value the reader believes they set.
+    #[test]
+    fn only_an_endpoint_takes_a_method() {
+        for recipe in ArtifactKind::value_variants() {
+            if metadata(*recipe).method == RefArity::Forbidden {
+                continue;
+            }
+            assert_eq!(*recipe, ArtifactKind::Controller, "{recipe:?}");
         }
     }
 

@@ -107,16 +107,18 @@ fn require_spring_project(project: &Project, kind: &str) -> Result<()> {
 /// source-hash receipt -- and folding them into the persistent path is what
 /// made an edited `fields` line arrive as a new intent against files that
 /// already existed.
+///
+/// The parameters that describe *what* to generate arrive as one [`Recipe`],
+/// which is the value `artifacts_for` already takes. They were eight
+/// positional arguments here and grew to nine the first time an endpoint
+/// needed a verb; a group of values computed together and consumed together is
+/// a parameter object, which is the same call this file makes one line down.
 pub fn plan_recipe(
     project: &Project,
-    kind: ArtifactKind,
-    name: &str,
-    fields: &[String],
+    recipe: &Recipe<'_>,
     package: Option<&str>,
-    indexes: &[String],
-    strategy_on: Option<&str>,
-    strategy_yields: Option<&str>,
 ) -> Result<Change> {
+    let kind = recipe.kind;
     if matches!(
         kind,
         ArtifactKind::Field | ArtifactKind::Cases | ArtifactKind::Migration
@@ -129,16 +131,12 @@ pub fn plan_recipe(
         ));
     }
     let root = project.root().to_path_buf();
-    let name = recorded_name(kind, name);
+    let name = recorded_name(kind, recipe.name);
     let artifacts = artifacts_for(
         project,
         &Recipe {
-            kind,
             name: &name,
-            fields,
-            indexes,
-            strategy_on,
-            strategy_yields,
+            ..*recipe
         },
         package,
     )?;
@@ -201,7 +199,7 @@ pub fn plan_recipe(
     // unreachable, and wrote the job and left the file unwritten.
     if kind == ArtifactKind::Command
         && let Some(registration) =
-            crate::generate::cli::planned_registration(project, &name, strategy_on)
+            crate::generate::cli::planned_registration(project, &name, recipe.strategy_on)
     {
         change.registrations.push(registration);
     }
@@ -349,6 +347,25 @@ pub struct Recipe<'a> {
     pub indexes: &'a [String],
     pub strategy_on: Option<&'a str>,
     pub strategy_yields: Option<&'a str>,
+    /// The HTTP verb an endpoint answers, when the recipe has one.
+    ///
+    /// `None` is "not asked", never "GET": the default belongs at the one
+    /// place that renders a mapping annotation, not spread across every
+    /// caller that has no endpoint to describe.
+    pub method: Option<jails_spec::spec::kind::HttpMethod>,
+}
+
+impl Recipe<'_> {
+    /// What this recipe's endpoint answers, with the default applied.
+    ///
+    /// Stated once. `GET` returning the resource name is what `g controller`
+    /// emitted before `--method` existed, and it stays the default -- but it
+    /// is now a default rather than the only shape, which is the whole of
+    /// missing.md §2.
+    pub fn http_method(&self) -> jails_spec::spec::kind::HttpMethod {
+        self.method
+            .unwrap_or(jails_spec::spec::kind::HttpMethod::Get)
+    }
 }
 
 #[cfg(test)]
@@ -1234,9 +1251,99 @@ mod tests {
         assert!(test.contains("GreetCommand.USAGE_ERROR"));
     }
 
+    /// The default endpoint: what `g controller Post` emits with no flags.
+    fn plain_endpoint() -> crate::generate::web::Endpoint<'static> {
+        crate::generate::web::Endpoint {
+            method: jails_spec::spec::kind::HttpMethod::Get,
+            returns: None,
+            accepts: None,
+            extra: String::new(),
+        }
+    }
+
+    /// Every verb reaches the annotation, the handler name and the test that
+    /// calls it -- and the three agree, which is the whole reason
+    /// `web::Endpoint` is one value rather than three derivations.
+    #[test]
+    fn a_controller_answers_the_method_it_was_asked_for() {
+        use jails_spec::spec::kind::HttpMethod;
+        for (method, mapping) in [
+            (HttpMethod::Post, "PostMapping"),
+            (HttpMethod::Put, "PutMapping"),
+            (HttpMethod::Patch, "PatchMapping"),
+            (HttpMethod::Delete, "DeleteMapping"),
+        ] {
+            let endpoint = crate::generate::web::Endpoint {
+                method,
+                ..plain_endpoint()
+            };
+            let source = stub_controller("com.example.blog", "Post", &endpoint);
+            assert!(
+                source.contains(&format!("@{mapping}(\"/post\")")),
+                "{source}"
+            );
+            assert!(
+                source.contains(&format!(
+                    "import org.springframework.web.bind.annotation.{mapping};"
+                )),
+                "{source}"
+            );
+            let test = controller_stub_test("com.example.blog", "Post", "x.Y", &endpoint);
+            assert!(
+                test.contains(&format!("mvc.{}().uri(\"/post\")", method.label())),
+                "{test}"
+            );
+        }
+    }
+
+    /// A verb that carries no body must not be given a `@RequestBody`
+    /// parameter: it is not forbidden by HTTP and it never binds, so a
+    /// parameter there would be a silent nothing.
+    #[test]
+    fn only_a_verb_with_a_body_takes_a_request_body() {
+        use jails_spec::spec::kind::HttpMethod;
+        for (method, expected) in [(HttpMethod::Post, true), (HttpMethod::Get, false)] {
+            let endpoint = crate::generate::web::Endpoint {
+                method,
+                accepts: Some("Verify"),
+                ..plain_endpoint()
+            };
+            assert_eq!(
+                stub_controller("com.example.blog", "Post", &endpoint).contains("@RequestBody"),
+                expected,
+                "{method:?}"
+            );
+        }
+    }
+
+    /// The `sample_value` rule, applied to a route: jails cannot build a
+    /// `Verification`, so the test is emitted whole and `@Disabled` naming
+    /// what to do rather than asserting a body jails invented.
+    #[test]
+    fn a_route_returning_a_project_type_is_tested_but_disabled() {
+        let endpoint = crate::generate::web::Endpoint {
+            returns: Some("Verification"),
+            ..plain_endpoint()
+        };
+        let test = controller_stub_test("com.example.blog", "Post", "x.Y", &endpoint);
+        assert!(test.contains("@Disabled"), "{test}");
+        assert!(
+            test.contains("import org.junit.jupiter.api.Disabled;"),
+            "{test}"
+        );
+        assert!(!test.contains("bodyText()"), "{test}");
+
+        let plain = controller_stub_test("com.example.blog", "Post", "x.Y", &plain_endpoint());
+        assert!(!plain.contains("@Disabled"), "{plain}");
+        assert!(plain.contains("bodyText()"), "{plain}");
+    }
+
     #[test]
     fn stub_templates_use_the_package_and_class_name() {
-        assert!(stub_controller("com.example.blog", "Post").contains("class PostController"));
+        assert!(
+            stub_controller("com.example.blog", "Post", &plain_endpoint())
+                .contains("class PostController")
+        );
         // Package-private: Spring wires these by reflection, so `public` only
         // widens what other packages can compile against.
         assert!(
@@ -1247,7 +1354,8 @@ mod tests {
             "spring.md §2: public only where the type is module API"
         );
         assert!(
-            !stub_controller("com.example.blog", "Post").contains("public class"),
+            !stub_controller("com.example.blog", "Post", &plain_endpoint())
+                .contains("public class"),
             "spring.md §2: public only where the type is module API"
         );
         assert!(

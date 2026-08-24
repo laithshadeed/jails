@@ -12,11 +12,10 @@ import org.springframework.test.web.servlet.assertj.MockMvcTester;
 @AutoConfigureMockMvc
 class HealthControllerTest {
 
-    @Autowired
-    private MockMvcTester mvc;
+    @Autowired private MockMvcTester mvc;
 
     @Test
-    void getReturnsOk() {
+    void getAnswers() {
         assertThat(mvc.get().uri("/health"))
                 .hasStatusOk()
                 .bodyText()

@@ -94,6 +94,13 @@ pub(super) fn parse_manifest(text: &str) -> Result<(Manifest, Vec<ResolvedIntent
                     }
                 }
                 "indexes" => intent.indexes = string_array(value, line_number, key)?,
+                "method" => {
+                    let value = string(value, line_number, key)?;
+                    intent.method = Some(
+                        jails_spec::spec::kind::HttpMethod::parse(value)
+                            .map_err(|why| format!("line {line_number}: {why}"))?,
+                    );
+                }
                 "package" => intent.package = Some(string(value, line_number, key)?.to_string()),
                 // `on` and `yields` are the names. `strategy_on` and
                 // `strategy_yields` are kept as deprecated aliases because

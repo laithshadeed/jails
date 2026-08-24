@@ -130,12 +130,15 @@ fn a_record_generates_through_the_transaction_protocol() {
 
     jails_engine::route::generate(
         &committing(&project),
-        jails_spec::spec::kind::ArtifactKind::Record,
-        "Note",
-        &["title:string!".to_string(), "at:instant".to_string()],
-        None,
-        &[],
-        None,
+        &jails_generate::generate::Recipe {
+            kind: jails_spec::spec::kind::ArtifactKind::Record,
+            name: "Note",
+            fields: &["title:string!".to_string(), "at:instant".to_string()],
+            indexes: &[],
+            strategy_on: None,
+            strategy_yields: None,
+            method: None,
+        },
         None,
     )
     .unwrap();
@@ -170,12 +173,15 @@ fn generating_the_same_record_twice_is_one_artifact_and_a_no_op() {
     let generate = || {
         jails_engine::route::generate(
             &committing(&Project::load(&root).unwrap()),
-            jails_spec::spec::kind::ArtifactKind::Record,
-            "Note",
-            &["title:string!".to_string()],
-            None,
-            &[],
-            None,
+            &jails_generate::generate::Recipe {
+                kind: jails_spec::spec::kind::ArtifactKind::Record,
+                name: "Note",
+                fields: &["title:string!".to_string()],
+                indexes: &[],
+                strategy_on: None,
+                strategy_yields: None,
+                method: None,
+            },
             None,
         )
     };
@@ -208,12 +214,15 @@ fn a_file_the_request_does_not_own_is_not_overwritten() {
 
     let outcome = jails_engine::route::generate(
         &committing(&Project::load(&root).unwrap()),
-        jails_spec::spec::kind::ArtifactKind::Record,
-        "Note",
-        &["title:string!".to_string()],
-        None,
-        &[],
-        None,
+        &jails_generate::generate::Recipe {
+            kind: jails_spec::spec::kind::ArtifactKind::Record,
+            name: "Note",
+            fields: &["title:string!".to_string()],
+            indexes: &[],
+            strategy_on: None,
+            strategy_yields: None,
+            method: None,
+        },
         None,
     );
 
@@ -572,12 +581,15 @@ fn destroying_a_record_takes_back_exactly_what_generating_it_wrote() {
 
     jails_engine::route::generate(
         &committing(&Project::load(&root).unwrap()),
-        jails_spec::spec::kind::ArtifactKind::Record,
-        "Note",
-        &["title:string!".to_string()],
-        None,
-        &[],
-        None,
+        &jails_generate::generate::Recipe {
+            kind: jails_spec::spec::kind::ArtifactKind::Record,
+            name: "Note",
+            fields: &["title:string!".to_string()],
+            indexes: &[],
+            strategy_on: None,
+            strategy_yields: None,
+            method: None,
+        },
         None,
     )
     .unwrap();
@@ -617,12 +629,15 @@ fn destroying_one_record_leaves_another_alone() {
     let generate = |name: &str| {
         jails_engine::route::generate(
             &committing(&Project::load(&root).unwrap()),
-            jails_spec::spec::kind::ArtifactKind::Record,
-            name,
-            &["title:string!".to_string()],
-            None,
-            &[],
-            None,
+            &jails_generate::generate::Recipe {
+                kind: jails_spec::spec::kind::ArtifactKind::Record,
+                name,
+                fields: &["title:string!".to_string()],
+                indexes: &[],
+                strategy_on: None,
+                strategy_yields: None,
+                method: None,
+            },
             None,
         )
         .unwrap();
@@ -757,13 +772,16 @@ fn every_persistent_kind_destroys_back_to_where_it_started() {
 
         let generated = jails_engine::route::generate(
             &committing(&Project::load(&root).unwrap()),
-            kind,
-            step[2],
-            &invocation.fields,
+            &jails_generate::generate::Recipe {
+                kind,
+                name: step[2],
+                fields: &invocation.fields,
+                indexes: &invocation.indexes,
+                strategy_on: invocation.on.as_deref(),
+                strategy_yields: invocation.yields.as_deref(),
+                method: None,
+            },
             invocation.package.as_deref(),
-            &invocation.indexes,
-            invocation.on.as_deref(),
-            invocation.yields.as_deref(),
         );
         match generated {
             Ok(_) => {}
@@ -850,13 +868,16 @@ fn route_step(root: &std::path::Path, step: &[&str]) -> Result<(), String> {
                 .ok_or_else(|| "unrecognised flag".to_string())?;
             jails_engine::route::generate(
                 &committing(&project),
-                kind,
-                step[2],
-                &invocation.fields,
+                &jails_generate::generate::Recipe {
+                    kind,
+                    name: step[2],
+                    fields: &invocation.fields,
+                    indexes: &invocation.indexes,
+                    strategy_on: invocation.on.as_deref(),
+                    strategy_yields: invocation.yields.as_deref(),
+                    method: None,
+                },
                 invocation.package.as_deref(),
-                &invocation.indexes,
-                invocation.on.as_deref(),
-                invocation.yields.as_deref(),
             )
             .map(|_| ())
         }
@@ -1192,12 +1213,15 @@ fn a_field_evolves_the_record_and_migrates_the_table_for_it() {
 
     jails_engine::route::generate(
         &committing(&Project::load(&root).unwrap()),
-        jails_spec::spec::kind::ArtifactKind::Record,
-        "Note",
-        &["id:uuid@pk".to_string(), "title:string!".to_string()],
-        None,
-        &[],
-        None,
+        &jails_generate::generate::Recipe {
+            kind: jails_spec::spec::kind::ArtifactKind::Record,
+            name: "Note",
+            fields: &["id:uuid@pk".to_string(), "title:string!".to_string()],
+            indexes: &[],
+            strategy_on: None,
+            strategy_yields: None,
+            method: None,
+        },
         None,
     )
     .unwrap();
@@ -1274,12 +1298,15 @@ fn a_field_merges_an_edit_the_generator_also_touched() {
 
     jails_engine::route::generate(
         &committing(&Project::load(&root).unwrap()),
-        jails_spec::spec::kind::ArtifactKind::Record,
-        "Note",
-        &["id:uuid@pk".to_string(), "title:string!".to_string()],
-        None,
-        &[],
-        None,
+        &jails_generate::generate::Recipe {
+            kind: jails_spec::spec::kind::ArtifactKind::Record,
+            name: "Note",
+            fields: &["id:uuid@pk".to_string(), "title:string!".to_string()],
+            indexes: &[],
+            strategy_on: None,
+            strategy_yields: None,
+            method: None,
+        },
         None,
     )
     .unwrap();
@@ -1359,12 +1386,15 @@ fn a_field_refuses_a_duplicate_and_an_unrecorded_target() {
 
     jails_engine::route::generate(
         &committing(&Project::load(&root).unwrap()),
-        jails_spec::spec::kind::ArtifactKind::Record,
-        "Note",
-        &["title:string!".to_string()],
-        None,
-        &[],
-        None,
+        &jails_generate::generate::Recipe {
+            kind: jails_spec::spec::kind::ArtifactKind::Record,
+            name: "Note",
+            fields: &["title:string!".to_string()],
+            indexes: &[],
+            strategy_on: None,
+            strategy_yields: None,
+            method: None,
+        },
         None,
     )
     .unwrap();
@@ -1410,6 +1440,7 @@ fn a_manifest_applies_as_one_transition_that_each_step_can_see() {
                 package: None,
                 on: None,
                 yields: None,
+                method: None,
             },
             // Needs `add db`'s starter *and* `g scaffold`'s record, neither of
             // which exists on disk while this plans.
@@ -1422,6 +1453,7 @@ fn a_manifest_applies_as_one_transition_that_each_step_can_see() {
                 package: None,
                 on: None,
                 yields: None,
+                method: None,
             },
         ],
     )
@@ -1484,6 +1516,7 @@ fn a_manifest_that_drops_a_row_takes_it_back_out() {
         package: None,
         on: None,
         yields: None,
+        method: None,
     };
 
     jails_engine::route::app_apply(
@@ -1537,6 +1570,7 @@ fn applying_a_manifest_twice_leaves_the_store_where_it_was() {
                 package: None,
                 on: None,
                 yields: None,
+                method: None,
             }],
         )
     };
@@ -1575,6 +1609,7 @@ fn the_web_crawler_manifest_applies_as_one_transition() {
         package: None,
         on: None,
         yields: None,
+        method: None,
     };
     let on = |mut i: jails_engine::route::Intent, target: &str| {
         i.on = Some(target.to_string());
@@ -1794,6 +1829,7 @@ fn a_plan_names_exactly_the_files_the_apply_then_writes() {
         package: None,
         on: None,
         yields: None,
+        method: None,
     };
 
     let before = common::scenarios::file_set(&root);
@@ -1889,6 +1925,7 @@ fn a_manifest_row_that_changes_merges_with_what_the_reader_wrote() {
         package: None,
         on: None,
         yields: None,
+        method: None,
     };
     let at = root.join("src/main/java/com/example/demo/domain/Note.java");
 
@@ -1955,6 +1992,7 @@ fn an_overlapping_edit_refuses_without_writing_anything() {
         package: None,
         on: None,
         yields: None,
+        method: None,
     };
     let at = root.join("src/main/java/com/example/demo/domain/Note.java");
 
@@ -2019,12 +2057,15 @@ fn a_rename_moves_the_type_its_companions_and_every_reference_at_once() {
 
     jails_engine::route::generate(
         &committing(&Project::load(&root).unwrap()),
-        jails_spec::spec::kind::ArtifactKind::Record,
-        "Reward",
-        &["title:string!".to_string()],
-        None,
-        &[],
-        None,
+        &jails_generate::generate::Recipe {
+            kind: jails_spec::spec::kind::ArtifactKind::Record,
+            name: "Reward",
+            fields: &["title:string!".to_string()],
+            indexes: &[],
+            strategy_on: None,
+            strategy_yields: None,
+            method: None,
+        },
         None,
     )
     .unwrap();
@@ -2104,12 +2145,15 @@ fn a_rename_is_one_generation_and_will_not_land_on_an_occupied_name() {
     let generate = |name: &str| {
         jails_engine::route::generate(
             &committing(&Project::load(&root).unwrap()),
-            jails_spec::spec::kind::ArtifactKind::Record,
-            name,
-            &["title:string!".to_string()],
-            None,
-            &[],
-            None,
+            &jails_generate::generate::Recipe {
+                kind: jails_spec::spec::kind::ArtifactKind::Record,
+                name,
+                fields: &["title:string!".to_string()],
+                indexes: &[],
+                strategy_on: None,
+                strategy_yields: None,
+                method: None,
+            },
             None,
         )
         .unwrap()
@@ -2396,12 +2440,15 @@ fn renaming_a_generated_type_moves_what_the_store_says_it_owns() {
     common::write_plain_fixture(&root);
     jails_engine::route::generate(
         &committing(&Project::load(&root).unwrap()),
-        jails_spec::spec::kind::ArtifactKind::Record,
-        "Reward",
-        &["title:string!".to_string()],
-        None,
-        &[],
-        None,
+        &jails_generate::generate::Recipe {
+            kind: jails_spec::spec::kind::ArtifactKind::Record,
+            name: "Reward",
+            fields: &["title:string!".to_string()],
+            indexes: &[],
+            strategy_on: None,
+            strategy_yields: None,
+            method: None,
+        },
         None,
     )
     .unwrap();
@@ -2470,12 +2517,15 @@ fn an_operation_records_the_request_that_produced_it() {
 
     jails_engine::route::generate(
         &committing(&Project::load(&root).unwrap()),
-        jails_spec::spec::kind::ArtifactKind::Record,
-        "Note",
-        &["title:string!".to_string()],
-        None,
-        &[],
-        None,
+        &jails_generate::generate::Recipe {
+            kind: jails_spec::spec::kind::ArtifactKind::Record,
+            name: "Note",
+            fields: &["title:string!".to_string()],
+            indexes: &[],
+            strategy_on: None,
+            strategy_yields: None,
+            method: None,
+        },
         None,
     )
     .unwrap();
@@ -2502,12 +2552,15 @@ fn an_operation_records_the_request_that_produced_it() {
     // requests whose file effects happened to coincide would be one operation.
     jails_engine::route::generate(
         &committing(&Project::load(&root).unwrap()),
-        jails_spec::spec::kind::ArtifactKind::Record,
-        "Memo",
-        &["title:string!".to_string()],
-        None,
-        &[],
-        None,
+        &jails_generate::generate::Recipe {
+            kind: jails_spec::spec::kind::ArtifactKind::Record,
+            name: "Memo",
+            fields: &["title:string!".to_string()],
+            indexes: &[],
+            strategy_on: None,
+            strategy_yields: None,
+            method: None,
+        },
         None,
     )
     .unwrap();
@@ -2552,12 +2605,15 @@ fn pretending_writes_nothing_and_names_what_a_commit_would_write() {
         .operations();
     let artifact = jails_engine::route::generate(
         &pretend,
-        jails_spec::spec::kind::ArtifactKind::Record,
-        "Note",
-        &["title:string!".to_string()],
-        None,
-        &[],
-        None,
+        &jails_generate::generate::Recipe {
+            kind: jails_spec::spec::kind::ArtifactKind::Record,
+            name: "Note",
+            fields: &["title:string!".to_string()],
+            indexes: &[],
+            strategy_on: None,
+            strategy_yields: None,
+            method: None,
+        },
         None,
     )
     .unwrap()
@@ -2588,12 +2644,15 @@ fn pretending_writes_nothing_and_names_what_a_commit_would_write() {
     // exactly what committing it makes appear.
     jails_engine::route::generate(
         &committing(&Project::load(&root).unwrap()),
-        jails_spec::spec::kind::ArtifactKind::Record,
-        "Note",
-        &["title:string!".to_string()],
-        None,
-        &[],
-        None,
+        &jails_generate::generate::Recipe {
+            kind: jails_spec::spec::kind::ArtifactKind::Record,
+            name: "Note",
+            fields: &["title:string!".to_string()],
+            indexes: &[],
+            strategy_on: None,
+            strategy_yields: None,
+            method: None,
+        },
         None,
     )
     .unwrap();
@@ -2627,12 +2686,15 @@ fn a_plan_is_reported_through_the_one_projection() {
 
     let outcome = jails_engine::route::generate(
         &pretend,
-        jails_spec::spec::kind::ArtifactKind::Record,
-        "Note",
-        &["title:string!".to_string()],
-        None,
-        &[],
-        None,
+        &jails_generate::generate::Recipe {
+            kind: jails_spec::spec::kind::ArtifactKind::Record,
+            name: "Note",
+            fields: &["title:string!".to_string()],
+            indexes: &[],
+            strategy_on: None,
+            strategy_yields: None,
+            method: None,
+        },
         None,
     )
     .unwrap();
@@ -2670,24 +2732,30 @@ fn a_plan_is_reported_through_the_one_projection() {
     // says so as a status rather than as an empty list the caller has to read.
     jails_engine::route::generate(
         &committing(&Project::load(&root).unwrap()),
-        jails_spec::spec::kind::ArtifactKind::Record,
-        "Note",
-        &["title:string!".to_string()],
-        None,
-        &[],
-        None,
+        &jails_generate::generate::Recipe {
+            kind: jails_spec::spec::kind::ArtifactKind::Record,
+            name: "Note",
+            fields: &["title:string!".to_string()],
+            indexes: &[],
+            strategy_on: None,
+            strategy_yields: None,
+            method: None,
+        },
         None,
     )
     .unwrap();
     let project = Project::load(&root).unwrap();
     let settled = jails_engine::route::generate(
         &jails_engine::route::Run::pretending(&project),
-        jails_spec::spec::kind::ArtifactKind::Record,
-        "Note",
-        &["title:string!".to_string()],
-        None,
-        &[],
-        None,
+        &jails_generate::generate::Recipe {
+            kind: jails_spec::spec::kind::ArtifactKind::Record,
+            name: "Note",
+            fields: &["title:string!".to_string()],
+            indexes: &[],
+            strategy_on: None,
+            strategy_yields: None,
+            method: None,
+        },
         None,
     )
     .unwrap();
@@ -2758,12 +2826,15 @@ fn a_generated_command_is_registered_in_the_dispatcher_that_runs_it() {
     let generate = |kind, name: &str| {
         jails_engine::route::generate(
             &committing(&Project::load(&root).unwrap()),
-            kind,
-            name,
-            &[],
-            None,
-            &[],
-            None,
+            &jails_generate::generate::Recipe {
+                kind,
+                name,
+                fields: &[],
+                indexes: &[],
+                strategy_on: None,
+                strategy_yields: None,
+                method: None,
+            },
             None,
         )
         .unwrap()
@@ -3057,12 +3128,15 @@ fn a_foreign_build_gets_the_code_and_a_capability_still_refuses() {
 
     jails_engine::route::generate(
         &committing(&Project::load(&root).unwrap()),
-        jails_spec::spec::kind::ArtifactKind::Record,
-        "Note",
-        &["title:string!".to_string()],
-        None,
-        &[],
-        None,
+        &jails_generate::generate::Recipe {
+            kind: jails_spec::spec::kind::ArtifactKind::Record,
+            name: "Note",
+            fields: &["title:string!".to_string()],
+            indexes: &[],
+            strategy_on: None,
+            strategy_yields: None,
+            method: None,
+        },
         None,
     )
     .unwrap();
@@ -3148,12 +3222,15 @@ fn a_plan_and_its_commit_are_described_in_the_same_words() {
     let record = |run: &jails_engine::route::Run| {
         jails_engine::route::generate(
             run,
-            jails_spec::spec::kind::ArtifactKind::Record,
-            "Note",
-            &["title:string!".to_string()],
-            None,
-            &[],
-            None,
+            &jails_generate::generate::Recipe {
+                kind: jails_spec::spec::kind::ArtifactKind::Record,
+                name: "Note",
+                fields: &["title:string!".to_string()],
+                indexes: &[],
+                strategy_on: None,
+                strategy_yields: None,
+                method: None,
+            },
             None,
         )
         .unwrap()
@@ -3218,6 +3295,7 @@ fn one_entry_point_sends_each_kind_to_the_route_that_owns_it() {
         package: None,
         on: None,
         yields: None,
+        method: None,
     };
     let run =
         |i| jails_engine::route::recipe(&committing(&Project::load(&root).unwrap()), &i).unwrap();
@@ -3287,12 +3365,15 @@ fn a_commit_and_a_plan_are_the_same_envelope() {
     let record = |run: &jails_engine::route::Run| {
         jails_engine::route::generate(
             run,
-            jails_spec::spec::kind::ArtifactKind::Record,
-            "Note",
-            &["title:string!".to_string()],
-            None,
-            &[],
-            None,
+            &jails_generate::generate::Recipe {
+                kind: jails_spec::spec::kind::ArtifactKind::Record,
+                name: "Note",
+                fields: &["title:string!".to_string()],
+                indexes: &[],
+                strategy_on: None,
+                strategy_yields: None,
+                method: None,
+            },
             None,
         )
         .unwrap()

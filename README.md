@@ -94,6 +94,22 @@ their exit codes, so `jails doctor --json && deploy` behaves like
   `<Name>IT` skeleton for a real boundary test.
 - `jails generate|g <controller|service|class|value|enum|sealed|test> ...`
   — the remaining small Java artifacts and their useful companion tests.
+- `jails generate|g controller <Name> [--method <get|post|put|patch|delete>]
+  [--on <Type>] [--returns <Type>]` — one route, in the shape you say. The
+  default is `GET` returning the resource name, which is a route that works and
+  a test that runs. `--returns <Type>` makes it the response type and `--on
+  <Type>` the `@RequestBody`, importing each from the domain layer.
+
+  A verb with no body — `get`, `delete` — never gets a `@RequestBody`
+  parameter: a body there is not forbidden by HTTP and is dropped somewhere
+  between the caller and the handler, so the parameter would silently never
+  bind.
+
+  When either type is named, the handler is a `todo` that throws and **the
+  test is emitted whole and `@Disabled`**, naming what to implement. Same rule
+  as `sample_value`: jails has no type model, so it cannot build a
+  `Verification` to return or one to post. A guessed body would not compile,
+  and emitting no test would silently drop the coverage.
 - `jails generate|g class <Name>` — a plain `public final class` and its
   companion test, both in the **base package** rather than a
   `domain`/`service` subpackage: "a class" says nothing about which layer owns

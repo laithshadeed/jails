@@ -859,6 +859,7 @@ const LAYERS: &[(&str, usize)] = &[
     ("new", 8),
     ("app", 8),
     ("invoke", 8),
+    ("arguments", 8),
     ("main", 8),
 ];
 

@@ -31,6 +31,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use clap::ValueEnum;
 use jails_commit::execute::{self, LockedProject, ProjectHandle};
 use jails_commit::outcome::{CommitError, CommitResult};
+use jails_generate::generate::Recipe;
 use jails_prepare::command::{CommandEnvelope, ProjectCommitDisposition};
 use jails_prepare::desire;
 use jails_prepare::pipeline::{self, ObservedStore, PreparationContext};
@@ -129,6 +130,7 @@ fn intent(
 }
 
 /// What the artifact was asked for, as the content of its identity.
+#[allow(clippy::too_many_arguments)]
 fn spec(
     project: &Project,
     kind: ArtifactKind,
@@ -136,6 +138,7 @@ fn spec(
     indexes: &[String],
     on: Option<&str>,
     yields: Option<&str>,
+    method: Option<jails_spec::spec::kind::HttpMethod>,
 ) -> Result<IntentSpec> {
     let base = Package::parse(project.base())?;
     // Parsed once to translate the index spelling, then again inside
@@ -159,6 +162,10 @@ fn spec(
     )?;
     spec.on = on.map(JavaType::parse).transpose()?;
     spec.yields = yields.map(JavaType::parse).transpose()?;
+    // Recorded, not applied: an intent regenerated with a different verb is
+    // the *same* entity with new content, which is what makes it an edit the
+    // three-way merge can carry rather than an orphan and a rewrite.
+    spec.method = method;
     Ok(spec)
 }
 

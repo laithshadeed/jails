@@ -5,6 +5,8 @@
 //! reflection, so `public` buys nothing and only widens what other packages
 //! can compile against.
 
+use jails_spec::spec::kind::HttpMethod;
+
 // ---- standalone stub templates (ported from springgen.nvim) ----
 
 pub(super) fn interface_java(pkg: &str, name: &str) -> String {
@@ -30,13 +32,92 @@ class {name}IT {{
     )
 }
 
-pub(super) fn stub_controller(pkg: &str, name: &str) -> String {
+/// One route's shape, decided once and read by both the controller and its
+/// test.
+///
+/// A parameter object rather than four arguments threaded twice, and the
+/// reason is the failure it removes: the controller and the test have to agree
+/// on the verb, the path and whether the test can run at all, and two
+/// independent derivations of that is how `g handler Category` came to serve
+/// `/categorys` against a table called `categories`.
+pub(super) struct Endpoint<'a> {
+    pub method: HttpMethod,
+    /// What the handler returns. `None` is the stub jails has always emitted:
+    /// a `String` echoing the resource name, which is a route that works.
+    pub returns: Option<&'a str>,
+    /// The `@RequestBody` type, when the verb carries one.
+    pub accepts: Option<&'a str>,
+    /// `import` lines for the types above, already resolved.
+    ///
+    /// The `extra` parameter `scaffold` takes, and for the same reason: this
+    /// module knows the shape of a route, not where the project keeps its
+    /// records. Deciding it here would mean this file second-guessing the
+    /// per-layer renames `Config::layers()` owns.
+    pub extra: String,
+}
+
+impl Endpoint<'_> {
+    /// Whether the generated test can actually run.
+    ///
+    /// The `sample_value` rule, applied to a route: jails has no type model,
+    /// so it cannot build a `Verification` to return or a `VerifyRequest` to
+    /// post. When either is named the test is emitted whole and `@Disabled`
+    /// naming what to do -- a guess would not compile, and emitting nothing
+    /// would silently drop the coverage.
+    fn is_executable(&self) -> bool {
+        self.returns.is_none() && self.body_type().is_none()
+    }
+
+    /// The request body type, which is `--on` and only on a verb that has one.
+    ///
+    /// A body on GET or DELETE is not forbidden by HTTP and is dropped by most
+    /// of the stack between the caller and the handler, so a parameter that
+    /// silently never binds is worse than no parameter.
+    fn body_type(&self) -> Option<&str> {
+        self.accepts.filter(|_| self.method.takes_a_body())
+    }
+}
+
+pub(super) fn stub_controller(pkg: &str, name: &str, endpoint: &Endpoint<'_>) -> String {
+    let mut imports = vec![
+        format!(
+            "import org.springframework.web.bind.annotation.{};",
+            endpoint.method.mapping()
+        ),
+        "import org.springframework.web.bind.annotation.RestController;".to_string(),
+    ];
+    let parameters = match endpoint.body_type() {
+        Some(ty) => {
+            imports.push("import org.springframework.web.bind.annotation.RequestBody;".to_string());
+            format!("@RequestBody {ty} request")
+        }
+        None => String::new(),
+    };
+    let (returns, body) = match endpoint.returns {
+        Some(ty) => (
+            ty.to_string(),
+            format!(
+                "throw new UnsupportedOperationException(\n                \"todo: build the \
+                 {ty} this route answers with\");"
+            ),
+        ),
+        None => ("String".to_string(), format!("return \"{name}\";")),
+    };
+    let imports = format!("{}{}", endpoint.extra, imports.join("\n"));
     crate::template::render(
         crate::template_here!("generate/stub_controller.java"),
         &[
             ("pkg", pkg),
             ("name", name),
             ("route", &name.to_lowercase()),
+            // Order does not matter: `write_new_file` normalises every import
+            // block, which is why templates must never hand-order them.
+            ("imports", &imports),
+            ("mapping", endpoint.method.mapping()),
+            ("handler", endpoint.method.handler_name()),
+            ("returns", &returns),
+            ("parameters", &parameters),
+            ("body", &body),
         ],
     )
 }
@@ -160,7 +241,22 @@ class {name}Test {{
 /// instead of being thrown, and the test method needs no `throws Exception`
 /// -- which is what makes the generated body a thing you extend rather than
 /// a thing you first have to reshape.
-pub(super) fn controller_stub_test(pkg: &str, name: &str, mockmvc_import: &str) -> String {
+pub(super) fn controller_stub_test(
+    pkg: &str,
+    name: &str,
+    mockmvc_import: &str,
+    endpoint: &Endpoint<'_>,
+) -> String {
+    let executable = endpoint.is_executable();
+    let assertion = match executable {
+        true => format!(
+            "                .hasStatusOk()\n                .bodyText()\n                \
+             .isEqualTo(\"{name}\")"
+        ),
+        // Status only. The body is whatever the reader writes, and asserting a
+        // shape jails invented would be a test of jails' guess.
+        false => "                .hasStatus2xxSuccessful()".to_string(),
+    };
     crate::template::render(
         crate::template_here!("generate/controller_stub_test.java"),
         &[
@@ -168,6 +264,25 @@ pub(super) fn controller_stub_test(pkg: &str, name: &str, mockmvc_import: &str) 
             ("name", name),
             ("mockmvc_import", mockmvc_import),
             ("route", &name.to_lowercase()),
+            ("handler", endpoint.method.handler_name()),
+            ("assertion", &assertion),
+            (
+                "disabled",
+                match executable {
+                    true => "",
+                    false => concat!(
+                        "    @Disabled(\"todo: implement the handler, then delete this ",
+                        "@Disabled\")\n"
+                    ),
+                },
+            ),
+            (
+                "disabled_import",
+                match executable {
+                    true => "",
+                    false => "import org.junit.jupiter.api.Disabled;\n",
+                },
+            ),
         ],
     )
 }

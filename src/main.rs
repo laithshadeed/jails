@@ -10,6 +10,7 @@ pub(crate) use jails_tooling::{
     bench, commands, console, doctor, explain, kafka, lint, migrate, run, source, testd, why,
 };
 mod app;
+mod arguments;
 mod invoke;
 mod new;
 
@@ -244,8 +245,17 @@ enum Command {
         /// For `strategy`: what a matching implementation produces. Omit and
         /// the strategy is a predicate returning `boolean`. For
         /// `durable-job`, the resource whose stable id proves completion.
-        #[arg(long = "yields", value_name = "TYPE")]
+        #[arg(long = "yields", visible_alias = "returns", value_name = "TYPE")]
         strategy_yields: Option<String>,
+        /// For `controller`, the HTTP method the generated route answers.
+        /// Defaults to `get`.
+        ///
+        ///   jails g controller Verify --method post --returns Verification
+        ///
+        /// `--on <Type>` becomes the `@RequestBody` parameter on a verb that
+        /// carries one; `--returns <Type>` is what the handler returns.
+        #[arg(long, value_name = "METHOD")]
+        method: Option<jails_spec::spec::kind::HttpMethod>,
     },
     /// Add one or more capabilities to an existing project: dependencies, code and tests
     ///
@@ -670,7 +680,7 @@ enum Declare {
         version: Option<String>,
         /// compile (default), runtime, or test
         #[arg(long, default_value = "compile")]
-        scope: DependencyScope,
+        scope: arguments::DependencyScope,
     },
 }
 
@@ -682,83 +692,6 @@ enum Undeclare {
         /// group:artifact
         coordinate: String,
     },
-}
-
-/// Maven's three scopes, as a closed set so `--scope <TAB>` completes.
-#[derive(Clone, Copy, Debug, clap::ValueEnum)]
-enum DependencyScope {
-    Compile,
-    Runtime,
-    Test,
-}
-
-impl DependencyScope {
-    fn resolved(self) -> jails_protocol::coordinate::MavenScope {
-        use jails_protocol::coordinate::MavenScope;
-        match self {
-            Self::Compile => MavenScope::Compile,
-            Self::Runtime => MavenScope::Runtime,
-            Self::Test => MavenScope::Test,
-        }
-    }
-}
-
-/// Returns [`ExitCode`] rather than calling [`std::process::exit`].
-///
-/// `crate::process::exit` terminates without unwinding, so destructors on the
-/// current stack never run. jails holds real resources while a command is in
-/// flight -- `migrate` creates a scratch database it is responsible for
-/// dropping -- and anything staging a file beside its destination would be in
-/// the same position. Returning lets the stack unwind normally first.
-/// `group:artifact`, refused rather than guessed at.
-///
-/// A coordinate with a third part is almost always a `group:artifact:version`
-/// pasted from somewhere -- so the refusal names `--version` rather than
-/// repeating the shape back.
-fn maven_coordinate(
-    text: &str,
-) -> jails_support::Result<jails_protocol::coordinate::MavenCoordinate> {
-    let mut parts = text.split(':');
-    match (parts.next(), parts.next(), parts.next()) {
-        (Some(group), Some(artifact), None) if !group.is_empty() && !artifact.is_empty() => {
-            jails_protocol::coordinate::MavenCoordinate::parse(group, artifact)
-        }
-        (_, _, Some(_)) => Err(format!(
-            "`{text}` names a version as well as a coordinate.\n       \
-             fix: jails add dependency <group>:<artifact> --version <version>"
-        )),
-        _ => Err(format!(
-            "`{text}` is not a Maven coordinate.\n       \
-             fix: jails add dependency <group>:<artifact>"
-        )),
-    }
-}
-
-/// `key=value`, split once so a value containing `=` survives.
-fn split_setting(text: &str) -> jails_support::Result<(String, String)> {
-    match text.split_once('=') {
-        Some((key, value)) => Ok((key.trim().to_string(), value.to_string())),
-        None => Err(format!(
-            "`{text}` is not a `key=value` setting.\n       \
-             fix: jails set server.port=3000"
-        )),
-    }
-}
-
-/// Which file a `jails set` wrote into. See `Command::Set` for why `--tests`
-/// is `config/` and not the obvious path.
-fn declared_property(
-    key: &str,
-    tests: bool,
-) -> jails_support::Result<jails_protocol::entity::DeclaredId> {
-    Ok(jails_protocol::entity::DeclaredId::Property {
-        path: jails_protocol::identity::ProjectPath::parse(if tests {
-            "src/test/resources/config/application.properties"
-        } else {
-            "src/main/resources/application.properties"
-        })?,
-        key: jails_protocol::identity::PropertyKey::parse(key)?,
-    })
 }
 
 fn main() -> std::process::ExitCode {
@@ -823,6 +756,7 @@ fn main() -> std::process::ExitCode {
             indexes,
             strategy_on,
             strategy_yields,
+            method,
         } => {
             // Built once, outside the closure: a route may be called twice --
             // a plan for a confirmation, then the commit -- and the intent is
@@ -836,6 +770,7 @@ fn main() -> std::process::ExitCode {
                 package,
                 on: strategy_on,
                 yields: strategy_yields,
+                method,
             };
             invoke::mutate(invocation, false, |run| {
                 jails_engine::route::recipe(run, &intent)
@@ -849,7 +784,7 @@ fn main() -> std::process::ExitCode {
                     scope,
                 }),
             ..
-        } => maven_coordinate(&coordinate).and_then(|coordinate| {
+        } => arguments::maven_coordinate(&coordinate).and_then(|coordinate| {
             invoke::mutate(invocation, false, |run| {
                 jails_engine::route::add_dependency(
                     run,
@@ -907,7 +842,7 @@ fn main() -> std::process::ExitCode {
             // decision about bytes the reader may have edited. Retiring a
             // declared resource unsplices exactly what jails spliced and
             // touches nothing else, so there is nothing to authorise.
-            Some(Undeclare::Dependency { coordinate }) => maven_coordinate(&coordinate)
+            Some(Undeclare::Dependency { coordinate }) => arguments::maven_coordinate(&coordinate)
                 .map(jails_protocol::entity::DeclaredId::Dependency)
                 .and_then(|id| {
                     invoke::mutate(invocation, false, |run| {
@@ -920,12 +855,14 @@ fn main() -> std::process::ExitCode {
                 invoke::one_transition_each(run, &asked, jails_engine::route::remove)
             }),
         },
-        Command::Set { setting, tests } => split_setting(&setting).and_then(|(key, value)| {
-            invoke::mutate(invocation, false, |run| {
-                jails_engine::route::set_property(run, key.clone(), value.clone(), tests)
+        Command::Set { setting, tests } => {
+            arguments::split_setting(&setting).and_then(|(key, value)| {
+                invoke::mutate(invocation, false, |run| {
+                    jails_engine::route::set_property(run, key.clone(), value.clone(), tests)
+                })
             })
-        }),
-        Command::Unset { key, tests } => declared_property(&key, tests).and_then(|id| {
+        }
+        Command::Unset { key, tests } => arguments::declared_property(&key, tests).and_then(|id| {
             invoke::mutate(invocation, false, |run| {
                 jails_engine::route::undeclare(run, id.clone())
             })

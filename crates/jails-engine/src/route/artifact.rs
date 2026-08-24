@@ -13,23 +13,25 @@ use super::*;
 /// entity rather than the capability list: `ReconcileScope::DirectEntity` is
 /// "exactly one direct `generate`/`destroy` request", so this route may add or
 /// remove its own claim and says nothing about anybody else's.
-#[allow(clippy::too_many_arguments)]
-pub fn generate(
-    run: &Run,
-    kind: ArtifactKind,
-    name: &str,
-    fields: &[String],
-    package: Option<&str>,
-    indexes: &[String],
-    on: Option<&str>,
-    yields: Option<&str>,
-) -> Result<Outcome> {
+///
+/// What to generate arrives as one [`Recipe`], the value `plan_recipe` takes:
+/// these were eight positional arguments and grew to nine the first time an
+/// endpoint needed a verb, which is the point at which a group of values
+/// computed together and consumed together stops being a list.
+pub fn generate(run: &Run, recipe: &Recipe<'_>, package: Option<&str>) -> Result<Outcome> {
+    let Recipe {
+        kind,
+        name,
+        fields,
+        indexes,
+        strategy_on: on,
+        strategy_yields: yields,
+        method,
+    } = *recipe;
     let project = run.project();
     let change = with_test_support(
         project,
-        jails_generate::generate::plan_recipe(
-            project, kind, name, fields, package, indexes, on, yields,
-        )?,
+        jails_generate::generate::plan_recipe(project, recipe, package)?,
     );
     // A foreign build file changes what gets emitted -- plain JDBC instead of
     // `JdbcClient`, no JSpecify -- and a dependency claim splices into nothing
@@ -41,7 +43,7 @@ pub fn generate(
     let mut desired = desire::contribution(&owner, &change, project)?;
     let entity = DesiredEntity {
         id: EntityId::Intent(id.clone()),
-        spec: EntitySpec::Intent(spec(project, kind, fields, indexes, on, yields)?),
+        spec: EntitySpec::Intent(spec(project, kind, fields, indexes, on, yields, method)?),
         owners: BTreeSet::from([OwnerId::DirectCli]),
     };
     provenance::stamp_files(
@@ -324,13 +326,16 @@ pub fn recipe(run: &Run, intent: &Intent) -> Result<Outcome> {
             );
             generate(
                 run,
-                intent.kind,
-                &name,
-                &fields,
+                &Recipe {
+                    kind: intent.kind,
+                    name: &name,
+                    fields: &fields,
+                    indexes: &intent.indexes,
+                    strategy_on: intent.on.as_deref(),
+                    strategy_yields: intent.yields.as_deref(),
+                    method: intent.method,
+                },
                 package,
-                &intent.indexes,
-                intent.on.as_deref(),
-                intent.yields.as_deref(),
             )
         }
     }

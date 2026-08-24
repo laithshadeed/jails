@@ -1,7 +1,6 @@
 package {{pkg}};
 
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RestController;
+{{imports}}
 
 /**
  * Package-private, and so is every handler on it.
@@ -13,8 +12,8 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 class {{name}}Controller {
 
-    @GetMapping("/{{route}}")
-    String get() {
-        return "{{name}}";
+    @{{mapping}}("/{{route}}")
+    {{returns}} {{handler}}({{parameters}}) {
+        {{body}}
     }
 }

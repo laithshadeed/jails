@@ -111,6 +111,75 @@ impl Capability {
     }
 }
 
+/// The HTTP method a generated endpoint answers.
+///
+/// A `ValueEnum` for the reason every closed vocabulary here is one: it is the
+/// only way `clap_complete` can emit `--method <TAB>`. Five verbs and no
+/// escape hatch -- an arbitrary string would be a value jails passes through
+/// and cannot check, and the two exotic methods a project actually needs are
+/// cheaper to write by hand than a passthrough that produces a controller
+/// annotated with something Spring has no mapping for.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, ValueEnum)]
+pub enum HttpMethod {
+    Get,
+    Post,
+    Put,
+    Patch,
+    Delete,
+}
+
+impl HttpMethod {
+    /// The canonical spelling, which is also the wire form.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Get => "get",
+            Self::Post => "post",
+            Self::Put => "put",
+            Self::Patch => "patch",
+            Self::Delete => "delete",
+        }
+    }
+
+    pub fn parse(text: &str) -> Result<Self, String> {
+        match text {
+            "get" => Ok(Self::Get),
+            "post" => Ok(Self::Post),
+            "put" => Ok(Self::Put),
+            "patch" => Ok(Self::Patch),
+            "delete" => Ok(Self::Delete),
+            other => Err(format!(
+                "unknown HTTP method `{other}`.\n       fix: one of get, post, put, patch, delete"
+            )),
+        }
+    }
+
+    /// Spring's mapping annotation for this method.
+    pub fn mapping(self) -> &'static str {
+        match self {
+            Self::Get => "GetMapping",
+            Self::Post => "PostMapping",
+            Self::Put => "PutMapping",
+            Self::Patch => "PatchMapping",
+            Self::Delete => "DeleteMapping",
+        }
+    }
+
+    /// The method name a stub handler takes.
+    pub fn handler_name(self) -> &'static str {
+        self.label()
+    }
+
+    /// Whether a request of this method conventionally carries a body, and so
+    /// whether `--on <Type>` becomes a `@RequestBody` parameter.
+    ///
+    /// GET and DELETE are excluded because a body on either is not forbidden
+    /// by HTTP but is ignored by most of the stack between the caller and the
+    /// handler -- a parameter that silently never binds is worse than none.
+    pub fn takes_a_body(self) -> bool {
+        matches!(self, Self::Post | Self::Put | Self::Patch)
+    }
+}
+
 /// Every artifact `jails generate` can write.
 ///
 /// A `clap::ValueEnum`, and that must stay true: it is the only way

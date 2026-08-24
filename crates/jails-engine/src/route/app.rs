@@ -51,6 +51,8 @@ pub struct Intent {
     pub package: Option<String>,
     pub on: Option<String>,
     pub yields: Option<String>,
+    /// The HTTP verb, for the one recipe that answers HTTP.
+    pub method: Option<jails_spec::spec::kind::HttpMethod>,
 }
 
 /// Apply a whole manifest in one transition.
@@ -148,13 +150,16 @@ fn declare(
             &planned,
             jails_generate::generate::plan_recipe(
                 &planned,
-                intent.kind,
-                &intent.name,
-                fields,
+                &jails_generate::generate::Recipe {
+                    kind: intent.kind,
+                    name: &intent.name,
+                    fields,
+                    indexes: &intent.indexes,
+                    strategy_on: intent.on.as_deref(),
+                    strategy_yields: intent.yields.as_deref(),
+                    method: intent.method,
+                },
                 intent.package.as_deref(),
-                &intent.indexes,
-                intent.on.as_deref(),
-                intent.yields.as_deref(),
             )?,
         );
         let id = super::intent(
@@ -174,6 +179,7 @@ fn declare(
             &intent.indexes,
             intent.on.as_deref(),
             intent.yields.as_deref(),
+            intent.method,
         )?;
         let owner = ResourceOwner::Entity(EntityId::Intent(id.clone()));
         let mut desired = desire::contribution(&owner, &change, &planned)?;

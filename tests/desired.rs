@@ -351,13 +351,16 @@ fn what_a_plan_desires_is_what_the_command_writes() {
         let planned = Project::load(&v2).unwrap();
         let change = match jails_generate::generate::plan_recipe(
             &planned,
-            kind,
-            step[2],
-            &invocation.fields,
+            &jails_generate::generate::Recipe {
+                kind,
+                name: step[2],
+                fields: &invocation.fields,
+                indexes: &invocation.indexes,
+                strategy_on: invocation.on.as_deref(),
+                strategy_yields: invocation.yields.as_deref(),
+                method: invocation.method,
+            },
             invocation.package.as_deref(),
-            &invocation.indexes,
-            invocation.on.as_deref(),
-            invocation.yields.as_deref(),
         ) {
             Ok(change) => change,
             Err(why) => {

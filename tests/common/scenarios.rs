@@ -190,6 +190,29 @@ pub const SCENARIOS: &[Scenario] = &[
         steps: &[&["g", "controller", "Health"], &["g", "service", "Billing"]],
     },
     Scenario {
+        // The other three quarters of a route: a verb that is not GET, a
+        // request body, and a response type jails cannot sample. `Verification`
+        // is generated first because the controller imports it, and an import
+        // of a type that is not there is exactly the failure this covers.
+        name: "controller-post",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[
+            &["g", "record", "Verification", "success:boolean"],
+            &[
+                "g",
+                "controller",
+                "Verify",
+                "--method",
+                "post",
+                "--on",
+                "Verification",
+                "--returns",
+                "Verification",
+            ],
+        ],
+    },
+    Scenario {
         name: "dto-client-job",
         fixture: Fixture::Spring,
         seed: &[],
@@ -755,6 +778,7 @@ pub struct Invocation {
     pub package: Option<String>,
     pub on: Option<String>,
     pub yields: Option<String>,
+    pub method: Option<jails_spec::spec::kind::HttpMethod>,
     pub timestamps: bool,
 }
 
@@ -772,7 +796,10 @@ pub fn invocation(step: &[&str]) -> Option<Invocation> {
             "--timestamps" => parsed.timestamps = true,
             "--package" => parsed.package = Some((*rest.next()?).to_string()),
             "--on" => parsed.on = Some((*rest.next()?).to_string()),
-            "--yields" => parsed.yields = Some((*rest.next()?).to_string()),
+            "--yields" | "--returns" => parsed.yields = Some((*rest.next()?).to_string()),
+            "--method" => {
+                parsed.method = jails_spec::spec::kind::HttpMethod::parse(rest.next()?).ok()
+            }
             "--index" => parsed.indexes.push((*rest.next()?).to_string()),
             other if other.starts_with('-') => return None,
             other => parsed.fields.push(other.to_string()),

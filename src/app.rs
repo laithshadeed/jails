@@ -58,6 +58,7 @@ struct GenerateIntent {
     package: Option<String>,
     strategy_on: Option<String>,
     strategy_yields: Option<String>,
+    method: Option<jails_spec::spec::kind::HttpMethod>,
 }
 
 impl GenerateIntent {
@@ -94,6 +95,7 @@ impl GenerateIntent {
             package: self.package,
             strategy_on: self.strategy_on,
             strategy_yields: self.strategy_yields,
+            method: self.method,
         })
     }
 }
@@ -108,6 +110,7 @@ struct ResolvedIntent {
     package: Option<String>,
     strategy_on: Option<String>,
     strategy_yields: Option<String>,
+    method: Option<jails_spec::spec::kind::HttpMethod>,
 }
 
 impl ResolvedIntent {
@@ -127,6 +130,7 @@ impl ResolvedIntent {
             package: self.package.clone(),
             on: self.strategy_on.clone(),
             yields: self.strategy_yields.clone(),
+            method: self.method,
         }
     }
 

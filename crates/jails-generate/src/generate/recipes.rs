@@ -56,11 +56,33 @@ pub fn artifacts_for(
         )?,
         ArtifactKind::Controller => {
             let web = place(layout::WEB);
+            // One value, read by the class and by its test. See `web::Endpoint`
+            // for why they must not derive it separately.
+            // Both referenced types are looked for in the domain layer, the
+            // same assumption `transition` and `durable-job` make about
+            // `--on`: `g record` is what writes a response type, and that is
+            // where it puts it. A type kept elsewhere produces a compile error
+            // naming this exact import, which is the failure jails can
+            // describe -- guessing by walking the tree would find the wrong
+            // `Status` in a project that has three.
+            let domain = config.layer(layout::DOMAIN);
+            let domain = crate::generate::subpackage(&base, domain);
+            let extra: String = [strategy_yields, strategy_on]
+                .into_iter()
+                .flatten()
+                .map(|ty| crate::generate::import_of(&web, &domain, ty))
+                .collect();
+            let endpoint = crate::generate::web::Endpoint {
+                method: recipe.http_method(),
+                returns: strategy_yields,
+                accepts: strategy_on,
+                extra,
+            };
             vec![
                 Artifact {
                     kind: "controller",
                     path: main_dir(&root, &web).join(format!("{name}Controller.java")),
-                    contents: stub_controller(&web, name),
+                    contents: stub_controller(&web, name, &endpoint),
                 },
                 Artifact {
                     kind: "controller test",
@@ -69,6 +91,7 @@ pub fn artifacts_for(
                         &web,
                         name,
                         project.mockmvc_autoconfigure_import(),
+                        &endpoint,
                     ),
                 },
             ]
