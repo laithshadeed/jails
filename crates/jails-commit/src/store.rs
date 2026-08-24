@@ -36,6 +36,10 @@ pub const MACHINE_ROOT: &str = ".jails";
 #[derive(Clone, Debug)]
 pub struct Store {
     root: PathBuf,
+    /// The project this store belongs to. Kept beside the machine directory
+    /// because the one classifier reads from the project root and deriving it
+    /// back from `root` would be a second opinion about where `.jails` lives.
+    project: PathBuf,
 }
 
 impl Store {
@@ -52,44 +56,40 @@ impl Store {
     /// one.
     pub fn observe(&self) -> Result<jails_prepare::pipeline::ObservedStore> {
         let path = self.root().join("ledger.toml");
-        let source = match std::fs::read_to_string(&path) {
-            Ok(source) => source,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+        // Which schema this is is `compat::read`'s question, and there is one
+        // answer to it: a second classifier here would be a second opinion
+        // about whether a project needs migrating, and the two would decide
+        // differently the first time either changed. What this adds is the two
+        // things a *commit* needs and a reader does not -- the exact file image
+        // it will guard under the lock, and the legacy sources it will retire.
+        let state = jails_project::compat::read(self.project());
+        let ledger = match &state {
+            jails_project::compat::MachineState::Absent => {
                 return Ok(jails_prepare::pipeline::ObservedStore::default());
             }
-            Err(error) => return Err(format!("failed to read {}: {error}", path.display())),
-        };
-        // Schema 1 is read, not refused. `.jails/ledger.toml` is one path
-        // with two formats -- V1 wrote its own and V2 writes this one -- so a
-        // store reader that only knows schema 2 refuses every project jails
-        // has ever touched. The translation is *in memory*: what reaches disk
-        // is decided by the first V2 commit, which takes the schema-1 bytes as
-        // its guarded before-image.
-        let (ledger, translated) = match jails_protocol::envelope::LedgerV2::parse_file(&source) {
-            Ok(ledger) => (ledger, false),
-            Err(current) => match jails_project::ledger::parse_source(&source) {
-                Ok(schema1) => (jails_project::compat::translate(&schema1), true),
-                // Neither format. The schema-2 message is the one to show:
-                // this binary writes schema 2, and a store it cannot read is
-                // more likely a newer one than an older one.
-                Err(_) => return Err(current),
-            },
+            jails_project::compat::MachineState::Unreadable(why) => return Err(why.clone()),
+            jails_project::compat::MachineState::Current(ledger) => ledger.clone(),
+            jails_project::compat::MachineState::Legacy { translated, .. } => translated.clone(),
         };
         // Observed in the same breath as the ledger, because §R2.5 makes the
         // cleanup of the old sources atomic with the first schema-2 write: two
         // reads could describe two different machine states, and the commit
         // would then guard preimages that were never all true at once.
-        let legacy = match translated {
-            true => Some(legacy_snapshot(self.root())?),
-            false => None,
+        let legacy = match state {
+            jails_project::compat::MachineState::Legacy { .. } => {
+                Some(legacy_snapshot(self.root())?)
+            }
+            _ => None,
         };
+        let source = std::fs::read(&path)
+            .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
         let metadata = std::fs::metadata(&path)
             .map_err(|error| format!("failed to stat {}: {error}", path.display()))?;
         Ok(jails_prepare::pipeline::ObservedStore {
             image: jails_protocol::conflict::FileImage::Present {
                 object: jails_protocol::identity::ObjectRef::new(
                     jails_protocol::identity::ObjectId::from_bytes(jails_support::codec::sha256(
-                        source.as_bytes(),
+                        &source,
                     )),
                     source.len() as u64,
                 ),
@@ -104,7 +104,12 @@ impl Store {
     pub fn at(project_root: &Path) -> Self {
         Self {
             root: project_root.join(MACHINE_ROOT),
+            project: project_root.to_path_buf(),
         }
+    }
+
+    pub fn project(&self) -> &Path {
+        &self.project
     }
 
     pub fn root(&self) -> &Path {

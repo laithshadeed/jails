@@ -24,6 +24,7 @@
 //! last two loses the difference between "migrate this" and "stop".
 
 use crate::ledger::{self, Ledger};
+use jails_protocol::envelope::LedgerV2;
 use jails_protocol::snapshot::{LegacyDirectoryKind, LegacyFileName, LegacySourcePath};
 use jails_support::Result;
 use std::path::{Path, PathBuf};
@@ -34,14 +35,17 @@ pub enum MachineState {
     /// No machine state at all. The ordinary state of a project jails has
     /// never touched.
     Absent,
-    /// The current store, read successfully.
-    Current(Ledger),
-    /// Pre-schema-2 sources that a first schema-2 commit will translate.
+    /// The store this binary writes, read successfully.
+    Current(LedgerV2),
+    /// Pre-schema-2 state that a first schema-2 commit will translate.
     ///
-    /// The translation is *in memory*. `sources` names what a migration will
-    /// have to delete, and deleting them is that commit's business.
+    /// The translation is *in memory*. `sources` names the *other* legacy
+    /// files a migration will have to delete; the schema-1 ledger itself is
+    /// not among them, because the guarded ledger replace consumes it as
+    /// `ledger_before -> ledger_after` and deleting it here would drop the very
+    /// rows being migrated.
     Legacy {
-        translated: Ledger,
+        translated: LedgerV2,
         sources: Vec<PathBuf>,
     },
     /// Present and unreadable. Deliberately distinct from `Absent`: treating
@@ -52,7 +56,7 @@ pub enum MachineState {
 
 impl MachineState {
     /// The store to plan against, or the reason there is none.
-    pub fn ledger(&self) -> Result<&Ledger> {
+    pub fn ledger(&self) -> Result<&LedgerV2> {
         match self {
             Self::Current(ledger)
             | Self::Legacy {
@@ -81,7 +85,7 @@ impl MachineState {
             Self::Absent => "no jails state".to_string(),
             Self::Current(_) => "current".to_string(),
             Self::Legacy { sources, .. } => format!(
-                "{} legacy source{} to migrate",
+                "schema 1, with {} other legacy source{} to migrate",
                 sources.len(),
                 if sources.len() == 1 { "" } else { "s" }
             ),
@@ -97,22 +101,39 @@ impl MachineState {
 #[must_use = "reading machine state is only useful for what it says"]
 pub fn read(root: &Path) -> MachineState {
     let machine = root.join(".jails");
-    match ledger::load(root) {
-        Ok(ledger) if ledger.is_empty() && !machine.exists() => MachineState::Absent,
-        Ok(ledger) => {
-            let sources = legacy_sources(&machine);
-            if sources.is_empty() {
-                MachineState::Current(ledger)
-            } else {
-                MachineState::Legacy {
-                    translated: ledger,
-                    sources,
-                }
-            }
+    let source = match std::fs::read_to_string(machine.join("ledger.toml")) {
+        Ok(source) => source,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return match machine.exists() {
+                // Machine state without a store: a project mid-migration, or
+                // one whose ledger was removed by hand. Either way the legacy
+                // sources are what there is to say.
+                true => MachineState::Legacy {
+                    translated: translate(&Ledger::empty()),
+                    sources: legacy_sources(&machine),
+                },
+                false => MachineState::Absent,
+            };
         }
         // Fail closed. An unreadable store is not an empty one, and the
         // difference is a project's whole contents.
-        Err(why) => MachineState::Unreadable(why),
+        Err(error) => return MachineState::Unreadable(error.to_string()),
+    };
+    // Schema 2 first: it is what this binary writes, and asking the older
+    // parser first would answer "use a newer jails" about a store this very
+    // binary produced.
+    match LedgerV2::parse_file(&source) {
+        Ok(ledger) => MachineState::Current(ledger),
+        Err(current) => match ledger::parse_source(&source) {
+            Ok(schema1) => MachineState::Legacy {
+                translated: translate(&schema1),
+                sources: legacy_sources(&machine),
+            },
+            // Neither format. The schema-2 message is the one to show: this
+            // binary writes schema 2, and a store it cannot read is more
+            // likely a newer one than an older one.
+            Err(_) => MachineState::Unreadable(current),
+        },
     }
 }
 
@@ -390,6 +411,46 @@ mod tests {
 
     /// Treating an unreadable store as an empty one is the fail-open bug §3.1
     /// fixed; it would silently offer to regenerate a project's contents.
+    /// The answer this facade got wrong for as long as nothing asked it: a
+    /// store *this binary writes* was reported as "use a newer jails",
+    /// because the schema-1 parser was asked first and refuses anything with a
+    /// `schema` key.
+    #[test]
+    fn a_store_this_binary_writes_reads_as_current() {
+        let dir = jails_support::scratch::ScratchDir::in_temp("jails-compat-current")
+            .unwrap()
+            .keep();
+        let machine = dir.join(".jails");
+        crate::apply::ensure_directory(&machine).unwrap();
+        let ledger = jails_protocol::envelope::LedgerV2 {
+            generation: 1,
+            ..Default::default()
+        };
+        crate::apply::put(machine.join("ledger.toml"), ledger.render().unwrap()).unwrap();
+
+        match read(&dir) {
+            MachineState::Current(read_back) => assert_eq!(read_back.generation, 1),
+            other => panic!("expected the current store, got {}", other.describe()),
+        }
+    }
+
+    /// And a schema-1 store is still `Legacy` even when it is the only source
+    /// left, because the ledger itself is what a migration replaces.
+    #[test]
+    fn a_schema_one_store_alone_is_still_a_migration() {
+        let dir = jails_support::scratch::ScratchDir::in_temp("jails-compat-schema1")
+            .unwrap()
+            .keep();
+        let machine = dir.join(".jails");
+        crate::apply::ensure_directory(&machine).unwrap();
+        crate::apply::put(machine.join("ledger.toml"), "version = \"0.1.0\"\n").unwrap();
+
+        match read(&dir) {
+            MachineState::Legacy { sources, .. } => assert!(sources.is_empty(), "{sources:?}"),
+            other => panic!("expected a migration, got {}", other.describe()),
+        }
+    }
+
     #[test]
     fn an_unreadable_store_is_not_an_empty_one() {
         let scratch = project();
