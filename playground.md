@@ -55,16 +55,52 @@ The following distinction matters:
 
 ### Problem summary
 
-| ID | Severity | Classification | Affected | Short version |
-|---|---|---|---|---|
-| P1 | Blocker | Confirmed Jails defect | All Spring apps | Generated `SecurityConfigTest` needs a Boot 4 test dependency that the generated POM omits |
-| P2 | High | Confirmed `doctor` failure; runtime effect unverified | All Spring apps | Many broad Spring tests are reported without Kafka Testcontainers wiring, and the suggested fix names the wrong capability |
-| P3 | Medium | Confirmed Jails diagnostic defect | All Spring apps | `doctor` mistakes a generated CORS comment for a required property |
-| P4 | Blocker for this run | Environment limitation | All Spring apps | The sandbox cannot operate the Podman/Docker runtime, so integration evidence is unavailable |
-| P5 | Medium | Jails portability/UX defect exposed by environment | Ledger apply | Jails selects unusable `mvnd` and provides no explicit Maven override or fallback |
-| P6 | Blocker | Confirmed Jails packaging defect | Ledger CLI | The jar and `jails run` start `App`, not the generated `LedgerCli` dispatcher |
-| P7 | Blocker for production semantics | Intentional scaffolding gap | All four | Generated strategies/listeners do not implement the application-specific reaction |
-| P8 | Low | Warnings/workflow | Ledger and this exercise | Future-JDK warnings and one incorrect relative copy path |
+| ID | Severity | Classification | Affected | Short version | Status |
+|---|---|---|---|---|---|
+| P1 | Blocker | Confirmed Jails defect | All Spring apps | Generated `SecurityConfigTest` needs a Boot 4 test dependency that the generated POM omits | **fixed** |
+| P2 | High | Confirmed `doctor` failure; runtime effect unverified | All Spring apps | Many broad Spring tests are reported without Kafka Testcontainers wiring, and the suggested fix names the wrong capability | **fixed** |
+| P3 | Medium | Confirmed Jails diagnostic defect | All Spring apps | `doctor` mistakes a generated CORS comment for a required property | **fixed** |
+| P4 | Blocker for this run | Environment limitation | All Spring apps | The sandbox cannot operate the Podman/Docker runtime, so integration evidence is unavailable | open — not a jails defect |
+| P5 | Medium | Jails portability/UX defect exposed by environment | Ledger apply | Jails selects unusable `mvnd` and provides no explicit Maven override or fallback | **fixed** |
+| P6 | Blocker | Confirmed Jails packaging defect | Ledger CLI | The jar and `jails run` start `App`, not the generated `LedgerCli` dispatcher | **fixed** |
+| P7 | Blocker for production semantics | Intentional scaffolding gap | All four | Generated strategies/listeners do not implement the application-specific reaction | open — by design |
+| P8 | Low | Warnings/workflow | Ledger and this exercise | Future-JDK warnings and one incorrect relative copy path | open — upstream |
+
+### What was fixed, and how each is held
+
+Every fix carries a test that fails without it. Re-running the exercise is
+still required for the numbers in the tables above; those were measured before
+these changes and are not restated as current.
+
+- **P1** — `spring-boot-starter-webmvc-test` is spliced from the write path,
+  keyed off the emitted bytes, for the same reason AssertJ and Failsafe are.
+  `@WebMvcTest`'s import is version-sniffed, so a Boot 3 project gets the
+  package it has and no dependency it does not need. The reason no test caught
+  this was worse than the defect: the Spring test fixture declared the module
+  and `jails new` does not, so every real-toolchain test compiled against a POM
+  the tool never produces. The fixture matches `new` now, and the services
+  toolbox — `add security` followed by real `mvn test` — is the gate.
+- **P2** — the `test datasource` check discriminates on the container's *type*.
+  The invariant it exists for is specific to JDBC: once
+  `spring-boot-starter-jdbc` is present, auto-configuration demands a
+  `DataSource` for every `@SpringBootTest`, including ones that never touch a
+  database. A broker has no equivalent demand. Three copies of "walk
+  `src/test/java` for annotated classes" existed, two of them matching raw
+  bytes — which is also why the scan read the `@SpringBootTest` in
+  `TestcontainersConfig`'s own Javadoc as a declaration. There is one reader.
+- **P3** — a capability's property block is prose *and* settings, and only the
+  settings are keys.
+- **P5** — `JAILS_MAVEN` names the Maven command and overrides every rule.
+  Jails also declines to pick `mvnd` when its registry directory is not
+  writable, because that failure happens *before* Maven runs and is
+  indistinguishable from a failing build at the call site — a blind retry there
+  would re-run a genuinely broken build. `jails doctor` reports which one it
+  chose.
+- **P6** — `jails run` resolves the POM's `<mainClass>`, so it and `java -jar`
+  agree by construction. `generate cli` moves that entry point onto the new
+  dispatcher, but only off a stub jails wrote that has no command registered in
+  it: once `App` dispatches something, it is the project's real CLI and moving
+  the jar out from under it would break what the reader built.
 
 ## Commands run
 
@@ -199,7 +235,9 @@ rg -n --glob '!target/**' --glob '!*.http' 'TODO|@Disabled|UnsupportedOperationE
 
 ### P1 — generated Spring tests do not compile
 
-**Classification:** confirmed Jails defect and release blocker.
+**Classification:** confirmed Jails defect and release blocker. **Fixed.** The
+dependency is spliced from the write path and the Spring test fixture no
+longer supplies it for jails; see the fix summary above.
 
 **Affected:** payments gateway, Intercom-style inbox, and web crawler.
 
@@ -247,6 +285,8 @@ adds security, and runs `mvn clean test`.
 
 **Classification:** confirmed `doctor` failure; the eventual runtime failure
 is not verified because P1 stops test compilation and P4 prevents containers.
+**Fixed.** The check discriminates on the container type, so a broker config
+is not read as the project's datasource config.
 
 **Affected:** all three Spring projects.
 
@@ -282,7 +322,8 @@ make `doctor` green.
 ### P3 — CORS capability is present but `doctor` says it is missing
 
 **Classification:** confirmed Jails diagnostic false-positive, not an observed
-runtime CORS failure.
+runtime CORS failure. **Fixed.** Comment lines in a capability's property
+block are prose, not required keys.
 
 **Affected:** all three Spring projects.
 
@@ -345,7 +386,8 @@ the database and broker behavior is **unverified**, not passing or failing.
 ### P5 — Jails chooses an unusable `mvnd` and does not fall back
 
 **Classification:** Jails portability/UX defect exposed by the sandbox's
-read-only home directory.
+read-only home directory. **Fixed.** `JAILS_MAVEN` overrides the choice, and
+mvnd is not selected when its registry directory is unwritable.
 
 **Affected:** ledger manifest application while reconciling the `format`
 capability. The same selection could affect any Maven-backed Jails command.
@@ -375,7 +417,9 @@ initialisation fails.
 
 ### P6 — the intended ledger command is not the executable entry point
 
-**Classification:** confirmed Jails packaging/run-selection defect.
+**Classification:** confirmed Jails packaging/run-selection defect. **Fixed.**
+`jails run` reads the POM's `<mainClass>`, and `generate cli` moves it onto
+the new dispatcher when the old one is an unused stub.
 
 **Expected:** the manifest's generated `LedgerCli` dispatcher, containing the
 generated `reconcile` command, should be what `java -jar` and `jails run`
@@ -473,9 +517,14 @@ systems package their production sources, but their generated test suites do
 not compile, and this environment cannot run the container-backed acceptance
 layer.
 
-The next highest-value Jails fixes are: add the Boot 4 WebMVC test dependency,
-correct test-datasource/CORS doctor reconciliation, make Maven selection
-overrideable/fallback-safe, and let a generated CLI become the packaged
-default. After those, rerun `doctor`, `migrate --check`, `jails check`, image
-builds, and real startup/API smoke tests before calling any Spring application
-production-ready.
+The five confirmed defects — P1, P2, P3, P5 and P6 — are fixed, each with a
+test that fails without the fix. What that does **not** establish is a passing
+production gate: the tables above were measured before those changes, this
+environment still cannot operate a container runtime (P4), and the generated
+strategies and listeners still contain the application-specific decisions
+nobody has written (P7).
+
+The next step is to rerun the whole exercise on a host with a responding
+Docker-compatible daemon: `jails check`, `jails migrate --check`, the generated
+image build, and real startup/API smoke tests. Until that run exists, this
+document records fixes to named defects and not a production verdict.
