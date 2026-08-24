@@ -1147,22 +1147,20 @@ fn a_field_evolves_the_record_and_migrates_the_table_for_it() {
     );
 }
 
-/// A derivative the reader edited and the generator also changed refuses the
-/// whole transition, and leaves the tree exactly as it was.
+/// A derivative the reader edited and the generator also changed is merged.
 ///
-/// §R5.3 calls this case a three-way `Merge`, and §R5.4 defines the committed
-/// conflict protocol that resolves one -- markers in the tree and a pending
-/// conflict in the ledger. Neither is wired to this route, so the honest
-/// answer is a refusal that names them.
+/// §R5.3's fifth answer, and the one that needs to look at the text rather
+/// than at three hashes. This is the ordinary case, not an exotic one: the
+/// reader adds a comment to a generated test, the generator adds a component,
+/// and the two do not touch the same lines. Both survive.
 ///
-/// The half worth asserting is the *second* one. V1 applies what it can and
-/// prints "skipped -- you have edited this file" for the rest, which leaves a
-/// record carrying a component its repository adapter does not persist. A
-/// transaction that refuses leaves nothing half-evolved, which is the whole
-/// premise of the protocol.
+/// The recorded base is what makes it possible. Without the bytes jails wrote
+/// there is nothing to measure the two divergent sides from, and the honest
+/// answer was to refuse -- which meant `g field` was unusable on any project
+/// where anybody had ever touched a derivative.
 #[test]
-fn a_field_that_would_merge_over_an_edit_refuses_and_changes_nothing() {
-    let root = common::temp_dir("engine-field-edited");
+fn a_field_merges_an_edit_the_generator_also_touched() {
+    let root = common::temp_dir("engine-field-merged");
     std::fs::create_dir_all(&root).unwrap();
     common::write_spring_fixture(&root);
 
@@ -1178,36 +1176,58 @@ fn a_field_that_would_merge_over_an_edit_refuses_and_changes_nothing() {
     )
     .unwrap();
 
+    // The reader adds something of their own, far from anything the next
+    // render touches.
     let test = root.join("src/test/java/com/example/demo/domain/NoteTest.java");
     let mine = format!(
-        "{}\n// a note I wrote by hand\n",
+        "// a note I wrote by hand\n{}",
         std::fs::read_to_string(&test).unwrap()
     );
     jails_support::apply::put(&test, &mine).unwrap();
-    let record = root.join("src/main/java/com/example/demo/domain/Note.java");
-    let before = std::fs::read_to_string(&record).unwrap();
 
-    let error = jails_engine::route::field(
+    jails_engine::route::field(
         &Project::load(&root).unwrap(),
         "Note",
         "archivedAt:instant?",
         None,
     )
-    .unwrap_err();
+    .unwrap();
 
+    let after = std::fs::read_to_string(&test).unwrap();
     assert!(
-        error.contains("§R5.4"),
-        "the refusal names the protocol that resolves it: {error}"
+        after.contains("// a note I wrote by hand"),
+        "the reader's line survived:\n{after}"
     );
-    assert_eq!(
-        std::fs::read_to_string(&test).unwrap(),
-        mine,
-        "the reader's bytes are still theirs"
+    // The generator's change to *this* file is the new component in the
+    // constructor call -- a nullable component reaches the test as
+    // `Optional.empty()` rather than by name.
+    assert!(
+        after.contains("new Note(null, \"sample\", Optional.empty())"),
+        "and so did the generator's change:\n{after}"
     );
-    assert_eq!(
-        std::fs::read_to_string(&record).unwrap(),
-        before,
-        "and nothing else was half-applied either"
+    assert!(
+        std::fs::read_to_string(root.join("src/main/java/com/example/demo/domain/Note.java"))
+            .unwrap()
+            .contains("archivedAt"),
+        "the record itself carries the new component"
+    );
+
+    // The recorded *base* is what the generator wrote, not the merged bytes.
+    // §R5.4: that is what keeps the reader's edit a delta from the newest
+    // render rather than becoming the baseline the next change merges against.
+    let store = jails_commit::store::Store::at(&root)
+        .observe()
+        .unwrap()
+        .ledger
+        .unwrap();
+    let row = store
+        .outputs
+        .iter()
+        .find(|row| row.path.as_str().ends_with("NoteTest.java"))
+        .expect("the companion test is a recorded output");
+    assert_ne!(
+        row.base.object.id, row.current.sha256,
+        "base and current are the same, so the reader's edit was adopted as jails' own output"
     );
 }
 

@@ -726,6 +726,7 @@ const LAYERS: &[(&str, usize)] = &[
     ("pipeline", 5),
     ("prepare", 5),
     ("receipt", 5),
+    ("merge", 5),
     ("reconcile", 5),
     ("report", 5),
     ("sandbox", 5),
@@ -805,6 +806,11 @@ const SUBPROCESS_CLASSIFICATION: &[(&str, &str)] = &[
     // executor and commits its exact output; it is not a renderer and not an
     // effect. `app::reconcile` is the module that does it today.
     ("app", "transaction input"),
+    // A three-way merge is transaction preparation, not a renderer and not an
+    // effect: it runs `git merge-file` over three scratch inputs to compute
+    // bytes the commit then guards like any other. §R5.2 says so explicitly --
+    // git appears in the preparation fingerprint and never in a renderer stamp.
+    ("merge", "transaction input"),
     // The executor's own runner and tool resolver.
     ("process", "the one executor"),
     ("runner", "the one executor"),

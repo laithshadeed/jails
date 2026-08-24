@@ -105,6 +105,24 @@ pub struct PreparationContext {
     pub operation_context: OperationContextFingerprint,
     /// The tools preparation actually ran, with their exact arguments.
     pub preparation: PreparationContextFingerprint,
+    /// The exact bytes of an object the store already holds, by id.
+    ///
+    /// A closure rather than a path, because reading the object store is
+    /// `jails-commit`'s job and that crate is *above* this one. What
+    /// preparation needs is narrower than a store anyway: given a recorded
+    /// base, the bytes jails wrote -- which is what a three-way merge measures
+    /// the two divergent sides from. Default is "nothing is retrievable",
+    /// which makes a merge refuse rather than silently measure from the wrong
+    /// place.
+    pub objects: ObjectReader,
+}
+
+/// Reads one object out of whatever holds them.
+pub type ObjectReader = std::sync::Arc<dyn Fn(&ObjectId) -> Option<Vec<u8>> + Send + Sync>;
+
+/// An object store with nothing in it.
+pub fn no_objects() -> ObjectReader {
+    std::sync::Arc::new(|_| None)
 }
 
 /// The prepared change plus the runtime-only bindings a commit needs.
@@ -187,7 +205,14 @@ fn apply(
         objects,
         outputs,
         retired,
-    } = diff::diff(&base, &projection, &rendered, &prior, &previously_owned)?;
+    } = diff::diff(
+        &base,
+        &projection,
+        &rendered,
+        &prior,
+        &previously_owned,
+        &context.objects,
+    )?;
 
     // Step 9. Parents for creates only, stopping at the machine root.
     let directories = parents(&base, &operations)?;
@@ -684,6 +709,8 @@ mod tests {
             // what lets `applying_against_a_moved_store_is_refused` state its
             // property without building a whole ledger file.
             observed_store: ObservedStore::default(),
+            // No recorded base means no merge, which is what these tests want.
+            objects: no_objects(),
             operation_context: OperationContextFingerprint::default(),
             preparation: PreparationContextFingerprint::default(),
         }

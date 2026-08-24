@@ -10,6 +10,7 @@
 
 pub mod command;
 pub mod desire;
+pub mod merge;
 pub mod migration;
 pub mod operation;
 pub mod pipeline;

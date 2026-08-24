@@ -5247,7 +5247,7 @@ command uses it", and dispatch is still V1 for every command.
 |---|---|---|
 | 1. Land the executor dark | done | `jails-engine` is a library crate precisely so nothing in `main.rs` calls it; the workspace `dead_code` denial makes dark code in the binary impossible rather than merely discouraged. |
 | 2. Capability `add`/`remove`/`sync` on V2 | done | `route::{install,remove,sync}`; `tests/desired.rs` compares 21 capabilities against V1 on dependencies, effective property values and file bytes; `tests/engine.rs` sweeps 21 failpoints through a real install. `sync` is one transition, not a loop. |
-| 3. Persistent `generate`, then the one-shots | done | `generate::plan_recipe` separates planning from writing and `route::generate` commits it; 22 scenarios match V1 byte-for-byte. `route::destroy` retires an entity from the recorded exact state, and `every_persistent_kind_destroys_back_to_where_it_started` round-trips 22 of the 25 scenarios to a byte-identical project. `route::migration` allocates from a declared directory listing §R4.3 step 2 now genuinely rechecks; `route::cases` records a source-hash receipt and reconciles a same-source re-run; `route::field` re-desires the target at its new spec and lets §R5.3 decide each derivative, with the migration owned by the field so removing the target cannot delete it. What is *not* done is §R5.4: a derivative both sides changed refuses, naming the committed conflict protocol, rather than merging. |
+| 3. Persistent `generate`, then the one-shots | done | `generate::plan_recipe` separates planning from writing and `route::generate` commits it; 22 scenarios match V1 byte-for-byte. `route::destroy` retires an entity from the recorded exact state, and `every_persistent_kind_destroys_back_to_where_it_started` round-trips 22 of the 25 scenarios to a byte-identical project. `route::migration` allocates from a declared directory listing §R4.3 step 2 now genuinely rechecks; `route::cases` records a source-hash receipt and reconciles a same-source re-run; `route::field` re-desires the target at its new spec and lets §R5.3 decide each derivative, with the migration owned by the field so removing the target cannot delete it. A derivative both sides changed is three-way merged; only a genuine overlap refuses, and it names §R5.4's pending protocol as the half that is missing. |
 | 4. `app init/plan/apply/reconcile` as one aggregate | not started | — |
 | 5. Maintenance mutations | not started | — |
 | 6. New-project bootstrap through publish | done | §R6.5; `new`/`new-cli` build in a scratch sibling under `<parent>/.jails-new.lock` and become real in one rename, `--app` included. |
@@ -5259,16 +5259,21 @@ command uses it", and dispatch is still V1 for every command.
 One gap is open, and it is named where it bites rather than left to be
 discovered:
 
-- **§R5.4's committed conflict protocol is not wired to these routes.**
-  §R5.3's decision table is complete and unit-tested, and four of its five
-  answers are acted on: create, replace, keep the reader's bytes, advance the
-  base. The fifth — both sides moved, differently — is a three-way merge whose
-  result is markers in the tree plus a `PendingConflict` in the ledger, and
-  none of that is reachable from a route. It refuses instead, naming the
-  section. That refusal is stricter than V1, which applies what it can and
-  prints "skipped -- you have edited this file"; the transaction leaves nothing
-  half-evolved, which is the premise, but a reader who added a comment to a
-  generated test currently cannot run `g field` at all.
+- **§R5.4's *committed conflict* half is not wired to these routes.** The merge
+  itself is: §R5.3's fifth answer runs `git merge-file` through R3's bounded
+  executor with §R5.4's exact arguments, and a clean merge commits the merged
+  bytes while the recorded base advances to the generator's output rather than
+  to the merge -- which is what keeps a reader's edit a delta from the newest
+  render. That is the case that matters in practice, and without it `g field`
+  refused on any project where anybody had ever touched a derivative.
+
+  What is missing is the other outcome. Genuinely overlapping edits produce
+  marker bytes, and §R5.4 commits those with a frozen `PendingConflict` that
+  the next invocation of the same command continues or aborts. The bytes are
+  produced and validated against the stored grammar; what does not exist is the
+  pending state, the ledger-first refusal while it stands, and the
+  continue/abort routes. It refuses instead, naming the hunk count and the
+  section.
 
 The two schema gaps this section used to name are closed:
 

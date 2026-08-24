@@ -564,6 +564,17 @@ fn commit_set(
         observed_store: observed,
         operation_context: Default::default(),
         preparation: Default::default(),
+        // The durable object store, as the one question preparation asks of
+        // it: given a recorded base, the bytes jails wrote. A three-way merge
+        // measures the reader's edit and the generator's change from exactly
+        // those, and there is nowhere else to get them -- the file on disk is
+        // one of the two sides, not the origin.
+        objects: {
+            let at = jails_commit::store::Store::at(project.root()).objects();
+            std::sync::Arc::new(move |id: &jails_protocol::identity::ObjectId| {
+                jails_commit::store::read_object(&at, id).ok()
+            })
+        },
     };
     let bundle = pipeline::prepare(
         &loaded,

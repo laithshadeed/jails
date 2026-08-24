@@ -30,6 +30,7 @@ pub(super) fn diff(
     rendered: &BTreeMap<ProjectPath, Vec<u8>>,
     prior: &BTreeMap<ProjectPath, crate::reconcile::PriorOutput>,
     previously_owned: &BTreeSet<ProjectPath>,
+    read_object: &super::ObjectReader,
 ) -> Result<Diffed> {
     let mut operations = Vec::new();
     let mut objects: BTreeMap<ObjectId, Arc<[u8]>> = BTreeMap::new();
@@ -79,7 +80,7 @@ pub(super) fn diff(
                 })
             }
             (Captured::Present(file), Some((body, mode))) => {
-                let object = intern(&mut objects, body);
+                let object = intern(&mut objects, body.clone());
                 let live = ObjectRef::new(file.sha256, file.len);
                 // Equal bytes *and* mode emit no operation. A file with the
                 // right bytes and the wrong mode is not the file that was
@@ -132,14 +133,63 @@ pub(super) fn diff(
                             record_output(&mut outputs, path, after, mode);
                             continue;
                         }
-                        crate::reconcile::Decision::Merge { .. } => {
-                            return Err(format!(
-                                "`{path}` was edited after jails wrote it and the generator has \
-                                 also changed it.\n       fix: the three-way merge and its \
-                                 committed conflict protocol are plan.md §R5.4, which is not \
-                                 wired to this route yet. Save your version elsewhere, destroy \
-                                 and regenerate."
-                            ));
+                        // Both sides moved. §R5.3's fifth answer, and the
+                        // only one that has to look at the text.
+                        crate::reconcile::Decision::Merge { mode, .. } => {
+                            let base_id = recorded.expect("a merge has a recorded base").base.id;
+                            let base_bytes = objects
+                                .get(&base_id)
+                                .map(|bytes| bytes.to_vec())
+                                .or_else(|| read_object(&base_id))
+                                .ok_or_else(|| {
+                                    format!(
+                                        "`{path}` has a recorded base whose bytes the object \
+                                         store does not hold, so a merge has nothing to measure \
+                                         the two sides from.\n       fix: move your version \
+                                         aside, or destroy and regenerate."
+                                    )
+                                })?;
+                            match crate::merge::three_way(path, &base_bytes, &file.bytes, &body)? {
+                                crate::merge::Merged::Clean(merged) => {
+                                    // The merged bytes go on disk; the *base*
+                                    // still advances to what the generator
+                                    // wrote, so the reader's edit stays a
+                                    // delta from the newest render rather than
+                                    // becoming the baseline.
+                                    let after = intern(&mut objects, merged);
+                                    outputs.insert(
+                                        path.clone(),
+                                        (
+                                            StoredFileImage { object, mode },
+                                            LiveFileImage {
+                                                sha256: after.id,
+                                                len: after.len,
+                                                mode,
+                                            },
+                                        ),
+                                    );
+                                    operations.push(FileOp::Replace {
+                                        path: OperationTarget::Project(path.clone()),
+                                        before: GuardedImage {
+                                            object: live,
+                                            mode: file.mode,
+                                        },
+                                        after,
+                                        mode,
+                                        contributors,
+                                    });
+                                    continue;
+                                }
+                                crate::merge::Merged::Conflicted { hunks } => {
+                                    return Err(format!(
+                                        "`{path}` has {hunks} place(s) where your edit and the \
+                                         generator's change overlap.\n       fix: committing \
+                                         marker bytes with a resumable pending conflict is \
+                                         plan.md §R5.4, which is not wired to this route yet. \
+                                         Move your version aside, or destroy and regenerate."
+                                    ));
+                                }
+                            }
                         }
                         crate::reconcile::Decision::Create { .. }
                         | crate::reconcile::Decision::Replace { .. }
