@@ -12,8 +12,17 @@
 # A checkout with local changes or a detached HEAD is skipped, never reset.
 set -uo pipefail
 
+# The manifest sits beside this script at the repository root; the checkouts
+# do not -- they live in `deps/`, which is gitignored. Those were one
+# directory for as long as `deps/deps.tsv` and `deps/update.sh` existed, and
+# when they moved up here the clone target came with them: one run cloned all
+# 81 repositories into the repository *root*, where `.gitignore`'s `/deps/`
+# does not match them and `git add -A` files each one as a gitlink. So the two
+# paths are now named separately, and neither is "wherever this script is".
 cd "$(dirname "$(readlink -f "$0")")" || exit 1
 MANIFEST=deps.tsv
+CHECKOUTS=deps
+mkdir -p "$CHECKOUTS" || exit 1
 REMOTE_PREFIX=${JAILS_DEPS_REMOTE:-github-personal:}
 JOBS=4
 LIST=0
@@ -59,7 +68,7 @@ fi
 if ((LIST)); then
   printf '%-38s %-42s %s\n' DIR REPO STATE
   for i in "${!DIRS[@]}"; do
-    d=${DIRS[i]}
+    d=${CHECKOUTS}/${DIRS[i]}
     if [[ -d $d/.git ]]; then
       state="$(git -C "$d" rev-parse --abbrev-ref HEAD 2>/dev/null) @ $(git -C "$d" log -1 --format=%cs 2>/dev/null)"
       [[ -n $(git -C "$d" status --porcelain 2>/dev/null) ]] && state+=" (dirty)"
@@ -68,7 +77,7 @@ if ((LIST)); then
     else
       state="missing"
     fi
-    printf '%-38s %-42s %s\n' "$d" "${REPOS[i]}" "$state"
+    printf '%-38s %-42s %s\n' "${DIRS[i]}" "${REPOS[i]}" "$state"
   done
   exit 0
 fi
@@ -85,7 +94,10 @@ err_line() {
 # Prints "STATUS<TAB>dir<TAB>detail". Runs under xargs, so it must be a
 # standalone invocation of this script.
 one() {
-  local dir=$1 repo=$2
+  local name=$1 repo=$2
+  # The checkout's path, never a bare name: every `git` call below would
+  # otherwise act on `$PWD/<name>`, which is the repository root.
+  local dir="${CHECKOUTS}/${name}"
   # Separate statement on purpose: bash declares every name in a `local` before
   # running its assignments, so a `url=...${repo}...` sharing the line above
   # would expand $repo as the blanked local and ask GitHub to clone "".
@@ -97,37 +109,37 @@ one() {
     local attempt out
     for attempt in 1 2 3; do
       if out=$(git clone --quiet --filter=blob:none "$url" "$dir" 2>&1); then
-        printf 'CLONED\t%s\t%s\n' "$dir" "$repo"; return
+        printf 'CLONED\t%s\t%s\n' "$name" "$repo"; return
       fi
       rm -rf "$dir"
       sleep $((attempt * 5))
     done
-    printf 'FAILED\t%s\t%s\n' "$dir" "clone: $(err_line "$out")"
+    printf 'FAILED\t%s\t%s\n' "$name" "clone: $(err_line "$out")"
     return
   fi
 
-  [[ -d $dir/.git ]] || { printf 'SKIP\t%s\tnot a git repo\n' "$dir"; return; }
-  ((CLONE_ONLY)) && { printf 'SKIP\t%s\talready present\n' "$dir"; return; }
+  [[ -d $dir/.git ]] || { printf 'SKIP\t%s\tnot a git repo\n' "$name"; return; }
+  ((CLONE_ONLY)) && { printf 'SKIP\t%s\talready present\n' "$name"; return; }
 
   local branch
   branch=$(git -C "$dir" symbolic-ref --quiet --short HEAD) \
-    || { printf 'SKIP\t%s\tdetached HEAD\n' "$dir"; return; }
+    || { printf 'SKIP\t%s\tdetached HEAD\n' "$name"; return; }
   [[ -n $(git -C "$dir" status --porcelain) ]] \
-    && { printf 'SKIP\t%s\tlocal changes\n' "$dir"; return; }
+    && { printf 'SKIP\t%s\tlocal changes\n' "$name"; return; }
 
   local before after out
   before=$(git -C "$dir" rev-parse HEAD)
   if ! out=$(git -C "$dir" fetch --quiet --prune origin 2>&1); then
-    printf 'FAILED\t%s\t%s\n' "$dir" "fetch: $(err_line "$out")"; return
+    printf 'FAILED\t%s\t%s\n' "$name" "fetch: $(err_line "$out")"; return
   fi
   if ! out=$(git -C "$dir" merge --ff-only --quiet "@{upstream}" 2>&1); then
-    printf 'SKIP\t%s\t%s\n' "$dir" "not fast-forwardable ($branch)"; return
+    printf 'SKIP\t%s\t%s\n' "$name" "not fast-forwardable ($branch)"; return
   fi
   after=$(git -C "$dir" rev-parse HEAD)
   if [[ $before == "$after" ]]; then
-    printf 'CURRENT\t%s\t%s\n' "$dir" "$branch"
+    printf 'CURRENT\t%s\t%s\n' "$name" "$branch"
   else
-    printf 'UPDATED\t%s\t%s\n' "$dir" \
+    printf 'UPDATED\t%s\t%s\n' "$name" \
       "$branch +$(git -C "$dir" rev-list --count "$before..$after")"
   fi
 }
