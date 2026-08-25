@@ -25,13 +25,21 @@ available.
 This file describes what the code *is* and the traps in it; `pending.md`
 describes what is not done and why. Do not add proposals here.
 
-`plan.md`, `abstract.md` and `playground.md` were deleted. Roughly 237
-comments across the code still cite them by section number -- `plan.md §R6`,
-`abstract.md §3.2`, and so on. Those citations are still the best record of
-*why* a decision was made and are worth reading; they resolve through git:
+**Six design documents were deleted and folded into `pending.md`:** `plan.md`,
+`abstract.md`, `playground.md`, and -- on 2026-08-24 and 2026-08-25 --
+`missing.md` (what one real migration needed and did not get, all eight entries
+now closed), `refactor.md` (the 26-item structural audit) and `test.md` (the
+test-suite performance investigation). Roughly 208 comments across the code
+still cite them by section number -- `plan.md §R6`, `abstract.md §3.2`,
+`missing.md §3` -- and those citations are still the best record of *why* a
+decision was made. They resolve through git:
 `git log --diff-filter=D -- plan.md` finds the commit that removed the file,
-and `git show <commit>^:plan.md` prints it. `pending.md` carries forward only
-what is still outstanding.
+and `git show <commit>^:plan.md` prints it.
+
+**One exception:** the `refactor.md` on disk when it was folded in had been
+recreated untracked, so `git show` reaches an *older* tracked version rather
+than that one. `pending.md`'s header says so. `pending.md` carries forward only
+what is still outstanding, re-measured rather than transcribed.
 
 ## Workspace
 
@@ -180,7 +188,8 @@ Four things to know before touching it:
 - **The layer list has one owner: `config::LAYERS_IN_ORDER`.** It carries each
   layer's package name *and* the heading `stats` prints, and the validation
   list is derived from it rather than written out again. `inspect.rs` used to
-  keep its own copy, which is exactly the drift refactor.md §6 predicts: it
+  keep its own copy, which is exactly the drift `refactor.md` §6 predicted --
+  see `pending.md`'s header for how that citation resolves. It
   reported against jails' *default* package names, so a project with
   `adapters = "persistence"` had its adapters counted as "Other", and `cli`
   and `messaging` -- missing from the copy -- were never counted at all.
