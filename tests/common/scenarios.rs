@@ -62,7 +62,14 @@ pub const SCENARIOS: &[Scenario] = &[
         seed: &[("src/main/resources/db/migration/.gitkeep", "")],
         steps: &[
             &["g", "record", "Note", "id:uuid", "title:string!"],
-            &["g", "field", "Note", "createdAt:instant"],
+            &[
+                "g",
+                "field",
+                "Note",
+                "createdAt:instant",
+                "--default-literal",
+                "2026-08-25T12:00:00Z",
+            ],
         ],
     },
     Scenario {

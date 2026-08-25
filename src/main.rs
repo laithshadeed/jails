@@ -114,6 +114,8 @@ fn main() -> std::process::ExitCode {
             fields,
             timestamps,
             package,
+            default_literal,
+            backfill_file,
             indexes,
             strategy_on,
             strategy_yields,
@@ -134,7 +136,12 @@ fn main() -> std::process::ExitCode {
                 method,
             };
             dispatch::mutate(invocation, false, |run| {
-                jails_engine::route::recipe(run, &intent)
+                jails_engine::route::recipe_with_field_data(
+                    run,
+                    &intent,
+                    default_literal.as_deref(),
+                    backfill_file.as_deref(),
+                )
             })
         }
         Command::Add {
@@ -287,9 +294,18 @@ fn main() -> std::process::ExitCode {
                 ResourceFieldCommand::Add {
                     entity,
                     field_spec,
+                    default_literal,
+                    backfill_file,
                     package,
                 } => dispatch::mutate(invocation, false, |run| {
-                    jails_engine::route::add_field(run, &entity, &field_spec, package.as_deref())
+                    jails_engine::route::add_field_with_data(
+                        run,
+                        &entity,
+                        &field_spec,
+                        package.as_deref(),
+                        default_literal.as_deref(),
+                        backfill_file.as_deref(),
+                    )
                 }),
                 ResourceFieldCommand::Rename {
                     entity,
@@ -328,13 +344,15 @@ fn main() -> std::process::ExitCode {
                     field,
                     nullable,
                     required: _,
+                    backfill_file,
                     package,
                 } => dispatch::mutate(invocation, false, |run| {
-                    jails_engine::route::set_field_nullability(
+                    jails_engine::route::set_field_nullability_with_data(
                         run,
                         &entity,
                         &field,
                         nullable,
+                        backfill_file.as_deref(),
                         package.as_deref(),
                     )
                 }),

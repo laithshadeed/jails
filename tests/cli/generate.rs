@@ -114,6 +114,8 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
             "field",
             "Note",
             "createdAt:instant",
+            "--default-literal",
+            "2026-08-25T12:00:00Z",
             "--pretend",
             "--diff",
             "--ast",
@@ -227,6 +229,8 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
             "field",
             "Note",
             "createdAt:instant",
+            "--default-literal",
+            "2026-08-25T12:00:00Z",
             "--pretend",
             "--output",
             "json",
@@ -675,8 +679,33 @@ fn generate_field_updates_unchanged_derivatives_preserves_edits_and_adds_a_migra
     );
     fs::write(&request, &edited).unwrap();
 
-    let output = jails_cmd(&root, None)
+    let refused = jails_cmd(&root, None)
         .args(["resource", "field", "add", "Note", "createdAt:instant"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("needs a data plan"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(
+        !root
+            .join("src/main/resources/db/migration/V002__add_created_at_to_notes.sql")
+            .exists(),
+        "a refused data plan must not mutate the project"
+    );
+
+    let output = jails_cmd(&root, None)
+        .args([
+            "resource",
+            "field",
+            "add",
+            "Note",
+            "createdAt:instant",
+            "--default-literal",
+            "2026-08-25T12:00:00Z",
+        ])
         .output()
         .unwrap();
     assert!(
@@ -718,11 +747,15 @@ fn generate_field_updates_unchanged_derivatives_preserves_edits_and_adds_a_migra
         "{migration}"
     );
     assert!(
-        migration.contains("default current_timestamp not null"),
+        migration.contains("set created_at = '2026-08-25T12:00:00Z'"),
         "{migration}"
     );
     assert!(
-        migration.contains("alter column created_at drop default"),
+        migration.contains("alter column created_at set not null"),
+        "{migration}"
+    );
+    assert!(
+        !migration.contains("default current_timestamp"),
         "{migration}"
     );
 
@@ -746,6 +779,27 @@ fn generate_field_updates_unchanged_derivatives_preserves_edits_and_adds_a_migra
     assert!(
         String::from_utf8_lossy(&duplicate.stderr).contains("already has a `createdAt` component")
     );
+
+    let alias = jails_cmd(&root, None)
+        .args([
+            "g",
+            "field",
+            "Note",
+            "priority:int",
+            "--default-literal",
+            "7",
+        ])
+        .output()
+        .unwrap();
+    assert!(alias.status.success(), "{alias:?}");
+    let alias_migration = fs::read_to_string(
+        root.join("src/main/resources/db/migration/V003__add_priority_to_notes.sql"),
+    )
+    .unwrap();
+    assert!(
+        alias_migration.contains("set priority = 7"),
+        "{alias_migration}"
+    );
 }
 
 #[test]
@@ -766,6 +820,12 @@ fn resource_field_commands_use_the_risk_specific_cli_contracts() {
         .output()
         .unwrap();
     assert!(generated.status.success(), "{generated:?}");
+    fs::create_dir_all(root.join("db/backfills")).unwrap();
+    fs::write(
+        root.join("db/backfills/task_description.sql"),
+        "update tasks set description = 'unknown' where description is null;\n",
+    )
+    .unwrap();
 
     for args in [
         vec![
@@ -816,11 +876,55 @@ fn resource_field_commands_use_the_risk_specific_cli_contracts() {
         );
     }
 
+    let refused = jails_cmd(&root, None)
+        .args([
+            "resource",
+            "field",
+            "nullability",
+            "Task",
+            "description",
+            "--required",
+        ])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success(), "{refused:?}");
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("--backfill-file"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    let required = jails_cmd(&root, None)
+        .args([
+            "resource",
+            "field",
+            "nullability",
+            "Task",
+            "description",
+            "--required",
+            "--backfill-file",
+            "db/backfills/task_description.sql",
+        ])
+        .output()
+        .unwrap();
+    assert!(required.status.success(), "{required:?}");
+    let migration = fs::read_to_string(
+        root.join("src/main/resources/db/migration/V005__make_description_required.sql"),
+    )
+    .unwrap();
+    assert!(
+        migration.contains("set description = 'unknown'"),
+        "{migration}"
+    );
+    assert!(
+        migration.contains("alter column description set not null"),
+        "{migration}"
+    );
+
     let record =
         fs::read_to_string(root.join("src/main/java/com/example/demo/domain/Task.java")).unwrap();
     assert!(record.contains("String headline"), "{record}");
     assert!(record.contains("long priority"), "{record}");
-    assert!(record.contains("Optional<String> description"), "{record}");
+    assert!(record.contains("String description"), "{record}");
     assert!(!record.contains("legacyCode"), "{record}");
 }
 

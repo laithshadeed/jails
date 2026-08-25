@@ -429,6 +429,16 @@ fn unnamed_implementations(
 /// which policy it follows is a compile error rather than a one-shot silently
 /// planned as an entity.
 pub fn recipe(run: &Run, intent: &Intent) -> Result<Outcome> {
+    recipe_with_field_data(run, intent, None, None)
+}
+
+/// Dispatch a recipe while carrying the data plan accepted by `generate field`.
+pub fn recipe_with_field_data(
+    run: &Run,
+    intent: &Intent,
+    default_literal: Option<&str>,
+    backfill_file: Option<&str>,
+) -> Result<Outcome> {
     let package = intent.package.as_deref();
     // On the *lifecycle*, not on a hand-listed set of kinds. The doc comment
     // above has always claimed this match is closed; until `pending.md` §6.4 it
@@ -458,18 +468,28 @@ pub fn recipe(run: &Run, intent: &Intent) -> Result<Outcome> {
                 )
                 .into());
             };
-            super::field(run, &intent.name, component, package)
+            super::field_with_data(
+                run,
+                &intent.name,
+                component,
+                package,
+                default_literal,
+                backfill_file,
+            )
         }
         // These two use NAME as a description or a path rather than a Java
         // class name, which is why they are decided before the capitalisation
         // every other kind gets.
         jails_protocol::recipe::LifecycleClass::OneShotCases => {
+            reject_field_data_options(default_literal, backfill_file)?;
             super::cases(run, &intent.name, package)
         }
         jails_protocol::recipe::LifecycleClass::OneShotMigration => {
+            reject_field_data_options(default_literal, backfill_file)?;
             super::migration(run, &intent.name)
         }
         jails_protocol::recipe::LifecycleClass::PersistentIntent => {
+            reject_field_data_options(default_literal, backfill_file)?;
             let fields = match intent.timestamps {
                 true => jails_generate::generate::with_timestamps(intent.kind, &intent.fields)?,
                 false => intent.fields.clone(),
@@ -493,4 +513,18 @@ pub fn recipe(run: &Run, intent: &Intent) -> Result<Outcome> {
             )
         }
     }
+}
+
+fn reject_field_data_options(
+    default_literal: Option<&str>,
+    backfill_file: Option<&str>,
+) -> Result<()> {
+    if default_literal.is_some() || backfill_file.is_some() {
+        return Err(
+            "`--default-literal` and `--backfill-file` only apply to `generate field`.\n       \
+             fix: remove the field data-plan option from this recipe."
+                .into(),
+        );
+    }
+    Ok(())
 }

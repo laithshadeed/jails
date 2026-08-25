@@ -3660,7 +3660,7 @@ fn one_entry_point_sends_each_kind_to_the_route_that_owns_it() {
     run(intent(
         ArtifactKind::Field,
         "Note",
-        vec!["createdAt:instant".to_string()],
+        vec!["createdAt:instant?".to_string()],
     ));
     let record =
         std::fs::read_to_string(root.join("src/main/java/com/example/demo/domain/Note.java"))

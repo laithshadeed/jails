@@ -684,6 +684,29 @@ pub fn add_column(type_name: &str, column: &Column) -> Result<String> {
     Ok(out)
 }
 
+/// Add a required column through the safe populated-table sequence.
+///
+/// `backfill` is either a typed `update` produced by the planner or exact SQL
+/// from a declared reader-owned input. The column is nullable until that data
+/// step has completed, and only then becomes required.
+pub fn add_required_column_with_backfill(
+    type_name: &str,
+    column: &Column,
+    backfill: &str,
+) -> Result<String> {
+    let mut nullable = column.clone();
+    nullable.not_null = false;
+    let mut out = add_column(type_name, &nullable)?;
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str("\n-- Data plan supplied for rows that pre-date this field.\n");
+    out.push_str(backfill.trim_end());
+    out.push_str("\n\n");
+    out.push_str(&set_column_nullable(type_name, &column.name, false));
+    Ok(out)
+}
+
 /// Rename one physical column in a forward-only migration.
 pub fn rename_column(type_name: &str, from: &str, to: &str) -> String {
     format!(

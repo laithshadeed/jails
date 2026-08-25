@@ -23,6 +23,11 @@
 
 use super::*;
 
+mod data;
+mod evolution;
+
+use data::{add_data_plan, read_backfill};
+use evolution::{evolve_existing, projected_column, safe_widening};
 use jails_protocol::declaration::{FieldType, Optionality};
 use jails_protocol::entity::{OneShotId, OneShotSpec, TypeTargetId};
 use jails_protocol::identity::SqlName;
@@ -33,7 +38,35 @@ use jails_protocol::resource::{OneShotLifecycle, OneShotState};
 
 /// Add one component to a generated artifact, and migrate the table for it.
 pub fn field(run: &Run, target: &str, component: &str, package: Option<&str>) -> Result<Outcome> {
-    add_field_with_syntax(run, target, component, package, &["generate", "field"])
+    add_field_with_syntax(
+        run,
+        target,
+        component,
+        package,
+        None,
+        None,
+        &["generate", "field"],
+    )
+}
+
+/// Compatibility spelling for adding a field with an explicit data plan.
+pub fn field_with_data(
+    run: &Run,
+    target: &str,
+    component: &str,
+    package: Option<&str>,
+    default_literal: Option<&str>,
+    backfill_file: Option<&str>,
+) -> Result<Outcome> {
+    add_field_with_syntax(
+        run,
+        target,
+        component,
+        package,
+        default_literal,
+        backfill_file,
+        &["generate", "field"],
+    )
 }
 
 /// Canonical resource spelling for adding one component.
@@ -48,6 +81,28 @@ pub fn add_field(
         target,
         component,
         package,
+        None,
+        None,
+        &["resource", "field", "add"],
+    )
+}
+
+/// Add a field with the explicit data plan required by populated tables.
+pub fn add_field_with_data(
+    run: &Run,
+    target: &str,
+    component: &str,
+    package: Option<&str>,
+    default_literal: Option<&str>,
+    backfill_file: Option<&str>,
+) -> Result<Outcome> {
+    add_field_with_syntax(
+        run,
+        target,
+        component,
+        package,
+        default_literal,
+        backfill_file,
         &["resource", "field", "add"],
     )
 }
@@ -113,6 +168,7 @@ pub fn rename_field(
             new_name: new_name.clone(),
             column,
         },
+        DataEvolution::None,
         body,
         &format!("rename_{from}_to_{to}"),
         vec![target.to_string(), field.to_string(), new_name.to_string()],
@@ -176,6 +232,7 @@ pub fn change_field_type(
             to: to.clone(),
             strategy,
         },
+        DataEvolution::None,
         body,
         &format!("widen_{}_type", before_column.name),
         vec![target.to_string(), field.to_string()],
@@ -192,6 +249,18 @@ pub fn set_field_nullability(
     target: &str,
     field: &str,
     nullable: bool,
+    package: Option<&str>,
+) -> Result<Outcome> {
+    set_field_nullability_with_data(run, target, field, nullable, None, package)
+}
+
+/// Change nullability with a reader-owned backfill when making a field required.
+pub fn set_field_nullability_with_data(
+    run: &Run,
+    target: &str,
+    field: &str,
+    nullable: bool,
+    backfill_file: Option<&str>,
     package: Option<&str>,
 ) -> Result<Outcome> {
     let project = run.project();
@@ -211,8 +280,11 @@ pub fn set_field_nullability(
         )
         .into());
     }
-    if !nullable {
-        return Err("making a populated column required needs an explicit backfill value or file.\n       fix: backfill the column first; a future data-plan option will make this atomic.".into());
+    if nullable && backfill_file.is_some() {
+        return Err("making a field nullable does not need a backfill.\n       fix: remove `--backfill-file`, or request `--required`.".into());
+    }
+    if !nullable && backfill_file.is_none() {
+        return Err("making a populated column required needs an explicit backfill.\n       fix: pass `--backfill-file <project-path>` so the data update and constraint are one migration.".into());
     }
     if changed.constraints.primary_key {
         return Err(format!(
@@ -221,10 +293,41 @@ pub fn set_field_nullability(
         .into());
     }
     let column = projected_column(project, &id, changed, package)?;
-    changed.optionality = Optionality::Nullable;
+    changed.optionality = if nullable {
+        Optionality::Nullable
+    } else {
+        Optionality::Required
+    };
     let mut after = spec.clone();
     after.arguments = IntentArguments::Fields(fields);
-    let body = jails_generate::sql::set_column_nullable(id.name.as_str(), &column.name, true);
+    let (data, body, data_option) = match backfill_file {
+        Some(path) => {
+            let path = ProjectPath::parse(path)?;
+            let sql = read_backfill(project, &path, &column.name)?;
+            let body = format!(
+                "{}\n\n{}",
+                sql.trim_end(),
+                jails_generate::sql::set_column_nullable(id.name.as_str(), &column.name, false)
+            );
+            (
+                DataEvolution::ReaderOwnedSql(path.clone()),
+                body,
+                Some(path.to_string()),
+            )
+        }
+        None => (
+            DataEvolution::None,
+            jails_generate::sql::set_column_nullable(id.name.as_str(), &column.name, true),
+            None,
+        ),
+    };
+    let mut options = BTreeMap::from([(
+        if nullable { "nullable" } else { "required" }.to_string(),
+        Vec::new(),
+    )]);
+    if let Some(path) = data_option {
+        options.insert("backfill-file".to_string(), vec![path]);
+    }
     evolve_existing(
         run,
         &store,
@@ -236,10 +339,15 @@ pub fn set_field_nullability(
             field: field.clone(),
             nullable,
         },
+        data,
         body,
-        &format!("make_{}_nullable", column.name),
+        &format!(
+            "make_{}_{}",
+            column.name,
+            if nullable { "nullable" } else { "required" }
+        ),
         vec![target.to_string(), field.to_string()],
-        BTreeMap::from([("nullable".to_string(), Vec::new())]),
+        options,
     )
 }
 
@@ -295,6 +403,7 @@ pub fn drop_field(
             field: field.clone(),
             confirmed_column,
         },
+        DataEvolution::None,
         body,
         &format!("drop_{expected}"),
         vec![target.to_string(), field.to_string()],
@@ -307,6 +416,8 @@ fn add_field_with_syntax(
     target: &str,
     component: &str,
     package: Option<&str>,
+    default_literal: Option<&str>,
+    backfill_file: Option<&str>,
     command_path: &[&str],
 ) -> Result<Outcome> {
     let project = run.project();
@@ -411,6 +522,14 @@ fn add_field_with_syntax(
     .pop()
     .expect("one field produces one column");
     let table = jails_generate::sql::table_name(id.name.as_str());
+    let (data, backfill, data_input) = add_data_plan(
+        project,
+        &added,
+        &table,
+        &column.name,
+        default_literal,
+        backfill_file,
+    )?;
     let expected_path = JavaType::new(
         Package::parse(&project.package_named(jails_spec::spec::layout::DOMAIN, package))?,
         id.name.clone(),
@@ -420,7 +539,7 @@ fn add_field_with_syntax(
         expected_path,
         expected_table: SqlName::parse(&table)?,
         action: FieldEvolution::Add(added.clone()),
-        data: DataEvolution::None,
+        data: data.clone(),
     };
     let directory = ProjectPath::parse("src/main/resources/db/migration")?;
     let mut migrated = None;
@@ -432,7 +551,14 @@ fn add_field_with_syntax(
             "{directory}/V{version:03}__add_{}_to_{table}.sql",
             column.name
         ))?;
-        let body = jails_generate::sql::add_column(id.name.as_str(), &column)?;
+        let body = match backfill.as_deref() {
+            Some(backfill) => jails_generate::sql::add_required_column_with_backfill(
+                id.name.as_str(),
+                &column,
+                backfill,
+            )?,
+            None => jails_generate::sql::add_column(id.name.as_str(), &column)?,
+        };
         let key = ResourceKey::WholeFile(path.clone());
         migration.resources.push(DesiredResource::new(
             key.clone(),
@@ -455,6 +581,9 @@ fn add_field_with_syntax(
         owners: BTreeSet::from([OwnerId::DirectCli]),
     };
     let mut reads = declaration(project, &change, &desired)?.directory(directory);
+    if let Some(path) = data_input {
+        reads = reads.file(path);
+    }
     for path in recorded_migrations(&store, &id) {
         reads = reads.file(path);
     }
@@ -478,14 +607,21 @@ fn add_field_with_syntax(
     // Built from the recorded spec rather than rebuilt beside it: two
     // constructions of one value is how a fingerprint comes to describe
     // something the receipt does not.
+    let mut options = match package {
+        Some(package) => BTreeMap::from([("package".to_string(), vec![package.to_string()])]),
+        None => BTreeMap::new(),
+    };
+    if let Some(value) = default_literal {
+        options.insert("default-literal".to_string(), vec![value.to_string()]);
+    }
+    if let Some(path) = backfill_file {
+        options.insert("backfill-file".to_string(), vec![path.to_string()]);
+    }
     let asked = Asked::new(
         CanonicalMutationRequest::EvolveField(evolution),
         command_path,
         vec![target.to_string(), component.to_string()],
-        match package {
-            Some(package) => BTreeMap::from([("package".to_string(), vec![package.to_string()])]),
-            None => BTreeMap::new(),
-        },
+        options,
         BTreeSet::new(),
     );
     set.ledger_intent.one_shots_after = vec![DesiredOneShotReceipt {
@@ -505,169 +641,6 @@ fn add_field_with_syntax(
     }];
     set.validate()?;
     commit_set(run, set, &reads, &asked)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn evolve_existing(
-    run: &Run,
-    store: &ObservedStore,
-    _target: &str,
-    package: Option<&str>,
-    id: IntentId,
-    after: IntentSpec,
-    action: FieldEvolution,
-    migration_body: String,
-    migration_slug: &str,
-    positionals: Vec<String>,
-    mut options: BTreeMap<String, Vec<String>>,
-) -> Result<Outcome> {
-    let project = run.project();
-    let fields: Vec<String> = after.fields().iter().map(FieldSpec::canonical).collect();
-    let indexes: Vec<String> = after
-        .indexes
-        .iter()
-        .map(|index| index.canonical())
-        .collect();
-    let on = after.on.as_ref().map(JavaType::qualified);
-    let yields = after.yields.as_ref().map(JavaType::qualified);
-    let mut change = with_test_support(
-        project,
-        jails_generate::generate::plan_recipe(
-            project,
-            &jails_generate::generate::Recipe {
-                kind: id.recipe,
-                name: id.name.as_str(),
-                fields: &fields,
-                indexes: &indexes,
-                strategy_on: on.as_deref(),
-                strategy_yields: yields.as_deref(),
-                method: after.method,
-            },
-            package,
-        )?,
-    );
-    change.files.retain(|artifact| {
-        !artifact
-            .path
-            .strip_prefix(project.root())
-            .is_ok_and(|path| {
-                path.to_string_lossy()
-                    .replace('\\', "/")
-                    .starts_with("src/main/resources/db/migration/")
-            })
-    });
-
-    let owner = ResourceOwner::Entity(EntityId::Intent(id.clone()));
-    let mut desired = desire::contribution(&owner, &change, project)?;
-    provenance::stamp_files(
-        &mut desired,
-        project,
-        RendererId::Recipe(id.recipe),
-        Some(RenderedSubjectContext::Entity {
-            id: EntityId::Intent(id.clone()),
-            spec: EntitySpec::Intent(after.clone()),
-        }),
-    )?;
-
-    let directory = ProjectPath::parse("src/main/resources/db/migration")?;
-    if !project.root().join(directory.as_str()).is_dir() {
-        return Err("field evolution requires `src/main/resources/db/migration`.\n       fix: add Flyway or scaffold the resource before evolving it.".into());
-    }
-    let version =
-        jails_generate::generate::next_migration_version(&project.root().join(directory.as_str()))?;
-    let path = ProjectPath::parse(&format!("{directory}/V{version:03}__{migration_slug}.sql"))?;
-    let key = ResourceKey::WholeFile(path.clone());
-    let mut migration = DesiredChange::owned_by(owner.clone());
-    migration.resources.push(DesiredResource::new(
-        key.clone(),
-        BTreeSet::from([owner]),
-        ResourceValue::WholeFile,
-    )?);
-    migration.files.push(DesiredFile {
-        path: path.clone(),
-        body: DesiredBody::Bytes(migration_body.as_bytes().into()),
-        mode: None,
-        resource: Some(key),
-        renderer: None,
-    });
-
-    let entity = DesiredEntity {
-        id: EntityId::Intent(id.clone()),
-        spec: EntitySpec::Intent(after),
-        owners: BTreeSet::from([OwnerId::DirectCli]),
-    };
-    let mut reads = declaration(project, &change, &desired)?.directory(directory);
-    for recorded in recorded_migrations(store, &id) {
-        reads = reads.file(recorded);
-    }
-    reads = reads.file(path);
-    let request = Request {
-        scope: ReconcileScope::DirectEntity(EntityId::Intent(id.clone())),
-        declared: BTreeMap::from([(entity.id.clone(), entity)]),
-        changes: vec![desired, migration],
-    };
-    let expected_path = JavaType::new(id.package.clone(), id.name.clone());
-    let evolution = EvolveFieldRequestV1 {
-        entity: EntityId::Intent(id.clone()),
-        expected_path,
-        expected_table: SqlName::parse(&jails_generate::sql::table_name(id.name.as_str()))?,
-        action,
-        data: DataEvolution::None,
-    };
-    let mut set = request.against(store)?;
-    set.subject = PlannedSubject::EvolveField(Box::new(evolution.clone()));
-    if let Some(package) = package {
-        options.insert("package".to_string(), vec![package.to_string()]);
-    }
-    let asked = Asked::new(
-        CanonicalMutationRequest::EvolveField(evolution),
-        &["resource", "field", action_name(&set.subject)],
-        positionals,
-        options,
-        BTreeSet::new(),
-    );
-    set.validate()?;
-    commit_set(run, set, &reads, &asked)
-}
-
-fn action_name(subject: &PlannedSubject) -> &'static str {
-    match subject {
-        PlannedSubject::EvolveField(request) => match request.action {
-            FieldEvolution::Add(_) => "add",
-            FieldEvolution::Rename { .. } => "rename",
-            FieldEvolution::ChangeType { .. } => "type",
-            FieldEvolution::SetNullability { .. } => "nullability",
-            FieldEvolution::Drop { .. } => "drop",
-        },
-        _ => unreachable!("field evolution constructs a field subject"),
-    }
-}
-
-fn projected_column(
-    project: &Project,
-    id: &IntentId,
-    field: &FieldSpec,
-    package: Option<&str>,
-) -> Result<jails_generate::sql::Column> {
-    Ok(jails_generate::sql::columns(
-        &[field.projected()?],
-        project,
-        &project.package_named(jails_spec::spec::layout::DOMAIN, package),
-        &jails_generate::generate::lower_first(id.name.as_str()),
-    )
-    .pop()
-    .expect("one field produces one column"))
-}
-
-fn safe_widening(from: &str, to: &str) -> bool {
-    matches!(
-        (from, to),
-        ("integer", "bigint")
-            | ("integer", "numeric")
-            | ("integer", "double precision")
-            | ("bigint", "numeric")
-            | ("bigint", "double precision")
-    )
 }
 
 fn unknown_field(id: &IntentId, field: &Name, fields: &[FieldSpec]) -> jails_support::Failure {

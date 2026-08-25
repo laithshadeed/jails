@@ -131,6 +131,12 @@ pub(crate) enum ResourceFieldCommand {
     Add {
         entity: String,
         field_spec: String,
+        /// Typed value used to backfill rows before a required field is enforced
+        #[arg(long, conflicts_with = "backfill_file")]
+        default_literal: Option<String>,
+        /// Project-relative reader-owned SQL used to backfill existing rows
+        #[arg(long, conflicts_with = "default_literal")]
+        backfill_file: Option<String>,
         /// Subpackage containing the generated entity
         #[arg(long)]
         package: Option<String>,
@@ -172,6 +178,9 @@ pub(crate) enum ResourceFieldCommand {
             required_unless_present = "nullable"
         )]
         required: bool,
+        /// Project-relative SQL that removes nulls before `--required`
+        #[arg(long)]
+        backfill_file: Option<String>,
         #[arg(long)]
         package: Option<String>,
     },
@@ -405,6 +414,12 @@ pub(crate) enum Command {
         /// empty string to write straight into the base package.
         #[arg(long)]
         package: Option<String>,
+        /// Typed value used to backfill rows for `generate field`
+        #[arg(long, conflicts_with = "backfill_file")]
+        default_literal: Option<String>,
+        /// Project-relative reader-owned SQL used by `generate field`
+        #[arg(long, conflicts_with = "default_literal")]
+        backfill_file: Option<String>,
         /// A composite or ordered index for the generated migration, as the
         /// column list Postgres wants. Repeatable.
         ///
