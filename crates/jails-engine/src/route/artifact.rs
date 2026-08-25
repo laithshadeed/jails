@@ -6,6 +6,7 @@
 //! read as absence.
 
 use super::*;
+use jails_protocol::request::DestroyResourceRequestV2;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RequestedStorageRetirement {
@@ -290,8 +291,23 @@ pub fn destroy(
         declared: BTreeMap::new(),
         changes,
     };
-    let canonical = match storage.clone() {
-        Some(storage) => CanonicalMutationRequest::destroy_resource(entity, storage, force)?,
+    let lifecycle_request = match storage.clone() {
+        Some(storage) => Some(DestroyResourceRequestV2 {
+            entity: entity.clone(),
+            expected_path: JavaType::new(
+                Package::parse(&project.package_named(jails_spec::spec::layout::DOMAIN, package))?,
+                id.name.clone(),
+            ),
+            storage,
+            migration_effect: None,
+        }),
+        None => None,
+    };
+    let canonical = match &lifecycle_request {
+        Some(request) => CanonicalMutationRequest::DestroyResourceV2 {
+            request: request.clone(),
+            force,
+        },
         None => CanonicalMutationRequest::destroy_entity(entity, force)?,
     };
     let options = match storage {
@@ -303,18 +319,23 @@ pub fn destroy(
         }
         None => BTreeMap::new(),
     };
-    commit(
-        run,
-        request,
-        &reads,
-        &Asked::new(
-            canonical,
-            &["destroy"],
-            vec![label(kind), name.to_string()],
-            options,
-            BTreeSet::new(),
+    let asked = Asked::new(
+        canonical,
+        &["destroy"],
+        vec![label(kind), name.to_string()],
+        options,
+        BTreeSet::new(),
+    );
+    match lifecycle_request {
+        Some(requested) => commit_subject(
+            run,
+            request,
+            &reads,
+            &asked,
+            PlannedSubject::DestroyResourceV2(Box::new(requested)),
         ),
-    )
+        None => commit(run, request, &reads, &asked),
+    }
 }
 
 /// Every class implementing this strategy's port that the strategy does not

@@ -163,7 +163,11 @@ pub(super) fn retiring(store: &ObservedStore, owner: &ResourceOwner) -> Result<R
         .iter()
         .flat_map(|ledger| ledger.resources.iter())
     {
-        if !row.owners.iter().all(|held| held == owner) {
+        // Shared resources are not retired, but their current image can still
+        // be an invariant of the transition. Migration history is shared with
+        // `SchemaHistory`: destroying the entity must capture and verify those
+        // bytes even though the history owner keeps the file alive.
+        if !row.owners.contains(owner) {
             continue;
         }
         match &row.key {

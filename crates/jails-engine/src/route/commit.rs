@@ -30,6 +30,28 @@ pub(super) fn commit(
     declaration: &ReadDeclaration,
     asked: &Asked,
 ) -> Result<Outcome> {
+    commit_with_subject(run, request, declaration, asked, None)
+}
+
+/// Drive an ownership request whose canonical operation has a more specific
+/// plan subject than ordinary reconciliation.
+pub(super) fn commit_subject(
+    run: &Run,
+    request: Request,
+    declaration: &ReadDeclaration,
+    asked: &Asked,
+    subject: PlannedSubject,
+) -> Result<Outcome> {
+    commit_with_subject(run, request, declaration, asked, Some(subject))
+}
+
+fn commit_with_subject(
+    run: &Run,
+    request: Request,
+    declaration: &ReadDeclaration,
+    asked: &Asked,
+    subject: Option<PlannedSubject>,
+) -> Result<Outcome> {
     let project = run.project();
     let mut recovery = Vec::new();
     for attempt in 0..2 {
@@ -40,7 +62,10 @@ pub(super) fn commit(
         let observed = run.measure(jails_prepare::timing::TimingPhase::Parse, || {
             observed(project)
         })?;
-        let set = request.clone().against(&observed)?;
+        let mut set = request.clone().against(&observed)?;
+        if let Some(subject) = &subject {
+            set.subject = subject.clone();
+        }
         let outcome = commit_set(run, set, declaration, asked)?;
         match outcome.replanned() {
             Some(outcome) if attempt == 0 => recovery.push(outcome),

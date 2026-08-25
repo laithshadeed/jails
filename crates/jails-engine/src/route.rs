@@ -100,7 +100,7 @@ pub use session::{Outcome, Run};
 // module list was one or the other. Re-exported into this module's namespace so
 // the eleven route submodules keep saying `super::commit(..)` and
 // `super::Asked` -- the seam is where the code lives, not a new vocabulary.
-use commit::{commit, commit_set, observed};
+use commit::{commit, commit_set, commit_subject, observed};
 use request::{
     Asked, Declared, Request, asked_capabilities, declaration, declared, declared_capabilities,
     identity, record_capability, retiring,

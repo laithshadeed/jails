@@ -352,6 +352,21 @@ fn task_scaffold_cannot_rewrite_or_delete_its_published_v001() {
             .join("src/main/java/com/example/demo/web/TaskController.java")
             .exists()
     );
+    let store = jails_commit::store::Store::at(&root)
+        .observe()
+        .unwrap()
+        .ledger
+        .unwrap();
+    assert!(store.applied.is_empty(), "{:?}", store.applied);
+    assert_eq!(store.lifecycles.len(), 1, "{:?}", store.lifecycles);
+    let lifecycle = &store.lifecycles[0];
+    assert!(matches!(
+        lifecycle.state,
+        jails_protocol::lifecycle::ResourceState::RetiredPreservingStorage { .. }
+    ));
+    assert_eq!(lifecycle.table.as_ref().unwrap().table.as_str(), "tasks");
+    assert_eq!(lifecycle.migrations.len(), 1);
+    assert_eq!(lifecycle.migrations[0].version.get(), 1);
 }
 
 #[test]
@@ -416,6 +431,26 @@ fn task_drop_keeps_v001_and_appends_an_exact_forward_migration() {
         !root
             .join("src/main/java/com/example/demo/web/TaskController.java")
             .exists()
+    );
+    let store = jails_commit::store::Store::at(&root)
+        .observe()
+        .unwrap()
+        .ledger
+        .unwrap();
+    assert_eq!(store.lifecycles.len(), 1, "{:?}", store.lifecycles);
+    let lifecycle = &store.lifecycles[0];
+    assert!(matches!(
+        &lifecycle.state,
+        jails_protocol::lifecycle::ResourceState::RetiredDropPlanned { migration, .. }
+            if migration.as_str() == "src/main/resources/db/migration/V002__drop_tasks.sql"
+    ));
+    assert_eq!(
+        lifecycle
+            .migrations
+            .iter()
+            .map(|seal| seal.version.get())
+            .collect::<Vec<_>>(),
+        vec![1, 2]
     );
 }
 
