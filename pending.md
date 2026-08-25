@@ -16,15 +16,16 @@ git show <commit>^:missing.md           # prints it
 **`refactor.md` is the exception and the version folded in here is gone.** An
 older one is recoverable — it was tracked until `8803a60 Remove superseded audit
 and refactor notes` — but the copy that was on disk on 2026-08-25 had been
-recreated untracked and was never committed, so `git show` reaches a different
-document. Everything in it that was still true is in §3 through §9 below, item
+regenerated since -- and `.gitignore` deliberately ignores `/refactor.md` to
+stop that regeneration being committed again -- so `git show` reaches a
+different document. Everything in it that was still true is in §4 through §10 below, item
 by item, with each number re-measured rather than transcribed; what is lost is
 its prose. If a claim below looks thin, that is why, and the fix is to
 re-measure rather than to hunt for the file.
 
 Roughly 154 comments still cite `plan.md §N` and 48 cite `abstract.md §N`; six
 cite `missing.md` or `refactor.md`. Those citations are the best record of
-*why*, and §9.2 is about the ones that are load-bearing rather than historical.
+*why*, and §10.2 is about the ones that are load-bearing rather than historical.
 
 **Every number in this file was measured on 2026-08-25** against `main`, and
 each item says how. A claim with no measurement is an opinion and is labelled
@@ -104,11 +105,166 @@ contain the application-specific reaction nobody has written, so the ledger does
 not reconcile and a received event drives nothing. That is the honest boundary
 of a scaffolding tool. **The open question is whether the declarative manifest
 can be extended far enough to generate those decisions, or whether they are
-properly the reader's code.** Opinion, not measurement.
+properly the reader's code.** Opinion, not measurement — and §2.2 and §2.3 are
+the two experiments most likely to settle it, because a ranking rule set and
+four framework ports of one domain are both cases where the answer is
+falsifiable rather than arguable.
 
 ---
 
-## 2. Gradle and Maven parity
+## 2. The portfolio: what jails has to be able to build
+
+The `examples/` applications are not demos. They are the acceptance criterion —
+the only evidence that the generic machinery is generic, because a crawler, a
+support inbox and a payments gateway are three lists of the same intents and
+none of them gets a command, branch, enum or template in core. Every gap in §1
+was found by building one.
+
+Where the portfolio stands today:
+
+| application | what it clones | manifest | proved by the suite |
+|---|---|---|---|
+| payments gateway | a payments gateway | `examples/payments-gateway/` | yes — `SPRING_APP_MANIFESTS` |
+| support inbox | Intercom | `examples/support-inbox/` | yes |
+| web crawler | Google | `examples/web-crawler/` | yes |
+| ledger CLI | stacks.ai | `examples/ledger-cli/` | yes — `ledger_cli_manifest_builds_without_spring`, the one non-Spring proof |
+| minicom | Intercom, ported from the Rails and Django originals | `examples/minicom/` | **no** |
+| minicom-spring | the Gradle interview scaffold | `examples/minicom-spring/` | **no** — verified by hand on 2026-08-25, nothing holds it |
+| Gradient Lattes | `gradient.md` | — | not started |
+| Throxy persona ranker | `throxy/` | — | not started |
+
+`gradient.md` and `throxy/` are **local-only inputs and are gitignored**, so a
+clone of this public repository will not have them. Three reasons, the first
+sufficient on its own: they are other companies' take-home material and not
+ours to publish; `throxy/` is its own upstream repo, which is the gitlink
+accident `/deps/` is in `.gitignore` to prevent; and `throxy/data/leads.csv`
+carries real people's names, job titles and employer domains. **The generated
+proof application is jails' own output and is committable — the brief it was
+built from is not.** Anything landing in `examples/` has to stand on its own
+without quoting either.
+
+Two things fall out of that table before any new work. **Two Intercom-shaped
+manifests exist and only one is proved** — `support-inbox` is in
+`SPRING_APP_MANIFESTS` and `examples/minicom/` is not, so the second can drift
+against a generator change with nothing failing. And `examples/minicom-spring/`
+is the same shape: it is the proof that `jails new --gradle` works and it is
+held by nothing.
+
+### 2.1 Gradient Lattes — `gradient.md`
+
+Spring Boot 4.1, Java 26. An ordering API for autonomous baristas over two bean
+suppliers: a cheap roastery with limited stock and an expensive chain with
+plenty. Part 1 hides the supplier choice from the caller behind a 30-second
+deadline; part 2 makes two stores share a supply that runs out at lunch.
+
+**The suppliers are part of the solution, not a hosted service.** The brief was
+rewritten so nothing reaches the public internet: no external URLs, no
+credentials, no `Authorization` header. jails writes the supplier service too,
+and its funky behaviour is the thing being reproduced — 429 with a `Retry-After`
+set from *when stock actually replenishes*, 200 with `{"success": "true"}` for
+most orders, and 200 with a garbage body for ~5% of them **with the beans still
+consumed**, which is what makes the rotten case expensive.
+
+What it will exercise, and where it is likely to find gaps:
+
+- **One client, two configurations.** `g client` writes one `@HttpExchange`
+  interface; the roastery and the chain differ in stock and price, not protocol,
+  so they are one port constructed twice. That interface is also the seam a test
+  substitutes a fake at, so no test needs a socket — which is §9's rule about
+  developer services, arriving from the application side for once.
+- **Retry that reads the signal.** Honouring `Retry-After` rather than backing
+  off on a constant. jails has no retry capability; `resilience4j` is in
+  `deps.tsv` and nothing generates against it. This is the first real candidate.
+- **A deadline, not a timeout.** "Apologise and offer instant coffee" at 30
+  seconds is a budget spanning several supplier calls, which is a different
+  thing from a per-call timeout and jails expresses neither.
+- **Fair share between two stores.** A quota or allocator over a contended
+  resource. `g idempotency` is the nearest primitive and is not it.
+- **Seedable randomness and configurable stock**, so a 429, a rotten delivery
+  and part 2's both-suppliers-empty case are forced on demand rather than waited
+  for. `add testkit` gives deterministic clocks and ids; a seeded generator is
+  the missing half.
+
+### 2.2 Throxy persona ranker — `throxy/`
+
+Spring Boot 4.1, Java 26. A Next.js scaffold (`src/app/api/rank/route.ts`) that
+loads ~200 leads from `data/leads.csv`, ranks them against
+`data/persona-spec.md`, and returns the best relevant contacts per company.
+`GET /api/leads` lists, `POST /api/rank` ranks. Relevance filtering is part of
+the ranking: an HR contact at a target company is a lead you should *not* email
+about a sales platform.
+
+**Two jobs, and the second is the interesting one.** Re-implement it in Spring
+Boot — and do the whole homework **without any external service**, which means
+without the Vercel AI SDK and without an OpenAI or Anthropic key. The original
+brief expects an LLM to do the ranking; doing it locally forces the scoring to
+be explicit, deterministic and testable, which is the only version jails can
+generate and the only version a test can assert on.
+
+Note the shape this shares with 2.1: **an interview brief pointing at an
+external service, re-done with that service replaced by something local.** That
+is not a coincidence, it is what makes both of them admissible as proof
+applications at all — §9's success criteria forbid a test that needs a developer
+service, and a proof app that cannot be proved is a demo.
+
+Likely exercise: `add csv` for the lead load, `g record`/`g value` for the lead
+and the persona spec, `g scaffold` or `g query` for the two routes, and a
+scoring strategy — `g strategy` is the open-set primitive, one bean per rule,
+which is exactly the shape "disqualification criteria plus weighted signals"
+wants. If the persona spec's rules can be expressed as a manifest, that is
+evidence for §1.4's open question; if they cannot, that is evidence against it,
+and either answer is worth having.
+
+### 2.3 All of minicom, with jails only
+
+`minicom/minicom-public/` is a whole prototype Intercom: a Rails server, a
+Django server, a Node server, a Spring server, and two static sites (`foo` on
+`127.0.0.1:8008`, `bar` on `8009`) that talk to them. `examples/minicom/`
+already ports the *domain* — users, messages, a read flag, a direction enum —
+and `examples/minicom-spring/` reproduces the Gradle scaffold. Neither is the
+whole thing.
+
+The target is the rest: every server in that repository re-expressed as jails
+manifests, and nothing hand-written. It is the largest of the three and the one
+that most directly tests the claim in §1.4 — four framework ports of one domain
+is the strongest available evidence about where the generic manifest stops.
+
+Start by proving what already exists: put `examples/minicom/` into
+`SPRING_APP_MANIFESTS` and `examples/minicom-spring/` behind a Gradle equivalent
+of it, so the two manifests that exist stop drifting silently. That is a small
+change and it is the prerequisite for the rest.
+
+### 2.4 The cost, which has to be decided before the first one lands
+
+**`SPRING_APP_MANIFESTS` currently holds three applications and they dominate
+the suite.** §9 measures the tail: three concurrent Failsafe runs against the
+shared PostgreSQL and Kafka, starting at ~21.5 s and alone determining when the
+CLI binary ends. Adding three or four more proof applications to that list
+multiplies the thing that is already the bottleneck, on a suite that is
+59.60 s today and has a stated target of 30.
+
+So decide the relationship first. The options, none of them free:
+
+- **All of them in `SPRING_APP_MANIFESTS`.** Honest and slow. Only viable after
+  §9's Failsafe tail is shortened, which makes this blocked on that work rather
+  than merely expensive.
+- **A tier.** Proof applications that run on every `cargo test`, and a larger
+  set behind an env var that CI runs and a laptop does not. The risk is the one
+  §9's success criteria name: a test that does not run by default is a test
+  nobody notices breaking, and this repository already has the
+  `JAILS_REQUIRE_TOOLCHAIN=1` precedent for turning a silent skip into a
+  failure — the same trick would have to apply here.
+- **Generate-and-typecheck by default, full Maven gate on a subset.** Cheapest,
+  and it gives up exactly the property the proof applications exist for: that
+  the generated project *runs*.
+
+**Do not add the first new application before choosing.** Three of them arriving
+one at a time, each adding ten seconds, is how the suite gets to two minutes
+with nobody having decided that it should.
+
+---
+
+## 3. Gradle and Maven parity
 
 **Maven stays the default.** `jails new` with no `--gradle` creates a Maven
 project and should go on doing so.
@@ -144,7 +300,7 @@ half-recognised.
 
 ---
 
-## 3. One gate reads green over unfinished work
+## 4. One gate reads green over unfinished work
 
 `tests/architecture.rs`:
 
@@ -182,7 +338,7 @@ others *measurable*.
 
 ---
 
-## 4. `jails new` is a second transaction protocol
+## 5. `jails new` is a second transaction protocol
 
 `src/new/publish.rs` implements publication-by-rename: write everything into a
 sibling scratch directory, `rename` once, so the destination is absent or
@@ -205,11 +361,11 @@ added on 2026-08-25 with eyes open. That total is the measure of this item.
 
 ---
 
-## 5. The abstractions worth introducing
+## 6. The abstractions worth introducing
 
 Ordered by leverage. Every count here was taken today.
 
-### 5.1 One `Codec` trait, not 262 hand-written halves
+### 6.1 One `Codec` trait, not 262 hand-written halves
 
 ```
   fn encode(&self, encoder: &mut Encoder) -> Result<()>     129 identical signatures
@@ -245,7 +401,7 @@ cannot check — *"there is one constructor per type and the codec calls it."*
 With a trait, "this type is on the wire" becomes a bound. This is where "zero
 traits" stops being a style choice and starts costing duplication.
 
-### 5.2 One validated request, parsed at the edge
+### 6.2 One validated request, parsed at the edge
 
 A single `jails generate` still exists in four shapes:
 
@@ -276,7 +432,7 @@ double parse in the route disappears, and the workspace-wide
 `too_many_arguments = "allow"` (`Cargo.toml:23`, whose comment says it is
 waiting on exactly this) can come out.
 
-### 5.3 One field model, not two parsers of one syntax
+### 6.3 One field model, not two parsers of one syntax
 
 `name:type[!?]@marker` has two parsers and two result types —
 `jails-spec/src/spec/field.rs:264 parse_fields` → `Field`, and
@@ -303,7 +459,7 @@ generator in this codebase's history. `declaration/field.rs` says so in its own
 doc comment — "a rule enforced in one place and not another is the shape of
 every drift bug in this repository" — and the repo has two anyway.
 
-### 5.4 One table per kind, not seven
+### 6.4 One table per kind, not seven
 
 `ArtifactKind` has seven independently maintained tables keyed on it across five
 crates: the enum and clap aliases; `metadata()`/`argument_shape()`;
@@ -328,7 +484,7 @@ Keep `SCENARIOS` separate. It is a test corpus, and
 `every_kind_and_capability_has_a_golden_scenario` already fails when it falls
 behind, which is the right relationship.
 
-### 5.5 `Result<T, String>` and the empty-string sentinel
+### 6.5 `Result<T, String>` and the empty-string sentinel
 
 `src/main.rs:1029`:
 
@@ -360,7 +516,7 @@ consumer is `main`, which prints. This adds the two distinctions actually used
 and nothing else, and makes "every refusal carries a fix" checkable across the
 workspace rather than in `doctor`'s one test.
 
-### 5.6 Where the other traits belong
+### 6.6 Where the other traits belong
 
 Zero traits is a legitimate Rust style. It stops being legitimate where the same
 shape repeats with no way to name it. 5.1 is the first. The others:
@@ -379,12 +535,12 @@ shape repeats with no way to name it. 5.1 is the first. The others:
 
 ---
 
-## 6. Crates, and the concepts they should hold
+## 7. Crates, and the concepts they should hold
 
 Ten crates today. It is a DAG and Cargo enforces it, which is the win the split
 bought.
 
-### 6.1 Dead and unreal edges
+### 7.1 Dead and unreal edges
 
 - **`crates/jails-tooling/src/rename.rs`** — 220 lines, **zero** production
   callers (`main.rs` uses `jails_engine::route::rename`). The one reference left
@@ -403,7 +559,7 @@ bought.
 root → `jails-protocol` and root → `jails-spec` — are **no longer** movable:
 they now have 9 and 4 uses in `src/` respectively.)
 
-### 6.2 Closed crate APIs
+### 7.2 Closed crate APIs
 
 `dead_code = "deny"` is set workspace-wide and finds almost nothing, because
 Rust assumes a `pub` item in a library may be used by another crate. Every crate
@@ -416,7 +572,7 @@ re-exports instead of wildcards. Expect the first pass to surface a large batch
 of real `dead_code` denials — that is the point, and it is why this should come
 before the deletions in 6.1 rather than after.
 
-### 6.3 `jails-commit` reaches up into `jails-project`
+### 7.3 `jails-commit` reaches up into `jails-project`
 
 Committing a transaction is lower-level than knowing what Maven is, yet
 `jails-commit` has 5 `jails_project::` references — `compat::*` and
@@ -434,7 +590,7 @@ holding `.jails/` discovery, ledger read/write, the envelope's file half and
 because there is one direction to finish in. It cannot be small while it also
 has to know how `.jails/` is laid out.
 
-### 6.4 `jails-protocol` is four concepts in one crate
+### 7.4 `jails-protocol` is four concepts in one crate
 
 **23** flat `pub mod`s. Every module has a genuinely distinct secret and says so
 — this is careful work, not a mess. The problem is that a reader arriving at
@@ -457,7 +613,7 @@ evidence exactly one would: `durable/` belongs with `jails-state` from 6.3,
 because an envelope is a file format and the rest of the crate is values that
 never touch a disk.
 
-### 6.5 `jails-support` is four concepts and a lost-property office
+### 7.5 `jails-support` is four concepts and a lost-property office
 
 Eight modules, four subjects: changing the filesystem (`apply`, `scratch`,
 `lock`), running programs (`process`, `runner`), encoding (`codec`, `json`),
@@ -481,7 +637,7 @@ text surgery (`codemod`). Plus `Result`, `debug_cmd` and `CWD_LOCK` at the root.
 
 What is left after those moves is coherent: **write, run, encode**.
 
-### 6.6 `jails-tooling` is two crates wearing one name
+### 7.6 `jails-tooling` is two crates wearing one name
 
 17 modules, two unrelated jobs:
 
@@ -496,7 +652,7 @@ What is left after those moves is coherent: **write, run, encode**.
 structural: the reporting crate simply could not depend on the crate that starts
 things. **Lowest-priority crate split of the three** — do it after 6.3 and 6.5.
 
-### 6.7 `jails-generate` still writes
+### 7.7 `jails-generate` still writes
 
 The largest crate. It holds one job — *decide what Java to write* — and one
 leftover: `generate/write.rs`, `add/database.rs`, `generate/cli.rs`,
@@ -508,9 +664,9 @@ honestly named for the first time.
 
 ---
 
-## 7. Files and tests
+## 8. Files and tests
 
-### 7.1 Modules with a visible seam
+### 8.1 Modules with a visible seam
 
 The architecture board's own listing, today:
 
@@ -552,7 +708,7 @@ For the binary:
                      new/publish.rs        (already split — keep)
 ```
 
-### 7.2 Test files
+### 8.2 Test files
 
 ```
   8,142  tests/cli.rs          175 #[test]
@@ -569,7 +725,7 @@ mixes the ratchet board, the architecture rules, a small Rust blanking parser,
 the crate-layer table, and that parser's own unit tests. Four files under
 `tests/architecture/`, one binary.
 
-### 7.3 The colocated-test convention has two exceptions
+### 8.3 The colocated-test convention has two exceptions
 
 - **`crates/jails-generate/src/generate.rs`** carries **1,020** lines of tests
   belonging to its submodules (`domain`, `web`, `repository`, `cli`,
@@ -584,7 +740,7 @@ the crate-layer table, and that parser's own unit tests. Four files under
   integration-shaped) but it means `route.rs`'s shared helpers have no direct
   test at all. 7.1's split is the moment to add them.
 
-### 7.4 `playground/` is 1,773 generated files in git
+### 8.4 `playground/` is 1,773 generated files in git
 
 A fully generated Java project, committed, regenerated by hand, drifting
 silently whenever a template changes with nothing failing. It has **grown** —
@@ -601,7 +757,7 @@ Right now it is maintenance nobody is doing.
 
 ---
 
-## 8. Test-suite performance
+## 9. Test-suite performance
 
 **Not achieved: plain, unfiltered `cargo test` under 30 seconds.**
 
@@ -699,9 +855,9 @@ image, so its builds use `--pull=never`.
 
 ---
 
-## 9. Documentation and the gates that shape it
+## 10. Documentation and the gates that shape it
 
-### 9.1 `CLAUDE.md` describes a repository that no longer exists
+### 10.1 `CLAUDE.md` describes a repository that no longer exists
 
 It documents **seven** crates; there are **ten**. `jails-engine`,
 `jails-commit`, `jails-prepare` and `jails-protocol` — the largest share of the
@@ -719,7 +875,7 @@ Two changes:
   what a module does belongs in that module's doc comment, where it sits next to
   the code and goes stale visibly.
 
-### 9.2 Load-bearing citations of deleted files
+### 10.2 Load-bearing citations of deleted files
 
 154 `plan.md` references and 48 `abstract.md` in `.rs`, plus six naming
 `missing.md` or `refactor.md`. `CLAUDE.md` is right that these resolve through
@@ -741,7 +897,7 @@ re-point those citations:
 Leave the rest citing `plan.md §N`. A *historical* citation is fine; a
 load-bearing one is not.
 
-### 9.3 A test is choosing production names
+### 10.3 A test is choosing production names
 
 `src/invoke.rs` opens by explaining it is named `invoke` rather than `dispatch`
 because `jails-java` already has a `dispatch`, and
@@ -755,7 +911,7 @@ Then rename `invoke` back to `dispatch`, which is what it is.
 
 ---
 
-## 10. Not started, and open by design
+## 11. Not started, and open by design
 
 - **Hosted CI has never been set up.** No `.github/workflows` exists. This is
   the last item from the V2 cutover. The four example applications are already
@@ -792,23 +948,33 @@ Then rename `invoke` back to `dispatch`, which is what it is.
 
 Each PR leaves `cargo build --workspace && cargo test --workspace` green.
 
-1. **Honest gates and an honest map** — fix §3's measurement and set the ceiling
-   to 69; add the four missing crates to `CLAUDE.md` (§9.1). Do this first;
+0. **Decide the proof-application tier** (§2.4) before adding any of the three
+   new applications. It is not code and it takes an afternoon, but three
+   applications arriving one at a time is how the suite reaches two minutes with
+   nobody having chosen that. Proving `examples/minicom/` and
+   `examples/minicom-spring/`, which exist and are held by nothing, is the
+   cheapest first move and answers the question with real numbers.
+1. **Honest gates and an honest map** — fix §4's measurement and set the ceiling
+   to 69; add the four missing crates to `CLAUDE.md` (§10.1). Do this first;
    everything below is measured against it.
-2. **Delete and close** — `rename.rs` and the unreal edges (§6.1), then close
-   the crate APIs (§6.2) and delete whatever `dead_code` then finds.
-3. **The `Codec` trait** (§5.1) — mechanical, byte-pinned by the golden suite.
-4. **One request, one field model** (§5.2, §5.3) — removes the parse-print-reparse
+2. **Delete and close** — `rename.rs` and the unreal edges (§7.1), then close
+   the crate APIs (§7.2) and delete whatever `dead_code` then finds.
+3. **The `Codec` trait** (§6.1) — mechanical, byte-pinned by the golden suite.
+4. **One request, one field model** (§6.2, §6.3) — removes the parse-print-reparse
    round trip, and drops `too_many_arguments = "allow"`.
-5. **One table per kind** (§5.4).
-6. **One transaction protocol** (§4, §6.7) — `new --app` becomes an ordinary V2
-   transition and the remaining `apply::` calls move behind the executor. §3's
+5. **One table per kind** (§6.4).
+6. **One transaction protocol** (§5, §7.7) — `new --app` becomes an ordinary V2
+   transition and the remaining `apply::` calls move behind the executor. §4's
    gate reaches its target, honestly this time.
-7. **Crate boundaries** (§6.3, §6.4, §6.5) and the file splits (§7).
+7. **Crate boundaries** (§7.3, §7.4, §7.5) and the file splits (§8).
 
-**If only four things get done:** §3 (the gate that reads green over unfinished
-work), §6.2 (close the APIs and let the compiler find the dead code), §5.1 (the
-cheapest large reduction in the repo), §5.3 (the deepest remaining seam between
+The three new proof applications (§2.1, §2.2, §2.3) sequence against §9 rather
+than against this list: each one lengthens the Failsafe tail, so §9's work is
+what makes them affordable, and §2.4 is what decides whether they wait for it.
+
+**If only four things get done:** §4 (the gate that reads green over unfinished
+work), §7.2 (close the APIs and let the compiler find the dead code), §6.1 (the
+cheapest large reduction in the repo), §6.3 (the deepest remaining seam between
 the two engines).
 
 ---
@@ -834,7 +1000,7 @@ From `refactor.md`:
 |---|---|
 | the red architecture gate | green; the board passes |
 | `/minicom/` untracked and unignored | `.gitignore:22` |
-| V1 dead code (~1,380 lines) | `add/shrink.rs`, `generate/remove.rs`, `add::add`/`add_in`, `generate_in_project` all deleted. Only `rename.rs` survives — see §6.1 |
+| V1 dead code (~1,380 lines) | `add/shrink.rs`, `generate/remove.rs`, `add::add`/`add_in`, `generate_in_project` all deleted. Only `rename.rs` survives — see §7.1 |
 | root → `jails-protocol`, root → `jails-spec` as dev-deps | no longer movable: 9 and 4 uses in `src/` |
 | `generate cli` retargets `<mainClass>` with a direct write | it is `SemanticEdit::MavenMainClass` now, carrying the entry point it displaces so `destroy` restores it |
 
@@ -842,4 +1008,4 @@ From `test.md`: Phase 1 (deterministic Kafka wiring, the shared process gate),
 Phase 2 (short-lived JVM settings, shared Spring toolboxes), Phase 3 (shared
 suite PostgreSQL and Kafka with per-application isolation) and Phase 4
 (benchmarked toolchain limits — six is the retained value) all landed. The CLI
-binary went 156.89 s → 38.54 s warm. What is left is §8.
+binary went 156.89 s → 38.54 s warm. What is left is §9.

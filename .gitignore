@@ -26,3 +26,14 @@ target/
 # this checkout; committing it again resurrects a document nobody reads and
 # whose section numbers nothing resolves against.
 /refactor.md
+
+# Take-home briefs and their scaffolds, from other companies, held locally as
+# input to the proof applications in `pending.md` §2. Deliberately never
+# committed: this repository is public, `throxy/` is its own upstream repo (the
+# gitlink accident `/deps/` is here to prevent), and `throxy/data/leads.csv`
+# carries real people's names, job titles and employer domains. A proof
+# application generated from them is jails' output and is committable; the
+# briefs are not ours to publish.
+/gradient.md
+/gradient.pdf
+/throxy/
