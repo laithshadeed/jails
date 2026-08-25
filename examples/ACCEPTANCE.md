@@ -114,7 +114,7 @@ in the defect ledger in [`DOGFOOD.md`](DOGFOOD.md). The application is
 
 ## Current evidence -- crawler and inbox (2026-08-21)
 
-The clean-manifest gate now proves idempotent application, Java 25 LTS
+The clean-manifest gate now proves idempotent application, Java 26
 compilation, real PostgreSQL migrations/repositories/typed equality queries,
 generated create use cases through MVC, authenticated observability, typed
 Kafka round trips, and PostgreSQL-leased durable work. Durable tests cover

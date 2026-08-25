@@ -18,18 +18,17 @@ use std::path::Path;
 /// `new-cli`'s `--release` default, `new`'s `--java` default, and the tier-3
 /// test gate.
 ///
-/// **This is the one place the target is decided.** Three other files
-/// describe the same toolchain and have to agree with it: `mise.toml` (which
-/// JDK this machine installs) and `tests/common/mod.rs`'s `TARGET_RELEASE`
-/// (the integration tests compile against the binary, not the library, so the
-/// constant cannot be imported; `target_release_matches_the_binary` pins them
-/// together).
+/// **This is the one place the generated-project target is decided.** Machine
+/// toolchain configuration such as `mise.toml` has to provide a JDK capable of
+/// compiling it. Integration tests import this constant from `jails-project`
+/// rather than maintaining a second release number.
 ///
-/// Java 25 is the current LTS and the conservative production default. Newer
-/// GA or early-access releases remain an explicit `--java`/`--release`
-/// choice; the default must not make real-toolchain tests silently skip while
-/// waiting for a future JDK to ship.
-pub const TARGET_RELEASE: &str = "25";
+/// JDK 26 is the product default for new projects. It is deliberately newer
+/// than the Java 21 compatibility floor below: adopted Java 21+ projects keep
+/// their configured release, while new projects start on 26. Strict
+/// real-toolchain tests must fail rather than silently skip when this JDK is
+/// unavailable.
+pub const TARGET_RELEASE: &str = "26";
 
 /// The oldest release the *generated* Java actually needs. Everything jails
 /// emits -- records, sealed interfaces, text blocks, pattern-matching switch,

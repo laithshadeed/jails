@@ -13,6 +13,13 @@ fn new_cli_creates_expected_project_layout() {
 
     let root = workdir.join("demo");
     assert!(root.join("pom.xml").is_file());
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(
+        pom.contains(&format!(
+            "<maven.compiler.release>{TARGET_RELEASE}</maven.compiler.release>"
+        )),
+        "{pom}"
+    );
     assert!(
         root.join("src/main/java/com/example/demo/App.java")
             .is_file()
@@ -24,6 +31,31 @@ fn new_cli_creates_expected_project_layout() {
     let agents = fs::read_to_string(root.join("AGENTS.md")).unwrap();
     assert!(agents.contains("jails check"), "{agents}");
     assert!(agents.contains("@MockBean"), "{agents}");
+}
+
+#[test]
+fn new_offline_defaults_to_the_workspace_target_release() {
+    let workdir = temp_dir("new-offline-default-release");
+    let output = jails_cmd(&workdir, None)
+        .args(["new", "demo-app", "--offline", "--no-git"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let root = workdir.join("demo-app");
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(
+        pom.contains(&format!("<java.version>{TARGET_RELEASE}</java.version>")),
+        "{pom}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("mise.toml")).unwrap(),
+        format!("[tools]\njava = \"{TARGET_RELEASE}\"\n")
+    );
 }
 
 #[test]
@@ -550,8 +582,6 @@ fn new_gradle_at_a_current_boot_uses_the_plugins_block_and_a_readable_dependency
             "shop",
             "--gradle",
             "--offline",
-            "--java",
-            "25",
             "--package",
             "com.acme.shop",
             "--no-devtools",
@@ -569,7 +599,10 @@ fn new_gradle_at_a_current_boot_uses_the_plugins_block_and_a_readable_dependency
         build.contains("id 'org.springframework.boot' version"),
         "{build}"
     );
-    assert!(build.contains("JavaLanguageVersion.of(25)"), "{build}");
+    assert!(
+        build.contains(&format!("JavaLanguageVersion.of({TARGET_RELEASE})")),
+        "{build}"
+    );
     // Applied by id, never with a version -- the one number jails has no
     // source for.
     assert!(

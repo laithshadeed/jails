@@ -36,13 +36,13 @@ their exit codes, so `jails doctor --json && deploy` behaves like
   flag jails accepts, derived from the same definition that parses the
   arguments, so it cannot drift from the binary. `--json` is what the Neovim
   plugin reads instead of keeping its own completion tables.
-- `jails new <name> [--deps web,jdbc] [--java 25] [--no-git] [--no-devtools]`
+- `jails new <name> [--deps web,jdbc] [--java 26] [--no-git] [--no-devtools]`
   — new Spring Boot project via start.spring.io. `git init` + `.gitignore`
   and `spring-boot-devtools` (needed for `run --watch`) are on by default.
   It creates `./<name>` and refuses to overwrite an existing directory. Java
-  defaults to the Java 25 LTS. Newer GA or EA releases are explicit choices;
-  when Initializr only accepts an earlier bootstrap release, Jails retargets
-  the generated Maven project to the requested release.
+  defaults to Java 26. Any supported Java 21+ release can be selected
+  explicitly. When Initializr only accepts an earlier bootstrap release,
+  Jails retargets the generated Maven project to the requested release.
 - `jails new <name> --gradle [--boot 2.7.18] [--gradle-version 8.5]
   [--jar-name <name>] [--jar-version <version>]` — the same, as a Groovy
   Gradle build. jails writes every file itself here and never contacts
@@ -61,7 +61,7 @@ their exit codes, so `jails doctor --json && deploy` behaves like
   tag. If it cannot be had, **none** of the three is written and jails says
   so: `run` falls back to `gradle` on PATH when there is no `gradlew`, so no
   wrapper is a working project and a wrapper missing its jar is not.
-- `jails new-cli <name> [--release 25] [--no-git]` — new plain Maven CLI
+- `jails new-cli <name> [--release 26] [--no-git]` — new plain Maven CLI
   project (hand-written `pom.xml`, `App.java`, `AppTest.java`), no network
   required. `App.java` is a working command dispatcher, not a Hello World
   stub, so `generate command` has something to register into from the start.

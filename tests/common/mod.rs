@@ -878,7 +878,11 @@ impl Drop for ProcessPermit<'_> {
 pub fn write_spring_fixture(root: &Path) {
     let pkg_dir = root.join("src/main/java/com/example/demo");
     fs::create_dir_all(&pkg_dir).unwrap();
-    fs::write(root.join("pom.xml"), SPRING_FIXTURE_POM).unwrap();
+    fs::write(
+        root.join("pom.xml"),
+        SPRING_FIXTURE_POM.replace("{TARGET_RELEASE}", TARGET_RELEASE),
+    )
+    .unwrap();
     fs::write(
         pkg_dir.join("DemoApplication.java"),
         SPRING_FIXTURE_APPLICATION,
@@ -991,7 +995,7 @@ const SPRING_FIXTURE_POM: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
     <artifactId>demo</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <properties>
-        <java.version>25</java.version>
+        <java.version>{TARGET_RELEASE}</java.version>
     </properties>
     <dependencies>
         <dependency>
