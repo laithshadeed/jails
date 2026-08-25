@@ -53,22 +53,22 @@ const ALLOWED: &[AllowedConcept] = &[
             "crates/jails-state/src/compat.rs",
             // `ProjectPath` must refuse `.jails/ledger.toml` by name, and the
             // test that proves it has to spell the path it is refusing.
-            "crates/jails-protocol/src/identity.rs",
+            "crates/jails-protocol/src/vocabulary/identity.rs",
             // The schema-2 envelope is the ledger file format; its constants
             // and messages name the thing they describe.
-            "crates/jails-protocol/src/envelope.rs",
+            "crates/jails-protocol/src/durable/envelope.rs",
             // Bootstrap order is *defined* by reading the ledger first, so it
             // cannot be described without naming it.
-            "crates/jails-protocol/src/bootstrap.rs",
+            "crates/jails-protocol/src/observe/bootstrap.rs",
             // `LedgerIntent` is what a plan says the store should hold
             // afterwards, and the guard it carries is the ledger generation.
-            "crates/jails-protocol/src/plan.rs",
+            "crates/jails-protocol/src/intent/plan.rs",
             // A transition is chosen against the ledger's pending-conflict
             // state, and its tests construct one to prove the pairing.
-            "crates/jails-protocol/src/transition.rs",
+            "crates/jails-protocol/src/intent/transition.rs",
             // A frozen conflict carries the complete ledger state a
             // resolution will promote; that is what it is.
-            "crates/jails-protocol/src/pending.rs",
+            "crates/jails-protocol/src/durable/pending.rs",
             // A prepared transaction guards the ledger file it will replace,
             // and its semantics carry the intent for it.
             "crates/jails-prepare/src/prepare.rs",

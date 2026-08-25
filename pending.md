@@ -809,15 +809,18 @@ that function and its private half moved; the rest of `capture` knows what a
 `jails-prepare`, because a `PreparedChange` is about a Java project. That is the
 honest shape and not the thing §7.3 was about.
 
-### 7.4 `jails-protocol` is four concepts in one crate
+### 7.4 `jails-protocol` is four concepts — **grouped 2026-08-25**
 
-**23** flat `pub mod`s. Every module has a genuinely distinct secret and says so
-— this is careful work, not a mess. The problem is that a reader arriving at
-`lib.rs` sees a flat list with no shape. Four groups fall out:
+**23** flat `pub mod`s. Every module had a genuinely distinct secret and said
+so — this was careful work, not a mess. The problem was that a reader arriving
+at `lib.rs` saw a flat list with no shape.
+
+Four submodules now, and the grouping is a claim rather than filing: a type that
+belonged in two of them would be a type doing two jobs.
 
 ```text
   vocabulary/   identity, declaration{,/field,/index}, recipe, coordinate,
-                entity, resource            — validating newtypes, closed sets
+                entity, resource            — what a value is allowed to be
   observe/      snapshot, fact, bootstrap, context, provenance
                                             — what a planner may know
   intent/       request, change, plan, transition, effect, edit, render,
@@ -826,11 +829,19 @@ honest shape and not the thing §7.3 was about.
                                             — what survives a crash
 ```
 
-Start as **submodules**, not crates — mechanical, compiler-checked, and free to
-undo. Promote a group only where the split enforces an edge that matters. On the
-evidence exactly one would: `durable/` belongs with `jails-state` from 6.3,
-because an envelope is a file format and the rest of the crate is values that
-never touch a disk.
+**Submodules, not crates**, as §7.4 said: mechanical, compiler-checked, free to
+undo. Every module is re-exported at the crate root, so
+`jails_protocol::identity::Name` still resolves and the grouping cost no call
+site anything — renaming four hundred of them would have made a filing decision
+look like an API change.
+
+The `observe`/`intent` split is the one that carries weight. A planner reads the
+first and writes the second, and a type appearing in both would be a fact that
+could be asserted, which is the shape of a plan that justifies itself.
+
+Promotion to a crate stays where §7.4 left it: exactly one group has a case, and
+`durable`'s own header says so. It is the only group whose members have a *file*
+behind them, and it belongs with `jails-state` from §7.3 — which now exists.
 
 ### 7.5 `jails-support` is three concepts now — **done 2026-08-25**
 

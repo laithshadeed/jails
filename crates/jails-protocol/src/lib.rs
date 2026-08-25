@@ -9,29 +9,40 @@
 //! valid path is a second validator, and two validators drift — which is how a
 //! value rejected at the CLI arrives through a recovered journal instead.
 //! There is one constructor per type and the codec calls it.
+//!
+//! ## Four groups, not twenty-three modules
+//!
+//! Every module here has a genuinely distinct secret and says so. What a reader
+//! arriving at this file did not get was any *shape*: a flat list of
+//! twenty-three names, alphabetical by accident. `pending.md` §7.4 groups them
+//! by the question they answer, and the grouping is a claim rather than
+//! filing — a type that belonged in two of these would be a type doing two
+//! jobs.
+//!
+//! - [`vocabulary`] — what a value is allowed to be. Validating newtypes,
+//!   closed sets, one constructor each.
+//! - [`observe`] — what a planner may know. Observations, never assertions.
+//! - [`intent`] — what is being asked for. Nothing here has met a disk.
+//! - [`durable`] — what survives a crash. The one group with files behind it.
+//!
+//! They are **submodules, not crates**: mechanical, compiler-checked, and free
+//! to undo. Every module is re-exported at the root below, so
+//! `jails_protocol::identity::Name` still resolves and the grouping cost no
+//! call site anything. Promote a group to a crate only where the split would
+//! enforce an edge that matters; on the evidence exactly one would, and
+//! [`durable`]'s own header says which.
 
-pub mod bootstrap;
-pub mod change;
-pub mod conflict;
-pub mod context;
-pub mod coordinate;
-pub mod declaration;
-pub mod edit;
-pub mod effect;
-pub mod entity;
-pub mod envelope;
-pub mod fact;
-pub mod identity;
-pub mod ownership;
-pub mod pending;
-pub mod plan;
-pub mod provenance;
-pub mod recipe;
-pub mod record;
-pub mod render;
-pub mod request;
-pub mod resource;
-pub mod snapshot;
-pub mod transition;
+mod durable;
+mod intent;
+mod observe;
+mod vocabulary;
 
-pub use jails_support::Result;
+// Flat at the root, grouped in the source. The groups above are for a reader;
+// `jails_protocol::identity::Name` is what four hundred call sites say, and
+// renaming those would have made a filing decision look like an API change.
+pub use durable::{conflict, envelope, pending, record};
+pub use intent::{change, edit, effect, ownership, plan, render, request, transition};
+pub use observe::{bootstrap, context, fact, provenance, snapshot};
+pub use vocabulary::{coordinate, declaration, entity, identity, recipe, resource};
+
+pub(crate) use jails_support::Result;
