@@ -1,8 +1,0 @@
-.git
-.github
-.idea
-.jails/app-state-v1
-.vscode
-target
-*.iml
-compose.yaml
