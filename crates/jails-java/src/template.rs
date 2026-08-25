@@ -64,7 +64,7 @@ use std::sync::OnceLock;
 static OVERRIDES: OnceLock<BTreeMap<String, Override>> = OnceLock::new();
 
 #[derive(Debug, Clone)]
-pub struct Override {
+pub(crate) struct Override {
     pub path: PathBuf,
     /// Deliberately not `contents`: `tests/architecture.rs` counts that field
     /// name as a file-about-to-be-written, and rung 2's gate is that there is

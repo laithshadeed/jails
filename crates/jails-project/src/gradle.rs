@@ -183,7 +183,7 @@ fn at_word(text: &str, at: usize, word: &str) -> bool {
 ///
 /// The same question `pom::flavor` answers about a parent POM, and it decides
 /// the same thing: whether a spliced dependency may omit its version.
-pub fn flavor(text: &str) -> Flavor {
+pub(crate) fn flavor(text: &str) -> Flavor {
     match spring_boot_major(text) {
         Some(_) => Flavor::SpringBoot,
         None => Flavor::PlainMaven,
@@ -197,12 +197,12 @@ pub fn flavor(text: &str) -> Flavor {
 /// `minicom-public/spring` uses, and a reader that only knew the modern
 /// `plugins {}` block would report a Spring project as plain -- which changes
 /// every template jails renders into it.
-pub fn spring_boot_major(text: &str) -> Option<u32> {
+pub(crate) fn spring_boot_major(text: &str) -> Option<u32> {
     boot_version(text)?.split('.').next()?.parse().ok()
 }
 
 /// The Spring Boot plugin's full version string.
-pub fn boot_version(text: &str) -> Option<String> {
+pub(crate) fn boot_version(text: &str) -> Option<String> {
     // Blanking finds *structure* -- which braces open which block. It is the
     // wrong tool for reading a *value*, because every value here lives inside
     // a string literal and blanking is precisely what erases those. So the
@@ -241,7 +241,7 @@ fn first_literal(text: &str) -> Option<String> {
 /// because that is the order Gradle itself resolves them in -- reporting the
 /// looser one would let `jails doctor` bless a project whose real toolchain is
 /// older than the code jails is about to generate.
-pub fn release_level(text: &str) -> Option<u32> {
+pub(crate) fn release_level(text: &str) -> Option<u32> {
     if let Some(body) = top_level_body(text, "java")
         && let Some(inner) = top_level_body(&text[body.clone()], "toolchain")
     {
@@ -387,7 +387,7 @@ fn coordinate_of(line: &str) -> Option<Declared> {
 /// a POM is XML and either has the element or does not; a Gradle build can
 /// compute its dependency list, and "I could not read line 14" is a different
 /// answer from "it is not there".
-pub fn has_dependency(text: &str, group_id: &str, artifact_id: &str) -> Option<bool> {
+pub(crate) fn has_dependency(text: &str, group_id: &str, artifact_id: &str) -> Option<bool> {
     Some(
         declared(text)?
             .iter()
@@ -508,7 +508,11 @@ fn trailing_insert_point(text: &str, body: std::ops::Range<usize>) -> usize {
 }
 
 /// Take one dependency back out, leaving every other byte alone.
-pub fn remove_dependency(text: &str, group_id: &str, artifact_id: &str) -> Result<Option<String>> {
+pub(crate) fn remove_dependency(
+    text: &str,
+    group_id: &str,
+    artifact_id: &str,
+) -> Result<Option<String>> {
     let Some(body) = top_level_body(text, "dependencies") else {
         return Ok(None);
     };
@@ -539,7 +543,7 @@ pub fn remove_dependency(text: &str, group_id: &str, artifact_id: &str) -> Resul
 /// Both spellings, for the same reason both plugin spellings are read:
 /// `bootJar { mainClass = '...' }` is the modern one and
 /// `springBoot { mainClass = '...' }` is what older builds carry.
-pub fn main_class(text: &str) -> Option<String> {
+pub(crate) fn main_class(text: &str) -> Option<String> {
     for block in ["bootJar", "springBoot", "application"] {
         if let Some(body) = top_level_body(text, block) {
             let region = &blanked(text)[body.clone()];
@@ -561,7 +565,7 @@ pub fn main_class(text: &str) -> Option<String> {
 /// where the plugin finds `@SpringBootApplication` itself. Same contract as
 /// `pom::with_main_class`, so the projection does not have to know which build
 /// file it is editing.
-pub fn with_main_class(text: &str, fqcn: &str) -> Option<String> {
+pub(crate) fn with_main_class(text: &str, fqcn: &str) -> Option<String> {
     for block in ["bootJar", "springBoot", "application"] {
         let Some(body) = top_level_body(text, block) else {
             continue;
@@ -1005,7 +1009,7 @@ fn body(feature: Feature) -> &'static str {
 }
 
 /// Whether this build already carries jails' block for a feature.
-pub fn has_feature(text: &str, feature: Feature) -> bool {
+pub(crate) fn has_feature(text: &str, feature: Feature) -> bool {
     text.contains(&format!("// {}", marker(feature)))
 }
 
@@ -1015,7 +1019,7 @@ pub fn has_feature(text: &str, feature: Feature) -> bool {
 /// the reason `codemod.rs` gives about every other file jails does not own:
 /// the marker is what makes removal exact, and what stops a second `add` from
 /// writing the block twice.
-pub fn add_feature(text: &str, feature: Feature) -> Result<Option<String>> {
+pub(crate) fn add_feature(text: &str, feature: Feature) -> Result<Option<String>> {
     if has_feature(text, feature) {
         return Ok(None);
     }
@@ -1072,7 +1076,7 @@ fn add_plugin_line(text: &str, line: &str) -> Result<String> {
 /// it is still byte-identical to what jails wrote. An edited line is the
 /// reader's, which is the same rule the property resource applies to the
 /// comment it writes above a key.
-pub fn remove_feature(text: &str, feature: Feature) -> Option<String> {
+pub(crate) fn remove_feature(text: &str, feature: Feature) -> Option<String> {
     let text = match plugin_line(feature) {
         Some(line) => remove_plugin_line(text, line),
         None => text.to_string(),

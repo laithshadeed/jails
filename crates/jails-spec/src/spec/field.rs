@@ -14,10 +14,7 @@
 //!
 //! See `sql.rs` for the SQL/JDBC projection of the same spec.
 
-use crate::spec::paths::main_dir;
 use jails_support::Result;
-use std::fs;
-use std::path::Path;
 
 #[derive(Clone, Debug)]
 pub struct Field {
@@ -100,7 +97,7 @@ pub enum Optionality {
 }
 
 /// One resolved type: how to spell it in Java, and what it needs imported.
-pub struct Resolved {
+pub(crate) struct Resolved {
     java_type: String,
     imports: Vec<&'static str>,
     owned: bool,
@@ -112,7 +109,7 @@ pub struct Resolved {
 /// Recursion is what makes the collection types worth having: `list<Match>`
 /// and `map<string,double>` cost nothing extra once the element goes through
 /// the same resolver as a bare field.
-pub fn resolve_type(token: &str) -> Result<Resolved> {
+pub(crate) fn resolve_type(token: &str) -> Result<Resolved> {
     let token = token.trim();
 
     if let Some(inner) = generic_argument(token, "list") {
@@ -188,7 +185,7 @@ pub fn resolve_type(token: &str) -> Result<Resolved> {
 /// A collection's element type, with a message that names the collection it
 /// came from -- `unknown field type 'nope'` alone is not much help when it
 /// came out of `list<nope>`.
-pub fn resolve_element(token: &str, outer: &str) -> Result<Resolved> {
+pub(crate) fn resolve_element(token: &str, outer: &str) -> Result<Resolved> {
     let token = token.trim();
     if token.is_empty() {
         return Err(format!("'{outer}' is missing an element type"));
@@ -205,7 +202,7 @@ pub fn resolve_element(token: &str, outer: &str) -> Result<Resolved> {
 /// The text inside `name<...>`, if the token is that shape. A bare `list` has
 /// no element type and is meaningless, so it is not matched here and falls
 /// through to the unknown-type error.
-pub fn generic_argument<'a>(token: &'a str, name: &str) -> Option<&'a str> {
+pub(crate) fn generic_argument<'a>(token: &'a str, name: &str) -> Option<&'a str> {
     token
         .strip_prefix(name)?
         .strip_prefix('<')?
@@ -284,53 +281,80 @@ pub fn parse_fields(args: &[String]) -> Result<Vec<Field>> {
             if ty.is_empty() {
                 return Err(format!("field '{arg}' has a suffix but no type"));
             }
-
-            let resolved = resolve_type(ty)?;
-            if optionality == Optionality::NonBlank && resolved.java_type != "String" {
-                return Err(format!(
-                    "'{arg}': the '!' suffix means non-blank, which only applies to text -- \
-                     drop it, or use '{}:{ty}' if you only meant required",
-                    name.trim()
-                ));
-            }
-            if optionality == Optionality::Nullable && resolved.collection {
-                return Err(format!(
-                    "'{arg}': a collection already models absence as an empty one -- drop the '?'"
-                ));
-            }
-
-            if let Some(check) = constraints.check {
-                // A check jails cannot emit correctly is worse than none: the
-                // migration would fail to apply, which is exactly the class of
-                // failure the field spec is supposed to remove.
-                if !is_numeric(&resolved.java_type) {
-                    return Err(format!(
-                        "'{arg}': {} only applies to a numeric column, and {} is not one",
-                        match check {
-                            NumericCheck::Positive => "@positive",
-                            NumericCheck::NonNegative => "@nonnegative",
-                        },
-                        resolved.java_type
-                    ));
-                }
-            }
-            if constraints.primary_key && optionality == Optionality::Nullable {
-                return Err(format!(
-                    "'{arg}': a primary key column cannot be nullable -- drop the '?' or the '@pk'"
-                ));
-            }
-
-            Ok(Field {
-                name: name.trim().to_string(),
-                java_type: resolved.java_type,
-                imports: resolved.imports,
-                optionality,
-                owned: resolved.owned,
-                collection: resolved.collection,
-                constraints,
-            })
+            derive_field(name.trim(), ty, optionality, constraints, arg)
         })
         .collect()
+}
+
+/// The Java facts a declared component implies, from parts already parsed.
+///
+/// **This is the half that is derivation rather than parsing**, and it is
+/// separate so it can have a second caller.
+/// `jails_protocol::declaration::FieldSpec` holds the same component in
+/// validated form, one layer up; it used to reach a `Field` by rendering
+/// itself back to a `name:type@marker` token and handing that to
+/// [`parse_fields`] — a value this program had just parsed, printed, and
+/// parsed again with the other of the two parsers. `FieldSpec::projected`
+/// calls this instead.
+///
+/// `pending.md` §6.3: *"`java_type` and `imports` are derived facts computed by
+/// a function on `FieldSpec`, not a second parse result."* This is that
+/// function. The cross-checks stay here rather than moving up, because they are
+/// about the *resolved Java type* — `!` needs a `String`, `@positive` needs a
+/// numeric column — and only resolution knows what that is.
+///
+/// `arg` is the original token, used only so a refusal can quote what was
+/// typed rather than a normalisation of it.
+pub fn derive_field(
+    name: &str,
+    type_token: &str,
+    optionality: Optionality,
+    constraints: Constraints,
+    arg: &str,
+) -> Result<Field> {
+    let resolved = resolve_type(type_token)?;
+    if optionality == Optionality::NonBlank && resolved.java_type != "String" {
+        return Err(format!(
+            "'{arg}': the '!' suffix means non-blank, which only applies to text -- \
+             drop it, or use '{name}:{type_token}' if you only meant required"
+        ));
+    }
+    if optionality == Optionality::Nullable && resolved.collection {
+        return Err(format!(
+            "'{arg}': a collection already models absence as an empty one -- drop the '?'"
+        ));
+    }
+
+    if let Some(check) = constraints.check {
+        // A check jails cannot emit correctly is worse than none: the
+        // migration would fail to apply, which is exactly the class of
+        // failure the field spec is supposed to remove.
+        if !is_numeric(&resolved.java_type) {
+            return Err(format!(
+                "'{arg}': {} only applies to a numeric column, and {} is not one",
+                match check {
+                    NumericCheck::Positive => "@positive",
+                    NumericCheck::NonNegative => "@nonnegative",
+                },
+                resolved.java_type
+            ));
+        }
+    }
+    if constraints.primary_key && optionality == Optionality::Nullable {
+        return Err(format!(
+            "'{arg}': a primary key column cannot be nullable -- drop the '?' or the '@pk'"
+        ));
+    }
+
+    Ok(Field {
+        name: name.to_string(),
+        java_type: resolved.java_type,
+        imports: resolved.imports,
+        optionality,
+        owned: resolved.owned,
+        collection: resolved.collection,
+        constraints,
+    })
 }
 
 /// Strip `@marker` suffixes off a field's type and read their constraints.
@@ -340,7 +364,7 @@ pub fn parse_fields(args: &[String]) -> Result<Vec<Field>> {
 /// error listing the real ones -- a typo that parsed as "no constraint" would
 /// produce a schema quietly missing the primary key someone thought they had
 /// asked for, which is the failure mode this whole feature exists to prevent.
-pub fn parse_constraints<'a>(ty: &'a str, arg: &str) -> Result<(&'a str, Constraints)> {
+pub(crate) fn parse_constraints<'a>(ty: &'a str, arg: &str) -> Result<(&'a str, Constraints)> {
     const KNOWN: &str = "@pk, @unique, @index, @scope, @positive, @nonnegative";
     let mut constraints = Constraints::default();
     let mut rest = ty;
@@ -375,7 +399,7 @@ pub fn parse_constraints<'a>(ty: &'a str, arg: &str) -> Result<(&'a str, Constra
 }
 
 /// Java types a numeric `check` can be emitted against.
-pub fn is_numeric(java_type: &str) -> bool {
+pub(crate) fn is_numeric(java_type: &str) -> bool {
     matches!(
         java_type,
         "long" | "Long" | "int" | "Integer" | "double" | "Double" | "BigDecimal"
@@ -392,7 +416,7 @@ pub fn capitalize(s: &str) -> String {
 
 /// Parse through boxed names so collection elements work, then use primitives
 /// for required record/value components where null is not a meaningful state.
-pub fn unboxed(java_type: &str) -> &str {
+pub(crate) fn unboxed(java_type: &str) -> &str {
     match java_type {
         "Integer" => "int",
         "Long" => "long",
@@ -403,7 +427,7 @@ pub fn unboxed(java_type: &str) -> &str {
 }
 
 /// A primitive component cannot be null, so it needs no runtime check.
-pub fn is_reference_type(java_type: &str) -> bool {
+pub(crate) fn is_reference_type(java_type: &str) -> bool {
     !matches!(java_type, "int" | "long" | "boolean" | "double")
 }
 
@@ -464,7 +488,7 @@ pub fn declared_type(field: &Field) -> String {
 }
 
 /// `Optional<int>` does not exist, so an optional primitive takes its wrapper.
-pub fn boxed(java_type: &str) -> &str {
+pub(crate) fn boxed(java_type: &str) -> &str {
     match java_type {
         "int" => "Integer",
         "long" => "Long",
@@ -517,20 +541,6 @@ pub fn blank_checks(fields: &[&Field]) -> String {
 // ---------------------------------------------------------------------------
 // The same spec, read back off a record that already exists
 // ---------------------------------------------------------------------------
-
-/// The components of a record that already exists on disk, as `Field`s.
-///
-/// This is what makes `jails g repo Reward` useful on a type you wrote
-/// yourself: the record already states every component and its type, so the
-/// adapter can be derived from it instead of being handed back as a pile of
-/// TODOs. Returns `None` when there is no such file, or when it declares no
-/// components -- both mean jails has nothing to derive from and should say
-/// so rather than invent columns.
-pub fn fields_from_record(root: &Path, pkg: &str, name: &str) -> Option<Vec<Field>> {
-    let path = main_dir(root, pkg).join(format!("{name}.java"));
-    let source = fs::read_to_string(path).ok()?;
-    fields_of_record(&source)
-}
 
 /// The same question, asked of source the caller already has.
 ///

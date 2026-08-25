@@ -490,7 +490,11 @@ fn last_child_indent(pom: &str, close: usize) -> Option<String> {
 /// Returns `Ok(None)` when it is not declared -- `remove` is idempotent the
 /// same way `add` is. Skips `<dependencyManagement>` so a BOM entry is never
 /// mistaken for the real declaration.
-pub fn remove_dependency(pom: &str, group_id: &str, artifact_id: &str) -> Result<Option<String>> {
+pub(crate) fn remove_dependency(
+    pom: &str,
+    group_id: &str,
+    artifact_id: &str,
+) -> Result<Option<String>> {
     let Some((start, end)) = project_child_span(
         pom,
         "dependency",
@@ -517,7 +521,7 @@ pub fn remove_dependency(pom: &str, group_id: &str, artifact_id: &str) -> Result
 /// scaffold with no meaning to Maven, and distinguishing it would need to know
 /// which branch `add_plugin` took, which is state this format owner does not
 /// keep.
-pub fn remove_plugin(pom: &str, artifact_id: &str) -> Result<Option<String>> {
+pub(crate) fn remove_plugin(pom: &str, artifact_id: &str) -> Result<Option<String>> {
     let Some((start, end)) = plugin_span(pom, artifact_id) else {
         return Ok(None);
     };
@@ -718,7 +722,7 @@ fn build_plugins_close(xml: &str) -> Option<usize> {
 }
 
 /// True when `artifact_id` is already declared as a build plugin.
-pub fn has_plugin(pom: &str, artifact_id: &str) -> bool {
+pub(crate) fn has_plugin(pom: &str, artifact_id: &str) -> bool {
     let needle = format!("<artifactId>{artifact_id}</artifactId>");
     let mut from = 0;
     while let Some(rel) = pom[from..].find(&needle) {
@@ -834,7 +838,7 @@ pub fn spring_boot_major_of(pom: &str) -> u32 {
 /// bring in. A template that hardcoded it produced a test importing a package
 /// that does not exist on Boot 3 and, on Boot 4, one the POM had no dependency
 /// for -- which is why `spring::WEBMVC_TEST_STARTER` is spliced beside it.
-pub fn webmvc_test_import_for(boot_major: u32) -> &'static str {
+pub(crate) fn webmvc_test_import_for(boot_major: u32) -> &'static str {
     const LEGACY: &str = "org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest";
     const CURRENT: &str = "org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest";
     if boot_major >= 4 { CURRENT } else { LEGACY }
@@ -859,7 +863,7 @@ pub fn main_class(pom: &str) -> Option<&str> {
 /// Point the packaged jar at a different class, leaving every other byte
 /// alone. `None` when the POM declares no main class at all -- a Spring Boot
 /// project, where the plugin finds `@SpringBootApplication` itself.
-pub fn with_main_class(pom: &str, fqcn: &str) -> Option<String> {
+pub(crate) fn with_main_class(pom: &str, fqcn: &str) -> Option<String> {
     let open = "<mainClass>";
     let start = pom.find(open)? + open.len();
     let end = pom[start..].find("</mainClass>")? + start;
@@ -908,7 +912,7 @@ pub const WEBMVC_TEST_STARTER: Dependency = Dependency {
 ///
 /// Reached through [`crate::model::Project::mockmvc_autoconfigure_import`],
 /// for the same reason as its `@WebMvcTest` sibling above.
-pub fn mockmvc_autoconfigure_import_for(boot_major: u32) -> &'static str {
+pub(crate) fn mockmvc_autoconfigure_import_for(boot_major: u32) -> &'static str {
     const LEGACY: &str =
         "org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc";
     const CURRENT: &str = "org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc";

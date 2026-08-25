@@ -37,7 +37,7 @@ use super::*;
 /// it is written into the migration so that changing it is a migration.
 const CONFIGURATION: &str = "english";
 
-pub fn search_files(
+pub(crate) fn search_files(
     slice: &Slice,
     name: &str,
     fields: &[String],

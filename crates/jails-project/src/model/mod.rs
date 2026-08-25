@@ -599,6 +599,22 @@ impl Project {
         &self.pom
     }
 
+    /// The class the packaged artifact starts, if this build names one.
+    ///
+    /// Dispatched on the build tool, because [`Self::pom`] returns whichever
+    /// build file the project has. `pom::main_class` handed `build.gradle`
+    /// finds no `<mainClass>` element and answers `None` -- confidently and
+    /// wrongly, which is the failure shape `read_build_file`'s doc comment
+    /// already records twice and `pending.md` §1.2 predicted a fourth of. It
+    /// was this: `g cli` on a Gradle project silently declined to retarget the
+    /// entry point, because declining is what "no entry point declared" means.
+    pub fn main_class(&self) -> Option<String> {
+        match self.build {
+            crate::build::Build::Gradle => crate::gradle::main_class(&self.pom),
+            _ => crate::pom::main_class(&self.pom).map(str::to_string),
+        }
+    }
+
     pub fn layers(&self) -> &Layers {
         &self.layers
     }

@@ -21,7 +21,7 @@ use super::*;
 /// The one command that spans layers, and so the only place that has to say
 /// out loud which package each half of a vertical slice lives in -- and add
 /// the imports that crossing those boundaries now costs.
-pub fn scaffold_artifacts(
+pub(crate) fn scaffold_artifacts(
     slice: &crate::model::Slice,
     name: &str,
     fields: &[String],
@@ -37,7 +37,7 @@ pub fn scaffold_artifacts(
     scaffold_artifacts_from_fields(slice, name, &parsed, indexes, !reusing_record)
 }
 
-pub fn scaffold_artifacts_from_fields(
+pub(crate) fn scaffold_artifacts_from_fields(
     slice: &crate::model::Slice,
     name: &str,
     parsed: &[Field],
@@ -315,7 +315,11 @@ pub fn scaffold_artifacts_from_fields(
 /// generated create test is `@Disabled` naming those types rather than
 /// shipping one that fails on every build, which is the same rule
 /// `generate::sample_value` follows for the DTO round trip.
-pub fn sampled_request(project: &Project, domain: &str, fields: &[Field]) -> (String, Vec<String>) {
+pub(crate) fn sampled_request(
+    project: &Project,
+    domain: &str,
+    fields: &[Field],
+) -> (String, Vec<String>) {
     let audited = crate::spring::has_audit_pair(fields);
     let mut unsampled = Vec::new();
     let body = fields
@@ -386,7 +390,7 @@ fn json_sample(project: &Project, domain: &str, field: &Field) -> Option<String>
 /// -- so the `### List` block this used to end with unconditionally answered
 /// 405 there. A reader sending it learns nothing about their project, only
 /// about this file.
-pub fn scaffold_requests(name: &str, fields: &[Field], body: &str) -> String {
+pub(crate) fn scaffold_requests(name: &str, fields: &[Field], body: &str) -> String {
     let route = resource_path(name);
     // Scoped resources are create-only; reads go through `jails g query`,
     // which writes its own collection.
@@ -404,28 +408,7 @@ pub fn scaffold_requests(name: &str, fields: &[Field], body: &str) -> String {
     )
 }
 
-pub fn field_spec(field: &Field) -> String {
-    let mut ty = field.java_type.clone();
-    if let Some(inner) = ty
-        .strip_prefix("List<")
-        .and_then(|rest| rest.strip_suffix('>'))
-    {
-        ty = format!("list<{inner}>");
-    } else if let Some(inner) = ty
-        .strip_prefix("Map<")
-        .and_then(|rest| rest.strip_suffix('>'))
-    {
-        ty = format!("map<{inner}>");
-    }
-    match field.optionality {
-        Optionality::Nullable => ty.push('?'),
-        Optionality::NonBlank => ty.push('!'),
-        Optionality::Required => {}
-    }
-    format!("{}:{ty}", field.name)
-}
-
-pub fn stored_primary_key(
+pub(crate) fn stored_primary_key(
     root: &Path,
     type_name: &str,
     package: Option<&str>,
@@ -448,186 +431,4 @@ pub fn stored_primary_key(
     } else {
         None
     })
-}
-
-pub fn generate_field(
-    project: &Project,
-    name: &str,
-    fields: &[String],
-    package: Option<&str>,
-    pretend: bool,
-) -> Result<()> {
-    let root: &Path = project.root();
-    let base: &str = project.base();
-    let slice = crate::model::Slice::new(project, package);
-    if fields.len() != 1 {
-        return Err(format!(
-            "field {name} needs exactly one `name:type` component, got {}.\n       \
-             fix: run one field evolution at a time so each change gets its own migration.",
-            fields.len()
-        ));
-    }
-
-    let config = crate::config::Config::load(root)?;
-    let domain = subpackage(base, package.unwrap_or(config.layer(layout::DOMAIN)));
-    let stored = crate::generated_files::model_fields(root, name, package)?;
-    let old_fields = if let Some(spec) = stored.as_ref() {
-        parse_fields(spec)?
-    } else {
-        project.record_in(&domain, name).ok_or_else(|| {
-            format!(
-                "no {name} record found under {domain}.\n       \
-                 fix: generate the record/scaffold first, then run `jails g field {name} {}`.",
-                fields[0]
-            )
-        })?
-    };
-    let mut added = parse_fields(fields)?;
-    let field = added
-        .pop()
-        .ok_or_else(|| "field needs one non-empty field spec".to_string())?;
-    if old_fields
-        .iter()
-        .any(|existing| existing.name == field.name)
-    {
-        return Err(format!(
-            "{name} already has a `{}` component.\n       \
-             fix: choose a new component name; removing or changing a field is a data migration and is not automated.",
-            field.name
-        ));
-    }
-
-    let new_column = crate::sql::columns(
-        std::slice::from_ref(&field),
-        project,
-        &domain,
-        &lower_first(name),
-    )
-    .pop()
-    .expect("one field produces one SQL column");
-    if !new_column.mapped() {
-        return Err(format!(
-            "{}:{} is a project type that cannot be persisted as one column.\n       \
-             fix: generate an association when the type is another record, or use a built-in/enum type.",
-            field.name, field.java_type
-        ));
-    }
-
-    let mut new_fields = old_fields.clone();
-    new_fields.push(field.clone());
-    let old_artifacts = scaffold_artifacts_from_fields(&slice, name, &old_fields, &[], true)?;
-    let new_artifacts = scaffold_artifacts_from_fields(&slice, name, &new_fields, &[], true)?;
-
-    let mut updates: Vec<(&Path, String)> = Vec::new();
-    let mut skipped: Vec<&Path> = Vec::new();
-    for new in &new_artifacts {
-        if new.kind == "migration" || !new.path.is_file() {
-            continue;
-        }
-        let Some(old) = old_artifacts.iter().find(|old| old.path == new.path) else {
-            continue;
-        };
-        let before = prepared_artifact_contents(&old.path, &old.contents);
-        let after = prepared_artifact_contents(&new.path, &new.contents);
-        if before == after {
-            continue;
-        }
-        match fs::read_to_string(&new.path) {
-            Ok(on_disk) if on_disk == before => updates.push((&new.path, after)),
-            Ok(_) => skipped.push(&new.path),
-            Err(error) => {
-                return Err(format!("failed to read {}: {error}", new.path.display()));
-            }
-        }
-    }
-
-    let migration = if project.has_directory("src/main/resources/db/migration") {
-        let path = crate::generate::migration_file(
-            project,
-            &format!(
-                "add_{}_to_{}",
-                new_column.name,
-                crate::sql::table_name(name)
-            ),
-        )?;
-        if path.exists() {
-            return Err(format!(
-                "{} already exists.\n       fix: resolve the migration version collision and rerun the command.",
-                path.display()
-            ));
-        }
-        Some((path, crate::sql::add_column(name, &new_column)?))
-    } else {
-        None
-    };
-
-    for (path, _) in &updates {
-        println!(
-            "{} {}",
-            if pretend { "would update" } else { "updated" },
-            path.display()
-        );
-    }
-    for path in &skipped {
-        println!("skipped {} -- you have edited this file", path.display());
-        if path
-            .file_name()
-            .is_some_and(|file| file.to_string_lossy() == format!("Jdbc{name}Repository.java"))
-        {
-            println!(
-                "         add to the select/insert lists: {}",
-                new_column.name
-            );
-            println!(
-                "         bind: {}",
-                new_column.write.as_deref().unwrap_or("the new component")
-            );
-        } else {
-            println!(
-                "         add component: {} {}",
-                declared_type(&field),
-                field.name
-            );
-        }
-    }
-    if let Some((path, _)) = &migration {
-        println!(
-            "{} migration {}",
-            if pretend { "would create" } else { "created" },
-            path.display()
-        );
-    }
-
-    if pretend {
-        println!();
-        println!("--pretend: nothing was written.");
-        return Ok(());
-    }
-    for (path, contents) in &updates {
-        // `g field` only reaches here for derived files that still match what
-        // jails would have written -- the ownership oracle already refused the
-        // rest and printed a snippet. So this is jails replacing its own
-        // output, which is what `replace` names.
-        crate::apply::replace(path, contents)?;
-    }
-    let mut written = Vec::new();
-    if let Some((path, contents)) = migration {
-        write_new_file(root, &path, &contents)?;
-        written.push(path);
-    }
-
-    let mut model_spec = stored.unwrap_or_else(|| old_fields.iter().map(field_spec).collect());
-    model_spec.push(fields[0].clone());
-    Ok(())
-}
-
-pub fn prepared_artifact_contents(path: &Path, contents: &str) -> String {
-    if path
-        .extension()
-        .is_some_and(|extension| extension == "java")
-    {
-        jails_java::tidy::tidy_blank_lines(&jails_java::tidy::normalize_imports(contents))
-    } else {
-        contents.to_string()
-    }
 }

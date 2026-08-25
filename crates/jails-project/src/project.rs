@@ -7,13 +7,13 @@ use crate::pom;
 use jails_support::Result;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MavenModule {
+pub(crate) struct MavenModule {
     pub artifact_id: Option<String>,
     pub root: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProjectContext {
+pub(crate) struct ProjectContext {
     pub reactor: MavenModule,
     pub module: MavenModule,
     pub java_release: Option<u32>,
@@ -381,7 +381,7 @@ fn maven_command(workspace_root: &Path) -> PathBuf {
 }
 
 #[cfg(test)]
-pub fn maven_command_for_tests(workspace_root: &Path) -> PathBuf {
+pub(crate) fn maven_command_for_tests(workspace_root: &Path) -> PathBuf {
     maven_command(workspace_root)
 }
 

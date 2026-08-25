@@ -12,50 +12,19 @@
 //! generated integration tests for months that `mvn verify` never ran, and
 //! `--pretend` named two files where the real run wrote three.
 
-use crate::model::{Artifact, Change, Project};
+use crate::model::Artifact;
 use jails_support::Result;
 use std::path::Path;
 
 /// Whether this change writes an integration test and therefore needs the
 /// Failsafe plugin. Derived from the planned files so a recipe cannot forget.
-pub fn writes_an_it(artifacts: &[Artifact]) -> bool {
+pub(crate) fn writes_an_it(artifacts: &[Artifact]) -> bool {
     artifacts.iter().any(|a| {
         a.path
             .file_name()
             .and_then(|n| n.to_str())
             .is_some_and(|n| n.ends_with("IT.java"))
     })
-}
-
-/// Every generated test is written against AssertJ, so the project has to
-/// have it.
-///
-/// The same rule as `ensure_failsafe` and for the same reason: handing the
-/// reader `cannot find symbol: method assertThat` for a file they did not
-/// write is the plumbing this tool exists to remove. `jails new` and
-/// `new-cli` put AssertJ in the pom, which is why this went unnoticed --
-/// **the projects that need it are the ones jails did not create**, and
-/// `jails add`/`jails g` on an existing plain Maven project is the whole
-/// point of §12.
-///
-/// Under a Spring Boot parent the version is left to the BOM; without one it
-/// is pinned, since a versionless dependency is a pom Maven refuses to read
-/// (plan.md §8.1).
-pub fn ensure_assertj(project: &Project, writes_a_test: bool) -> Result<()> {
-    if !writes_a_test || project.build() != crate::build::Build::Maven {
-        return Ok(());
-    }
-    let pom = project.pom().to_string();
-    // A Spring Boot project gets AssertJ transitively through the test
-    // starter, and jails' own `new` declares it outright. Adding a second
-    // declaration would be noise in a file the reader owns.
-    if crate::pom::has_dependency(&pom, "org.assertj", "assertj-core")
-        || pom.contains("spring-boot-starter-test")
-        || pom.contains("spring-boot-starter-webmvc-test")
-    {
-        return Ok(());
-    }
-    ensure_dependency(project.root(), &crate::pom::assertj(project.flavor()))
 }
 
 /// The Boot 4 package `@WebMvcTest` and `@AutoConfigureMockMvc` moved to.
@@ -66,7 +35,7 @@ pub fn ensure_assertj(project: &Project, writes_a_test: bool) -> Result<()> {
 /// decays. A Boot 3 project renders the legacy package, so this is false
 /// there and the dependency is not added -- which is right, since on Boot 3
 /// the class is in `spring-boot-test-autoconfigure` and already present.
-pub const WEBMVC_TEST_PACKAGE: &str = "org.springframework.boot.webmvc.test.autoconfigure";
+pub(crate) const WEBMVC_TEST_PACKAGE: &str = "org.springframework.boot.webmvc.test.autoconfigure";
 
 /// Did this batch write a test that needs Boot 4's servlet test slice?
 pub fn writes_a_webmvc_test(artifacts: &[Artifact]) -> bool {
@@ -75,84 +44,11 @@ pub fn writes_a_webmvc_test(artifacts: &[Artifact]) -> bool {
         .any(|artifact| artifact.contents.contains(WEBMVC_TEST_PACKAGE))
 }
 
-/// Supply the module a generated `@WebMvcTest` needs.
-///
-/// The same rule as `ensure_assertj`, and the failure it prevents is worse:
-/// without it `mvn verify` stops while *compiling* the generated test, so no
-/// test in the project runs, CI is red, and the generated Dockerfile fails
-/// too -- `-DskipTests` suppresses execution but still compiles test sources.
-pub fn ensure_webmvc_test(project: &Project, writes_one: bool) -> Result<()> {
-    if !writes_one || project.build() != crate::build::Build::Maven {
-        return Ok(());
-    }
-    if crate::pom::has_dependency(
-        project.pom(),
-        "org.springframework.boot",
-        "spring-boot-starter-webmvc-test",
-    ) {
-        return Ok(());
-    }
-    ensure_dependency(project.root(), &crate::pom::WEBMVC_TEST_STARTER)
-}
-
 /// Did this batch write anything under `src/test`?
-pub fn writes_a_test(artifacts: &[Artifact]) -> bool {
+pub(crate) fn writes_a_test(artifacts: &[Artifact]) -> bool {
     artifacts
         .iter()
         .any(|a| a.path.to_string_lossy().contains("src/test/java"))
-}
-
-/// Splice a dependency into pom.xml unless it is already there.
-///
-/// Comment-preserving, like every other pom edit jails makes: the file
-/// belongs to the reader, and a generator that reformats it has taken more
-/// than it was asked for.
-pub fn ensure_dependency(root: &Path, dep: &crate::pom::Dependency) -> Result<()> {
-    // Nothing to splice into, and jails will not write a foreign build file.
-    // `generate::report_degraded_shape` has already named this dependency for
-    // the reader to add, which is the honest half of the trade.
-    if crate::build::detect(root) != crate::build::Build::Maven {
-        return Ok(());
-    }
-    let pom = crate::pom::read(root)?;
-    match crate::pom::add_dependency(&pom, dep)? {
-        Some(updated) => {
-            crate::apply::put_named(root.join("pom.xml"), updated, "pom.xml")?;
-            println!("     dep {}:{}", dep.group_id, dep.artifact_id);
-            Ok(())
-        }
-        None => Ok(()),
-    }
-}
-
-/// Apply the POM portion of a planned change in memory and write it once.
-pub fn apply_build_change(root: &Path, pom: &str, change: &Change) -> Result<()> {
-    if crate::build::detect(root) != crate::build::Build::Maven {
-        return Ok(());
-    }
-    let mut updated = pom.to_string();
-    let mut changed = false;
-
-    // Preserve the historical insertion order (plugin, AssertJ, recipe
-    // dependencies) while collapsing all edits into one filesystem write.
-    for (artifact_id, body) in &change.plugins {
-        if let Some(next) = crate::pom::add_plugin(&updated, artifact_id, body)? {
-            updated = next;
-            changed = true;
-            println!("  plugin {artifact_id}");
-        }
-    }
-    for dep in &change.deps {
-        if let Some(next) = crate::pom::add_dependency(&updated, dep)? {
-            updated = next;
-            changed = true;
-            println!("  dep {}:{}", dep.group_id, dep.artifact_id);
-        }
-    }
-    if changed {
-        crate::apply::put_named(root.join("pom.xml"), updated, "pom.xml")?;
-    }
-    Ok(())
 }
 
 /// Write a file jails is creating, into a project whose root the caller
@@ -206,7 +102,7 @@ pub fn write_new_file(root: &Path, path: &Path, contents: &str) -> Result<()> {
 /// `org.jspecify:jspecify` dependency would not compile with the annotation,
 /// so nothing is written unless the annotation is actually available. That is
 /// checked by the caller chain rather than here; see `jspecify_available`.
-pub fn ensure_package_info(root: &Path, class_path: &Path) -> Result<()> {
+pub(crate) fn ensure_package_info(root: &Path, class_path: &Path) -> Result<()> {
     let Some(dir) = class_path.parent() else {
         return Ok(());
     };
@@ -238,7 +134,7 @@ pub fn ensure_package_info(root: &Path, class_path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn package_info_java(pkg: &str) -> String {
+pub(crate) fn package_info_java(pkg: &str) -> String {
     format!(
         r#"/**
  * Every reference type in this package is non-null unless it is explicitly
@@ -270,7 +166,11 @@ import org.jspecify.annotations.NullMarked;
 /// do is exactly the drift this costs elsewhere. They are prepended to the
 /// plan so each lands before the class that needed it, at which point
 /// `ensure_package_info` finds the file present and does nothing.
-pub fn planned_package_infos(root: &Path, pom: &str, artifacts: &[Artifact]) -> Vec<Artifact> {
+pub(crate) fn planned_package_infos(
+    root: &Path,
+    pom: &str,
+    artifacts: &[Artifact],
+) -> Vec<Artifact> {
     if !jspecify_available(pom) {
         return Vec::new();
     }
@@ -309,12 +209,12 @@ pub fn planned_package_infos(root: &Path, pom: &str, artifacts: &[Artifact]) -> 
 /// Annotating a package that cannot resolve `@NullMarked` would hand the
 /// reader a compile error for a file they did not ask for, which is the exact
 /// opposite of what a scaffold is for.
-pub fn jspecify_available(pom: &str) -> bool {
+pub(crate) fn jspecify_available(pom: &str) -> bool {
     crate::pom::has_dependency(pom, "org.jspecify", "jspecify")
 }
 
 /// The package name for a directory under `src/main/java`.
-pub fn package_of_dir(root: &Path, dir: &Path) -> Option<String> {
+pub(crate) fn package_of_dir(root: &Path, dir: &Path) -> Option<String> {
     let src_root = root.join("src/main/java");
     let rel = dir.strip_prefix(&src_root).ok()?;
     let pkg = rel

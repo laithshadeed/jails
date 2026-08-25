@@ -11,7 +11,7 @@ use super::*;
 // no framework annotations, and a compact constructor so an invalid value cannot be
 // constructed in the first place. ----
 
-pub fn record_java(pkg: &str, name: &str, fields: &[Field]) -> String {
+pub(crate) fn record_java(pkg: &str, name: &str, fields: &[Field]) -> String {
     // Only reference components can be null, and only ones not marked `?`
     // are checked -- if that leaves nothing, the compact constructor is dead
     // weight.
@@ -84,7 +84,7 @@ pub fn record_java(pkg: &str, name: &str, fields: &[Field]) -> String {
 /// table as generated tests and fixtures. Unknown project types remain null
 /// and `build()` names them; silently guessing would produce a factory that
 /// compiles and lies.
-pub fn factory_java(
+pub(crate) fn factory_java(
     project: &Project,
     pkg: &str,
     domain: &str,
@@ -296,7 +296,7 @@ pub(super) fn record_test(project: &Project, pkg: &str, name: &str, fields: &[Fi
 /// have any constructor at all, and guessing produces a test that does not
 /// compile. The one case it *can* solve is an enum -- hence `generate enum`
 /// pulling its weight twice.
-pub fn sample_value(field: &Field, project: &Project, pkg: &str) -> Option<String> {
+pub(crate) fn sample_value(field: &Field, project: &Project, pkg: &str) -> Option<String> {
     // An absent Optional is a sample of anything, so `?` rescues even a type
     // jails knows nothing about.
     if field.optionality == Optionality::Nullable {
@@ -323,7 +323,7 @@ pub fn sample_value(field: &Field, project: &Project, pkg: &str) -> Option<Strin
 /// already has on disk**.
 ///
 /// jails has no type model, which is why `sample_value` gives up on an owned
-/// type -- but it does have the record, and `fields_from_record` already
+/// type -- but it does have the record, and `Project::record_in` already
 /// reads it for `g repo` and eight newer kinds. A `value` generated two
 /// intents earlier is not an unknown type; refusing to sample it is the tool
 /// forgetting what it just wrote. App D hit exactly that: `Entry` carries an
@@ -337,7 +337,7 @@ pub fn sample_value(field: &Field, project: &Project, pkg: &str) -> Option<Strin
 ///
 /// Returns the expression and any imports its *components* need, since the
 /// nested literals are not otherwise visible to the file's import list.
-pub fn sample_in_package(
+pub(crate) fn sample_in_package(
     field: &Field,
     project: &Project,
     pkg: &str,
@@ -422,7 +422,7 @@ fn owned_record_sample(
 /// The boolean is true when the record on disk was the source. Keeping that
 /// fact lets a spanning generator such as `scaffold` reuse the model without
 /// claiming (or later destroying) a file it did not create.
-pub fn fields_from_spec_or_record(
+pub(crate) fn fields_from_spec_or_record(
     project: &Project,
     pkg: &str,
     name: &str,
@@ -447,7 +447,7 @@ pub fn fields_from_spec_or_record(
 /// The first constant of a project enum, for a fixture sample. Reads the
 /// file rather than guessing: a made-up constant produces a fixture that
 /// looks right and fails on the first `valueOf`.
-pub fn first_enum_constant(project: &Project, pkg: &str, type_name: &str) -> Option<String> {
+pub(crate) fn first_enum_constant(project: &Project, pkg: &str, type_name: &str) -> Option<String> {
     let source = project.source_of(pkg, type_name)?;
     let source = source.as_str();
     let text = crate::java::blanked(source);

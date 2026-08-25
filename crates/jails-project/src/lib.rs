@@ -37,6 +37,6 @@ pub mod synonyms;
 // The lower crates, re-exported so every module in this one keeps saying
 // `crate::…` wherever it ships. Only this block knows which crate a module
 // actually lives in, which is what makes moving one a one-line change.
-pub(crate) use jails_java::{java, template};
-pub(crate) use jails_spec::{build, spec};
+pub use jails_java::{java, template};
+pub use jails_spec::{build, spec};
 pub(crate) use jails_support::{apply, codemod, json, process};

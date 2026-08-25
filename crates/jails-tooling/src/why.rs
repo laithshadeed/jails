@@ -580,13 +580,13 @@ const FATAL_MARKERS: [&str; 4] = [
     "Exception in thread \"restartedMain\"",
 ];
 
-pub fn looks_fatal(log: &str) -> bool {
+pub(crate) fn looks_fatal(log: &str) -> bool {
     FATAL_MARKERS.iter().any(|marker| log.contains(marker))
 }
 
 /// Explain a captured run that failed. Returns how many failures were
 /// recognised, so the caller can say something useful about zero.
-pub fn report(log: &str) -> usize {
+pub(crate) fn report(log: &str) -> usize {
     let found = explain(log);
     print_report(&found);
     found.len()

@@ -17,7 +17,6 @@
 //! command `jails test` would not have used.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// The name mvnd is installed under. On Windows it ships as `mvnd.cmd`, so
 /// probing for a bare `mvnd` there finds nothing and silently falls back to
@@ -103,21 +102,6 @@ fn mvnd_can_start() -> bool {
             },
         }
     }
-}
-
-/// Format a tree jails has just written, best-effort.
-///
-/// Formatter *wrapping* cannot be predicted from a template, so `add format`
-/// runs the real formatter once rather than trying to emit pre-wrapped Java.
-/// A machine without Maven simply gets `false` and a note: failing the capability
-/// over a cosmetic pass would be worse than an unformatted tree.
-pub fn format_quietly(root: &Path) -> bool {
-    Command::new(binary(root))
-        .args(["-q", "spotless:apply"])
-        .current_dir(root)
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
 }
 
 #[cfg(test)]

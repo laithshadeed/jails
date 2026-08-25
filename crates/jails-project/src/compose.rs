@@ -198,7 +198,7 @@ pub fn exists(root: &Path) -> bool {
 
 /// True when any jails-managed (or otherwise declared) service is still in
 /// the file -- used to keep or drop `spring-boot-docker-compose`.
-pub fn has_services(text: &str) -> bool {
+pub(crate) fn has_services(text: &str) -> bool {
     service_names(text).next().is_some()
 }
 
@@ -278,20 +278,11 @@ fn marked_volume(name: &str, marker: &str) -> String {
     block(marker).render(&format!("{name}:\n"))
 }
 
-pub fn has_service(text: &str, svc: &Service) -> bool {
-    has_service_ref(text, svc.borrowed())
-}
-
-pub fn has_service_ref(text: &str, svc: ServiceRef<'_>) -> bool {
+pub(crate) fn has_service_ref(text: &str, svc: ServiceRef<'_>) -> bool {
     block(svc.marker).present_in(text)
         || text
             .lines()
             .any(|line| line.trim_end() == format!("  {}:", svc.name))
-}
-
-/// Splice `svc` into `text`. `Ok(None)` when it is already there.
-pub fn add_service(text: &str, svc: &Service) -> Option<String> {
-    add_service_ref(text, svc.borrowed())
 }
 
 /// The same, for a body stated *canonically*: relative to the service, with no
@@ -304,7 +295,7 @@ pub fn add_service(text: &str, svc: &Service) -> Option<String> {
 /// handing it the canonical value instead un-nests every key -- `image:` lands
 /// at the service's own indent and the document stops being YAML. That is
 /// exactly what the V2 route wrote until something compared the bytes.
-pub fn add_canonical_service(text: &str, svc: ServiceRef<'_>) -> Option<String> {
+pub(crate) fn add_canonical_service(text: &str, svc: ServiceRef<'_>) -> Option<String> {
     let body = nested(svc.body);
     add_service_ref(text, ServiceRef { body: &body, ..svc })
 }
@@ -329,7 +320,7 @@ fn nested(body: &str) -> String {
 /// The same splice from borrowed parts, for a service that did not come from
 /// a literal in this binary. One splice, two callers — see
 /// `pom::add_dependency_ref` for the same reason.
-pub fn add_service_ref(text: &str, svc: ServiceRef<'_>) -> Option<String> {
+pub(crate) fn add_service_ref(text: &str, svc: ServiceRef<'_>) -> Option<String> {
     if !text.trim().is_empty() && has_service_ref(text, svc) {
         return None;
     }
@@ -415,20 +406,13 @@ fn ensure_volume(text: &str, name: &str, marker: &str) -> String {
     insert_under(text, "volumes", &marked_volume(name, marker))
 }
 
-/// Remove the marked block for `svc`. Returns `Some("")` when the file would
-/// have no services left (caller should delete it), `None` when the service
-/// was not there.
-pub fn remove_service(text: &str, svc: &Service) -> Option<String> {
-    remove_service_ref(text, svc.borrowed())
-}
-
 /// The same removal, from parts the caller owns.
 ///
 /// A service being retired is named by a *recorded* resource rather than by
 /// one of this module's constants, so its marker and volume arrive as runtime
 /// strings. Leaking them to fit `Service`'s `&'static str` fields would be a
 /// memory leak in the name of a type signature.
-pub fn remove_service_ref(text: &str, svc: ServiceRef<'_>) -> Option<String> {
+pub(crate) fn remove_service_ref(text: &str, svc: ServiceRef<'_>) -> Option<String> {
     let stripped = strip_marked(text, svc.marker)?;
     let stripped = if svc.volume.is_some() {
         strip_marked(&stripped, svc.marker).unwrap_or(stripped)
@@ -476,19 +460,6 @@ pub fn up(root: &Path, names: &[&str], debug: bool) -> bool {
         return true;
     }
     match invoke_compose(root, up_args(names), debug) {
-        Ok(()) => true,
-        Err(err) => {
-            eprintln!("jails: {err}");
-            false
-        }
-    }
-}
-
-pub fn stop(root: &Path, names: &[&str], debug: bool) -> bool {
-    if !exists(root) || names.is_empty() {
-        return true;
-    }
-    match invoke_compose(root, stop_args(names), debug) {
         Ok(()) => true,
         Err(err) => {
             eprintln!("jails: {err}");
@@ -700,6 +671,22 @@ fn host_port_for_container(trimmed: &str, container_port: u16) -> Option<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The splice, reached the way the V2 projection reaches it.
+    ///
+    /// These tests were written against `add_service(text, &Service)`, a V1
+    /// entry point that had no callers left once `projection.rs` started
+    /// splicing from a recorded `ComposeServiceSpec`. Deleting the entry point
+    /// would have deleted the only unit tests the splice has, so they were
+    /// re-pointed at the surviving `*_ref` pair instead -- which is the
+    /// function the shipped path actually calls.
+    fn add_service(text: &str, svc: &Service) -> Option<String> {
+        add_service_ref(text, svc.borrowed())
+    }
+
+    fn remove_service(text: &str, svc: &Service) -> Option<String> {
+        remove_service_ref(text, svc.borrowed())
+    }
 
     #[test]
     fn add_service_to_empty_file_renders_header_and_markers() {

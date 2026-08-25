@@ -27,7 +27,7 @@ use jails_support::Result;
 use std::path::{Path, PathBuf};
 
 /// One `.java` file that declares the requested simple name.
-pub struct Found {
+pub(crate) struct Found {
     pub qualified: String,
     pub path: PathBuf,
 }
@@ -78,7 +78,7 @@ pub fn src(type_name: &str, json: bool) -> Result<()> {
 /// Sorted within each root so two runs on one machine agree, and the project's
 /// own sources come first because a type you own shadowing a library type is
 /// almost always the one you meant.
-pub fn search(root: &Path, type_name: &str) -> Vec<Found> {
+pub(crate) fn search(root: &Path, type_name: &str) -> Vec<Found> {
     let mut found = Vec::new();
     for dir in roots(root) {
         let mut here = Vec::new();

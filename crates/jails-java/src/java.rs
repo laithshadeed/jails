@@ -534,7 +534,7 @@ fn top_level_find(text: &str, needle: &str) -> Option<usize> {
     None
 }
 
-pub fn skip_space(text: &str, mut at: usize) -> usize {
+pub(crate) fn skip_space(text: &str, mut at: usize) -> usize {
     let bytes = text.as_bytes();
     while at < bytes.len() && bytes[at].is_ascii_whitespace() {
         at += 1;
@@ -544,7 +544,7 @@ pub fn skip_space(text: &str, mut at: usize) -> usize {
 
 /// Offset of the `)` closing the `(` at `open`. Returns the last byte when
 /// the source is unbalanced, so a truncated file cannot panic the caller.
-pub fn match_paren(text: &str, open: usize) -> usize {
+pub(crate) fn match_paren(text: &str, open: usize) -> usize {
     match_delim(text, open, b'(', b')')
 }
 

@@ -89,7 +89,7 @@ const FILE_URL: &str = "jdbc:h2:file:./data/app";
 /// like a missing table.
 const TEST_URL: &str = "jdbc:h2:mem:test;DB_CLOSE_DELAY=-1";
 
-pub fn h2_slice(slice: &Slice) -> Change {
+pub(crate) fn h2_slice(slice: &Slice) -> Change {
     let root: &Path = slice.project().root();
     let pkg: &str = &slice.root_package();
     let boot_major = slice.project().boot_major();

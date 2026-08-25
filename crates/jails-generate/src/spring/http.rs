@@ -25,7 +25,7 @@ use super::*;
 /// the usual hand-written client: no `RestTemplate` field, no URI building,
 /// no response-entity unwrapping, and the base URL is configuration rather
 /// than a constant compiled into the jar.
-pub fn client_files(slice: &Slice, name: &str) -> Vec<Artifact> {
+pub(crate) fn client_files(slice: &Slice, name: &str) -> Vec<Artifact> {
     let root: &Path = slice.project().root();
     let pkg: &str = &slice.placed(Layer::Clients);
     let main = crate::generate::main_dir(root, pkg);
@@ -82,7 +82,7 @@ fn client_test_java(pkg: &str, name: &str, group: &str) -> String {
 // `generate fetcher` -- bounded, SSRF-safe outbound bytes.
 // ---------------------------------------------------------------------------
 
-pub fn fetcher_files(slice: &Slice, name: &str) -> Vec<Artifact> {
+pub(crate) fn fetcher_files(slice: &Slice, name: &str) -> Vec<Artifact> {
     let root: &Path = slice.project().root();
     let pkg: &str = &slice.placed(Layer::Clients);
     let main = crate::generate::main_dir(root, pkg);
@@ -120,7 +120,7 @@ pub fn fetcher_files(slice: &Slice, name: &str) -> Vec<Artifact> {
 // `generate http-workflow` -- durable bounded traversal over a safe fetcher.
 // ---------------------------------------------------------------------------
 
-pub fn http_workflow_files(
+pub(crate) fn http_workflow_files(
     slice: &Slice,
     name: &str,
     fetcher: &str,

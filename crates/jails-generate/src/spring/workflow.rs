@@ -21,7 +21,7 @@ use super::*;
 // `generate usecase` -- an executable create operation over a scaffold.
 // ---------------------------------------------------------------------------
 
-pub fn require_scope_authorizer(
+pub(crate) fn require_scope_authorizer(
     slice: &Slice,
     kind: &str,
     name: &str,
@@ -81,7 +81,7 @@ pub(super) fn scope_test_parts(
 /// standing in for. Reading it is also the one refusal every field-taking
 /// operation shares, so it lives here once rather than in each generator with
 /// its own wording -- plan.md §9.4's rule, in the only form that cannot drift.
-pub struct Target {
+pub(crate) struct Target {
     /// The resource's class name.
     pub name: String,
     /// Its record components, read off disk.
@@ -140,7 +140,7 @@ struct Defaults {
     imports: Vec<String>,
 }
 
-pub fn usecase_files(
+pub(crate) fn usecase_files(
     slice: &Slice,
     name: &str,
     target: &str,

@@ -76,7 +76,7 @@ pub const FILE: &str = "jails.toml";
 /// (`cli`, `messaging`) were never counted at all. A second list of the same
 /// thing is how that happens, so the validation list below is derived from
 /// this one rather than written out again.
-pub const LAYERS_IN_ORDER: &[(&str, &str)] = &[
+pub(crate) const LAYERS_IN_ORDER: &[(&str, &str)] = &[
     (layout::DOMAIN, "Domain"),
     (layout::APP, "Ports"),
     (layout::SERVICE, "Services"),
@@ -433,63 +433,12 @@ fn capability_named(label: &str, lineno: usize) -> Result<Capability, String> {
         })
 }
 
-/// Add a capability to `[project] capabilities`, creating `jails.toml` if the
-/// project has none.
-///
-/// Called by `add` after it succeeds, so the manifest stays true without
-/// anyone maintaining it by hand -- a file you have to remember to update is
-/// a file that is wrong, and a wrong manifest is worse than none because
-/// `sync` would act on it.
-///
-/// Rewrites only the one line. Everything else in the file -- comments, the
-/// `[layout]` table, key order -- is left byte-for-byte alone, for the same
-/// reason `pom.rs` splices rather than round-trips: this is a file people
-/// edit.
-pub fn record_capability(root: &Path, label: &str) -> Result<(), String> {
-    edit_capabilities(root, |labels| {
-        if labels.iter().any(|l| l == label) {
-            return false;
-        }
-        labels.push(label.to_string());
-        true
-    })
-}
-
-/// Take a capability back out, for `remove`. The exact inverse of
-/// `record_capability`: leaving it listed would have the next `sync` put back
-/// what you just removed.
-pub fn forget_capability(root: &Path, label: &str) -> Result<(), String> {
-    edit_capabilities(root, |labels| {
-        let before = labels.len();
-        labels.retain(|l| l != label);
-        labels.len() != before
-    })
-}
-
-/// Read the declared list, let `change` mutate it, and write the file back if
-/// it said something changed.
-fn edit_capabilities(
-    root: &Path,
-    change: impl FnOnce(&mut Vec<String>) -> bool,
-) -> Result<(), String> {
-    let path = root.join(FILE);
-    let text = match fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(format!("failed to read {}: {e}", path.display())),
-    };
-    match edited_capabilities(&text, change)? {
-        Some(updated) => crate::apply::put(&path, updated),
-        None => Ok(()),
-    }
-}
-
 /// The same edit as text, for a caller holding the bytes rather than a root.
 ///
 /// `None` means the change was already true. This is the splice; the two
 /// root-taking functions above are the file half of it, so a projection and a
 /// write cannot disagree about what the file becomes.
-pub fn edited_capabilities(
+pub(crate) fn edited_capabilities(
     text: &str,
     change: impl FnOnce(&mut Vec<String>) -> bool,
 ) -> Result<Option<String>, String> {
@@ -512,7 +461,10 @@ pub fn edited_capabilities(
 /// not the caller's: bare goes in `[project] capabilities`, parameterised gets
 /// a `[[capability]]` table. That is why this takes a [`Declaration`] rather
 /// than a label -- a label cannot say which.
-pub fn with_capability(text: &str, declaration: &Declaration) -> Result<Option<String>, String> {
+pub(crate) fn with_capability(
+    text: &str,
+    declaration: &Declaration,
+) -> Result<Option<String>, String> {
     declaration.validate().map_err(|e| format!("{FILE}: {e}"))?;
     let config = Config::parse(text).map_err(|e| format!("{FILE}: {e}"))?;
     if config.declarations.contains(declaration) {
@@ -536,7 +488,10 @@ pub fn with_capability(text: &str, declaration: &Declaration) -> Result<Option<S
 /// The exact inverse: a bare one leaves the array, a parameterised one takes
 /// its whole table with it. A declaration the file does not make is `None`
 /// rather than an error, because `remove` is allowed to be run twice.
-pub fn without_capability(text: &str, declaration: &Declaration) -> Result<Option<String>, String> {
+pub(crate) fn without_capability(
+    text: &str,
+    declaration: &Declaration,
+) -> Result<Option<String>, String> {
     let config = Config::parse(text).map_err(|e| format!("{FILE}: {e}"))?;
     if !config.declarations.contains(declaration) {
         return Ok(None);
@@ -731,25 +686,9 @@ fn append_project_table(text: &str, rendered: &str) -> String {
     out
 }
 
-/// Add or replace one `[layout]` entry, creating `jails.toml` if there is none.
-///
-/// The same surgical rule as `record_capability`: this is a file people edit,
-/// so everything else in it -- comments, key order, `[project]` -- is left
-/// byte-for-byte alone. `jails adopt` is the only caller, and it deliberately
-/// cannot reach `[project] capabilities` from here.
-pub fn record_layout(root: &Path, layer: &str, directory: &str) -> Result<(), String> {
-    let path = root.join(FILE);
-    let text = match fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(format!("failed to read {}: {e}", path.display())),
-    };
-    crate::apply::put(&path, with_layout(&text, layer, directory)?)
-}
-
 /// The same layout edit as text. See [`edited_capabilities`] for why the
 /// splice and the write are separate.
-pub fn with_layout(text: &str, layer: &str, directory: &str) -> Result<String, String> {
+pub(crate) fn with_layout(text: &str, layer: &str, directory: &str) -> Result<String, String> {
     if !is_layer(layer) {
         return Err(format!(
             "`{layer}` is not a layer. Known layers: {}",
@@ -1275,6 +1214,45 @@ mod tests {
     fn the_manifest_stores_labels_not_aliases() {
         assert!(capability_named("db", 1).is_ok());
         assert!(capability_named("postgres", 1).is_err());
+    }
+
+    /// The capability edit, reached the way the V2 projection reaches it.
+    ///
+    /// These tests were written against `record_capability(root, label)` and
+    /// `forget_capability(root, label)`, a pair of V1 entry points that read
+    /// the file, spliced it and wrote it back. Nothing called them once the
+    /// projection started splicing text it already holds, but `pub` kept
+    /// `dead_code` from saying so. The splice they wrapped is still the
+    /// shipped one, so the tests keep it -- through the text-in/text-out half,
+    /// which is what the projection calls.
+    fn record_capability(root: &std::path::Path, label: &str) -> Result<(), String> {
+        edit_manifest(root, |labels| {
+            if labels.iter().any(|l| l == label) {
+                return false;
+            }
+            labels.push(label.to_string());
+            true
+        })
+    }
+
+    fn forget_capability(root: &std::path::Path, label: &str) -> Result<(), String> {
+        edit_manifest(root, |labels| {
+            let before = labels.len();
+            labels.retain(|l| l != label);
+            labels.len() != before
+        })
+    }
+
+    fn edit_manifest(
+        root: &std::path::Path,
+        change: impl FnOnce(&mut Vec<String>) -> bool,
+    ) -> Result<(), String> {
+        let path = root.join(FILE);
+        let text = fs::read_to_string(&path).unwrap_or_default();
+        if let Some(updated) = edited_capabilities(&text, change)? {
+            fs::write(&path, updated).map_err(|e| e.to_string())?;
+        }
+        Ok(())
     }
 
     fn manifest_dir(label: &str) -> std::path::PathBuf {

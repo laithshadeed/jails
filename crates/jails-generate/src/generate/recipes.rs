@@ -27,7 +27,7 @@ use super::*;
 /// cost, and it is the right trade: a query that returned only paths would be
 /// a *second* traversal of the same match, which is the duplication this
 /// removes wearing a different hat.
-pub fn artifacts_for(
+pub(crate) fn artifacts_for(
     project: &Project,
     recipe: &Recipe<'_>,
     package: Option<&str>,
@@ -389,7 +389,14 @@ pub fn artifacts_for(
                 },
             ]
         }
-        ArtifactKind::Field => unreachable!("handled above -- it updates an existing model"),
+        // The three one-shots. `plan_recipe` refuses them before this is
+        // reached, asking `recipe::is_persistent` rather than listing them --
+        // so these arms exist for exhaustiveness and are the *only* thing
+        // trusting that guard. They stay `unreachable!` rather than becoming a
+        // `_` because a new kind must still be classified here.
+        ArtifactKind::Field => {
+            unreachable!("a one-shot: refused by `plan_recipe`, which asks `recipe::is_persistent`")
+        }
         ArtifactKind::Factory => {
             if !fields.is_empty() {
                 return Err(format!(
@@ -662,8 +669,8 @@ pub fn artifacts_for(
                 },
             ]
         }
-        ArtifactKind::Cases => unreachable!("handled above -- its NAME is a path, not a class"),
-        ArtifactKind::Migration => unreachable!("handled above -- its NAME is a SQL description"),
+        ArtifactKind::Cases => unreachable!("a one-shot: its NAME is a path, not a class"),
+        ArtifactKind::Migration => unreachable!("a one-shot: its NAME is a SQL description"),
         ArtifactKind::Test => {
             let pkg = place("");
             vec![Artifact {

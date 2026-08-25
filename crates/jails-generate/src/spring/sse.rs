@@ -25,7 +25,7 @@ use super::*;
 
 /// The emitter registry, the stream endpoint, and the one property without
 /// which the heartbeat stalls every other scheduled job.
-pub fn sse_slice(slice: &Slice) -> Change {
+pub(crate) fn sse_slice(slice: &Slice) -> Change {
     let root: &Path = slice.project().root();
     let pkg: &str = &slice.root_package();
     let web: &str = &slice.owned(Layer::Web);

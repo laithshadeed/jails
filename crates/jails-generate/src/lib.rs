@@ -21,12 +21,10 @@ pub mod sql;
 // The lower crates, re-exported so every module in this one keeps saying
 // `crate::…` wherever it ships. Only this block knows which crate a module
 // actually lives in, which is what makes moving one a one-line change.
-pub(crate) use jails_java::{java, template};
-pub(crate) use jails_project::{
-    compose, config, generated_files, gradle, inspect, model, pom, project,
-};
-pub(crate) use jails_spec::{build, spec};
-pub(crate) use jails_support::{apply, codemod, json};
+pub use jails_java::{java, template};
+pub(crate) use jails_project::{compose, generated_files, gradle, inspect, model, pom, project};
+pub use jails_spec::{build, spec};
+pub(crate) use jails_support::{apply, json};
 
 /// This crate's templates live at the repository root, two levels up from its
 /// own manifest.

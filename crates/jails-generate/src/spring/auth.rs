@@ -27,7 +27,7 @@ fn issuer_of(slice: &Slice) -> String {
     format!("urn:{}", slice.base())
 }
 
-pub fn auth_files(slice: &Slice, name: &str) -> jails_support::Result<Vec<Artifact>> {
+pub(crate) fn auth_files(slice: &Slice, name: &str) -> jails_support::Result<Vec<Artifact>> {
     if !slice
         .project()
         .has_dependency("org.springframework.boot", "spring-boot-starter-security")

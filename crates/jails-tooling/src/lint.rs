@@ -5,7 +5,7 @@ use crate::generate::find_project_root;
 use jails_support::Result;
 use std::path::Path;
 
-pub struct Rule {
+pub(crate) struct Rule {
     pub needle: &'static str,
     pub replacement: &'static str,
     pub reason: &'static str,
@@ -14,7 +14,7 @@ pub struct Rule {
 /// The same table is rendered into generated AGENTS.md files. Keeping the
 /// machine check and the agent guidance together prevents either from becoming
 /// stale prose.
-pub const RULES: &[Rule] = &[
+pub(crate) const RULES: &[Rule] = &[
     Rule {
         needle: "@MockBean",
         replacement: "@MockitoBean",

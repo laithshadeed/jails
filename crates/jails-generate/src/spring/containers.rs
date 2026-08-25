@@ -20,7 +20,7 @@
 use super::*;
 
 /// Boot's Testcontainers integration, needed for `@ServiceConnection`.
-pub const SPRING_TESTCONTAINERS: Dependency = Dependency {
+pub(crate) const SPRING_TESTCONTAINERS: Dependency = Dependency {
     group_id: "org.springframework.boot",
     artifact_id: "spring-boot-testcontainers",
     version: None,
@@ -30,7 +30,7 @@ pub const SPRING_TESTCONTAINERS: Dependency = Dependency {
 
 /// Testcontainers' Kafka module. Named the 2.x way (`testcontainers-kafka`),
 /// matching the postgres module `add db` already pins.
-pub const TESTCONTAINERS_KAFKA: Dependency = Dependency {
+pub(crate) const TESTCONTAINERS_KAFKA: Dependency = Dependency {
     group_id: "org.testcontainers",
     artifact_id: "testcontainers-kafka",
     version: Some("2.0.5"),
@@ -42,7 +42,7 @@ pub const TESTCONTAINERS_KAFKA: Dependency = Dependency {
 /// `@ServiceConnection` factory matches on: it accepts any
 /// `GenericContainer` whose image is one of the Redis images, rather than a
 /// dedicated Redis container type.
-pub const TESTCONTAINERS_CORE: Dependency = Dependency {
+pub(crate) const TESTCONTAINERS_CORE: Dependency = Dependency {
     group_id: "org.testcontainers",
     artifact_id: "testcontainers",
     version: Some("2.0.5"),
@@ -57,7 +57,7 @@ pub const TESTCONTAINERS_CORE: Dependency = Dependency {
 /// Spring Boot parent imports -- a versionless declaration of it makes Maven
 /// refuse to read the pom at all, `validate` included. Only the real-toolchain
 /// tier catches that, which is where it was caught.
-pub const TESTCONTAINERS_JUNIT: Dependency = Dependency {
+pub(crate) const TESTCONTAINERS_JUNIT: Dependency = Dependency {
     group_id: "org.testcontainers",
     artifact_id: "testcontainers-junit-jupiter",
     version: Some("2.0.5"),

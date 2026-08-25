@@ -13,7 +13,7 @@
 
 use super::*;
 
-pub const KAFKA_TESTCONTAINERS_CONFIG: &str = "KafkaTestcontainersConfig";
+pub(crate) const KAFKA_TESTCONTAINERS_CONFIG: &str = "KafkaTestcontainersConfig";
 
 /// The Spring Kafka properties that make publish-and-consume actually work.
 ///
@@ -31,7 +31,7 @@ pub const KAFKA_TESTCONTAINERS_CONFIG: &str = "KafkaTestcontainersConfig";
 /// - `spring.json.trusted.packages`: the deserializer refuses to instantiate
 ///   a type outside the trusted list, and reports it as a deserialization
 ///   failure rather than a configuration one.
-pub fn kafka_properties(base: &str, group: &str) -> Vec<String> {
+pub(crate) fn kafka_properties(base: &str, group: &str) -> Vec<String> {
     vec![
         "spring.kafka.bootstrap-servers=localhost:9092".to_string(),
         format!("spring.kafka.consumer.group-id={group}"),
@@ -165,7 +165,7 @@ fn kafka_testcontainers_config_java(pkg: &str) -> String {
 }
 
 /// The files `add kafka` writes on a Spring project.
-pub fn kafka_files(root: &Path, pkg: &str, base: &str) -> Vec<Artifact> {
+pub(crate) fn kafka_files(root: &Path, pkg: &str, base: &str) -> Vec<Artifact> {
     vec![
         Artifact {
             kind: "kafka config",
@@ -191,7 +191,7 @@ pub fn kafka_files(root: &Path, pkg: &str, base: &str) -> Vec<Artifact> {
     ]
 }
 
-pub fn event_files(
+pub(crate) fn event_files(
     slice: &Slice,
     name: &str,
     fields: &[crate::generate::Field],

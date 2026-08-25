@@ -19,7 +19,7 @@ use super::*;
 // `generate association` -- explicit, composite relational invariants.
 // ---------------------------------------------------------------------------
 
-pub fn association_files(
+pub(crate) fn association_files(
     slice: &Slice,
     name: &str,
     child: &str,
@@ -251,7 +251,7 @@ fn association_sql_literal(column: &crate::sql::Column) -> &'static str {
 /// payments one: the scope is a string the caller chooses, the request is bytes
 /// the caller canonicalises, and the stored result is opaque. Nothing here
 /// knows what is being made at most once.
-pub fn idempotency_files(slice: &Slice, name: &str) -> jails_support::Result<Vec<Artifact>> {
+pub(crate) fn idempotency_files(slice: &Slice, name: &str) -> jails_support::Result<Vec<Artifact>> {
     if !slice.project().has_jdbc() {
         return Err(format!(
             "idempotency {name} needs PostgreSQL/JDBC to keep receipts across restarts.\n       \
@@ -370,7 +370,7 @@ fn idempotency_migration(table: &str) -> String {
 /// outbox. The outbox owns persistence/retry; this generator owns only the
 /// destination adapter, so the same mechanism remains useful for arbitrary
 /// provider APIs rather than one inbox vendor.
-pub fn http_sink_files(
+pub(crate) fn http_sink_files(
     slice: &Slice,
     name: &str,
     usecase: &str,
@@ -500,7 +500,7 @@ pub fn http_sink_files(
 /// The default layer names put `com.example.demo.service` and friends exactly
 /// where these tests used to spell them by hand.
 #[cfg(test)]
-pub fn scratch_project(tag: &str, pom: &str) -> (std::path::PathBuf, Project) {
+pub(crate) fn scratch_project(tag: &str, pom: &str) -> (std::path::PathBuf, Project) {
     let root = jails_support::scratch::ScratchDir::in_temp(&format!("jails-spring-{tag}"))
         .unwrap()
         .keep();
@@ -517,7 +517,7 @@ pub fn scratch_project(tag: &str, pom: &str) -> (std::path::PathBuf, Project) {
 
 /// The same, with the JDBC starter the persistence-shaped recipes require.
 #[cfg(test)]
-pub fn scratch_jdbc_project(tag: &str) -> (std::path::PathBuf, Project) {
+pub(crate) fn scratch_jdbc_project(tag: &str) -> (std::path::PathBuf, Project) {
     scratch_project(
         tag,
         "<project><dependencies><dependency>\

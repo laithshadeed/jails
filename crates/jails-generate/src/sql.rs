@@ -311,7 +311,7 @@ fn builtin_mapping(inner: &str, column: &str, accessor: &str) -> Option<(String,
 /// The imports the generated read/write expressions need, sorted and
 /// de-duplicated. Derived from the component types rather than scraped out
 /// of the expression strings, so adding a mapping cannot forget its import.
-pub fn imports(columns: &[Column]) -> Vec<&'static str> {
+pub(crate) fn imports(columns: &[Column]) -> Vec<&'static str> {
     let mut found: Vec<&'static str> = Vec::new();
     for column in columns {
         if !column.mapped() {
@@ -473,7 +473,11 @@ pub fn snake_case(name: &str) -> String {
 /// ordered index (`customer_id, created_at desc`). Passed through as written
 /// after its column names are checked against the table, because index
 /// ordering is a real schema decision with no shorthand worth inventing.
-pub fn create_table(type_name: &str, columns: &[Column], extra_indexes: &[String]) -> String {
+pub(crate) fn create_table(
+    type_name: &str,
+    columns: &[Column],
+    extra_indexes: &[String],
+) -> String {
     let table = table_name(type_name);
     let width = columns
         .iter()
@@ -679,7 +683,7 @@ pub fn add_column(type_name: &str, column: &Column) -> Result<String, String> {
 ///
 /// A typo here fails at `flyway migrate` with "column does not exist", which
 /// is a slow way to find out and happens on whichever machine runs it first.
-pub fn validate_index(spec: &str, columns: &[Column]) -> Result<(), String> {
+pub(crate) fn validate_index(spec: &str, columns: &[Column]) -> Result<(), String> {
     let known: Vec<&str> = columns.iter().map(|c| c.name.as_str()).collect();
     for part in spec.split(',') {
         // `created_at desc` -- the column is the first word, the rest is
@@ -710,7 +714,10 @@ pub fn validate_index(spec: &str, columns: &[Column]) -> Result<(), String> {
 /// The keys are the *column* names, not the component names, so the fixture
 /// lines up with what the database actually holds -- which is the point of
 /// having it next to a JDBC adapter rather than a Java builder.
-pub fn fixture_json(columns: &[Column], enum_constant: &dyn Fn(&str) -> Option<String>) -> String {
+pub(crate) fn fixture_json(
+    columns: &[Column],
+    enum_constant: &dyn Fn(&str) -> Option<String>,
+) -> String {
     let rows: Vec<String> = (1..=2)
         .map(|row| {
             let fields: Vec<String> = columns

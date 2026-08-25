@@ -19,7 +19,7 @@ struct Projection {
 
 use crate::model::{Artifact, Layer, Slice};
 
-pub fn query_files(
+pub(crate) fn query_files(
     slice: &Slice,
     name: &str,
     target: &str,

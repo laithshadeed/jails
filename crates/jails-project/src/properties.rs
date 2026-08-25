@@ -36,15 +36,6 @@ pub fn get(text: &str, key: &str) -> Option<String> {
         .map(|(_, value)| value.to_string())
 }
 
-/// Set a key, preserving every other byte.
-///
-/// Rewrites the last line stating the key, because that is the line in force.
-/// Rewriting the first would leave a later line still deciding the value while
-/// the edit looks applied.
-pub fn set(text: &str, key: &str, value: &str) -> String {
-    introduce(text, key, value, &[])
-}
-
 /// Set a key, and write prose above it *the first time it appears*.
 ///
 /// The comment is only ever written when the key is introduced. A capability's
@@ -52,7 +43,7 @@ pub fn set(text: &str, key: &str, value: &str) -> String {
 /// somebody who edits or deletes it means it: rewriting it on every reconcile
 /// would be jails arguing with the reader about their own file. So an existing
 /// key keeps whatever is above it, and only its value is brought into line.
-pub fn introduce(text: &str, key: &str, value: &str, comment: &[String]) -> String {
+pub(crate) fn introduce(text: &str, key: &str, value: &str, comment: &[String]) -> String {
     let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
     let last = lines
         .iter()
@@ -94,7 +85,7 @@ pub fn introduce(text: &str, key: &str, value: &str, comment: &[String]) -> Stri
 /// This is also what makes "the last claim out takes the file" work: without
 /// it, retiring every key leaves a file of orphaned comments, and `remove`
 /// stops being the inverse of `add`.
-pub fn remove(text: &str, key: &str, comment: &[String]) -> String {
+pub(crate) fn remove(text: &str, key: &str, comment: &[String]) -> String {
     let lines: Vec<&str> = text.lines().collect();
     let mut drop = vec![false; lines.len()];
     for (index, line) in lines.iter().enumerate() {
@@ -153,6 +144,13 @@ fn entry(line: &str) -> Option<(&str, &str)> {
 
 #[cfg(test)]
 mod tests {
+    /// `set` was `introduce(text, key, value, &[])` and had no callers left --
+    /// every capability that writes a property writes prose above it the first
+    /// time. The tests are about the splice, which is unchanged.
+    fn set(text: &str, key: &str, value: &str) -> String {
+        super::introduce(text, key, value, &[])
+    }
+
     #[test]
     fn a_comment_is_written_when_the_key_is_introduced() {
         let out = introduce("", "a.b", "one", &["why it is one".to_string()]);

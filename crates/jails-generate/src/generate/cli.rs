@@ -349,7 +349,7 @@ pub(super) fn planned_entry_point(
     cli_package: &str,
     name: &str,
 ) -> Option<String> {
-    let current = crate::pom::main_class(project.pom())?;
+    let current = project.main_class()?;
     if current != qualified(project.base(), "App") {
         return None;
     }

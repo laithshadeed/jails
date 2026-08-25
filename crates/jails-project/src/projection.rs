@@ -564,15 +564,26 @@ impl ProjectedProject {
     fn retire(&mut self, key: &ResourceKey) -> Result<Option<ProjectPath>> {
         match key {
             ResourceKey::MavenDependency(coordinate) => {
-                let path = pom_path()?;
+                // The same two-build-files split the `MavenDependency` edit
+                // makes above, and for the same reason: the `Maven` in the
+                // key's name is the *coordinate's*, not the tool's. This arm
+                // used to read `pom_path()` unconditionally, so on a Gradle
+                // project it opened a `pom.xml` that is not there, returned
+                // `Ok(None)`, and left the dependency in `build.gradle` --
+                // `remove` reporting success over a claim it had not retired.
+                // Nothing caught it because `gradle::remove_dependency` was
+                // `pub` and therefore not `dead_code`, which is `pending.md`
+                // §7.2's whole argument.
+                let path = self.build_file_path()?;
                 let Some(text) = self.optional_text(&path)? else {
                     return Ok(None);
                 };
-                let without = pom::remove_dependency(
-                    &text,
-                    coordinate.group_id.as_str(),
-                    coordinate.artifact_id.as_str(),
-                )?;
+                let group = coordinate.group_id.as_str();
+                let artifact = coordinate.artifact_id.as_str();
+                let without = match self.build {
+                    Build::Gradle => crate::gradle::remove_dependency(&text, group, artifact)?,
+                    _ => pom::remove_dependency(&text, group, artifact)?,
+                };
                 self.write_text(&path, without.unwrap_or(text));
                 Ok(Some(path))
             }
@@ -726,7 +737,15 @@ impl ProjectedProject {
                     return Ok(None);
                 };
                 let previous = previous.qualified();
-                match pom::with_main_class(&text, &previous) {
+                // Two build files, same as the edit that installed it. Without
+                // this branch `destroy cli` on a Gradle project handed Groovy
+                // to the XML rewriter, changed nothing, and reported the claim
+                // retired.
+                let restored = match self.build {
+                    Build::Gradle => crate::gradle::with_main_class(&text, &previous),
+                    _ => pom::with_main_class(&text, &previous),
+                };
+                match restored {
                     Some(updated) => self.write_text(path, updated),
                     None => return Ok(None),
                 }

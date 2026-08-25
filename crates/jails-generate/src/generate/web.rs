@@ -393,7 +393,7 @@ class {name}ServiceTest {{
 /// very same resource's table was `categories` -- and the Spring scaffold's
 /// controller, which does go through `table_name`, disagreed with the
 /// framework-free handler about the URL of the same thing.
-pub fn resource_path(name: &str) -> String {
+pub(crate) fn resource_path(name: &str) -> String {
     format!("/{}", crate::sql::table_name(name).replace('_', "-"))
 }
 

@@ -20,7 +20,7 @@ use super::*;
 /// repository, so the day one of these operations grows a rule (a permission
 /// check, an event to publish) there is somewhere for it to go that is not a
 /// controller method.
-pub fn resource_service_java(pkg: &str, name: &str, extra: &str) -> String {
+pub(crate) fn resource_service_java(pkg: &str, name: &str, extra: &str) -> String {
     let var = crate::generate::lower_first(name);
     crate::template::render(
         crate::template_here!("spring/resource_service_java.java"),
@@ -41,7 +41,7 @@ pub fn resource_service_java(pkg: &str, name: &str, extra: &str) -> String {
 /// with a `Location` for a creation, 204 for a delete that removed
 /// something, 404 for one that did not, and 404 rather than an empty 200 for
 /// a missing item.
-pub fn resource_controller_java(
+pub(crate) fn resource_controller_java(
     slice: &Slice,
     name: &str,
     extra: &str,
@@ -159,7 +159,7 @@ fn scoped_resource_controller_java(
 /// resource. Security configuration and full-context behavior retain their
 /// dedicated Spring tests; this companion test stays focused on HTTP and uses
 /// a fresh Mockito service for every method.
-pub fn resource_controller_test_java(
+pub(crate) fn resource_controller_test_java(
     slice: &Slice,
     name: &str,
     extra: &str,
@@ -235,7 +235,7 @@ pub fn resource_controller_test_java(
 /// What it pins is delegation and the two boolean-ish outcomes that are easy
 /// to get backwards -- an absent item is `Optional.empty()`, and a delete
 /// reports whether anything was actually removed.
-pub fn resource_service_test_java(pkg: &str, name: &str, extra: &str) -> String {
+pub(crate) fn resource_service_test_java(pkg: &str, name: &str, extra: &str) -> String {
     crate::template::render(
         crate::template_here!("spring/resource_service_test_java.java"),
         &[("pkg", pkg), ("extra", extra), ("name", name)],
@@ -262,7 +262,7 @@ pub fn resource_service_test_java(pkg: &str, name: &str, extra: &str) -> String 
 /// this and the JDBC adapter may -- see `generate::RepositoryWiring`. Two
 /// annotated adapters make two beans qualify for one injection point, and the
 /// scaffold then compiles and refuses to start.
-pub fn in_memory_repository_java(
+pub(crate) fn in_memory_repository_java(
     pkg: &str,
     name: &str,
     extra: &str,

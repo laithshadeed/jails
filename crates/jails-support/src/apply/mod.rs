@@ -51,16 +51,22 @@
 //!
 //! - [`remove`] — jails wrote this file and is taking it back. Absence is
 //!   success, because `destroy` after a manual delete is not an error.
-//! - [`remove_managed_directory`] — a directory jails created and nothing
-//!   else has claimed. Refuses a symlink outright.
 //! - [`ensure_directory`] — the parent chain for something about to be
 //!   written, made explicit at the call site rather than implied.
-//! - [`move_file`] — a rename within one project, where the destination is
-//!   expected to be free.
 //!
 //! What is deliberately *not* here is a recursive delete of anything a user
-//! might own. `remove_managed_directory` removes one empty directory, and a
-//! caller that wants more has to say so path by path.
+//! might own. A caller that wants a tree gone has to say so path by path.
+//!
+//! ## Six verbs that used to be here
+//!
+//! `put_bytes`, `move_file`, `copy_into_scratch`, `remove_managed_tree`,
+//! `remove_managed_directory` and `atomically` are gone. They were the V1
+//! spellings of moving, copying and rewriting `.jails/` bookkeeping, and each
+//! of those is the executor's job now: `jails-commit`'s `activate` moves the
+//! bytes and its `store` owns the ledger. Nothing had called any of them for
+//! some time, and nothing said so, because `pub` on a library item tells the
+//! compiler another crate might — which is the whole reason this crate's API
+//! is closed to `pub(crate)` by default.
 
 use crate::Result;
 use std::fs;
@@ -124,18 +130,6 @@ pub fn put(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<()> {
         .map_err(|error| format!("failed to write {}: {error}", path.display()))
 }
 
-/// Write bytes rather than text.
-///
-/// The 3-way merge produces a file that may not be valid UTF-8 and may carry
-/// conflict markers: it is whatever `git merge-file` decided, and re-encoding
-/// it through `String` would be jails editing a merge result it did not make.
-pub fn put_bytes(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> Result<()> {
-    let path = path.as_ref();
-    ensure_parent(path)?;
-    fs::write(path, contents)
-        .map_err(|error| format!("failed to write {}: {error}", path.display()))
-}
-
 /// Write a file that has to be runnable, not merely present.
 ///
 /// A sixth verb rather than a `chmod` at the call site, and for the reason
@@ -186,7 +180,7 @@ pub fn put_outside_project(path: impl AsRef<Path>, contents: impl AsRef<str>) ->
 
 /// Write a file into a scratch tree jails owns for the duration of one run.
 ///
-/// A fifth verb rather than reusing `put_bytes`, for the same reason
+/// A verb of its own rather than a general byte-write, for the same reason
 /// `put_outside_project` exists: the caller's belief about what is there is
 /// different. A scratch tree is jails' own, created empty moments earlier and
 /// removed when the run ends, so there is nothing to preserve and nothing to
@@ -213,54 +207,6 @@ pub fn remove(path: impl AsRef<Path>) -> Result<()> {
     }
 }
 
-/// Remove a directory jails created, if it is empty.
-///
-/// Non-recursive on purpose. A recursive delete of a project directory is one
-/// mistyped path away from removing work nobody can recover, and the cases
-/// that need it are cases where the caller can name what it is removing.
-/// A directory that still has contents is left alone and reported as removed
-/// *nothing*, because something else is using it.
-pub fn remove_managed_directory(path: impl AsRef<Path>) -> Result<bool> {
-    let path = path.as_ref();
-    let metadata = match fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(format!("failed to stat {}: {error}", path.display())),
-    };
-    if metadata.is_symlink() {
-        return Err(format!(
-            "{} is a symlink.\n       fix: jails removes directories it created, and a symlink \
-             here points at something it did not.",
-            path.display()
-        ));
-    }
-    match fs::remove_dir(path) {
-        Ok(()) => Ok(true),
-        // Still in use by something else. Leaving it is the safe answer.
-        Err(error)
-            if error.kind() == std::io::ErrorKind::DirectoryNotEmpty
-                || error.raw_os_error() == Some(39) =>
-        {
-            Ok(false)
-        }
-        Err(error) => Err(format!("failed to remove {}: {error}", path.display())),
-    }
-}
-
-/// Remove a whole tree jails owns end to end.
-///
-/// Deliberately long, like [`put_outside_project`]: this is for a scratch or
-/// machine tree jails created and no user file lives in. Nothing that removes
-/// part of a *project* should reach for it.
-pub fn remove_managed_tree(path: impl AsRef<Path>) -> Result<()> {
-    let path = path.as_ref();
-    match fs::remove_dir_all(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(format!("failed to remove {}: {error}", path.display())),
-    }
-}
-
 /// Create a directory and its parents.
 ///
 /// Explicit at the call site rather than implied by a write, because a
@@ -270,22 +216,6 @@ pub fn ensure_directory(path: impl AsRef<Path>) -> Result<()> {
     let path = path.as_ref();
     fs::create_dir_all(path)
         .map_err(|error| format!("failed to create {}: {error}", path.display()))
-}
-
-/// Move a file within the project.
-///
-/// The destination's parents are created, because a rename that moves a type
-/// into a package that does not exist yet is ordinary.
-pub fn move_file(from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<()> {
-    let (from, to) = (from.as_ref(), to.as_ref());
-    ensure_parent(to)?;
-    fs::rename(from, to).map_err(|error| {
-        format!(
-            "failed to move {} to {}: {error}",
-            from.display(),
-            to.display()
-        )
-    })
 }
 
 /// Publish a completed tree by renaming it onto a destination that must be
@@ -323,54 +253,11 @@ pub fn publish_tree(from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<()> 
 
 /// Flush a directory's own entries, so a name that was just created or
 /// renamed survives a crash rather than only the bytes it points at.
-pub fn sync_directory(path: impl AsRef<Path>) -> Result<()> {
+pub(crate) fn sync_directory(path: impl AsRef<Path>) -> Result<()> {
     let path = path.as_ref();
     std::fs::File::open(path)
         .and_then(|dir| dir.sync_all())
         .map_err(|error| format!("failed to flush {}: {error}", path.display()))
-}
-
-/// Copy a file into a tree jails owns for the duration of one run.
-///
-/// Named for its destination rather than its action: copying *into a project*
-/// is a write and belongs to the verbs above; this is for scratch.
-pub fn copy_into_scratch(from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<u64> {
-    let (from, to) = (from.as_ref(), to.as_ref());
-    ensure_parent(to)?;
-    fs::copy(from, to).map_err(|error| {
-        format!(
-            "failed to copy {} to {}: {error}",
-            from.display(),
-            to.display()
-        )
-    })
-}
-
-/// Write via a temporary file and a rename.
-///
-/// For the bookkeeping under `.jails/`, where a half-written ledger is worse
-/// than an absent one: an interrupted `app apply` has to be resumable, and it
-/// can only resume from a file that is either the old one or the new one.
-pub fn atomically(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<()> {
-    let (path, contents) = (path.as_ref(), contents.as_ref());
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("{} has no parent directory", path.display()))?;
-    ensure_parent(path)?;
-    let temporary = parent.join(format!(
-        ".{}.{}.tmp",
-        path.file_name().unwrap_or_default().to_string_lossy(),
-        std::process::id()
-    ));
-    fs::write(&temporary, contents)
-        .map_err(|error| format!("failed to write {}: {error}", temporary.display()))?;
-    fs::rename(&temporary, path).map_err(|error| {
-        format!(
-            "failed to replace {} with {}: {error}",
-            path.display(),
-            temporary.display()
-        )
-    })
 }
 
 #[cfg(test)]
@@ -425,20 +312,5 @@ mod tests {
         fs::create_dir_all(&path).unwrap();
         let error = put_named(&path, "<project/>", "pom.xml").unwrap_err();
         assert!(error.starts_with("failed to write pom.xml:"), "{error}");
-    }
-
-    #[test]
-    fn atomically_leaves_no_temporary_behind() {
-        let dir = scratch();
-        let path = dir.join(".jails/files");
-        atomically(&path, "a\nb\n").unwrap();
-        assert_eq!(fs::read_to_string(&path).unwrap(), "a\nb\n");
-        let leftovers: Vec<_> = fs::read_dir(dir.join(".jails"))
-            .unwrap()
-            .filter_map(|entry| entry.ok())
-            .map(|entry| entry.file_name().to_string_lossy().into_owned())
-            .filter(|name| name.ends_with(".tmp"))
-            .collect();
-        assert!(leftovers.is_empty(), "{leftovers:?}");
     }
 }

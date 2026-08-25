@@ -16,7 +16,7 @@ use super::*;
 // `generate job` -- scheduled work.
 // ---------------------------------------------------------------------------
 
-pub fn job_files(slice: &Slice, name: &str) -> Vec<Artifact> {
+pub(crate) fn job_files(slice: &Slice, name: &str) -> Vec<Artifact> {
     let root: &Path = slice.project().root();
     let pkg: &str = &slice.placed(Layer::Jobs);
     let main = crate::generate::main_dir(root, pkg);
@@ -48,7 +48,7 @@ fn job_java(pkg: &str, name: &str) -> String {
     )
 }
 
-pub fn scheduling_config_java(pkg: &str) -> String {
+pub(crate) fn scheduling_config_java(pkg: &str) -> String {
     crate::template::render(
         crate::template_here!("spring/scheduling_config_java.java"),
         &[("pkg", pkg)],
@@ -82,7 +82,7 @@ const DURABLE_JOB_TEST_PROPERTIES: &str = "src/test/resources/config/application
 /// about the file at all -- the V1 write path wrote it as a side effect after
 /// the plan, so it was invisible to anything that reasons about a `Change`,
 /// and the file simply stopped being generated.
-pub fn durable_job_test_properties(name: &str) -> crate::model::MarkedBlock {
+pub(crate) fn durable_job_test_properties(name: &str) -> crate::model::MarkedBlock {
     let property = crate::sql::snake_case(name).replace('_', "-");
     crate::model::MarkedBlock {
         path: DURABLE_JOB_TEST_PROPERTIES.to_string(),
@@ -94,98 +94,6 @@ pub fn durable_job_test_properties(name: &str) -> crate::model::MarkedBlock {
     }
 }
 
-/// Install one durable job's scheduler/retry limits into the app-wide test
-/// property source without touching another job's block or reader-owned
-/// properties around it.
-pub fn install_durable_job_test_properties(
-    project: &crate::model::Project,
-    name: &str,
-    dry_run: bool,
-) -> jails_support::Result<bool> {
-    let root = project.root();
-    let property = crate::sql::snake_case(name).replace('_', "-");
-    let initial_delay = format!("jobs.{property}.initial-delay=PT1H");
-    let max_attempts = format!("jobs.{property}.max-attempts=2");
-    let expected = format!("{initial_delay}\n{max_attempts}\n");
-    let marker = format!("durable-job-{property}");
-    let marked = crate::codemod::Marked::new(&marker);
-    let path = root.join(DURABLE_JOB_TEST_PROPERTIES);
-    let existing = if path.exists() {
-        std::fs::read_to_string(&path)
-            .map_err(|error| format!("failed to read {}: {error}", path.display()))?
-    } else {
-        String::new()
-    };
-
-    if marked.present_in(&existing) {
-        let body = marked.body_in(&existing).ok_or_else(|| {
-            format!(
-                "{} has an unterminated # jails:{marker} block",
-                path.display()
-            )
-        })?;
-        if body != expected {
-            return Err(format!(
-                "{} has an edited # jails:{marker} block and no longer keeps the generated integration test isolated.\n       fix: restore `{initial_delay}` and `{max_attempts}` inside that block.",
-                path.display()
-            ));
-        }
-        return Ok(false);
-    }
-
-    if dry_run {
-        println!("would set {initial_delay} in {DURABLE_JOB_TEST_PROPERTIES}");
-        println!("would set {max_attempts} in {DURABLE_JOB_TEST_PROPERTIES}");
-        return Ok(true);
-    }
-
-    let block = marked.render(&expected);
-    let next = if existing.is_empty() {
-        block
-    } else if existing.ends_with('\n') {
-        format!("{existing}{block}")
-    } else {
-        format!("{existing}\n{block}")
-    };
-    crate::apply::put(&path, next)?;
-    println!("set {initial_delay}");
-    println!("set {max_attempts}");
-    Ok(true)
-}
-
-/// Remove one durable job's contribution, retaining every other block and
-/// every reader-owned property in the shared source.
-pub fn uninstall_durable_job_test_properties(
-    project: &crate::model::Project,
-    name: &str,
-    dry_run: bool,
-) -> jails_support::Result<bool> {
-    let property = crate::sql::snake_case(name).replace('_', "-");
-    let marker = format!("durable-job-{property}");
-    let path = project.root().join(DURABLE_JOB_TEST_PROPERTIES);
-    if !path.exists() {
-        return Ok(false);
-    }
-    let existing = std::fs::read_to_string(&path)
-        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
-    let Some(next) = crate::codemod::Marked::new(&marker).strip_from(&existing) else {
-        return Ok(false);
-    };
-
-    if dry_run {
-        println!("would unset jobs.{property}.* in {DURABLE_JOB_TEST_PROPERTIES}");
-        return Ok(true);
-    }
-    if next.is_empty() {
-        jails_support::apply::remove(&path)
-            .map_err(|error| format!("failed to remove {}: {error}", path.display()))?;
-    } else {
-        crate::apply::put(&path, next)?;
-    }
-    println!("unset jobs.{property}.* in {DURABLE_JOB_TEST_PROPERTIES}");
-    Ok(true)
-}
-
 /// Generate at-least-once durable execution without teaching Jails a domain.
 ///
 /// The work fields must exactly match an existing generated command and must
@@ -193,7 +101,7 @@ pub fn uninstall_durable_job_test_properties(
 /// use case. That lets a reclaimed execution observe an already-committed
 /// resource and mark the work successful after a crash between the business
 /// commit and the queue acknowledgement.
-pub fn durable_job_files(
+pub(crate) fn durable_job_files(
     slice: &Slice,
     name: &str,
     usecase: &str,
@@ -587,7 +495,7 @@ fn durable_job_it_java(
     )
 }
 
-pub fn durable_alternate_sample(field: &crate::generate::Field) -> Option<String> {
+pub(crate) fn durable_alternate_sample(field: &crate::generate::Field) -> Option<String> {
     match usecase_normalized_type(&field.java_type) {
         "String" => Some("\"different-payload\"".to_string()),
         "UUID" => Some("UUID.fromString(\"00000000-0000-0000-0000-000000000002\")".to_string()),
@@ -630,19 +538,15 @@ fn durable_job_migration(table: &str, columns: &[crate::sql::Column]) -> String 
 mod durable_job_test_properties_tests {
     use super::*;
 
-    fn scratch(tag: &str) -> (std::path::PathBuf, crate::model::Project) {
-        crate::spring::schema::scratch_project(
-            &format!("durable-properties-{tag}"),
-            "<project></project>",
-        )
-    }
-
-    /// The stated block and the installed one are the same bytes.
+    /// What the recipe states is what reaches the file.
     ///
-    /// They are two halves of one fact: the recipe states what it contributes
-    /// so a plan can carry it, and the V1 installer writes it directly. Two
-    /// spellings of one block is how a route and a direct call come to produce
-    /// projects that differ in a file neither of them owns.
+    /// This used to have a second half: the V1 installer wrote the block
+    /// directly, and the test compared its bytes with the stated ones, because
+    /// two spellings of one block is how a route and a direct call come to
+    /// produce projects that differ in a file neither of them owns. The
+    /// installer is gone -- `SemanticEdit::MarkedBlock` carries the stated
+    /// value to `projection.rs` and there is only one spelling left -- so what
+    /// remains is the statement itself and the rendering it implies.
     #[test]
     fn the_stated_block_is_the_block_that_gets_installed() {
         let block = durable_job_test_properties("ItemDispatcher");
@@ -655,123 +559,102 @@ mod durable_job_test_properties_tests {
                 "jobs.item-dispatcher.max-attempts=2"
             ]
         );
-
-        let (root, project) = scratch("stated");
-        assert!(install_durable_job_test_properties(&project, "ItemDispatcher", false).unwrap());
-        let written = std::fs::read_to_string(root.join(DURABLE_JOB_TEST_PROPERTIES)).unwrap();
         assert_eq!(
-            written,
-            crate::codemod::Marked::new(&block.marker).render(&block.rendered()),
-            "the recipe states a block the installer does not write"
+            jails_support::codemod::Marked::new(&block.marker).render(&block.rendered()),
+            "# jails:durable-job-item-dispatcher\n\
+             jobs.item-dispatcher.initial-delay=PT1H\n\
+             jobs.item-dispatcher.max-attempts=2\n\
+             # /jails:durable-job-item-dispatcher\n"
         );
-        std::fs::remove_dir_all(root).unwrap();
     }
 
+    /// Two job names where one is a prefix of the other stay independent.
+    ///
+    /// `EmailSender` and `Email` render `durable-job-email-sender` and
+    /// `durable-job-email`, and a marker matched as a substring would have
+    /// retiring the second take the first's opening line with it.
+    #[test]
+    fn prefix_related_job_names_keep_independent_property_blocks() {
+        let render = |name: &str| {
+            let block = durable_job_test_properties(name);
+            (
+                block.marker.clone(),
+                jails_support::codemod::Marked::new(&block.marker).render(&block.rendered()),
+            )
+        };
+        let (_, sender) = render("EmailSender");
+        let (email_marker, email) = render("Email");
+        assert_eq!(email_marker, "durable-job-email");
+
+        let both = format!("{sender}{email}");
+        let remaining = jails_support::codemod::Marked::new(&email_marker)
+            .strip_from(&both)
+            .expect("the shorter marker is there to strip");
+        assert!(
+            !remaining.contains("# jails:durable-job-email\n"),
+            "{remaining}"
+        );
+        assert!(
+            remaining.contains("# jails:durable-job-email-sender\n"),
+            "{remaining}"
+        );
+        assert!(remaining.contains("jobs.email-sender.initial-delay=PT1H"));
+        assert!(remaining.contains("jobs.email-sender.max-attempts=2"));
+    }
+
+    /// Retiring the last job leaves nothing, which is what deletes the file.
+    ///
+    /// `projection.rs`'s `write_or_delete` turns empty text into an absence,
+    /// so a shared property source with no owners left does not survive as an
+    /// empty file. This half is the one this module owns: that stripping the
+    /// only block really does leave nothing behind.
+    #[test]
+    fn removing_the_only_job_leaves_an_empty_source() {
+        let block = durable_job_test_properties("EmailSender");
+        let marked = jails_support::codemod::Marked::new(&block.marker);
+        let only = marked.render(&block.rendered());
+        assert_eq!(marked.strip_from(&only).as_deref(), Some(""));
+    }
+
+    /// Two jobs share one test property source and neither clobbers the other.
+    ///
+    /// The file is shared -- one `application.properties` under
+    /// `src/test/resources/config`, several owners -- which is why it is a
+    /// *marked block* per job rather than a property per key. Asked against
+    /// `codemod::Marked` directly, because that is what
+    /// `SemanticEdit::MarkedBlock` applies: this test used to drive the V1
+    /// installer, and deleting that would otherwise have deleted the only
+    /// assertion that two durable jobs stack.
     #[test]
     fn durable_jobs_merge_into_one_test_source_without_clobbering() {
-        let (root, project) = scratch("merge");
-        let path = root.join(DURABLE_JOB_TEST_PROPERTIES);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, "reader.owned=kept").unwrap();
+        let render = |name: &str| {
+            let block = durable_job_test_properties(name);
+            (
+                block.marker.clone(),
+                jails_support::codemod::Marked::new(&block.marker).render(&block.rendered()),
+            )
+        };
+        let (email_marker, email) = render("EmailSender");
+        let (_, invoice) = render("InvoiceWriter");
 
-        assert!(install_durable_job_test_properties(&project, "EmailSender", false).unwrap());
-        assert!(install_durable_job_test_properties(&project, "InvoiceWriter", false).unwrap());
-        let once = std::fs::read_to_string(&path).unwrap();
+        let both = format!("reader.owned=kept\n{email}{invoice}");
         assert!(
-            once.starts_with("reader.owned=kept\n# jails:durable-job-email-sender\n"),
-            "{once}"
+            both.starts_with("reader.owned=kept\n# jails:durable-job-email-sender\n"),
+            "{both}"
         );
-        assert!(once.contains("jobs.email-sender.initial-delay=PT1H"));
-        assert!(once.contains("jobs.email-sender.max-attempts=2"));
-        assert!(once.contains("jobs.invoice-writer.initial-delay=PT1H"));
-        assert!(once.contains("jobs.invoice-writer.max-attempts=2"));
+        assert!(both.contains("jobs.email-sender.initial-delay=PT1H"));
+        assert!(both.contains("jobs.invoice-writer.max-attempts=2"));
 
-        assert!(!install_durable_job_test_properties(&project, "EmailSender", false).unwrap());
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), once);
-
-        assert!(uninstall_durable_job_test_properties(&project, "EmailSender", false).unwrap());
-        let without_email = std::fs::read_to_string(&path).unwrap();
-        assert!(without_email.starts_with("reader.owned=kept\n"));
+        // Retiring one leaves the other and the reader's line untouched.
+        let without_email = jails_support::codemod::Marked::new(&email_marker)
+            .strip_from(&both)
+            .expect("the email block is there to strip");
+        assert!(
+            without_email.starts_with("reader.owned=kept\n"),
+            "{without_email}"
+        );
         assert!(!without_email.contains("jobs.email-sender."));
         assert!(without_email.contains("jobs.invoice-writer.initial-delay=PT1H"));
         assert!(without_email.contains("jobs.invoice-writer.max-attempts=2"));
-
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn removing_the_only_job_removes_the_generated_source() {
-        let (root, project) = scratch("remove-only");
-        let path = root.join(DURABLE_JOB_TEST_PROPERTIES);
-
-        install_durable_job_test_properties(&project, "EmailSender", false).unwrap();
-        assert!(path.is_file());
-        assert!(uninstall_durable_job_test_properties(&project, "EmailSender", false).unwrap());
-        assert!(!path.exists());
-
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn prefix_related_job_names_keep_independent_property_blocks() {
-        let (root, project) = scratch("prefixes");
-        let path = root.join(DURABLE_JOB_TEST_PROPERTIES);
-
-        install_durable_job_test_properties(&project, "EmailSender", false).unwrap();
-        install_durable_job_test_properties(&project, "Email", false).unwrap();
-        uninstall_durable_job_test_properties(&project, "Email", false).unwrap();
-
-        let remaining = std::fs::read_to_string(&path).unwrap();
-        assert!(!remaining.contains("# jails:durable-job-email\n"));
-        assert!(remaining.contains("# jails:durable-job-email-sender\n"));
-        assert!(remaining.contains("jobs.email-sender.initial-delay=PT1H"));
-        assert!(remaining.contains("jobs.email-sender.max-attempts=2"));
-
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn an_edited_safety_block_is_rejected_instead_of_silently_clobbered() {
-        let (root, project) = scratch("edited");
-        let path = root.join(DURABLE_JOB_TEST_PROPERTIES);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(
-            &path,
-            "# jails:durable-job-email-sender\n\
-             jobs.email-sender.initial-delay=PT0S\n\
-             jobs.email-sender.max-attempts=99\n\
-             # /jails:durable-job-email-sender\n",
-        )
-        .unwrap();
-
-        let error =
-            install_durable_job_test_properties(&project, "EmailSender", false).unwrap_err();
-        assert!(error.contains("no longer keeps the generated integration test isolated"));
-        assert!(error.contains("initial-delay=PT1H"));
-        assert!(error.contains("max-attempts=2"));
-
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn a_later_duplicate_cannot_override_the_safety_values() {
-        let (root, project) = scratch("duplicate-override");
-        let path = root.join(DURABLE_JOB_TEST_PROPERTIES);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(
-            &path,
-            "# jails:durable-job-email-sender\n\
-             jobs.email-sender.initial-delay=PT1H\n\
-             jobs.email-sender.max-attempts=2\n\
-             jobs.email-sender.initial-delay=PT0S\n\
-             # /jails:durable-job-email-sender\n",
-        )
-        .unwrap();
-
-        let error =
-            install_durable_job_test_properties(&project, "EmailSender", false).unwrap_err();
-        assert!(error.contains("no longer keeps the generated integration test isolated"));
-
-        std::fs::remove_dir_all(root).unwrap();
     }
 }

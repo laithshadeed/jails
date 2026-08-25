@@ -24,18 +24,18 @@ pub use cli::*;
 mod closed;
 mod domain;
 use closed::*;
-pub use domain::*;
+pub(crate) use domain::*;
 
 mod repository;
 use repository::*;
 
 mod recipes;
 mod write;
-pub use recipes::*;
+pub(crate) use recipes::*;
 pub use write::*;
 
 mod scaffold;
-pub use scaffold::*;
+pub(crate) use scaffold::*;
 
 /// Say what a foreign build cost this generation, before printing the files.
 ///
@@ -119,10 +119,9 @@ pub fn plan_recipe(
     package: Option<&str>,
 ) -> Result<Change> {
     let kind = recipe.kind;
-    if matches!(
-        kind,
-        ArtifactKind::Field | ArtifactKind::Cases | ArtifactKind::Migration
-    ) {
+    // Asked, not listed. `recipe::is_persistent` is the one owner of which half
+    // a kind is in -- see `pending.md` §6.4 for the three copies this replaces.
+    if !jails_protocol::recipe::is_persistent(kind) {
         return Err(format!(
             "`{}` is a one-shot, not a persistent artifact, so it has no recipe plan.\n       \
              fix: plan it through its own policy -- an overlay, a serial allocation or a \
@@ -264,7 +263,7 @@ pub fn with_timestamps(kind: ArtifactKind, fields: &[String]) -> Result<Vec<Stri
 ///
 /// `None` for kinds that use the name verbatim (`record`, `enum`, `scaffold`
 /// -- which spans several suffixes and cannot have one of them stripped).
-pub fn kind_suffix(kind: ArtifactKind) -> Option<&'static str> {
+pub(crate) fn kind_suffix(kind: ArtifactKind) -> Option<&'static str> {
     match kind {
         ArtifactKind::Controller => Some("Controller"),
         ArtifactKind::Service => Some("Service"),
@@ -280,7 +279,40 @@ pub fn kind_suffix(kind: ArtifactKind) -> Option<&'static str> {
         ArtifactKind::Query => Some("Query"),
         ArtifactKind::Test => Some("Test"),
         ArtifactKind::IntegrationTest => Some("IT"),
-        _ => None,
+
+        // Exhaustive, deliberately. This match ended in `_ => None` for a long
+        // time, and `pending.md` §6.4 is the entry about what that cost: a kind
+        // added to the enum got no suffix and nothing said so, and
+        // `recorded_name` and `strip_redundant_suffix` -- which both read this
+        // -- inherited the silence. A kind whose name is not normalised is a
+        // kind whose `destroy` rebuilds different paths from the ones
+        // `generate` wrote.
+        //
+        // So the kinds that genuinely add nothing are listed. Adding a variant
+        // to `ArtifactKind` now fails to compile until somebody decides which
+        // half it is in, which is the whole point.
+        ArtifactKind::Scaffold
+        | ArtifactKind::Class
+        | ArtifactKind::Interface
+        | ArtifactKind::Record
+        | ArtifactKind::Field
+        | ArtifactKind::Factory
+        | ArtifactKind::Value
+        | ArtifactKind::Enum
+        | ArtifactKind::Sealed
+        | ArtifactKind::Strategy
+        | ArtifactKind::Migration
+        | ArtifactKind::Handler
+        | ArtifactKind::Command
+        | ArtifactKind::Cases
+        | ArtifactKind::Association
+        | ArtifactKind::Idempotency
+        | ArtifactKind::Auth
+        | ArtifactKind::Webhook
+        | ArtifactKind::Search
+        | ArtifactKind::Dto
+        | ArtifactKind::Transition
+        | ArtifactKind::Event => None,
     }
 }
 

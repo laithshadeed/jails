@@ -20,7 +20,7 @@ use super::*;
 ///
 /// The listing is the projection, not disk, so two rows of one transition
 /// cannot both take the next number.
-pub fn migration_file(project: &Project, description: &str) -> Result<std::path::PathBuf> {
+pub(crate) fn migration_file(project: &Project, description: &str) -> Result<std::path::PathBuf> {
     const DIR: &str = "src/main/resources/db/migration";
     let names = project.projected_names_in(DIR);
     let suffix = format!("__{description}.sql");

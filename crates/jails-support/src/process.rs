@@ -354,7 +354,7 @@ pub fn on_path(bin: &str) -> bool {
 
 /// The lookup over an explicit list of directories, so it can be tested
 /// without touching the process environment.
-pub fn on_path_in(bin: &str, dirs: impl Iterator<Item = PathBuf>) -> bool {
+pub(crate) fn on_path_in(bin: &str, dirs: impl Iterator<Item = PathBuf>) -> bool {
     dirs.into_iter().any(|dir| dir.join(bin).is_file())
 }
 

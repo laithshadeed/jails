@@ -32,7 +32,7 @@ use std::path::{Path, PathBuf};
 
 /// One `<testcase>` from a report.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Case {
+pub(crate) struct Case {
     pub class: String,
     pub method: String,
     /// Seconds, as Surefire recorded them.
@@ -91,7 +91,7 @@ const REPORT_DIRECTORIES: &[&str] = &[
     "build/test-results/integrationTest",
 ];
 
-pub fn cases(root: &Path) -> Vec<Case> {
+pub(crate) fn cases(root: &Path) -> Vec<Case> {
     let mut found = Vec::new();
     for dir in REPORT_DIRECTORIES {
         for path in xml_reports(&root.join(dir)) {
@@ -110,7 +110,7 @@ pub fn cases(root: &Path) -> Vec<Case> {
 /// [`Case::pattern`] is separate from [`Case::selector`]: the two build tools
 /// take different spellings, and one function returning whichever the caller
 /// happened to want is how a selector reaches the wrong tool.
-pub fn failed_patterns(root: &Path) -> Vec<String> {
+pub(crate) fn failed_patterns(root: &Path) -> Vec<String> {
     let mut patterns: Vec<String> = cases(root)
         .into_iter()
         .filter(|case| case.failed)
@@ -123,7 +123,7 @@ pub fn failed_patterns(root: &Path) -> Vec<String> {
 
 /// Which tests failed last time, as rerun selectors, deduplicated and in a
 /// stable order.
-pub fn failed_selectors(root: &Path) -> Vec<String> {
+pub(crate) fn failed_selectors(root: &Path) -> Vec<String> {
     let mut selectors: Vec<String> = cases(root)
         .into_iter()
         .filter(|case| case.failed)
@@ -135,7 +135,7 @@ pub fn failed_selectors(root: &Path) -> Vec<String> {
 }
 
 /// The `count` slowest cases, slowest first.
-pub fn slowest(root: &Path, count: usize) -> Vec<Case> {
+pub(crate) fn slowest(root: &Path, count: usize) -> Vec<Case> {
     let mut all = cases(root);
     // Descending by time. `total_cmp` rather than `partial_cmp().unwrap()`:
     // a malformed `time` attribute parses to NaN, and a comparator that
@@ -159,7 +159,7 @@ fn xml_reports(dir: &Path) -> Vec<PathBuf> {
 }
 
 /// Pull every `<testcase>` out of one report.
-pub fn parse(xml: &str) -> Vec<Case> {
+pub(crate) fn parse(xml: &str) -> Vec<Case> {
     let mut found = Vec::new();
     let mut rest = xml;
     while let Some(at) = rest.find("<testcase ") {
@@ -227,7 +227,7 @@ fn attribute(attributes: &str, name: &str) -> Option<String> {
 /// -- and an empty failure list would then read as success. The `cases` array
 /// says what actually executed, which is the other half a consumer needs to
 /// tell "all green" from "nothing ran".
-pub fn report_json(root: &Path, passed: bool) -> Result<()> {
+pub(crate) fn report_json(root: &Path, passed: bool) -> Result<()> {
     let cases = cases(root);
     let rows: Vec<String> = cases
         .iter()
@@ -257,7 +257,7 @@ pub fn report_json(root: &Path, passed: bool) -> Result<()> {
 /// Read from the reports rather than timed here: Maven already measured
 /// each one, and a wall-clock number jails invented would include its own
 /// startup.
-pub fn report_slowest(root: &Path, count: usize) {
+pub(crate) fn report_slowest(root: &Path, count: usize) {
     let slowest = slowest(root, count);
     if slowest.is_empty() {
         println!();

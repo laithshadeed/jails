@@ -33,7 +33,7 @@ use std::process::Command;
 use std::time::SystemTime;
 
 /// Why the fast path could not be taken. `None` means it can.
-pub enum TooStale {
+pub(crate) enum TooStale {
     /// Nothing has been compiled here yet.
     NothingCompiled,
     /// A source file is newer than the newest class file.
@@ -56,7 +56,7 @@ impl TooStale {
 }
 
 /// Whether the compiled classes can be trusted for this run.
-pub fn staleness(root: &Path) -> Option<TooStale> {
+pub(crate) fn staleness(root: &Path) -> Option<TooStale> {
     // `?` here would mean "no class files, so nothing is stale", which is
     // exactly backwards: the launcher would then run against an empty
     // classpath and report that nothing failed.
@@ -111,7 +111,7 @@ fn newest_with_extension(dir: &Path, extension: &str) -> Option<(PathBuf, System
 /// `--class-path`, which loads them into a fresh child loader per run. Put the
 /// outputs in both and the parent-first delegation returns the **stale** class
 /// every time, silently: the run is fresh in name only.
-pub struct TestClasspath {
+pub(crate) struct TestClasspath {
     /// `target/classes` and `target/test-classes`: what a recompile changes.
     pub outputs: Vec<PathBuf>,
     /// The resolved third-party jars: what a pom change changes.
@@ -132,7 +132,7 @@ fn join<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Result<String> {
 }
 
 /// The test classpath, from cache when the pom has not moved since.
-pub fn test_classpath(root: &Path, debug: bool) -> Result<TestClasspath> {
+pub(crate) fn test_classpath(root: &Path, debug: bool) -> Result<TestClasspath> {
     let cache = root.join("target/jails-test-classpath");
     if !is_fresh(&cache, &root.join("pom.xml")) {
         let mut mvn = Command::new(crate::maven::binary(root));
@@ -179,7 +179,7 @@ fn is_fresh(cache: &Path, source: &Path) -> bool {
 /// The launcher wants a fully qualified name and jails' filters are usually
 /// bare class names, so the caller resolves the filter to an FQN first --
 /// exactly what the Maven path does before handing Surefire a `-Dtest=`.
-pub fn selectors(filter: Option<&str>) -> Vec<String> {
+pub(crate) fn selectors(filter: Option<&str>) -> Vec<String> {
     match filter {
         None => vec![
             "--scan-class-path".to_string(),
@@ -199,7 +199,7 @@ pub fn selectors(filter: Option<&str>) -> Vec<String> {
 /// names, because that is what a person types and what Surefire accepts. The
 /// package is read off the file rather than guessed, for the same reason
 /// `base_package` reads it rather than being configured.
-pub fn fully_qualified(root: &Path, filter: &str) -> Option<String> {
+pub(crate) fn fully_qualified(root: &Path, filter: &str) -> Option<String> {
     let (class, method) = match filter.split_once('#') {
         Some((class, method)) => (class, Some(method)),
         None => (filter, None),
@@ -236,7 +236,7 @@ pub fn fully_qualified(root: &Path, filter: &str) -> Option<String> {
 }
 
 /// Run the already-compiled tests. The caller has checked [`staleness`].
-pub fn run_fast(root: &Path, filter: Option<&str>, debug: bool) -> Result<()> {
+pub(crate) fn run_fast(root: &Path, filter: Option<&str>, debug: bool) -> Result<()> {
     let classpath = test_classpath(root, debug)?.joined()?;
     let mut cmd = Command::new("java");
     cmd.args(["-cp", &classpath])

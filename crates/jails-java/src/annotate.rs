@@ -17,7 +17,7 @@
 //! knows what a capability is.
 
 /// `@Import(Class.class)`, the form this module reads and writes.
-pub fn import_annotation(class: &str) -> String {
+pub(crate) fn import_annotation(class: &str) -> String {
     format!("@Import({class}.class)")
 }
 

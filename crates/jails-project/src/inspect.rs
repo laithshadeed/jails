@@ -513,7 +513,7 @@ fn line_of(source: &str, needle: &str) -> usize {
 
 /// A path relative to the project root when possible -- absolute paths make
 /// the output unusable in a narrow terminal split.
-pub fn relative(root: &Path, path: &Path) -> String {
+pub(crate) fn relative(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
         .unwrap_or(path)
         .to_string_lossy()
@@ -838,7 +838,7 @@ fn contains_package(segments: &[String], package: &str) -> bool {
 
 /// A `TODO`/`FIXME`-style marker and where it is.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Note {
+pub(crate) struct Note {
     pub tag: String,
     pub file: String,
     pub line: usize,
@@ -892,7 +892,7 @@ pub fn notes(tag: Option<&str>, json: bool) -> Result<()> {
     Ok(())
 }
 
-pub fn collect_notes(root: &Path, only: Option<&str>) -> Vec<Note> {
+pub(crate) fn collect_notes(root: &Path, only: Option<&str>) -> Vec<Note> {
     let mut found = Vec::new();
     for dir in ["src/main/java", "src/test/java"] {
         for path in crate::java::source_files(&root.join(dir)) {

@@ -16,7 +16,7 @@ use super::*;
 /// PostgreSQL outbox. `usecase --yields Event` is deliberately composition,
 /// not a second domain-specific workflow language: the event's components
 /// must come from the command/result or one safe timestamp default.
-pub fn outbox_files(
+pub(crate) fn outbox_files(
     slice: &Slice,
     usecase: &str,
     target: &str,

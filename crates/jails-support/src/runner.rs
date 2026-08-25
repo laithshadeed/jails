@@ -51,10 +51,7 @@ pub const RUNNER_SCHEMA: u32 = 1;
 /// At most this much of each stream is kept. Beyond it the bytes are dropped
 /// and a truncation bit is set — a diagnostic that grows without bound is a
 /// diagnostic nobody reads and a memory profile nobody predicted.
-pub const MAX_STREAM_BYTES: usize = 64 * 1024;
-
-/// How long a tool gets before the escalation starts.
-pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
+pub(crate) const MAX_STREAM_BYTES: usize = 64 * 1024;
 
 /// How long a terminated group gets to exit before it is killed.
 const GRACE: Duration = Duration::from_secs(2);
@@ -284,6 +281,11 @@ pub fn summarise(run: &Run, redact: &[&Path], limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// How long a tool gets before the escalation starts, for the tests that
+    /// are not about the timeout. Production callers all pass their own: a
+    /// default nobody defaults to is a number that drifts from every real one.
+    const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
 
     fn sh(script: &str, timeout: Duration) -> Invocation {
         Invocation {
