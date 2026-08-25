@@ -129,4 +129,12 @@ mod tests {
         assert!(source.contains("PROTOCOL_MIN = 2"));
         assert!(!source.contains("@JAILS_TESTD_"));
     }
+
+    #[test]
+    fn daemon_source_keeps_the_bounded_recycle_controls() {
+        let source = super::v2::rendered_daemon_source();
+        assert!(source.contains("MAX_GENERATIONS = 50"));
+        assert!(source.contains("128L * 1024L * 1024L"));
+        assert!(source.contains("leakedThread()"));
+    }
 }

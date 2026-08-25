@@ -301,6 +301,66 @@ fn test_command_explains_the_canonical_partition() {
 }
 
 #[test]
+fn automatic_warm_execution_delegates_fork_sensitive_tests_but_strict_warm_refuses() {
+    let root = temp_dir("mock-test-isolation");
+    write_plain_fixture(&root);
+    let source = root.join("src/test/java/com/example/demo/ContextTest.java");
+    fs::create_dir_all(source.parent().unwrap()).unwrap();
+    fs::write(
+        &source,
+        "package com.example.demo;\n@SpringBootTest class ContextTest {}\n",
+    )
+    .unwrap();
+    let fake_dir = temp_dir("mock-test-isolation-bin");
+    let log = fake_dir.join("log.txt");
+    write_fake_maven(&fake_dir, &["mvn"], &log);
+
+    let automatic = jails_cmd(&root, Some(&fake_dir))
+        .args([
+            "test",
+            "ContextTest",
+            "--engine",
+            "auto",
+            "--compile",
+            "none",
+        ])
+        .output()
+        .unwrap();
+    let report = format!(
+        "{}{}",
+        String::from_utf8_lossy(&automatic.stdout),
+        String::from_utf8_lossy(&automatic.stderr)
+    );
+    assert!(automatic.status.success(), "{report}");
+    assert!(report.contains("delegated to the build tool"), "{report}");
+    assert!(read_log(&log).contains("test -Dtest=ContextTest"));
+
+    let strict = jails_cmd(&root, Some(&fake_dir))
+        .args([
+            "test",
+            "ContextTest",
+            "--engine",
+            "warm",
+            "--compile",
+            "none",
+        ])
+        .output()
+        .unwrap();
+    let report = format!(
+        "{}{}",
+        String::from_utf8_lossy(&strict.stdout),
+        String::from_utf8_lossy(&strict.stderr)
+    );
+    assert!(!strict.status.success());
+    assert!(
+        report.contains("strict warm execution is ineligible")
+            && report.contains("Spring application context")
+            && report.contains("fix:"),
+        "{report}"
+    );
+}
+
+#[test]
 fn project_maven_wrapper_wins_over_path_maven() {
     let root = temp_dir("mock-wrapper-first");
     write_project_skeleton(&root);

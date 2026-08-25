@@ -45,8 +45,10 @@ fn either_root(command: &str) -> Result<(PathBuf, crate::build::Build)> {
 mod filter;
 mod fingerprint;
 mod gradlew;
+mod isolation;
 mod test_execution;
 mod test_plan;
+mod watch;
 use filter::*;
 
 /// Run a command with our stdio, failing on a non-zero exit.

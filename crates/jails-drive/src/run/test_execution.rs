@@ -62,25 +62,33 @@ pub(super) fn run_inherited_timeout(
 }
 
 pub(super) fn run_warm(requested: &[String], options: &TestOptions, debug: bool) -> Result<()> {
+    let (root, _) = either_root("test --engine warm")?;
+    let ineligible = super::isolation::refusals(&root, requested);
+    if !ineligible.is_empty() {
+        return delegate_or_refuse(requested, options, debug, ineligible.join("; "));
+    }
     if options.scope != jails_protocol::testing::TestScope::Unit || options.database_schema {
-        return Err(
-            "the warm engine only accepts isolated unit tests\n       fix: choose `--engine auto` \
-             so integration tests delegate to the build tool"
-                .into(),
+        return delegate_or_refuse(
+            requested,
+            options,
+            debug,
+            "the warm engine only accepts isolated unit tests".into(),
         );
     }
     if !options.tags.is_empty() {
-        return Err(
-            "the warm engine cannot prove JUnit tag eligibility yet\n       fix: choose `--engine \
-             auto` so tagged selection delegates safely"
-                .into(),
+        return delegate_or_refuse(
+            requested,
+            options,
+            debug,
+            "the warm engine cannot prove JUnit tag eligibility yet".into(),
         );
     }
     if options.timeout.is_some() {
-        return Err(
-            "the v1 warm transport cannot cancel a timed-out request\n       fix: choose `--engine \
-             build` until testd v2 cancellation is active"
-                .into(),
+        return delegate_or_refuse(
+            requested,
+            options,
+            debug,
+            "testd v2 cancellation is not active for timed requests".into(),
         );
     }
     if options.affected {
@@ -97,28 +105,69 @@ pub(super) fn run_warm(requested: &[String], options: &TestOptions, debug: bool)
     crate::testd::render(report)
 }
 
+fn delegate_or_refuse(
+    requested: &[String],
+    options: &TestOptions,
+    debug: bool,
+    reason: String,
+) -> Result<()> {
+    if options.engine == jails_protocol::testing::TestEnginePolicy::Auto {
+        println!("test engine delegated to the build tool: {reason}");
+        let mut delegated = options.clone();
+        delegated.engine = jails_protocol::testing::TestEnginePolicy::Build;
+        delegated.compile = jails_protocol::testing::TestCompilePolicy::Build;
+        delegated.fast = false;
+        return test_once(requested, delegated, debug);
+    }
+    Err(format!(
+        "strict warm execution is ineligible: {reason}\n       fix: choose `--engine auto` so the build tool owns this partition"
+    )
+    .into())
+}
+
 pub(super) fn test_watch(requested: &[String], options: TestOptions, debug: bool) -> Result<()> {
     let (root, _) = either_root("test --watch")?;
     let mut once = options;
     once.watch = false;
     once.repeat = 1;
     once.until_fail = false;
-    test_once(requested, once.clone(), debug)?;
     let mut previous = fingerprint::fingerprint(&root);
+    if previous.overflowed() {
+        return Err(format!(
+            "test watch cannot establish its initial snapshot: {}\n       fix: restore readable project inputs and retry",
+            previous.gaps().join("; ")
+        )
+        .into());
+    }
+    test_once(requested, once.clone(), debug)?;
     println!("test watch: ready; waiting for project changes (Ctrl-C to stop)");
+    let mut pending = super::watch::Batch::default();
     loop {
-        std::thread::sleep(std::time::Duration::from_millis(150));
+        std::thread::sleep(super::watch::POLL);
         let current = fingerprint::fingerprint(&root);
         let changes = fingerprint::changes_between(&previous, &current, &root);
-        if changes.is_empty() {
+        let overflow = current.overflowed();
+        if !changes.is_empty() || overflow {
+            previous = current;
+            pending.observe(std::time::Instant::now(), changes, overflow);
+        }
+        if !pending.due(std::time::Instant::now()) {
             continue;
         }
-        previous = current;
+        if previous.overflowed() {
+            continue;
+        }
+        let (changes, overflowed) = pending.take();
         println!();
         for change in &changes {
             println!("test watch: {change}");
         }
-        if let Err(error) = test_once(requested, once.clone(), debug) {
+        let mut run = once.clone();
+        if overflowed {
+            println!("test watch: watcher overflow; full rescan complete, widening this run");
+            run.affected = false;
+        }
+        if let Err(error) = test_once(requested, run, debug) {
             eprintln!("test watch: {error}");
         }
         println!("test watch: ready; waiting for project changes (Ctrl-C to stop)");

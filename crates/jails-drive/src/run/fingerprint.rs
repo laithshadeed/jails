@@ -9,62 +9,169 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// What every watched file looked like at one moment: path -> mtime.
+/// What every watched file looked like at one moment.
 ///
-/// A map, not a high-water mark. The mtime *maximum* the watcher used before
-/// could only answer "has anything got newer", which gets three cases wrong,
-/// all of them ordinary: it cannot name the file that changed, a **deletion**
-/// lowers nothing so it goes unnoticed, and `git checkout` of an older
-/// revision moves mtimes backwards -- the exact moment a reader most wants a
-/// restart. Comparing maps with `!=` catches all three.
+/// A content-addressed map, not a timestamp high-water mark. Digests make file
+/// bytes authoritative even when an editor preserves timestamps, while the
+/// map shape detects additions and deletions and names every changed input.
 ///
 /// The watched set is the whole project, not just `.java`: a template, a
 /// migration, `application.properties`, `pom.xml`, `compose.yaml` and
 /// `jails.toml` all change what a running application does, and a watcher
 /// that ignores them makes the reader wonder why their change did nothing.
-pub(super) fn fingerprint(root: &Path) -> BTreeMap<PathBuf, std::time::SystemTime> {
-    let mut found = BTreeMap::new();
+#[derive(Clone, Debug, Default)]
+pub(super) struct Snapshot {
+    files: BTreeMap<PathBuf, FileStamp>,
+    gaps: Vec<String>,
+}
+
+impl Snapshot {
+    pub(super) fn overflowed(&self) -> bool {
+        !self.gaps.is_empty()
+    }
+
+    pub(super) fn gaps(&self) -> &[String] {
+        &self.gaps
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FileStamp {
+    size: u64,
+    digest: [u8; 32],
+}
+
+pub(super) fn fingerprint(root: &Path) -> Snapshot {
+    let mut snapshot = Snapshot::default();
     for dir in [
         "src/main/java",
         "src/main/resources",
         "src/test/java",
         "src/test/resources",
+        ".mvn",
+        "gradle",
     ] {
-        collect_mtimes(&root.join(dir), &mut found);
+        collect_files(&root.join(dir), &mut snapshot);
     }
-    for file in ["pom.xml", "compose.yaml", "jails.toml"] {
+    for file in [
+        "pom.xml",
+        "build.gradle",
+        "build.gradle.kts",
+        "settings.gradle",
+        "settings.gradle.kts",
+        "gradle.properties",
+        "mvnw",
+        "mvnw.cmd",
+        "gradlew",
+        "gradlew.bat",
+        "compose.yaml",
+        "jails.toml",
+        ".jails/app.toml",
+    ] {
         let path = root.join(file);
-        if let Ok(modified) = fs::metadata(&path).and_then(|m| m.modified()) {
-            found.insert(path, modified);
+        if path.symlink_metadata().is_ok() {
+            collect_file(&path, &mut snapshot);
         }
     }
-    found
+    snapshot.gaps.sort();
+    snapshot.gaps.dedup();
+    snapshot
 }
 
-fn collect_mtimes(dir: &Path, out: &mut BTreeMap<PathBuf, std::time::SystemTime>) {
-    let Ok(entries) = fs::read_dir(dir) else {
+fn collect_files(dir: &Path, snapshot: &mut Snapshot) {
+    if dir
+        .symlink_metadata()
+        .is_ok_and(|metadata| metadata.file_type().is_symlink())
+    {
+        snapshot
+            .gaps
+            .push(format!("{} is a symlink", dir.display()));
         return;
+    }
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        Err(error) => {
+            snapshot
+                .gaps
+                .push(format!("{} could not be scanned ({error})", dir.display()));
+            return;
+        }
     };
-    for entry in entries.flatten() {
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                snapshot.gaps.push(format!(
+                    "{} has an unreadable entry ({error})",
+                    dir.display()
+                ));
+                continue;
+            }
+        };
         let path = entry.path();
-        if path.is_dir() {
+        let kind = match entry.file_type() {
+            Ok(kind) => kind,
+            Err(error) => {
+                snapshot.gaps.push(format!(
+                    "{} could not be classified ({error})",
+                    path.display()
+                ));
+                continue;
+            }
+        };
+        if kind.is_symlink() {
+            snapshot
+                .gaps
+                .push(format!("{} is a symlink", path.display()));
+        } else if kind.is_dir() {
             // Build output is a *consequence* of a change, not one.
             if path.file_name().is_some_and(|n| n == "target") {
                 continue;
             }
-            collect_mtimes(&path, out);
-        } else if let Ok(modified) = fs::metadata(&path).and_then(|m| m.modified()) {
-            out.insert(path, modified);
+            collect_files(&path, snapshot);
+        } else if kind.is_file() {
+            collect_file(&path, snapshot);
         }
     }
 }
 
+fn collect_file(path: &Path, snapshot: &mut Snapshot) {
+    match path.symlink_metadata() {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            snapshot
+                .gaps
+                .push(format!("{} is a symlink", path.display()));
+            return;
+        }
+        Ok(metadata) if !metadata.is_file() => return,
+        Ok(_) => {}
+        Err(error) => {
+            snapshot.gaps.push(format!(
+                "{} could not be inspected ({error})",
+                path.display()
+            ));
+            return;
+        }
+    }
+    match fs::read(path) {
+        Ok(bytes) => {
+            snapshot.files.insert(
+                path.to_path_buf(),
+                FileStamp {
+                    size: bytes.len() as u64,
+                    digest: jails_support::codec::sha256(&bytes),
+                },
+            );
+        }
+        Err(error) => snapshot
+            .gaps
+            .push(format!("{} could not be hashed ({error})", path.display())),
+    }
+}
+
 /// What moved between two fingerprints, as lines a reader can act on.
-pub(super) fn changes_between(
-    before: &BTreeMap<PathBuf, std::time::SystemTime>,
-    after: &BTreeMap<PathBuf, std::time::SystemTime>,
-    root: &Path,
-) -> Vec<String> {
+pub(super) fn changes_between(before: &Snapshot, after: &Snapshot, root: &Path) -> Vec<String> {
     let relative = |path: &Path| {
         path.strip_prefix(root)
             .unwrap_or(path)
@@ -72,19 +179,17 @@ pub(super) fn changes_between(
             .to_string()
     };
     let mut changes = Vec::new();
-    for (path, when) in after {
-        match before.get(path) {
+    for (path, stamp) in &after.files {
+        match before.files.get(path) {
             None => changes.push(format!("added   {}", relative(path))),
-            // `!=`, not `>`: `git checkout` of an older revision moves an
-            // mtime backwards, and that is still a change.
-            Some(previous) if previous != when => {
+            Some(previous) if previous != stamp => {
                 changes.push(format!("changed {}", relative(path)))
             }
             Some(_) => {}
         }
     }
-    for path in before.keys() {
-        if !after.contains_key(path) {
+    for path in before.files.keys() {
+        if !after.files.contains_key(path) {
             changes.push(format!("deleted {}", relative(path)));
         }
     }
@@ -113,7 +218,7 @@ mod tests {
         fs::write(root.join("pom.xml"), "<project/>").unwrap();
 
         let before = fingerprint(&root);
-        assert_eq!(before.len(), 3, "{before:?}");
+        assert_eq!(before.files.len(), 3, "{before:?}");
         assert!(changes_between(&before, &before, &root).is_empty());
 
         // A resource is a change: it decides what the running application
@@ -143,26 +248,18 @@ mod tests {
     }
 
     #[test]
-    fn an_mtime_that_moves_backwards_is_still_a_change() {
-        // `git checkout` of an older revision does exactly this, and it is
-        // the moment a reader most wants a restart.
+    fn an_older_checkout_with_different_bytes_is_still_a_change() {
+        // `git checkout` can move metadata backwards; the bytes remain the
+        // authority in either comparison direction.
         let root = scratch("fingerprint-backwards");
         let java = root.join("src/main/java");
         fs::create_dir_all(&java).unwrap();
         fs::write(java.join("App.java"), "x").unwrap();
 
         let before = fingerprint(&root);
-        let mut older = before.clone();
         let path = java.join("App.java");
-        older.insert(
-            path,
-            before
-                .values()
-                .next()
-                .unwrap()
-                .checked_sub(std::time::Duration::from_secs(60))
-                .unwrap(),
-        );
+        fs::write(&path, "older checkout bytes").unwrap();
+        let older = fingerprint(&root);
         assert_eq!(
             changes_between(&older, &before, &root),
             vec!["changed src/main/java/App.java"]
@@ -175,12 +272,28 @@ mod tests {
     }
 
     #[test]
+    fn content_is_authority_even_when_metadata_does_not_help() {
+        let root = scratch("fingerprint-content");
+        let java = root.join("src/main/java");
+        fs::create_dir_all(&java).unwrap();
+        let path = java.join("App.java");
+        fs::write(&path, "aaaa").unwrap();
+        let before = fingerprint(&root);
+        fs::write(&path, "bbbb").unwrap();
+        let after = fingerprint(&root);
+        assert_eq!(
+            changes_between(&before, &after, &root),
+            vec!["changed src/main/java/App.java"]
+        );
+    }
+
+    #[test]
     fn build_output_is_not_a_change() {
         let root = scratch("fingerprint-target");
         let java = root.join("src/main/java");
         fs::create_dir_all(java.join("target")).unwrap();
         fs::write(java.join("App.java"), "x").unwrap();
         fs::write(java.join("target/App.class"), "compiled").unwrap();
-        assert_eq!(fingerprint(&root).len(), 1);
+        assert_eq!(fingerprint(&root).files.len(), 1);
     }
 }
