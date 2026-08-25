@@ -3207,6 +3207,77 @@ dependencies {
     );
 }
 
+/// `remove` on a Gradle project takes the dependency back out.
+///
+/// The bug this pins: the projection's *installing* edit branched on the build
+/// tool and its *retiring* one did not. `ResourceKey::MavenDependency`
+/// retirement opened `pom_path()` unconditionally, found no `pom.xml` on a
+/// Gradle project, returned "nothing to do", and reported the claim retired
+/// while the line was still in `build.gradle` -- so `add json` then
+/// `remove json` left the project holding a dependency nothing declared.
+///
+/// It survived because `gradle::remove_dependency` was written, tested and
+/// `pub`, and `pub` is what tells `dead_code` that another crate may be
+/// calling it. Closing this workspace's crate APIs (`pending.md` §7.2) is what
+/// made the compiler say nothing did.
+#[test]
+fn removing_a_capability_from_a_gradle_project_unsplices_the_dependency() {
+    let root = common::temp_dir("engine-gradle-remove");
+    std::fs::create_dir_all(root.join("src/main/java/com/example/demo")).unwrap();
+    std::fs::write(
+        root.join("build.gradle"),
+        r#"plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.2.0'
+}
+
+sourceCompatibility = 25
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+}
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("src/main/java/com/example/demo/App.java"),
+        "package com.example.demo;
+
+public class App {}
+",
+    )
+    .unwrap();
+
+    jails_engine::route::install(
+        &committing(&Project::load(&root).unwrap()),
+        &Declaration::plain(Capability::Json),
+    )
+    .expect("install");
+    let with = std::fs::read_to_string(root.join("build.gradle")).unwrap();
+    assert!(
+        with.contains("tools.jackson.core:jackson-databind"),
+        "{with}"
+    );
+
+    jails_engine::route::remove(
+        &committing(&Project::load(&root).unwrap()),
+        &Declaration::plain(Capability::Json),
+    )
+    .expect("remove");
+
+    let without = std::fs::read_to_string(root.join("build.gradle")).unwrap();
+    assert!(
+        !without.contains("jackson-databind"),
+        "the dependency survived `remove`: {without}"
+    );
+    // And nothing the reader wrote moved.
+    assert!(
+        without.contains("implementation 'org.springframework.boot:spring-boot-starter-web'"),
+        "{without}"
+    );
+    assert!(without.contains("sourceCompatibility = 25"), "{without}");
+}
+
 /// A plan and the commit that follows it read the same way.
 ///
 /// §R3.4 gives a command result one human rendering, and the reason is what a

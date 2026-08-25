@@ -300,9 +300,9 @@ half-recognised.
 
 ---
 
-## 4. One gate reads green over unfinished work
+## 4. One gate reads green over unfinished work — **closed 2026-08-25**
 
-`tests/architecture.rs`:
+`tests/architecture.rs` used to read:
 
 ```
   name:    "filesystem mutation sites outside the write layer"
@@ -310,33 +310,40 @@ half-recognised.
   now: 0   ceiling: 0   target: 0   status: done
 ```
 
-`mutation_sites` counts raw `std::fs::*` mutating calls outside `apply/`,
-`store.rs`, `journal.rs`, `execute.rs`, `scratch` and `sandbox`. It does **not**
-count `apply::put`, `apply::create`, `apply::remove` or `apply::move_file`.
+`mutation_sites` counted raw `std::fs::*` mutating calls outside `apply/`,
+`store.rs`, `journal.rs`, `execute.rs`, `scratch` and `sandbox` — and the
+`apply` module had already driven that to zero. It did **not** count
+`apply::put`, `apply::create`, `apply::remove` or `apply::move_file`, so the row
+read `done` on the rung "every mutation through the executor" while the
+migration that rung names had not happened.
 
-Measured today: **69** such calls in production outside the executor, led by
-`src/new.rs` (22), `src/new/gradle_project.rs` (12) and `src/new/publish.rs` (5).
+Fixed by fixing the measurement, not the ceiling. The row is now **"mutations
+that bypass the executor"** and counts `mutation_sites + executor_bypasses`,
+where `executor_bypasses` is every `apply::` occurrence in production outside
+the write layer. `no_bare_apply_verb_imports` holds the counting honest: an
+`use jails_support::apply::put;` would let a call be spelled bare `put(` and
+step around the gate, so importing `apply`'s verbs by name is a test failure.
 
-```sh
-grep -rn "apply::" src/ crates/ --include=*.rs \
-  | grep -vE "jails-support/src/apply|store.rs|journal.rs|execute.rs|scratch|sandbox" \
-  | wc -l
+**Measured 56, not the 69 this file previously recorded** — that number came
+from a raw `grep` that also counted `use` lines and `#[cfg(test)]` bodies, which
+the gate blanks. It fell to **54** the same afternoon when `rename.rs` was
+deleted (§7.1). Where the remaining 54 live:
+
+```
+  21  src/new.rs                                  §5
+  12  src/new/gradle_project.rs                   §5
+   4  crates/jails-generate/src/generate/write.rs §7.7
+   3  crates/jails-generate/src/spring/durable.rs §7.7
+   2  crates/jails-project/src/compose.rs
+   2  crates/jails-project/src/config.rs
+   2  crates/jails-tooling/src/testd.rs
+   2  src/new/publish.rs                          §5 — keep, see there
+   1  each: add/database.rs, generate/scaffold.rs, merge.rs,
+        console.rs, doctor.rs, run.rs
 ```
 
-So the gate reads `done` on the rung "every mutation through the executor" while
-the migration that rung names has not happened. Its own comment says it was
-built to make that migration countable — "each migrated surface lowers it; the
-ceiling comes down with it" — and it counts a different thing.
-
-**Fix the measurement, not the ceiling.** Count `apply::` calls outside the
-executor, set the ceiling to today's number, and let items 4 and 7 bring it
-down. A gate that reads green over unfinished work is worse than no gate, which
-is the argument every other gate in that file is built on.
-
-This is listed above the refactors because it is the one item that makes the
-others *measurable*.
-
----
+`src/new.rs` and `src/new/gradle_project.rs` are 33 of the 54, which is what
+makes §5 the largest single move rather than a tidy-up.
 
 ## 5. `jails new` is a second transaction protocol
 
@@ -355,9 +362,10 @@ The honest shape: `new` reserves and publishes the *skeleton* by rename (keep
 against the now-real project. One transaction protocol, and `publish.rs` shrinks
 to what only it can do.
 
-`src/new.rs` has 22 direct `apply::*` calls and `src/new/gradle_project.rs`
+`src/new.rs` has 21 direct `apply::*` calls and `src/new/gradle_project.rs`
 another 12 — the most of any pair of files, and the Gradle half is new debt
-added on 2026-08-25 with eyes open. That total is the measure of this item.
+added on 2026-08-25 with eyes open. Those 33 are 61% of §4's whole remaining
+count, so this item *is* that gate's descent.
 
 ---
 
@@ -365,7 +373,9 @@ added on 2026-08-25 with eyes open. That total is the measure of this item.
 
 Ordered by leverage. Every count here was taken today.
 
-### 6.1 One `Codec` trait, not 262 hand-written halves
+### 6.1 One `Codec` trait — **done 2026-08-25**
+
+What it was:
 
 ```
   fn encode(&self, encoder: &mut Encoder) -> Result<()>     129 identical signatures
@@ -373,33 +383,42 @@ Ordered by leverage. Every count here was taken today.
   traits in the entire workspace                              0
 ```
 
-There is no trait, so there is no way to write the generic helper, so every
-collection is encoded by hand — and where the same shape recurred, someone wrote
-a *named* monomorphisation instead: `encode_strings`, `decode_strings`,
-`encode_paths`, `encode_owners`, `encode_service_set`, `decode_service_map`,
-`decode_vec`. Seven copies of one function that cannot be written once.
-`Encoder::option` and `Encoder::nested` take **closures** for the same reason.
+`jails_support::codec::Codec` now exists and **126 types implement it**. A
+ratchet holds the migration: `codec halves outside `impl Codec`` reads
+`0 / 0 / 0 done`, counting any method with either signature that is not a trait
+method. Its scanner reads `trim_start()` rather than column zero, because
+`digest_newtype!` and `logical_id!` expand to `impl Codec for $name` indented
+inside a `macro_rules!` body — a gate that misread six good impls as violations
+would have been retired within the week.
 
-Declare it in `jails-support::codec`:
+`Encoder`/`Decoder` gained `seq`, `set`, `map`, `maybe`/`perhaps` over the
+bound, and **eight named monomorphisations are gone**: `encode_service_map`,
+`decode_service_map`, `encode_service_set`, `decode_service_set`,
+`encode_owners`, `decode_owners`, `encode_keys`, `decode_keys`, plus
+`decode_vec` and the `encode_contributors`/`decode_contributors` aliases that
+only forwarded to two of them.
 
-```rust
-pub trait Codec: Sized {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()>;
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self>;
-}
-```
+Three things worth knowing before touching this again.
 
-then add `Encoder::seq`/`option` and `Decoder::seq`/`option` over `T: Codec`.
-Every existing `impl` block already has both methods with the right signatures —
-the change is `impl Foo {` → `impl Codec for Foo {` in ~129 places, then
-collapsing the count-then-loop bodies, then deleting the seven named copies.
+**Thirteen `encode` methods were infallible and are not any more.** They wrote
+only fixed-width fields, so they returned `()`; the trait's signature is
+`Result<()>`, and a type that cannot be `Codec` cannot go in a generic
+collection — `ObjectId` is in a great many sets and maps. Making them fallible
+cascaded through ~95 call sites that now carry `?`. Every one of those was
+found by the compiler, not by reading.
 
-Why this one first: it is the cheapest large win in the repo, the byte-level
-output is pinned by the golden suite and the ledger round-trip tests so a
-mistake fails loudly, and `lib.rs` currently states a property the compiler
-cannot check — *"there is one constructor per type and the codec calls it."*
-With a trait, "this type is on the wire" becomes a bound. This is where "zero
-traits" stops being a style choice and starts costing duplication.
+**`InputPrecondition` was the eighth named copy in a disguise**: an inherent
+`encode` method paired with a free `decode_precondition` *function*. Same split,
+nothing naming it, and the gate above is what surfaced it.
+
+**Two collections are deliberately not `Encoder::set`.**
+`conflict::encode_paths` and the `entries` list in `snapshot::InputPrecondition`
+order by a *field* of the element rather than by the element, so `T: Ord` where
+`T`'s own order is the wire order does not hold. Both now say so in a comment.
+That is the shape a future `ordered_by` helper would take, if a third appears.
+
+The byte-level output is unchanged, and that is not an assumption: the golden
+suite and the ledger round-trip tests compare bytes, and 1,169 tests pass.
 
 ### 6.2 One validated request, parsed at the edge
 
@@ -432,53 +451,90 @@ double parse in the route disappears, and the workspace-wide
 `too_many_arguments = "allow"` (`Cargo.toml:23`, whose comment says it is
 waiting on exactly this) can come out.
 
-### 6.3 One field model, not two parsers of one syntax
+### 6.3 One field model — **the round trip is gone; one parser is still two**
 
-`name:type[!?]@marker` has two parsers and two result types —
-`jails-spec/src/spec/field.rs:264 parse_fields` → `Field`, and
-`jails-protocol/src/declaration/field.rs` → `FieldSpec` — and they are bridged
-**through text**:
+`name:type[!?]@marker` had two parsers and two result types —
+`jails-spec/src/spec/field.rs`'s `parse_fields` → `Field`, and
+`jails-protocol/src/declaration/field.rs`'s `FieldSpec::parse` → `FieldSpec` —
+and they were bridged **through text**:
 
 ```rust
-// crates/jails-engine/src/route/field.rs:107
+// crates/jails-engine/src/route/field.rs, before
 let parsed = jails_generate::generate::parse_fields(&[added.canonical()])?;
 ```
 
-A typed `FieldSpec` is rendered back to a string token and re-parsed by the
+A typed `FieldSpec` was rendered back to a string token and re-parsed by the
 other parser to obtain a `Field`. Counting the parse that already ran on the way
-in, a field spec is parsed up to **three times** per request, and one of those
-parses reads text this program printed a line earlier.
+in, a field spec was parsed up to **three** times per request, and one of those
+parses read text this program had printed a line earlier.
 
-`FieldSpec` should be the model and `Field` a *projection* of it for rendering —
-`java_type` and `imports` are derived facts computed by a function on
-`FieldSpec`, not a second parse result. Delete `parse_fields`, its `Field`, and
-the `canonical()` round-trip.
+**Done 2026-08-25.** `parse_fields` split into the half that reads a token and
+the half that *derives* the Java facts (`jails_spec::spec::derive_field`), and
+`FieldSpec::projected()` calls the second directly with values it already holds.
+The call site above is now `added.projected()?`. §6.3's own words for the target
+were *"`java_type` and `imports` are derived facts computed by a function on
+`FieldSpec`, not a second parse result"*; that function exists and has one
+caller on each side.
 
-Two parsers of one user-facing syntax is the single most reliable drift
-generator in this codebase's history. `declaration/field.rs` says so in its own
-doc comment — "a rule enforced in one place and not another is the shape of
-every drift bug in this repository" — and the repo has two anyway.
+**What is not done: there are still two parsers.** Merging them is blocked on
+layering, and the shape of the block is worth writing down because it decides
+how the merge has to go. `Field`, `Optionality` and `Constraints` live in
+`jails-spec`; `FieldSpec`, its own `Optionality` and `FieldConstraints` live in
+`jails-protocol`, which is **above** `jails-spec` — so the lower parser cannot
+delegate to the upper one, and `jails-generate` does not depend on
+`jails-protocol` at all, which is why the bridge was a string in the first
+place. The merge is therefore a *move*, not a rewrite: either `FieldSpec` comes
+down to `jails-spec` (dragging `identity::{JavaType, Name, Package}` with it) or
+`Field` goes up. The second is smaller and is the one to do.
 
-### 6.4 One table per kind, not seven
+Until then the two are pinned to each other by
+`a_projected_field_spec_equals_the_parsed_one`, which runs 26 tokens through
+both and compares all seven fields of the result, and by
+`a_spec_the_projection_refuses_is_one_the_parser_refuses`, which asserts they
+agree about what to reject. **A failure there means one parser learned something
+the other did not; the fix is to teach the projection, never to relax the
+assertion.** The guard was checked by breaking it — dropping `indexed` from the
+projection fails on `owner:string@index`.
+
+### 6.4 One table per kind — **the holes are closed; the tables are still seven**
 
 `ArtifactKind` has seven independently maintained tables keyed on it across five
 crates: the enum and clap aliases; `metadata()`/`argument_shape()`;
 `kind_suffix()`; `recorded_name()`/`strip_redundant_suffix()`;
 `artifacts_for()`; `explain()`; `SCENARIOS`.
 
-Three are held exhaustive by the compiler. **`kind_suffix` is not** — it ends in
-`_ => None` (`generate.rs:283`), so a new kind silently gets no suffix, and
-`recorded_name` and `strip_redundant_suffix` inherit that silence.
-`recipes.rs` patches three kinds outside its own match and marks them
-`unreachable!` inside it (3 occurrences) — a closed set with holes cut in from
-the outside. `Capability` has the same shape across four crates.
+**The two holes are closed, 2026-08-25** — which is the half that was actually
+costing correctness rather than typing:
 
-One `RecipeFacts` value returned by a single exhaustive match, carrying label,
-aliases, suffix, layer, lifecycle, argument shape and rationale.
-`artifacts_for` stays a `match` — its arms are *logic*, not data, and
-`recipes.rs`'s doc comment argues that correctly — but the three special kinds
-get a `lifecycle` variant instead of a pre-match escape, so the `unreachable!`
-arms go.
+- **`kind_suffix` ended in `_ => None`** (`generate.rs`), so a kind added to the
+  enum got no suffix and nothing said so; `recorded_name` and
+  `strip_redundant_suffix` read it and inherited the silence, and a kind whose
+  name is not normalised is one whose `destroy` rebuilds different paths from
+  the ones `generate` wrote. Every arm is now explicit, including the
+  twenty-three kinds that genuinely add nothing, so a new variant fails to
+  compile until somebody decides which half it is in.
+- **Three copies of "is this kind a one-shot".** `generate::plan_recipe`
+  refused `matches!(kind, Field | Cases | Migration)`; `route::artifact::recipe`
+  listed the same three as match arms above a `_`, under a doc comment claiming
+  *"the match is closed on `ArtifactKind`, so a kind added without deciding
+  which policy it follows is a compile error"* — which the `_` made false;
+  and `artifacts_for` carried three `unreachable!`s trusting both. There is one
+  owner now, `jails_protocol::recipe::lifecycle`/`is_persistent`, which was
+  already written and had no callers (§7.2 found it). `plan_recipe` asks it, and
+  the route matches on `LifecycleClass` rather than on kinds, so both halves are
+  exhaustive and a fourth one-shot cannot fall through to the persistent branch.
+  `jails-generate` gained a direct `jails-protocol` dependency to ask; it is a
+  downward edge and `no_module_depends_on_a_layer_above_its_own` agrees.
+
+The `unreachable!` arms stay, and deliberately: they are the only thing trusting
+the guard, and turning them into a `_` would let a new kind reach the persistent
+renderer unclassified.
+
+**Still open: the tables themselves.** One `RecipeFacts` value returned by a
+single exhaustive match, carrying label, aliases, suffix, layer, lifecycle,
+argument shape and rationale. `artifacts_for` stays a `match` — its arms are
+*logic*, not data, and `recipes.rs`'s doc comment argues that correctly.
+`Capability` has the same shape across four crates.
 
 Keep `SCENARIOS` separate. It is a test corpus, and
 `every_kind_and_capability_has_a_golden_scenario` already fails when it falls
@@ -540,37 +596,130 @@ shape repeats with no way to name it. 5.1 is the first. The others:
 Ten crates today. It is a DAG and Cargo enforces it, which is the win the split
 bought.
 
-### 7.1 Dead and unreal edges
+### 7.1 Dead and unreal edges — **closed 2026-08-25**
 
-- **`crates/jails-tooling/src/rename.rs`** — 220 lines, **zero** production
-  callers (`main.rs` uses `jails_engine::route::rename`). The one reference left
-  is a doc comment in `jails-java/src/identifier.rs` pointing at its module
-  docs, which needs re-pointing when it goes.
-- **`jails-tooling` → `jails-protocol`** — declared in the manifest,
-  `grep -rn "jails_protocol::" crates/jails-tooling/src` returns **0**. Delete
-  the edge.
-- **Root `jails` → `jails-commit`** — 0 uses in `src/`, 44 in `tests/`, and it
-  is *already* in `[dev-dependencies]` too with
-  `features = ["fault-injection"]`. Drop the `[dependencies]` line.
-- **No `[workspace.dependencies]`.** Ten manifests repeat `clap`, `tempfile` and
-  the internal crate paths.
+All four done:
+
+- **`crates/jails-tooling/src/rename.rs`** deleted — 220 lines, zero production
+  callers, `main.rs` having routed `jails rename` through
+  `jails_engine::route::maintenance::rename` since V2. Its module docs carried
+  the one thing worth keeping (when to prefer jdt.ls `grn`, and why textual is
+  honest here), which moved onto the live route's doc comment; the pointer in
+  `jails-java/src/identifier.rs` re-points there.
+- **`jails-tooling` → `jails-protocol`** edge deleted.
+- **Root `jails` → `jails-commit`** dropped from `[dependencies]`; the
+  `[dev-dependencies]` entry with `features = ["fault-injection"]` is what the
+  44 `tests/` uses were always resolving through.
+- **`[workspace.dependencies]` added** and all eleven manifests inherit from it.
+  The per-crate comment saying *why* that crate takes clap stays beside
+  `clap.workspace = true`; only the version moved.
+
+Two ratchet rows fell as a result and are recorded: `root: &Path` 105 → 103, and
+§4's bypass count 56 → 54.
 
 (Two edges that item 3 of the old `refactor.md` also listed —
 root → `jails-protocol` and root → `jails-spec` — are **no longer** movable:
 they now have 9 and 4 uses in `src/` respectively.)
 
-### 7.2 Closed crate APIs
+### 7.2 Closed crate APIs — **done 2026-08-25, and it found a great deal**
 
-`dead_code = "deny"` is set workspace-wide and finds almost nothing, because
+`dead_code = "deny"` was set workspace-wide and found almost nothing, because
 Rust assumes a `pub` item in a library may be used by another crate. Every crate
-root is `pub mod` for every module, with **27** `pub use ...::*` wildcards on
-top, across **829** `pub` items. The compiler has been told not to look.
+root was `pub mod` for every module across ~829 `pub` items, so the compiler had
+been told not to look.
 
-Per crate: modules private by default, `pub mod` only where another crate
-imports it; `pub(crate)`/`pub(super)` for what is shared internally; named
-re-exports instead of wildcards. Expect the first pass to surface a large batch
-of real `dead_code` denials — that is the point, and it is why this should come
-before the deletions in 6.1 rather than after.
+Every crate is now narrowed: each item starts `pub(crate)` and only what
+something outside really names is `pub`. Five modules went `pub(crate)` whole
+(`commit::activate`, `prepare::merge`, `tooling::affected`/`launcher`/
+`reports`). The method was mechanical and compiler-driven — narrow everything,
+build, reopen exactly what the errors name — which is why it is trustworthy:
+nothing was decided by reading.
+
+**What it found, and what was done with each.** The rule applied throughout:
+*if a finding has a live V2 counterpart doing the same job, delete it; otherwise
+keep it `pub` with a note beside it saying nothing calls it and what would.*
+Deleting a specified, tested feature because it is not wired yet is not cleanup.
+
+Two real defects, both now fixed and pinned by a test:
+
+- **`jails remove` left the dependency in `build.gradle`.**
+  `projection.rs`'s `ResourceKey::MavenDependency` retirement opened
+  `pom_path()` unconditionally, found no `pom.xml` on a Gradle project,
+  returned "nothing to do", and reported the claim retired. The *installing*
+  edit had branched on `self.build` since the day it was written, which is what
+  made the asymmetry invisible. `gradle::remove_dependency` existed, was
+  tested, and had no caller — and `pub` is exactly what stopped `dead_code`
+  saying so. `ResourceKey::MavenMainClass` had the identical hole.
+  `removing_a_capability_from_a_gradle_project_unsplices_the_dependency` in
+  `tests/engine.rs` pins it, and the narrowing itself now fails the *build* if
+  the branch is removed again.
+- **§1.2's predicted fourth instance of "a version fact answered confidently
+  and wrongly".** `generate/cli.rs` asked `pom::main_class(project.pom())`, and
+  `Project::pom()` returns whichever build file the project has. Handed Groovy,
+  the XML reader finds no `<mainClass>` and answers `None` — which means "this
+  build declares no entry point", so `g cli` on a Gradle project silently
+  declined to retarget the packaged jar. There is now one `Project::main_class`
+  that dispatches on the build tool, and `gradle::main_class` — written, tested
+  and never called — is its Gradle half.
+
+Deleted, each having a live V2 counterpart: `apply`'s `put_bytes`, `move_file`,
+`copy_into_scratch`, `remove_managed_tree`, `remove_managed_directory` and
+`atomically`; `spec::fields_from_record`; `compose::add_service`/
+`remove_service`/`has_service`/`stop`; `config::record_capability`/
+`forget_capability`/`edit_capabilities`/`record_layout`; `properties::set`;
+`maven::format_quietly`; `generate/write.rs`'s four dependency-ensuring
+functions; `generate/scaffold.rs`'s `field_spec`, `generate_field` and
+`prepared_artifact_contents`; `spring/durable.rs`'s install/uninstall pair;
+`prepare`'s `preconditions_of`, `subject_of`, `contributors_of`,
+`desire::POM`/`COMPOSE`; and `journal::ObservedImage::tag`.
+
+**The test inventory went 1,171 → 1,169, and every one of the five removals is
+accounted for.** Where a V1 entry point was the only thing a test called, the
+test was re-pointed at the shipped splice it wrapped — `compose`'s
+`add_service_ref`/`remove_service_ref`, `config`'s `edited_capabilities`,
+`properties::introduce`, `codemod::Marked` for the durable-job blocks. Several
+are *better* for it: they now exercise the function the shipped path calls.
+Two tests were added (`no_bare_apply_verb_imports` and the Gradle removal
+regression). The five that went, and why each is not a hole:
+
+| test | why it is not a loss |
+|---|---|
+| `apply::atomically_leaves_no_temporary_behind` | its subject was deleted |
+| `rename::a_package_qualified_name_is_rejected` | the live route has its own `validate`, and `tests/cli.rs` asserts the same "simple name" refusal end to end |
+| `durable::an_edited_safety_block_is_rejected_instead_of_silently_clobbered` | superseded, and by something stronger. V1 compared the block's bytes with what it would have written. V2 records the file as a `FactKind::Properties` input, so **any** reader edit fails the commit precondition — not only one inside the markers |
+| `durable::a_later_duplicate_cannot_override_the_safety_values` | the same mechanism |
+| `durable::removing_the_only_job_removes_the_generated_source` | split in two: `removing_the_only_job_leaves_an_empty_source` keeps the half this module owns, and turning empty text into an absence is `projection::write_or_delete`'s |
+
+`prefix_related_job_names_keep_independent_property_blocks` was nearly lost the
+same way and was restored — a marker matched as a substring would have
+`durable-job-email` retiring take `durable-job-email-sender`'s opening line
+with it, which is a property of `codemod::Marked` worth keeping pinned.
+
+Kept `pub` with the finding recorded beside it — five bodies of specified,
+encoded, unit-tested work that nothing reaches:
+
+| what | where | what would wire it |
+|---|---|---|
+| the conflict-resume protocol, 33 items | `protocol::pending`, `protocol::conflict`, `protocol::bootstrap` | §11, which lands as one piece or not at all |
+| finalisation's two halves | `prepare::reconcile`'s `MarkerTokens::for_operation`, `still_conflicted` | the same |
+| the prerequisite graph and reference resolution, 11 items | `protocol::recipe` | §6.2's one parsed request, validating at the edge |
+| **garbage collection, entire** | `commit::gc` + `store::list_objects`/`is_object_name` | one call at the end of a successful commit |
+| `ToolSpec` and `canonical_args` | `prepare::tool` | `route::format` building one instead of passing an identity and a `Vec<String>` separately — which is the shape `ToolSpec` exists to make impossible |
+
+**The garbage-collection one is new and worth stating plainly: nothing collects
+anything, so `.jails/objects` only grows.** Every rendered body, base and
+preimage a project has ever had is still on disk. The module is complete and
+tested; what is missing is the call site and the decision about where its
+warnings go, and that decision is already written in its own header.
+
+Two smaller ones in the same shape: `store::same_device` — the refusal that
+stops a publication rename silently becoming a copy across a mount boundary —
+is never made; and `prepare::report::summary` draws a distinction
+(*a prepared Apply whose plan turned out to be empty*) that no command makes,
+because `render_envelope`'s "nothing to do" is a different case.
+
+Four ratchet rows fell and are recorded in `tests/architecture.rs`:
+`root: &Path` 105 → 94, and §4's bypass count 56 → 46.
 
 ### 7.3 `jails-commit` reaches up into `jails-project`
 
@@ -953,19 +1102,25 @@ Each PR leaves `cargo build --workspace && cargo test --workspace` green.
    applications arriving one at a time is how the suite reaches two minutes with
    nobody having chosen that. Proving `examples/minicom/` and
    `examples/minicom-spring/`, which exist and are held by nothing, is the
-   cheapest first move and answers the question with real numbers.
-1. **Honest gates and an honest map** — fix §4's measurement and set the ceiling
-   to 69; add the four missing crates to `CLAUDE.md` (§10.1). Do this first;
-   everything below is measured against it.
-2. **Delete and close** — `rename.rs` and the unreal edges (§7.1), then close
-   the crate APIs (§7.2) and delete whatever `dead_code` then finds.
-3. **The `Codec` trait** (§6.1) — mechanical, byte-pinned by the golden suite.
+   cheapest first move and answers the question with real numbers. **Still
+   open.**
+1. ~~**Honest gates and an honest map**~~ — **done 2026-08-25.** §4's row now
+   measures what its rung claims (and the number was 56, not the 69 a raw grep
+   reported); `CLAUDE.md`'s crate table names all ten crates.
+2. ~~**Delete and close**~~ — **done 2026-08-25.** `rename.rs` and the three
+   unreal edges are gone, `[workspace.dependencies]` exists, and every crate's
+   API is narrowed. See §7.2 for what `dead_code` then found, which was
+   considerably more than "some dead code": two shipped defects and five bodies
+   of specified, tested, unwired work.
+3. ~~**The `Codec` trait**~~ — **done 2026-08-25.** 126 types, eight named
+   monomorphisations deleted, a ratchet at zero. See §6.1.
 4. **One request, one field model** (§6.2, §6.3) — removes the parse-print-reparse
-   round trip, and drops `too_many_arguments = "allow"`.
+   round trip, and drops `too_many_arguments = "allow"`. **Next.**
 5. **One table per kind** (§6.4).
 6. **One transaction protocol** (§5, §7.7) — `new --app` becomes an ordinary V2
    transition and the remaining `apply::` calls move behind the executor. §4's
-   gate reaches its target, honestly this time.
+   gate reaches its target, honestly this time. It is at **46**, down from the
+   56 it started at, entirely as a side effect of step 2 deleting V1 writers.
 7. **Crate boundaries** (§7.3, §7.4, §7.5) and the file splits (§8).
 
 The three new proof applications (§2.1, §2.2, §2.3) sequence against §9 rather
@@ -975,7 +1130,8 @@ what makes them affordable, and §2.4 is what decides whether they wait for it.
 **If only four things get done:** §4 (the gate that reads green over unfinished
 work), §7.2 (close the APIs and let the compiler find the dead code), §6.1 (the
 cheapest large reduction in the repo), §6.3 (the deepest remaining seam between
-the two engines).
+the two engines). **Three of the four are done**; §6.3 is what is left of that
+list.
 
 ---
 

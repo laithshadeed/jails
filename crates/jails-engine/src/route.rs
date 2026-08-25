@@ -26,6 +26,7 @@
 //! The interesting property is that steps 1 to 5 touch nothing. A failure
 //! anywhere in them leaves a project that has not been opened for writing.
 
+use jails_support::codec::Codec;
 use std::collections::{BTreeMap, BTreeSet};
 
 use clap::ValueEnum;
@@ -704,7 +705,7 @@ fn prepare_set(
 /// Built by the route rather than parsed out of `argv`. A route knows what it
 /// was asked far more exactly than a parser reading the command line back
 /// does, and there is no second implementation to disagree with.
-pub struct Asked {
+pub(crate) struct Asked {
     request: CanonicalMutationRequest,
     syntax: CanonicalRequestSyntaxV1,
 }

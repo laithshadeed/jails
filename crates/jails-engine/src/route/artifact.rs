@@ -288,10 +288,17 @@ fn unnamed_implementations(
 /// planned as an entity.
 pub fn recipe(run: &Run, intent: &Intent) -> Result<Outcome> {
     let package = intent.package.as_deref();
-    match intent.kind {
+    // On the *lifecycle*, not on a hand-listed set of kinds. The doc comment
+    // above has always claimed this match is closed; until `pending.md` §6.4 it
+    // was `Field`, `Cases` and `Migration` above a `_`, so a fourth one-shot
+    // would have fallen through to the persistent branch and been planned as an
+    // ownable entity. `recipe::lifecycle` is exhaustive over `ArtifactKind` and
+    // this is exhaustive over it, so both halves now fail to compile rather
+    // than guessing.
+    match jails_protocol::recipe::lifecycle(intent.kind) {
         // `--timestamps` is expanded into two ordinary components before any
         // recipe sees it, through the same helper the manifest uses.
-        ArtifactKind::Field => {
+        jails_protocol::recipe::LifecycleClass::OneShotField => {
             if !intent.indexes.is_empty() || intent.on.is_some() || intent.yields.is_some() {
                 return Err(
                     "field accepts one `name:type` component; --index/--on/--yields do not \
@@ -313,9 +320,13 @@ pub fn recipe(run: &Run, intent: &Intent) -> Result<Outcome> {
         // These two use NAME as a description or a path rather than a Java
         // class name, which is why they are decided before the capitalisation
         // every other kind gets.
-        ArtifactKind::Cases => super::cases(run, &intent.name, package),
-        ArtifactKind::Migration => super::migration(run, &intent.name),
-        _ => {
+        jails_protocol::recipe::LifecycleClass::OneShotCases => {
+            super::cases(run, &intent.name, package)
+        }
+        jails_protocol::recipe::LifecycleClass::OneShotMigration => {
+            super::migration(run, &intent.name)
+        }
+        jails_protocol::recipe::LifecycleClass::PersistentIntent => {
             let fields = match intent.timestamps {
                 true => jails_generate::generate::with_timestamps(intent.kind, &intent.fields)?,
                 false => intent.fields.clone(),

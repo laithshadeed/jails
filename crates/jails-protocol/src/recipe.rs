@@ -20,6 +20,20 @@
 //! There are exactly three edges at this baseline, and a test says so — not to
 //! pin trivia, but because §R1.2 asks specifically that no hidden POM or file
 //! probe quietly adds a fourth.
+//!
+//! ## What is wired, and what is not
+//!
+//! `metadata`, `argument_shape` and `lifecycle`/`is_persistent` are
+//! load-bearing: `declaration.rs`, `entity.rs`, `generate::plan_recipe` and
+//! `route::artifact::recipe` all go through them. The rest of this module -- the
+//! prerequisite graph (`prerequisites`, `transitive_prerequisites`,
+//! `missing_prerequisites`), reference resolution (`RefTarget`, `RefError`,
+//! `resolve_reference`, `reference_key`) and cycle detection (`find_cycle`) --
+//! is reached by nothing but its own tests. Closing this crate's API
+//! (`pending.md` §7.2) is what surfaced that. It is the validation half
+//! `pending.md` §6.2 wants a single parsed request to perform at the edge, and
+//! keeping it `pub` is what says so out loud rather than letting a private
+//! copy grow somewhere upstream.
 
 use jails_spec::spec::kind::{ArtifactKind, Capability};
 
@@ -39,7 +53,7 @@ pub enum LifecycleClass {
 
 /// Whether a recipe takes a reference, and whether it must.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RefArity {
+pub(crate) enum RefArity {
     Required,
     Optional,
     /// Supplying it is an error rather than being ignored — a parameter
@@ -70,7 +84,7 @@ pub enum ArgumentShape {
 
 /// One recipe's contract.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RecipeMetadata {
+pub(crate) struct RecipeMetadata {
     pub class: LifecycleClass,
     pub on: RefArity,
     pub yields: RefArity,
@@ -86,7 +100,7 @@ pub struct RecipeMetadata {
 
 /// The single table. Every arm is explicit so a new `ArtifactKind` fails to
 /// compile until it is classified.
-pub fn metadata(recipe: ArtifactKind) -> RecipeMetadata {
+pub(crate) fn metadata(recipe: ArtifactKind) -> RecipeMetadata {
     use ArtifactKind::*;
     use LifecycleClass::*;
     use RefArity::*;
@@ -162,13 +176,24 @@ pub fn metadata(recipe: ArtifactKind) -> RecipeMetadata {
 }
 
 /// What this recipe's positional arguments are.
-pub fn argument_shape(recipe: ArtifactKind) -> ArgumentShape {
+pub(crate) fn argument_shape(recipe: ArtifactKind) -> ArgumentShape {
     metadata(recipe).arguments
 }
 
 /// Whether a recipe is a persistent, ownable, removable entity.
+///
+/// The one owner of that question. It used to have three: `plan_recipe`
+/// refused `matches!(kind, Field | Cases | Migration)`, `route::artifact`
+/// listed the same three as match arms above a `_`, and `artifacts_for`
+/// carried three `unreachable!`s trusting both. `pending.md` §6.4 is the entry
+/// about that shape -- a closed set with holes cut in from the outside.
 pub fn is_persistent(recipe: ArtifactKind) -> bool {
-    metadata(recipe).class == LifecycleClass::PersistentIntent
+    lifecycle(recipe) == LifecycleClass::PersistentIntent
+}
+
+/// How this recipe behaves over its lifetime.
+pub fn lifecycle(recipe: ArtifactKind) -> LifecycleClass {
+    metadata(recipe).class
 }
 
 /// The capabilities a capability requires to already be declared.

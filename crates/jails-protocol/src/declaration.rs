@@ -34,13 +34,13 @@ mod index;
 pub use field::{
     FieldConstraints, FieldSpec, FieldType, NumericConstraint, Optionality, ScalarFieldType,
 };
-pub use index::{IndexColumn, IndexDirection, IndexSpec};
+pub(crate) use index::{IndexColumn, IndexSpec};
 
 use crate::Result;
 use crate::entity::Recipe;
 use crate::identity::{JavaType, Name, Package};
 use crate::recipe::ArgumentShape;
-use jails_support::codec::{Decoder, Encoder, ordered};
+use jails_support::codec::{Codec, Decoder, Encoder, ordered};
 
 /// One `childField=parentField` pair, which only `association` declares.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -68,13 +68,14 @@ impl FieldMapping {
     pub fn canonical(&self) -> String {
         format!("{}={}", self.child, self.parent)
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for FieldMapping {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.child.encode(encoder)?;
         self.parent.encode(encoder)
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
             child: Name::decode(decoder)?,
             parent: Name::decode(decoder)?,
@@ -188,8 +189,9 @@ impl IntentArguments {
             Self::Mappings(_) => 2,
         }
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for IntentArguments {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.tag(self.tag());
         match self {
             Self::Fields(fields) => {
@@ -233,7 +235,7 @@ impl IntentArguments {
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         let tag = decoder.tag()?;
         let count = decoder.count()?;
         Ok(match tag {
@@ -293,38 +295,6 @@ impl IntentSpec {
         self.arguments.fields()
     }
 
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.arguments.encode(encoder)?;
-        encoder.count(self.indexes.len())?;
-        for index in &self.indexes {
-            index.encode(encoder)?;
-        }
-        encoder.bool(self.timestamps);
-        encoder.option(self.on.as_ref(), |e, ty| ty.encode(e))?;
-        encoder.option(self.yields.as_ref(), |e, ty| ty.encode(e))?;
-        // By label, not by discriminant: §R1.4's rule for every closed
-        // vocabulary on the wire, so reordering the enum cannot change a
-        // recorded value.
-        encoder.option(self.method.as_ref(), |e, method| e.string(method.label()))
-    }
-
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        let arguments = IntentArguments::decode(decoder)?;
-        let index_count = decoder.count()?;
-        let mut indexes = Vec::new();
-        for _ in 0..index_count {
-            indexes.push(IndexSpec::decode(decoder)?);
-        }
-        Ok(Self {
-            arguments,
-            indexes,
-            timestamps: decoder.bool()?,
-            on: decoder.option(JavaType::decode)?,
-            yields: decoder.option(JavaType::decode)?,
-            method: decoder.option(|d| jails_spec::spec::kind::HttpMethod::parse(&d.string()?))?,
-        })
-    }
-
     /// Parse a whole declaration: positional tokens in the shape this recipe
     /// takes, then index tokens, which are validated against the fields.
     ///
@@ -370,6 +340,39 @@ impl IntentSpec {
         })
     }
 }
+impl Codec for IntentSpec {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        self.arguments.encode(encoder)?;
+        encoder.count(self.indexes.len())?;
+        for index in &self.indexes {
+            index.encode(encoder)?;
+        }
+        encoder.bool(self.timestamps);
+        encoder.option(self.on.as_ref(), |e, ty| ty.encode(e))?;
+        encoder.option(self.yields.as_ref(), |e, ty| ty.encode(e))?;
+        // By label, not by discriminant: §R1.4's rule for every closed
+        // vocabulary on the wire, so reordering the enum cannot change a
+        // recorded value.
+        encoder.option(self.method.as_ref(), |e, method| e.string(method.label()))
+    }
+
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        let arguments = IntentArguments::decode(decoder)?;
+        let index_count = decoder.count()?;
+        let mut indexes = Vec::new();
+        for _ in 0..index_count {
+            indexes.push(IndexSpec::decode(decoder)?);
+        }
+        Ok(Self {
+            arguments,
+            indexes,
+            timestamps: decoder.bool()?,
+            on: decoder.option(JavaType::decode)?,
+            yields: decoder.option(JavaType::decode)?,
+            method: decoder.option(|d| jails_spec::spec::kind::HttpMethod::parse(&d.string()?))?,
+        })
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -381,6 +384,101 @@ mod tests {
 
     fn field(token: &str) -> FieldSpec {
         FieldSpec::parse(token, &base()).unwrap()
+    }
+
+    /// The projection and the other parser agree, token for token.
+    ///
+    /// Two parsers of one user-facing syntax is this repository's most reliable
+    /// drift generator, and `pending.md` §6.3 is the entry about it. The
+    /// parse-print-reparse bridge is gone -- `FieldSpec::projected` derives the
+    /// `Field` from the value instead -- but the two parsers themselves are
+    /// still there, so this is what stops them separating: every token below
+    /// must reach the same `Field` through both.
+    ///
+    /// A failure here means one parser learned something the other did not.
+    /// The fix is to teach the projection, never to relax the assertion.
+    #[test]
+    fn a_projected_field_spec_equals_the_parsed_one() {
+        let tokens = [
+            "title:string",
+            "title:string!",
+            "note:string?",
+            "count:int",
+            "total:long@positive",
+            "balance:decimal@nonnegative",
+            "id:uuid@pk",
+            "email:string@unique",
+            "owner:string@index",
+            "tenant:string@scope",
+            "at:instant",
+            "on:date",
+            "seen:datetime",
+            "ok:boolean",
+            "ratio:double",
+            "money:currency",
+            "blob:bytes",
+            "took:duration",
+            "zone:zone-id",
+            "href:uri",
+            "where:path",
+            "tags:list<string>",
+            "counts:map<string,int>",
+            "id:String",
+            "when:Instant",
+            "key:uuid@pk@index",
+        ];
+        for token in tokens {
+            let projected = field(token)
+                .projected()
+                .unwrap_or_else(|e| panic!("{token} does not project: {e}"));
+            let parsed = jails_spec::spec::parse_fields(&[token.to_string()])
+                .unwrap_or_else(|e| panic!("{token} does not parse: {e}"))
+                .pop()
+                .expect("one token, one field");
+            assert_eq!(projected.name, parsed.name, "{token}: name");
+            assert_eq!(projected.java_type, parsed.java_type, "{token}: java type");
+            assert_eq!(projected.imports, parsed.imports, "{token}: imports");
+            assert_eq!(
+                projected.optionality, parsed.optionality,
+                "{token}: optionality"
+            );
+            assert_eq!(projected.owned, parsed.owned, "{token}: owned");
+            assert_eq!(
+                projected.collection, parsed.collection,
+                "{token}: collection"
+            );
+            assert_eq!(
+                projected.constraints, parsed.constraints,
+                "{token}: constraints"
+            );
+        }
+    }
+
+    /// A refusal one parser makes, the other makes too.
+    ///
+    /// The projection reruns the checks that need a *resolved Java type* --
+    /// `!` on something that is not text, `@positive` on a non-numeric column
+    /// -- because only `resolve_type` knows what the type became. A spec that
+    /// `FieldSpec::parse` lets through and `derive_field` refuses would be a
+    /// request accepted at the edge and rejected mid-transition.
+    #[test]
+    fn a_spec_the_projection_refuses_is_one_the_parser_refuses() {
+        for token in [
+            "title:uuid!",
+            "tags:list<string>?",
+            "id:uuid@pk",
+            "at:instant@positive",
+        ] {
+            let projected = FieldSpec::parse(token, &base()).and_then(|spec| spec.projected());
+            let parsed = jails_spec::spec::parse_fields(&[token.to_string()]);
+            assert_eq!(
+                projected.is_err(),
+                parsed.is_err(),
+                "{token}: projection {:?}, parser {:?}",
+                projected.map(|_| ()),
+                parsed.map(|_| ())
+            );
+        }
     }
 
     /// One spelling, one value. Today these survive as distinct strings into

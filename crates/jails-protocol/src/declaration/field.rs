@@ -11,7 +11,7 @@
 
 use crate::Result;
 use crate::identity::{JavaType, Name, Package};
-use jails_support::codec::{Decoder, Encoder};
+use jails_support::codec::{Codec, Decoder, Encoder};
 
 /// A built-in scalar, or a type the project owns.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
@@ -136,8 +136,9 @@ impl ScalarFieldType {
         };
         Ok(Self::Project(qualified))
     }
-
-    pub(crate) fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for ScalarFieldType {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.tag(self.tag());
         match self {
             Self::Project(ty) => ty.encode(encoder),
@@ -145,7 +146,7 @@ impl ScalarFieldType {
         }
     }
 
-    pub(crate) fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::Text,
             1 => Self::Integer,
@@ -229,8 +230,9 @@ impl FieldType {
             }
         }
     }
-
-    pub(crate) fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for FieldType {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         match self {
             Self::Scalar(scalar) => {
                 encoder.tag(0);
@@ -248,7 +250,7 @@ impl FieldType {
         }
     }
 
-    pub(crate) fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::Scalar(ScalarFieldType::decode(decoder)?),
             1 => Self::List(ScalarFieldType::decode(decoder)?),
@@ -387,8 +389,9 @@ impl FieldConstraints {
         }
         Ok(out)
     }
-
-    pub(crate) fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for FieldConstraints {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.bool(self.primary_key);
         encoder.bool(self.unique);
         encoder.bool(self.indexed);
@@ -402,7 +405,7 @@ impl FieldConstraints {
         })
     }
 
-    pub(crate) fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
             primary_key: decoder.bool()?,
             unique: decoder.bool()?,
@@ -493,6 +496,52 @@ impl FieldSpec {
     /// One spelling per field, whatever was typed. Two declarations that mean
     /// the same thing render the same bytes, so a comparison between them
     /// cannot report a change nobody made.
+    /// This component as the rendering layer's [`jails_spec::spec::Field`].
+    ///
+    /// The one direction that should exist between the two models. `FieldSpec`
+    /// is what a request declares -- validated, on the wire, identity-bearing;
+    /// `Field` is what a template needs -- a Java type and the imports it
+    /// costs. The second is *derived* from the first.
+    ///
+    /// It used to be re-parsed from it. `route::field` rendered this value back
+    /// to a `name:type@marker` token with [`Self::canonical`] and handed the
+    /// string to `parse_fields`, so a field spec was parsed up to three times
+    /// per request and one of those parses read text this program had printed
+    /// a line earlier. `pending.md` §6.3 names that as the deepest seam between
+    /// the two engines, and `declaration/field.rs`'s own header names why it
+    /// matters: *"a rule enforced in one place and not another is the shape of
+    /// every drift bug in this repository."*
+    ///
+    /// The type token is still rendered, because the *type* vocabularies are
+    /// two spellings of one set and only `resolve_type` knows the Java side.
+    /// Everything else -- the name, the suffix, the markers and every
+    /// cross-check they imply -- is passed as the value it already is.
+    /// `a_projected_field_spec_equals_the_parsed_one` pins the two together.
+    pub fn projected(&self) -> Result<jails_spec::spec::Field> {
+        let constraints = jails_spec::spec::Constraints {
+            primary_key: self.constraints.primary_key,
+            unique: self.constraints.unique,
+            indexed: self.constraints.indexed,
+            scoped: self.constraints.scoped,
+            check: self.constraints.numeric.map(|numeric| match numeric {
+                NumericConstraint::Positive => jails_spec::spec::NumericCheck::Positive,
+                NumericConstraint::NonNegative => jails_spec::spec::NumericCheck::NonNegative,
+            }),
+        };
+        let optionality = match self.optionality {
+            Optionality::Required => jails_spec::spec::Optionality::Required,
+            Optionality::NonBlank => jails_spec::spec::Optionality::NonBlank,
+            Optionality::Nullable => jails_spec::spec::Optionality::Nullable,
+        };
+        jails_spec::spec::derive_field(
+            self.name.as_str(),
+            &self.field_type.canonical(),
+            optionality,
+            constraints,
+            &self.canonical(),
+        )
+    }
+
     pub fn canonical(&self) -> String {
         let mut out = format!("{}:{}", self.name, self.field_type.canonical());
         match self.optionality {
@@ -521,15 +570,16 @@ impl FieldSpec {
         }
         out
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for FieldSpec {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.name.encode(encoder)?;
         self.field_type.encode(encoder)?;
         encoder.tag(self.optionality.tag());
         self.constraints.encode(encoder)
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
             name: Name::decode(decoder)?,
             field_type: FieldType::decode(decoder)?,

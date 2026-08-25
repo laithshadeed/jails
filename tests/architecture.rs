@@ -158,7 +158,27 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // unreachable: `jails fmt` has gone through the transaction
                 // route since V2, so this was a second, non-transactional way
                 // to run the formatter that nothing called.
-                ceiling: 105,
+                //
+                // 105 -> 103 when `tooling::rename` was deleted for the same
+                // reason: zero production callers, `jails rename` having gone
+                // through the transaction route since V2. Both of its
+                // `root: &Path` helpers went with it.
+                //
+                // 103 -> 96 when closing the crate APIs (`pending.md` §7.2) let
+                // `dead_code` reach the V1 file-level writers it had been
+                // hiding: `config::record_capability`/`forget_capability`/
+                // `edit_capabilities`/`record_layout`, `apply::atomically` and
+                // four sibling verbs. Every one took a `root` and read the file
+                // itself, which is precisely the disease this row counts -- the
+                // projection holds the text and splices it, so the root-taking
+                // wrapper had nothing left to do.
+                //
+                // 96 -> 94 with `generate/write.rs`'s V1 half: `ensure_assertj`,
+                // `ensure_webmvc_test`, `ensure_dependency` and
+                // `apply_build_change`. `route::support` states the same
+                // dependencies as claims now, so these were the write path that
+                // no route takes.
+                ceiling: 94,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;
@@ -328,6 +348,31 @@ fn gates() -> Vec<(Ratchet, usize)> {
         ),
         (
             Ratchet {
+                name: "codec halves outside `impl Codec`",
+                rung: "R1.1 — one constructor per type, and the codec calls it",
+                // 130 -> 4 when the `Codec` trait was declared and the
+                // inherent pairs moved onto it. `lib.rs` had been *stating*
+                // this property in prose because the language could not hold
+                // it: 126 types carried an `encode`/`decode` pair with
+                // byte-identical signatures and nothing connected them, so
+                // nothing generic could be written over them and seven named
+                // monomorphisations were written instead.
+                //
+                // Zero. `InputPrecondition` was the last one and was the
+                // seven named copies in a different disguise -- an inherent
+                // `encode` method paired with a free `decode_precondition`
+                // function, which is the same split with nothing naming it.
+                ceiling: 0,
+                target: 0,
+                why: "A pair of methods with the codec's signatures and no trait behind them is \
+                      a type on the wire that no generic helper can reach -- which is how seven \
+                      hand-written copies of one collection loop came to exist, and how a set \
+                      whose author forgot the sortedness check got no check at all.",
+            },
+            inherent_codec_halves(&src),
+        ),
+        (
+            Ratchet {
                 name: "`fs::write` sites outside the apply layer",
                 rung: "6 — `Edit` + `apply/codemod.rs`",
                 ceiling: 0,
@@ -340,27 +385,61 @@ fn gates() -> Vec<(Ratchet, usize)> {
         ),
         (
             Ratchet {
-                name: "filesystem mutation sites outside the write layer",
+                name: "mutations that bypass the executor",
                 rung: "R6.4 — every mutation through the executor",
-                // Measured for the first time here. plan.md §R6.4 names the
-                // surfaces that must move -- `app`, `new`, `rename`,
-                // `compose`, `generated_files`, `generate::remove`,
-                // `add::shrink`, `add::database`, `add::test_wiring`, `testd`
-                // and `console` -- and this is what makes the migration
-                // countable rather than a list somebody ticks off. Each
-                // migrated surface lowers it; the ceiling comes down with it.
+                // plan.md §R6.4 names the surfaces that must move -- `app`,
+                // `new`, `rename`, `compose`, `generated_files`,
+                // `generate::remove`, `add::shrink`, `add::database`,
+                // `add::test_wiring`, `testd` and `console` -- and this is what
+                // makes the migration countable rather than a list somebody
+                // ticks off. Each migrated surface lowers it; the ceiling comes
+                // down with it.
                 //
-                // It is deliberately not zero yet: R6 step 1 lands the
-                // executor dark, and nothing has been rerouted. A gate that
-                // demanded zero today would have to be suppressed, and a
-                // suppressed gate measures nothing.
+                // 0 -> 56: the measurement was wrong, not the migration. It
+                // counted raw `std::fs::*` outside the write layer, which the
+                // `apply` module had already driven to zero -- so this row read
+                // `done` on the rung "every mutation through the executor"
+                // while fifty-six `apply::` calls still wrote straight to disk
+                // outside any transaction. Every one of those surfaces R6 names
+                // was still there; the gate simply could not see them, because
+                // moving `fs::write` behind `apply::put` is the *first* step of
+                // the migration and this gate was measuring only that step.
+                //
+                // Fixing the measurement rather than the ceiling is the rule
+                // every other row here is built on: a gate that reads green
+                // over unfinished work is worse than no gate, because it also
+                // certifies the work as finished.
+                //
+                // 56 -> 54: `jails-tooling/src/rename.rs` deleted. It had zero
+                // production callers -- `main` routes `jails rename` through
+                // `jails_engine::route::maintenance::rename`, which commits it
+                // as one transition -- so its two `apply::` calls were a
+                // migration nobody had to do.
+                //
+                // 54 -> 52: `config::edit_capabilities` and `record_layout`
+                // deleted, same reason. Both wrote `jails.toml` directly; the
+                // projection has spliced it since V2.
+                //
+                // 52 -> 46: `jails-generate`'s own V1 write half, which is what
+                // `pending.md` §7.7 calls "the largest crate holds one job and
+                // one leftover". `generate/write.rs`'s four dependency-ensuring
+                // functions, `generate/scaffold.rs`'s `field_spec`,
+                // `generate_field` and `prepared_artifact_contents`, and
+                // `spring/durable.rs`'s install/uninstall pair. Every one had
+                // a V2 counterpart that states the same thing as a claim --
+                // `route::support`, `route::field`, `SemanticEdit::MarkedBlock`
+                // -- and no caller at all, which only `dead_code` could say
+                // once the crate's API stopped being `pub` by default.
                 ceiling: MUTATION_CEILING,
                 target: 0,
                 why: "The narrow `fs::write` gate read green while a dozen other calls mutated \
                       the project through other names -- which is exactly the surface R6 has to \
-                      migrate, and exactly what a gate measuring one spelling could not see.",
+                      migrate, and exactly what a gate measuring one spelling could not see. \
+                      A direct `apply::` call is the same hole under a better name: it writes \
+                      outside any transaction, so `--pretend` cannot see it and the journal \
+                      cannot undo it.",
             },
-            mutation_sites(&src, MUTATION_APIS),
+            mutation_sites(&src, MUTATION_APIS) + executor_bypasses(&src),
         ),
         (
             Ratchet {
@@ -577,7 +656,20 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // bootstrapping different Boot versions with nothing saying so.
                 // One line of the rise is the constant; the rest is the reason,
                 // which is the trade this gate exists to make visible.
-                ceiling: 644,
+                //
+                // 644 -> 647, and the largest module is now `projection.rs`
+                // rather than `pom.rs`. Two retirement arms gained a
+                // `match self.build` they should always have had:
+                // `ResourceKey::MavenDependency` opened `pom.xml`
+                // unconditionally, so on a Gradle project it found no file and
+                // reported the claim retired while the dependency stayed in
+                // `build.gradle`; `ResourceKey::MavenMainClass` handed Groovy
+                // to the XML rewriter with the same result. The *installing*
+                // edits had both branches already, which is what made the
+                // asymmetry invisible. Three production lines for two silent
+                // wrong answers is the trade -- four after `cargo fmt` split
+                // one of them, which is the number that counts.
+                ceiling: 648,
                 target: 700,
                 why: "The row above can be satisfied by *moving* a monolith rather than \
                       decomposing one, so this asks the question the split is actually for: \
@@ -907,7 +999,6 @@ const SUBPROCESS_CLASSIFICATION: &[(&str, &str)] = &[
     // caches, which are excluded from the snapshot and the store, and they
     // run without the project lock after any required commit.
     ("run", "derived build process"),
-    ("maven", "derived build process"),
     ("launcher", "derived build process"),
     ("why", "derived build process"),
     ("testd", "derived build process"),
@@ -1336,11 +1427,6 @@ const A_FRESH_READ_IS_CORRECT: &[(&str, &str)] = &[
          at the call site instead, which is the same read one frame up",
     ),
     (
-        "ensure_dependency",
-        "it splices into the pom, so it must hold the current bytes -- an earlier \
-         dependency added in the same run is not in any copy taken before it",
-    ),
-    (
         "ensure_console_launcher",
         "the same: it checks for and splices `junit-platform-console`",
     ),
@@ -1642,6 +1728,64 @@ fn type_aliases(src: &[Source]) -> usize {
         .sum()
 }
 
+/// The bypass count reads a literal, so the literal must be the only spelling.
+///
+/// `use jails_support::apply::put;` would let a call be written as bare `put(`,
+/// which `executor_bypasses` cannot see -- and a gate that can be stepped around
+/// by an import is the failure mode this whole file exists to prevent, arriving
+/// through the door it was built to watch.
+#[test]
+fn no_bare_apply_verb_imports() {
+    let offenders: Vec<_> = sources()
+        .into_iter()
+        .filter(|file| {
+            file.production.lines().any(|line| {
+                let line = line.trim();
+                line.starts_with("use ") && (line.contains("apply::{") || line.contains("apply::*"))
+            })
+        })
+        .map(|file| file.path.display().to_string())
+        .collect();
+    assert!(
+        offenders.is_empty(),
+        "these files import `apply`'s verbs by name, so their writes are invisible to the \
+         `mutations that bypass the executor` gate. Spell the call `apply::put(..)` in full:\n  {}",
+        offenders.join("\n  ")
+    );
+}
+
+/// An `encode`/`decode` half that is not a `Codec` method.
+///
+/// The signatures are what identify one: `encode(&self, encoder: &mut Encoder)`
+/// and `decode(decoder: &mut Decoder<'_>)`. A method with either shape sitting
+/// in an inherent `impl` is a value on the wire that `Encoder::seq`,
+/// `Encoder::set` and `Encoder::map` cannot be used on, so its collection
+/// handling has to be written out again by hand.
+fn inherent_codec_halves(src: &[Source]) -> usize {
+    let mut count = 0;
+    for file in src {
+        let mut in_codec_impl = false;
+        for line in file.production.lines() {
+            // `trim_start`, because `digest_newtype!` and `logical_id!`
+            // expand to `impl Codec for $name` indented inside a
+            // `macro_rules!` body -- and a scanner that read column zero
+            // would report six perfectly good trait impls as violations.
+            let head = line.trim_start();
+            if head.starts_with("impl ") {
+                in_codec_impl = head.starts_with("impl Codec for ");
+            }
+            // A declaration, not a definition: the trait's own two lines.
+            let is_half = !head.ends_with(';')
+                && (head.contains("fn encode(&self, encoder: &mut Encoder)")
+                    || head.contains("fn decode(decoder: &mut Decoder<'_>)"));
+            if is_half && !in_codec_impl {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
 fn write_sites_outside_apply(src: &[Source]) -> usize {
     mutation_sites(src, &["fs::write"])
 }
@@ -1656,7 +1800,7 @@ fn write_sites_outside_apply(src: &[Source]) -> usize {
 /// project through other names, so the gate read green over exactly the
 /// surface R6 has to migrate.
 /// Where the count stands today. Lowered by each migrated surface.
-const MUTATION_CEILING: usize = 0;
+const MUTATION_CEILING: usize = 46;
 
 const MUTATION_APIS: &[&str] = &[
     "fs::write",
@@ -1672,6 +1816,26 @@ const MUTATION_APIS: &[&str] = &[
     "set_len(",
     "create_new(true)",
 ];
+
+/// Writes that reach the filesystem outside a transaction.
+///
+/// `apply::*` is the *write layer*, not the executor. It is one owner for the
+/// bytes -- which is what the `fs::write` gate above buys -- but a call to it
+/// from a generator happens immediately: nothing journals it, `--pretend`
+/// cannot report it, and a failure half way through a capability leaves the
+/// project in a state no `continue` or `abort` can reach. The executor
+/// (`execute.rs` + `activate.rs`, driven from `jails-commit`) is what supplies
+/// those three, and R6.4's rung is that every mutation goes through it.
+///
+/// So this counts the calls that do not. `apply::` is spelled in full at every
+/// call site -- there is no `use apply::put` anywhere in the workspace, which
+/// `no_bare_apply_verb_imports` holds -- so the literal is the count.
+fn executor_bypasses(src: &[Source]) -> usize {
+    src.iter()
+        .filter(|file| !owns_writing(&file.path))
+        .map(|file| file.production.matches("apply::").count())
+        .sum()
+}
 
 fn mutation_sites(src: &[Source], apis: &[&str]) -> usize {
     src.iter()

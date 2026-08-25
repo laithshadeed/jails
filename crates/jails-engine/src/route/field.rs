@@ -101,10 +101,11 @@ pub fn field(run: &Run, target: &str, component: &str, package: Option<&str>) ->
         field: added.name.clone(),
     };
     let mut migration = DesiredChange::owned_by(ResourceOwner::OneShot(one_shot.clone()));
-    // Back through the recipe layer's own parser, from the canonical spelling
-    // rather than by translating the value: two parsers for one syntax is how
-    // the column and the record component come to disagree.
-    let parsed = jails_generate::generate::parse_fields(&[added.canonical()])?;
+    // Projected, not re-parsed. `FieldSpec` is the model and `Field` is its
+    // rendering half, so this asks the value for the Java facts it implies
+    // rather than printing it back to a token for the other parser to read --
+    // see `FieldSpec::projected`.
+    let parsed = vec![added.projected()?];
     let column = jails_generate::sql::columns(
         &parsed,
         project,
