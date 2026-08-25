@@ -64,6 +64,7 @@ pub(super) fn record_store(
         one_shots: Vec::new(),
         resources: Vec::new(),
         outputs: Vec::new(),
+        lifecycles: vec![],
         pending_conflict: None,
     });
     store.written_by = env!("CARGO_PKG_VERSION").to_string();

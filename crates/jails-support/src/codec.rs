@@ -321,6 +321,15 @@ impl<'a> Decoder<'a> {
         Ok(())
     }
 
+    /// Whether the complete input has been claimed.
+    ///
+    /// Versioned container decoders use this only at an explicitly documented
+    /// append-only compatibility boundary; ordinary values still call
+    /// [`Self::finish`] and reject unread tails.
+    pub fn is_finished(&self) -> bool {
+        self.at == self.bytes.len()
+    }
+
     fn take(&mut self, count: usize) -> Result<&'a [u8]> {
         let end = self
             .at

@@ -21,8 +21,10 @@ pub const SQL_CONTRACT_SCHEMA: &str = "jails.sql-contract.v1";
 
 /// `.jails/ledger.toml`'s closed envelope schema.
 pub const DURABLE_ENVELOPE_SCHEMA: u32 = 2;
-/// Binary codec named by the ledger envelope.
-pub const DURABLE_PAYLOAD_CODEC: &str = concat!("jails-", "led", "ger-payload-1");
+/// Legacy payload accepted during the lifecycle-state upgrade.
+pub const DURABLE_PAYLOAD_CODEC_V1: &str = concat!("jails-", "led", "ger-payload-1");
+/// Binary codec named by newly written ledger envelopes.
+pub const DURABLE_PAYLOAD_CODEC: &str = concat!("jails-", "led", "ger-payload-2");
 
 /// Transaction journal root-format marker, including its fixed-width NUL.
 pub const JOURNAL_MAGIC: &[u8; 16] = b"JAILS-JOURNAL-1\0";
@@ -56,6 +58,7 @@ mod tests {
             SQL_CONTRACT_SCHEMA.to_string(),
             format!("schema={DURABLE_ENVELOPE_SCHEMA}"),
             DURABLE_PAYLOAD_CODEC.to_string(),
+            DURABLE_PAYLOAD_CODEC_V1.to_string(),
             "JAILS-JOURNAL-1\\0".to_string(),
             "JAILS-RECEIPT-1\\0".to_string(),
         ] {

@@ -42,6 +42,7 @@
 use crate::Result;
 use crate::compatibility::{
     DURABLE_ENVELOPE_SCHEMA as SCHEMA, DURABLE_PAYLOAD_CODEC as PAYLOAD_CODEC,
+    DURABLE_PAYLOAD_CODEC_V1 as LEGACY_PAYLOAD_CODEC,
 };
 use jails_support::codec;
 
@@ -129,7 +130,7 @@ pub fn parse(source: &str) -> Result<Vec<u8>> {
         .into());
     }
     let declared_codec = quoted(value_of(lines[1], "codec")?)?;
-    if declared_codec != PAYLOAD_CODEC {
+    if declared_codec != PAYLOAD_CODEC && declared_codec != LEGACY_PAYLOAD_CODEC {
         return Err(format!(
             "ledger declares codec `{declared_codec}`, and this jails reads `{PAYLOAD_CODEC}`.\n       \
              fix: upgrade jails to a version that supports that codec; this version will not \
@@ -243,6 +244,7 @@ fn decimal(value: &str) -> Result<usize> {
 
 use crate::entity::{EntityId, EntitySpec, OneShotId};
 use crate::identity::{OperationId, ProjectPath};
+use crate::lifecycle::ResourceLifecycleV1;
 use crate::record::{AppliedEntity, OneShotReceipt, OutputRecord};
 use crate::resource::{ResourceKey, ResourceOwner, ResourceRecord, ResourceValue};
 use jails_support::codec::{Codec, Decoder, Encoder, ordered};
@@ -268,6 +270,10 @@ pub struct LedgerV2 {
     pub resources: Vec<ResourceRecord>,
     /// One canonical row per path jails has written.
     pub outputs: Vec<OutputRecord>,
+    /// Stable entity identity, declared model, retirement state, and sealed
+    /// migration lineage. Old payloads decode this append-only registry as
+    /// empty and populate it on the first lifecycle-aware mutation.
+    pub lifecycles: Vec<ResourceLifecycleV1>,
     /// A reconciliation that stopped with conflicts still in the tree.
     ///
     /// Its presence is what makes the ordinary bootstrap parsers unsafe: a
@@ -373,6 +379,13 @@ impl LedgerV2 {
             output.encode(&mut encoder)?;
         }
         encoder.option(self.pending_conflict.as_ref(), |e, marker| marker.encode(e))?;
+        encoder.count(self.lifecycles.len())?;
+        let mut previous: Option<&EntityId> = None;
+        for lifecycle in &self.lifecycles {
+            ordered(previous, &lifecycle.entity)?;
+            previous = Some(&lifecycle.entity);
+            lifecycle.encode(&mut encoder)?;
+        }
         encoder.finish()
     }
 
@@ -426,6 +439,20 @@ impl LedgerV2 {
             outputs.push(output);
         }
         let pending_conflict = decoder.option(PendingMarker::decode)?;
+        let mut lifecycles = Vec::new();
+        if !decoder.is_finished() {
+            let count = decoder.count()?;
+            for _ in 0..count {
+                let lifecycle = ResourceLifecycleV1::decode(&mut decoder)?;
+                ordered(
+                    lifecycles
+                        .last()
+                        .map(|last: &ResourceLifecycleV1| &last.entity),
+                    &lifecycle.entity,
+                )?;
+                lifecycles.push(lifecycle);
+            }
+        }
         decoder.finish()?;
         Ok(Self {
             written_by,
@@ -435,6 +462,7 @@ impl LedgerV2 {
             one_shots,
             resources,
             outputs,
+            lifecycles,
             pending_conflict,
         })
     }
@@ -501,6 +529,7 @@ mod tests {
                 row("spring-boot-starter-web"),
             ],
             outputs: Vec::new(),
+            lifecycles: vec![],
             pending_conflict: None,
         };
         let bytes = ledger.encode().unwrap();
@@ -519,7 +548,7 @@ mod tests {
         assert_eq!(
             source,
             "schema = 2\n\
-             codec = \"jails-ledger-payload-1\"\n\
+             codec = \"jails-ledger-payload-2\"\n\
              payload_len = 4\n\
              payload_sha256 = \
              \"5f78c33274e43fa9de5659265c1d917e25c03722dcb0b8d27db8d5feaa813953\"\n\
@@ -536,7 +565,7 @@ mod tests {
         assert_eq!(
             render(&[]).unwrap(),
             "schema = 2\n\
-             codec = \"jails-ledger-payload-1\"\n\
+             codec = \"jails-ledger-payload-2\"\n\
              payload_len = 0\n\
              payload_sha256 = \
              \"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"\n\
@@ -717,6 +746,7 @@ mod tests {
             one_shots: Vec::new(),
             resources: Vec::new(),
             outputs: Vec::new(),
+            lifecycles: vec![],
             pending_conflict: None,
         };
         let actual = ledger.render().unwrap();
@@ -735,6 +765,7 @@ mod tests {
             one_shots: Vec::new(),
             resources: Vec::new(),
             outputs: Vec::new(),
+            lifecycles: vec![],
             pending_conflict: None,
         };
         let source = ledger.render().unwrap();
@@ -784,6 +815,7 @@ mod tests {
             one_shots: Vec::new(),
             resources: Vec::new(),
             outputs: Vec::new(),
+            lifecycles: vec![],
             pending_conflict: None,
         };
         assert!(
@@ -817,6 +849,7 @@ mod tests {
             one_shots: Vec::new(),
             resources: Vec::new(),
             outputs: Vec::new(),
+            lifecycles: vec![],
             pending_conflict: None,
         };
         let models = ledger.models();

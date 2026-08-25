@@ -12,5 +12,6 @@
 
 pub mod conflict;
 pub mod envelope;
+pub mod lifecycle;
 pub mod pending;
 pub mod record;

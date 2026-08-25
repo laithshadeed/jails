@@ -293,6 +293,7 @@ mod tests {
             one_shots: Vec::new(),
             resources: Vec::new(),
             outputs: Vec::new(),
+            lifecycles: vec![],
             pending_conflict: pending,
         }
     }

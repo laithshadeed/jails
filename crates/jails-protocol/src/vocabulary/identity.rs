@@ -29,6 +29,9 @@
 use crate::Result;
 use jails_support::codec::{self, Codec, DIGEST_BYTES, Decoder, Encoder};
 
+mod sql;
+pub use sql::SqlName;
+
 // ---------------------------------------------------------------------------
 // Digests
 // ---------------------------------------------------------------------------

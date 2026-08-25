@@ -41,7 +41,7 @@ mod vocabulary;
 // Flat at the root, grouped in the source. The groups above are for a reader;
 // `jails_protocol::identity::Name` is what four hundred call sites say, and
 // renaming those would have made a filing decision look like an API change.
-pub use durable::{conflict, envelope, pending, record};
+pub use durable::{conflict, envelope, lifecycle, pending, record};
 pub use intent::{change, edit, effect, ownership, plan, render, request, transition};
 pub use observe::{bootstrap, context, fact, provenance, snapshot};
 pub use vocabulary::{coordinate, declaration, entity, feature, identity, recipe, resource};

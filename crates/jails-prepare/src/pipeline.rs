@@ -891,6 +891,7 @@ mod tests {
             generation: 3,
             last_operation: None,
             applied: Vec::new(),
+            lifecycles: vec![],
             pending_conflict: None,
             one_shots: Vec::new(),
             resources: Vec::new(),
@@ -1231,6 +1232,7 @@ mod tests {
             generation: 3,
             last_operation: None,
             applied: Vec::new(),
+            lifecycles: vec![],
             pending_conflict: Some(jails_protocol::envelope::PendingMarker {
                 operation: jails_protocol::identity::OperationId::from_bytes(sha256(b"op")),
                 generation: 3,
