@@ -136,6 +136,8 @@ fn production_security_config_java(pkg: &str) -> String {
 
 fn security_test_java(pkg: &str, webmvc_test_import: &str) -> String {
     crate::template::render(
+        // No classic form: `add security` refuses below Boot 3, its filter
+        // chain being Security 6 code. `pending.md` §1.2.
         crate::template_here!("spring/security_test_java.java"),
         &[("pkg", pkg), ("webmvc_test_import", webmvc_test_import)],
     )

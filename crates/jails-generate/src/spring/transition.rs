@@ -310,6 +310,10 @@ fn transition_controller_java(
     crate::template::render(
         crate::template_here!("spring/transition_controller_java.java"),
         &[
+            (
+                "validation",
+                crate::spring::validation_package(slice.project()),
+            ),
             ("web", web),
             ("command_import", &*command_import),
             ("usecase_import", &*usecase_import),
@@ -481,6 +485,7 @@ fn transition_controller_test_java(
     };
     let (scope_import, scope_argument) = scope_test_parts(security, web, fields);
     crate::template::render(
+        // No classic form, for the same reason `g query` has none.
         crate::template_here!("spring/transition_controller_test_java.java"),
         &[
             ("web", web),

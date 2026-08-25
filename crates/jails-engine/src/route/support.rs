@@ -122,6 +122,29 @@ pub fn with_test_support(project: &Project, mut change: Change) -> Change {
     {
         change.deps.push(jails_project::pom::WEBMVC_TEST_STARTER);
     }
+    // A generator that emits a `JdbcClient` adapter, or annotates one
+    // `@Transactional`, needs the starter that supplies both -- `spring-jdbc`
+    // for the first, `spring-tx` for the second. `g query` and `g transition`
+    // emit exactly that and declared neither, so on any project without
+    // `add db` they handed the reader a compile error for four lines they did
+    // not write: *package org.springframework.jdbc.core.simple does not
+    // exist*. Found by `pending.md` §1.2's Boot 2 run, and it was never a Boot
+    // 2 problem -- Boot 4 does the same.
+    //
+    // Keyed off the emitted bytes for the same reason the four above are: the
+    // rule belongs to what was written, not to whichever recipe wrote it.
+    if project.flavor() == jails_project::pom::Flavor::SpringBoot
+        && change.files.iter().any(|file| {
+            file.contents
+                .contains("org.springframework.jdbc.core.simple")
+                || file
+                    .contents
+                    .contains("org.springframework.transaction.annotation")
+        })
+        && project.lacks_dependency("org.springframework.boot", "spring-boot-starter-jdbc")
+    {
+        change.deps.push(jails_generate::add::JDBC_STARTER);
+    }
     // A Spring project with compose services gets the module that starts them
     // for `spring-boot:run`. Same rule as the three above and the same reason
     // it lives here: the recipes that bring a service are `db`, `kafka`,

@@ -111,3 +111,12 @@ dafny	dafny-lang/dafny
 
 # --- other reference ---
 rails	rails/rails
+
+# --- dx research (research-kimi.md) ---
+ecto	elixir-ecto/ecto
+ecto_sql	elixir-ecto/ecto_sql
+alembic	sqlalchemy/alembic
+archunit	TNG/ArchUnit
+air	air-verse/air
+goose	pressly/goose
+micronaut-core	micronaut-projects/micronaut-core

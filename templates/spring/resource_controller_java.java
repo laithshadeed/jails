@@ -1,6 +1,6 @@
 package {{pkg}};
 
-{{extra}}{{location_import}}import jakarta.validation.Valid;
+{{extra}}{{location_import}}import {{validation}}.validation.Valid;
 import java.util.List;
 import java.util.Objects;
 {{status_import}}import org.springframework.http.ResponseEntity;

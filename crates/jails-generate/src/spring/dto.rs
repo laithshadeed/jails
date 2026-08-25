@@ -36,16 +36,17 @@ pub(crate) fn dto_files(
     let main = crate::generate::main_dir(root, pkg);
     let test = crate::generate::test_dir(root, pkg);
     let domain_import = crate::generate::import_of(pkg, domain, name);
+    let validation = crate::spring::validation_package(slice.project());
     vec![
         Artifact {
             kind: "request",
             path: main.join(format!("{name}Request.java")),
-            contents: request_java_for(pkg, name, fields, &domain_import, domain),
+            contents: request_java_for(validation, pkg, name, fields, &domain_import, domain),
         },
         Artifact {
             kind: "response",
             path: main.join(format!("{name}Response.java")),
-            contents: response_java_for(pkg, name, fields, &domain_import, domain),
+            contents: response_java_for(validation, pkg, name, fields, &domain_import, domain),
         },
         Artifact {
             kind: "dto test",
@@ -58,6 +59,9 @@ pub(crate) fn dto_files(
 /// Which validation annotation a component earns, from the optionality jails
 /// already parsed. Returns the annotation and the import it needs.
 fn validation_for(field: &crate::generate::Field) -> Option<(&'static str, &'static str)> {
+    // The package half is decided by the caller: Bean Validation moved from
+    // `javax` to `jakarta` at Jakarta EE 9, which Spring Boot crossed at 3.0,
+    // so the annotation is stable and its import is not. `pending.md` §1.2.
     use crate::generate::Optionality;
     // A primitive cannot be null, so @NotNull on one is noise at best -- and
     // Hibernate Validator rejects some constraint/type pairings outright.
@@ -101,6 +105,7 @@ fn wire_type(field: &crate::generate::Field) -> String {
 /// record that names a type it cannot see, which javac catches and no
 /// template review does.
 fn dto_imports(
+    validation: &str,
     fields: &[crate::generate::Field],
     with_validation: bool,
     owner: &str,
@@ -130,7 +135,7 @@ fn dto_imports(
             imports.push((*import).to_string());
         }
         if with_validation && let Some((_, import)) = validation_for(field) {
-            imports.push(import.to_string());
+            imports.push(import.replacen("jakarta", validation, 1));
         }
     }
     imports.sort();
@@ -241,6 +246,7 @@ pub(crate) fn client_supplied(fields: &[crate::generate::Field]) -> Vec<crate::g
 }
 
 pub(crate) fn request_java_for(
+    validation: &str,
     pkg: &str,
     name: &str,
     fields: &[crate::generate::Field],
@@ -249,7 +255,7 @@ pub(crate) fn request_java_for(
 ) -> String {
     // Imports come from the full spec, not from the wire components: `Instant`
     // is still needed by `Instant.now()` even when no component carries it.
-    let imports = dto_imports(fields, true, domain, pkg);
+    let imports = dto_imports(validation, fields, true, domain, pkg);
     let optional_import = if needs_optional(fields) {
         "import java.util.Optional;\n"
     } else {
@@ -296,13 +302,14 @@ pub(crate) fn request_java_for(
 }
 
 pub(crate) fn response_java_for(
+    validation: &str,
     pkg: &str,
     name: &str,
     fields: &[crate::generate::Field],
     domain_import: &str,
     domain: &str,
 ) -> String {
-    let imports = dto_imports(fields, false, domain, pkg);
+    let imports = dto_imports(validation, fields, false, domain, pkg);
     let components = components(fields, false);
     let arguments = fields
         .iter()
@@ -395,7 +402,7 @@ fn dto_test_java(
     // The sample literals need the same imports the wire types do
     // (`UUID.fromString`, `Instant.parse`, ...), and `dto_imports` already
     // computes exactly that set with Optional filtered out.
-    let sample_imports = dto_imports(fields, false, domain, pkg);
+    let sample_imports = dto_imports("jakarta", fields, false, domain, pkg);
 
     crate::template::render(
         crate::template_here!("spring/dto_test_java.java"),
@@ -424,6 +431,7 @@ mod tests {
     #[test]
     fn the_audit_pair_is_set_by_the_create_path_not_sent_by_the_caller() {
         let java = request_java_for(
+            "jakarta",
             "com.example.demo.web",
             "Note",
             &fields(&[
@@ -465,6 +473,7 @@ mod tests {
         // `--timestamps` writes the pair and refuses to expand over either
         // name, so one on its own was declared by hand and means data.
         let java = request_java_for(
+            "jakarta",
             "com.example.demo.web",
             "Note",
             &fields(&["id:uuid@pk", "title:string!", "createdAt:instant"]),
@@ -478,6 +487,7 @@ mod tests {
     #[test]
     fn a_scaffold_with_no_timestamps_is_unchanged() {
         let java = request_java_for(
+            "jakarta",
             "com.example.demo.web",
             "Note",
             &fields(&["id:uuid@pk", "title:string!"]),

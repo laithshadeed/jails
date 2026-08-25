@@ -893,6 +893,82 @@ pub fn write_spring_fixture(root: &Path) {
     .unwrap();
 }
 
+/// A Boot 2.7 project, for the tests that have to prove a classic
+/// `MockMvc` template compiles.
+///
+/// **`pending.md` §1.2's whole point.** Nine generated companion tests are
+/// written against `MockMvcTester`, which is Spring Framework 6.2 (Boot 3.4).
+/// Seven of them used to refuse on an older project rather than write a test
+/// that cannot compile — the right failure and the wrong feature, since
+/// `jails new --gradle --boot 2.7.18` exists so those projects can be worked
+/// in. They have a classic form now, and the item's own reason for not writing
+/// one earlier was that *a template written and not exercised is a template
+/// nobody has proved compiles*. This fixture is what exercises them.
+///
+/// Boot 2.7.18 on Java 17, resolved from Maven Central like every other pinned
+/// version here, and it runs under this machine's JDK 26 — verified, because
+/// the assumption that it would not is what made this look impossible.
+pub fn write_spring2_fixture(root: &Path) {
+    let pkg_dir = root.join("src/main/java/com/example/demo");
+    fs::create_dir_all(&pkg_dir).unwrap();
+    fs::write(root.join("pom.xml"), SPRING2_FIXTURE_POM).unwrap();
+    fs::write(
+        pkg_dir.join("DemoApplication.java"),
+        SPRING_FIXTURE_APPLICATION,
+    )
+    .unwrap();
+    let test_dir = root.join("src/test/java/com/example/demo");
+    fs::create_dir_all(&test_dir).unwrap();
+    fs::write(
+        test_dir.join("DemoApplicationTests.java"),
+        SPRING_FIXTURE_TESTS,
+    )
+    .unwrap();
+}
+
+/// Pinned, and `spring-boot-starter-web` rather than `-webmvc`: the module was
+/// renamed in Boot 4, and naming the Boot 4 spelling here would be the fixture
+/// describing a project this version cannot build.
+const SPRING2_FIXTURE_POM: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>2.7.18</version>
+        <relativePath/>
+    </parent>
+    <groupId>com.example</groupId>
+    <artifactId>demo</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <properties>
+        <!-- 21, not 17: jails generates Java 21+ code and refuses below it,
+             and `examples/minicom-spring/` pairs Boot 2.7.18 with 21 for the
+             same reason. Boot 2.7 predates 21 but does not object to it. -->
+        <java.version>21</java.version>
+    </properties>
+    <dependencies>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>
+"#;
+
 /// A Spring project shaped exactly like the one `jails new --offline` writes.
 ///
 /// It used to declare `spring-boot-starter-webmvc-test`, which `new` does

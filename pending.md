@@ -80,23 +80,58 @@ which runs both orders end to end: the together case must have the arm, the
 backwards case must not, `doctor` must name the drift *and* the repair, `sync`
 must apply it, and `doctor` must agree afterwards.
 
-### 1.2 Seven generated tests have a Boot floor
+### 1.2 The Boot floor is in the generated code, not its tests — **re-measured and half-closed 2026-08-25**
 
-`jails new --gradle --boot 2.7.18` made pre-Boot-3.4 projects reachable for the
-first time, and that surfaced an assumption nothing had ever tested: nine of
-jails' companion tests are written against `MockMvcTester`
-(`org.springframework.test.web.servlet.assertj`), which is Spring Framework 6.2.
+`jails new --gradle --boot 2.7.18` made pre-Boot-3 projects reachable for the
+first time, and this item read the resulting floor as living in nine companion
+tests written against `MockMvcTester` (Spring Framework 6.2). Two had a classic
+`MockMvc` variant; the other seven refused.
 
-Two now carry a classic `MockMvc` variant and pick it from the project's Boot
-major — `g controller` and `add cors`, the two `examples/minicom-spring/` needs.
-The other seven **refuse** rather than write a test that cannot compile:
-`add api`, `add security`, `g scaffold`, `g usecase`, `g query`, `g transition`.
+**The item's own precondition turned out to be the thing that disproved it.**
+It said each classic variant wants a real-toolchain run against a Boot 2 project
+because *a template written and not exercised is a template nobody has proved
+compiles*. That run now exists —
+`what_jails_generates_for_boot_2_compiles_and_what_cannot_refuses_by_name`,
+Boot 2.7.18 on real Maven — and the first thing it said was that the tests were
+the smaller half:
 
-That is the right failure and the wrong feature. The fix is a classic variant
-per template, and the reason it has not been done is that a template written and
-not exercised is a template nobody has proved compiles. Each wants its own
-real-toolchain run against a Boot 2 project, which `examples/minicom-spring/`
-now makes cheap.
+| what failed | why | fixed? |
+|---|---|---|
+| `jakarta.validation.*` everywhere | the package moved at Jakarta EE 9, which Boot crossed at 3.0; Boot 2.7's starter supplies `javax.validation` | **yes** — `spring::validation_package`, sniffed like `mockmvc_autoconfigure_import` already is, threaded into six controller templates and the DTO renderer |
+| `MockMvcTester` in seven tests | Framework 6.2 | **partly** — `g scaffold`'s two got a classic form; the other five belong to kinds that refuse for the reason below, so a variant would be a template nothing exercises |
+| `ProblemDetail` (`add api`) | Framework 6 | no: the Boot 2 equivalent is a hand-rolled error body, which is the per-project invention `add api` exists to replace |
+| `requestMatchers` (`add security`) | Security 6; 5.7 spells it `antMatchers` and the surrounding DSL differs | no |
+| `JdbcClient` (`g query`, `g transition`) | Framework 6.1 | no |
+
+So `add cors`, `g enum`, `g scaffold` and `g usecase` **work on a Boot 2
+project and are compiled and run to prove it**, and the other four refuse
+through `spring::require_jakarta_spring`, which names the *type* rather than a
+test entry point — that is what the compiler would have said and what a reader
+can look up.
+
+**It found a live bug on every Boot version, which is the better half of the
+result.** `g query` and `g transition` emit a `JdbcClient` adapter and a
+`@Transactional` method and declared **neither** `spring-jdbc` nor `spring-tx`,
+so on any project without `add db` they handed the reader *package
+org.springframework.jdbc.core.simple does not exist* for four lines they did not
+write. That is the rule `CLAUDE.md` states — a generator that emits code must
+supply the dependency it needs — broken in the shipped tool, and Boot 4 did it
+too. `route::support` claims `spring-boot-starter-jdbc` off the emitted bytes
+now, beside the AssertJ, Failsafe and webmvc-test claims, for the same reason
+they live there.
+
+**Still open**: `add api`, `add security`, `g query` and `g transition` on
+Boot 2. Each needs a Boot 2 form of its *main* code, and for `add api` that
+means inventing the error envelope RFC 9457 replaced. The refusal is honest and
+the alternatives it names are real, so this is a deliberate limit rather than a
+gap nobody got to.
+
+**One residual imprecision, stated rather than hidden.** `JdbcClient` is
+Framework 6.1, which is Boot **3.2**, and `boot_major` reads a major and
+nothing finer. The floor is drawn at 3, so a Boot 3.0 or 3.1 project still gets
+a compile error naming `JdbcClient` — narrower than the every-Boot-2 error it
+replaces, and drawn there rather than at 4 because 4 would refuse the Boot 3.2+
+projects this works on today.
 
 **The general lesson outlived the fix.** Three sibling bugs were found in the
 same afternoon, all one shape — a version fact answered confidently and wrongly:
@@ -111,8 +146,9 @@ same afternoon, all one shape — a version fact answered confidently and wrongl
   `spring.persistence.exceptiontranslation.enabled` (renamed at 4.0.0, so the
   older spelling is silently unbound rather than rejected).
 
-`read_build_file`'s doc comment records the first two instances of this. Assume
-there is a fourth.
+`read_build_file`'s doc comment records the first two instances of this. The
+`jakarta.validation` and `JdbcClient` findings above are the fourth and fifth,
+and they were found the same way: by compiling.
 
 ### 1.3 Two lists of the same types — **closed 2026-08-25**
 

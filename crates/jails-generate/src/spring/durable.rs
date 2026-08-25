@@ -397,6 +397,10 @@ fn durable_job_controller_java(
     crate::template::render(
         crate::template_here!("spring/durable_job_controller_java.java"),
         &[
+            (
+                "validation",
+                crate::spring::validation_package(slice.project()),
+            ),
             ("web", web),
             ("queue_import", &*queue_import),
             ("work_import", &*work_import),

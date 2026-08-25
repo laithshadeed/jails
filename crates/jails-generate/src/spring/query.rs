@@ -345,6 +345,10 @@ fn query_controller_java(
     crate::template::render(
         crate::template_here!("spring/query_controller_java.java"),
         &[
+            (
+                "validation",
+                crate::spring::validation_package(slice.project()),
+            ),
             ("web", web),
             ("query_import", &*query_import),
             ("port_import", &*port_import),
@@ -407,6 +411,9 @@ fn query_controller_test_java(
     };
     let (scope_import, scope_argument) = scope_test_parts(security, web, fields);
     crate::template::render(
+        // No classic form: `g query` refuses below Boot 3 because the adapter
+        // it writes needs `JdbcClient`, so a Boot 2 test would have nothing to
+        // exercise. `pending.md` §1.2.
         crate::template_here!("spring/query_controller_test_java.java"),
         &[
             ("web", web),

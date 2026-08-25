@@ -1086,6 +1086,24 @@ jails knows nothing about.
   PATH to *just* the tool directory — the real `mvn` script breaks with
   "command not found" for coreutils. Mocked fake-mvn scripts don't have
   this problem (they're a single `#!/bin/sh` line with no external calls).
+- **A version fact is read off the project, never assumed — and there are now
+  three.** `mockmvc_autoconfigure_import` and `webmvc_test_import` were the
+  first; `spring::validation_package` (`jakarta` vs `javax`, which Boot crossed
+  at 3.0) and `spring::mockmvc_template` (the classic `MockMvc` form for a
+  project whose Framework predates 6.2) are the others. All live in `spring.rs`
+  because they are questions about *this project* that more than one template
+  asks.
+- **The Boot floor is in the generated *code*, not its tests.** `pending.md`
+  §1.2 read it the other way round and a real Boot 2.7.18 compile disproved it:
+  `add api` writes `ProblemDetail` (Framework 6), `add security` writes
+  `requestMatchers` (Security 6), and `g query`/`g transition` write a
+  `JdbcClient` adapter (Framework 6.1) — all in the main source set, where no
+  test variant helps. Those four refuse through
+  `spring::require_jakarta_spring`, which names the **type** rather than a
+  version, because that is what the compiler would have said. `add cors`,
+  `g enum`, `g scaffold` and `g usecase` work there and
+  `what_jails_generates_for_boot_2_compiles_and_what_cannot_refuses_by_name`
+  compiles and runs them to prove it.
 - **Spring Boot 4.x moved `@AutoConfigureMockMvc`** from
   `org.springframework.boot.test.autoconfigure.web.servlet` to
   `org.springframework.boot.webmvc.test.autoconfigure`, no back-compat

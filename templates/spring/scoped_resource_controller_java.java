@@ -1,6 +1,6 @@
 package {{pkg}};
 
-{{extra}}{{scope_import}}{{location_import}}import jakarta.validation.Valid;
+{{extra}}{{scope_import}}{{location_import}}import {{validation}}.validation.Valid;
 import java.util.Objects;
 {{status_import}}import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;

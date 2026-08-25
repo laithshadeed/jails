@@ -498,6 +498,10 @@ fn usecase_controller_java(
     crate::template::render(
         crate::template_here!("spring/usecase_controller_java.java"),
         &[
+            (
+                "validation",
+                crate::spring::validation_package(slice.project()),
+            ),
             ("web", web),
             ("command_import", &*command_import),
             ("usecase_import", &*usecase_import),
@@ -608,7 +612,11 @@ fn usecase_controller_test_java(
     };
     let (scope_import, scope_argument) = scope_test_parts(security, web, fields);
     crate::template::render(
-        crate::template_here!("spring/usecase_controller_test_java.java"),
+        crate::spring::mockmvc_template(
+            project,
+            crate::template_here!("spring/usecase_controller_test_java.java"),
+            crate::template_here!("spring/usecase_controller_test_classic_java.java"),
+        ),
         &[
             ("web", web),
             ("command_import", &*command_import),

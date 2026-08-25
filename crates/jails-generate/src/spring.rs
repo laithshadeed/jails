@@ -87,6 +87,28 @@ pub(crate) const JAKARTA_VALIDATION_API: Dependency = Dependency {
     optional: false,
 };
 
+/// `jakarta` or `javax`, whichever this project's Bean Validation lives under.
+///
+/// **The rename happened at Jakarta EE 9, and Spring Boot crossed it at 3.0.**
+/// `spring-boot-starter-validation` on Boot 2.7 supplies `javax.validation`;
+/// on Boot 3 and later it supplies `jakarta.validation`. Emitting one spelling
+/// for both is a compile error naming a package rather than a version, which
+/// is the failure mode `pending.md` §1.2 is a list of.
+///
+/// Same shape as `mockmvc_autoconfigure_import` and the
+/// `MeterRegistryCustomizer` import: a version fact answered from the project
+/// rather than assumed, in one place, because six templates and the DTO
+/// renderer all need the same answer.
+///
+/// A plain-Maven project gets `jakarta`: it has no Boot version to read, and
+/// `JAKARTA_VALIDATION_API` is the artifact jails splices there.
+pub(crate) fn validation_package(project: &crate::model::Project) -> &'static str {
+    match project.flavor() {
+        crate::pom::Flavor::SpringBoot if project.boot_major() < 3 => "javax",
+        _ => "jakarta",
+    }
+}
+
 /// Whichever of the two the project can actually resolve.
 pub(crate) fn validation_dependency(flavor: crate::pom::Flavor) -> &'static Dependency {
     match flavor {
@@ -164,40 +186,89 @@ pub(crate) fn require_spring(flavor: Flavor, capability: &str) -> Result<()> {
     }
 }
 
-/// Refuse a generator whose companion test is written against
-/// `MockMvcTester`, on a project whose Spring Framework does not have it.
+/// The Spring Boot major at which the *generated code* stops being portable.
 ///
-/// `MockMvcTester` (`org.springframework.test.web.servlet.assertj`) arrived in
-/// Spring Framework 6.2, which is Spring Boot 3.4. Nine of jails' generated
-/// tests are written against it. Two of them -- the `controller` stub and
-/// `add cors` -- have a classic `MockMvc` variant and pick it by version; the
-/// rest do not, and this is what stops them writing a test that cannot compile.
+/// Boot 3.0 is the Jakarta EE 9 line: `jakarta.*` rather than `javax.*`,
+/// Spring Framework 6, Spring Security 6. Three things jails generates need
+/// it outright, and none of them has a Boot 2 form worth writing:
 ///
-/// A refusal rather than a silent downgrade, because a downgrade jails has not
-/// written does not exist, and emitting the Boot 4 shape anyway is the exact
-/// failure the Gradle reader's `None` answer exists to prevent: confident, and
-/// wrong at a step far from its cause. The message names the version and the
-/// commands that do work, so it is a route forward rather than a wall.
+/// - `ProblemDetail` (`add api`) is Framework 6's RFC 9457 type. The Boot 2
+///   equivalent is a hand-rolled error body, which is precisely the
+///   per-project invention `add api` exists to replace.
+/// - `HttpSecurity.requestMatchers` (`add security`) is Security 6; Security
+///   5.7 spells it `antMatchers`, and the surrounding lambda DSL differs too.
+/// - `JdbcClient` (`g query`, `g transition`) is Framework **6.1**, which is
+///   Boot 3.2. Drawn at 3 rather than guessed finer: `boot_major` reads a
+///   major and nothing else, and refusing at 4 would refuse the Boot 3.2+
+///   projects this works on today. A Boot 3.0 or 3.1 project therefore still
+///   gets a compile error naming `JdbcClient` — narrower than the every-Boot-2
+///   error this replaces, and stated rather than hidden.
+pub(crate) const JAKARTA_BOOT_MAJOR: u32 = 3;
+
+/// Refuse a generator whose *generated code* needs a Spring this project does
+/// not have.
 ///
-/// Reachable only since `jails new --gradle --boot <2.x>`: before that every
-/// project jails created or adopted was Boot 3 or later, so the assumption was
-/// true everywhere it was made.
-pub(crate) fn require_mockmvc_tester(project: &crate::model::Project, what: &str) -> Result<()> {
+/// **Not the same question as [`mockmvc_template`], and `pending.md` §1.2
+/// conflated them.** That item read the Boot floor as living in seven generated
+/// *tests*, and the first real Boot 2.7.18 compile said otherwise: the tests
+/// were the smaller half. `add api`'s advice, `add security`'s filter chain and
+/// the JDBC adapters `g query`/`g transition` write are Boot 3 code in the
+/// *main* source set, where a test variant cannot help.
+///
+/// So the refusal survives, narrowed to three kinds and re-based on what
+/// actually fails. It names the type rather than the version, because that is
+/// what the compiler would have said and what the reader can look up.
+pub(crate) fn require_jakarta_spring(
+    project: &crate::model::Project,
+    what: &str,
+    needs: &str,
+) -> Result<()> {
     let major = project.boot_major();
-    if major >= crate::generate::MOCKMVC_TESTER_BOOT_MAJOR {
+    if major >= JAKARTA_BOOT_MAJOR {
         return Ok(());
     }
     Err(format!(
-        "`{what}` generates a test written against MockMvcTester, and this project is Spring \
-         Boot {major}.\n       \
-         MockMvcTester is Spring Framework 6.2 (Boot 3.4) and later; on this project the \
-         generated test would not compile, and the error would name a package rather than a \
-         version.\n       \
-         fix: `jails g controller <Name> --method <verb>` and `jails add cors` write the \
-         classic MockMvc form and work here, as do every non-web kind -- `record`, `value`, \
-         `enum`, `sealed`, `repo`, `migration`, `service`."
+        "`{what}` generates code that uses {needs}, and this project is Spring Boot \
+         {major}.\n       \
+         {needs} arrived with the Jakarta EE 9 line, which is Spring Boot 3; on this project \
+         the generated code would not compile, and the error would name a package rather than \
+         a version.\n       \
+         fix: `jails g controller`, `jails g scaffold`, `jails g usecase`, `jails add cors` and \
+         every non-web kind -- `record`, `value`, `enum`, `sealed`, `repo`, `migration`, \
+         `service` -- work on this project. Raising the Boot version is the other way."
     )
     .into())
+}
+
+/// Which of a generated web test's two forms this project can compile.
+///
+/// **`pending.md` §1.2.** `MockMvcTester`
+/// (`org.springframework.test.web.servlet.assertj`) arrived in Spring
+/// Framework 6.2, which is Spring Boot 3.4, and nine of jails' companion tests
+/// were written against it. Seven of the nine had no other form, so on an older
+/// project they *refused* — the right failure and the wrong feature, because
+/// `jails new --gradle --boot 2.7.18` made those projects reachable on purpose,
+/// and a refusal is not a Boot 2 project somebody can work in.
+///
+/// All nine have a classic `MockMvc` form now and pick it here. That form
+/// compiles against every version jails supports, so this is a version choice
+/// rather than a fallback: the AssertJ entry point is worth having where it
+/// exists, and one call site deciding for every template is what stops the nine
+/// drifting back to two.
+///
+/// Both arguments are evaluated, deliberately. `template_here!` resolves a
+/// project override, and taking the templates as values means a project that
+/// overrode only one form still has that override read on the version that uses
+/// it — where a lazy pick would silently ignore it.
+pub(crate) fn mockmvc_template(
+    project: &crate::model::Project,
+    tester: String,
+    classic: String,
+) -> String {
+    match project.boot_major() >= crate::generate::MOCKMVC_TESTER_BOOT_MAJOR {
+        true => tester,
+        false => classic,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -442,6 +513,8 @@ fn api_exception_handler_test_java(pkg: &str, duplicate_key: bool) -> String {
         false => ("", ""),
     };
     crate::template::render(
+        // No classic form: `add api` refuses below Boot 3, its advice being
+        // built on Framework 6's `ProblemDetail`. `pending.md` §1.2.
         crate::template_here!("spring/api_exception_handler_test_java.java"),
         &[
             ("pkg", pkg),

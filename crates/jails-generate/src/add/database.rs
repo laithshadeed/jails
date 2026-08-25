@@ -13,7 +13,7 @@ use crate::spring::TESTCONTAINERS_JUNIT;
 // db -- PostgreSQL, Flyway, and real integration tests; deliberately no ORM
 // ---------------------------------------------------------------------------
 
-pub(crate) const SPRING_JDBC: Dependency = Dependency {
+pub const SPRING_JDBC: Dependency = Dependency {
     group_id: "org.springframework.boot",
     artifact_id: "spring-boot-starter-jdbc",
     version: None,

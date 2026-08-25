@@ -1868,11 +1868,16 @@ fn a_template_override_missing_a_placeholder_is_refused_by_name() {
     );
 }
 
-/// The generated *code* has a Boot floor the build file does not, and the two
-/// halves of the answer are here: what carries a classic variant works, and
-/// what does not refuses by name instead of writing a test that cannot compile.
+/// The generated *code* had a Boot floor the build file does not, and every
+/// generator that hits it now writes the classic `MockMvc` form.
+///
+/// `pending.md` §1.2. Nine companion tests are written against `MockMvcTester`
+/// (Spring Framework 6.2, Boot 3.4); two had a classic variant and seven
+/// refused. The refusal was the right failure and the wrong feature —
+/// `jails new --gradle --boot 2.7.18` exists so that a Boot 2 project can be
+/// worked in — so all nine pick their form by version now.
 #[test]
-fn a_boot_2_project_gets_the_classic_mockmvc_and_a_named_refusal_for_the_rest() {
+fn a_boot_2_project_gets_the_classic_mockmvc_for_every_generated_web_test() {
     let parent = temp_dir("gradle-boot2-generators");
     let created = jails_cmd(&parent, None)
         .args([
@@ -1968,19 +1973,49 @@ fn a_boot_2_project_gets_the_classic_mockmvc_and_a_named_refusal_for_the_rest() 
         "{properties}"
     );
 
-    // The seven with no classic variant refuse, and the refusal is a route
-    // forward rather than a wall.
-    for command in [
-        vec!["add", "api", "--no-start"],
-        vec!["add", "security", "--no-start"],
-        vec!["g", "scaffold", "Note", "id:uuid@pk", "title:string!"],
+    // `g scaffold` used to refuse and writes the classic form now, and the
+    // whole of what it generates compiles -- proved against real Maven by
+    // `what_jails_generates_for_boot_2_compiles_and_what_cannot_refuses_by_name`.
+    // `add api` and `add security` still refuse, for a reason that is not
+    // about MockMvc at all: their *main* source set is Boot 3 code, which
+    // `pending.md` §1.2's premise missed.
+    let scaffolded = jails_cmd(&root, None)
+        .args([
+            "g",
+            "scaffold",
+            "Note",
+            "id:uuid@pk",
+            "title:string!",
+            "version:long",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        scaffolded.status.success(),
+        "{}",
+        String::from_utf8_lossy(&scaffolded.stderr)
+    );
+    let source =
+        fs::read_to_string(root.join("src/test/java/com/acme/svc/web/NoteControllerTest.java"))
+            .unwrap();
+    assert!(
+        !source.contains("servlet.assertj.MockMvcTester"),
+        "the Framework 6.2 entry point: {source}"
+    );
+    assert!(
+        source.contains("import org.springframework.test.web.servlet.MockMvc;"),
+        "{source}"
+    );
+    assert!(source.contains("andExpect(status()"), "{source}");
+
+    for (command, needs) in [
+        (vec!["add", "api", "--no-start"], "ProblemDetail"),
+        (vec!["add", "security", "--no-start"], "requestMatchers"),
     ] {
         let refused = jails_cmd(&root, None).args(&command).output().unwrap();
         let stderr = String::from_utf8_lossy(&refused.stderr);
         assert!(!refused.status.success(), "{command:?} should refuse");
-        assert!(stderr.contains("MockMvcTester"), "{command:?}: {stderr}");
-        assert!(stderr.contains("Boot 2"), "{command:?}: {stderr}");
-        assert!(stderr.contains("g controller"), "{command:?}: {stderr}");
+        assert!(stderr.contains(needs), "{command:?}: {stderr}");
     }
 }
 
@@ -2149,4 +2184,151 @@ fn generate_search_refuses_a_component_it_cannot_index() {
         assert!(!output.status.success(), "{args:?} should refuse");
         assert!(stderr.contains(expected), "{args:?}: {stderr}");
     }
+}
+
+/// What jails generates for a real Boot 2 project compiles and passes, and
+/// what cannot refuses by naming the type.
+///
+/// **This is the test `pending.md` §1.2 said the fix was waiting for, and it
+/// contradicted the item.** §1.2 read the Boot floor as living in seven
+/// generated *tests* written against `MockMvcTester`; the first real Boot
+/// 2.7.18 compile said the tests were the smaller half. `add api` writes
+/// `ProblemDetail` (Spring Framework 6), `add security` writes
+/// `requestMatchers` (Spring Security 6), and `g query`/`g transition` write a
+/// `JdbcClient` adapter (Framework 6.1) — all in the *main* source set, where
+/// no test variant helps.
+///
+/// So the split is what compiles and what refuses, both asserted here:
+/// `add cors`, `g enum`, `g scaffold` and `g usecase` are generated and run
+/// through real `mvn test`; the other four must refuse and must say which type
+/// is missing.
+///
+/// One project rather than four, which is also the arrangement that catches a
+/// template compiling alone and colliding in company — two probe controllers
+/// on one path, two classes with one name.
+#[test]
+fn what_jails_generates_for_boot_2_compiles_and_what_cannot_refuses_by_name() {
+    if !real_mvn_available() {
+        skip("mvn not found on PATH");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let root = temp_dir("real-boot2-classic");
+    write_spring2_fixture(&root);
+
+    // The same shape as the `usecase-query-transition` golden scenario, which
+    // is what these three generators need: an enum, a scaffold declaring the
+    // components they reference, and a `version` for optimistic locking.
+    for command in [
+        vec!["add", "cors", "--no-start"],
+        vec!["g", "enum", "NoteStatus", "DRAFT", "PUBLISHED"],
+        vec![
+            "g",
+            "scaffold",
+            "Note",
+            "id:uuid@pk",
+            "title:string!",
+            "status:NoteStatus@index",
+            "version:long@nonnegative",
+        ],
+        vec![
+            "g",
+            "usecase",
+            "DraftNote",
+            "id:uuid",
+            "title:string!",
+            "--on",
+            "Note",
+        ],
+    ] {
+        let output = jails_cmd_with_path(&root, &path)
+            .args(&command)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{command:?}: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    // The four that cannot, and why the item's premise was incomplete: their
+    // *main* source set is Boot 3 code, which no test variant can help. The
+    // refusal names the type the compiler would have named.
+    for (command, needs) in [
+        (vec!["add", "api", "--no-start"], "ProblemDetail"),
+        (vec!["add", "security", "--no-start"], "requestMatchers"),
+        (
+            vec![
+                "g",
+                "query",
+                "NotesByStatus",
+                "status:NoteStatus",
+                "--on",
+                "Note",
+            ],
+            "JdbcClient",
+        ),
+        (
+            vec![
+                "g",
+                "transition",
+                "ChangeNoteStatus",
+                "id:uuid",
+                "status:NoteStatus",
+                "version:long@nonnegative",
+                "--on",
+                "Note",
+            ],
+            "JdbcClient",
+        ),
+    ] {
+        let refused = jails_cmd_with_path(&root, &path)
+            .args(&command)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&refused.stderr);
+        assert!(!refused.status.success(), "{command:?} should refuse");
+        assert!(stderr.contains(needs), "{command:?}: {stderr}");
+        assert!(stderr.contains("Spring Boot 2"), "{command:?}: {stderr}");
+        assert!(stderr.contains("jails g scaffold"), "{command:?}: {stderr}");
+    }
+
+    // Not one of them may name the Framework 6.2 entry point.
+    let mut checked = 0;
+    let mut stack = vec![root.join("src/test/java")];
+    while let Some(dir) = stack.pop() {
+        for entry in fs::read_dir(&dir).unwrap() {
+            let entry = entry.unwrap().path();
+            if entry.is_dir() {
+                stack.push(entry);
+                continue;
+            }
+            let source = fs::read_to_string(&entry).unwrap();
+            assert!(
+                !source.contains("servlet.assertj.MockMvcTester"),
+                "{}: MockMvcTester is Spring Framework 6.2, and this project is 5.3\n{source}",
+                entry.display()
+            );
+            checked += 1;
+        }
+    }
+    assert!(
+        checked >= 4,
+        "expected the generated tests plus the fixture's, found {checked}"
+    );
+
+    let output = std::process::Command::new("mvn")
+        .current_dir(&root)
+        .env("PATH", &path)
+        .args(["-q", "-B", "test"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "mvn test failed on a Boot 2 project:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }

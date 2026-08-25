@@ -696,11 +696,31 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 //
                 // 489 -> 522 for §1.1: `handles_duplicate_keys`, the two
                 // rendered blocks and their reasons. It belongs here for the
-                // same reason `require_mockmvc_tester` does -- it is a question
-                // about *this project* that more than one template asks -- and
-                // the row is at a fifth of its target, so this is growth the
-                // gate is meant to allow rather than absorb.
-                ceiling: 522,
+                // same reason `mockmvc_template` does -- it is a question about
+                // *this project* that more than one template asks -- and the
+                // row is at a fifth of its target, so this is growth the gate
+                // is meant to allow rather than absorb.
+                //
+                // 522 -> 531 for §1.2, which *deleted* more of this file than
+                // it added: `require_mockmvc_tester`, the refusal seven
+                // generators made on a Boot 2 project, is gone because all nine
+                // of those tests have a classic `MockMvc` form now.
+                // `mockmvc_template` replaced it at about the same size, and
+                // the rise is the two render call sites it made multi-line.
+                // Most of what left was doc comment, which this row does not
+                // count.
+                //
+                // 531 -> 543 once §1.2's Boot 2 run said what the floor
+                // actually is. `require_mockmvc_tester` came back as
+                // `require_jakarta_spring` -- narrower, three kinds instead of
+                // seven, and named for `ProblemDetail`, `requestMatchers` and
+                // `JdbcClient` rather than for a test entry point -- beside
+                // `mockmvc_template` and `validation_package`, which is a third
+                // version question about *this project* that more than one
+                // template asks. Three such questions in one file is the
+                // logical cohesion this row's `why` describes rather than a
+                // regression; the row is at a fifth of its target.
+                ceiling: 543,
                 target: 2500,
                 why: "Logical cohesion: one file for everything sharing the `require_spring` \
                       precondition. abstract.md §6.2 says turning that precondition into data \

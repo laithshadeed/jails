@@ -1,6 +1,6 @@
 package {{web}};
 
-{{queue_import}}{{work_import}}{{scope_import}}import jakarta.validation.Valid;
+{{queue_import}}{{work_import}}{{scope_import}}import {{validation}}.validation.Valid;
 import java.net.URI;
 import java.util.UUID;
 import org.springframework.http.ResponseEntity;

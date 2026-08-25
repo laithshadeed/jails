@@ -82,6 +82,10 @@ pub(crate) fn resource_controller_java(
     crate::template::render(
         crate::template_here!("spring/resource_controller_java.java"),
         &[
+            (
+                "validation",
+                crate::spring::validation_package(slice.project()),
+            ),
             ("pkg", pkg),
             ("extra", extra),
             ("location_import", location_import),
@@ -134,6 +138,10 @@ fn scoped_resource_controller_java(
     crate::template::render(
         crate::template_here!("spring/scoped_resource_controller_java.java"),
         &[
+            (
+                "validation",
+                crate::spring::validation_package(slice.project()),
+            ),
             ("pkg", pkg),
             ("extra", extra),
             ("scope_import", &*scope_import),
@@ -198,7 +206,11 @@ pub(crate) fn resource_controller_test_java(
     if fields.iter().any(|field| field.constraints.scoped) {
         let guard_import = crate::generate::import_of(pkg, security, "ScopeAuthorizer");
         return crate::template::render(
-            crate::template_here!("spring/resource_controller_test_scoped_java.java"),
+            crate::spring::mockmvc_template(
+                slice.project(),
+                crate::template_here!("spring/resource_controller_test_scoped_java.java"),
+                crate::template_here!("spring/resource_controller_test_scoped_classic_java.java"),
+            ),
             &[
                 ("pkg", pkg),
                 ("extra", extra),
@@ -212,7 +224,11 @@ pub(crate) fn resource_controller_test_java(
         );
     }
     crate::template::render(
-        crate::template_here!("spring/resource_controller_test_java.java"),
+        crate::spring::mockmvc_template(
+            slice.project(),
+            crate::template_here!("spring/resource_controller_test_java.java"),
+            crate::template_here!("spring/resource_controller_test_classic_java.java"),
+        ),
         &[
             ("pkg", pkg),
             ("extra", extra),

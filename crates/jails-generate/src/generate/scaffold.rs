@@ -243,6 +243,7 @@ pub(crate) fn scaffold_artifacts_from_fields(
             kind: "request",
             path: main_dir(root, &web).join(format!("{name}Request.java")),
             contents: crate::spring::request_java_for(
+                crate::spring::validation_package(slice.project()),
                 &web,
                 name,
                 parsed,
@@ -254,6 +255,7 @@ pub(crate) fn scaffold_artifacts_from_fields(
             kind: "response",
             path: main_dir(root, &web).join(format!("{name}Response.java")),
             contents: crate::spring::response_java_for(
+                crate::spring::validation_package(slice.project()),
                 &web,
                 name,
                 parsed,

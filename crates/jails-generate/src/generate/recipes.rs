@@ -48,19 +48,12 @@ pub(crate) fn artifacts_for(
     } = *recipe;
 
     let artifacts = match recipe.kind {
-        ArtifactKind::Scaffold => {
-            // Only on Spring: the plain-Maven scaffold writes a framework-free
-            // handler and no MockMvc test at all, so there is nothing to refuse.
-            if project.flavor() == jails_project::pom::Flavor::SpringBoot {
-                crate::spring::require_mockmvc_tester(project, "scaffold")?;
-            }
-            scaffold_artifacts(
-                &crate::model::Slice::new(project, package),
-                name,
-                fields,
-                indexes,
-            )?
-        }
+        ArtifactKind::Scaffold => scaffold_artifacts(
+            &crate::model::Slice::new(project, package),
+            name,
+            fields,
+            indexes,
+        )?,
         ArtifactKind::Controller => {
             let web = place(layout::WEB);
             // One value, read by the class and by its test. See `web::Endpoint`
@@ -298,7 +291,6 @@ pub(crate) fn artifacts_for(
         }
         ArtifactKind::Usecase => {
             require_spring_project(project, "usecase")?;
-            crate::spring::require_mockmvc_tester(project, "usecase")?;
             let target = strategy_on.ok_or_else(|| {
                 format!(
                     "usecase {name} needs the resource it creates.\n       fix: pass `--on <Resource>`, for example `jails g usecase {name} title:string --on Task`."
@@ -326,7 +318,7 @@ pub(crate) fn artifacts_for(
         }
         ArtifactKind::Query => {
             require_spring_project(project, "query")?;
-            crate::spring::require_mockmvc_tester(project, "query")?;
+            crate::spring::require_jakarta_spring(project, "query", "JdbcClient")?;
             let target = strategy_on.ok_or_else(|| {
                 format!(
                     "query {name} needs the resource it reads.\n       fix: pass `--on <Resource>`, for example `jails g query {name} status:TaskStatus --on Task`."
@@ -344,7 +336,7 @@ pub(crate) fn artifacts_for(
         }
         ArtifactKind::Transition => {
             require_spring_project(project, "transition")?;
-            crate::spring::require_mockmvc_tester(project, "transition")?;
+            crate::spring::require_jakarta_spring(project, "transition", "JdbcClient")?;
             let target = strategy_on.ok_or_else(|| {
                 format!(
                     "transition {name} needs the resource it updates.\n       fix: pass `--on <Resource>`, for example `jails g transition {name} id:uuid tenantId:uuid@scope status:TaskStatus version:long --on Task`."

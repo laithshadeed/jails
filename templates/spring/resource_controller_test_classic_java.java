@@ -1,6 +1,6 @@
-package com.example.demo.web;
+package {{pkg}};
 
-import static org.mockito.ArgumentMatchers.any;
+{{extra}}import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -10,10 +10,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup;
 
-import com.example.demo.service.NoteService;
 import java.util.List;
 import java.util.Optional;
-import org.junit.jupiter.api.BeforeEach;
+{{disabled_import}}import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
@@ -22,10 +21,10 @@ import org.springframework.test.web.servlet.MockMvc;
  * Written against plain {@code MockMvc} rather than {@code MockMvcTester},
  * because this project's Spring Framework predates the AssertJ entry point.
  */
-class NoteControllerTest {
+class {{name}}ControllerTest {
 
     /**
-     * The body {@code requests/note.http} documents, generated from
+     * The body {@code requests/{{route_file}}.http} documents, generated from
      * the same builder.
      *
      * <p>One source, two readers, for the reason every other pair in this tool
@@ -36,28 +35,22 @@ class NoteControllerTest {
      */
     private static final String CREATE_REQUEST =
             """
-            {
-              "id": "00000000-0000-0000-0000-000000000001",
-              "title": "sample-title",
-              "amount": 1,
-              "createdAt": "2026-01-01T00:00:00Z"
-            }
-            """;
+{{create_body}}            """;
 
-    private NoteService service;
+    private {{name}}Service service;
     private MockMvc mvc;
 
     @BeforeEach
     void setUp() {
-        service = mock(NoteService.class);
-        mvc = standaloneSetup(new NoteController(service)).build();
+        service = mock({{name}}Service.class);
+        mvc = standaloneSetup(new {{name}}Controller(service)).build();
     }
 
-    @Test
+    {{disabled}}@Test
     void theDocumentedCreateRequestIsAccepted() throws Exception {
         given(service.create(any())).willAnswer(invocation -> invocation.getArgument(0));
 
-        mvc.perform(post(NoteController.PATH)
+        mvc.perform(post({{name}}Controller.PATH)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(CREATE_REQUEST))
                 .andExpect(status().isCreated());
@@ -67,7 +60,7 @@ class NoteControllerTest {
     void anEmptyCollectionIsAnEmptyArray() throws Exception {
         given(service.findAll()).willReturn(List.of());
 
-        mvc.perform(get(NoteController.PATH))
+        mvc.perform(get({{name}}Controller.PATH))
                 .andExpect(status().isOk())
                 .andExpect(content().json("[]"));
     }
@@ -76,13 +69,13 @@ class NoteControllerTest {
     void aMissingItemIs404() throws Exception {
         given(service.findById("nope")).willReturn(Optional.empty());
 
-        mvc.perform(get(NoteController.PATH + "/nope")).andExpect(status().isNotFound());
+        mvc.perform(get({{name}}Controller.PATH + "/nope")).andExpect(status().isNotFound());
     }
 
     @Test
     void aDeleteThatRemovedNothingIs404() throws Exception {
         given(service.deleteById("nope")).willReturn(false);
 
-        mvc.perform(delete(NoteController.PATH + "/nope")).andExpect(status().isNotFound());
+        mvc.perform(delete({{name}}Controller.PATH + "/nope")).andExpect(status().isNotFound());
     }
 }

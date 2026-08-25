@@ -38,6 +38,10 @@ use tooling::*;
 
 mod database;
 
+/// The starter a generated `JdbcClient` adapter needs. `route::support`
+/// claims it off the emitted bytes; see the comment there.
+pub use database::SPRING_JDBC as JDBC_STARTER;
+
 /// One owner for the JDBC starter's coordinate. `add h2` needs the same
 /// artifact `add db` does, and two spellings of one dependency is how a
 /// version bump comes to move only half a project.
@@ -264,10 +268,18 @@ fn spring_slice_plan(
     build: fn(&Slice) -> Change,
 ) -> Result<Change> {
     crate::spring::require_spring(slice.flavor(), capability)?;
-    // `api` and `security` write a `MockMvcTester` test and have no classic
-    // variant. `cors` does have one and picks it by version, so it is not here.
-    if matches!(capability, "api" | "security") {
-        crate::spring::require_mockmvc_tester(slice.project(), capability)?;
+    // The *main* source set, not the test: `api` writes `ProblemDetail`
+    // (Framework 6) and `security` writes `requestMatchers` (Security 6).
+    // `pending.md` §1.2 read this floor as living in the generated tests; the
+    // first real Boot 2 compile said otherwise.
+    match capability {
+        "api" => crate::spring::require_jakarta_spring(slice.project(), "api", "ProblemDetail")?,
+        "security" => crate::spring::require_jakarta_spring(
+            slice.project(),
+            "security",
+            "Spring Security 6's `requestMatchers`",
+        )?,
+        _ => {}
     }
     Ok(build(slice))
 }
