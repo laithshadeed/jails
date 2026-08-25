@@ -4,17 +4,17 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-jails-prepare = { path = "../jails-prepare" }
-jails-project = { path = "../jails-project" }
-jails-protocol = { path = "../jails-protocol" }
-jails-support = { path = "../jails-support" }
+jails-prepare.workspace = true
+jails-project.workspace = true
+jails-protocol.workspace = true
+jails-support.workspace = true
 
 [dev-dependencies]
 # Self-dependency with the feature on, so the crash suite -- an integration
 # test, which links the library built *without* `cfg(test)` -- can reach the
 # failpoints. Enabling it here rather than asking every caller to remember
 # `--features` keeps `cargo test --workspace` complete.
-jails-commit = { path = ".", features = ["fault-injection"] }
+jails-commit = { workspace = true, features = ["fault-injection"] }
 
 [features]
 # plan.md §R4.5: failpoints exist for the crash suite and are compiled out

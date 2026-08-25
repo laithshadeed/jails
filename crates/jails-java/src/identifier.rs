@@ -8,7 +8,8 @@
 //! reimplementing identifier boundaries and literal skipping, which is how
 //! two answers to one question come to disagree.
 //!
-//! It is textual by design -- see `jails_tooling::rename`'s module docs for
+//! It is textual by design -- see `jails_engine::route::maintenance::rename`'s
+//! doc comment for
 //! when to prefer a language server instead. What that costs is stated rather
 //! than hidden: [`literal_mentions`] counts the occurrences inside string
 //! literals that [`replace_identifier`] leaves alone, so the caller can name

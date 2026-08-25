@@ -10,18 +10,17 @@
 //! walks the same `clap::Command` that parses the arguments, so there is no
 //! second list of what jails can do.
 
-pub mod affected;
+pub(crate) mod affected;
 pub mod bench;
 pub mod commands;
 pub mod console;
 pub mod doctor;
 pub mod explain;
 pub mod kafka;
-pub mod launcher;
+pub(crate) mod launcher;
 pub mod lint;
 pub mod migrate;
-pub mod rename;
-pub mod reports;
+pub(crate) mod reports;
 pub mod run;
 pub mod source;
 pub mod testd;

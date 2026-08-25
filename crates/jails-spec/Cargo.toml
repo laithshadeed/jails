@@ -6,9 +6,9 @@ edition.workspace = true
 [dependencies]
 # `Capability` is a `clap::ValueEnum` so `clap_complete` can emit a static
 # completion list for it -- see CLAUDE.md. The derive has to live with the enum.
-clap = { version = "4.6.4", features = ["derive"] }
-jails-support = { path = "../jails-support" }
-jails-java = { path = "../jails-java" }
+clap.workspace = true
+jails-support.workspace = true
+jails-java.workspace = true
 
 [lints]
 workspace = true

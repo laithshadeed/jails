@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-jails-support = { path = "../jails-support" }
+jails-support.workspace = true
 
 [lints]
 workspace = true

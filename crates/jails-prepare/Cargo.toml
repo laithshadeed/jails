@@ -4,11 +4,11 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-jails-java = { path = "../jails-java" }
-jails-project = { path = "../jails-project" }
-jails-protocol = { path = "../jails-protocol" }
-jails-spec = { path = "../jails-spec" }
-jails-support = { path = "../jails-support" }
+jails-java.workspace = true
+jails-project.workspace = true
+jails-protocol.workspace = true
+jails-spec.workspace = true
+jails-support.workspace = true
 
 [lints]
 workspace = true

@@ -7,9 +7,9 @@ edition.workspace = true
 # Recipe and Capability are `ValueEnum`s, and their CLI spelling *is* their
 # recorded spelling -- routed through clap's own table rather than a second
 # match, so the two cannot disagree about what a ledger row names.
-clap = { version = "4.6.4", features = ["derive"] }
-jails-spec = { path = "../jails-spec" }
-jails-support = { path = "../jails-support" }
+clap.workspace = true
+jails-spec.workspace = true
+jails-support.workspace = true
 
 [lints]
 workspace = true

@@ -94,6 +94,22 @@ capabilities = []
 
 /// Rename a Java type across the project, as one transition.
 ///
+/// **Reach for the language server first.** Neovim's `grn` (jdt.ls rename)
+/// understands scope, so it will not touch an unrelated `Reward` in another
+/// package, and where it works it is strictly better than this command. What
+/// this exists for is the case jdt.ls cannot serve: the server is not attached,
+/// the project does not currently compile (jdt.ls degrades badly there, and a
+/// rename is often exactly how you are trying to fix it), or the rename has to
+/// reach a file no buffer has opened.
+///
+/// It is textual, and two properties are what keep textual honest.
+/// `jails_java::identifier` holds both: `Reward` never matches inside
+/// `RewardHistory`, so the classic sed disaster cannot happen; and string
+/// literals are left alone, because a literal is data and silently rewriting
+/// `"Reward not found"` is a change nobody asked for. A literal that genuinely
+/// names the class -- a `Class.forName` argument -- is therefore missed, which
+/// is the safe direction and is reported rather than hidden.
+///
 /// The reason this is worth routing is written in V1's own source: it writes
 /// every file's new contents, *then* moves the files, with a comment saying
 /// that order at least leaves "one consistent state" if a write fails partway.

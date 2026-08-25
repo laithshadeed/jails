@@ -5,6 +5,33 @@ members = ["crates/*"]
 version = "0.1.0"
 edition = "2024"
 
+# One version per external crate, and one path per internal one. Ten manifests
+# repeated `clap = { version = "4.6.4", features = ["derive"] }` verbatim, which
+# is ten places a version bump has to reach and nine places it can be forgotten
+# -- and a workspace that resolves two clap majors compiles, links both, and
+# fails only where a derive from one meets a trait from the other.
+#
+# The per-crate comments justifying *why* a crate takes clap stay in that
+# crate's manifest, beside `clap.workspace = true`. They are about that crate's
+# reason (a `ValueEnum` for completion), not about the version.
+[workspace.dependencies]
+clap = { version = "4.6.4", features = ["derive"] }
+clap_complete = "4.6.7"
+fs2 = "0.4.3"
+nix = { version = "0.31.3", default-features = false, features = ["process", "signal"] }
+tempfile = "3.27"
+
+jails-commit = { path = "crates/jails-commit" }
+jails-engine = { path = "crates/jails-engine" }
+jails-generate = { path = "crates/jails-generate" }
+jails-java = { path = "crates/jails-java" }
+jails-prepare = { path = "crates/jails-prepare" }
+jails-project = { path = "crates/jails-project" }
+jails-protocol = { path = "crates/jails-protocol" }
+jails-spec = { path = "crates/jails-spec" }
+jails-support = { path = "crates/jails-support" }
+jails-tooling = { path = "crates/jails-tooling" }
+
 # One place for the lint policy, so a new crate cannot quietly opt out of it.
 [workspace.lints.rust]
 # A function nobody calls inside a `mod tests` is almost always a test that
@@ -28,32 +55,31 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-jails-tooling = { path = "crates/jails-tooling" }
-jails-engine = { path = "crates/jails-engine" }
-jails-commit = { path = "crates/jails-commit" }
-jails-prepare = { path = "crates/jails-prepare" }
-jails-generate = { path = "crates/jails-generate" }
-jails-project = { path = "crates/jails-project" }
-jails-spec = { path = "crates/jails-spec" }
-jails-java = { path = "crates/jails-java" }
-clap = { version = "4.6.4", features = ["derive"] }
+jails-tooling.workspace = true
+jails-engine.workspace = true
+jails-prepare.workspace = true
+jails-generate.workspace = true
+jails-project.workspace = true
+jails-spec.workspace = true
+jails-java.workspace = true
+clap.workspace = true
 clap_complete = "4.6.7"
-jails-protocol = { path = "crates/jails-protocol" }
-jails-support = { path = "crates/jails-support" }
+jails-protocol.workspace = true
+jails-support.workspace = true
 
 [dev-dependencies]
 # Failpoints, for the crash sweep over a *real* route in `tests/engine.rs`.
 # §R4.5's property is about whatever instant a run stops at, and the only way
 # to ask it of a whole command is to arm the executor the command uses.
-jails-commit = { path = "crates/jails-commit", features = ["fault-injection"] }
+jails-commit = { workspace = true, features = ["fault-injection"] }
 # The integration tests assert against jails' own constants -- `TARGET_RELEASE`
 # among them -- rather than keeping copies of them in the fixtures.
-jails-project = { path = "crates/jails-project" }
+jails-project.workspace = true
 # plan.md §3.2: atomic, random, exclusive scratch creation. A pid plus a
 # timestamp is not exclusive -- two threads in one test binary read the same
 # nanosecond and got the same directory -- and reimplementing OS randomness
 # and Windows deletion semantics is not this project's work.
-tempfile = "3.27"
+tempfile.workspace = true
 
 [lints]
 workspace = true

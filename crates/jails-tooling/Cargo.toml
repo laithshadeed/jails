@@ -6,13 +6,12 @@ edition.workspace = true
 [dependencies]
 # `commands` walks the same `clap::Command` that parses the arguments, so
 # there is no second list of what jails can do.
-clap = { version = "4.6.4", features = ["derive"] }
-jails-support = { path = "../jails-support" }
-jails-java = { path = "../jails-java" }
-jails-spec = { path = "../jails-spec" }
-jails-project = { path = "../jails-project" }
-jails-protocol = { path = "../jails-protocol" }
-jails-generate = { path = "../jails-generate" }
+clap.workspace = true
+jails-support.workspace = true
+jails-java.workspace = true
+jails-spec.workspace = true
+jails-project.workspace = true
+jails-generate.workspace = true
 
 [lints]
 workspace = true
