@@ -12,4 +12,5 @@ pub mod ownership;
 pub mod plan;
 pub mod render;
 pub mod request;
+pub mod testing;
 pub mod transition;
