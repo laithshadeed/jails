@@ -30,6 +30,32 @@ use jails_protocol::resource::{OneShotLifecycle, OneShotState};
 
 /// Add one component to a generated artifact, and migrate the table for it.
 pub fn field(run: &Run, target: &str, component: &str, package: Option<&str>) -> Result<Outcome> {
+    add_field_with_syntax(run, target, component, package, &["generate", "field"])
+}
+
+/// Canonical resource spelling for adding one component.
+pub fn add_field(
+    run: &Run,
+    target: &str,
+    component: &str,
+    package: Option<&str>,
+) -> Result<Outcome> {
+    add_field_with_syntax(
+        run,
+        target,
+        component,
+        package,
+        &["resource", "field", "add"],
+    )
+}
+
+fn add_field_with_syntax(
+    run: &Run,
+    target: &str,
+    component: &str,
+    package: Option<&str>,
+    command_path: &[&str],
+) -> Result<Outcome> {
     let project = run.project();
     let store = observed(project)?;
     let (id, spec) = recorded_target(project, &store, target, package)?;
@@ -201,7 +227,7 @@ pub fn field(run: &Run, target: &str, component: &str, package: Option<&str>) ->
     // something the receipt does not.
     let asked = Asked::new(
         CanonicalMutationRequest::EvolveField(evolution),
-        &["generate", "field"],
+        command_path,
         vec![target.to_string(), component.to_string()],
         match package {
             Some(package) => BTreeMap::from([("package".to_string(), vec![package.to_string()])]),

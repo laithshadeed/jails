@@ -102,6 +102,23 @@ pub(crate) enum ResourceCommand {
         #[arg(long)]
         table: String,
     },
+    /// Evolve one field through a new forward migration
+    Field {
+        #[command(subcommand)]
+        command: ResourceFieldCommand,
+    },
+}
+
+#[derive(Subcommand)]
+pub(crate) enum ResourceFieldCommand {
+    /// Add one field and append its migration
+    Add {
+        entity: String,
+        field_spec: String,
+        /// Subpackage containing the generated entity
+        #[arg(long)]
+        package: Option<String>,
+    },
 }
 
 /// Everything a mutation needs that is not the mutation.

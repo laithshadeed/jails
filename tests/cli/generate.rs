@@ -622,7 +622,7 @@ fn generate_field_updates_unchanged_derivatives_preserves_edits_and_adds_a_migra
     fs::write(&request, &edited).unwrap();
 
     let output = jails_cmd(&root, None)
-        .args(["g", "field", "Note", "createdAt:instant"])
+        .args(["resource", "field", "add", "Note", "createdAt:instant"])
         .output()
         .unwrap();
     assert!(

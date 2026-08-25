@@ -15,7 +15,9 @@ mod new;
 
 // What the CLI accepts lives in `cli`; what it does is the match below.
 pub(crate) use add::Capability;
-pub(crate) use cli::{Cli, Command, Declare, Invocation, Output, ResourceCommand, Undeclare};
+pub(crate) use cli::{
+    Cli, Command, Declare, Invocation, Output, ResourceCommand, ResourceFieldCommand, Undeclare,
+};
 
 use clap::{CommandFactory, Parser};
 
@@ -274,6 +276,15 @@ fn main() -> std::process::ExitCode {
                     jails_engine::route::revive(run, &selector, &table)
                 })
             }
+            ResourceCommand::Field { command } => match command {
+                ResourceFieldCommand::Add {
+                    entity,
+                    field_spec,
+                    package,
+                } => dispatch::mutate(invocation, false, |run| {
+                    jails_engine::route::add_field(run, &entity, &field_spec, package.as_deref())
+                }),
+            },
         },
         Command::Start { services } => compose::start(&services, debug),
         Command::Stop { services } => compose::stop_cmd(&services, debug),

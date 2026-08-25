@@ -44,6 +44,8 @@ destroy	jails-engine	project-mutation	route::destroy
 resource	jails	dispatch-only	main command dispatch
 resource status	jails-report	read-only	lifecycle_status::status
 resource revive	jails-engine	project-mutation	route::revive
+resource field	jails	dispatch-only	main command dispatch
+resource field add	jails-engine	project-mutation	route::add_field
 test	jails-drive	external-process+conditional-project-mutation	run::test
 testd	jails-drive	machine-daemon+external-process	testd::testd
 build	jails-drive	external-process	run::build
