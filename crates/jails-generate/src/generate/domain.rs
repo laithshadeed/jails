@@ -714,3 +714,344 @@ pub(super) fn value_test(project: &Project, pkg: &str, name: &str, fields: &[Fie
     out += "}\n";
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A reserved directory the test may write a project into.
+    fn scratch(label: &str) -> std::path::PathBuf {
+        jails_support::scratch::ScratchDir::in_temp(&format!("jails-generate-test-{label}"))
+            .unwrap()
+            .keep()
+    }
+
+    #[test]
+    fn sealed_emits_a_permits_clause_and_a_record_per_variant() {
+        let variants = parse_variants(&["verified".to_string(), "timeout".to_string()]).unwrap();
+        let src = sealed_java("com.example.demo", "VerificationResult", &variants);
+
+        // Nested variants have to be named qualified in the permits clause.
+        assert!(
+            src.contains("permits VerificationResult.Verified, VerificationResult.Timeout"),
+            "{src}"
+        );
+        assert!(
+            src.contains("record Verified() implements VerificationResult"),
+            "{src}"
+        );
+        assert!(
+            src.contains("record Timeout() implements VerificationResult"),
+            "{src}"
+        );
+    }
+
+    /// The companion test switches without a `default`, so adding a variant
+    /// breaks it at compile time -- which is the entire reason to seal a type.
+    #[test]
+    fn sealed_test_switches_exhaustively_without_a_default() {
+        let variants = parse_variants(&["ok".to_string(), "failed".to_string()]).unwrap();
+        let test = sealed_test("com.example.demo", "Result", &variants);
+
+        assert!(test.contains("switch (result)"), "{test}");
+        assert!(test.contains("case Result.Ok v ->"), "{test}");
+        assert!(
+            !test.contains("default ->"),
+            "an exhaustive switch must not have a default: {test}"
+        );
+    }
+
+    /// Typing the name the class will actually have is the obvious thing to
+    /// do, and `g service RewardHistoryService` writing
+    /// `RewardHistoryServiceService.java` is the bug that taught jails not to
+    /// punish it. The same rule applies to a strategy's variants.
+    #[test]
+    fn a_strategy_variant_does_not_repeat_the_interface_name() {
+        assert_eq!(strategy_class("Coffee", "RewardRule"), "CoffeeRewardRule");
+        assert_eq!(
+            strategy_class("CoffeeRewardRule", "RewardRule"),
+            "CoffeeRewardRule"
+        );
+        // Never the whole name away: `g strategy Rule Rule` means a class
+        // called `Rule`, not the empty string.
+        assert_eq!(strategy_class("RewardRule", "RewardRule"), "RewardRule");
+    }
+
+    /// `--yields` is what decides the shape: with it the strategy answers
+    /// "what does this earn?" and declines with an empty `Optional`, which is
+    /// what lets every implementation see every input. Without it it is a
+    /// predicate.
+    #[test]
+    fn a_strategy_yields_an_optional_and_a_bare_one_is_a_predicate() {
+        let (ret, method, param) = strategy_method("Transaction", Some("Reward"));
+        assert_eq!(ret, "Optional<Reward>");
+        assert_eq!(method, "apply");
+        assert_eq!(param, "Transaction transaction");
+
+        let (ret, method, _) = strategy_method("Transaction", None);
+        assert_eq!(ret, "boolean");
+        assert_eq!(method, "matches");
+    }
+
+    /// The annotation is the whole reason the pattern works, and its absence
+    /// is silent: without it the class is simply not in the `List<Port>`, so
+    /// it never runs and nothing reports a problem. The generated Javadoc
+    /// says so, because that is the only place a reader will find it.
+    #[test]
+    fn a_spring_strategy_implementation_is_a_bean_and_says_why() {
+        let spring = strategy_impl_java(
+            "com.example.demo.domain",
+            "RewardRule",
+            "CoffeeRewardRule",
+            "Transaction",
+            Some("Reward"),
+            true,
+        );
+        assert!(spring.contains("@Component"), "{spring}");
+        assert!(
+            spring.contains("import org.springframework.stereotype.Component;"),
+            "{spring}"
+        );
+        assert!(spring.contains("its absence is silent"), "{spring}");
+
+        // A plain Maven project has no Spring on the classpath, so the
+        // annotation would not resolve and the import would not compile.
+        let plain = strategy_impl_java(
+            "com.example.demo.domain",
+            "RewardRule",
+            "CoffeeRewardRule",
+            "Transaction",
+            Some("Reward"),
+            false,
+        );
+        assert!(!plain.contains("@Component"), "{plain}");
+        assert!(!plain.contains("springframework"), "{plain}");
+    }
+
+    /// `apply` + `s` reads `applys`. A generated test whose name is
+    /// misspelled is the first thing anyone sees of the pattern.
+    #[test]
+    fn generated_strategy_test_names_are_english() {
+        let yielding = strategy_impl_test(
+            "d",
+            "RewardRule",
+            "CoffeeRewardRule",
+            "Transaction",
+            Some("Reward"),
+        );
+        assert!(
+            yielding.contains("void grantsWhenTheTransactionQualifies()"),
+            "{yielding}"
+        );
+        assert!(!yielding.contains("applys"), "{yielding}");
+
+        let predicate =
+            strategy_impl_test("d", "RewardRule", "CoffeeRewardRule", "Transaction", None);
+        assert!(
+            predicate.contains("void matchesWhenTheTransactionQualifies()"),
+            "{predicate}"
+        );
+
+        // @Disabled, not a passing assertion over an unwritten class: it is
+        // reported as skipped rather than counted green.
+        assert!(yielding.contains("@Disabled"), "{yielding}");
+    }
+
+    #[test]
+    fn parse_variants_rejects_unusable_names() {
+        assert!(parse_variants(&[]).is_err());
+        assert!(
+            parse_variants(&["ok".to_string(), "Ok".to_string()]).is_err(),
+            "duplicate after capitalising"
+        );
+        assert!(parse_variants(&["not a name".to_string()]).is_err());
+    }
+
+    #[test]
+    fn a_generated_zero_component_sealed_variant_is_a_complete_sample() {
+        let root = scratch("sealed-sample");
+        let pkg = "com.example.demo.domain";
+        let main = main_dir(&root, pkg);
+        fs::create_dir_all(&main).unwrap();
+        fs::write(
+            main.join("Outcome.java"),
+            sealed_java(pkg, "Outcome", &["Accepted".into(), "Rejected".into()]),
+        )
+        .unwrap();
+        let field = parse_fields(&["result:Outcome".to_string()])
+            .unwrap()
+            .remove(0);
+
+        let project = crate::model::Project::inspect(&root).unwrap();
+        let (sample, imports) = sample_in_package(&field, &project, pkg).unwrap();
+
+        assert_eq!(sample, "new Outcome.Accepted()");
+        assert!(imports.is_empty());
+    }
+
+    /// A collection component must be copied (so the record is genuinely
+    /// immutable) and default to empty (so no consumer has to null-check a
+    /// bucket).
+    #[test]
+    fn collection_components_are_copied_and_default_to_empty() {
+        let fields = parse_fields(&[
+            "matched:list<Match>".to_string(),
+            "rates:map<string,double>".to_string(),
+        ])
+        .unwrap();
+        let src = value_java("com.example.demo", "Result", &fields);
+
+        assert!(src.contains("List<Match> matched"), "{src}");
+        assert!(
+            src.contains("matched = matched == null ? List.of() : List.copyOf(matched);"),
+            "{src}"
+        );
+        assert!(
+            src.contains("rates = rates == null ? Map.of() : Map.copyOf(rates);"),
+            "{src}"
+        );
+        assert!(
+            !src.contains("requireNonNull(matched"),
+            "a collection is defaulted, not rejected: {src}"
+        );
+    }
+
+    #[test]
+    fn record_java_emits_a_record_with_a_null_rejecting_compact_constructor() {
+        let fields =
+            parse_fields(&["amount:long".to_string(), "currency:string".to_string()]).unwrap();
+        let src = record_java("com.example.demo", "Money", &fields);
+
+        // Primitive components make null impossible for numeric/boolean values: a
+        // `long` cannot be null, so it needs neither the box nor the check.
+        assert!(
+            src.contains("public record Money(long amount, String currency) {"),
+            "{src}"
+        );
+        assert!(
+            src.contains("public Money {"),
+            "expected a compact constructor"
+        );
+        assert!(
+            !src.contains("requireNonNull(amount"),
+            "a primitive cannot be null"
+        );
+        assert!(src.contains(r#"Objects.requireNonNull(currency, "currency");"#));
+        // Plain Java: no framework persistence annotations.
+        for forbidden in ["@", "org.springframework"] {
+            assert!(
+                !src.contains(forbidden),
+                "{forbidden} should not appear in a plain record"
+            );
+        }
+    }
+
+    /// A record whose components are all primitives cannot hold a null, so the
+    /// compact constructor would be empty -- and an empty one is noise.
+    #[test]
+    fn record_java_omits_the_compact_constructor_when_every_component_is_primitive() {
+        let fields = parse_fields(&["amount:long".to_string(), "count:int".to_string()]).unwrap();
+        let src = record_java("com.example.demo", "Tally", &fields);
+
+        assert!(
+            src.contains("public record Tally(long amount, int count) {"),
+            "{src}"
+        );
+        assert!(
+            !src.contains("public Tally {"),
+            "nothing to validate: {src}"
+        );
+        assert!(!src.contains("import java.util.Objects;"));
+    }
+
+    /// A no-field record has nothing to null-check, so the compact constructor
+    /// (and the Objects import that only exists to serve it) must be omitted
+    /// rather than emitted empty.
+    #[test]
+    fn record_java_omits_the_compact_constructor_when_there_are_no_fields() {
+        let src = record_java("com.example.demo", "Marker", &[]);
+
+        assert!(src.contains("public record Marker() {"));
+        assert!(!src.contains("public Marker {"));
+        assert!(!src.contains("import java.util.Objects;"));
+    }
+
+    #[test]
+    fn record_java_sorts_time_imports_with_the_objects_import() {
+        let fields = parse_fields(&["on:date".to_string()]).unwrap();
+        let src = record_java("com.example.demo", "Entry", &fields);
+
+        let time = src.find("import java.time.LocalDate;").unwrap();
+        let objects = src.find("import java.util.Objects;").unwrap();
+        assert!(time < objects, "java.time should sort before java.util");
+    }
+
+    /// The compact constructor's validation is real behaviour and can
+    /// regress. An accessor round-trip cannot: it asserts that javac
+    /// generated an accessor, which `java.md` §7 names as a thing not to
+    /// test.
+    #[test]
+    fn record_test_pins_the_validation_and_not_the_accessors() {
+        let fields =
+            parse_fields(&["amount:long".to_string(), "currency:string".to_string()]).unwrap();
+        let test = record_test(
+            &crate::model::Project::inspect(Path::new("/tmp/does-not-matter")).unwrap(),
+            "com.example.demo",
+            "Money",
+            &fields,
+        );
+
+        assert!(test.contains("class MoneyTest"));
+        assert!(test.contains("assertThatNullPointerException()"));
+        // `amount` is a primitive, so the null case has to target the first
+        // *reference* component or the generated test would not compile.
+        assert!(test.contains("new Money(1L, null)"), "{test}");
+
+        assert!(
+            !test.contains("accessorsReturnWhatWasConstructed"),
+            "{test}"
+        );
+        assert!(
+            !test.contains("assertThat(money.amount()).isEqualTo(1L);"),
+            "testing the compiler: {test}"
+        );
+    }
+
+    /// A record with nothing to validate has nothing honest to assert, so it
+    /// says so rather than emitting a green tick over an unproven type.
+    #[test]
+    fn a_record_with_no_validation_gets_a_disabled_todo_rather_than_a_tick() {
+        let fields = parse_fields(&["amount:long".to_string()]).unwrap();
+        let test = record_test(
+            &crate::model::Project::inspect(Path::new("/tmp/does-not-matter")).unwrap(),
+            "com.example.demo",
+            "Money",
+            &fields,
+        );
+        assert!(test.contains("@Disabled("), "{test}");
+        assert!(test.contains("todo: state what Money guarantees"), "{test}");
+        assert!(
+            test.contains("import org.junit.jupiter.api.Disabled;"),
+            "{test}"
+        );
+        assert!(!test.contains("assertThatNullPointerException"), "{test}");
+    }
+
+    /// With no fields there is no null to reject, so the test that asserts the
+    /// rejection would not compile -- it must not be emitted.
+    #[test]
+    fn record_test_skips_the_null_case_for_a_no_field_record() {
+        let test = record_test(
+            &crate::model::Project::inspect(Path::new("/tmp/does-not-matter")).unwrap(),
+            "com.example.demo",
+            "Marker",
+            &[],
+        );
+
+        assert!(!test.contains("assertThatNullPointerException"));
+        assert!(!test.contains(
+            "import static org.assertj.core.api.Assertions.assertThatNullPointerException;"
+        ));
+        assert!(test.contains("new Marker()"));
+    }
+}

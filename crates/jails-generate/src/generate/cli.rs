@@ -372,3 +372,71 @@ pub(super) fn planned_entry_point(
     }
     Some(qualified(cli_package, &format!("{name}Cli")))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_java_returns_an_exit_code_and_never_exits_the_process() {
+        let src = command_java("com.example.demo", "Greet");
+
+        assert!(src.contains("public final class GreetCommand"));
+        assert!(src.contains(r#"public static final String NAME = "greet";"#));
+        assert!(
+            src.contains("public static int run(PrintStream out, PrintStream err, String... args)")
+        );
+        // A CLI command has no business depending on Spring.
+        assert!(!src.contains("org.springframework"));
+
+        // The whole point: main owns the exit, so the command stays testable
+        // in-process, and output goes to injected streams, not System.out.
+        // Only the class body is checked -- the Javadoc deliberately shows a
+        // `main` that does call System.exit, since that is where it belongs.
+        let body = &src[src.find("public final class").unwrap()..];
+        assert!(
+            !body.contains("System.exit"),
+            "run() must not exit the process"
+        );
+        assert!(
+            !body.contains("System.out"),
+            "output should go to the injected stream"
+        );
+    }
+
+    #[test]
+    fn command_test_drives_the_command_through_captured_streams() {
+        let test = command_test("com.example.demo", "Greet");
+
+        assert!(test.contains("class GreetCommandTest"));
+        assert!(test.contains("ByteArrayOutputStream"));
+        assert!(
+            test.contains("GreetCommand.run(new PrintStream(out), new PrintStream(err), args)")
+        );
+        assert!(test.contains("GreetCommand.USAGE_ERROR"));
+    }
+
+    /// The shape `is_dispatcher` looks for, which is what `new-cli` writes.
+    fn dispatcher_java() -> &'static str {
+        "package com.example.demo;\n\
+         \n\
+         import java.util.LinkedHashMap;\n\
+         import java.util.SequencedMap;\n\
+         \n\
+         public class App {\n\
+         \x20   static SequencedMap<String, Command> commands() {\n\
+         \x20       SequencedMap<String, Command> commands = new LinkedHashMap<>();\n\
+         \x20       return commands;\n\
+         \x20   }\n\
+         }\n"
+    }
+
+    /// The dispatcher's own Javadoc carries an example `commands.put(...)`
+    /// line. Unregistering must not reach into it -- that is documentation,
+    /// not a registration.
+    #[test]
+    fn unsplice_registration_leaves_an_unregistered_command_alone() {
+        let source = dispatcher_java();
+        assert!(unsplice_registration(source, "GreetCommand").is_none());
+    }
+}

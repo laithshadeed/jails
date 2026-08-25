@@ -128,13 +128,20 @@ Four things to know before touching it:
     `ensure_failsafe`, `ensure_assertj`, `tidy_blank_lines`.
   - `generate/scaffold.rs` — `scaffold` and its evolution step `g field`.
 
-  **The test module still lives in `generate.rs`**, not beside each
-  submodule, which is the one place this tree does not follow the colocated
-  convention. Moving it is a real improvement and was attempted and backed
-  out: the tests contain Java strings full of braces, so a mechanical
-  extractor cut them mid-identifier. Do it by hand, a few at a time, or not
-  at all — `scratch()` is already hoisted to module level so a submodule
-  test mod can use it.
+  **The tests are colocated now**, and the extraction that failed twice
+  succeeded on the third attempt for one reason worth keeping: **a
+  brace-matching splitter must blank string literals first.** These tests are
+  full of Java, so ending an item at the next line that is exactly `}` cuts one
+  mid-literal. Blank comments and string literals — `r#"…"#` included — to
+  spaces of the *same length*, count braces in the blanked copy, then slice the
+  original. That is `java::blanked()`'s trick applied to Rust, and
+  `tests/architecture/measure.rs` has the implementation the gates use.
+
+  901 lines moved out: 16 tests to `generate/domain.rs`, 10 to `generate/web.rs`,
+  5 to `generate/repository.rs`, 4 to `generate/cli.rs`, and 13 to
+  `crates/jails-spec/src/spec/field.rs` — those last were testing the field spec
+  through this file's re-export, so they belong to the crate that owns it. The
+  nine that stayed are the nine about `generate.rs` itself.
 - `crates/jails-generate/src/add.rs` — `add`/`remove`/`sync`/`preflight`: the orchestration that
   grows or shrinks an existing project by a whole slice (dependency + code +
   test, and for `db`/`kafka` a compose service). `Capability` is a

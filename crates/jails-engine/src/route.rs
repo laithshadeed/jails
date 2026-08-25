@@ -134,3 +134,66 @@ fn relative_path(project: &Project, path: &std::path::Path) -> Result<ProjectPat
         .ok_or_else(|| format!("{} is not valid UTF-8", relative.display()))?;
     ProjectPath::parse(text)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A refusal that names `jails g <kind>` names a command that exists.
+    ///
+    /// `label` reads clap's own `ValueEnum` rather than a second table, so the
+    /// word in a message and the word the parser accepts cannot drift apart.
+    #[test]
+    fn a_kinds_label_is_the_word_clap_accepts() {
+        for kind in ArtifactKind::value_variants() {
+            let spelled = label(*kind);
+            assert_eq!(
+                ArtifactKind::from_str(&spelled, false).unwrap(),
+                *kind,
+                "`{spelled}` is what a refusal prints, so it has to parse back"
+            );
+        }
+    }
+
+    /// The smallest tree `Project::load` accepts: a pom and one class to read
+    /// the base package off.
+    fn project(label: &str) -> (jails_support::scratch::ScratchDir, Project) {
+        let root = jails_support::scratch::ScratchDir::in_temp(label).unwrap();
+        let sources = root.path().join("src/main/java/com/example/demo");
+        std::fs::create_dir_all(&sources).unwrap();
+        std::fs::write(
+            root.path().join("pom.xml"),
+            "<project><modelVersion>4.0.0</modelVersion><groupId>com.example</groupId>\
+             <artifactId>demo</artifactId><version>0.0.1</version></project>",
+        )
+        .unwrap();
+        std::fs::write(
+            sources.join("App.java"),
+            "package com.example.demo;\n\npublic class App {}\n",
+        )
+        .unwrap();
+        let project = Project::load(root.path()).unwrap();
+        (root, project)
+    }
+
+    #[test]
+    fn a_path_inside_the_project_is_claimed_by_its_project_relative_name() {
+        let (root, project) = project("route-relative");
+        let path = root.path().join("src/main/java/com/example/demo/App.java");
+        assert_eq!(
+            relative_path(&project, &path).unwrap().as_str(),
+            "src/main/java/com/example/demo/App.java"
+        );
+    }
+
+    /// A path outside the project is a refusal, not a `..` walk out of it.
+    #[test]
+    fn a_path_outside_the_project_is_refused_by_naming_both() {
+        let (_root, project) = project("route-outside");
+        let message = relative_path(&project, std::path::Path::new("/etc/passwd")).unwrap_err();
+        assert!(
+            message.contains("/etc/passwd") && message.contains("cannot claim it"),
+            "got {message}"
+        );
+    }
+}

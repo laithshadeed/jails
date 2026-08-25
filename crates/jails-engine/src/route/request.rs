@@ -584,3 +584,69 @@ pub(super) fn asked_capabilities(
     let syntax: Vec<&str> = syntax.iter().map(String::as_str).collect();
     Asked::plain(request, command, &syntax)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jails_protocol::identity::Package;
+
+    fn fields(tokens: &[&str]) -> Vec<FieldSpec> {
+        let base = Package::parse("com.example.demo").unwrap();
+        tokens
+            .iter()
+            .map(|token| FieldSpec::parse(token, &base).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn an_index_named_in_column_spelling_is_translated_to_the_field_it_means() {
+        let fields = fields(&["createdAt:instant", "name:string"]);
+        assert_eq!(as_field_names("created_at", &fields), "createdAt");
+        assert_eq!(as_field_names("name", &fields), "name");
+    }
+
+    #[test]
+    fn an_ordering_survives_the_translation() {
+        let fields = fields(&["createdAt:instant"]);
+        assert_eq!(as_field_names("created_at desc", &fields), "createdAt desc");
+    }
+
+    #[test]
+    fn a_composite_index_translates_every_part_and_keeps_the_order() {
+        let fields = fields(&["tenantId:string", "createdAt:instant"]);
+        assert_eq!(
+            as_field_names("tenant_id, created_at desc", &fields),
+            "tenantId, createdAt desc"
+        );
+    }
+
+    /// A token naming neither a field nor a column is left exactly as typed.
+    ///
+    /// Rewriting it into something plausible here would rob `IndexSpec::parse`
+    /// of the refusal that lists the fields that *are* declared, which is the
+    /// only message a reader can act on.
+    #[test]
+    fn a_token_that_names_nothing_is_passed_through_untouched() {
+        let fields = fields(&["name:string"]);
+        assert_eq!(as_field_names("nonesuch", &fields), "nonesuch");
+    }
+
+    #[test]
+    fn a_dispatcher_in_the_base_package_gets_no_directory() {
+        let ty = jails_protocol::identity::JavaType::parse("App").unwrap();
+        assert_eq!(
+            dispatcher_source(&ty).unwrap().as_str(),
+            "src/main/java/App.java"
+        );
+    }
+
+    #[test]
+    fn a_dispatcher_in_a_package_lands_under_the_directory_that_package_names() {
+        let ty =
+            jails_protocol::identity::JavaType::parse("com.example.demo.cli.AdminCli").unwrap();
+        assert_eq!(
+            dispatcher_source(&ty).unwrap().as_str(),
+            "src/main/java/com/example/demo/cli/AdminCli.java"
+        );
+    }
+}

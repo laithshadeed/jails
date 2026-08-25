@@ -675,3 +675,206 @@ class {name}HandlerTest {{
 "#
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resource_path_is_kebab_case_and_plural() {
+        assert_eq!(resource_path("WorkItem"), "/work-items");
+        assert_eq!(resource_path("Import"), "/imports");
+    }
+
+    /// A handler binds, routes and maps outcomes to status codes -- and holds
+    /// no rules, so the same service can be driven from the CLI.
+    #[test]
+    fn handler_maps_outcomes_to_status_codes() {
+        let src = handler_java("com.example.demo.api", "WorkItem", "");
+
+        assert!(src.contains("implements HttpHandler"), "{src}");
+        assert!(src.contains(r#"PATH = "/work-items""#), "{src}");
+        assert!(
+            src.contains("private final Service service"),
+            "the service is a dependency: {src}"
+        );
+        assert!(src.contains("error(404"), "{src}");
+        assert!(
+            src.contains("error(422"),
+            "well-formed but rejected is not a 400: {src}"
+        );
+        assert!(
+            src.contains("ApiError"),
+            "failures share one envelope: {src}"
+        );
+        assert!(!src.contains("java.sql"), "no storage in a handler: {src}");
+    }
+
+    #[test]
+    fn handler_test_drives_it_over_a_real_socket() {
+        let test = handler_test("com.example.demo.api", "WorkItem");
+
+        assert!(test.contains("java.net.http.HttpClient"), "{test}");
+        assert!(
+            test.contains("new InetSocketAddress(0)"),
+            "an ephemeral port: {test}"
+        );
+        assert!(test.contains("isEqualTo(422)"), "{test}");
+    }
+
+    #[test]
+    fn stub_class_emits_a_plain_final_class_with_no_framework_in_it() {
+        let src = stub_class("gym", "MoneyMoved");
+
+        assert_eq!(
+            src, "package gym;\n\npublic final class MoneyMoved {\n}\n",
+            "{src}"
+        );
+        for forbidden in ["@", "org.springframework", "record "] {
+            assert!(
+                !src.contains(forbidden),
+                "{forbidden} should not appear in a plain class"
+            );
+        }
+    }
+
+    /// The companion test has to compile against the class jails just wrote,
+    /// which means constructing it with the implicit no-arg constructor -- the
+    /// only one a bare class has.
+    #[test]
+    fn class_test_constructs_the_class_it_accompanies() {
+        let src = class_test("gym", "MoneyMoved");
+
+        assert!(src.contains("class MoneyMovedTest {"), "{src}");
+        assert!(
+            src.contains("MoneyMoved moneyMoved = new MoneyMoved();"),
+            "{src}"
+        );
+        assert!(src.contains("import org.junit.jupiter.api.Test;"), "{src}");
+        // The three defects of the old `isNotNull()` body: it passed while
+        // the class was broken, it counted as coverage, and it taught `null`
+        // as a constructor argument.
+        assert!(
+            !src.contains("isNotNull"),
+            "a test that passes over a broken class is worse than no test: {src}"
+        );
+        assert!(src.contains("@Disabled("), "{src}");
+        assert!(
+            src.contains("todo: state what MoneyMoved is supposed to do"),
+            "the disabled reason has to say what to prove: {src}"
+        );
+    }
+
+    /// The default endpoint: what `g controller Post` emits with no flags.
+    fn plain_endpoint() -> crate::generate::web::Endpoint<'static> {
+        crate::generate::web::Endpoint {
+            method: jails_spec::spec::kind::HttpMethod::Get,
+            returns: None,
+            accepts: None,
+            extra: String::new(),
+        }
+    }
+
+    /// Every verb reaches the annotation, the handler name and the test that
+    /// calls it -- and the three agree, which is the whole reason
+    /// `web::Endpoint` is one value rather than three derivations.
+    #[test]
+    fn a_controller_answers_the_method_it_was_asked_for() {
+        use jails_spec::spec::kind::HttpMethod;
+        for (method, mapping) in [
+            (HttpMethod::Post, "PostMapping"),
+            (HttpMethod::Put, "PutMapping"),
+            (HttpMethod::Patch, "PatchMapping"),
+            (HttpMethod::Delete, "DeleteMapping"),
+        ] {
+            let endpoint = crate::generate::web::Endpoint {
+                method,
+                ..plain_endpoint()
+            };
+            let source = stub_controller("com.example.blog", "Post", &endpoint);
+            assert!(
+                source.contains(&format!("@{mapping}(\"/post\")")),
+                "{source}"
+            );
+            assert!(
+                source.contains(&format!(
+                    "import org.springframework.web.bind.annotation.{mapping};"
+                )),
+                "{source}"
+            );
+            let test = controller_stub_test("com.example.blog", "Post", "x.Y", &endpoint, 4);
+            assert!(
+                test.contains(&format!("mvc.{}().uri(\"/post\")", method.label())),
+                "{test}"
+            );
+        }
+    }
+
+    /// A verb that carries no body must not be given a `@RequestBody`
+    /// parameter: it is not forbidden by HTTP and it never binds, so a
+    /// parameter there would be a silent nothing.
+    #[test]
+    fn only_a_verb_with_a_body_takes_a_request_body() {
+        use jails_spec::spec::kind::HttpMethod;
+        for (method, expected) in [(HttpMethod::Post, true), (HttpMethod::Get, false)] {
+            let endpoint = crate::generate::web::Endpoint {
+                method,
+                accepts: Some("Verify"),
+                ..plain_endpoint()
+            };
+            assert_eq!(
+                stub_controller("com.example.blog", "Post", &endpoint).contains("@RequestBody"),
+                expected,
+                "{method:?}"
+            );
+        }
+    }
+
+    /// The `sample_value` rule, applied to a route: jails cannot build a
+    /// `Verification`, so the test is emitted whole and `@Disabled` naming
+    /// what to do rather than asserting a body jails invented.
+    #[test]
+    fn a_route_returning_a_project_type_is_tested_but_disabled() {
+        let endpoint = crate::generate::web::Endpoint {
+            returns: Some("Verification"),
+            ..plain_endpoint()
+        };
+        let test = controller_stub_test("com.example.blog", "Post", "x.Y", &endpoint, 4);
+        assert!(test.contains("@Disabled"), "{test}");
+        assert!(
+            test.contains("import org.junit.jupiter.api.Disabled;"),
+            "{test}"
+        );
+        assert!(!test.contains("bodyText()"), "{test}");
+
+        let plain = controller_stub_test("com.example.blog", "Post", "x.Y", &plain_endpoint(), 4);
+        assert!(!plain.contains("@Disabled"), "{plain}");
+        assert!(plain.contains("bodyText()"), "{plain}");
+    }
+
+    #[test]
+    fn stub_templates_use_the_package_and_class_name() {
+        assert!(
+            stub_controller("com.example.blog", "Post", &plain_endpoint())
+                .contains("class PostController")
+        );
+        // Package-private: Spring wires these by reflection, so `public` only
+        // widens what other packages can compile against.
+        assert!(
+            stub_service("com.example.blog", "Post").contains("\n@Component\nclass PostService")
+        );
+        assert!(
+            !stub_service("com.example.blog", "Post").contains("public class"),
+            "spring.md §2: public only where the type is module API"
+        );
+        assert!(
+            !stub_controller("com.example.blog", "Post", &plain_endpoint())
+                .contains("public class"),
+            "spring.md §2: public only where the type is module API"
+        );
+        assert!(
+            interface_java("com.example.blog", "PostStore").contains("public interface PostStore")
+        );
+        assert!(stub_test("com.example.blog", "Post").contains("class PostTest"));
+    }
+}

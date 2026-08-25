@@ -1147,4 +1147,152 @@ mod repository_test_generation_tests {
         assert!(!source.contains("@SpringBootTest"), "{source}");
         std::fs::remove_dir_all(root).unwrap();
     }
+
+    /// The invariant that keeps a scaffold able to *start*: exactly one
+    /// adapter is a bean. Two makes Spring refuse to choose; zero leaves the
+    /// service with no repository at all.
+    #[test]
+    fn exactly_one_repository_adapter_carries_the_bean_annotation() {
+        let columns = crate::sql::columns(
+            &parse_fields(&["id:string!".to_string(), "title:string".to_string()]).unwrap(),
+            &crate::model::Project::inspect(Path::new("/tmp/does-not-matter")).unwrap(),
+            "com.example.app.domain",
+            "note",
+        );
+        let jdbc_bean = jdbc_client_repository(
+            "com.example.app.adapters",
+            "Note",
+            "",
+            &columns,
+            "com.example.app.domain",
+        );
+        let in_memory_fake = crate::spring::in_memory_repository_java(
+            "com.example.app.adapters",
+            "Note",
+            "",
+            Some("id"),
+            false,
+        );
+        // The annotation on the declaration, not the word in the Javadoc.
+        assert!(
+            jdbc_bean.contains("@Component\npublic final class"),
+            "{jdbc_bean}"
+        );
+        assert!(
+            !in_memory_fake.contains("@Component\npublic class"),
+            "the JDBC adapter is the bean here, so this one must not be: {in_memory_fake}"
+        );
+        assert!(
+            !in_memory_fake.contains("import org.springframework.stereotype.Component;"),
+            "an unused import would fail a strict build: {in_memory_fake}"
+        );
+
+        // ...and the other way round, before `add db` has run.
+        let in_memory_bean = crate::spring::in_memory_repository_java(
+            "com.example.app.adapters",
+            "Note",
+            "",
+            Some("id"),
+            true,
+        );
+        assert!(
+            in_memory_bean.contains("@Component\npublic class"),
+            "{in_memory_bean}"
+        );
+    }
+
+    /// `spring.md` calls a positional `?` list in a multi-column insert a
+    /// silent-swap bug waiting for a schema change, and the generator used to
+    /// emit exactly that.
+    #[test]
+    fn the_spring_adapter_binds_by_name_and_shares_one_column_list() {
+        let columns = crate::sql::columns(
+            &parse_fields(&[
+                "id:uuid".to_string(),
+                "amount:long".to_string(),
+                "currency:string".to_string(),
+            ])
+            .unwrap(),
+            &crate::model::Project::inspect(Path::new("/tmp/does-not-matter")).unwrap(),
+            "com.example.app.domain",
+            "reward",
+        );
+        let src = jdbc_client_repository(
+            "com.example.app.adapters",
+            "Reward",
+            "",
+            &columns,
+            "com.example.app.domain",
+        );
+        assert!(src.contains("JdbcClient"), "{src}");
+        assert!(!src.contains("PreparedStatement"), "{src}");
+        // Named, not positional.
+        assert!(src.contains(".param(\"amount\""), "{src}");
+        assert!(src.contains(":amount"), "{src}");
+        assert!(!src.contains("setObject("), "{src}");
+        // One column list, interpolated into the reads.
+        assert!(src.contains("private static final String COLUMNS"), "{src}");
+        assert!(src.contains(".formatted(COLUMNS)"), "{src}");
+    }
+
+    /// The whole point of a port: application code must be able to depend on
+    /// it without dragging JDBC along -- including in the prose, since a
+    /// reader grepping for java.sql should find only the adapter.
+    #[test]
+    fn repository_port_is_free_of_jdbc() {
+        let src = repository_port(
+            "com.example.demo.app",
+            "Transaction",
+            "import com.example.demo.domain.Transaction;\n",
+        );
+
+        assert!(
+            src.contains("public interface TransactionRepository"),
+            "{src}"
+        );
+        assert!(
+            src.contains("Optional<Transaction> findById(String id)"),
+            "{src}"
+        );
+        assert!(src.contains("List<Transaction> findAll()"), "{src}");
+        assert!(!src.contains("java.sql"), "not even in a comment: {src}");
+    }
+
+    #[test]
+    fn jdbc_adapter_uses_plain_jdbc_and_no_orm() {
+        let src = jdbc_repository(
+            "com.example.demo.adapters",
+            "Transaction",
+            "",
+            &[],
+            "com.example.demo.domain",
+        );
+
+        assert!(src.contains("implements TransactionRepository"), "{src}");
+        assert!(src.contains("connection.prepareStatement"), "{src}");
+        assert!(src.contains("try (var query"), "try-with-resources: {src}");
+        assert!(
+            src.contains("order by id"),
+            "unordered findAll would flake a test: {src}"
+        );
+        assert!(
+            src.contains("\"\"\""),
+            "SQL should be visible in text blocks: {src}"
+        );
+        {
+            let forbidden = "org.springframework";
+            assert!(!src.contains(forbidden), "{forbidden} should not appear");
+        }
+    }
+
+    /// jails cannot know the columns, so map/bind are TODOs -- and a test that
+    /// asserts on a TODO is noise until they are written.
+    #[test]
+    fn jdbc_adapter_test_is_disabled_until_the_mapping_is_written() {
+        let test = jdbc_repository_test("com.example.demo.adapters", "Transaction");
+
+        assert!(test.contains("@Disabled"), "{test}");
+        assert!(test.contains("class JdbcTransactionRepositoryIT"), "{test}");
+        assert!(test.contains("roundTripsThroughTheRealDatabase"), "{test}");
+    }
 }

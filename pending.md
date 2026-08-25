@@ -1048,20 +1048,40 @@ restart each:
   `tests/cli/`. `include_str!` is relative to the file, so every manifest path
   gained a `../`.
 
-### 8.3 The colocated-test convention has two exceptions
+### 8.3 The colocated-test convention has two exceptions — **done 2026-08-25**
 
-- **`crates/jails-generate/src/generate.rs`** carries **1,020** lines of tests
-  belonging to its submodules (`domain`, `web`, `repository`, `cli`,
-  `migration`, `scaffold`, `write`). `CLAUDE.md` documents why a mechanical
-  extraction failed: the tests contain Java strings full of braces, so a
-  brace-matching splitter cut them mid-identifier. Still true. Move them by hand
-  a few at a time — `scratch()` is already hoisted so a submodule test mod can
-  use it — or stop calling it a convention.
-- **`jails-engine` has zero `#[cfg(test)]` modules.** It is the crate that
-  assembles whole commands, and every assertion about it lives in
-  `tests/engine.rs` and `tests/cli.rs`. Defensible (whole commands are
-  integration-shaped) but it means `route.rs`'s shared helpers have no direct
-  test at all. 7.1's split is the moment to add them.
+- **`crates/jails-generate/src/generate.rs`** carried **1,020** lines of tests
+  belonging to its submodules. `CLAUDE.md` documented why a mechanical
+  extraction had failed: the tests contain Java strings full of braces, so a
+  brace-matching splitter cut them mid-identifier.
+
+  That is exactly the trap §8.2's splitter had just been taught to avoid, so the
+  extraction was mechanical after all — blank comments and string literals to
+  spaces of the same length, count braces in the blanked copy, slice the
+  original. 901 lines moved: 16 tests to `generate/domain.rs`, 10 to
+  `generate/web.rs`, 5 to `generate/repository.rs`, 4 to `generate/cli.rs`.
+
+  **Thirteen went further than the item asked.** `field_type_*`, the column
+  markers and every `parse_fields_*` test were testing `jails-spec`'s field
+  spec through `generate.rs`'s re-export, so they went to
+  `crates/jails-spec/src/spec/field.rs` — the crate that owns the code. The
+  file was 1,474 lines and is 572; the nine tests still there are the nine
+  about `generate.rs` itself (`strip_redundant_suffix`, `capitalize`,
+  `find_project_root`, `base_package`, and the cross-table sample check).
+
+- **`jails-engine` has zero `#[cfg(test)]` modules** — it had, and now has nine
+  tests over the helpers `tests/engine.rs` could only reach through a whole
+  command: `route::label` (every `ArtifactKind`'s printed spelling parses back,
+  so a refusal naming `jails g <kind>` names one that exists),
+  `route::relative_path` (both directions, including the refusal), and
+  `request::as_field_names` / `request::dispatcher_source`, the two pure
+  translations at the request boundary.
+
+  `as_field_names` is the one worth having: `--index created_at` is column
+  spelling for a field called `createdAt`, and the pass-through case — a token
+  naming neither — is load-bearing, because rewriting it into something
+  plausible would rob `IndexSpec::parse` of the refusal that lists the fields
+  that *are* declared.
 
 ### 8.4 `playground/` — **untracked 2026-08-25**
 
