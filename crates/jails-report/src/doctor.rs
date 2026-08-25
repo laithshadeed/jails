@@ -25,7 +25,6 @@ use crate::compose;
 use crate::generate::find_project_root;
 use crate::inspect;
 use crate::pom;
-use crate::run;
 use jails_support::Result;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -496,7 +495,7 @@ fn compose_checks(project: &Project) -> Vec<Check> {
         format!("compose.yaml declares: {}", services.join(", ")),
     ));
 
-    if !run::find_on_path("docker") {
+    if !crate::process::on_path("docker") {
         checks.push(
             Check::new(
                 Status::Fail,

@@ -43,7 +43,7 @@ what is still outstanding, re-measured rather than transcribed.
 
 ## Workspace
 
-Twelve crates, lowest first. A crate may only depend on one below it, and
+Thirteen crates, lowest first. A crate may only depend on one below it, and
 Cargo enforces that; `no_module_depends_on_a_layer_above_its_own` in
 `tests/architecture.rs` enforces the same rule for module-level edges the
 compiler cannot see, and assigns every module its crate. **That table
@@ -62,11 +62,12 @@ module belongs to** — this one is the prose, and prose is what goes stale.
 | `jails-generate` | everything that decides what Java to write: `generate`, `spring`, `add`, `sql`. Its planning half (`plan_for`, `artifacts_for`) is what the engine calls and is pure. |
 | `jails-prepare` | **turning semantic desire into an exact executable transition**: `desire`, `reconcile`, `pipeline`, `merge`, `sandbox`, `report`. Plan-only — nothing here creates `.jails/` or commits anything. Everything a commit needs to *decide* is decided here, so the executor applies a value rather than re-deriving one. |
 | `jails-commit` | **making a prepared transition durable, and recovering one**: `store`, `journal`, `execute`, `activate`, `recover`, `gc`. Crash recovery rolls a fully persisted, validated journal *forward*; preimages exist for a guarded explicit abort and for audit, not as the crash policy. That is what keeps this crate small — there is one direction to finish in. |
-| `jails-tooling` | commands that drive a toolchain or report on a project: `run`, `testd`, `doctor`, `why` and the rest. Two jobs in one name; `pending.md` §7.6. |
+| `jails-report` | commands that **answer a question**: `doctor`, `why`, `explain`, `source`, `commands`. Read-only by contract, and the contract is structural — this crate sits *below* `jails-drive`, so a reporting command that started something would not compile. |
+| `jails-drive` | commands that **start something**: `run`, `testd`, `launcher`, `affected`, `migrate`, `kafka`, `console`, `bench`, `lint`, `reports`. The one edge back down is `run` → `report::why`, because `mvn spring-boot:run` exits 0 over a failed startup. |
 | `jails-engine` | **one request, as one transition.** `route` and its submodules are where a parsed command becomes a capture, a desire, a preparation and a commit. Above the executor because it drives it; below the CLI because it is not about arguments. |
 | `jails` (root) | the binary: `main`, `new`, `app`, `invoke`, and `tests/`. |
 
-`jails-engine` and `jails-tooling` sit at the same level and do not reference
+`jails-engine` and `jails-drive` sit at the same level and do not reference
 each other; so do `jails-generate` and `jails-prepare`. The layering is a DAG,
 not a line, and `LAYERS` records it as one number per module because a
 same-level edge is allowed.
@@ -251,7 +252,7 @@ Four things to know before touching it:
   saying `adapter = "persistence"` that silently kept writing to `adapters`
   would be worse than no file. Read through the `place` closure in
   `generate`/`destroy`/`add`, so a renamed layer is renamed everywhere.
-- `crates/jails-tooling/src/kafka.rs` — `jails kafka`: the broker counterpart to `jails db`. Runs
+- `crates/jails-drive/src/kafka.rs` — `jails kafka`: the broker counterpart to `jails db`. Runs
   the image's own CLI tools inside the compose container, so nothing is
   installed. Note `BROKER` is `kafka:19092`, the *inter-broker* listener —
   `localhost:9092` is the host-side advertised one and works from inside the
@@ -259,7 +260,7 @@ Four things to know before touching it:
   `TOPIC` constant out of source, using `java::blanked()` to locate the
   declaration and the **original** string to read the value, since `blanked`
   replaces the quotes too.
-- `crates/jails-tooling/src/migrate.rs` — `jails migrate --check`: applies every migration to a
+- `crates/jails-drive/src/migrate.rs` — `jails migrate --check`: applies every migration to a
   scratch database (`create database` / `drop database` around the run) and
   reports the first failure with psql's file and line. **Not a `doctor`
   check** — doctor is read-only by contract and this writes. Ordering is
@@ -282,7 +283,7 @@ Four things to know before touching it:
   Marked service blocks so `add db` and `add kafka` stack, and `remove` can
   take one service out without touching the other. Also `start`/`stop`
   (`docker compose up/stop`) and the auto-start `run` shells out to.
-- `crates/jails-tooling/src/launcher.rs` — `jails test --fast`: JUnit's console launcher over the
+- `crates/jails-drive/src/launcher.rs` — `jails test --fast`: JUnit's console launcher over the
   already-compiled classes, no Maven. Three things worth knowing before
   touching it. **The console artifact's version must equal the project's own
   JUnit version** — a mismatch resolves fine and dies at run time with
@@ -294,7 +295,7 @@ Four things to know before touching it:
   And **`--fast` does not beat `mvnd`**: `plan.md` §19.1 has the numbers, it is
   the no-mvnd path and the substrate for `jails testd`, and it must not be
   described as faster than the default.
-- `crates/jails-tooling/src/testd.rs` + `templates/testd/JailsTestDaemon.java` — `jails testd`: a
+- `crates/jails-drive/src/testd.rs` + `templates/testd/JailsTestDaemon.java` — `jails testd`: a
   resident JVM over a unix socket. **0.06-0.10 s against `--fast`'s 0.62 s**
   for one test method, measured; §19.2 says why, and it is not the launcher --
   the first JUnit session in a JVM is 464 ms against 20 ms warm, and a cold
@@ -313,7 +314,7 @@ Four things to know before touching it:
   And it is **a Java program, not a jails jar**: the daemon is a template
   compiled by `java`'s single-file source launcher at start-up, and nothing
   about it enters the project.
-- `crates/jails-tooling/src/affected.rs` + `crates/jails-java/src/classfile.rs` — `jails testd --affected`: a reverse
+- `crates/jails-drive/src/affected.rs` + `crates/jails-java/src/classfile.rs` — `jails testd --affected`: a reverse
   dependency index built from the constant pools already in `target/`.
   `classfile.rs` is **the smallest reader that can answer "which types does
   this class name"** and must not grow into a class-file parser (same rule as
@@ -329,9 +330,9 @@ Four things to know before touching it:
   writes, because a marker makes the same command select differently on two
   consecutive runs with no edit between, and after a red run with nothing
   changed it would select nothing and report green.
-- `crates/jails-tooling/src/run.rs` — `test`/`build`/`clean`/`run`, shells to `mvn`/`mvnd`. `run`/`watch`
+- `crates/jails-drive/src/run.rs` — `test`/`build`/`clean`/`run`, shells to `mvn`/`mvnd`. `run`/`watch`
   start compose services first when `compose.yaml` is present.
-- `crates/jails-tooling/src/console.rs` — `db`/`dbconsole` (`psql` or `sqlite3`) and `console`/`c`
+- `crates/jails-drive/src/console.rs` — `db`/`dbconsole` (`psql` or `sqlite3`) and `console`/`c`
   (`jshell` + Maven classpath). Interactive; inherit stdio.
 - `crates/jails-java/src/java.rs` — a deliberately small Java reader shared by `inspect`,
   `doctor` and `rename`: annotations and what they are attached to, a type's
@@ -345,7 +346,7 @@ Four things to know before touching it:
   context: instant, and works on a project that does not start (the case
   that matters). The cost is anything decided at runtime, which the output
   states rather than hiding.
-- `crates/jails-tooling/src/doctor.rs` + `crates/jails-tooling/src/doctor/` — `doctor`. Split by **who is being asked**:
+- `crates/jails-drive/src/doctor.rs` + `crates/jails-report/src/doctor/` — `doctor`. Split by **who is being asked**:
   `doctor/environment.rs` asks the machine (is Maven there, which JDK will run,
   is the container engine up and is it the one Testcontainers will find),
   `doctor/wiring.rs` asks the project whether a capability is actually wired up,
@@ -367,7 +368,7 @@ Four things to know before touching it:
   carries a `fix:` line (an integration test asserts this), and a failure
   exits non-zero via an *empty* `Err` so `main` prints no redundant
   `jails: ` line.
-- `crates/jails-tooling/src/why.rs` — `why`. A table of (signature, explanation, fix) rules
+- `crates/jails-drive/src/why.rs` — `why`. A table of (signature, explanation, fix) rules
   matched against a log. Rules sharing a `group` describe one failure
   through different messages and only the most specific is reported. Add
   rules only from failures that actually happened; a guessed cause costs
@@ -511,7 +512,7 @@ Four things to know before touching it:
   twenty-one-defect ledger, and the friction ledger. **Never hand-edit a
   generated proof app to make it pass** — a manual edit is evidence for the
   next generic improvement and belongs in the friction ledger.
-- `crates/jails-tooling/src/source.rs` — `jails src <Type>`: where a type's source is. The one
+- `crates/jails-drive/src/source.rs` — `jails src <Type>`: where a type's source is. The one
   command that deliberately does **not** require a build file — "where is this
   type" is a question about a directory, and the case it exists for (jumping
   into a library checkout) is often asked from a repo that is not a Maven
@@ -519,12 +520,12 @@ Four things to know before touching it:
   three `Status.java` files is ordinary and choosing silently sends an editor
   to the wrong one. The package is read off the `package` line, not derived
   from the path, since a checkout's layout does not always match its packages.
-- `crates/jails-tooling/src/bench.rs` — `jails bench`: runs the k6 script `add loadtest` wrote,
+- `crates/jails-drive/src/bench.rs` — `jails bench`: runs the k6 script `add loadtest` wrote,
   after stating the load profile. **It does not parse k6's output** — k6 prints
   p95/p99 and its own thresholds decide pass/fail, and k6 is not installed on
   this machine, so a parser would be written against a format nobody has seen.
   `plan.md` §19.6's p99 is still unmeasured and says so.
-- `crates/jails-tooling/src/rename.rs` — `rename`. Textual by design (see its module docs for
+- `crates/jails-drive/src/rename.rs` — `rename`. Textual by design (see its module docs for
   when to prefer jdt.ls `grn`): whole identifiers only, string literals left
   alone and the skipped count reported.
 - `tests/common/mod.rs` + `tests/cli.rs` — integration tests against the
@@ -550,13 +551,13 @@ Four things to know before touching it:
   because select-then-insert reopens the race. Domain-blind by construction:
   scope is a string the caller picks, the request is bytes the caller
   canonicalises, and the stored result is opaque.
-- `crates/jails-tooling/src/explain.rs` — `jails explain <kind>`: why each artifact is shaped the
+- `crates/jails-drive/src/explain.rs` — `jails explain <kind>`: why each artifact is shaped the
   way it is, and the trap it invites. **A hand-written table, deliberately** —
   a rationale is prose with nowhere to derive it from — so it is held to
   `why.rs`'s shape: a value in a table, one edit per kind, with
   `every_kind_has_an_explanation` failing the build when a kind is added
   without one. That is what stops it becoming the editor lists.
-- `crates/jails-tooling/src/commands.rs` — `jails commands [--json]`: every subcommand, generator
+- `crates/jails-drive/src/commands.rs` — `jails commands [--json]`: every subcommand, generator
   kind, capability and flag, walked out of the same `clap::Command` that parses
   the arguments and the same `ValueEnum`s that validate them. **There is no
   second list**, which is the point — adding a kind is one edit and this output

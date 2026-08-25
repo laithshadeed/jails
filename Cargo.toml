@@ -22,17 +22,18 @@ nix = { version = "0.31.3", default-features = false, features = ["process", "si
 tempfile = "3.27"
 
 jails-commit = { path = "crates/jails-commit" }
+jails-drive = { path = "crates/jails-drive" }
 jails-engine = { path = "crates/jails-engine" }
 jails-generate = { path = "crates/jails-generate" }
 jails-java = { path = "crates/jails-java" }
 jails-prepare = { path = "crates/jails-prepare" }
 jails-project = { path = "crates/jails-project" }
 jails-protocol = { path = "crates/jails-protocol" }
+jails-report = { path = "crates/jails-report" }
 jails-spec = { path = "crates/jails-spec" }
 jails-state = { path = "crates/jails-state" }
 jails-support = { path = "crates/jails-support" }
 jails-testkit = { path = "crates/jails-testkit" }
-jails-tooling = { path = "crates/jails-tooling" }
 
 # One place for the lint policy, so a new crate cannot quietly opt out of it.
 [workspace.lints.rust]
@@ -57,7 +58,8 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-jails-tooling.workspace = true
+jails-drive.workspace = true
+jails-report.workspace = true
 jails-engine.workspace = true
 jails-prepare.workspace = true
 jails-generate.workspace = true

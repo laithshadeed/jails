@@ -585,7 +585,12 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // reason as the largest-module row: `Result`'s error type is
                 // `Failure` now, so `Err(format!(..))` sites gained `.into()`
                 // and rustfmt wrapped a few of them. `pending.md` §6.5.
-                ceiling: 1481,
+                //
+                // 1481 -> 1479 when `jails-tooling` split into `jails-report`
+                // and `jails-drive` (§7.6): `doctor` stopped importing
+                // `crate::run`, which was its only reason to name the crate
+                // that starts processes.
+                ceiling: 1479,
                 // Withdrawn, not reached. abstract.md §8.0.1 audits all ten
                 // checks: none is a re-encoded dependency fact, so the 700
                 // measured a saving that is not there. Ratchet against growth.
@@ -1005,22 +1010,24 @@ const LAYERS: &[(&str, &str, usize)] = &[
     // jails-engine: one request, as one transition. Above the executor because
     // it drives it, and below the CLI because it is not about arguments.
     ("jails-engine", "route", 8),
-    // jails-tooling: commands that drive a toolchain or report on a project.
-    ("jails-tooling", "run", 8),
-    ("jails-tooling", "launcher", 8),
-    ("jails-tooling", "testd", 8),
-    ("jails-tooling", "affected", 8),
-    ("jails-tooling", "doctor", 8),
-    ("jails-tooling", "why", 8),
-    ("jails-tooling", "kafka", 8),
-    ("jails-tooling", "migrate", 8),
-    ("jails-tooling", "console", 8),
-    ("jails-tooling", "bench", 8),
-    ("jails-tooling", "reports", 8),
-    ("jails-tooling", "lint", 8),
-    ("jails-tooling", "source", 8),
-    ("jails-tooling", "explain", 8),
-    ("jails-tooling", "commands", 8),
+    // jails-report: commands that answer a question. Read-only by contract,
+    // and below `jails-drive` so the contract is structural.
+    ("jails-report", "doctor", 7),
+    ("jails-report", "why", 7),
+    ("jails-report", "explain", 7),
+    ("jails-report", "commands", 7),
+    ("jails-report", "source", 7),
+    // jails-drive: commands that start something.
+    ("jails-drive", "run", 8),
+    ("jails-drive", "launcher", 8),
+    ("jails-drive", "testd", 8),
+    ("jails-drive", "affected", 8),
+    ("jails-drive", "kafka", 8),
+    ("jails-drive", "migrate", 8),
+    ("jails-drive", "console", 8),
+    ("jails-drive", "bench", 8),
+    ("jails-drive", "reports", 8),
+    ("jails-drive", "lint", 8),
     // jails-cli: the binary and the whole-project lifecycle commands.
     ("jails", "new", 9),
     ("jails", "app", 9),

@@ -33,7 +33,6 @@ use std::time::Duration;
 
 use crate::compose;
 use crate::generate::find_project_root;
-use crate::run;
 
 /// Apply the project's migrations to a scratch database, then drop it.
 ///
@@ -55,7 +54,7 @@ pub fn check(no_start: bool, debug: bool) -> Result<()> {
          migrations to"
             .to_string()
     })?;
-    if !run::find_on_path("psql") {
+    if !crate::process::on_path("psql") {
         return Err("psql not on PATH -- install the postgres client and try again".into());
     }
     if !no_start {

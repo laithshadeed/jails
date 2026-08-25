@@ -181,16 +181,17 @@ dependencies = [
  "clap",
  "clap_complete",
  "jails-commit",
+ "jails-drive",
  "jails-engine",
  "jails-generate",
  "jails-java",
  "jails-prepare",
  "jails-project",
  "jails-protocol",
+ "jails-report",
  "jails-spec",
  "jails-support",
  "jails-testkit",
- "jails-tooling",
  "tempfile",
 ]
 
@@ -202,6 +203,19 @@ dependencies = [
  "jails-prepare",
  "jails-protocol",
  "jails-state",
+ "jails-support",
+]
+
+[[package]]
+name = "jails-drive"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "jails-generate",
+ "jails-java",
+ "jails-project",
+ "jails-report",
+ "jails-spec",
  "jails-support",
 ]
 
@@ -274,6 +288,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "jails-report"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "jails-generate",
+ "jails-java",
+ "jails-project",
+ "jails-spec",
+ "jails-support",
+]
+
+[[package]]
 name = "jails-spec"
 version = "0.1.0"
 dependencies = [
@@ -302,18 +328,6 @@ dependencies = [
 [[package]]
 name = "jails-testkit"
 version = "0.1.0"
-
-[[package]]
-name = "jails-tooling"
-version = "0.1.0"
-dependencies = [
- "clap",
- "jails-generate",
- "jails-java",
- "jails-project",
- "jails-spec",
- "jails-support",
-]
 
 [[package]]
 name = "libc"

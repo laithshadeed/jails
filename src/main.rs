@@ -2,13 +2,12 @@
 // `crate::ledger` and `crate::template`. A facade at the root rather than an
 // import line in every file: the paths a reader already knows stay correct,
 // and Cargo enforces the boundary either way.
+pub(crate) use jails_drive::{bench, console, kafka, lint, migrate, run, testd};
 pub(crate) use jails_generate::{add, generate};
 pub(crate) use jails_java::template;
 pub(crate) use jails_project::{compose, inspect, model, pom, project};
+pub(crate) use jails_report::{commands, doctor, explain, source, why};
 pub(crate) use jails_support::apply;
-pub(crate) use jails_tooling::{
-    bench, commands, console, doctor, explain, kafka, lint, migrate, run, source, testd, why,
-};
 mod app;
 mod arguments;
 mod dispatch;
@@ -1048,7 +1047,7 @@ fn main() -> std::process::ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jails_tooling::commands;
+    use jails_report::commands;
 
     #[test]
     fn visible_aliases_are_carried_because_completion_cannot_see_hidden_ones() {

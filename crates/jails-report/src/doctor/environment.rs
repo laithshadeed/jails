@@ -17,7 +17,6 @@ use super::wiring::property_value;
 use super::{Check, Status};
 use crate::model::Project;
 use crate::pom;
-use crate::run;
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs as _};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -53,11 +52,11 @@ pub(super) fn maven_check(project: &Project) -> Check {
     if binary.is_absolute() || label.starts_with("./") {
         return Check::new(Status::Ok, "maven", format!("project wrapper ({label})"));
     }
-    if run::find_on_path(&label) {
+    if crate::process::on_path(&label) {
         return Check::new(
             Status::Ok,
             "maven",
-            match label == "mvn" && run::find_on_path("mvnd") {
+            match label == "mvn" && crate::process::on_path("mvnd") {
                 true => "mvn on PATH; mvnd is installed but could not start".to_string(),
                 false => format!("{label} on PATH (no wrapper)"),
             },

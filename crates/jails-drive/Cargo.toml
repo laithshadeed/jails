@@ -1,0 +1,16 @@
+[package]
+name = "jails-drive"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+clap.workspace = true
+jails-generate.workspace = true
+jails-java.workspace = true
+jails-project.workspace = true
+jails-report.workspace = true
+jails-spec.workspace = true
+jails-support.workspace = true
+
+[lints]
+workspace = true

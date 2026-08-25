@@ -47,10 +47,6 @@ mod fingerprint;
 mod gradlew;
 use filter::*;
 
-pub(crate) fn find_on_path(bin: &str) -> bool {
-    crate::process::on_path(bin)
-}
-
 /// Run a command with our stdio, failing on a non-zero exit.
 ///
 /// A thin adapter over the one executor: the callers here build a

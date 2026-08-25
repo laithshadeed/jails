@@ -354,7 +354,7 @@ deleted (§7.1). Where the remaining 54 live:
    3  crates/jails-generate/src/spring/durable.rs §7.7
    2  crates/jails-project/src/compose.rs
    2  crates/jails-project/src/config.rs
-   2  crates/jails-tooling/src/testd.rs
+   2  crates/jails-drive/src/testd.rs
    2  src/new/publish.rs                          §5 — keep, see there
    1  each: add/database.rs, generate/scaffold.rs, merge.rs,
         console.rs, doctor.rs, run.rs
@@ -867,20 +867,32 @@ It was eight modules and four subjects, plus `Result`, `debug_cmd` and
 
 What is left is coherent: **write, run, encode.**
 
-### 7.6 `jails-tooling` is two crates wearing one name
+### 7.6 `jails-tooling` was two crates wearing one name — **split 2026-08-25**
 
-17 modules, two unrelated jobs:
+17 modules, two unrelated jobs. They are `jails-report` and `jails-drive` now:
 
-- **Drives a toolchain** (starts processes, may write): `run`, `testd`,
-  `launcher`, `affected`, `reports`, `migrate`, `kafka`, `console`, `bench`,
-  `lint`
-- **Answers a question** (read-only by contract): `doctor`, `why`, `explain`,
-  `commands`, `source`
+- **`jails-report` answers a question** and is read-only by contract: `doctor`,
+  `why`, `explain`, `commands`, `source`.
+- **`jails-drive` starts something**: `run`, `testd`, `launcher`, `affected`,
+  `reports`, `migrate`, `kafka`, `console`, `bench`, `lint`.
 
-`doctor` is read-only *by contract* and currently lives one `use` away from
-`run::mvn`. Splitting into `jails-drive` and `jails-report` makes that contract
-structural: the reporting crate simply could not depend on the crate that starts
-things. **Lowest-priority crate split of the three** — do it after 6.3 and 6.5.
+**The contract is structural rather than a promise.** `doctor` used to live one
+`use` away from `run::mvn`; `jails-report` cannot depend on `jails-drive`
+because `jails-drive` depends on *it*, so a reporting command that started
+something would not compile.
+
+Two things worth knowing about the direction.
+
+**It goes the way round the original item did not expect.** §7.6 imagined the
+reporting crate simply not depending on the driving one; in fact the edge exists
+and points *down* — `run` → `report::why`, because `mvn spring-boot:run` exits 0
+over a failed startup, so `run` pipes its own output and explains the failure
+inline. That is a better arrangement than two unrelated crates: the dependency
+is real, it is one-way, and it puts the read-only crate underneath.
+
+**Severing `doctor` took one deletion.** `run::find_on_path` was a one-line
+alias for `process::on_path`, and it was `doctor`'s only reason to name `run` at
+all. The `doctor` module-lines ratchet fell 1481 → 1479 as a result.
 
 ### 7.7 `jails-generate` still writes
 
@@ -908,7 +920,7 @@ The architecture board's own listing, today:
   624  jails-project/src/config.rs           jails.toml parse | LAYERS_IN_ORDER | writeback
   622  jails-project/src/inspect.rs
   619  src/main.rs
-  614  jails-tooling/src/doctor/wiring.rs
+  614  jails-report/src/doctor/wiring.rs
 ```
 
 (Production lines, comments and `#[cfg(test)]` blanked. Print it with

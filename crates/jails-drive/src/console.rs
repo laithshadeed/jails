@@ -65,7 +65,7 @@ fn sqlite3(root: &Path, file: &Path, args: &[String], debug: bool) -> Result<()>
 }
 
 fn db_client(name: &str) -> Result<PathBuf> {
-    if run::find_on_path(name) {
+    if crate::process::on_path(name) {
         return Ok(PathBuf::from(name));
     }
     Err(format!("{name} not on PATH -- install the {name} client and try again").into())
@@ -94,7 +94,7 @@ pub fn console(no_build: bool, args: &[String], debug: bool) -> Result<()> {
 }
 
 fn find_jshell() -> Option<PathBuf> {
-    if run::find_on_path("jshell") {
+    if crate::process::on_path("jshell") {
         return Some(PathBuf::from("jshell"));
     }
     let home = std::env::var_os("JAVA_HOME")?;

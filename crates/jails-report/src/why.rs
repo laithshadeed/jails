@@ -571,7 +571,7 @@ fn print_report(found: &[Diagnosis]) {
 /// plugin return normally -- prints BUILD SUCCESS over the top of a stack
 /// trace. Without this, `jails run` reports success for an app that never
 /// came up.
-const FATAL_MARKERS: [&str; 4] = [
+pub const FATAL_MARKERS: [&str; 4] = [
     // Spring's own log line when the context fails to refresh.
     "Application run failed",
     // The failure-analyzer banner, for the failures it has a report for.
@@ -580,13 +580,13 @@ const FATAL_MARKERS: [&str; 4] = [
     "Exception in thread \"restartedMain\"",
 ];
 
-pub(crate) fn looks_fatal(log: &str) -> bool {
+pub fn looks_fatal(log: &str) -> bool {
     FATAL_MARKERS.iter().any(|marker| log.contains(marker))
 }
 
 /// Explain a captured run that failed. Returns how many failures were
 /// recognised, so the caller can say something useful about zero.
-pub(crate) fn report(log: &str) -> usize {
+pub fn report(log: &str) -> usize {
     let found = explain(log);
     print_report(&found);
     found.len()
