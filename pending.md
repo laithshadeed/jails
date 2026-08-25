@@ -466,36 +466,54 @@ That is the shape a future `ordered_by` helper would take, if a third appears.
 The byte-level output is unchanged, and that is not an assumption: the golden
 suite and the ledger round-trip tests compare bytes, and 1,169 tests pass.
 
-### 6.2 One validated request, parsed at the edge
+### 6.2 One validated request, parsed at the edge — **done 2026-08-25**
 
-A single `jails generate` still exists in four shapes:
+A single `jails generate` existed in four shapes, and the manifest path built
+three of them before anything was checked: `.jails/app.toml` →
+`app::ResolvedIntent` (carrying the deprecated `strategy_on` aliases) →
+`route::Intent` → `IntentSpec`.
 
-```
-  clap `Command::Generate { kind, name, fields: Vec<String>, … }`   strings
-  src/app.rs:104  ResolvedIntent                                    strings
-  jails-engine/src/route/app.rs:43  Intent                          strings
-  jails-protocol/src/declaration.rs:268  IntentSpec                 validated
-```
+**`ResolvedIntent` is deleted.** `GenerateIntent::finish` produces a
+`route::Intent` directly, and the aliases are resolved by the parser that read
+them — file-format syntax should not survive its own parser. Its three methods
+became three free functions over `Intent` in the same module, `fingerprint`
+still `#[cfg(test)]`.
 
-Validation happens in `IntentSpec::parse`, called from inside the route — after
-the run has started. The manifest path is worse: `.jails/app.toml` →
-`ResolvedIntent` (with the deprecated `strategy_on` aliases) → `route::Intent` →
-`IntentSpec`. Three copies before anything is checked.
+**The route parses once.** `request::intent` (eight arguments, four of them
+unused for long enough to have grown `_` prefixes) and `request::spec` (seven)
+are one `request::declared(project, recipe, package) -> Declared { id, spec }`.
+Both call sites — `artifact::generate` and the manifest loop — were already
+building the same `Recipe` and then passing its parts to the two functions
+separately.
 
-Parse once, at each edge, into one value holding the already-parsed `Recipe`,
-`Name`, `Package`, `Vec<FieldSpec>`, `Vec<IndexSpec>` and resolved
-`on`/`yields`. `ResolvedIntent` and `route::Intent` both collapse into it. The
-manifest's deprecated-alias handling stays in `src/app/manifest.rs` where it
-belongs: it is file-format syntax and should not survive past the parser.
+The second parse is gone with them. Translating `--index created_at` into the
+field it names needs the fields, so the arguments were parsed once for the
+translation and then again inside `IntentSpec::parse`;
+`IntentSpec::from_arguments` takes the parsed value, and `parse` is now a
+two-line wrapper over it, so it stays the one authority on what a valid
+declaration is.
 
-Note `jails-protocol/src/request.rs:46` already declares
-`CanonicalRequestSyntaxV1` — the name is taken and the concept is half-present,
-which is worth checking before inventing a third.
+**The `too_many_arguments` escape hatch is closed** — `deny`, not `allow`. Its
+comment claimed 21 generator functions were waiting on a parameter-struct
+refactor; re-measured, there were **nine**, and one of the five carrying a local
+`#[allow]` no longer had eight arguments at all. Each took the parameter object
+its arguments were already a group of:
 
-Payoff: a malformed manifest is refused **before** the transition starts, the
-double parse in the route disappears, and the workspace-wide
-`too_many_arguments = "allow"` (`Cargo.toml:23`, whose comment says it is
-waiting on exactly this) can come out.
+| was | now |
+|---|---|
+| `pipeline::assemble`, 9 | `Produced` — what one preparation produced, plus `Produced::nothing()` for the two degenerate cases |
+| `sql::finish`, 8 | the finished non-optional `Column` and one `bool`; the caller already knew all seven values |
+| `repository::jdbc_repository_test_{for,with_wiring}`, 7 and 9 | `Subject` — the two adjacent `&str` triples were an ordering nothing could catch |
+| `new_cli` and `new_offline`, 8 and 9 | the `Request` that already existed for `jails new` |
+| `request::{intent,spec}`, 8 and 7 | `Declared`, above |
+| `ledger::record_outputs` | nothing: it had three arguments and a stale `#[allow]` |
+
+**One claim in this item was not met, and it could not have been.** "Parsed at
+the edge" cannot mean at clap-parse time: a `FieldSpec` is parsed against the
+project's base `Package`, which is not known until the project resolves. What
+is true is that every parse now happens once, before the lock — `app_apply`
+plans every row before any of them commits, so a malformed manifest is still
+refused before a transition writes anything.
 
 ### 6.3 One field model — **the round trip is gone; one parser is still two**
 

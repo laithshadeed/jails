@@ -309,7 +309,28 @@ impl IntentSpec {
         timestamps: bool,
         base: &Package,
     ) -> Result<Self> {
-        let arguments = IntentArguments::parse(recipe, argument_tokens, base)?;
+        Self::from_arguments(
+            recipe,
+            IntentArguments::parse(recipe, argument_tokens, base)?,
+            index_tokens,
+            timestamps,
+        )
+    }
+
+    /// The same declaration, from arguments somebody has already parsed.
+    ///
+    /// The caller that needs this is the one translating `--index created_at`
+    /// into the field it names: that translation needs the fields, so the
+    /// arguments have to be parsed before the indexes can be. Handing the
+    /// parsed value back in is what stops the tokens being parsed a second
+    /// time here -- and it keeps [`Self::parse`] the one authority on what a
+    /// valid declaration is, because that is now this function.
+    pub fn from_arguments(
+        recipe: Recipe,
+        arguments: IntentArguments,
+        index_tokens: &[String],
+        timestamps: bool,
+    ) -> Result<Self> {
         if !index_tokens.is_empty() && arguments.shape() != ArgumentShape::Fields {
             return Err(format!(
                 "`{}` does not take fields, so there is nothing for an index to name.",

@@ -117,14 +117,16 @@ fn column(field: &Field, project: &crate::model::Project, pkg: &str, receiver: &
             write = optional_write(&inner, &accessor);
         }
         return finish(
-            name,
-            sql_type,
-            not_null,
+            Column {
+                name,
+                sql_type,
+                not_null,
+                read: Some(read),
+                write: Some(write),
+                java_type: inner.clone(),
+                constraints: field.constraints,
+            },
             optional,
-            read,
-            write,
-            &inner,
-            field.constraints,
         );
     }
 
@@ -137,14 +139,16 @@ fn column(field: &Field, project: &crate::model::Project, pkg: &str, receiver: &
             format!("{accessor}.name()")
         };
         return finish(
-            name,
-            "text".into(),
-            not_null,
+            Column {
+                name,
+                sql_type: "text".into(),
+                not_null,
+                read: Some(read),
+                write: Some(write),
+                java_type: inner.clone(),
+                constraints: field.constraints,
+            },
             optional,
-            read,
-            write,
-            &inner,
-            field.constraints,
         );
     }
 
@@ -161,27 +165,27 @@ fn column(field: &Field, project: &crate::model::Project, pkg: &str, receiver: &
 
 /// Wrap the mapping for an `Optional` component. The column stays the same;
 /// only the two expressions change.
-fn finish(
-    name: String,
-    sql_type: String,
-    not_null: bool,
-    optional: bool,
-    read: String,
-    write: String,
-    inner: &str,
-    constraints: crate::generate::Constraints,
-) -> Column {
+///
+/// It takes the finished non-optional column rather than the seven values it
+/// is made of, which is what it was: the caller already knows every one of
+/// them, and passing them separately meant the two branches could disagree
+/// about which column they were describing.
+fn finish(column: Column, optional: bool) -> Column {
     if !optional {
-        return Column {
-            name,
-            sql_type,
-            not_null,
-            read: Some(read),
-            write: Some(write),
-            java_type: inner.to_string(),
-            constraints,
-        };
+        return column;
     }
+    let Column {
+        name,
+        sql_type,
+        read,
+        write,
+        java_type: inner,
+        constraints,
+        ..
+    } = column;
+    let read = read.expect("a mapped column carries its read expression");
+    let write = write.expect("a mapped column carries its write expression");
+    let inner = inner.as_str();
     // A null column must come back as Optional.empty(), not as an Optional
     // wrapping null -- and `getLong` on a null column returns 0, not null,
     // so a primitive read has to be guarded by wasNull() rather than by a

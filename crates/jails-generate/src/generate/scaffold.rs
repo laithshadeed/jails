@@ -210,12 +210,14 @@ pub(crate) fn scaffold_artifacts_from_fields(
             path: test_dir(root, &adapters).join(format!("Jdbc{name}RepositoryIT.java")),
             contents: jdbc_repository_test_for(
                 slice.project(),
-                &adapters,
-                &domain,
-                &repository,
-                name,
-                parsed,
-                &columns,
+                &super::repository::Subject {
+                    pkg: &adapters,
+                    domain: &domain,
+                    repository: &repository,
+                    name,
+                    fields: parsed,
+                    columns: &columns,
+                },
             ),
         },
         Artifact {

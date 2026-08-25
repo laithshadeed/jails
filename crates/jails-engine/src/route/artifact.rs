@@ -20,13 +20,7 @@ use super::*;
 /// computed together and consumed together stops being a list.
 pub fn generate(run: &Run, recipe: &Recipe<'_>, package: Option<&str>) -> Result<Outcome> {
     let Recipe {
-        kind,
-        name,
-        fields,
-        indexes,
-        strategy_on: on,
-        strategy_yields: yields,
-        method,
+        kind, name, fields, ..
     } = *recipe;
     let project = run.project();
     let change = with_test_support(
@@ -38,12 +32,12 @@ pub fn generate(run: &Run, recipe: &Recipe<'_>, package: Option<&str>) -> Result
     // because there is no pom to splice it into. Said out loud, because the
     // alternative is a reader discovering it by reading the generated code.
     jails_generate::generate::report_degraded_shape(project, &change);
-    let id = intent(project, kind, name, package, fields, indexes, on, yields)?;
+    let Declared { id, spec } = declared(project, recipe, package)?;
     let owner = ResourceOwner::Entity(EntityId::Intent(id.clone()));
     let mut desired = desire::contribution(&owner, &change, project)?;
     let entity = DesiredEntity {
         id: EntityId::Intent(id.clone()),
-        spec: EntitySpec::Intent(spec(project, kind, fields, indexes, on, yields, method)?),
+        spec: EntitySpec::Intent(spec),
         owners: BTreeSet::from([OwnerId::DirectCli]),
     };
     provenance::stamp_files(
@@ -138,7 +132,7 @@ pub fn destroy(
         .into());
     }
     let project = run.project();
-    let id = intent(project, kind, name, package, &[], &[], None, None)?;
+    let id = identity(project, kind, name, package)?;
     let entity = EntityId::Intent(id.clone());
     let store = observed(project)?;
     if !store

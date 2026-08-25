@@ -18,16 +18,11 @@ use super::*;
 /// The package is resolved rather than optional: two rows for one artifact,
 /// one saying "wherever the convention puts it" and one naming the package it
 /// went to, are two authorities for one identity.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn intent(
+pub(super) fn identity(
     project: &Project,
     kind: ArtifactKind,
     name: &str,
     package: Option<&str>,
-    _fields: &[String],
-    _indexes: &[String],
-    _on: Option<&str>,
-    _yields: Option<&str>,
 ) -> Result<IntentId> {
     Ok(IntentId {
         recipe: kind,
@@ -39,44 +34,55 @@ pub(super) fn intent(
     })
 }
 
-/// What the artifact was asked for, as the content of its identity.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn spec(
+/// One artifact's identity and everything it was declared to be.
+///
+/// `pending.md` §6.2. These were two functions taking eight and seven
+/// positional arguments, and both call sites — `generate` and the manifest
+/// loop — passed each of them the same values off the same [`Recipe`] they had
+/// just built. Four of the eight were unused and had been for long enough to
+/// have grown `_` prefixes.
+///
+/// Parsing them together is what removes the second parse: translating
+/// `--index created_at` into the field it names needs the fields, so the
+/// arguments had to be parsed once for the translation and then again inside
+/// `IntentSpec::parse`. `IntentSpec::from_arguments` takes the parsed value
+/// instead, so a declaration is read exactly once per request.
+pub(super) struct Declared {
+    pub(super) id: IntentId,
+    pub(super) spec: IntentSpec,
+}
+
+pub(super) fn declared(
     project: &Project,
-    kind: ArtifactKind,
-    arguments: &[String],
-    indexes: &[String],
-    on: Option<&str>,
-    yields: Option<&str>,
-    method: Option<jails_spec::spec::kind::HttpMethod>,
-) -> Result<IntentSpec> {
+    recipe: &Recipe<'_>,
+    package: Option<&str>,
+) -> Result<Declared> {
     let base = Package::parse(project.base())?;
-    // Parsed once to translate the index spelling, then again inside
-    // `IntentSpec::parse`, which stays the one authority on what a valid
-    // declaration is. Two parses of a handful of tokens is cheaper than two
-    // places that decide whether a declaration is well formed.
-    let parsed = IntentArguments::parse(kind, arguments, &base)?;
-    let translated: Vec<String> = indexes
+    let arguments = IntentArguments::parse(recipe.kind, recipe.fields, &base)?;
+    let translated: Vec<String> = recipe
+        .indexes
         .iter()
-        .map(|index| as_field_names(index, parsed.fields()))
+        .map(|index| as_field_names(index, arguments.fields()))
         .collect();
-    let mut spec = IntentSpec::parse(
-        kind,
+    let mut spec = IntentSpec::from_arguments(
+        recipe.kind,
         arguments,
         &translated,
         // `--timestamps` is expanded into fields before a recipe ever sees it,
         // so by the time there is a spec the two extra components are ordinary
         // ones. Recording it again would make one request two facts.
         false,
-        &base,
     )?;
-    spec.on = on.map(JavaType::parse).transpose()?;
-    spec.yields = yields.map(JavaType::parse).transpose()?;
+    spec.on = recipe.strategy_on.map(JavaType::parse).transpose()?;
+    spec.yields = recipe.strategy_yields.map(JavaType::parse).transpose()?;
     // Recorded, not applied: an intent regenerated with a different verb is
     // the *same* entity with new content, which is what makes it an edit the
     // three-way merge can carry rather than an orphan and a rewrite.
-    spec.method = method;
-    Ok(spec)
+    spec.method = recipe.method;
+    Ok(Declared {
+        id: identity(project, recipe.kind, recipe.name, package)?,
+        spec,
+    })
 }
 
 /// An `--index` token as the RFC's canonical spelling.

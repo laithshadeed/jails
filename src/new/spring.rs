@@ -58,7 +58,7 @@ pub fn new(request: Request<'_>) -> Result<()> {
     let deps = deps_for_gradle.as_str();
 
     if offline {
-        return new_offline(name, group, package, deps, java, git, app, debug, pretend);
+        return new_offline(&request, deps);
     }
 
     let publication = publish::Publication::reserve(Path::new(name))?;
@@ -165,17 +165,18 @@ fn download_starter(
     Ok(())
 }
 
-fn new_offline(
-    name: &str,
-    group: Option<&str>,
-    package: Option<&str>,
-    deps: &str,
-    java: &str,
-    git: bool,
-    app: Option<&Path>,
-    debug: bool,
-    pretend: bool,
-) -> Result<()> {
+fn new_offline(request: &Request<'_>, deps: &str) -> Result<()> {
+    let Request {
+        name,
+        group,
+        package,
+        java,
+        git,
+        app,
+        debug,
+        pretend,
+        ..
+    } = *request;
     let release = java
         .parse::<u32>()
         .map_err(|_| format!("--java must be a release number, got `{java}`"))?;

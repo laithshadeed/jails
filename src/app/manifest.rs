@@ -30,13 +30,13 @@ pub(super) fn manifest_path(root: &Path, requested: Option<&Path>) -> Result<Pat
     Ok(path)
 }
 
-pub(super) fn read_manifest(path: &Path) -> Result<(Manifest, Vec<ResolvedIntent>)> {
+pub(super) fn read_manifest(path: &Path) -> Result<(Manifest, Vec<Intent>)> {
     let text =
         fs::read_to_string(path).map_err(|e| format!("failed to read {}: {e}", path.display()))?;
     parse_manifest(&text).map_err(|e| format!("{}: {e}", path.display()).into())
 }
 
-pub(super) fn parse_manifest(text: &str) -> Result<(Manifest, Vec<ResolvedIntent>)> {
+pub(super) fn parse_manifest(text: &str) -> Result<(Manifest, Vec<Intent>)> {
     let mut manifest = Manifest::default();
     let mut current: Option<GenerateIntent> = None;
     let mut resolved = Vec::new();
@@ -191,11 +191,11 @@ pub(super) fn parse_manifest(text: &str) -> Result<(Manifest, Vec<ResolvedIntent
     // R1.2's gate: duplicate identity refuses before any write.
     let mut seen = HashSet::new();
     for intent in &resolved {
-        let recipe = intent.recipe();
+        let recipe = recipe_of(intent);
         // The *recorded* name, so `fetcher Acquirer` and `fetcher
         // AcquirerFetcher` are caught as the one entity they generate into
         // rather than accepted as two and applied over each other.
-        let name = intent.recorded_name();
+        let name = recorded_name_of(intent);
         let package = intent.package.clone().unwrap_or_default();
         if !seen.insert((recipe.clone(), name.clone(), package.clone())) {
             return Err(format!(

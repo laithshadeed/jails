@@ -517,12 +517,14 @@ pub(crate) fn artifacts_for(
                 path: test_dir(&root, &adapters).join(format!("Jdbc{name}RepositoryIT.java")),
                 contents: jdbc_repository_test_for(
                     project,
-                    &adapters,
-                    &domain,
-                    &app,
-                    name,
-                    &record_fields,
-                    &columns,
+                    &repository::Subject {
+                        pkg: &adapters,
+                        domain: &domain,
+                        repository: &app,
+                        name,
+                        fields: &record_fields,
+                        columns: &columns,
+                    },
                 ),
             });
             artifacts

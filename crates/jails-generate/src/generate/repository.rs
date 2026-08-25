@@ -713,15 +713,9 @@ pub(super) fn jdbc_repository_test(pkg: &str, name: &str) -> String {
 /// from blessing an adapter which silently omitted part of the record. The
 /// Spring/JDBC gate keeps plain projects compilable: they do not have the
 /// annotations or an injectable repository port this test requires.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn jdbc_repository_test_for(
     project: &crate::model::Project,
-    pkg: &str,
-    domain: &str,
-    repository: &str,
-    name: &str,
-    fields: &[Field],
-    columns: &[crate::sql::Column],
+    subject: &Subject<'_>,
 ) -> String {
     // The projection, not the directory. In an `app apply` the whole manifest
     // is one transition, so `add db`'s `TestcontainersConfig` is not on disk
@@ -740,27 +734,41 @@ pub(super) fn jdbc_repository_test_for(
         repository_wiring(project),
         config_pkg.as_deref(),
         project,
+        subject,
+    )
+}
+
+/// The record a repository is for, and everything derived from it together.
+///
+/// Six values that are computed together and consumed together: the three
+/// packages the test has to import across, the record's name, its components
+/// and the exact column projection the adapter uses. They were six positional
+/// parameters, and the two `&str` triples in the middle were an ordering
+/// nothing but a compile error over `&str` versus `&str` would catch -- which
+/// is to say nothing.
+pub(super) struct Subject<'a> {
+    pub(super) pkg: &'a str,
+    pub(super) domain: &'a str,
+    pub(super) repository: &'a str,
+    pub(super) name: &'a str,
+    pub(super) fields: &'a [Field],
+    pub(super) columns: &'a [crate::sql::Column],
+}
+
+fn jdbc_repository_test_with_wiring(
+    wiring: RepositoryWiring,
+    testcontainers_pkg: Option<&str>,
+    project: &crate::model::Project,
+    subject: &Subject<'_>,
+) -> String {
+    let Subject {
         pkg,
         domain,
         repository,
         name,
         fields,
         columns,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn jdbc_repository_test_with_wiring(
-    wiring: RepositoryWiring,
-    testcontainers_pkg: Option<&str>,
-    project: &crate::model::Project,
-    pkg: &str,
-    domain: &str,
-    repository: &str,
-    name: &str,
-    fields: &[Field],
-    columns: &[crate::sql::Column],
-) -> String {
+    } = *subject;
     if fields.is_empty() {
         return jdbc_repository_test(pkg, name);
     }
@@ -987,12 +995,14 @@ mod repository_test_generation_tests {
             RepositoryWiring::JdbcClientBean,
             Some("com.example.demo"),
             &project,
-            "com.example.demo.adapters",
-            "com.example.demo.domain",
-            "com.example.demo.app",
-            "Transaction",
-            &fields,
-            &columns,
+            &Subject {
+                pkg: "com.example.demo.adapters",
+                domain: "com.example.demo.domain",
+                repository: "com.example.demo.app",
+                name: "Transaction",
+                fields: &fields,
+                columns: &columns,
+            },
         );
 
         assert!(
@@ -1031,12 +1041,14 @@ mod repository_test_generation_tests {
             RepositoryWiring::JdbcClientBean,
             None,
             &project,
-            "com.example.demo.adapters",
-            "com.example.demo.domain",
-            "com.example.demo.app",
-            "Transaction",
-            &fields,
-            &columns,
+            &Subject {
+                pkg: "com.example.demo.adapters",
+                domain: "com.example.demo.domain",
+                repository: "com.example.demo.app",
+                name: "Transaction",
+                fields: &fields,
+                columns: &columns,
+            },
         );
 
         assert!(source.contains("@Disabled"), "{source}");
@@ -1067,12 +1079,14 @@ mod repository_test_generation_tests {
             RepositoryWiring::JdbcClientBean,
             Some("com.example.demo"),
             &project,
-            "com.example.demo.adapters",
-            "com.example.demo.domain",
-            "com.example.demo.app",
-            "Transaction",
-            &fields,
-            &columns,
+            &Subject {
+                pkg: "com.example.demo.adapters",
+                domain: "com.example.demo.domain",
+                repository: "com.example.demo.app",
+                name: "Transaction",
+                fields: &fields,
+                columns: &columns,
+            },
         );
 
         assert!(adapter.contains("where reference = :id"), "{adapter}");
@@ -1103,12 +1117,14 @@ mod repository_test_generation_tests {
             RepositoryWiring::JdbcClientBean,
             Some("com.example.demo"),
             &project,
-            "com.example.demo.adapters",
-            "com.example.demo.domain",
-            "com.example.demo.app",
-            "Transaction",
-            &fields,
-            &columns,
+            &Subject {
+                pkg: "com.example.demo.adapters",
+                domain: "com.example.demo.domain",
+                repository: "com.example.demo.app",
+                name: "Transaction",
+                fields: &fields,
+                columns: &columns,
+            },
         );
 
         assert!(adapter.contains("findById requires a composite-key repository port"));
@@ -1133,12 +1149,14 @@ mod repository_test_generation_tests {
             RepositoryWiring::JdbcClientBean,
             None,
             &project,
-            "com.example.demo.adapters",
-            "com.example.demo.domain",
-            "com.example.demo.app",
-            "Transaction",
-            &fields,
-            &columns,
+            &Subject {
+                pkg: "com.example.demo.adapters",
+                domain: "com.example.demo.domain",
+                repository: "com.example.demo.app",
+                name: "Transaction",
+                fields: &fields,
+                columns: &columns,
+            },
         );
 
         assert!(source.contains("@Disabled"), "{source}");

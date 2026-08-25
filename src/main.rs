@@ -80,16 +80,29 @@ fn main() -> std::process::ExitCode {
             release,
             no_git,
             app,
-        } => new::new_cli(
-            &name,
-            group.as_deref(),
-            package.as_deref(),
-            &release,
-            !no_git,
-            app.as_deref(),
+        } => new::new_cli(&new::Request {
+            name: &name,
+            group: group.as_deref(),
+            package: package.as_deref(),
+            java: &release,
+            git: !no_git,
+            app: app.as_deref(),
             debug,
             pretend,
-        ),
+            // Spelled out rather than defaulted. `new-cli` writes a plain
+            // Maven project, so every Spring-shaped field below is one it has
+            // no flag for -- and a `..Default::default()` would let a new one
+            // arrive here silently rather than as a compile error asking what
+            // `new-cli` should do with it.
+            deps: "",
+            devtools: false,
+            offline: true,
+            gradle: false,
+            boot: None,
+            gradle_version: None,
+            jar_name: None,
+            jar_version: None,
+        }),
         Command::App { command } => app::run(command, invocation),
         Command::Generate {
             kind,

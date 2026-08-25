@@ -277,15 +277,17 @@ fn apply(
         base,
         semantics,
         PreparedKind::Apply,
-        operations,
-        directories,
-        objects,
-        ledger::Recorded {
-            outputs,
-            retired,
-            stamps,
+        Produced {
+            operations,
+            directories,
+            objects,
+            recorded: ledger::Recorded {
+                outputs,
+                retired,
+                stamps,
+            },
+            post_commit,
         },
-        post_commit,
         context,
     )
 }
@@ -350,17 +352,7 @@ fn finalise(
         PreparedKind::Finalise {
             origin: plan.origin.operation,
         },
-        Vec::new(),
-        Vec::new(),
-        BTreeMap::new(),
-        // A finalisation or an abort writes no new managed output: it
-        // resolves one that already exists, and the row it resolves is
-        // already in the store.
-        ledger::Recorded::default(),
-        // §R3.3: a conflict freezes semantic intent only, and an abort clears
-        // it. Neither materialises an executable effect -- a finalisation is
-        // the step that does, and that half waits on §R5.4's pending state.
-        Vec::new(),
+        Produced::nothing(),
         context,
     )
 }
@@ -426,17 +418,11 @@ fn abort_plan(
         PreparedKind::Abort {
             origin: plan.origin.operation,
         },
-        operations,
-        Vec::new(),
-        objects,
-        // A finalisation or an abort writes no new managed output: it
-        // resolves one that already exists, and the row it resolves is
-        // already in the store.
-        ledger::Recorded::default(),
-        // §R3.3: a conflict freezes semantic intent only, and an abort clears
-        // it. Neither materialises an executable effect -- a finalisation is
-        // the step that does, and that half waits on §R5.4's pending state.
-        Vec::new(),
+        Produced {
+            operations,
+            objects,
+            ..Produced::nothing()
+        },
         context,
     )
 }
@@ -594,17 +580,45 @@ fn parents(base: &ProjectSnapshot, operations: &[FileOp]) -> Result<Vec<Director
         .map(|path| DirectoryOp::Create { path })
         .collect())
 }
-fn assemble(
-    base: Arc<ProjectSnapshot>,
-    semantics: OperationSemanticsV1,
-    kind: PreparedKind,
+/// What one preparation produced, before it is stamped with an identity.
+///
+/// These five are computed together and consumed together -- `assemble` reads
+/// every one of them and nothing else does -- which is the point at which a
+/// list of parameters stops being a list. It also makes the two degenerate
+/// cases legible: [`Produced::nothing`] is what a finalisation prepares, and
+/// an abort is that plus the restores it is undoing.
+#[derive(Default)]
+struct Produced {
     operations: Vec<FileOp>,
     directories: Vec<DirectoryOp>,
     objects: ObjectBundle,
     recorded: ledger::Recorded,
     post_commit: Vec<jails_protocol::effect::PostCommitEffect>,
+}
+
+impl Produced {
+    /// No new managed output: a finalisation or an abort resolves a row that
+    /// already exists rather than writing one, and §R3.3 has neither
+    /// materialising an executable effect.
+    fn nothing() -> Self {
+        Self::default()
+    }
+}
+
+fn assemble(
+    base: Arc<ProjectSnapshot>,
+    semantics: OperationSemanticsV1,
+    kind: PreparedKind,
+    produced: Produced,
     context: PreparationContext,
 ) -> Result<PreparedBundle> {
+    let Produced {
+        operations,
+        directories,
+        objects,
+        recorded,
+        post_commit,
+    } = produced;
     let operation_identity = OperationIdentityV1 {
         snapshot: jails_protocol::snapshot::snapshot_digest(&context.read_set)?,
         operation_context: context.operation_context,

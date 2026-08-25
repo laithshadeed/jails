@@ -280,22 +280,36 @@ mod tests {
         assert!(src.contains("App.run("));
     }
 
+    /// What `jails new-cli` is asked for, with every Spring-shaped field at
+    /// the value that means "not asked" -- the same spelling `main.rs` uses.
+    fn plain_request<'a>(name: &'a str, git: bool) -> Request<'a> {
+        Request {
+            name,
+            group: None,
+            package: None,
+            java: crate::pom::TARGET_RELEASE,
+            git,
+            app: None,
+            debug: false,
+            pretend: false,
+            deps: "",
+            devtools: false,
+            offline: true,
+            gradle: false,
+            boot: None,
+            gradle_version: None,
+            jar_name: None,
+            jar_version: None,
+        }
+    }
+
     #[test]
     fn new_cli_writes_pom_and_sources_under_the_target_directory() {
         let _guard = CWD_LOCK.lock().unwrap();
         let workdir = scratch("new-cli");
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&workdir).unwrap();
-        let result = new_cli(
-            "demo-app",
-            None,
-            None,
-            crate::pom::TARGET_RELEASE,
-            false,
-            None,
-            false,
-            false,
-        );
+        let result = new_cli(&plain_request("demo-app", false));
         std::env::set_current_dir(&original_cwd).unwrap();
         result.unwrap();
 
@@ -320,16 +334,7 @@ mod tests {
         fs::create_dir_all(workdir.join("demo-app")).unwrap();
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&workdir).unwrap();
-        let result = new_cli(
-            "demo-app",
-            None,
-            None,
-            crate::pom::TARGET_RELEASE,
-            false,
-            None,
-            false,
-            false,
-        );
+        let result = new_cli(&plain_request("demo-app", false));
         std::env::set_current_dir(&original_cwd).unwrap();
 
         assert!(result.is_err());
@@ -341,16 +346,7 @@ mod tests {
         let workdir = scratch("new-cli-no-git");
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&workdir).unwrap();
-        let result = new_cli(
-            "demo-app",
-            None,
-            None,
-            crate::pom::TARGET_RELEASE,
-            false,
-            None,
-            false,
-            false,
-        );
+        let result = new_cli(&plain_request("demo-app", false));
         std::env::set_current_dir(&original_cwd).unwrap();
         result.unwrap();
 
@@ -365,16 +361,7 @@ mod tests {
         let workdir = scratch("new-cli-git");
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&workdir).unwrap();
-        let result = new_cli(
-            "demo-app",
-            None,
-            None,
-            crate::pom::TARGET_RELEASE,
-            true,
-            None,
-            false,
-            false,
-        );
+        let result = new_cli(&plain_request("demo-app", true));
         std::env::set_current_dir(&original_cwd).unwrap();
         result.unwrap();
 

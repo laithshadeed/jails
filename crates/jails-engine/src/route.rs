@@ -101,8 +101,8 @@ pub use session::{Outcome, Run};
 // `super::Asked` -- the seam is where the code lives, not a new vocabulary.
 use commit::{commit, commit_set, observed};
 use request::{
-    Asked, Request, asked_capabilities, declaration, declared_capabilities, intent,
-    record_capability, retiring, spec,
+    Asked, Declared, Request, asked_capabilities, declaration, declared, declared_capabilities,
+    identity, record_capability, retiring,
 };
 
 /// A kind as the word somebody types, taken from the same `ValueEnum` clap

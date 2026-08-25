@@ -11,6 +11,7 @@ use manifest::*;
 use crate::add::Capability;
 use crate::generate::{self, ArtifactKind};
 use clap::{Subcommand, ValueEnum};
+use jails_engine::route::Intent;
 use jails_support::Result;
 use std::collections::HashSet;
 use std::fs;
@@ -62,7 +63,17 @@ struct GenerateIntent {
 }
 
 impl GenerateIntent {
-    fn finish(self, number: usize) -> Result<ResolvedIntent> {
+    /// The row, as the engine takes it.
+    ///
+    /// One type rather than two. `pending.md` §6.2: a `[[generate]]` row used
+    /// to become a `ResolvedIntent` here, which became a `route::Intent` at
+    /// the call site, which became an `IntentSpec` inside the route -- three
+    /// copies of one request before anything checked it. The manifest's own
+    /// syntax is what justified the first of those, and it dies here instead:
+    /// the deprecated `strategy_on`/`strategy_yields` spellings are resolved
+    /// by the parser that read them, which is the only place that should ever
+    /// have known they exist.
+    fn finish(self, number: usize) -> Result<Intent> {
         let kind = self
             .kind
             .ok_or_else(|| format!("[[generate]] #{number} is missing `kind`"))?;
@@ -87,94 +98,58 @@ impl GenerateIntent {
                 .into());
             }
         }
-        Ok(ResolvedIntent {
+        Ok(Intent {
             kind,
             name,
             fields: self.fields,
             timestamps: self.timestamps,
             indexes: self.indexes,
             package: self.package,
-            strategy_on: self.strategy_on,
-            strategy_yields: self.strategy_yields,
+            on: self.strategy_on,
+            yields: self.strategy_yields,
             method: self.method,
         })
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct ResolvedIntent {
-    kind: ArtifactKind,
-    name: String,
-    fields: Vec<String>,
-    timestamps: bool,
-    indexes: Vec<String>,
-    package: Option<String>,
-    strategy_on: Option<String>,
-    strategy_yields: Option<String>,
-    method: Option<jails_spec::spec::kind::HttpMethod>,
+/// The recipe name as the ledger spells it -- clap's canonical value, never
+/// an alias, or one kind would be stored under two names.
+fn recipe_of(intent: &Intent) -> String {
+    intent
+        .kind
+        .to_possible_value()
+        .expect("every ArtifactKind has a clap value")
+        .get_name()
+        .to_string()
 }
 
-impl ResolvedIntent {
-    /// The same row, as the engine takes it.
-    ///
-    /// Two types rather than one on purpose: this one carries manifest syntax
-    /// -- the deprecated `strategy_on`/`strategy_yields` spellings, and the
-    /// `timestamps` flag that is expanded before any recipe sees it -- and the
-    /// engine has no business knowing about a file format.
-    fn declared(&self) -> jails_engine::route::Intent {
-        jails_engine::route::Intent {
-            kind: self.kind,
-            name: self.name.clone(),
-            fields: self.fields.clone(),
-            timestamps: self.timestamps,
-            indexes: self.indexes.clone(),
-            package: self.package.clone(),
-            on: self.strategy_on.clone(),
-            yields: self.strategy_yields.clone(),
-            method: self.method,
-        }
-    }
+/// The name the ledger row carries, which is what the duplicate check keys on.
+fn recorded_name_of(intent: &Intent) -> String {
+    generate::recorded_name(intent.kind, &intent.name)
+}
 
-    #[cfg(test)]
-    /// Identity **and** content, as one string.
-    ///
-    /// Named for what it is. It was called `key`, and being used as one is the
-    /// defect plan.md R1 names first: a key that mixes identity with content
-    /// cannot answer "is this the same entity?", so the manifest's duplicate
-    /// check accepted one entity declared twice with different fields and
-    /// applied both, the second overwriting the first's row. Identity alone is
-    /// [`ResolvedIntent::key`]; this stays only for whole-intent equivalence.
-    fn fingerprint(&self) -> String {
-        format!(
-            "{}|{}|{}|{}|{}|{}|{}|{}",
-            self.kind
-                .to_possible_value()
-                .expect("every ArtifactKind has a clap value")
-                .get_name(),
-            self.name,
-            self.package.as_deref().unwrap_or(""),
-            self.fields.join(","),
-            self.timestamps,
-            self.indexes.join(","),
-            self.strategy_on.as_deref().unwrap_or(""),
-            self.strategy_yields.as_deref().unwrap_or("")
-        )
-    }
-
-    /// The recipe name as the ledger spells it -- clap's canonical value, never
-    /// an alias, or one kind would be stored under two names.
-    fn recipe(&self) -> String {
-        self.kind
-            .to_possible_value()
-            .expect("every ArtifactKind has a clap value")
-            .get_name()
-            .to_string()
-    }
-
-    /// The name the ledger row carries. See `key`.
-    fn recorded_name(&self) -> String {
-        generate::recorded_name(self.kind, &self.name)
-    }
+/// Identity **and** content, as one string.
+///
+/// Named for what it is. It was called `key`, and being used as one is the
+/// defect plan.md R1 names first: a key that mixes identity with content
+/// cannot answer "is this the same entity?", so the manifest's duplicate check
+/// accepted one entity declared twice with different fields and applied both,
+/// the second overwriting the first's row. Identity is
+/// `(recipe_of, recorded_name_of, package)`; this stays only for whole-intent
+/// equivalence.
+#[cfg(test)]
+fn fingerprint(intent: &Intent) -> String {
+    format!(
+        "{}|{}|{}|{}|{}|{}|{}|{}",
+        recipe_of(intent),
+        intent.name,
+        intent.package.as_deref().unwrap_or(""),
+        intent.fields.join(","),
+        intent.timestamps,
+        intent.indexes.join(","),
+        intent.on.as_deref().unwrap_or(""),
+        intent.yields.as_deref().unwrap_or(""),
+    )
 }
 
 /// `app plan` and `app apply` are one route and one flag apart.
@@ -219,8 +194,6 @@ fn declared(
 ) -> Result<jails_engine::route::Outcome> {
     let path = manifest_path(run.project().root(), requested)?;
     let (manifest, intents) = read_manifest(&path)?;
-    let intents: Vec<jails_engine::route::Intent> =
-        intents.iter().map(ResolvedIntent::declared).collect();
     jails_engine::route::app_apply(run, &manifest.capabilities, &intents)
 }
 
@@ -271,15 +244,12 @@ mod tests {
 
         let (_, new_intents) = parse_manifest(canonical).unwrap();
         let (_, old_intents) = parse_manifest(&legacy).unwrap();
-        assert_eq!(new_intents[0].strategy_on.as_deref(), Some("WorkItem"));
-        assert_eq!(
-            new_intents[0].strategy_yields.as_deref(),
-            Some("WorkQueued")
-        );
+        assert_eq!(new_intents[0].on.as_deref(), Some("WorkItem"));
+        assert_eq!(new_intents[0].yields.as_deref(), Some("WorkQueued"));
         // Identical intents, so identical state keys: renaming the key in a
         // manifest must not make `app apply` see a new intent and refuse on
         // files that already exist.
-        assert_eq!(new_intents[0].fingerprint(), old_intents[0].fingerprint());
+        assert_eq!(fingerprint(&new_intents[0]), fingerprint(&old_intents[0]));
     }
 
     #[test]

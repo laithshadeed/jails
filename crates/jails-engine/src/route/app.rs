@@ -35,11 +35,14 @@ use super::*;
 /// [`super::recipe`] is the one entry point that turns either into the route
 /// that owns the kind.
 ///
-/// Deliberately not `app::ResolvedIntent`: that type lives in the binary,
-/// which is above this crate, and it carries manifest syntax -- deprecated
-/// aliases, the `timestamps` flag that is expanded before a recipe sees it --
-/// that a route has no business knowing about.
-#[derive(Clone, Debug)]
+/// It was two types, and the second lived in the binary. `pending.md` §6.2:
+/// a `[[generate]]` row became an `app::ResolvedIntent`, which became one of
+/// these at the call site, which became an `IntentSpec` inside the route --
+/// three copies of one request before anything checked it. The justification
+/// for the first was manifest syntax, the deprecated `strategy_on` spellings,
+/// and syntax should not survive its own parser: `GenerateIntent::finish`
+/// resolves the aliases and produces this directly.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Intent {
     pub kind: ArtifactKind,
     pub name: String,
@@ -146,41 +149,20 @@ fn declare(
             }
             false => intent.fields.as_slice(),
         };
+        let recipe = jails_generate::generate::Recipe {
+            kind: intent.kind,
+            name: &intent.name,
+            fields,
+            indexes: &intent.indexes,
+            strategy_on: intent.on.as_deref(),
+            strategy_yields: intent.yields.as_deref(),
+            method: intent.method,
+        };
         let change = with_test_support(
             &planned,
-            jails_generate::generate::plan_recipe(
-                &planned,
-                &jails_generate::generate::Recipe {
-                    kind: intent.kind,
-                    name: &intent.name,
-                    fields,
-                    indexes: &intent.indexes,
-                    strategy_on: intent.on.as_deref(),
-                    strategy_yields: intent.yields.as_deref(),
-                    method: intent.method,
-                },
-                intent.package.as_deref(),
-            )?,
+            jails_generate::generate::plan_recipe(&planned, &recipe, intent.package.as_deref())?,
         );
-        let id = super::intent(
-            &planned,
-            intent.kind,
-            &intent.name,
-            intent.package.as_deref(),
-            fields,
-            &intent.indexes,
-            intent.on.as_deref(),
-            intent.yields.as_deref(),
-        )?;
-        let spec = super::spec(
-            &planned,
-            intent.kind,
-            fields,
-            &intent.indexes,
-            intent.on.as_deref(),
-            intent.yields.as_deref(),
-            intent.method,
-        )?;
+        let Declared { id, spec } = super::declared(&planned, &recipe, intent.package.as_deref())?;
         let owner = ResourceOwner::Entity(EntityId::Intent(id.clone()));
         let mut desired = desire::contribution(&owner, &change, &planned)?;
         provenance::stamp_files(

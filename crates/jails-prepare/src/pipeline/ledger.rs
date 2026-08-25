@@ -158,7 +158,6 @@ pub(super) fn record_store(
     Ok(store)
 }
 
-#[allow(clippy::too_many_arguments)]
 /// Write the `outputs` table §R5.2 requires: one row per path jails wrote,
 /// with the exact bytes it wrote as the base to measure the next change from.
 ///

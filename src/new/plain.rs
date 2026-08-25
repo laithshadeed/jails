@@ -13,16 +13,18 @@ use super::*;
 /// Plain Maven CLI project, written directly -- no `mvn archetype:generate`
 /// (slow, needs network, and falls into an interactive catalog picker
 /// without exact archetype coordinates).
-pub fn new_cli(
-    name: &str,
-    group: Option<&str>,
-    package: Option<&str>,
-    java: &str,
-    git: bool,
-    app: Option<&Path>,
-    debug: bool,
-    pretend: bool,
-) -> Result<()> {
+pub fn new_cli(request: &Request<'_>) -> Result<()> {
+    let Request {
+        name,
+        group,
+        package,
+        java,
+        git,
+        app,
+        debug,
+        pretend,
+        ..
+    } = *request;
     if Path::new(name).exists() {
         return Err(jails_support::Failure::Told(publish::already_exists(
             Path::new(name),

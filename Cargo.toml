@@ -47,10 +47,13 @@ dead_code = "deny"
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
 
-# The generator functions genuinely take name/fields/package/pretend/... and
-# splitting 21 of them into parameter structs is the refactor in plan.md §6,
-# not a prerequisite for having linting on. Revisit when that lands.
-too_many_arguments = "allow"
+# Was "allow", with a comment saying 21 generator functions were waiting on
+# plan.md §6's parameter-struct refactor. Re-measured 2026-08-25: nine, four of
+# them warning and five carrying a local `#[allow]` -- one of which no longer
+# had eight arguments at all. All nine took a parameter object (`Produced`,
+# `Subject`, `Request`, `Declared`), so the escape hatch is closed rather than
+# left open against a number that had already fallen.
+too_many_arguments = "deny"
 
 [package]
 name = "jails"
