@@ -7,15 +7,14 @@
 //! removal would then delete it.
 
 use crate::Result;
-use crate::change::{
-    ChangeAttribution, DesiredChange, MaintenanceAttribution, decode_all, encode_all,
-};
+use crate::change::{ChangeAttribution, DesiredChange, decode_all, encode_all};
 use crate::entity::{EntityId, EntitySpec, OneShotId, OneShotSpec, OwnerId};
-use crate::identity::{JavaType, ProjectPath};
-use crate::ownership::{DesiredEntity, DesiredState, ReconcileScope};
 use crate::resource::{DesiredResource, OneShotLifecycle, OneShotState};
 use jails_support::codec::{Codec, Decoder, Encoder, ordered};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
+
+mod subject;
+pub use subject::PlannedSubject;
 
 // ---------------------------------------------------------------------------
 // The change set
@@ -195,48 +194,6 @@ impl Codec for DesiredOneShotReceipt {
     }
 }
 
-/// What the whole invocation is about.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum PlannedSubject {
-    Reconcile(DesiredState),
-    ApplyOneShot {
-        id: OneShotId,
-        spec: OneShotSpec,
-    },
-    DestroyCases {
-        id: OneShotId,
-        force: bool,
-    },
-    AppInit {
-        target: ProjectPath,
-    },
-    Rename {
-        from: JavaType,
-        to: JavaType,
-        force: bool,
-    },
-    AdoptLayout,
-    Format {
-        scopes: BTreeSet<ProjectPath>,
-    },
-}
-
-impl PlannedSubject {
-    /// The maintenance attribution a change under this subject may claim, if
-    /// the subject is a maintenance one at all.
-    pub fn maintenance(&self) -> Option<MaintenanceAttribution> {
-        Some(match self {
-            Self::AppInit { .. } => MaintenanceAttribution::AppInit,
-            Self::Rename { .. } => MaintenanceAttribution::Rename,
-            Self::AdoptLayout => MaintenanceAttribution::AdoptLayout,
-            Self::Format { .. } => MaintenanceAttribution::Format,
-            Self::Reconcile(_) | Self::ApplyOneShot { .. } | Self::DestroyCases { .. } => {
-                return None;
-            }
-        })
-    }
-}
-
 /// The ordered changes, what they are for, and what the store is to say.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DesiredChangeSet {
@@ -295,131 +252,13 @@ impl Codec for DesiredChangeSet {
     }
 }
 
-impl PlannedSubject {
-    fn tag(&self) -> u8 {
-        match self {
-            Self::Reconcile(_) => 0,
-            Self::ApplyOneShot { .. } => 1,
-            Self::DestroyCases { .. } => 2,
-            Self::AppInit { .. } => 3,
-            Self::Rename { .. } => 4,
-            Self::AdoptLayout => 5,
-            Self::Format { .. } => 7,
-        }
-    }
-}
-impl Codec for PlannedSubject {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(self.tag());
-        match self {
-            Self::Reconcile(state) => encode_desired_state(encoder, state),
-            Self::ApplyOneShot { id, spec } => {
-                id.encode(encoder)?;
-                spec.encode(encoder)
-            }
-            Self::DestroyCases { id, force } => {
-                id.encode(encoder)?;
-                encoder.bool(*force);
-                Ok(())
-            }
-            Self::AppInit { target } => target.encode(encoder),
-            Self::Rename { from, to, force } => {
-                from.encode(encoder)?;
-                to.encode(encoder)?;
-                encoder.bool(*force);
-                Ok(())
-            }
-            Self::AdoptLayout => Ok(()),
-            Self::Format { scopes } => {
-                encoder.set(scopes)?;
-                Ok(())
-            }
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Reconcile(decode_desired_state(decoder)?),
-            1 => Self::ApplyOneShot {
-                id: OneShotId::decode(decoder)?,
-                spec: OneShotSpec::decode(decoder)?,
-            },
-            2 => Self::DestroyCases {
-                id: OneShotId::decode(decoder)?,
-                force: decoder.bool()?,
-            },
-            3 => Self::AppInit {
-                target: ProjectPath::decode(decoder)?,
-            },
-            4 => Self::Rename {
-                from: JavaType::decode(decoder)?,
-                to: JavaType::decode(decoder)?,
-                force: decoder.bool()?,
-            },
-            5 => Self::AdoptLayout,
-            7 => {
-                let scopes: BTreeSet<ProjectPath> = decoder.set()?;
-                Self::Format { scopes }
-            }
-            other => Err(format!("unknown planned subject tag {other}"))?,
-        })
-    }
-}
-
-fn encode_desired_state(encoder: &mut Encoder, state: &DesiredState) -> Result<()> {
-    match &state.scope {
-        ReconcileScope::AppManifest => encoder.tag(0),
-        ReconcileScope::DirectConfig => encoder.tag(1),
-        ReconcileScope::DirectEntity(id) => {
-            encoder.tag(2);
-            id.encode(encoder)?;
-        }
-    }
-    encoder.count(state.entities.len())?;
-    let mut previous: Option<&EntityId> = None;
-    for (id, entity) in &state.entities {
-        ordered(previous, id)?;
-        previous = Some(id);
-        DesiredAppliedEntity {
-            id: entity.id.clone(),
-            owners: entity.owners.clone(),
-            spec: entity.spec.clone(),
-        }
-        .encode(encoder)?;
-    }
-    Ok(())
-}
-
-fn decode_desired_state(decoder: &mut Decoder<'_>) -> Result<DesiredState> {
-    let scope = match decoder.tag()? {
-        0 => ReconcileScope::AppManifest,
-        1 => ReconcileScope::DirectConfig,
-        2 => ReconcileScope::DirectEntity(EntityId::decode(decoder)?),
-        other => Err(format!("unknown reconcile scope tag {other}"))?,
-    };
-    let count = decoder.count()?;
-    let mut entities = BTreeMap::new();
-    let mut previous: Option<EntityId> = None;
-    for _ in 0..count {
-        let row = DesiredAppliedEntity::decode(decoder)?;
-        ordered(previous.as_ref(), &row.id)?;
-        previous = Some(row.id.clone());
-        entities.insert(
-            row.id.clone(),
-            DesiredEntity {
-                id: row.id,
-                spec: row.spec,
-                owners: row.owners,
-            },
-        );
-    }
-    DesiredState::new(scope, entities)
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::change::MaintenanceAttribution;
     use crate::change::tests::{dependency_change, intent, path};
+    use crate::ownership::DesiredState;
+    use std::collections::BTreeMap;
 
     pub(crate) fn change_set(subject: PlannedSubject, change: DesiredChange) -> DesiredChangeSet {
         DesiredChangeSet {

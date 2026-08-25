@@ -665,7 +665,8 @@ pub(crate) const SCRATCH_RS: &str = "jails-support/src/scratch.rs";
 /// collision actionable: move or rename the colliding file, then retry.
 /// 436 → 432 when every compatibility-version refusal gained an explicit
 /// upgrade path instead of only describing the unsupported bytes.
-pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 432;
+/// 432 → 430 when planned-subject decoding gained the same recovery advice.
+pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 430;
 
 /// A refusal that builds a message and does not say what to do next.
 ///
