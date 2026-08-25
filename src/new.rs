@@ -16,7 +16,7 @@ use std::process::Command;
 /// steps that only ever appear together. The manifest path is resolved against
 /// the directory the *user* is standing in, not the project just created,
 /// because that is where they are pointing from.
-pub(crate) fn seed_manifest(root: &Path, manifest: &Path, debug: bool) -> Result<()> {
+pub(crate) fn seed_manifest(tree: &publish::Tree<'_>, manifest: &Path, debug: bool) -> Result<()> {
     let source = std::fs::read_to_string(manifest).map_err(|error| {
         format!(
             "failed to read the application manifest {}: {error}\n       \
@@ -24,9 +24,9 @@ pub(crate) fn seed_manifest(root: &Path, manifest: &Path, debug: bool) -> Result
             manifest.display()
         )
     })?;
-    crate::apply::put(root.join(".jails/app.toml"), &source)?;
+    tree.put(".jails/app.toml", &source)?;
     println!("  manifest {}", manifest.display());
-    crate::app::apply_in(root, false, debug)
+    crate::app::apply_in(tree.root(), false, debug)
 }
 
 /// What `jails new` was asked for.
@@ -108,21 +108,21 @@ pub fn new(request: Request<'_>) -> Result<()> {
     }
 
     let publication = publish::Publication::reserve(Path::new(name))?;
-    let root = publication.root().to_path_buf();
+    let tree = publication.tree();
     download_starter(&publication, name, group, package, deps, java, debug)?;
 
     if initializr_java(java) != java {
-        set_java_release(&root, initializr_java(java), java)?;
+        set_java_release(&tree, initializr_java(java), java)?;
     }
-    write_fixtures_dir(&root)?;
-    finish_spring_project(&root, deps)?;
-    ensure_enforcer(&root, java)?;
-    write_mise(&root, java)?;
-    write_agents(&root, java)?;
+    write_fixtures_dir(&tree)?;
+    finish_spring_project(&tree, deps)?;
+    ensure_enforcer(&tree, java)?;
+    write_mise(&tree, java)?;
+    write_agents(&tree, java)?;
 
     // start.spring.io's zip already ships a .gitignore, so just init.
     if git {
-        git_init(&root, debug);
+        git_init(&tree, debug);
     }
     seed(&publication, app, debug)?;
 
@@ -257,17 +257,17 @@ fn new_offline(
     }
 
     let publication = publish::Publication::reserve(Path::new(name))?;
-    let root = publication.root();
-    let source = root.join("src/main/java").join(package.replace('.', "/"));
-    let tests = root.join("src/test/java").join(package.replace('.', "/"));
+    let tree = publication.tree();
+    let source = tree.join("src/main/java").join(package.replace('.', "/"));
+    let tests = tree.join("src/test/java").join(package.replace('.', "/"));
 
-    jails_support::apply::ensure_directory(&source)
+    tree.ensure_directory_at(&source)
         .map_err(|error| format!("failed to create {}: {error}", source.display()))?;
-    jails_support::apply::ensure_directory(&tests)
+    tree.ensure_directory_at(&tests)
         .map_err(|error| format!("failed to create {}: {error}", tests.display()))?;
     let dependencies = offline_dependencies(deps)?;
-    crate::apply::put_named(
-        root.join("pom.xml"),
+    tree.put_named(
+        "pom.xml",
         crate::template::render(
             crate::template_here!("new/offline_pom.xml"),
             &[
@@ -280,7 +280,7 @@ fn new_offline(
         "pom.xml",
     )?;
     crate::generate::write_new_file(
-        root,
+        tree.root(),
         &source.join(format!("{class}Application.java")),
         &crate::template::render(
             crate::template_here!("new/offline_application.java"),
@@ -288,21 +288,21 @@ fn new_offline(
         ),
     )?;
     crate::generate::write_new_file(
-        root,
+        tree.root(),
         &tests.join(format!("{class}ApplicationTests.java")),
         &crate::template::render(
             crate::template_here!("new/offline_application_test.java"),
             &[("package", &package), ("class", &class)],
         ),
     )?;
-    write_fixtures_dir(root)?;
-    finish_spring_project(root, deps)?;
-    ensure_enforcer(root, java)?;
-    write_mise(root, java)?;
-    write_agents(root, java)?;
+    write_fixtures_dir(&tree)?;
+    finish_spring_project(&tree, deps)?;
+    ensure_enforcer(&tree, java)?;
+    write_mise(&tree, java)?;
+    write_agents(&tree, java)?;
     if git {
-        crate::apply::put(root.join(".gitignore"), GITIGNORE)?;
-        git_init(root, debug);
+        tree.put(".gitignore", GITIGNORE)?;
+        git_init(&tree, debug);
     }
     seed(&publication, app, debug)?;
 
@@ -396,18 +396,18 @@ fn offline_dependencies(deps: &str) -> Result<String> {
 ///
 /// Run once, after the zip is extracted and before git init, so the initial
 /// commit is of a project that is already in the shape jails maintains.
-fn finish_spring_project(root: &Path, requested_deps: &str) -> Result<()> {
-    verify_requested_deps(root, requested_deps);
-    drop_initializr_help(root);
-    add_jspecify(root)?;
+fn finish_spring_project(tree: &publish::Tree<'_>, requested_deps: &str) -> Result<()> {
+    verify_requested_deps(tree, requested_deps);
+    drop_initializr_help(tree);
+    add_jspecify(tree)?;
     // Read rather than assumed: the online path takes whatever Boot line
     // start.spring.io is currently serving, and the properties written below
     // are the ones that line actually has.
-    let major = crate::pom::read(root)
+    let major = crate::pom::read(tree.root())
         .map(|pom| crate::pom::spring_boot_major_of(&pom))
         .unwrap_or(4);
-    write_default_properties(root, major)?;
-    write_devtools_defaults(root)
+    write_default_properties(tree, major)?;
+    write_devtools_defaults(tree)
 }
 
 /// Remove the `HELP.md` start.spring.io ships.
@@ -425,10 +425,10 @@ fn finish_spring_project(root: &Path, requested_deps: &str) -> Result<()> {
 /// Best-effort: a project without one is the ordinary case for `--offline`,
 /// and failing to delete a file nobody asked for is not a reason to fail
 /// creating the project.
-fn drop_initializr_help(root: &Path) {
-    let help = root.join("HELP.md");
+fn drop_initializr_help(tree: &publish::Tree<'_>) {
+    let help = tree.root().join("HELP.md");
     if help.is_file() {
-        let _ = crate::apply::remove(&help);
+        let _ = tree.remove_at(&help);
     }
 }
 
@@ -453,16 +453,18 @@ fn drop_initializr_help(root: &Path) {
 /// Not written here: `spring.docker.compose.enabled=false`. `add db` owns
 /// that property in its own marked block, and a second owner is how a
 /// property ends up with two values and no obvious winner.
-fn write_devtools_defaults(root: &Path) -> Result<()> {
-    let path = root.join("src/main/resources/META-INF/spring-devtools.properties");
+fn write_devtools_defaults(tree: &publish::Tree<'_>) -> Result<()> {
+    let path = tree
+        .root()
+        .join("src/main/resources/META-INF/spring-devtools.properties");
     if path.exists() {
         return Ok(());
     }
     if let Some(parent) = path.parent() {
-        jails_support::apply::ensure_directory(parent)
+        tree.ensure_directory_at(parent)
             .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
     }
-    crate::apply::put(&path, DEVTOOLS_DEFAULTS)
+    tree.put_at(&path, DEVTOOLS_DEFAULTS)
 }
 
 const DEVTOOLS_DEFAULTS: &str =
@@ -488,8 +490,8 @@ defaults.spring.devtools.restart.quiet-period=50ms
 /// A warning rather than an error: the mapping from an Initializr id to the
 /// artifact it contributes is not always one to one, so a false positive must
 /// not stop a project from being created.
-fn verify_requested_deps(root: &Path, requested: &str) {
-    let Ok(pom) = crate::pom::read(root) else {
+fn verify_requested_deps(tree: &publish::Tree<'_>, requested: &str) {
+    let Ok(pom) = crate::pom::read(tree.root()) else {
         return;
     };
     let missing: Vec<&str> = requested
@@ -512,8 +514,8 @@ fn verify_requested_deps(root: &Path, requested: &str) {
 
 /// JSpecify, so the null-marked `package-info.java` every generator writes
 /// compiles. Boot's dependency management does not pin it, hence the version.
-fn add_jspecify(root: &Path) -> Result<()> {
-    let pom = crate::pom::read(root)?;
+fn add_jspecify(tree: &publish::Tree<'_>) -> Result<()> {
+    let pom = crate::pom::read(tree.root())?;
     if crate::pom::has_dependency(&pom, "org.jspecify", "jspecify") {
         return Ok(());
     }
@@ -525,7 +527,7 @@ fn add_jspecify(root: &Path) -> Result<()> {
         optional: false,
     };
     if let Some(updated) = crate::pom::add_dependency(&pom, &dep)? {
-        crate::apply::put_named(root.join("pom.xml"), updated, "pom.xml")?;
+        tree.put_named("pom.xml", updated, "pom.xml")?;
     }
     Ok(())
 }
@@ -545,8 +547,10 @@ fn add_jspecify(root: &Path) -> Result<()> {
 /// `additional-spring-configuration-metadata.json` under `deps/spring-boot`,
 /// which records `server.max-http-header-size` as replaced by
 /// `server.max-http-request-header-size` at 3.0.0.
-fn write_default_properties(root: &Path, boot_major: u32) -> Result<()> {
-    let path = root.join("src/main/resources/application.properties");
+fn write_default_properties(tree: &publish::Tree<'_>, boot_major: u32) -> Result<()> {
+    let path = tree
+        .root()
+        .join("src/main/resources/application.properties");
     let existing = fs::read_to_string(&path).unwrap_or_default();
     let modern = boot_major >= 3;
     let defaults = [
@@ -609,19 +613,19 @@ fn write_default_properties(root: &Path, boot_major: u32) -> Result<()> {
     // nothing, opened every project with two blank lines.
     let mut next = existing.trim_end().to_string();
     if next.is_empty() {
-        return write_properties(&path, addition.trim_start().to_string());
+        return write_properties(tree, &path, addition.trim_start().to_string());
     }
     next.push('\n');
     next.push_str(&addition);
-    write_properties(&path, next)
+    write_properties(tree, &path, next)
 }
 
-fn write_properties(path: &Path, body: String) -> Result<()> {
+fn write_properties(tree: &publish::Tree<'_>, path: &Path, body: String) -> Result<()> {
     if let Some(parent) = path.parent() {
-        jails_support::apply::ensure_directory(parent)
+        tree.ensure_directory_at(parent)
             .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
     }
-    crate::apply::put(path, body)
+    tree.put_at(path, body)
 }
 
 fn initializr_java(requested: &str) -> &str {
@@ -632,8 +636,8 @@ fn initializr_java(requested: &str) -> &str {
     }
 }
 
-fn set_java_release(root: &Path, from: &str, to: &str) -> Result<()> {
-    let path = root.join("pom.xml");
+fn set_java_release(tree: &publish::Tree<'_>, from: &str, to: &str) -> Result<()> {
+    let path = tree.root().join("pom.xml");
     let pom =
         fs::read_to_string(&path).map_err(|e| format!("failed to read {}: {e}", path.display()))?;
     let old = format!("<java.version>{from}</java.version>");
@@ -644,7 +648,7 @@ fn set_java_release(root: &Path, from: &str, to: &str) -> Result<()> {
         )
         .into());
     }
-    crate::apply::put(
+    tree.put_at(
         &path,
         pom.replacen(&old, &format!("<java.version>{to}</java.version>"), 1),
     )
@@ -716,17 +720,17 @@ pub fn new_cli(
     }
 
     let publication = publish::Publication::reserve(Path::new(name))?;
-    let root = publication.root();
-    let src_dir = root.join("src/main/java").join(package.replace('.', "/"));
-    let test_dir = root.join("src/test/java").join(package.replace('.', "/"));
+    let tree = publication.tree();
+    let src_dir = tree.join("src/main/java").join(package.replace('.', "/"));
+    let test_dir = tree.join("src/test/java").join(package.replace('.', "/"));
 
-    jails_support::apply::ensure_directory(&src_dir)
+    tree.ensure_directory_at(&src_dir)
         .map_err(|e| format!("failed to create {}: {e}", src_dir.display()))?;
-    jails_support::apply::ensure_directory(&test_dir)
+    tree.ensure_directory_at(&test_dir)
         .map_err(|e| format!("failed to create {}: {e}", test_dir.display()))?;
 
-    crate::apply::put_named(
-        root.join("pom.xml"),
+    tree.put_named(
+        "pom.xml",
         pom_xml(name, &group_of(group, &package), &package, java),
         "pom.xml",
     )?;
@@ -739,28 +743,28 @@ pub fn new_cli(
     // makes `jails generate command` -- the obvious next step -- report that
     // it has nothing to register into, and leaves you with two `main`s the
     // moment you fix that by hand.
-    // `root` is the project being created, not the process CWD. Passing it
+    // `tree.root()` is the project being created, not the process CWD. Passing it
     // is what gives a new-cli project's own base package the null-marked
     // `package-info.java` every other package gets -- the lookup this
     // replaced either found the surrounding project or found nothing.
     crate::generate::write_new_file(
-        root,
+        tree.root(),
         &src_dir.join("App.java"),
         &crate::generate::cli_java(&package, "App", name),
     )?;
     crate::generate::write_new_file(
-        root,
+        tree.root(),
         &test_dir.join("AppTest.java"),
         &crate::generate::cli_test(&package, "App"),
     )?;
 
-    write_fixtures_dir(root)?;
-    write_mise(root, java)?;
-    write_agents(root, java)?;
+    write_fixtures_dir(&tree)?;
+    write_mise(&tree, java)?;
+    write_agents(&tree, java)?;
 
     if git {
-        crate::apply::put(root.join(".gitignore"), GITIGNORE)?;
-        git_init(root, debug);
+        tree.put(".gitignore", GITIGNORE)?;
+        git_init(&tree, debug);
     }
     seed(&publication, app, debug)?;
 
@@ -779,7 +783,7 @@ pub fn new_cli(
 /// standing in, which is why it is read before anything is written.
 fn seed(publication: &publish::Publication, app: Option<&Path>, debug: bool) -> Result<()> {
     match app {
-        Some(manifest) => seed_manifest(publication.root(), manifest, debug),
+        Some(manifest) => seed_manifest(&publication.tree(), manifest, debug),
         None => Ok(()),
     }
 }
@@ -801,24 +805,24 @@ fn previewed(app: Option<&Path>) -> Result<()> {
 /// Test fixtures land on the test classpath, so they belong under
 /// `src/test/resources`. Git can't track an empty directory, so seed it with
 /// a `.gitkeep` -- otherwise the folder vanishes on the first clone.
-fn write_fixtures_dir(root: &Path) -> Result<()> {
-    let dir = root.join("src/test/resources/fixtures");
-    jails_support::apply::ensure_directory(&dir)?;
-    crate::apply::put(dir.join(".gitkeep"), "")?;
+fn write_fixtures_dir(tree: &publish::Tree<'_>) -> Result<()> {
+    let dir = tree.root().join("src/test/resources/fixtures");
+    tree.ensure_directory_at(&dir)?;
+    tree.put_at(&dir.join(".gitkeep"), "")?;
     Ok(())
 }
 
-fn write_mise(root: &Path, java: &str) -> Result<()> {
-    let path = root.join("mise.toml");
-    crate::apply::put(&path, format!("[tools]\njava = \"{java}\"\n"))
+fn write_mise(tree: &publish::Tree<'_>, java: &str) -> Result<()> {
+    let path = tree.root().join("mise.toml");
+    tree.put_at(&path, format!("[tools]\njava = \"{java}\"\n"))
 }
 
-fn write_agents(root: &Path, java: &str) -> Result<()> {
-    let path = root.join("AGENTS.md");
+fn write_agents(tree: &publish::Tree<'_>, java: &str) -> Result<()> {
+    let path = tree.root().join("AGENTS.md");
     if path.exists() {
         return Ok(());
     }
-    let package = crate::generate::base_package(root)
+    let package = crate::generate::base_package(tree.root())
         .unwrap_or_else(|_| "the package declared by the application entry point".to_string());
     let rules = crate::lint::agents_rules();
     let body = format!(
@@ -848,11 +852,11 @@ This project targets Java {java}. Its base package is `{package}`.
 {rules}
 "#
     );
-    crate::apply::put(&path, body)
+    tree.put_at(&path, body)
 }
 
-fn ensure_enforcer(root: &Path, java: &str) -> Result<()> {
-    let pom = crate::pom::read(root)?;
+fn ensure_enforcer(tree: &publish::Tree<'_>, java: &str) -> Result<()> {
+    let pom = crate::pom::read(tree.root())?;
     let plugin = format!(
         r#"<plugin>
     <groupId>org.apache.maven.plugins</groupId>
@@ -879,7 +883,7 @@ fn ensure_enforcer(root: &Path, java: &str) -> Result<()> {
 </plugin>"#
     );
     if let Some(updated) = crate::pom::add_plugin(&pom, "maven-enforcer-plugin", &plugin)? {
-        crate::apply::put_named(root.join("pom.xml"), updated, "pom.xml")?;
+        tree.put_named("pom.xml", updated, "pom.xml")?;
     }
     Ok(())
 }
@@ -888,9 +892,9 @@ const GITIGNORE: &str = "target/\n*.class\n.idea/\n*.iml\n.DS_Store\n";
 
 /// Best-effort: a missing/broken git shouldn't fail project creation, just
 /// skip repo setup with a warning.
-fn git_init(root: &Path, debug: bool) {
+fn git_init(tree: &publish::Tree<'_>, debug: bool) {
     let mut cmd = Command::new("git");
-    cmd.args(["init", "-q"]).current_dir(root);
+    cmd.args(["init", "-q"]).current_dir(tree.root());
     if debug {
         jails_support::debug_cmd(&cmd);
     }
@@ -1080,7 +1084,7 @@ mod tests {
         )
         .unwrap();
 
-        set_java_release(&root, "26", "27").unwrap();
+        set_java_release(&publish::Tree::at(&root), "26", "27").unwrap();
 
         let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
         assert!(pom.contains("<java.version>27</java.version>"));

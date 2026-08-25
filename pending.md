@@ -363,29 +363,57 @@ deleted (§7.1). Where the remaining 54 live:
 `src/new.rs` and `src/new/gradle_project.rs` are 33 of the 54, which is what
 makes §5 the largest single move rather than a tidy-up.
 
-## 5. `jails new` is a second transaction protocol
+## 5. `jails new` was not a second transaction protocol — **re-measured 2026-08-25**
 
 `src/new/publish.rs` implements publication-by-rename: write everything into a
 sibling scratch directory, `rename` once, so the destination is absent or
 complete. Its doc comment justifies this correctly — `jails new` has no project
 to lock and no ledger to journal, because there is nothing there yet.
 
-That reasoning is sound for the *first* write. It stops being sound for
-`jails new --app <manifest>`, which then runs a whole `app apply` inside the
-scratch tree through a mechanism with no journal, no recovery and no conflict
-detection — the three things `jails-commit` exists to provide.
+**The rest of this item was wrong, and re-measuring it was the work.** It said
+`jails new --app <manifest>` then ran a whole `app apply` inside the scratch
+tree *"through a mechanism with no journal, no recovery and no conflict
+detection — the three things `jails-commit` exists to provide."* It does not:
+`app::apply_in` builds `jails_engine::route::Run::committing`, which is the
+ordinary V2 transition. A `jails new-cli demo --app app.toml` leaves a `.jails/`
+holding `ledger.toml`, `objects/`, `receipts/` and `transactions/`. Checked by
+running it.
 
-The honest shape: `new` reserves and publishes the *skeleton* by rename (keep
-`publish.rs` exactly as it is), then `--app` runs an ordinary V2 transition
-against the now-real project. One transaction protocol, and `publish.rs` shrinks
-to what only it can do.
+So the proposed fix — publish the skeleton, then apply the manifest against the
+now-real project — would have made things *worse* on the axis
+`publish.rs` exists for: it would allow a destination to exist holding a project
+whose manifest half-applied, which is the state publication-by-rename removes.
 
-`src/new.rs` has 21 direct `apply::*` calls and `src/new/gradle_project.rs`
-another 12 — the most of any pair of files, and the Gradle half is new debt
-added on 2026-08-25 with eyes open. Those 33 are 61% of §4's whole remaining
-count, so this item *is* that gate's descent.
+**What was real is the 33 `apply::` calls, and they were a measurement problem.**
+§4's gate counted them as mutations bypassing the executor. They are not: every
+byte lands in a reserved scratch that is renamed into place or discarded entire,
+which is the same guarantee the executor gives, bought the way §R6.5 describes.
+The gate could not see that, because `root: &Path` is a path like any other and
+nothing distinguished a write into the staging tree from a write into a live
+project.
 
----
+`publish::Tree` is what makes it visible, and it is the fix that was actually
+available:
+
+- A `Tree` is obtained from a `Publication` and nowhere else, so **a function
+  that takes one cannot reach a published project**. Thirteen `root: &Path`
+  helpers in `new.rs` and two in `gradle_project.rs` take one now.
+- Its absolute-path verbs (`put_at`, `put_named_at`, `ensure_directory_at`,
+  `remove_at`, `put_executable_at`) **check containment rather than assuming
+  it** — half of `new`'s writes arrive as absolute paths, because the source and
+  test directories are computed once from the package name and joined many
+  times. A write outside the staging tree is a refusal.
+- `Publication::root()` is gone. Nothing hands out a bare path any more.
+
+`publish.rs` joins the write layer in `tests/architecture.rs` on the strength of
+that, not on a promise. **§4's count went 46 → 11**, and `root: &Path` 94 → 81 —
+the second is this row's cure rather than a coincidence, since a `root` threaded
+through a call graph so each level can re-derive facts is the disease, and a
+`Tree` is the parameter object that says *which* tree.
+
+What is left of §4's 11 is §7.7's work: `generate/write.rs`, `add/database.rs`,
+`compose.rs`, `capture.rs`, `desire.rs`, `merge.rs`, `console.rs`, `run.rs`,
+`testd.rs`, `doctor.rs`.
 
 ## 6. The abstractions worth introducing
 

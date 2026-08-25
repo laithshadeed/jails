@@ -327,11 +327,15 @@ pub(super) fn planned_paths(plan: &Plan<'_>, class: &str) -> Vec<std::path::Path
 
 /// Write the build files. The Java sources are the caller's, since both `new`
 /// paths write the same two classes from the same two templates.
-pub(super) fn write_build(plan: &Plan<'_>) -> Result<()> {
+pub(super) fn write_build(plan: &Plan<'_>, tree: &super::publish::Tree<'_>) -> Result<()> {
     let root = plan.root;
-    crate::apply::put_named(root.join("build.gradle"), build_file(plan)?, "build.gradle")?;
-    crate::apply::put_named(
-        root.join("settings.gradle"),
+    tree.put_named_at(
+        &root.join("build.gradle"),
+        build_file(plan)?,
+        "build.gradle",
+    )?;
+    tree.put_named_at(
+        &root.join("settings.gradle"),
         crate::template::render(
             crate::template_here!("new/gradle/settings.gradle"),
             &[("name", plan.name)],
@@ -347,10 +351,15 @@ pub(super) fn write_build(plan: &Plan<'_>) -> Result<()> {
 /// project is run by the Gradle version it pins; without it, the project is run
 /// by whatever `gradle` is on PATH, which is worse but works. A `gradlew` with
 /// no jar beside it is neither.
-pub(super) fn write_wrapper(plan: &Plan<'_>, offline: bool, debug: bool) -> Result<()> {
+pub(super) fn write_wrapper(
+    plan: &Plan<'_>,
+    tree: &super::publish::Tree<'_>,
+    offline: bool,
+    debug: bool,
+) -> Result<()> {
     let (root, gradle) = (plan.root, plan.gradle);
-    crate::apply::put(
-        root.join("gradle/wrapper/gradle-wrapper.properties"),
+    tree.put_at(
+        &root.join("gradle/wrapper/gradle-wrapper.properties"),
         crate::template::render(
             crate::template_here!("new/gradle/wrapper.properties"),
             &[("gradle", gradle)],
@@ -359,14 +368,14 @@ pub(super) fn write_wrapper(plan: &Plan<'_>, offline: bool, debug: bool) -> Resu
     if offline {
         return skipped_wrapper(gradle, "`--offline` was passed");
     }
-    match fetch_wrapper_jar(plan, debug) {
+    match fetch_wrapper_jar(plan, tree, debug) {
         Ok(()) => {
-            crate::apply::put_executable(
-                root.join("gradlew"),
+            tree.put_executable_at(
+                &root.join("gradlew"),
                 crate::template_here!("new/gradle/gradlew.sh"),
             )?;
-            crate::apply::put(
-                root.join("gradlew.bat"),
+            tree.put_at(
+                &root.join("gradlew.bat"),
                 crate::template_here!("new/gradle/gradlew.bat"),
             )
         }
@@ -407,10 +416,10 @@ fn wrapper_tag(gradle: &str) -> String {
 /// match is the class the scripts launch, `org.gradle.wrapper.GradleWrapperMain`,
 /// and the wrapper's job is to read the properties written beside it and fetch
 /// the distribution they name. It is not tied to the distribution's version.
-fn fetch_wrapper_jar(plan: &Plan<'_>, debug: bool) -> Result<()> {
+fn fetch_wrapper_jar(plan: &Plan<'_>, tree: &super::publish::Tree<'_>, debug: bool) -> Result<()> {
     let (root, gradle) = (plan.root, plan.gradle);
     let path = root.join("gradle/wrapper/gradle-wrapper.jar");
-    jails_support::apply::ensure_directory(path.parent().unwrap_or(root))
+    tree.ensure_directory_at(path.parent().unwrap_or(root))
         .map_err(|error| format!("failed to create the wrapper directory: {error}"))?;
     let url = format!(
         "https://raw.githubusercontent.com/gradle/gradle/v{}/gradle/wrapper/gradle-wrapper.jar",
@@ -428,7 +437,7 @@ fn fetch_wrapper_jar(plan: &Plan<'_>, debug: bool) -> Result<()> {
         // Left behind, `curl -o` has already created an empty or partial file,
         // and a zero-byte jar is the one shape that looks like a wrapper and
         // is not.
-        let _ = crate::apply::remove(&path);
+        let _ = tree.remove_at(&path);
         return Err(format!("{url} could not be fetched").into());
     }
     Ok(())
@@ -504,22 +513,22 @@ pub(super) fn create(request: &super::Request<'_>, deps: &str, boot: &str) -> Re
     // Copied out rather than borrowed: `publication.publish()` consumes the
     // guard at the end of this function, and a `Plan` holding a reference into
     // it could not outlive the writes it describes.
-    let reserved = publication.root().to_path_buf();
+    let tree = publication.tree();
+    let reserved = tree.root().to_path_buf();
     let plan = plan_at!(&reserved);
-    let root: &Path = &reserved;
-    let source = root.join("src/main/java").join(package.replace('.', "/"));
-    let tests = root.join("src/test/java").join(package.replace('.', "/"));
-    jails_support::apply::ensure_directory(&source)
+    let source = tree.join("src/main/java").join(package.replace('.', "/"));
+    let tests = tree.join("src/test/java").join(package.replace('.', "/"));
+    tree.ensure_directory_at(&source)
         .map_err(|error| format!("failed to create {}: {error}", source.display()))?;
-    jails_support::apply::ensure_directory(&tests)
+    tree.ensure_directory_at(&tests)
         .map_err(|error| format!("failed to create {}: {error}", tests.display()))?;
 
-    crate::apply::put_named(root.join("build.gradle"), build_file, "build.gradle")?;
-    write_build(&plan)?;
-    write_wrapper(&plan, request.offline, request.debug)?;
+    tree.put_named("build.gradle", build_file, "build.gradle")?;
+    write_build(&plan, &tree)?;
+    write_wrapper(&plan, &tree, request.offline, request.debug)?;
 
     crate::generate::write_new_file(
-        root,
+        tree.root(),
         &source.join(format!("{class}Application.java")),
         &crate::template::render(
             crate::template_here!("new/offline_application.java"),
@@ -527,22 +536,22 @@ pub(super) fn create(request: &super::Request<'_>, deps: &str, boot: &str) -> Re
         ),
     )?;
     crate::generate::write_new_file(
-        root,
+        tree.root(),
         &tests.join(format!("{class}ApplicationTests.java")),
         &crate::template::render(
             crate::template_here!("new/offline_application_test.java"),
             &[("package", &package), ("class", &class)],
         ),
     )?;
-    super::write_fixtures_dir(root)?;
-    super::write_default_properties(root, major)?;
-    super::write_devtools_defaults(root)?;
-    add_jspecify_to_gradle(&plan)?;
-    super::write_mise(root, java)?;
-    super::write_agents(root, java)?;
+    super::write_fixtures_dir(&tree)?;
+    super::write_default_properties(&tree, major)?;
+    super::write_devtools_defaults(&tree)?;
+    add_jspecify_to_gradle(&plan, &tree)?;
+    super::write_mise(&tree, java)?;
+    super::write_agents(&tree, java)?;
     if request.git {
-        crate::apply::put(root.join(".gitignore"), GRADLE_GITIGNORE)?;
-        super::git_init(root, request.debug);
+        tree.put(".gitignore", GRADLE_GITIGNORE)?;
+        super::git_init(&tree, request.debug);
     }
     super::seed(&publication, request.app, request.debug)?;
 
@@ -562,7 +571,7 @@ pub(super) fn create(request: &super::Request<'_>, deps: &str, boot: &str) -> Re
 /// `add_dependency_ref` returning `None` means the file already declares it or
 /// says something `gradle::` will not guess at -- both of which are "leave it
 /// alone", which is why this is not an error.
-fn add_jspecify_to_gradle(plan: &Plan<'_>) -> Result<()> {
+fn add_jspecify_to_gradle(plan: &Plan<'_>, tree: &super::publish::Tree<'_>) -> Result<()> {
     let path = plan.root.join(jails_project::gradle::FILE);
     let text = std::fs::read_to_string(&path)
         .map_err(|e| format!("failed to read {}: {e}", path.display()))?;
@@ -574,7 +583,7 @@ fn add_jspecify_to_gradle(plan: &Plan<'_>) -> Result<()> {
         optional: false,
     };
     if let Some(updated) = jails_project::gradle::add_dependency_ref(&text, declaration)? {
-        crate::apply::put_named(&path, updated, jails_project::gradle::FILE)?;
+        tree.put_named_at(&path, updated, jails_project::gradle::FILE)?;
     }
     Ok(())
 }

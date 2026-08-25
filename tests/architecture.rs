@@ -173,12 +173,18 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // projection holds the text and splices it, so the root-taking
                 // wrapper had nothing left to do.
                 //
+                // 94 -> 81 when `jails new`'s thirteen root-taking helpers
+                // started taking a `publish::Tree` instead. That is this row's
+                // cure rather than a coincidence: a `root` threaded through a
+                // call graph so each level can re-derive facts is the disease,
+                // and a `Tree` is the parameter object that says which tree.
+                //
                 // 96 -> 94 with `generate/write.rs`'s V1 half: `ensure_assertj`,
                 // `ensure_webmvc_test`, `ensure_dependency` and
                 // `apply_build_change`. `route::support` states the same
                 // dependencies as claims now, so these were the write path that
                 // no route takes.
-                ceiling: 94,
+                ceiling: 81,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;
@@ -467,6 +473,30 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // `route::support`, `route::field`, `SemanticEdit::MarkedBlock`
                 // -- and no caller at all, which only `dead_code` could say
                 // once the crate's API stopped being `pub` by default.
+                //
+                // 46 -> 11, and 33 of the 35 were a **measurement** correction
+                // rather than a migration. `src/new.rs` and
+                // `src/new/gradle_project.rs` write the skeleton with no
+                // project to lock and no ledger to journal, and every byte of
+                // it lands in a reserved scratch that `publish.rs` renames into
+                // place or discards entire -- the same guarantee the executor
+                // gives, bought the way §R6.5 describes and documented there
+                // since it was written. This gate could not see that, because
+                // `root: &Path` is a path like any other.
+                //
+                // `publish::Tree` is what made it visible. A `Tree` comes from
+                // a `Publication` and nowhere else, so a function taking one
+                // cannot reach a published project, and its absolute-path verbs
+                // *check* containment rather than assuming it -- a write
+                // outside the staging tree is a refusal. `publish.rs` joins the
+                // write layer on the strength of that, not on a promise.
+                //
+                // `pending.md` §5 also claimed `new --app` ran `app apply`
+                // "through a mechanism with no journal, no recovery and no
+                // conflict detection". That was stale: `app::apply_in` builds
+                // `route::Run::committing`, and a `jails new-cli --app` run
+                // leaves a `.jails/` holding a ledger, objects, receipts and
+                // transactions. Re-measured before acting on it.
                 ceiling: MUTATION_CEILING,
                 target: 0,
                 why: "The narrow `fs::write` gate read green while a dozen other calls mutated \
@@ -1513,14 +1543,6 @@ const A_FRESH_READ_IS_CORRECT: &[(&str, &str)] = &[
          creating the very pom this asks about, so there is no project to have resolved",
     ),
     (
-        "finish_spring_project",
-        "the same case as `apply_in`: it runs inside `jails new`, on a tree unpacked from \
-         Initializr's zip moments earlier, so there is no `Project` for this to be a second \
-         read of. What it reads is the Boot major, and it has to be read rather than assumed \
-         -- the online path takes whatever line start.spring.io is currently serving, and the \
-         defaults written next are the ones that line actually has",
-    ),
-    (
         "read_build_file",
         "it is the read a `Project` is *constructed from*, not a second one taken beside \
          it. Both `load` and `inspect` go through it precisely so there is one answer: \
@@ -1920,7 +1942,7 @@ fn write_sites_outside_apply(src: &[Source]) -> usize {
 /// project through other names, so the gate read green over exactly the
 /// surface R6 has to migrate.
 /// Where the count stands today. Lowered by each migrated surface.
-const MUTATION_CEILING: usize = 46;
+const MUTATION_CEILING: usize = 11;
 
 const MUTATION_APIS: &[&str] = &[
     "fs::write",
@@ -2008,6 +2030,14 @@ fn owns_writing(path: &Path) -> bool {
         "recover.rs",
         "gc.rs",
         "lock.rs",
+        // `jails new` has no project to lock and no ledger to journal, so the
+        // guarantee the executor gives is bought a different way: everything
+        // lands in a reserved scratch that is published by one `rename` or
+        // discarded entire. This module owns that, and `Tree` is what makes
+        // it checkable -- a `Tree` comes from a `Publication` and nowhere
+        // else, and its absolute-path verbs refuse a write outside the tree.
+        // `pending.md` §5.
+        "publish.rs",
     ];
     path.components().any(|part| part.as_os_str() == "apply")
         || owns
