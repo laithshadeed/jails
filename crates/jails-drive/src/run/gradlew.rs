@@ -8,7 +8,7 @@
 //! probe and the `spring-boot:run` output scan, none of which have a Gradle
 //! counterpart.
 
-use super::{TestOptions, run_inherited};
+use super::{TestOptions, run_inherited, test_execution, test_plan};
 use jails_support::Result;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -51,7 +51,7 @@ pub(super) fn tasks(root: &Path, names: &[&str], debug: bool) -> Result<()> {
 /// *loudly*.
 pub(super) fn test(
     root: &Path,
-    filter: Option<&str>,
+    requested: &[String],
     options: TestOptions,
     debug: bool,
 ) -> Result<()> {
@@ -65,26 +65,41 @@ pub(super) fn test(
                 .to_string(),
         ));
     }
+    if !options.tags.is_empty() {
+        return Err(jails_support::Failure::Told(
+            "this Gradle build does not expose JUnit tag selection as a command-line contract.\n       \
+             fix: add a tagged `Test` task to the build, or select classes explicitly with \
+             `jails test <class>...`"
+                .to_string(),
+        ));
+    }
 
     // Resolved before anything runs, and then followed exactly like a filter
     // the reader typed -- the same shape the Maven path uses.
-    let patterns: Vec<String> = if options.failed {
-        let failures = crate::reports::failed_patterns(root);
-        if failures.is_empty() {
-            println!("no failures recorded. Reports are read from build/test-results/.");
-            println!("Nothing to rerun -- run `jails test` first, or drop --failed.");
-            return Ok(());
-        }
-        println!(
-            "rerunning {} failed test(s) from the last run",
-            failures.len()
-        );
-        failures
-    } else {
-        filter.map(str::to_string).into_iter().collect()
-    };
+    let patterns = requested.to_vec();
 
-    let mut selectors = vec!["test".to_string()];
+    let execution_tasks: Vec<&str> = if patterns.is_empty() {
+        match options.scope {
+            jails_protocol::testing::TestScope::Unit => vec!["test"],
+            jails_protocol::testing::TestScope::Integration => vec!["integrationTest"],
+            jails_protocol::testing::TestScope::All => vec!["test", "integrationTest"],
+        }
+    } else {
+        let has_unit = patterns.iter().any(|pattern| {
+            let class = pattern.split(['#', '.']).next_back().unwrap_or(pattern);
+            !class.ends_with("IT")
+        });
+        let has_integration = patterns.iter().any(|pattern| {
+            let class = pattern.split(['#', '.']).next_back().unwrap_or(pattern);
+            class.ends_with("IT")
+        });
+        match (has_unit, has_integration) {
+            (true, true) => vec!["test", "integrationTest"],
+            (false, true) => vec!["integrationTest"],
+            _ => vec!["test"],
+        }
+    };
+    let mut selectors: Vec<String> = execution_tasks.into_iter().map(str::to_string).collect();
     for pattern in &patterns {
         // Gradle's own selector, and repeatable: `--tests` takes a class or
         // method pattern, which is the same shape the reader already types for
@@ -93,7 +108,18 @@ pub(super) fn test(
         selectors.push(pattern.to_string());
     }
     let borrowed: Vec<&str> = selectors.iter().map(String::as_str).collect();
-    let outcome = tasks(root, &borrowed, debug);
+    let outcome = match options.timeout.as_deref() {
+        Some(timeout) => {
+            let mut command = Command::new(binary(root));
+            command.args(&borrowed).current_dir(root);
+            test_execution::run_inherited_timeout(
+                command,
+                debug,
+                std::time::Duration::from_secs(test_plan::parse_duration(timeout)?),
+            )
+        }
+        None => tasks(root, &borrowed, debug),
+    };
 
     // After the run, over the reports it just wrote. `--json` owns the exit
     // status because its whole point is being the machine-readable answer.

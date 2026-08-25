@@ -82,6 +82,8 @@ pub enum Action {
     Stop,
     /// Say whether one is running, and where.
     Status,
+    /// Stop the current daemon and start a fresh resident process.
+    Restart,
 }
 
 pub fn testd(action: Action, debug: bool) -> Result<()> {
@@ -104,6 +106,13 @@ pub fn testd(action: Action, debug: bool) -> Result<()> {
                 Ok(_) => println!("testd: running ({})", socket.display()),
                 Err(_) => println!("testd: not running"),
             }
+            Ok(())
+        }
+        Action::Restart => {
+            let _ = request(&socket, &["STOP".into()]);
+            let classpath = launcher::test_classpath(root, debug)?;
+            ensure_running(&project, &socket, &classpath, debug)?;
+            println!("testd: running ({})", socket.display());
             Ok(())
         }
         Action::Run(filter) => run(&project, &socket, Wanted::Filter(filter), debug),

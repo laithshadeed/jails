@@ -415,13 +415,37 @@ fn main() -> std::process::ExitCode {
         } => console::db(file.as_deref(), no_start, &args, debug),
         Command::Console { no_build, args } => console::console(no_build, &args, debug),
         Command::Test {
-            filter,
+            requested,
+            scope,
+            compile,
+            engine,
+            watch,
+            affected,
             failed,
+            tags,
             fail_fast,
             slowest,
             json,
             fast,
+            until_fail,
+            repeat,
+            timeout,
+            db,
+            explain_selection,
+            command,
         } => {
+            if let Some(cli::TestCommand::Daemon { action }) = command {
+                return match action {
+                    cli::TestDaemonAction::Status => testd::testd(testd::Action::Status, debug),
+                    cli::TestDaemonAction::Stop => testd::testd(testd::Action::Stop, debug),
+                    cli::TestDaemonAction::Restart => testd::testd(testd::Action::Restart, debug),
+                }
+                .map(|()| std::process::ExitCode::SUCCESS)
+                .unwrap_or_else(|error| {
+                    eprintln!("jails: {error}");
+                    std::process::ExitCode::FAILURE
+                });
+            }
             // The launcher class has to be on the test classpath before
             // `--fast` can run anything, and that is a dependency in the
             // reader's POM -- so it is an owned entity installed by an
@@ -429,31 +453,49 @@ fn main() -> std::process::ExitCode {
             // run. V1 spliced it from inside `run::test`, recorded nothing,
             // and left no way to take it back out; `jails remove fast-test`
             // is that way. Idempotent, so every later `--fast` writes nothing.
-            let installed = match fast {
-                true => dispatch::precondition(invocation, jails_engine::route::install_fast_test),
-                false => Ok(()),
+            let options = run::TestOptions {
+                scope: scope.into(),
+                compile: compile.into(),
+                engine: engine.into(),
+                watch,
+                affected,
+                failed,
+                tags,
+                fail_fast,
+                slowest,
+                json,
+                fast,
+                until_fail,
+                repeat,
+                timeout,
+                database_schema: db == cli::TestDatabaseArg::Schema,
+                explain_selection,
             };
-            installed.and_then(|()| {
-                run::test(
-                    filter.as_deref(),
-                    run::TestOptions {
-                        failed,
-                        fail_fast,
-                        slowest,
-                        json,
-                        fast,
-                    },
-                    debug,
-                )
-            })
+            let installed = run::validate_test_options(&options).and_then(|()| {
+                match fast
+                    || engine == cli::TestEngineArg::Warm
+                    || (engine == cli::TestEngineArg::Auto
+                        && matches!(
+                            compile,
+                            cli::TestCompileArg::Ide | cli::TestCompileArg::None
+                        ))
+                    || (affected && engine != cli::TestEngineArg::Build)
+                {
+                    true => {
+                        dispatch::precondition(invocation, jails_engine::route::install_fast_test)
+                    }
+                    false => Ok(()),
+                }
+            });
+            installed.and_then(|()| run::test(&requested, options, debug))
         }
         Command::Testd {
             filter,
             affected,
             stop,
             status,
-        } => testd::testd(
-            if stop {
+        } => {
+            let action = if stop {
                 testd::Action::Stop
             } else if status {
                 testd::Action::Status
@@ -461,9 +503,13 @@ fn main() -> std::process::ExitCode {
                 testd::Action::Affected
             } else {
                 testd::Action::Run(filter)
-            },
-            debug,
-        ),
+            };
+            println!(
+                "note: `jails testd` is a compatibility alias; use `jails test --engine warm \
+                 --compile none` or `jails test daemon ...`"
+            );
+            testd::testd(action, debug)
+        }
         Command::Build => run::build(debug),
         Command::Clean => run::clean(debug),
         Command::Fmt => dispatch::mutate(invocation, false, jails_engine::route::format),

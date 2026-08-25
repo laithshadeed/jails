@@ -221,6 +221,86 @@ fn test_command_infers_unit_and_integration_test_names() {
 }
 
 #[test]
+fn test_command_partitions_multiple_selectors_without_dropping_one() {
+    let root = temp_dir("mock-test-partitions");
+    write_project_skeleton(&root);
+    let fake_dir = temp_dir("mock-test-partitions-bin");
+    let log = fake_dir.join("log.txt");
+    write_fake_maven(&fake_dir, &["mvn"], &log);
+
+    let status = jails_cmd(&root, Some(&fake_dir))
+        .args(["test", "Invoice", "PayoutIT#settles", "--engine", "build"])
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let invocation = read_log(&log);
+    assert!(
+        invocation.contains("test -Dtest=InvoiceTest"),
+        "{invocation}"
+    );
+    assert!(
+        invocation.contains("verify -Dit.test=PayoutIT#settles"),
+        "{invocation}"
+    );
+}
+
+#[test]
+fn test_command_scope_and_repeat_are_owned_by_the_coordinator() {
+    let root = temp_dir("mock-test-scope-repeat");
+    write_project_skeleton(&root);
+    let fake_dir = temp_dir("mock-test-scope-repeat-bin");
+    let log = fake_dir.join("log.txt");
+    write_fake_maven(&fake_dir, &["mvn"], &log);
+
+    let status = jails_cmd(&root, Some(&fake_dir))
+        .args([
+            "test",
+            "--scope",
+            "integration",
+            "--engine",
+            "build",
+            "--repeat",
+            "2",
+        ])
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let invocation = read_log(&log);
+    assert_eq!(invocation.lines().count(), 2, "{invocation}");
+    assert!(
+        invocation
+            .lines()
+            .all(|line| line.contains("verify -Dsurefire.skip=true")),
+        "{invocation}"
+    );
+}
+
+#[test]
+fn test_command_explains_the_canonical_partition() {
+    let root = temp_dir("mock-test-explain");
+    write_project_skeleton(&root);
+    let fake_dir = temp_dir("mock-test-explain-bin");
+    let log = fake_dir.join("log.txt");
+    write_fake_maven(&fake_dir, &["mvn"], &log);
+
+    let output = jails_cmd(&root, Some(&fake_dir))
+        .args([
+            "test",
+            "LedgerTest",
+            "--engine",
+            "build",
+            "--explain-selection",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("engine policy: Build"), "{stdout}");
+    assert!(stdout.contains("Maven: LedgerTest"), "{stdout}");
+    assert!(stdout.contains("reason: Requested"), "{stdout}");
+}
+
+#[test]
 fn project_maven_wrapper_wins_over_path_maven() {
     let root = temp_dir("mock-wrapper-first");
     write_project_skeleton(&root);

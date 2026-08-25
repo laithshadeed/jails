@@ -45,6 +45,8 @@ fn either_root(command: &str) -> Result<(PathBuf, crate::build::Build)> {
 mod filter;
 mod fingerprint;
 mod gradlew;
+mod test_execution;
+mod test_plan;
 use filter::*;
 
 /// Run a command with our stdio, failing on a non-zero exit.
@@ -210,23 +212,130 @@ fn forced_color(cmd: &mut Command) {
 }
 
 /// What `jails test` was asked for beyond the filter.
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Debug)]
 pub struct TestOptions {
+    pub scope: jails_protocol::testing::TestScope,
+    pub compile: jails_protocol::testing::TestCompilePolicy,
+    pub engine: jails_protocol::testing::TestEnginePolicy,
+    pub watch: bool,
+    pub affected: bool,
     pub failed: bool,
+    pub tags: Vec<String>,
     pub fail_fast: bool,
     pub slowest: Option<usize>,
     /// Report the run as JSON instead of Maven's own output.
     pub json: bool,
-    /// Skip Maven entirely and run the compiled classes (`plan.md` §10.2).
+    /// One-release compatibility spelling for `--engine auto`.
     pub fast: bool,
+    pub until_fail: bool,
+    pub repeat: usize,
+    pub timeout: Option<String>,
+    pub database_schema: bool,
+    pub explain_selection: bool,
 }
 
-pub fn test(filter: Option<&str>, options: TestOptions, debug: bool) -> Result<()> {
+pub fn validate_test_options(options: &TestOptions) -> Result<()> {
+    test_plan::validate_runtime_options(options)
+}
+
+pub fn test(requested: &[String], options: TestOptions, debug: bool) -> Result<()> {
+    validate_test_options(&options)?;
+    if options.watch {
+        return test_execution::test_watch(requested, options, debug);
+    }
+    if options.until_fail {
+        let mut once = options;
+        once.until_fail = false;
+        loop {
+            test_once(requested, once.clone(), debug)?;
+        }
+    }
+    let mut once = options;
+    let repeat = once.repeat;
+    once.repeat = 1;
+    for iteration in 0..repeat {
+        if repeat > 1 {
+            println!("test run {}/{}", iteration + 1, repeat);
+        }
+        test_once(requested, once.clone(), debug)?;
+    }
+    Ok(())
+}
+
+fn test_once(requested: &[String], mut options: TestOptions, debug: bool) -> Result<()> {
     let (root, build) = either_root("test")?;
+    let mut execution_requested = requested.to_vec();
+    if options.failed {
+        let failures = match build {
+            crate::build::Build::Gradle => crate::reports::failed_patterns(&root),
+            _ => crate::reports::failed_selectors(&root),
+        };
+        if failures.is_empty() && execution_requested.is_empty() {
+            println!(
+                "no failures recorded. Reports are read from target/surefire-reports, \
+                 target/failsafe-reports and build/test-results/."
+            );
+            println!("Nothing to rerun -- run `jails test` first, or drop --failed.");
+            return Ok(());
+        }
+        if !failures.is_empty() {
+            if execution_requested.is_empty() {
+                println!(
+                    "rerunning {} failed test(s) from the last run",
+                    failures.len()
+                );
+            } else {
+                println!(
+                    "adding {} failed test(s) from the last run to the requested selection",
+                    failures.len()
+                );
+            }
+            execution_requested.extend(failures);
+            execution_requested.sort();
+            execution_requested.dedup();
+        }
+        options.failed = false;
+    }
+    let requested = execution_requested.as_slice();
+    let plan = test_plan::plan(build, requested, &options)?;
+    if options.explain_selection || options.fast {
+        test_plan::explain(&plan);
+    }
+    if plan
+        .partitions
+        .iter()
+        .any(|partition| partition.engine == jails_protocol::testing::TestEngine::TestdV2)
+    {
+        return test_execution::run_warm(requested, &options, debug);
+    }
+    if options.affected {
+        if options.engine == jails_protocol::testing::TestEnginePolicy::Build {
+            println!(
+                "test selection widened to the full {:?} scope: the build engine has no safe \
+                 affected-test graph",
+                options.scope
+            );
+        } else {
+            return test_execution::run_warm(requested, &options, debug);
+        }
+    }
     if build == crate::build::Build::Gradle {
-        return gradlew::test(&root, filter, options, debug);
+        return gradlew::test(&root, requested, options, debug);
     }
     let root = maven_root("test")?;
+
+    let filter = match requested {
+        [] => None,
+        [one] => Some(one.as_str()),
+        _ => {
+            let context = test_execution::MavenTestContext {
+                project: &root,
+                options: &options,
+                debug,
+            };
+            return test_execution::test_many_maven(&context, requested);
+        }
+    };
 
     // `--failed` is a filter jails computes rather than one the reader types,
     // so it is resolved first and then follows exactly the same path.
@@ -310,7 +419,20 @@ pub fn test(filter: Option<&str>, options: TestOptions, debug: bool) -> Result<(
         cmd.arg("-Dfailsafe.failIfNoSpecifiedTests=false");
         rerun_hint = Some(test_name);
     } else {
-        cmd.arg("test");
+        match options.scope {
+            jails_protocol::testing::TestScope::Unit => {
+                cmd.arg("test");
+            }
+            jails_protocol::testing::TestScope::Integration => {
+                cmd.arg("verify").arg("-Dsurefire.skip=true");
+            }
+            jails_protocol::testing::TestScope::All => {
+                cmd.arg("verify");
+            }
+        }
+    }
+    if !options.tags.is_empty() {
+        cmd.arg(format!("-Dgroups={}", options.tags.join(",")));
     }
     if options.fail_fast {
         // One failing class is enough to stop: the point of the flag is the
@@ -321,6 +443,13 @@ pub fn test(filter: Option<&str>, options: TestOptions, debug: bool) -> Result<(
     cmd.current_dir(&root);
 
     if options.json {
+        if options.timeout.is_some() {
+            return Err(
+                "`--timeout --json` needs the v2 captured-result executor\n       fix: omit one \
+                 option until that executor is active"
+                    .into(),
+            );
+        }
         // Maven's own output would sit in front of the JSON and make it
         // unparseable, so it is captured and dropped. The report is read from
         // Surefire's XML afterwards -- the same source `--failed` and
@@ -333,7 +462,14 @@ pub fn test(filter: Option<&str>, options: TestOptions, debug: bool) -> Result<(
         return crate::reports::report_json(&root, captured.status.success());
     }
 
-    let outcome = run_inherited(cmd, debug);
+    let outcome = match options.timeout.as_deref() {
+        Some(timeout) => test_execution::run_inherited_timeout(
+            cmd,
+            debug,
+            std::time::Duration::from_secs(test_plan::parse_duration(timeout)?),
+        ),
+        None => run_inherited(cmd, debug),
+    };
 
     if let Some(count) = options.slowest {
         crate::reports::report_slowest(&root, count);

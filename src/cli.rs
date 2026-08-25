@@ -29,6 +29,84 @@ pub(crate) enum StoragePolicy {
     Drop,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum TestScopeArg {
+    Unit,
+    Integration,
+    All,
+}
+
+impl From<TestScopeArg> for jails_protocol::testing::TestScope {
+    fn from(value: TestScopeArg) -> Self {
+        match value {
+            TestScopeArg::Unit => Self::Unit,
+            TestScopeArg::Integration => Self::Integration,
+            TestScopeArg::All => Self::All,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum TestCompileArg {
+    Auto,
+    Ide,
+    Build,
+    None,
+}
+
+impl From<TestCompileArg> for jails_protocol::testing::TestCompilePolicy {
+    fn from(value: TestCompileArg) -> Self {
+        match value {
+            TestCompileArg::Auto => Self::Auto,
+            TestCompileArg::Ide => Self::Ide,
+            TestCompileArg::Build => Self::Build,
+            TestCompileArg::None => Self::None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum TestEngineArg {
+    Auto,
+    Build,
+    Warm,
+}
+
+impl From<TestEngineArg> for jails_protocol::testing::TestEnginePolicy {
+    fn from(value: TestEngineArg) -> Self {
+        match value {
+            TestEngineArg::Auto => Self::Auto,
+            TestEngineArg::Build => Self::Build,
+            TestEngineArg::Warm => Self::Warm,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum TestDatabaseArg {
+    Off,
+    Schema,
+}
+
+#[derive(Subcommand)]
+pub(crate) enum TestCommand {
+    /// Inspect or control this project's resident test process
+    Daemon {
+        #[command(subcommand)]
+        action: TestDaemonAction,
+    },
+}
+
+#[derive(Subcommand)]
+pub(crate) enum TestDaemonAction {
+    /// Say whether the daemon is running
+    Status,
+    /// Stop the daemon if it is running
+    Stop,
+    /// Replace the daemon and report its new status
+    Restart,
+}
+
 #[derive(Parser)]
 #[command(
     name = "jails",
@@ -742,11 +820,35 @@ pub(crate) enum Command {
     /// The last resolves the `@Test` enclosing that line, which is what an
     /// editor keybinding has to hand: JUnit itself never resolves a file and
     /// a line, so something has to.
+    #[command(
+        args_conflicts_with_subcommands = true,
+        subcommand_precedence_over_arg = true
+    )]
     Test {
-        filter: Option<String>,
+        /// Test classes or `Class#method` selectors; repeat for a union
+        #[arg(value_name = "TEST_OR_METHOD")]
+        requested: Vec<String>,
+        /// Select unit tests, integration tests, or both
+        #[arg(long, value_enum, default_value_t = TestScopeArg::Unit)]
+        scope: TestScopeArg,
+        /// Choose who may compile stale sources
+        #[arg(long, value_enum, default_value_t = TestCompileArg::Auto)]
+        compile: TestCompileArg,
+        /// Choose build-tool execution, strict warm execution, or safe auto partitioning
+        #[arg(long, value_enum, default_value_t = TestEngineArg::Auto)]
+        engine: TestEngineArg,
+        /// Keep running when source or compiled outputs change
+        #[arg(long)]
+        watch: bool,
+        /// Select tests reachable from changed inputs, widening on uncertainty
+        #[arg(long)]
+        affected: bool,
         /// Rerun only what failed last time, read from the reports on disk
         #[arg(long)]
         failed: bool,
+        /// Select tests carrying this tag; repeat for a union
+        #[arg(long = "tag", value_name = "TAG")]
+        tags: Vec<String>,
         /// Stop at the first failing test class
         #[arg(long)]
         fail_fast: bool,
@@ -761,6 +863,23 @@ pub(crate) enum Command {
         /// source file is newer than the classes.
         #[arg(long)]
         fast: bool,
+        /// Run repeatedly until the first failure
+        #[arg(long)]
+        until_fail: bool,
+        /// Run the selection this many times
+        #[arg(long, default_value_t = 1, value_name = "N")]
+        repeat: usize,
+        /// Refuse a run that exceeds this duration (for example `30s` or `2m`)
+        #[arg(long, value_name = "DURATION")]
+        timeout: Option<String>,
+        /// Database isolation for eligible integration tests
+        #[arg(long, value_enum, default_value_t = TestDatabaseArg::Off)]
+        db: TestDatabaseArg,
+        /// Print the canonical partitions and reasons before execution
+        #[arg(long)]
+        explain_selection: bool,
+        #[command(subcommand)]
+        command: Option<TestCommand>,
     },
     /// Run the tests against a resident JVM, started on demand
     ///

@@ -52,6 +52,10 @@ resource field type	jails-engine	project-mutation	route::change_field_type
 resource field nullability	jails-engine	project-mutation	route::set_field_nullability
 resource field drop	jails-engine	project-mutation	route::drop_field
 test	jails-drive	external-process+conditional-project-mutation	run::test
+test daemon	jails-drive	dispatch-only	main command dispatch
+test daemon restart	jails-drive	machine-daemon+external-process	testd::testd
+test daemon status	jails-drive	read-only	testd::testd
+test daemon stop	jails-drive	machine-daemon	testd::testd
 testd	jails-drive	machine-daemon+external-process	testd::testd
 build	jails-drive	external-process	run::build
 clean	jails-drive	external-process	run::clean
