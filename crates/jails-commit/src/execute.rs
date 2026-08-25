@@ -662,9 +662,8 @@ fn recheck_inputs(
                 entries_sha256,
                 ..
             } => {
-                let listed =
-                    jails_project::capture::list_directory(&root.join(path.as_str()), path)
-                        .map_err(|failure| CommitError::StaleInput(failure.to_string()))?;
+                let listed = jails_state::listing::list_directory(&root.join(path.as_str()), path)
+                    .map_err(|failure| CommitError::StaleInput(failure.to_string()))?;
                 let actual = jails_protocol::snapshot::directory_digest(&listed)
                     .map_err(|failure| CommitError::StaleInput(failure.to_string()))?;
                 if actual != *entries_sha256 {

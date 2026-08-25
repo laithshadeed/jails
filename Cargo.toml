@@ -29,6 +29,7 @@ jails-prepare = { path = "crates/jails-prepare" }
 jails-project = { path = "crates/jails-project" }
 jails-protocol = { path = "crates/jails-protocol" }
 jails-spec = { path = "crates/jails-spec" }
+jails-state = { path = "crates/jails-state" }
 jails-support = { path = "crates/jails-support" }
 jails-testkit = { path = "crates/jails-testkit" }
 jails-tooling = { path = "crates/jails-tooling" }

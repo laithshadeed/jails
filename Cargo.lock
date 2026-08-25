@@ -200,8 +200,8 @@ version = "0.1.0"
 dependencies = [
  "jails-commit",
  "jails-prepare",
- "jails-project",
  "jails-protocol",
+ "jails-state",
  "jails-support",
 ]
 
@@ -259,6 +259,7 @@ dependencies = [
  "jails-java",
  "jails-protocol",
  "jails-spec",
+ "jails-state",
  "jails-support",
  "jails-testkit",
 ]
@@ -278,6 +279,14 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "jails-java",
+ "jails-support",
+]
+
+[[package]]
+name = "jails-state"
+version = "0.1.0"
+dependencies = [
+ "jails-protocol",
  "jails-support",
 ]
 

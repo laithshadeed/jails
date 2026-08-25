@@ -1,0 +1,11 @@
+[package]
+name = "jails-state"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+jails-protocol.workspace = true
+jails-support.workspace = true
+
+[lints]
+workspace = true

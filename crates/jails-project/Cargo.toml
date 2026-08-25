@@ -10,6 +10,7 @@ jails-support.workspace = true
 jails-java.workspace = true
 jails-protocol.workspace = true
 jails-spec.workspace = true
+jails-state.workspace = true
 
 [lints]
 workspace = true

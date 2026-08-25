@@ -50,7 +50,7 @@ const ALLOWED: &[AllowedConcept] = &[
         files: &[
             "crates/jails-project/src/generated_files.rs",
             // The read-only machine-state facade classifies the ledger file.
-            "crates/jails-project/src/compat.rs",
+            "crates/jails-state/src/compat.rs",
             // `ProjectPath` must refuse `.jails/ledger.toml` by name, and the
             // test that proves it has to spell the path it is refusing.
             "crates/jails-protocol/src/identity.rs",

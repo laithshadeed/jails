@@ -5,7 +5,7 @@ edition.workspace = true
 
 [dependencies]
 jails-prepare.workspace = true
-jails-project.workspace = true
+jails-state.workspace = true
 jails-protocol.workspace = true
 jails-support.workspace = true
 

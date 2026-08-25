@@ -62,15 +62,15 @@ impl Store {
         // first time either changed. What this adds is the one thing a
         // *commit* needs and a reader does not -- the exact file image it will
         // guard under the lock.
-        let state = jails_project::compat::read(self.project());
+        let state = jails_state::compat::read(self.project());
         let ledger = match &state {
-            jails_project::compat::MachineState::Absent => {
+            jails_state::compat::MachineState::Absent => {
                 return Ok(jails_prepare::pipeline::ObservedStore::default());
             }
-            jails_project::compat::MachineState::Unreadable(why) => {
+            jails_state::compat::MachineState::Unreadable(why) => {
                 return Err(jails_support::Failure::Told(why.clone()));
             }
-            jails_project::compat::MachineState::Current(ledger) => ledger.clone(),
+            jails_state::compat::MachineState::Current(ledger) => ledger.clone(),
         };
         let source = match std::fs::read(&path) {
             Ok(source) => source,

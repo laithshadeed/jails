@@ -782,23 +782,32 @@ because `render_envelope`'s "nothing to do" is a different case.
 Four ratchet rows fell and are recorded in `tests/architecture.rs`:
 `root: &Path` 105 → 94, and §4's bypass count 56 → 46.
 
-### 7.3 `jails-commit` reaches up into `jails-project`
+### 7.3 `jails-commit` no longer reaches up — **done 2026-08-25**
 
 Committing a transaction is lower-level than knowing what Maven is, yet
-`jails-commit` has 5 `jails_project::` references — `compat::*` and
-`capture::list_directory`. That is one coherent thing (**reading and translating
-jails' own machine state**) living in the crate that models Java projects,
-because that is where `.jails/` reading grew up.
+`jails-commit` had 5 `jails_project::` references — `compat::*` and
+`capture::list_directory`. That is one coherent thing (**reading and
+translating jails' own machine state**) living in the crate that models Java
+projects, because that is where `.jails/` reading grew up.
 
-Extract a `jails-state` crate between `jails-protocol` and `jails-project`
-holding `.jails/` discovery, ledger read/write, the envelope's file half and
-`capture::list_directory`. `jails-project` keeps what makes it *a Java project*:
-`pom`, `compose`, `config`, `model`, `projection`, `inspect`, `maven`, `junit`,
-`synonyms`.
+`jails-state` sits between `jails-protocol` and `jails-project` and holds
+`compat` and `listing`. `jails-commit` depends on it instead, and
+`grep -rn "jails_project::" crates/jails-commit/src` returns **0**.
 
-`jails-commit`'s doc comment says its whole point is that the executor is small
-because there is one direction to finish in. It cannot be small while it also
-has to know how `.jails/` is laid out.
+Two things the extraction turned up. **`compat.rs` was already independent** —
+its only imports were `jails_protocol::envelope::LedgerV2`, `jails_support` and
+`std::path::Path`, so the crate boundary it needed had been available all along
+and nothing had drawn it. And **the one reference from below was a doc comment**:
+`jails-protocol::resource` mentions `codemod::Marked` in prose, which is what
+made `codemod`'s move in §7.5 possible in the same pass.
+
+`capture` keeps the name its callers use by re-exporting `list_directory`. Only
+that function and its private half moved; the rest of `capture` knows what a
+`Project` is and stays where it is.
+
+`jails-commit` still reaches `jails-project` *transitively*, through
+`jails-prepare`, because a `PreparedChange` is about a Java project. That is the
+honest shape and not the thing §7.3 was about.
 
 ### 7.4 `jails-protocol` is four concepts in one crate
 

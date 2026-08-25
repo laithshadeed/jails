@@ -20,7 +20,6 @@
 pub mod capability;
 pub mod capture;
 pub mod codemod;
-pub mod compat;
 pub mod compose;
 pub mod config;
 pub mod generated_files;
@@ -41,3 +40,7 @@ pub mod synonyms;
 pub use jails_java::{java, template};
 pub use jails_spec::{build, spec};
 pub(crate) use jails_support::{apply, json, process};
+
+// `.jails/` reading lives one layer down now (`pending.md` §7.3). Re-exported
+// so `crate::compat` keeps meaning what it always did.
+pub use jails_state::compat;

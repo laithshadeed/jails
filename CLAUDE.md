@@ -43,7 +43,7 @@ what is still outstanding, re-measured rather than transcribed.
 
 ## Workspace
 
-Ten crates, lowest first. A crate may only depend on one below it, and
+Twelve crates, lowest first. A crate may only depend on one below it, and
 Cargo enforces that; `no_module_depends_on_a_layer_above_its_own` in
 `tests/architecture.rs` enforces the same rule for module-level edges the
 compiler cannot see, and assigns every module its crate. **That table
@@ -52,9 +52,11 @@ module belongs to** — this one is the prose, and prose is what goes stale.
 
 | crate | what belongs in it |
 |---|---|
-| `jails-support` | writing, running, splicing, encoding. Nothing here knows what a Java project is. `Result`, `debug_cmd` and `CWD_LOCK` live here. |
+| `jails-support` | **write, run, encode.** Nothing here knows what a Java project is — `codemod` moved to `jails-project` and `CWD_LOCK` to `jails-testkit` when that rule was applied honestly, and `runner` is `hermetic`, named for the contract that separates it from `process`. `Result`, `Failure` and `debug_cmd` live here. |
+| `jails-testkit` | one `CWD_LOCK`, taken as a `[dev-dependency]`. Test infrastructure that cannot be `#[cfg(test)]`, because a dependent crate's tests cannot see one. |
 | `jails-java` | reading Java (`java`, `classfile`) and rendering templates into it (`template`). |
 | `jails-spec` | where a project is and how it is laid out (`build`, `spec::paths`, `spec::layout`), what a field spec means (`spec::field`), and the closed CLI vocabularies (`spec::kind`). |
+| `jails-state` | **jails' own machine state, read and classified**: `compat` (absent / current / unreadable, never a fourth answer that quietly repairs something) and `listing` (what a directory holds). Below the Java project on purpose — `jails-commit` needs both and neither is about Java. |
 | `jails-protocol` | **the validated values every closed jails format is built from** — `Recipe`, `Name`, `Package`, `FieldSpec`, `EntityId`, `ResourceKey`, and the plan/transition/effect vocabulary above them. One constructor per type, and every wire decoder calls it, so a value rejected at the CLI cannot arrive through a recovered journal instead. 23 flat modules; §7.4 of `pending.md` groups them. |
 | `jails-project` | one resolved `model::Project`, plus every file jails writes *about* a project — the reader's (`config`, `compose`, `pom`, `gradle`) and the read-only view of jails' own (`compat`, `projection`, `ledger`). |
 | `jails-generate` | everything that decides what Java to write: `generate`, `spring`, `add`, `sql`. Its planning half (`plan_for`, `artifacts_for`) is what the engine calls and is pure. |
