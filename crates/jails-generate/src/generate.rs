@@ -413,6 +413,56 @@ mod tests {
             .keep()
     }
 
+    /// Every built-in field type has a JSON sample, in both tables that write
+    /// one.
+    ///
+    /// `pending.md` §1.3: the field-type vocabulary and the JSON sample tables
+    /// are two spellings of one set, and they had drifted five apart -- which
+    /// is how a `uri` component came to document a request its own record
+    /// refuses. `path` had no sample in `scaffold`, and `currency` and `bytes`
+    /// had none in `spring::workflow`, so a scaffold or a use-case over one of
+    /// those emitted a request body with the field silently absent.
+    ///
+    /// The vocabulary is `jails_spec::spec::BUILTIN_FIELD_TYPES` and nothing
+    /// else, so a type added there fails this until it has a sample. That is
+    /// the relationship the two tables should have had all along: one of them
+    /// is the list, the others answer to it.
+    #[test]
+    fn every_builtin_type_has_a_json_sample() {
+        let dir = scratch("json-samples");
+        let project = crate::model::Project::inspect(&dir).unwrap();
+        let slice = crate::model::Slice::new(&project, None);
+        let mut missing = Vec::new();
+        for java_type in jails_spec::spec::builtin_java_types() {
+            // The token is not what these tables read -- they match on the
+            // resolved Java type -- so the field is built directly.
+            let field = Field {
+                name: "sample".to_string(),
+                java_type: java_type.to_string(),
+                imports: Vec::new(),
+                optionality: Optionality::Required,
+                owned: false,
+                collection: false,
+                constraints: Default::default(),
+            };
+            if crate::generate::scaffold::json_sample(&project, "com.example.demo.domain", &field)
+                .is_none()
+            {
+                missing.push(format!("scaffold: {java_type}"));
+            }
+            if crate::spring::json_sample(&slice, &field).is_none() {
+                missing.push(format!("spring::workflow: {java_type}"));
+            }
+        }
+        std::fs::remove_dir_all(&dir).ok();
+        assert!(
+            missing.is_empty(),
+            "these built-in field types have no JSON sample, so a generated request body \
+             documents a field it then omits:\n  {}",
+            missing.join("\n  ")
+        );
+    }
+
     /// The invariant that keeps a scaffold able to *start*: exactly one
     /// adapter is a bean. Two makes Spring refuse to choose; zero leaves the
     /// service with no repository at all.

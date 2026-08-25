@@ -209,31 +209,78 @@ pub(crate) fn generic_argument<'a>(token: &'a str, name: &str) -> Option<&'a str
         .strip_suffix('>')
 }
 
-pub fn field_type(token: &str) -> Result<(&'static str, Option<&'static str>)> {
-    match token {
-        "string" | "text" => Ok(("String", None)),
-        "int" | "integer" => Ok(("Integer", None)),
-        "long" => Ok(("Long", None)),
-        "boolean" => Ok(("Boolean", None)),
-        "date" => Ok(("LocalDate", Some("java.time.LocalDate"))),
-        "datetime" => Ok(("LocalDateTime", Some("java.time.LocalDateTime"))),
-        "instant" => Ok(("Instant", Some("java.time.Instant"))),
-        "uuid" => Ok(("UUID", Some("java.util.UUID"))),
-        "currency" => Ok(("Currency", Some("java.util.Currency"))),
-        "bigdecimal" | "decimal" => Ok(("BigDecimal", Some("java.math.BigDecimal"))),
-        "bytes" => Ok(("byte[]", None)),
-        "duration" => Ok(("Duration", Some("java.time.Duration"))),
-        "zone-id" | "zoneid" => Ok(("ZoneId", Some("java.time.ZoneId"))),
-        "uri" => Ok(("URI", Some("java.net.URI"))),
-        "path" => Ok(("Path", Some("java.nio.file.Path"))),
-        "double" => Ok(("Double", None)),
-        other => Err(format!(
-            "unknown field type '{other}' (known: string, text, int/integer, long, boolean, date, datetime, instant, uuid, currency, decimal, bytes, duration, zone-id, uri, path, double, list<T>, map<K,V>).\n       \
-             Capitalise it -- {}:{} -- to mean a type this project owns.",
-            other,
-            capitalize(other)
-        )),
+/// **The field-type vocabulary, and the only place it is written down.**
+///
+/// One row per accepted spelling: the token, the Java type it resolves to, and
+/// the import that costs. Aliases are rows of their own (`string` and `text`,
+/// `int` and `integer`), so the list a refusal prints is derived from what is
+/// actually accepted rather than typed out beside it -- it used to be a literal
+/// in the error message, which is a second list that goes stale the first time
+/// somebody adds a type and does not scroll far enough.
+///
+/// `pending.md` §1.3 is the entry about that: *"the JSON sample table and the
+/// field-type vocabulary are two spellings of one set. They were five apart,
+/// which is how a `uri` component came to document a request its own record
+/// refuses."* `every_builtin_type_has_a_json_sample` in `jails-generate` reads
+/// [`builtin_java_types`] and fails when a sample table falls behind this one.
+pub const BUILTIN_FIELD_TYPES: &[(&str, &str, Option<&str>)] = &[
+    ("string", "String", None),
+    ("text", "String", None),
+    ("int", "Integer", None),
+    ("integer", "Integer", None),
+    ("long", "Long", None),
+    ("boolean", "Boolean", None),
+    ("date", "LocalDate", Some("java.time.LocalDate")),
+    ("datetime", "LocalDateTime", Some("java.time.LocalDateTime")),
+    ("instant", "Instant", Some("java.time.Instant")),
+    ("uuid", "UUID", Some("java.util.UUID")),
+    ("currency", "Currency", Some("java.util.Currency")),
+    ("bigdecimal", "BigDecimal", Some("java.math.BigDecimal")),
+    ("decimal", "BigDecimal", Some("java.math.BigDecimal")),
+    ("bytes", "byte[]", None),
+    ("duration", "Duration", Some("java.time.Duration")),
+    ("zone-id", "ZoneId", Some("java.time.ZoneId")),
+    ("zoneid", "ZoneId", Some("java.time.ZoneId")),
+    ("uri", "URI", Some("java.net.URI")),
+    ("path", "Path", Some("java.nio.file.Path")),
+    ("double", "Double", None),
+];
+
+/// Every distinct Java type a built-in spelling can produce.
+///
+/// The set anything that maps a field to something else -- a JSON sample, a SQL
+/// column, a fixture value -- has to cover. Order is the declaration order, so
+/// a failure names the types in the order they appear above.
+pub fn builtin_java_types() -> Vec<&'static str> {
+    let mut out: Vec<&'static str> = Vec::new();
+    for (_, java, _) in BUILTIN_FIELD_TYPES {
+        if !out.contains(java) {
+            out.push(java);
+        }
     }
+    out
+}
+
+pub fn field_type(token: &str) -> Result<(&'static str, Option<&'static str>)> {
+    if let Some((_, java, import)) = BUILTIN_FIELD_TYPES
+        .iter()
+        .find(|(spelling, _, _)| *spelling == token)
+    {
+        return Ok((java, *import));
+    }
+    let mut known: Vec<&str> = Vec::new();
+    for (spelling, _, _) in BUILTIN_FIELD_TYPES {
+        if !known.contains(spelling) {
+            known.push(spelling);
+        }
+    }
+    Err(format!(
+        "unknown field type '{token}' (known: {}, list<T>, map<K,V>).\n       \
+         Capitalise it -- {}:{} -- to mean a type this project owns.",
+        known.join(", "),
+        token,
+        capitalize(token)
+    ))
 }
 
 /// The Java spellings of the built-in table, so `date:LocalDate` and

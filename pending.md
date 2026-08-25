@@ -92,11 +92,29 @@ same afternoon, all one shape — a version fact answered confidently and wrongl
 `read_build_file`'s doc comment records the first two instances of this. Assume
 there is a fourth.
 
-### 1.3 Two lists of the same types
+### 1.3 Two lists of the same types — **closed 2026-08-25**
 
-The JSON sample table and the field-type vocabulary are two spellings of one
-set. They were five apart, which is how a `uri` component came to document a
-request its own record refuses. One table would close it.
+The JSON sample table and the field-type vocabulary were two spellings of one
+set, and they were apart — which is how a `uri` component came to document a
+request its own record refuses.
+
+Re-measured before fixing, and it was worse than one gap: there were **four**
+copies. `jails_spec::spec::field_type`'s match; the list of accepted spellings
+typed out again inside its own error message; `scaffold::json_sample`; and
+`spring::workflow::json_sample`. A fifth, `sql::sample_value`, is a different
+question (two *distinct* rows for a fixture) and stays.
+
+The real holes: `path` had no sample in `scaffold`, and `currency` and `bytes`
+had none in `spring::workflow` — so a scaffold or a use-case over one of those
+emitted a request body with the field silently absent.
+
+`jails_spec::spec::BUILTIN_FIELD_TYPES` is the vocabulary now, one row per
+accepted spelling, and both the resolver and its error message read it.
+`builtin_java_types()` is the distinct set anything mapping a field to something
+else has to cover, and `every_builtin_type_has_a_json_sample` fails when a
+sample table falls behind it — checked by breaking it, which reports
+`scaffold: Path`. That is the relationship the tables should always have had:
+one of them is the list, the others answer to it.
 
 ### 1.4 Generated business behaviour is unwritten, by design
 

@@ -513,7 +513,7 @@ fn usecase_controller_java(
     )
 }
 
-pub(super) fn json_sample(slice: &Slice, field: &crate::generate::Field) -> Option<String> {
+pub(crate) fn json_sample(slice: &Slice, field: &crate::generate::Field) -> Option<String> {
     let project = slice.project();
     let domain: &str = &slice.owned(Layer::Domain);
     if field.optionality == crate::generate::Optionality::Nullable {
@@ -536,6 +536,11 @@ pub(super) fn json_sample(slice: &Slice, field: &crate::generate::Field) -> Opti
         "URI" => Some("https://example.test/items/1".to_string()),
         "Path" => Some("/tmp/example".to_string()),
         "ZoneId" => Some("UTC".to_string()),
+        // Two the field vocabulary accepts and this table had no arm for, so a
+        // use-case over a `currency` or `bytes` component produced a request
+        // body with the field silently missing. `pending.md` §1.3.
+        "Currency" => Some("GBP".to_string()),
+        "byte[]" => Some("amFpbHM=".to_string()),
         owned if field.owned => crate::generate::first_enum_constant(project, domain, owned),
         _ => None,
     };

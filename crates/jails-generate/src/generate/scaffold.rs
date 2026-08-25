@@ -358,7 +358,7 @@ pub(crate) fn sampled_request(
 /// `deps/jackson-databind`: `Currency` and `ZoneId` are their identifiers,
 /// `byte[]` is base64, and `Duration` accepts ISO-8601 in either direction
 /// even though it is written as decimal seconds.
-fn json_sample(project: &Project, domain: &str, field: &Field) -> Option<String> {
+pub(crate) fn json_sample(project: &Project, domain: &str, field: &Field) -> Option<String> {
     Some(match field.java_type.as_str() {
         "String" => format!("\"sample-{}\"", field.name),
         "Integer" | "int" | "Long" | "long" | "Double" | "double" | "BigDecimal" => "1".to_string(),
@@ -375,6 +375,13 @@ fn json_sample(project: &Project, domain: &str, field: &Field) -> Option<String>
         "ZoneId" => "\"Europe/London\"".to_string(),
         "Duration" => "\"PT30S\"".to_string(),
         "byte[]" => "\"amFpbHM=\"".to_string(),
+        // `pending.md` §1.3: this table and the field-type vocabulary are two
+        // spellings of one set, and they had drifted. `path` was accepted by
+        // `g scaffold` and had no sample here, so the generated `.http`
+        // collection documented a request the record it was generated from
+        // refuses. `every_builtin_type_has_a_json_sample` is what stops the
+        // two separating again.
+        "Path" => "\"/tmp/example\"".to_string(),
         other if field.owned => {
             format!("\"{}\"", first_enum_constant(project, domain, other)?)
         }
