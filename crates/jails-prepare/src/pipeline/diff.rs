@@ -49,15 +49,20 @@ pub(super) struct Conflict {
     pub(super) hunks: usize,
 }
 
+pub(super) struct DiffContext<'a> {
+    pub(super) prior: &'a BTreeMap<ProjectPath, crate::reconcile::PriorOutput>,
+    pub(super) previously_owned: &'a BTreeSet<ProjectPath>,
+    pub(super) exact_restores: &'a BTreeMap<ProjectPath, ObjectId>,
+    pub(super) read_object: &'a super::ObjectReader,
+    pub(super) timings: &'a crate::timing::TimingTrace,
+}
+
 /// Step 8: every path whose projected state differs from what was captured.
 pub(super) fn diff(
     base: &ProjectSnapshot,
     projection: &ProjectedProject,
     rendered: &BTreeMap<ProjectPath, Vec<u8>>,
-    prior: &BTreeMap<ProjectPath, crate::reconcile::PriorOutput>,
-    previously_owned: &BTreeSet<ProjectPath>,
-    read_object: &super::ObjectReader,
-    timings: &crate::timing::TimingTrace,
+    context: DiffContext<'_>,
 ) -> Result<Diffed> {
     let mut operations = Vec::new();
     let mut objects: BTreeMap<ObjectId, Arc<[u8]>> = BTreeMap::new();
@@ -87,6 +92,7 @@ pub(super) fn diff(
             }
             (Captured::Absent, Some((body, mode))) => {
                 let object = intern(&mut objects, body);
+                require_exact_restore(path, object.id, context.exact_restores)?;
                 if !contributors.is_empty() {
                     record_output(&mut outputs, path, object, mode);
                 }
@@ -110,6 +116,7 @@ pub(super) fn diff(
             }
             (Captured::Present(file), Some((body, mode))) => {
                 let object = intern(&mut objects, body.clone());
+                require_exact_restore(path, object.id, context.exact_restores)?;
                 let live = ObjectRef::new(file.sha256, file.len);
                 // Equal bytes *and* mode emit no operation. A file with the
                 // right bytes and the wrong mode is not the file that was
@@ -122,6 +129,27 @@ pub(super) fn diff(
                     }
                     continue;
                 }
+                // Repair is the one explicit operation allowed to put a
+                // sealed migration back to its content-addressed image. It
+                // is deliberately narrower than `--force`: the subject and
+                // lifecycle supply the exact path and digest, so arbitrary
+                // generated source still follows the normal three-way rule.
+                if context.exact_restores.contains_key(path) {
+                    if !contributors.is_empty() {
+                        record_output(&mut outputs, path, object, mode);
+                    }
+                    operations.push(FileOp::Replace {
+                        path: path.clone(),
+                        before: GuardedImage {
+                            object: live,
+                            mode: file.mode,
+                        },
+                        after: object,
+                        mode,
+                        contributors,
+                    });
+                    continue;
+                }
                 // An *owned output* -- a file some entity claims, as opposed
                 // to a shared file this change merely edits -- goes through
                 // R5.3's reconciliation, which is where "jails did not write
@@ -129,8 +157,8 @@ pub(super) fn diff(
                 // planned a replace over a file somebody had written by hand,
                 // and the receipt recorded the entity as its contributor.
                 if !contributors.is_empty() {
-                    let recorded = prior.get(path).copied();
-                    if recorded.is_none() && previously_owned.contains(path) {
+                    let recorded = context.prior.get(path).copied();
+                    if recorded.is_none() && context.previously_owned.contains(path) {
                         return Err(format!(
                             "`{path}` is jails' own output and its bytes differ from what this \
                              would write, but the store has not recorded the bytes jails wrote \
@@ -155,7 +183,7 @@ pub(super) fn diff(
                         // becoming the new baseline.
                         crate::reconcile::Decision::Nothing => continue,
                         crate::reconcile::Decision::KeepUserBytes => {
-                            keep_current(&mut outputs, path, prior, live, file.mode);
+                            keep_current(&mut outputs, path, context.prior, live, file.mode);
                             continue;
                         }
                         // Both sides moved to the same bytes. No write, but
@@ -172,7 +200,7 @@ pub(super) fn diff(
                             let base_bytes = objects
                                 .get(&base_id)
                                 .map(|bytes| bytes.to_vec())
-                                .or_else(|| read_object(&base_id))
+                                .or_else(|| (context.read_object)(&base_id))
                                 .ok_or_else(|| {
                                     format!(
                                         "`{path}` has a recorded base whose bytes the object \
@@ -181,9 +209,11 @@ pub(super) fn diff(
                                          aside, or destroy and regenerate."
                                     )
                                 })?;
-                            match timings.measure(crate::timing::TimingPhase::Process, || {
-                                crate::merge::three_way(path, &base_bytes, &file.bytes, &body)
-                            })? {
+                            match context
+                                .timings
+                                .measure(crate::timing::TimingPhase::Process, || {
+                                    crate::merge::three_way(path, &base_bytes, &file.bytes, &body)
+                                })? {
                                 crate::merge::Merged::Clean(merged) => {
                                     // The merged bytes go on disk; the *base*
                                     // still advances to what the generator
@@ -272,6 +302,24 @@ pub(super) fn diff(
         conflicts,
         merged: merged_paths,
     })
+}
+
+fn require_exact_restore(
+    path: &ProjectPath,
+    desired: ObjectId,
+    exact_restores: &BTreeMap<ProjectPath, ObjectId>,
+) -> Result<()> {
+    let Some(expected) = exact_restores.get(path) else {
+        return Ok(());
+    };
+    if expected != &desired {
+        return Err(format!(
+            "repair bytes for `{path}` do not match its sealed digest.\n       fix: restore the \
+             object store from backup; repair never invents migration history."
+        )
+        .into());
+    }
+    Ok(())
 }
 
 /// The ordinary row: jails wrote these bytes, so they are both the base it

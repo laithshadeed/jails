@@ -228,6 +228,7 @@ fn apply(
         })
         .collect();
     let stamps = stamps(&set.ordered);
+    let exact_restores = repair_restores(&set.subject, &context.observed_store)?;
     let diff::Diffed {
         operations,
         objects,
@@ -239,13 +240,21 @@ fn apply(
         &base,
         &projection,
         &rendered,
-        &prior,
-        &previously_owned,
-        &context.objects,
-        &context.timings,
+        diff::DiffContext {
+            prior: &prior,
+            previously_owned: &previously_owned,
+            exact_restores: &exact_restores,
+            read_object: &context.objects,
+            timings: &context.timings,
+        },
     )?;
 
-    protect_migration_history(&context.observed_store, &operations, &conflicts)?;
+    protect_migration_history(
+        &context.observed_store,
+        &operations,
+        &conflicts,
+        &exact_restores,
+    )?;
 
     // Step 9. Parents for creates only, stopping at the machine root.
     let directories = parents(&base, &operations)?;
@@ -615,6 +624,7 @@ fn protect_migration_history(
     store: &ObservedStore,
     operations: &[FileOp],
     conflicts: &[diff::Conflict],
+    exact_restores: &BTreeMap<ProjectPath, ObjectId>,
 ) -> Result<()> {
     let sealed: BTreeSet<ProjectPath> = store
         .ledger
@@ -630,9 +640,17 @@ fn protect_migration_history(
         })
         .collect();
     let changed = operations.iter().find_map(|operation| match operation {
-        FileOp::Replace { path, .. } | FileOp::Delete { path, .. } if sealed.contains(path) => {
+        FileOp::Create { path, after, .. }
+            if sealed.contains(path) && exact_restores.get(path) != Some(&after.id) =>
+        {
             Some(path)
         }
+        FileOp::Replace { path, after, .. }
+            if sealed.contains(path) && exact_restores.get(path) != Some(&after.id) =>
+        {
+            Some(path)
+        }
+        FileOp::Delete { path, .. } if sealed.contains(path) => Some(path),
         _ => None,
     });
     let conflicted = conflicts
@@ -648,6 +666,37 @@ fn protect_migration_history(
         .into());
     }
     Ok(())
+}
+
+fn repair_restores(
+    subject: &jails_protocol::plan::PlannedSubject,
+    store: &ObservedStore,
+) -> Result<BTreeMap<ProjectPath, ObjectId>> {
+    let jails_protocol::plan::PlannedSubject::RepairResource(request) = subject else {
+        return Ok(BTreeMap::new());
+    };
+    let lifecycle = store
+        .lifecycles()
+        .iter()
+        .find(|row| row.entity == request.entity)
+        .ok_or_else(|| {
+            "repair names an entity with no resource lifecycle.\n       fix: run `jails resource \
+             status <entity>` and restore the ledger before repairing files."
+                .to_string()
+        })?;
+    if lifecycle.expected_path != request.expected_path {
+        return Err(format!(
+            "repair expected `{}` but the lifecycle records `{}`.\n       fix: rerun repair with \
+             the recorded identity.",
+            request.expected_path, lifecycle.expected_path
+        )
+        .into());
+    }
+    Ok(lifecycle
+        .migrations
+        .iter()
+        .map(|seal| (seal.path.clone(), seal.content_digest))
+        .collect())
 }
 
 /// What one preparation produced, before it is stamped with an identity.

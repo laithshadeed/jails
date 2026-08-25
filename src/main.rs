@@ -276,6 +276,13 @@ fn main() -> std::process::ExitCode {
                     jails_engine::route::revive(run, &selector, &table)
                 })
             }
+            ResourceCommand::Repair {
+                selector,
+                strategy: _,
+                datasource,
+            } => dispatch::mutate(invocation, false, |run| {
+                jails_engine::route::repair(run, &selector, datasource.as_deref())
+            }),
             ResourceCommand::Field { command } => match command {
                 ResourceFieldCommand::Add {
                     entity,

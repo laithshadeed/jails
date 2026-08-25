@@ -102,11 +102,27 @@ pub(crate) enum ResourceCommand {
         #[arg(long)]
         table: String,
     },
+    /// Restore sealed history and reconcile owned projections
+    Repair {
+        /// Simple entity name or fully qualified generated Java type
+        selector: String,
+        /// The only automatic repair policy: preserve history and move forward
+        #[arg(long, value_enum)]
+        strategy: RepairStrategy,
+        /// Include evidence from this datasource when available
+        #[arg(long)]
+        datasource: Option<String>,
+    },
     /// Evolve one field through a new forward migration
     Field {
         #[command(subcommand)]
         command: ResourceFieldCommand,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
+pub(crate) enum RepairStrategy {
+    RollForward,
 }
 
 #[derive(Subcommand)]

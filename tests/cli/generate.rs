@@ -285,7 +285,6 @@ fn task_scaffold_cannot_rewrite_or_delete_its_published_v001() {
         .output()
         .unwrap();
     assert!(generated.status.success(), "{generated:?}");
-
     let migration = root.join("src/main/resources/db/migration/V001__create_tasks.sql");
     let sealed = fs::read_to_string(&migration).unwrap();
     let before_resync = snapshot_tree(&root);
@@ -442,6 +441,61 @@ fn task_scaffold_cannot_rewrite_or_delete_its_published_v001() {
         "{}",
         String::from_utf8_lossy(&active_status.stdout)
     );
+}
+
+#[test]
+fn resource_repair_restores_sealed_history_and_missing_owned_projections() {
+    let root = temp_dir("resource-repair");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    let generated = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(generated.status.success(), "{generated:?}");
+    let evolved = jails_cmd(&root, None)
+        .args(["resource", "field", "add", "Task", "priority:int?"])
+        .output()
+        .unwrap();
+    assert!(evolved.status.success(), "{evolved:?}");
+
+    let migration = root.join("src/main/resources/db/migration/V001__create_tasks.sql");
+    let sealed = fs::read(&migration).unwrap();
+    fs::write(&migration, b"-- accidentally edited\n").unwrap();
+    let controller = root.join("src/main/java/com/example/demo/web/TaskController.java");
+    fs::remove_file(&controller).unwrap();
+
+    let repaired = jails_cmd(&root, None)
+        .args(["resource", "repair", "Task", "--strategy", "roll-forward"])
+        .output()
+        .unwrap();
+    assert!(
+        repaired.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&repaired.stdout),
+        String::from_utf8_lossy(&repaired.stderr)
+    );
+    assert_eq!(fs::read(&migration).unwrap(), sealed);
+    assert!(
+        controller.is_file(),
+        "repair did not recreate {controller:?}"
+    );
+
+    fs::remove_file(&migration).unwrap();
+    let repaired_missing = jails_cmd(&root, None)
+        .args(["resource", "repair", "Task", "--strategy", "roll-forward"])
+        .output()
+        .unwrap();
+    assert!(repaired_missing.status.success(), "{repaired_missing:?}");
+    assert_eq!(fs::read(&migration).unwrap(), sealed);
+
+    let store = jails_commit::store::Store::at(&root)
+        .observe()
+        .unwrap()
+        .ledger
+        .unwrap();
+    assert_eq!(store.lifecycles.len(), 1);
+    assert_eq!(store.lifecycles[0].migrations.len(), 2);
 }
 
 #[test]
