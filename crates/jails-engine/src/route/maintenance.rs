@@ -540,6 +540,24 @@ pub fn adopt_layout(run: &Run) -> Result<Outcome> {
 /// reader's.
 pub fn format(run: &Run) -> Result<Outcome> {
     let project = run.project();
+    // Maven only, and by name rather than by trying and failing. `add format`
+    // *does* configure a Gradle build -- the `plugins {}` entry, the
+    // `spotless {}` block, and `spotlessCheck` wired into `check` by the
+    // plugin itself -- so the formatting is enforced. What is missing is this
+    // route's guarantee, not the formatter: it runs the tool in a sandbox laid
+    // out from the projection, so the reformat is a reviewed diff committed in
+    // the same transaction. Gradle in a throwaway tree needs its wrapper, its
+    // caches and a writable `build/`, which is a different bargain and is
+    // recorded in `pending.md` rather than half-taken here.
+    if project.build() == jails_spec::build::Build::Gradle {
+        return Err(
+            "`jails fmt` runs the formatter inside a sandbox laid out from this transaction, \
+             and it drives that with Maven.\n       fix: `./gradlew spotlessApply` -- `jails \
+             add format` has already configured it, and `check` fails on an unformatted \
+             file. The command is refused rather than silently doing something else."
+                .to_string(),
+        );
+    }
     let scope = ProjectPath::parse("src")?;
     let mut reads = capture::capability_reads()?;
     let mut sources = Vec::new();

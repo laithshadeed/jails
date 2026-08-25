@@ -1092,6 +1092,16 @@ writes the same JUnit XML Surefire does, in a different directory.
 classpath resolved through Maven, and a flag that silently ran the whole suite
 instead would look like it worked.
 
+`jails add format` configures Spotless on a Gradle build too, splicing
+`id 'com.diffplug.spotless' version '…'` into the existing `plugins {}` block
+(and refusing when there is none — that block is only legal as the script's
+first statement, and jails will not guess where the top of your build file is).
+`jails fmt` itself is Maven-only: it runs the formatter in a sandbox laid out
+from the transaction so the reformat is a reviewed diff, and it drives that
+sandbox with Maven. On Gradle it refuses and points at `./gradlew
+spotlessApply`, which the project is by then configured for and which `check`
+already enforces.
+
 **Maven stays the default.** `jails new` creates a Maven project and goes on
 doing so; the Gradle work is about jails *operating on* a build somebody else
 wrote.
@@ -1151,9 +1161,7 @@ Deferred out of v1 on purpose — this is meant to stay a small tool:
 
 - **Kotlin-DSL Gradle** (`build.gradle.kts`). The Groovy DSL is read and
   spliced; the Kotlin one is a different grammar and stays foreign rather than
-  half-understood. `add format` also still refuses on Gradle, because Spotless
-  there needs a version inside the `plugins {}` block — the one thing that
-  cannot be a self-contained appended block.
+  half-understood.
 - A runtime bean/route view (booting the context and asking Spring itself).
   `routes` and `beans` read source instead, which is instant and works on a
   project that does not start — at the cost of anything decided at runtime.

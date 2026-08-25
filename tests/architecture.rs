@@ -153,7 +153,12 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // three readers already here. `reports.rs` reads a directory
                 // of XML and knows nothing about a Java project; a `Project`
                 // would carry no fact it reads.
-                ceiling: 106,
+                //
+                // 106 -> 105 when `run::fmt` was deleted. It was public and
+                // unreachable: `jails fmt` has gone through the transaction
+                // route since V2, so this was a second, non-transactional way
+                // to run the formatter that nothing called.
+                ceiling: 105,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;

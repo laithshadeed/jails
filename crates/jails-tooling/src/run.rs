@@ -471,17 +471,6 @@ pub fn clean(debug: bool) -> Result<()> {
     run_inherited(cmd, debug)
 }
 
-/// Reformat in place. Spotless is a plugin, not a dependency, so an
-/// unconfigured project fails with a Maven stack trace about an unknown
-/// prefix -- checking first turns that into one actionable line.
-pub fn fmt(debug: bool) -> Result<()> {
-    let root = maven_root("fmt")?;
-    require_spotless(&root)?;
-    let mut cmd = Command::new(crate::maven::binary(&root));
-    cmd.args(["spotless:apply"]).current_dir(&root);
-    run_inherited(cmd, debug)
-}
-
 /// Reformat quietly, for `add format` to call the moment it installs the
 /// plugin. A formatter has an opinion about line wrapping that no amount of
 /// careful templating can predict, so the only way to leave the project
@@ -534,15 +523,6 @@ pub fn gradle(args: &[String], debug: bool) -> Result<()> {
     }
     let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
     gradlew::tasks(&root, &borrowed, debug)
-}
-
-fn require_spotless(root: &Path) -> Result<()> {
-    let pom = fs::read_to_string(root.join("pom.xml"))
-        .map_err(|e| format!("failed to read pom.xml: {e}"))?;
-    if pom.contains("spotless-maven-plugin") {
-        return Ok(());
-    }
-    Err("this project has no formatter configured -- run `jails add format` first".to_string())
 }
 
 /// Spawns `spring-boot:run` once and, on every change to a .java source

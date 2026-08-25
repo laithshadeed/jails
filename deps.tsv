@@ -18,6 +18,9 @@ spring-cloud-circuitbreaker	spring-cloud/spring-cloud-circuitbreaker
 springdoc-openapi	springdoc/springdoc-openapi
 start.spring.io	spring-io/start.spring.io
 
+# --- build / formatting ---
+spotless	diffplug/spotless
+
 # --- datastores / messaging / infra ---
 postgres	postgres/postgres
 pgjdbc	pgjdbc/pgjdbc

@@ -887,6 +887,14 @@ pub enum Feature {
     IntegrationTests,
     /// Enforce line coverage during `check`.
     Coverage,
+    /// Format on `check`, and offer a task that fixes.
+    ///
+    /// The one feature that cannot be a self-contained appended block:
+    /// Spotless is not bundled with Gradle, so it needs an `id ... version`
+    /// entry inside `plugins {}` -- a block that has to be near the top of the
+    /// file, which is the opposite end from where a marked block goes. See
+    /// [`add_feature`].
+    Formatting,
 }
 
 /// Which feature a Maven plugin coordinate stands for.
@@ -898,6 +906,7 @@ pub fn feature_of(maven_artifact: &str) -> Option<Feature> {
     match maven_artifact {
         "maven-failsafe-plugin" => Some(Feature::IntegrationTests),
         "jacoco-maven-plugin" => Some(Feature::Coverage),
+        "spotless-maven-plugin" => Some(Feature::Formatting),
         _ => None,
     }
 }
@@ -909,6 +918,26 @@ fn marker(feature: Feature) -> &'static str {
     match feature {
         Feature::IntegrationTests => "jails:integration-tests",
         Feature::Coverage => "jails:coverage",
+        Feature::Formatting => "jails:formatting",
+    }
+}
+
+/// The `plugins {}` entry a feature needs, when it needs one.
+///
+/// `None` for everything Gradle already bundles. The line is an exact string
+/// so removal can match it byte-for-byte: it carries no marker, because a
+/// `//` comment inside `plugins {}` is legal but reads as noise in a block
+/// people scan, and an edited line is the reader's.
+fn plugin_line(feature: Feature) -> Option<&'static str> {
+    match feature {
+        // Kept in step with the Maven plugin `add format` splices, but *not*
+        // the same number: the two plugins are versioned separately (Maven
+        // 3.10.0 against Gradle 8.10.0 on the same 2026-08-17 release). The
+        // formatter underneath them is what has to agree, and that is pinned
+        // identically in both -- a formatter that drifts version rewrites
+        // files nobody touched.
+        Feature::Formatting => Some("id 'com.diffplug.spotless' version '8.10.0'"),
+        Feature::IntegrationTests | Feature::Coverage => None,
     }
 }
 
@@ -955,6 +984,23 @@ fn body(feature: Feature) -> &'static str {
                  dependsOn tasks.named('jacocoTestCoverageVerification')\n\
              }\n"
         }
+        // No `check` wiring: the Gradle plugin adds `spotlessCheck` to `check`
+        // itself, so repeating it here would be a second authority for the
+        // same fact. `spotlessApply` is what `jails fmt` runs.
+        //
+        // palantir-java-format at the same version the Maven side pins, and
+        // `removeUnusedImports` for the same reason: `write_new_file`
+        // normalises imports at write time, so a formatter that reordered them
+        // differently would make a freshly generated project fail its own
+        // `check`.
+        Feature::Formatting => {
+            "spotless {\n    \
+                 java {\n        \
+                     palantirJavaFormat('2.97.0')\n        \
+                     removeUnusedImports()\n    \
+                 }\n\
+             }\n"
+        }
     }
 }
 
@@ -973,6 +1019,13 @@ pub fn add_feature(text: &str, feature: Feature) -> Result<Option<String>> {
     if has_feature(text, feature) {
         return Ok(None);
     }
+    // Two edits at opposite ends of the file for one feature, when the plugin
+    // is not one Gradle bundles. The `plugins {}` entry goes first so a
+    // failure there leaves the file untouched rather than half-written.
+    let text = match plugin_line(feature) {
+        Some(line) => add_plugin_line(text, line)?,
+        None => text.to_string(),
+    };
     let name = marker(feature);
     let separator = match text.ends_with('\n') || text.is_empty() {
         true => "",
@@ -984,8 +1037,47 @@ pub fn add_feature(text: &str, feature: Feature) -> Result<Option<String>> {
     )))
 }
 
+/// Splice one `id ... version ...` into the build's `plugins {}` block.
+///
+/// **Refuses when there is no such block**, rather than writing one. A
+/// `plugins {}` block is only legal as the first statement of the script
+/// (after an optional `buildscript`), so jails would have to decide where the
+/// top of somebody else's build file is -- and a `plugins {}` in the wrong
+/// place is a build that no longer evaluates at all, which is a worse outcome
+/// than a capability that says it cannot.
+fn add_plugin_line(text: &str, line: &str) -> Result<String> {
+    if text.contains(line) {
+        return Ok(text.to_string());
+    }
+    let Some(body) = top_level_body(text, "plugins") else {
+        return Err(format!(
+            "`{FILE}` has no `plugins {{ }}` block, and this capability needs `{line}` in \
+             one.\n       fix: add the block yourself -- it has to be the first statement in \
+             the script, and jails will not guess where the top of your build file is. Then \
+             re-run this command."
+        ));
+    };
+    let spliced = format!("{}{line}\n", indent_of(text, body.clone()));
+    let at = trailing_insert_point(text, body);
+    let mut out = String::with_capacity(text.len() + spliced.len());
+    out.push_str(&text[..at]);
+    out.push_str(&spliced);
+    out.push_str(&text[at..]);
+    Ok(out)
+}
+
 /// Take a feature's block back out, leaving every other byte alone.
+///
+/// Including the `plugins {}` entry, when the feature had one -- and only when
+/// it is still byte-identical to what jails wrote. An edited line is the
+/// reader's, which is the same rule the property resource applies to the
+/// comment it writes above a key.
 pub fn remove_feature(text: &str, feature: Feature) -> Option<String> {
+    let text = match plugin_line(feature) {
+        Some(line) => remove_plugin_line(text, line),
+        None => text.to_string(),
+    };
+    let text = text.as_str();
     let name = marker(feature);
     let open = format!("// {name}\n");
     let close = format!("// /{name}\n");
@@ -997,6 +1089,21 @@ pub fn remove_feature(text: &str, feature: Feature) -> Option<String> {
     // The blank line that separated the block from what came before goes with
     // it, so add-then-remove is byte-for-byte the original.
     Some(out.trim_end().to_string() + "\n")
+}
+
+/// The inverse of [`add_plugin_line`], and a no-op when the line is not there
+/// exactly as jails wrote it.
+fn remove_plugin_line(text: &str, line: &str) -> String {
+    let mut kept: Vec<&str> = Vec::new();
+    let mut removed = false;
+    for one in text.split_inclusive('\n') {
+        if !removed && one.trim() == line {
+            removed = true;
+            continue;
+        }
+        kept.push(one);
+    }
+    kept.concat()
 }
 
 #[cfg(test)]
@@ -1030,8 +1137,49 @@ mod feature_tests {
 
     #[test]
     fn a_plugin_with_no_gradle_equivalent_renders_nothing() {
-        assert_eq!(feature_of("spotless-maven-plugin"), None);
         assert_eq!(feature_of("maven-surefire-plugin"), None);
+        assert_eq!(feature_of("maven-enforcer-plugin"), None);
+    }
+
+    /// The one feature that edits both ends of the file, and the reason it
+    /// has to: Spotless is not bundled with Gradle, so it needs an
+    /// `id ... version` inside `plugins {}` -- a block that is only legal near
+    /// the top, which is the opposite end from where a marked block goes.
+    #[test]
+    fn formatting_reaches_the_plugins_block_and_comes_back_out_of_it() {
+        assert_eq!(
+            feature_of("spotless-maven-plugin"),
+            Some(Feature::Formatting)
+        );
+        let out = add_feature(BARE, Feature::Formatting).unwrap().unwrap();
+        assert!(
+            out.contains("    id 'com.diffplug.spotless' version '8.10.0'\n"),
+            "{out}"
+        );
+        assert!(out.contains("palantirJavaFormat('2.97.0')"), "{out}");
+        // No `check` wiring: the Gradle plugin adds `spotlessCheck` to `check`
+        // itself, and a second authority for one fact is how they drift.
+        assert!(
+            !out.contains("dependsOn tasks.named('spotlessCheck')"),
+            "{out}"
+        );
+        // Byte-for-byte back, which is what makes `remove` the exact inverse.
+        assert_eq!(
+            remove_feature(&out, Feature::Formatting).as_deref(),
+            Some(BARE)
+        );
+    }
+
+    /// A build with no `plugins {}` block refuses rather than growing one.
+    ///
+    /// The block is only legal as the script's first statement, so writing one
+    /// means deciding where the top of somebody else's build file is -- and
+    /// getting that wrong is a build that no longer evaluates at all.
+    #[test]
+    fn formatting_refuses_a_build_with_no_plugins_block() {
+        let why = add_feature("apply plugin: 'java'\n", Feature::Formatting).unwrap_err();
+        assert!(why.contains("plugins {"), "{why}");
+        assert!(why.contains("fix:"), "{why}");
     }
 
     #[test]
