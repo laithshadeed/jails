@@ -55,7 +55,7 @@ pub fn field(run: &Run, target: &str, component: &str, package: Option<&str>) ->
         .map(FieldSpec::canonical)
         .chain([added.canonical()])
         .collect();
-    let change = with_test_support(
+    let mut change = with_test_support(
         project,
         jails_generate::generate::plan_recipe(
             project,
@@ -75,6 +75,20 @@ pub fn field(run: &Run, target: &str, component: &str, package: Option<&str>) ->
             package,
         )?,
     );
+    // Re-render the Java projection, but never carry the scaffold's original
+    // create-table migration into field evolution. That file is sealed at
+    // publication; the storage half of this command is the new one-shot
+    // migration constructed below.
+    change.files.retain(|artifact| {
+        !artifact
+            .path
+            .strip_prefix(project.root())
+            .is_ok_and(|path| {
+                path.to_string_lossy()
+                    .replace('\\', "/")
+                    .starts_with("src/main/resources/db/migration/")
+            })
+    });
 
     let owner = ResourceOwner::Entity(EntityId::Intent(id.clone()));
     let mut desired = desire::contribution(&owner, &change, project)?;

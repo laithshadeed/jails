@@ -35,6 +35,7 @@ use crate::build;
 use crate::launcher;
 use crate::model::Project;
 use crate::process::CommandSpec;
+use jails_protocol::compatibility::{TESTD_PROTOCOL, TESTD_PROTOCOL_VERSION};
 use jails_support::Result;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
@@ -296,10 +297,9 @@ fn indent(text: &str) -> String {
 fn request(socket: &Path, message: &[String]) -> Result<(String, i32)> {
     let mut stream =
         UnixStream::connect(socket).map_err(|error| format!("testd: not running ({error})"))?;
-    let mut payload = message.join("\n");
-    payload.push_str("\n\n");
+    let payload = encode_request(message);
     stream
-        .write_all(payload.as_bytes())
+        .write_all(&payload)
         .map_err(|error| format!("testd: could not send the request ({error})"))?;
     let mut buffer = Vec::new();
     stream
@@ -308,18 +308,36 @@ fn request(socket: &Path, message: &[String]) -> Result<(String, i32)> {
     split_reply(&buffer)
 }
 
+/// The complete client frame. Kept separate from the socket so its bytes can
+/// be pinned independently of a daemon process.
+fn encode_request(message: &[String]) -> Vec<u8> {
+    let mut payload = format!("{TESTD_PROTOCOL}\n");
+    payload.push_str(&message.join("\n"));
+    payload.push_str("\n\n");
+    payload.into_bytes()
+}
+
 /// Split a reply at its terminator into output and exit code.
 fn split_reply(buffer: &[u8]) -> Result<(String, i32)> {
     let end = buffer
         .iter()
         .rposition(|byte| *byte == END)
         .ok_or_else(|| "testd: the reply was truncated".to_string())?;
-    let output = String::from_utf8_lossy(&buffer[..end]).into_owned();
+    let framed_output = String::from_utf8_lossy(&buffer[..end]);
+    let prefix = format!("{TESTD_PROTOCOL}\n");
+    let output = framed_output.strip_prefix(&prefix).ok_or_else(|| {
+        let declared = framed_output.lines().next().unwrap_or("<missing>");
+        format!(
+            "testd: unsupported daemon protocol `{declared}`; this jails requires \
+             `{TESTD_PROTOCOL}`.\n       fix: upgrade jails, or stop the daemon with the jails \
+             version that started it and retry."
+        )
+    })?;
     let code = String::from_utf8_lossy(&buffer[end + 1..])
         .trim()
         .parse()
         .map_err(|_| "testd: the reply had no exit code".to_string())?;
-    Ok((output, code))
+    Ok((output.to_string(), code))
 }
 
 /// The daemon source on disk, written from the template if it is not there.
@@ -328,16 +346,17 @@ fn split_reply(buffer: &[u8]) -> Result<(String, i32)> {
 /// built from the previous source -- the failure that would cause is a
 /// protocol mismatch, which reads as a hang rather than as an error.
 fn daemon_source() -> Result<PathBuf> {
-    const SOURCE: &str = include_str!(concat!(
+    const TEMPLATE: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../templates/testd/JailsTestDaemon.java"
     ));
+    let source = TEMPLATE.replace("@JAILS_TESTD_PROTOCOL@", TESTD_PROTOCOL);
     let dir = cache_dir()?.join(env!("CARGO_PKG_VERSION"));
     jails_support::apply::ensure_directory_outside_project(&dir)
         .map_err(|error| format!("failed to create {}: {error}", dir.display()))?;
     let path = dir.join("JailsTestDaemon.java");
-    if std::fs::read_to_string(&path).ok().as_deref() != Some(SOURCE) {
-        crate::apply::put_outside_project(&path, SOURCE)?;
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(source.as_str()) {
+        crate::apply::put_outside_project(&path, &source)?;
     }
     Ok(path)
 }
@@ -368,7 +387,10 @@ fn socket_path(root: &Path) -> Result<PathBuf> {
         .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
         .take(24)
         .collect();
-    Ok(cache_dir()?.join(format!("{name}-{:016x}.sock", fnv1a(canonical.as_os_str()))))
+    Ok(cache_dir()?.join(format!(
+        "{name}-testd-v{TESTD_PROTOCOL_VERSION}-{:016x}.sock",
+        fnv1a(canonical.as_os_str())
+    )))
 }
 
 /// FNV-1a. jails' dependencies are clap and clap_complete, and a hash used
@@ -389,7 +411,7 @@ mod tests {
 
     #[test]
     fn a_reply_splits_into_output_and_exit_code() {
-        let mut buffer = b"two tests passed\n".to_vec();
+        let mut buffer = format!("{TESTD_PROTOCOL}\ntwo tests passed\n").into_bytes();
         buffer.push(END);
         buffer.extend_from_slice(b"0\n");
         assert_eq!(
@@ -398,12 +420,44 @@ mod tests {
         );
     }
 
+    #[test]
+    fn testd_ipc_frames_match_the_protocol_goldens() {
+        let request = encode_request(&[
+            "RUN".to_string(),
+            "--select-class=com.example.NoteTest".to_string(),
+            "--details=testfeed".to_string(),
+        ]);
+        assert_eq!(
+            hex(&request),
+            include_str!("../../../tests/protocol-golden/testd-request.hex").trim()
+        );
+
+        let reply =
+            decode_hex(include_str!("../../../tests/protocol-golden/testd-reply.hex").trim());
+        assert_eq!(
+            split_reply(&reply).unwrap(),
+            ("one test passed\n".to_string(), 0)
+        );
+    }
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
+    fn decode_hex(source: &str) -> Vec<u8> {
+        source
+            .as_bytes()
+            .chunks_exact(2)
+            .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+            .collect()
+    }
+
     /// The terminator is searched for from the *end*, so output that somehow
     /// contained one still yields the real exit code rather than a parse
     /// failure that would be reported as a broken daemon.
     #[test]
     fn a_terminator_inside_the_output_does_not_confuse_the_split() {
-        let mut buffer = b"weird \x04 output\n".to_vec();
+        let mut buffer = format!("{TESTD_PROTOCOL}\nweird \x04 output\n").into_bytes();
         buffer.push(END);
         buffer.extend_from_slice(b"1\n");
         let (output, code) = split_reply(&buffer).unwrap();
@@ -414,6 +468,28 @@ mod tests {
     #[test]
     fn a_truncated_reply_is_an_error_rather_than_a_silent_success() {
         assert!(split_reply(b"no terminator").is_err());
+    }
+
+    #[test]
+    fn an_unknown_daemon_protocol_fails_closed_with_an_upgrade_instruction() {
+        let mut buffer = b"jails.testd.v2\nok\n".to_vec();
+        buffer.push(END);
+        buffer.extend_from_slice(b"0\n");
+        let error = split_reply(&buffer).unwrap_err();
+        assert!(error.contains("jails.testd.v2"), "{error}");
+        assert!(error.contains(TESTD_PROTOCOL), "{error}");
+        assert!(error.contains("upgrade jails"), "{error}");
+    }
+
+    #[test]
+    fn rendered_daemon_source_uses_the_shared_protocol_identifier() {
+        const TEMPLATE: &str = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../templates/testd/JailsTestDaemon.java"
+        ));
+        let source = TEMPLATE.replace("@JAILS_TESTD_PROTOCOL@", TESTD_PROTOCOL);
+        assert!(source.contains(&format!("PROTOCOL = \"{TESTD_PROTOCOL}\"")));
+        assert!(!source.contains("@JAILS_TESTD_PROTOCOL@"));
     }
 
     /// Two projects must never share a daemon: the classpath differs, so a
@@ -432,6 +508,13 @@ mod tests {
     fn a_deeply_nested_project_still_gets_a_short_socket_name() {
         let deep = PathBuf::from("/tmp").join("x".repeat(200)).join("service");
         let socket = socket_path(&deep).unwrap();
-        assert!(socket.file_name().unwrap().len() < 60);
+        assert!(socket.file_name().unwrap().len() < 70);
+        assert!(
+            socket
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .contains(&format!("testd-v{TESTD_PROTOCOL_VERSION}"))
+        );
     }
 }

@@ -660,7 +660,12 @@ pub(crate) const SCRATCH_RS: &str = "jails-support/src/scratch.rs";
 /// line the two `publish::Tree` refusals already use — "this is a bug in jails,
 /// not something a project can cause". That is a real next step rather than a
 /// filler: it tells the reader the one thing they can do.
-pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 437;
+///
+/// 437 → 436 when truthful parent-directory capture made a file/directory
+/// collision actionable: move or rename the colliding file, then retry.
+/// 436 → 432 when every compatibility-version refusal gained an explicit
+/// upgrade path instead of only describing the unsupported bytes.
+pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 432;
 
 /// A refusal that builds a message and does not say what to do next.
 ///

@@ -1,0 +1,9 @@
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.example</groupId>
+  <artifactId>benchmark-parent</artifactId>
+  <version>0.1.0</version>
+  <packaging>pom</packaging>
+  <properties><maven.compiler.release>26</maven.compiler.release></properties>
+  <modules><module>core</module><module>web</module><module>jobs</module></modules>
+</project>

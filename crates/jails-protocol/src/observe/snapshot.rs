@@ -435,6 +435,7 @@ pub struct ProjectSnapshot {
     files: BTreeMap<ProjectPath, SnapshotFile>,
     absences: BTreeSet<ProjectPath>,
     directories: BTreeMap<ProjectPath, Vec<ProjectPath>>,
+    directory_absences: BTreeSet<ProjectPath>,
 }
 
 /// What a declared read found.
@@ -445,12 +446,30 @@ pub enum Captured<'a> {
     Absent,
 }
 
+/// The no-follow filesystem fact captured for a directory precondition.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DirectoryFact<'a> {
+    Missing,
+    Directory(&'a [ProjectPath]),
+    NonDirectory,
+}
+
 impl ProjectSnapshot {
     pub fn new(
         root: CanonicalRoot,
         files: BTreeMap<ProjectPath, SnapshotFile>,
         absences: BTreeSet<ProjectPath>,
         directories: BTreeMap<ProjectPath, Vec<ProjectPath>>,
+    ) -> Result<Self> {
+        Self::with_directory_absences(root, files, absences, directories, BTreeSet::new())
+    }
+
+    pub fn with_directory_absences(
+        root: CanonicalRoot,
+        files: BTreeMap<ProjectPath, SnapshotFile>,
+        absences: BTreeSet<ProjectPath>,
+        directories: BTreeMap<ProjectPath, Vec<ProjectPath>>,
+        directory_absences: BTreeSet<ProjectPath>,
     ) -> Result<Self> {
         // A path cannot be both present and absent: one of the two readings
         // would silently win, and which one is an implementation detail.
@@ -459,11 +478,33 @@ impl ProjectSnapshot {
                 return Err(format!("`{path}` is captured as both present and absent").into());
             }
         }
+        for path in directories.keys() {
+            if files.contains_key(path)
+                || absences.contains(path)
+                || directory_absences.contains(path)
+            {
+                return Err(format!(
+                    "`{path}` has contradictory captured filesystem facts.\n       \
+                     fix: declare the path in exactly one observed state."
+                )
+                .into());
+            }
+        }
+        for path in &directory_absences {
+            if files.contains_key(path) {
+                return Err(format!(
+                    "`{path}` has contradictory captured filesystem facts.\n       \
+                     fix: declare the path in exactly one observed state."
+                )
+                .into());
+            }
+        }
         Ok(Self {
             root,
             files,
             absences,
             directories,
+            directory_absences,
         })
     }
 
@@ -495,6 +536,9 @@ impl ProjectSnapshot {
 
     /// List a declared directory. Undeclared is an error for the same reason.
     pub fn list(&self, path: &ProjectPath) -> Result<&[ProjectPath]> {
+        if self.directory_absences.contains(path) {
+            return Ok(&[]);
+        }
         Ok(self
             .directories
             .get(path)
@@ -505,6 +549,26 @@ impl ProjectSnapshot {
                  fix: declare it in the read set."
                 )
             })?)
+    }
+
+    /// Read a directory fact that was explicitly captured without following
+    /// symlinks. A file at the path is returned as a collision so preparation
+    /// can refuse before commit.
+    pub fn directory_fact(&self, path: &ProjectPath) -> Result<DirectoryFact<'_>> {
+        if let Some(entries) = self.directories.get(path) {
+            return Ok(DirectoryFact::Directory(entries));
+        }
+        if self.directory_absences.contains(path) {
+            return Ok(DirectoryFact::Missing);
+        }
+        if self.files.contains_key(path) {
+            return Ok(DirectoryFact::NonDirectory);
+        }
+        Err(format!(
+            "directory `{path}` was not captured, so preparation cannot decide whether creating it is observable.\n       \
+             fix: declare it in the directory read set."
+        )
+        .into())
     }
 
     /// The complete read set this snapshot justifies.
@@ -522,7 +586,7 @@ impl ProjectSnapshot {
                 mode: file.mode,
             });
         }
-        for path in &self.absences {
+        for path in self.absences.union(&self.directory_absences) {
             inputs.push(InputPrecondition::Absent { path: path.clone() });
         }
         for (path, entries) in &self.directories {

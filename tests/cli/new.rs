@@ -284,6 +284,12 @@ fn every_generated_pom_is_one_maven_can_read() {
     let mut generated = Vec::new();
     for spring in [false, true] {
         for (label, args) in cells {
+            // A scaffold is a Spring projection. Plain-project refusal is
+            // covered by the no-write contract in `cli::generate`; there is
+            // intentionally no plain scaffold POM to include in this matrix.
+            if !spring && *label == "scaffold" {
+                continue;
+            }
             let flavor = if spring { "spring" } else { "plain" };
             let module = format!("{flavor}-{label}");
             let root = matrix.join(&module);

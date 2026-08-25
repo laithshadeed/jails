@@ -36,7 +36,7 @@ fn generate_standalone_and_destroy_roundtrip() {
 #[test]
 fn generate_scaffold_writes_a_raw_jdbc_slice() {
     let root = temp_dir("scaffold-files");
-    write_project_skeleton(&root);
+    write_spring_fixture(&root);
 
     let status = jails_cmd(&root, None)
         .args(["generate", "scaffold", "Post", "title:string", "body:text"])
@@ -61,9 +61,368 @@ fn generate_scaffold_writes_a_raw_jdbc_slice() {
 }
 
 #[test]
+fn plain_project_scaffold_refuses_without_writing_uncompilable_spring_java() {
+    let root = temp_dir("scaffold-plain-refusal");
+    write_plain_fixture(&root);
+    let before = snapshot_tree(&root);
+
+    let output = jails_cmd(&root, None)
+        .args([
+            "generate",
+            "scaffold",
+            "Note",
+            "id:uuid@pk",
+            "title:string!",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("`scaffold` is a Spring Boot capability"),
+        "{stderr}"
+    );
+    assert_eq!(
+        snapshot_tree(&root),
+        before,
+        "a refused scaffold wrote project or machine state"
+    );
+}
+
+#[test]
+fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
+    let root = temp_dir("prepared-review");
+    write_spring_fixture(&root);
+    let generated = jails_cmd(&root, None)
+        .args(["g", "record", "Note", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(generated.status.success(), "{generated:?}");
+
+    let test = root.join("src/test/java/com/example/demo/domain/NoteTest.java");
+    let reader_edit = format!(
+        "// reader-owned context\n{}",
+        fs::read_to_string(&test).unwrap()
+    );
+    fs::write(&test, reader_edit).unwrap();
+    let before = snapshot_tree(&root);
+
+    let changed = jails_cmd(&root, None)
+        .args([
+            "g",
+            "field",
+            "Note",
+            "createdAt:instant",
+            "--pretend",
+            "--diff",
+            "--ast",
+        ])
+        .output()
+        .unwrap();
+    assert!(changed.status.success(), "{changed:?}");
+    let shown = String::from_utf8_lossy(&changed.stdout);
+    assert!(
+        shown.contains("diff --jails replace src/main/java/com/example/demo/domain/Note.java"),
+        "{shown}"
+    );
+    assert!(shown.contains("+import java.time.Instant;"), "{shown}");
+    assert!(
+        shown.contains("@@ -") && shown.contains(" three-way\n"),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("MergeFile { path: src/test/java/com/example/demo/domain/NoteTest.java }"),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("ReplaceFile { path: src/main/java/com/example/demo/domain/Note.java }"),
+        "{shown}"
+    );
+    assert_eq!(snapshot_tree(&root), before, "review preview wrote files");
+
+    let created = jails_cmd(&root, None)
+        .args([
+            "g",
+            "record",
+            "Fresh",
+            "id:uuid",
+            "--pretend",
+            "--diff",
+            "--ast",
+        ])
+        .output()
+        .unwrap();
+    assert!(created.status.success(), "{created:?}");
+    let shown = String::from_utf8_lossy(&created.stdout);
+    assert!(shown.contains("--- /dev/null\n+++ b/"), "{shown}");
+    assert!(shown.contains("CreateFile { path:"), "{shown}");
+    assert!(
+        !shown.contains("  timing  "),
+        "ordinary human output exposed debug timings: {shown}"
+    );
+    assert_eq!(snapshot_tree(&root), before, "create preview wrote files");
+
+    let debug = jails_cmd(&root, None)
+        .args(["g", "record", "Fresh", "id:uuid", "--pretend", "--debug"])
+        .output()
+        .unwrap();
+    assert!(debug.status.success(), "{debug:?}");
+    let debug = String::from_utf8(debug.stdout).unwrap();
+    for phase in [
+        "discover", "observe", "parse", "project", "prepare", "verify",
+    ] {
+        assert!(
+            debug.contains(&format!("timing  {phase}")),
+            "missing {phase} timing in {debug}"
+        );
+    }
+    assert!(!debug.contains("timing  commit"), "{debug}");
+    assert_eq!(snapshot_tree(&root), before, "debug preview wrote files");
+
+    let json = jails_cmd(&root, None)
+        .args([
+            "g",
+            "record",
+            "Fresh",
+            "id:uuid",
+            "--pretend",
+            "--diff",
+            "--ast",
+            "--output",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert!(json.status.success(), "{json:?}");
+    let json = String::from_utf8(json.stdout).unwrap();
+    assert!(json.starts_with('{') && json.ends_with('}'), "{json}");
+    assert!(json.contains("\"diffs\": ["), "{json}");
+    assert!(json.contains("\"ast\": ["), "{json}");
+    assert!(json.contains("\"timings\": ["), "{json}");
+    for phase in [
+        "discover", "observe", "parse", "project", "prepare", "verify",
+    ] {
+        assert!(
+            json.contains(&format!("\"phase\": \"{phase}\"")),
+            "missing {phase} timing in {json}"
+        );
+    }
+    assert!(!json.contains("\"phase\": \"commit\""), "{json}");
+    assert!(json.contains("\"patch\": \"diff --jails create"), "{json}");
+    assert!(
+        json.contains("src/main/java/com/example/demo/domain/Fresh.java"),
+        "{json}"
+    );
+    assert!(!json.contains("nothing was written"), "{json}");
+    assert_eq!(
+        snapshot_tree(&root),
+        before,
+        "JSON review preview wrote files"
+    );
+
+    let merged_json = jails_cmd(&root, None)
+        .args([
+            "g",
+            "field",
+            "Note",
+            "createdAt:instant",
+            "--pretend",
+            "--output",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert!(merged_json.status.success(), "{merged_json:?}");
+    let merged_json = String::from_utf8(merged_json.stdout).unwrap();
+    assert!(
+        merged_json.contains("\"phase\": \"process\""),
+        "three-way merge process was not timed: {merged_json}"
+    );
+    assert_eq!(
+        snapshot_tree(&root),
+        before,
+        "timed merge preview wrote files"
+    );
+
+    let applied = jails_cmd(&root, None)
+        .args(["g", "record", "Fresh", "id:uuid", "--diff", "--ast"])
+        .output()
+        .unwrap();
+    assert!(applied.status.success(), "{applied:?}");
+    let applied = String::from_utf8_lossy(&applied.stdout);
+    assert!(
+        applied.contains("diff --jails create src/main/java/com/example/demo/domain/Fresh.java"),
+        "{applied}"
+    );
+    assert!(applied.contains("CreateFile { path:"), "{applied}");
+    assert!(
+        root.join("src/main/java/com/example/demo/domain/Fresh.java")
+            .is_file(),
+        "an applied reviewed transition did not commit"
+    );
+
+    let committed = jails_cmd(&root, None)
+        .args(["g", "record", "Timed", "id:uuid", "--output", "json"])
+        .output()
+        .unwrap();
+    assert!(committed.status.success(), "{committed:?}");
+    let committed = String::from_utf8(committed.stdout).unwrap();
+    assert!(
+        committed.contains("\"phase\": \"commit\""),
+        "committed JSON omitted commit timing: {committed}"
+    );
+}
+
+#[test]
+fn task_scaffold_cannot_rewrite_or_delete_its_published_v001() {
+    let root = temp_dir("task-migration-seal");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+
+    let generated = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(generated.status.success(), "{generated:?}");
+
+    let migration = root.join("src/main/resources/db/migration/V001__create_tasks.sql");
+    let sealed = fs::read_to_string(&migration).unwrap();
+    let before_resync = snapshot_tree(&root);
+    let resync = jails_cmd(&root, None)
+        .args([
+            "g",
+            "scaffold",
+            "Task",
+            "id:uuid@pk",
+            "title:string!",
+            "completed:boolean",
+        ])
+        .output()
+        .unwrap();
+    assert!(!resync.status.success(), "{resync:?}");
+    assert!(
+        String::from_utf8_lossy(&resync.stderr).contains("migration-edited-after-seal"),
+        "{}",
+        String::from_utf8_lossy(&resync.stderr)
+    );
+    assert_eq!(snapshot_tree(&root), before_resync, "refusal wrote files");
+
+    let before_retirement = snapshot_tree(&root);
+    let missing_policy = jails_cmd(&root, None)
+        .args(["destroy", "scaffold", "Task", "--force"])
+        .output()
+        .unwrap();
+    assert!(!missing_policy.status.success(), "{missing_policy:?}");
+    let missing_policy_stderr = String::from_utf8_lossy(&missing_policy.stderr);
+    assert!(
+        missing_policy_stderr.contains("storage-policy-required"),
+        "{missing_policy_stderr}"
+    );
+    assert!(
+        missing_policy_stderr.contains("--storage preserve"),
+        "{missing_policy_stderr}"
+    );
+    assert!(
+        missing_policy_stderr.contains("--storage drop --confirm-table tasks"),
+        "{missing_policy_stderr}"
+    );
+    assert_eq!(
+        snapshot_tree(&root),
+        before_retirement,
+        "refusal wrote files"
+    );
+
+    let destroyed = jails_cmd(&root, None)
+        .args([
+            "destroy",
+            "scaffold",
+            "Task",
+            "--storage",
+            "preserve",
+            "--force",
+        ])
+        .output()
+        .unwrap();
+    assert!(destroyed.status.success(), "{destroyed:?}");
+    assert_eq!(fs::read_to_string(&migration).unwrap(), sealed);
+    assert!(migration.is_file());
+    assert!(
+        !root
+            .join("src/main/java/com/example/demo/web/TaskController.java")
+            .exists()
+    );
+}
+
+#[test]
+fn task_drop_keeps_v001_and_appends_an_exact_forward_migration() {
+    let root = temp_dir("task-drop-migration");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    assert!(
+        jails_cmd(&root, None)
+            .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let create = root.join("src/main/resources/db/migration/V001__create_tasks.sql");
+    let sealed = fs::read_to_string(&create).unwrap();
+    let before_wrong_confirmation = snapshot_tree(&root);
+    let wrong = jails_cmd(&root, None)
+        .args([
+            "destroy",
+            "scaffold",
+            "Task",
+            "--storage",
+            "drop",
+            "--confirm-table",
+            "task",
+            "--force",
+        ])
+        .output()
+        .unwrap();
+    assert!(!wrong.status.success(), "{wrong:?}");
+    let wrong_stderr = String::from_utf8_lossy(&wrong.stderr);
+    assert!(wrong_stderr.contains("is not `tasks`"), "{wrong_stderr}");
+    assert_eq!(
+        snapshot_tree(&root),
+        before_wrong_confirmation,
+        "wrong confirmation wrote files"
+    );
+
+    let dropped = jails_cmd(&root, None)
+        .args([
+            "destroy",
+            "scaffold",
+            "Task",
+            "--storage",
+            "drop",
+            "--confirm-table",
+            "tasks",
+            "--force",
+        ])
+        .output()
+        .unwrap();
+    assert!(dropped.status.success(), "{dropped:?}");
+    assert_eq!(fs::read_to_string(&create).unwrap(), sealed);
+    assert_eq!(
+        fs::read_to_string(root.join("src/main/resources/db/migration/V002__drop_tasks.sql"))
+            .unwrap(),
+        "drop table tasks;\n"
+    );
+    assert!(
+        !root
+            .join("src/main/java/com/example/demo/web/TaskController.java")
+            .exists()
+    );
+}
+
+#[test]
 fn scaffold_reuses_an_existing_record_and_destroy_preserves_it() {
     let root = temp_dir("scaffold-model-first");
-    write_project_skeleton(&root);
+    write_spring_fixture(&root);
 
     let record = jails_cmd(&root, None)
         .args(["generate", "record", "Post", "id:uuid", "title:string!"])
@@ -106,7 +465,7 @@ fn scaffold_reuses_an_existing_record_and_destroy_preserves_it() {
 #[test]
 fn field_driven_generators_refuse_an_absent_model_with_a_fix() {
     let root = temp_dir("missing-model-fix");
-    write_project_skeleton(&root);
+    write_spring_fixture(&root);
 
     for kind in ["scaffold", "dto", "repo"] {
         let output = jails_cmd(&root, None)
@@ -123,7 +482,7 @@ fn field_driven_generators_refuse_an_absent_model_with_a_fix() {
 #[test]
 fn generate_field_updates_unchanged_derivatives_preserves_edits_and_adds_a_migration() {
     let root = temp_dir("generate-field");
-    write_project_skeleton(&root);
+    write_spring_fixture(&root);
     fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
 
     let scaffold = jails_cmd(&root, None)
@@ -143,7 +502,12 @@ fn generate_field_updates_unchanged_derivatives_preserves_edits_and_adds_a_migra
         .args(["g", "field", "Note", "createdAt:instant"])
         .output()
         .unwrap();
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     // The plan names the files a new component touches: the record, its test
     // and the migration that adds the column. V1 printed a per-derivative
@@ -210,7 +574,7 @@ fn generate_field_updates_unchanged_derivatives_preserves_edits_and_adds_a_migra
 #[test]
 fn scaffold_refuses_to_silently_flatten_a_project_record_component() {
     let root = temp_dir("scaffold-project-record");
-    write_project_skeleton(&root);
+    write_spring_fixture(&root);
     assert!(
         jails_cmd(&root, None)
             .args(["g", "record", "User", "id:uuid@pk", "name:string!"])
@@ -1742,7 +2106,7 @@ fn pretend_names_the_package_info_it_will_write() {
 #[test]
 fn planned_package_infos_are_one_per_package() {
     let root = temp_dir("pkginfo-dedup");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
     let pom = fs::read_to_string(root.join("pom.xml")).unwrap().replace(
         "</dependencies>",
         "<dependency><groupId>org.jspecify</groupId>\

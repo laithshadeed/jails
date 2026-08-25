@@ -32,6 +32,7 @@
 //! enforce an edge that matters; on the evidence exactly one would, and
 //! [`durable`]'s own header says which.
 
+pub mod compatibility;
 mod durable;
 mod intent;
 mod observe;

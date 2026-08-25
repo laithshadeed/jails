@@ -4,7 +4,7 @@
     <artifactId>demo</artifactId>
     <version>0.1.0</version>
     <properties>
-        <maven.compiler.release>25</maven.compiler.release>
+        <maven.compiler.release>26</maven.compiler.release>
     </properties>
     <dependencies>
         <dependency>

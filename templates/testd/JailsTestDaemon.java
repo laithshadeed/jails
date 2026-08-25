@@ -45,6 +45,8 @@ public final class JailsTestDaemon {
 
     /** Ends a response; cannot occur in JUnit's output, which is text. */
     private static final byte END = 4;
+    /** Replaced from jails-protocol when this template is written to the cache. */
+    private static final String PROTOCOL = "@JAILS_TESTD_PROTOCOL@";
 
     public static void main(String[] args) throws Exception {
         if (args.length < 3) {
@@ -100,18 +102,37 @@ public final class JailsTestDaemon {
             }
             try (SocketChannel client = channel) {
                 List<String> request = readRequest(client);
-                if (request.isEmpty() || request.get(0).equals("STOP")) {
+                if (request.isEmpty()) {
+                    reply(client, "testd: request has no protocol version\n", 2);
+                    continue;
+                }
+                if (!request.get(0).equals(PROTOCOL)) {
+                    reply(client,
+                            "testd: unsupported client protocol `" + request.get(0) + "`; this daemon requires `"
+                                    + PROTOCOL + "`.\nfix: upgrade jails or restart the daemon with the matching version.\n",
+                            2);
+                    continue;
+                }
+                if (request.size() < 2) {
+                    reply(client, "testd: request has no command\n", 2);
+                    continue;
+                }
+                if (request.get(1).equals("STOP")) {
                     reply(client, "", 0);
                     return;
                 }
-                if (request.get(0).equals("PING")) {
+                if (request.get(1).equals("PING")) {
                     reply(client, "ok\n", 0);
+                    continue;
+                }
+                if (!request.get(1).equals("RUN")) {
+                    reply(client, "testd: unknown command `" + request.get(1) + "`\n", 2);
                     continue;
                 }
                 List<String> arguments = new ArrayList<>();
                 arguments.add("--class-path");
                 arguments.add(outputs);
-                arguments.addAll(request.subList(1, request.size()));
+                arguments.addAll(request.subList(2, request.size()));
                 Result result = run(arguments);
                 reply(client, result.output, result.exitCode);
             } catch (Exception failure) {
@@ -194,6 +215,7 @@ public final class JailsTestDaemon {
 
     private static void reply(SocketChannel client, String output, int exitCode) throws Exception {
         var payload = new ByteArrayOutputStream();
+        payload.write((PROTOCOL + "\n").getBytes(StandardCharsets.UTF_8));
         payload.write(output.getBytes(StandardCharsets.UTF_8));
         payload.write(END);
         payload.write(Integer.toString(exitCode).getBytes(StandardCharsets.UTF_8));

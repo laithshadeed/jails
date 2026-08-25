@@ -204,8 +204,12 @@ fn declared(
 /// the one that command just created, not whatever encloses the directory the
 /// user is standing in.
 pub(crate) fn apply_in(root: &Path, no_start: bool, debug: bool) -> Result<()> {
+    let discovering = std::time::Instant::now();
     let project = crate::model::Project::load(root)?;
-    let mut run = jails_engine::route::Run::committing(&project);
+    let mut run = jails_engine::route::Run::committing(&project).with_timing(
+        jails_prepare::timing::TimingPhase::Discover,
+        discovering.elapsed(),
+    );
     if no_start {
         run = run.without_start();
     }
@@ -213,7 +217,12 @@ pub(crate) fn apply_in(root: &Path, no_start: bool, debug: bool) -> Result<()> {
         run = run.with_debug();
     }
     let outcome = declared(&run, None)?;
-    crate::dispatch::report(&outcome, crate::Output::Human)
+    crate::dispatch::report(
+        &outcome,
+        crate::Output::Human,
+        jails_prepare::review::ReviewSelection::default(),
+        debug,
+    )
 }
 
 #[cfg(test)]

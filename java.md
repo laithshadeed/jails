@@ -28,8 +28,10 @@ Do not guess these. They change the correct answer.
 | Testing | **JUnit 6** (baseline Java 17), AssertJ 3.27+, Mockito 5, **Testcontainers 2.x** |
 | Nullness | **JSpecify 1.0** — 400+ usages in `spring-core` alone; this is the standard now, not a proposal |
 
-**Target the LTS unless told otherwise.** Java 25 is the floor you can assume a
-2026 production shop is on. Everything in §1 is final in 25.
+**New jails projects target the latest GA, Java 26.** Adoption preserves the
+project's configured release, and generators support Java 21 or newer rather
+than silently raising that floor. Everything in §1 is final in 25 and remains
+available to the Java 26 default.
 
 ### What is still preview — never emit it unasked
 

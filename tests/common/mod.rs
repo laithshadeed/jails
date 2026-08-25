@@ -232,8 +232,17 @@ impl MavenReportSummary {
 /// Maven exit alone also describes a run that selected or skipped nothing.
 pub fn maven_report_summary(root: &Path, report_dir: &str) -> MavenReportSummary {
     let reports = root.join("target").join(report_dir);
+    xml_test_report_summary(&reports)
+}
+
+/// Totals from the JUnit XML directory emitted by a build tool.
+///
+/// Maven and Gradle use the same `testsuite` attributes. Keeping one reader
+/// makes the example-manifest gates prove collected and executed tests rather
+/// than treating a zero-test green build as sufficient.
+pub fn xml_test_report_summary(reports: &Path) -> MavenReportSummary {
     let mut summary = MavenReportSummary::default();
-    for entry in fs::read_dir(&reports)
+    for entry in fs::read_dir(reports)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", reports.display()))
         .flatten()
     {

@@ -28,6 +28,7 @@ use super::*;
 /// implementation hoping to agree with the first.
 pub struct Run<'a> {
     project: &'a Project,
+    timings: jails_prepare::timing::TimingTrace,
     pub(super) write: bool,
     /// Whether jails prints the commands it shells out to.
     ///
@@ -52,6 +53,7 @@ impl<'a> Run<'a> {
     pub fn committing(project: &'a Project) -> Self {
         Self {
             project,
+            timings: Default::default(),
             write: true,
             start: true,
             debug: false,
@@ -62,6 +64,7 @@ impl<'a> Run<'a> {
     pub fn pretending(project: &'a Project) -> Self {
         Self {
             project,
+            timings: Default::default(),
             write: false,
             start: true,
             debug: false,
@@ -84,6 +87,7 @@ impl<'a> Run<'a> {
     pub fn against<'b>(&self, project: &'b Project) -> Run<'b> {
         Run {
             project,
+            timings: self.timings.clone(),
             write: self.write,
             debug: self.debug,
             start: self.start,
@@ -100,6 +104,29 @@ impl<'a> Run<'a> {
     pub fn with_debug(mut self) -> Self {
         self.debug = true;
         self
+    }
+
+    /// Attach work performed before the project-bound run existed, such as
+    /// root discovery.
+    pub fn with_timing(
+        self,
+        phase: jails_prepare::timing::TimingPhase,
+        elapsed: std::time::Duration,
+    ) -> Self {
+        self.timings.record(phase, elapsed);
+        self
+    }
+
+    pub(super) fn measure<T>(
+        &self,
+        phase: jails_prepare::timing::TimingPhase,
+        work: impl FnOnce() -> T,
+    ) -> T {
+        self.timings.measure(phase, work)
+    }
+
+    pub(super) fn timing_trace(&self) -> jails_prepare::timing::TimingTrace {
+        self.timings.clone()
     }
 
     /// What the canonical request records, which is the caller's word for it.
@@ -124,14 +151,23 @@ impl<'a> Run<'a> {
 /// way to run the wrong one by picking the wrong function.
 #[derive(Debug)]
 pub enum Outcome {
-    Committed(CommitResult),
+    Committed(
+        CommitResult,
+        Box<jails_prepare::review::PreparedReview>,
+        jails_prepare::timing::TimingTrace,
+    ),
     /// The same, plus what recovery finished on the way here.
     ///
     /// Kept as its own variant rather than a field on every outcome, because
     /// the ordinary value is empty and §R3.4 omits an observationally clean
     /// recovery entirely. A caller that sees this at all is being told an
     /// earlier interrupted run left work that this invocation completed.
-    CommittedAfterRecovery(CommitResult, Vec<RecoveryOutcome>),
+    CommittedAfterRecovery(
+        CommitResult,
+        Vec<RecoveryOutcome>,
+        Box<jails_prepare::review::PreparedReview>,
+        jails_prepare::timing::TimingTrace,
+    ),
     /// Nothing was written. This is the prepared transition, projected.
     ///
     /// §R3.4's `Report`, not a second description of it. There used to be a
@@ -141,14 +177,25 @@ pub enum Outcome {
     /// directory creation entirely. A `--pretend` that describes the work in
     /// different words from the receipt is the failure the one-projection rule
     /// exists to prevent.
-    Planned(Box<Report>),
+    Planned(Box<PreparedOutcome>),
+}
+
+/// The canonical report and its optional-expansion material, both projected
+/// from the same prepared bundle.
+#[derive(Debug)]
+pub struct PreparedOutcome {
+    pub report: Report,
+    pub review: jails_prepare::review::PreparedReview,
+    pub timings: jails_prepare::timing::TimingTrace,
 }
 
 impl Outcome {
     /// The commit, when the caller knows it asked for one.
     pub fn committed(self) -> Result<CommitResult> {
         match self {
-            Self::Committed(result) | Self::CommittedAfterRecovery(result, _) => Ok(result),
+            Self::Committed(result, _, _) | Self::CommittedAfterRecovery(result, _, _, _) => {
+                Ok(result)
+            }
             Self::Planned(_) => Err(jails_support::Failure::Told(
                 "this run was asked to pretend, so there is no commit".to_string(),
             )),
@@ -158,8 +205,27 @@ impl Outcome {
     /// The prepared transition, for a run that planned one.
     pub fn report(&self) -> Option<&Report> {
         match self {
-            Self::Planned(report) => Some(report),
+            Self::Planned(prepared) => Some(&prepared.report),
             _ => None,
+        }
+    }
+
+    /// Runtime-only material for an explicitly requested diff or semantic
+    /// view. It comes from the same bundle on both preview and commit paths.
+    pub fn review(&self) -> &jails_prepare::review::PreparedReview {
+        match self {
+            Self::Committed(_, review, _) | Self::CommittedAfterRecovery(_, _, review, _) => review,
+            Self::Planned(prepared) => &prepared.review,
+        }
+    }
+
+    /// Completed runtime spans in the order each phase finished.
+    pub fn timings(&self) -> Vec<jails_prepare::timing::TimingSpan> {
+        match self {
+            Self::Committed(_, _, timings) | Self::CommittedAfterRecovery(_, _, _, timings) => {
+                timings.spans()
+            }
+            Self::Planned(prepared) => prepared.timings.spans(),
         }
     }
 
@@ -171,7 +237,7 @@ impl Outcome {
     /// like one.
     pub(super) fn replanned(&self) -> Option<RecoveryOutcome> {
         match self {
-            Self::Committed(CommitResult::RecoveredPriorTransaction(outcome)) => {
+            Self::Committed(CommitResult::RecoveredPriorTransaction(outcome), _, _) => {
                 Some((**outcome).clone())
             }
             _ => None,
@@ -182,10 +248,12 @@ impl Outcome {
     pub(super) fn after_recovery(self, recovery: Vec<RecoveryOutcome>) -> Self {
         match (self, recovery.is_empty()) {
             (outcome, true) => outcome,
-            (Self::Committed(result), false) => Self::CommittedAfterRecovery(result, recovery),
-            (Self::CommittedAfterRecovery(result, mut had), false) => {
+            (Self::Committed(result, review, timings), false) => {
+                Self::CommittedAfterRecovery(result, recovery, review, timings)
+            }
+            (Self::CommittedAfterRecovery(result, mut had, review, timings), false) => {
                 had.extend(recovery);
-                Self::CommittedAfterRecovery(result, had)
+                Self::CommittedAfterRecovery(result, had, review, timings)
             }
             (planned, false) => planned,
         }
@@ -203,11 +271,14 @@ impl Outcome {
     /// is known, and which has no single status until §R6.8 says which.
     pub fn envelope(&self) -> Option<CommandEnvelope> {
         let (result, recovery) = match self {
-            Self::Planned(report) => {
-                return Some(CommandEnvelope::preview((**report).clone()));
+            Self::Planned(prepared) => {
+                return Some(
+                    CommandEnvelope::preview(prepared.report.clone())
+                        .with_timings(prepared.timings.spans()),
+                );
             }
-            Self::Committed(result) => (result, Vec::new()),
-            Self::CommittedAfterRecovery(result, recovery) => (result, recovery.clone()),
+            Self::Committed(result, _, _) => (result, Vec::new()),
+            Self::CommittedAfterRecovery(result, recovery, _, _) => (result, recovery.clone()),
         };
         let envelope = match result {
             CommitResult::NoOp => CommandEnvelope::no_op(),
@@ -218,7 +289,11 @@ impl Outcome {
             CommitResult::RecoveredPriorTransaction(_)
             | CommitResult::CommittedRecoveryRequired(_) => return None,
         };
-        Some(envelope.after_recovery(recovery))
+        Some(
+            envelope
+                .after_recovery(recovery)
+                .with_timings(self.timings()),
+        )
     }
 
     /// The project-relative paths this outcome removed from disk.
@@ -228,8 +303,8 @@ impl Outcome {
     /// `target/` would be writing on a run that promised not to.
     pub fn deleted_files(&self) -> Vec<String> {
         let receipt = match self {
-            Self::Committed(CommitResult::Committed(committed))
-            | Self::CommittedAfterRecovery(CommitResult::Committed(committed), _) => {
+            Self::Committed(CommitResult::Committed(committed), _, _)
+            | Self::CommittedAfterRecovery(CommitResult::Committed(committed), _, _, _) => {
                 &committed.receipt
             }
             _ => return Vec::new(),
@@ -245,7 +320,7 @@ impl Outcome {
     /// Every operation a plan would perform, in the report's order.
     pub fn operations(&self) -> Vec<ReportedOp> {
         match self {
-            Self::Planned(report) => report.operations.clone(),
+            Self::Planned(prepared) => prepared.report.operations.clone(),
             _ => Vec::new(),
         }
     }

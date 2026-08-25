@@ -18,8 +18,10 @@ pub mod receipt;
 pub mod reconcile;
 pub mod recovery;
 pub mod report;
+pub mod review;
 pub mod sandbox;
 pub mod serialize;
+pub mod timing;
 pub mod tool;
 
 pub(crate) use jails_support::Result;

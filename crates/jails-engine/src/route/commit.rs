@@ -37,7 +37,9 @@ pub(super) fn commit(
         // the plan claims and the image the commit guards under the lock.
         // Reading them apart is how a plan comes to be written against a store
         // that moved in between.
-        let observed = observed(project)?;
+        let observed = run.measure(jails_prepare::timing::TimingPhase::Parse, || {
+            observed(project)
+        })?;
         let set = request.clone().against(&observed)?;
         let outcome = commit_set(run, set, declaration, asked)?;
         match outcome.replanned() {
@@ -69,19 +71,28 @@ pub(super) fn commit_set(
     let project = run.project();
     let bundle = prepare_set(run, set, declaration, Some(asked))?;
     if !run.write {
-        return Ok(Outcome::Planned(Box::new(
-            jails_prepare::report::Report::of(&bundle.change)?,
-        )));
+        return Ok(Outcome::Planned(Box::new(PreparedOutcome {
+            report: jails_prepare::report::Report::of(&bundle.change)?,
+            review: bundle.review,
+            timings: run.timing_trace(),
+        })));
     }
-    let handle = ProjectHandle::at(project.root())?;
-    let locked = LockedProject::acquire(handle, &asked.display()).map_err(describe)?;
-    let result = execute::commit(&locked, &bundle).map_err(describe)?;
+    let (locked, result) = run.measure(jails_prepare::timing::TimingPhase::Commit, || {
+        let handle = ProjectHandle::at(project.root())?;
+        let locked = LockedProject::acquire(handle, &asked.display()).map_err(describe)?;
+        let result = execute::commit(&locked, &bundle).map_err(describe)?;
+        Ok::<_, jails_support::Failure>((locked, result))
+    })?;
     // The project lock goes *before* the runtime reconciliation, which is
     // §R6.6's rule and not an optimisation: `docker compose up -d` can take a
     // minute pulling an image, and holding the mutation lock across it would
     // make every other jails command in the tree wait on a container.
     drop(locked);
-    Ok(Outcome::Committed(reconciled(run, result)?))
+    Ok(Outcome::Committed(
+        reconciled(run, result)?,
+        Box::new(bundle.review),
+        run.timing_trace(),
+    ))
 }
 
 /// Attempt the effect the commit recorded, if it recorded one.
@@ -98,13 +109,15 @@ pub(super) fn reconciled(run: &Run, result: CommitResult) -> Result<CommitResult
         return Ok(CommitResult::Committed(committed));
     }
     let store = jails_commit::store::Store::at(run.project().root());
-    let effect = jails_commit::runtime::reconcile(
-        &store,
-        run.project().root(),
-        &committed.receipt.transaction_id,
-        run.debug,
-    )
-    .map_err(describe)?;
+    let effect = run.measure(jails_prepare::timing::TimingPhase::Container, || {
+        jails_commit::runtime::reconcile(
+            &store,
+            run.project().root(),
+            &committed.receipt.transaction_id,
+            run.debug,
+        )
+        .map_err(describe)
+    })?;
     Ok(CommitResult::Committed(Box::new(
         jails_commit::outcome::CommittedResult {
             effect,
@@ -127,22 +140,38 @@ pub(super) fn prepare_set(
     asked: Option<&Asked>,
 ) -> Result<pipeline::PreparedBundle> {
     let project = run.project();
-    let (snapshot, mut projection) = capture::projected(project, declaration)?;
-    let observed = observed(project)?;
-    if let Some(store) = &observed.ledger {
-        projection.record(&store.resources);
-    }
-    let root = capture::canonical_root(project.root())?;
-    let machine = if project.root().join(".jails").is_dir() {
-        MachineRootPresence::Present
-    } else {
-        MachineRootPresence::Absent
-    };
-    let loaded = Bootstrap::begin(root, machine)
-        .with_ledger(None)?
-        .classify()?;
+    let (snapshot, mut projection) = run
+        .measure(jails_prepare::timing::TimingPhase::Observe, || {
+            capture::projected(project, declaration)
+        })?;
+    let observed = run.measure(jails_prepare::timing::TimingPhase::Parse, || {
+        observed(project)
+    })?;
+    let (loaded, read_set, invocation) = run.measure(
+        jails_prepare::timing::TimingPhase::Project,
+        || -> Result<_> {
+            if let Some(store) = &observed.ledger {
+                projection.record(&store.resources);
+            }
+            let root = capture::canonical_root(project.root())?;
+            let machine = if project.root().join(".jails").is_dir() {
+                MachineRootPresence::Present
+            } else {
+                MachineRootPresence::Absent
+            };
+            let loaded = Bootstrap::begin(root, machine)
+                .with_ledger(None)?
+                .classify()?;
+            let read_set = snapshot.read_set()?;
+            let invocation = match asked {
+                Some(asked) => Some(asked.fingerprint(&snapshot)?),
+                None => None,
+            };
+            Ok((loaded, read_set, invocation))
+        },
+    )?;
     let context = PreparationContext {
-        read_set: snapshot.read_set()?,
+        read_set,
         // Nothing is rendered from a template on this route yet: a recipe
         // hands over bytes it already produced. An empty store is therefore
         // the honest value, and `TemplateStore::resolve` refuses anything
@@ -160,10 +189,7 @@ pub(super) fn prepare_set(
         // Computed against the same capture the plan was, so the row for
         // `jails.toml` describes the bytes this plan actually read rather
         // than whatever is on disk by the time it is asked for.
-        invocation: match asked {
-            Some(asked) => Some(asked.fingerprint(&snapshot)?),
-            None => None,
-        },
+        invocation,
         // The durable object store, as the one question preparation asks of
         // it: given a recorded base, the bytes jails wrote. A three-way merge
         // measures the reader's edit and the generator's change from exactly
@@ -175,14 +201,21 @@ pub(super) fn prepare_set(
                 jails_commit::store::read_object(&at, id).ok()
             })
         },
+        timings: run.timing_trace(),
     };
-    pipeline::prepare(
-        &loaded,
-        CommitPlan::Apply(set),
-        snapshot,
-        projection,
-        context,
-    )
+    let bundle = run.measure(jails_prepare::timing::TimingPhase::Prepare, || {
+        pipeline::prepare(
+            &loaded,
+            CommitPlan::Apply(set),
+            snapshot,
+            projection,
+            context,
+        )
+    })?;
+    run.measure(jails_prepare::timing::TimingPhase::Verify, || {
+        bundle.change.validate()
+    })?;
+    Ok(bundle)
 }
 
 /// A commit failure as the one line a person reads.

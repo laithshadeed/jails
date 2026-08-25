@@ -46,6 +46,21 @@ pub(crate) fn migration_file(project: &Project, description: &str) -> Result<std
         .join(format!("V{version:03}__{description}.sql")))
 }
 
+/// Plan the forward-only migration that retires one generated table.
+/// Confirmation and dependency evidence belong to the lifecycle route; this
+/// renderer owns only the deterministic path and SQL bytes.
+pub fn drop_table_change(project: &Project, table: &str) -> Result<Change> {
+    let path = migration_file(project, &format!("drop_{table}"))?;
+    Ok(Change {
+        files: vec![Artifact {
+            kind: "migration",
+            path,
+            contents: format!("drop table {table};\n"),
+        }],
+        ..Change::default()
+    })
+}
+
 pub fn next_migration_version(dir: &Path) -> Result<u32> {
     if !dir.exists() {
         return Ok(1);

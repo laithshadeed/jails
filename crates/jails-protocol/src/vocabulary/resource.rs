@@ -211,6 +211,17 @@ impl ResourceKey {
             Self::MavenMainClass(_) => 9,
         }
     }
+
+    /// Whether this key names append-only Flyway history rather than an
+    /// ordinary generated projection.
+    pub fn is_migration_history(&self) -> bool {
+        matches!(
+            self,
+            Self::WholeFile(path)
+                if path.as_str().starts_with("src/main/resources/db/migration/")
+                    && path.as_str().ends_with(".sql")
+        )
+    }
 }
 impl Codec for ResourceKey {
     fn encode(&self, encoder: &mut Encoder) -> Result<()> {
@@ -504,12 +515,15 @@ impl Codec for ResourceValue {
     }
 }
 
-/// Who claims a resource. An entity or a one-shot — never a human owner, since
-/// a human declares an *entity* and the entity claims the resource.
+/// Who claims a resource. A human declares an entity rather than claiming a
+/// resource directly. Schema history is the durable exception: once a
+/// migration is published, its path remains claimed after its contributing
+/// entity or one-shot retires.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
 pub enum ResourceOwner {
     Entity(EntityId),
     OneShot(OneShotId),
+    SchemaHistory,
 }
 
 impl Codec for ResourceOwner {
@@ -523,6 +537,10 @@ impl Codec for ResourceOwner {
                 encoder.tag(1);
                 id.encode(encoder)
             }
+            Self::SchemaHistory => {
+                encoder.tag(2);
+                Ok(())
+            }
         }
     }
 
@@ -530,6 +548,7 @@ impl Codec for ResourceOwner {
         Ok(match decoder.tag()? {
             0 => Self::Entity(EntityId::decode(decoder)?),
             1 => Self::OneShot(OneShotId::decode(decoder)?),
+            2 => Self::SchemaHistory,
             other => Err(format!("unknown resource owner tag {other}"))?,
         })
     }
@@ -731,6 +750,31 @@ mod tests {
         let resource = DesiredResource::new(key, owners(&["Note", "Invoice"]), value).unwrap();
         assert_eq!(round_trip(&resource), resource);
         assert_eq!(resource.owners.len(), 2);
+    }
+
+    #[test]
+    fn schema_history_is_a_stable_append_only_owner_tag() {
+        let mut encoder = Encoder::new();
+        ResourceOwner::SchemaHistory.encode(&mut encoder).unwrap();
+        assert_eq!(encoder.finish().unwrap(), vec![2]);
+
+        let bytes = [2];
+        let mut decoder = Decoder::new(&bytes).unwrap();
+        assert_eq!(
+            ResourceOwner::decode(&mut decoder).unwrap(),
+            ResourceOwner::SchemaHistory
+        );
+        decoder.finish().unwrap();
+    }
+
+    #[test]
+    fn only_sql_beneath_the_flyway_directory_is_migration_history() {
+        let key = |path| ResourceKey::WholeFile(ProjectPath::parse(path).unwrap());
+        assert!(
+            key("src/main/resources/db/migration/V001__create_tasks.sql").is_migration_history()
+        );
+        assert!(!key("src/main/resources/schema.sql").is_migration_history());
+        assert!(!key("src/main/resources/db/migration/README.md").is_migration_history());
     }
 
     /// The coordinate is recorded twice, so this is the check that stops a

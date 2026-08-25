@@ -714,6 +714,33 @@ pub(crate) mod tests {
             .unwrap();
     }
 
+    #[test]
+    fn prepared_bundle_matches_the_protocol_golden() {
+        let change = change_with(vec![create(
+            "src/main/java/com/example/Note.java",
+            b"package com.example;\n\npublic record Note(String title) {}\n",
+        )]);
+        let identity = change.identity().unwrap();
+        let mut encoder = Encoder::new();
+        identity.encode(&mut encoder).unwrap();
+        let identity_bytes = encoder.finish().unwrap();
+        let mut actual = format!(
+            "operation = {}\ntransaction = {}\nprepared_identity_hex = {}\n",
+            change.operation_id,
+            change.transaction_id,
+            hex(&identity_bytes)
+        );
+        for (id, bytes) in &change.objects {
+            actual.push_str(&format!("object = {id} {} {}\n", bytes.len(), hex(bytes)));
+        }
+        let expected = include_str!("../../../tests/protocol-golden/prepared-bundle.txt");
+        assert_eq!(actual, expected);
+    }
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
     /// §R3.1: no lazy body. A recovered journal has to be able to finish the
     /// work without re-deriving anything.
     #[test]

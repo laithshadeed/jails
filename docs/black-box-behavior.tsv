@@ -1,0 +1,14 @@
+# Phase-0 baseline. Each row is exercised through the compiled jails binary with a fake build tool.
+# build	command	outcome	evidence
+maven	test	success	tool:mvn test
+gradle	test	success	tool:gradle test
+maven	test --fast	success	stdout:--fast not taken|tool:mvn test
+gradle	test --fast	refused	stderr:failed to read|stderr:pom.xml
+maven	testd --status	success	stdout:testd: not running
+gradle	testd --status	success	stdout:testd: not running
+maven	run	success	tool:mvn spring-boot:run
+gradle	run	success	tool:gradle bootRun
+maven	run --watch	success	tool:mvn spring-boot:run
+gradle	run --watch	success	tool:gradle --continuous bootRun
+maven	watch	refused	stderr:unrecognized subcommand 'watch'
+gradle	watch	refused	stderr:unrecognized subcommand 'watch'

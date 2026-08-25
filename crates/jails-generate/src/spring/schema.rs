@@ -103,9 +103,13 @@ pub(crate) fn association_files(
         parent_table,
         parent_columns.join("_")
     );
-    let migration_dir = root.join("src/main/resources/db/migration");
-    let needs_unique_index =
-        !migrations_declare_unique_key(&migration_dir, &parent_table, &parent_columns);
+    let migration_dir = "src/main/resources/db/migration";
+    let needs_unique_index = !migrations_declare_unique_key(
+        slice.project(),
+        migration_dir,
+        &parent_table,
+        &parent_columns,
+    );
     for identifier in
         std::iter::once(&constraint).chain(needs_unique_index.then_some(&unique_index))
     {
@@ -184,21 +188,22 @@ pub(crate) fn association_files(
 /// Reuse a key already proven by earlier Flyway migrations. This recognizes
 /// only SQL shapes Jails itself emits; unfamiliar/user-authored SQL falls back
 /// to creating a named unique index rather than making a risky inference.
-fn migrations_declare_unique_key(dir: &Path, table: &str, columns: &[String]) -> bool {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return false;
-    };
+fn migrations_declare_unique_key(
+    project: &Project,
+    dir: &str,
+    table: &str,
+    columns: &[String],
+) -> bool {
     let columns = columns.join(", ");
     let primary_key = format!("constraint {table}_pk\n    primary key ({columns})");
     let unique_index_target = format!("on {table} ({columns})");
     let create_table = format!("create table {table} (");
 
-    entries.filter_map(|entry| entry.ok()).any(|entry| {
-        let path = entry.path();
-        if path.extension().and_then(|extension| extension.to_str()) != Some("sql") {
+    project.projected_names_in(dir).into_iter().any(|name| {
+        if !name.ends_with(".sql") {
             return false;
         }
-        let Ok(sql) = std::fs::read_to_string(path) else {
+        let Some(sql) = project.projected_text(&format!("{dir}/{name}")) else {
             return false;
         };
         if sql.contains(&primary_key)
@@ -554,29 +559,33 @@ mod association_and_http_sink_tests {
 
     #[test]
     fn association_reuses_primary_and_prior_composite_unique_keys() {
-        let root = jails_support::scratch::ScratchDir::in_temp("jails-association-existing-keys")
-            .unwrap()
-            .keep();
-        let migrations = root.join("src/main/resources/db/migration");
-        std::fs::create_dir_all(&migrations).unwrap();
-        std::fs::write(
-            migrations.join("V001__parents.sql"),
-            "create table parents (\n  id uuid not null,\n  workspace_id uuid not null,\n  constraint parents_pk\n    primary key (id)\n);\n\ncreate unique index parents_workspace_id_id_association_key\n  on parents (workspace_id, id);\n",
+        let (root, live) = scratch_jdbc_project("association-existing-keys");
+        let migration = "create table parents (\n  id uuid not null,\n  workspace_id uuid not null,\n  constraint parents_pk\n    primary key (id)\n);\n\ncreate unique index parents_workspace_id_id_association_key\n  on parents (workspace_id, id);\n";
+        let path = "src/main/resources/db/migration/V001__parents.sql";
+        let projected = Project::projected(
+            &live,
+            std::collections::BTreeMap::from([(
+                jails_protocol::identity::ProjectPath::parse(path).unwrap(),
+                migration.as_bytes().to_vec(),
+            )]),
         )
         .unwrap();
 
         assert!(migrations_declare_unique_key(
-            &migrations,
+            &projected,
+            "src/main/resources/db/migration",
             "parents",
             &["id".to_string()]
         ));
         assert!(migrations_declare_unique_key(
-            &migrations,
+            &projected,
+            "src/main/resources/db/migration",
             "parents",
             &["workspace_id".to_string(), "id".to_string()]
         ));
         assert!(!migrations_declare_unique_key(
-            &migrations,
+            &projected,
+            "src/main/resources/db/migration",
             "parents",
             &["workspace_id".to_string()]
         ));

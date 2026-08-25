@@ -14,7 +14,7 @@
 
 use std::path::Path;
 
-use crate::model::{Artifact, Change, Layer, Slice};
+use crate::model::{Artifact, Change, Layer, Project, Slice};
 use jails_support::Result;
 
 mod auth;
@@ -35,6 +35,7 @@ mod sse;
 mod transition;
 mod webhook;
 mod workflow;
+use crate::pom::{Dependency, Flavor};
 pub(crate) use auth::*;
 pub(crate) use containers::*;
 pub(crate) use dto::*;
@@ -53,11 +54,6 @@ pub(crate) use sse::*;
 pub(crate) use transition::*;
 pub(crate) use webhook::*;
 pub(crate) use workflow::*;
-// Production code here reaches the project through `Slice`; only the renderer
-// fixtures build one directly.
-#[cfg(test)]
-use crate::model::Project;
-use crate::pom::{Dependency, Flavor};
 
 fn artifact(path: std::path::PathBuf, contents: String) -> Artifact {
     Artifact::rendered(path, contents)

@@ -261,6 +261,9 @@ pub struct CommandEnvelope {
     pub report: Option<CommandReport>,
     pub receipt: Option<AppliedReceipt>,
     pub error: Option<ErrorReport>,
+    /// Runtime observations only; never part of a prepared or committed
+    /// transition's identity.
+    pub timings: Vec<crate::timing::TimingSpan>,
 }
 
 impl CommandEnvelope {
@@ -281,6 +284,7 @@ impl CommandEnvelope {
             report: Some(CommandReport::Prepared(Box::new(report))),
             receipt: None,
             error: None,
+            timings: Vec::new(),
         }
     }
 
@@ -301,6 +305,7 @@ impl CommandEnvelope {
             report: None,
             receipt: Some(receipt),
             error: None,
+            timings: Vec::new(),
         }
     }
 
@@ -317,12 +322,19 @@ impl CommandEnvelope {
             report: None,
             receipt: None,
             error: None,
+            timings: Vec::new(),
         }
     }
 
     /// The same envelope, carrying what recovery changed on the way.
     pub fn after_recovery(mut self, recovery: Vec<RecoveryOutcome>) -> Self {
         self.recovery = recovery;
+        self
+    }
+
+    /// The same result with invocation-local performance observations.
+    pub fn with_timings(mut self, timings: Vec<crate::timing::TimingSpan>) -> Self {
+        self.timings = timings;
         self
     }
 
@@ -341,6 +353,7 @@ impl CommandEnvelope {
             report: None,
             receipt: None,
             error: Some(error),
+            timings: Vec::new(),
         }
     }
 

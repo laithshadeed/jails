@@ -79,6 +79,23 @@ pub fn envelope(envelope: &CommandEnvelope) -> String {
         &option(envelope.error.as_ref(), error),
         false,
     );
+    field(
+        &mut out,
+        "timings",
+        &array(&envelope.timings, |span| {
+            let mut out = String::from("{");
+            field(&mut out, "phase", &quoted(span.phase.label()), true);
+            field(
+                &mut out,
+                "duration_micros",
+                &quoted(&span.duration_micros.to_string()),
+                false,
+            );
+            out.push('}');
+            out
+        }),
+        false,
+    );
     out.push('}');
     out.push('\n');
     out
@@ -203,6 +220,7 @@ fn owner_of(owner: &&ResourceOwner) -> String {
     match owner {
         ResourceOwner::Entity(id) => variant("entity", &quoted(&format!("{id:?}"))),
         ResourceOwner::OneShot(id) => variant("one-shot", &quoted(&format!("{id:?}"))),
+        ResourceOwner::SchemaHistory => variant("schema-history", "null"),
     }
 }
 

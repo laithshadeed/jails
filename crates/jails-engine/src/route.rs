@@ -85,13 +85,14 @@ mod session;
 mod support;
 
 pub use app::{Intent, app_apply};
-pub use artifact::{destroy, generate, recipe};
+pub use artifact::{RequestedStorageRetirement, destroy, generate, recipe};
 pub use capability::{install, remove, sync};
 pub use declare::{add_dependency, set_property, undeclare};
 pub use feature::{install_fast_test, remove_fast_test};
 pub use field::field;
 pub use maintenance::{adopt_layout, app_init, format, rename};
 pub use oneshot::{cases, migration};
+pub(crate) use session::PreparedOutcome;
 pub use session::{Outcome, Run};
 
 // The two halves of what used to be this file. `pending.md` §8.1: assembling a

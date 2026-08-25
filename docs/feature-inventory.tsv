@@ -1,0 +1,56 @@
+# command	owner crate	side-effect class	current entry point
+about	jails-project	read-only	project::about
+new	jails	project-create	new::new
+new-cli	jails	project-create	new::new_cli
+app	jails	dispatch-only	app::run
+app init	jails-engine	project-mutation	route::app_init
+app plan	jails-engine	read-only	route::app_apply (pretend)
+app apply	jails-engine	project-mutation	route::app_apply
+generate	jails-engine	project-mutation	route::recipe
+add	jails-engine	project-mutation	route::install
+add dependency	jails-engine	project-mutation	route::add_dependency
+sync	jails-engine	project-mutation	route::sync
+remove	jails-engine	project-mutation	route::remove
+remove dependency	jails-engine	project-mutation	route::undeclare
+remove fast-test	jails-engine	project-mutation	route::remove_fast_test
+set	jails-engine	project-mutation	route::set_property
+unset	jails-engine	project-mutation	route::undeclare
+start	jails-project	service-lifecycle	compose::start
+stop	jails-project	service-lifecycle	compose::stop_cmd
+src	jails-report	read-only	source::src
+bench	jails-drive	external-process	bench::bench
+adopt	jails-engine	project-mutation	route::adopt_layout
+doctor	jails-report	read-only	doctor::doctor
+why	jails-report	read-only+external-process	why::why
+stats	jails-project	read-only	inspect::stats
+notes	jails-project	read-only	inspect::notes
+lint	jails-drive	read-only+external-process	lint::lint
+routes	jails-project	read-only	inspect::routes
+beans	jails-project	read-only	inspect::beans
+migrate	jails-drive	external-process+service-lifecycle	migrate::check
+kafka	jails-drive	dispatch-only	kafka::kafka
+kafka topics	jails-drive	broker-read+service-lifecycle	kafka::tool
+kafka describe	jails-drive	broker-read+service-lifecycle	kafka::tool
+kafka send	jails-drive	broker-mutation+service-lifecycle	kafka::send
+kafka poison	jails-drive	broker-mutation+service-lifecycle	kafka::send
+kafka tail	jails-drive	broker-read+service-lifecycle	kafka::tool
+kafka dlt	jails-drive	broker-read+service-lifecycle	kafka::tool
+kafka lag	jails-drive	broker-read+service-lifecycle	kafka::tool
+kafka reset	jails-drive	broker-mutation+service-lifecycle	kafka::tool
+db	jails-drive	external-process+service-lifecycle	console::db
+console	jails-drive	external-process	console::console
+rename	jails-engine	project-mutation	route::rename
+destroy	jails-engine	project-mutation	route::destroy
+test	jails-drive	external-process+conditional-project-mutation	run::test
+testd	jails-drive	machine-daemon+external-process	testd::testd
+build	jails-drive	external-process	run::build
+clean	jails-drive	external-process	run::clean
+fmt	jails-engine	project-mutation+external-process	route::format
+check	jails-drive	external-process	run::check
+mvn	jails-drive	external-process	run::mvn
+gradle	jails-drive	external-process	run::gradle
+run	jails-drive	external-process+service-lifecycle	run::run/run::watch
+setup	jails-report	machine-mutation	doctor::setup
+explain	jails-report	read-only	explain::explain
+commands	jails-report	read-only	commands::commands
+completion	jails	read-only	clap_complete::generate

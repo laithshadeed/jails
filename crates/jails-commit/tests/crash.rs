@@ -97,6 +97,7 @@ fn bundle(locked: &LockedProject, change: PreparedChange) -> PreparedBundle {
         )
         .unwrap(),
         change,
+        review: jails_prepare::review::PreparedReview::default(),
     }
 }
 
@@ -249,6 +250,7 @@ fn a_plan_prepared_elsewhere_is_refused_before_anything_is_written() {
         )
         .unwrap(),
         change,
+        review: jails_prepare::review::PreparedReview::default(),
     };
 
     let error = commit(&locked, &foreign).unwrap_err();

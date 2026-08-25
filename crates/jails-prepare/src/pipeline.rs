@@ -37,7 +37,7 @@ use jails_protocol::identity::{ObjectId, ObjectRef, ProjectPath, TemplateKey};
 use jails_protocol::plan::LedgerIntent;
 use jails_protocol::render::DesiredProvenance;
 use jails_protocol::render::{DesiredBody, TemplateValue};
-use jails_protocol::snapshot::{Captured, ProjectSnapshot, ReadSet, TemplateStore};
+use jails_protocol::snapshot::{Captured, DirectoryFact, ProjectSnapshot, ReadSet, TemplateStore};
 use jails_protocol::transition::{AbortPlan, CommitPlan, FinalisationPlan};
 use jails_support::codec::sha256;
 use std::collections::{BTreeMap, BTreeSet};
@@ -128,20 +128,26 @@ pub struct PreparationContext {
     /// which makes a merge refuse rather than silently measure from the wrong
     /// place.
     pub objects: ObjectReader,
+    /// Runtime-only phase collector. It is deliberately outside every
+    /// fingerprint and prepared value.
+    pub timings: crate::timing::TimingTrace,
 }
 
 /// Reads one object out of whatever holds them.
 pub(crate) type ObjectReader = std::sync::Arc<dyn Fn(&ObjectId) -> Option<Vec<u8>> + Send + Sync>;
 
-/// The prepared change plus the runtime-only bindings a commit needs.
+/// The prepared change plus runtime-only bindings and review material.
 ///
-/// They are separate values because one is durable and the other is not: an
-/// absolute path is meaningless on another machine and must never reach a
-/// journal, a receipt or a report.
+/// They are separate values because only `change` is durable: an absolute
+/// path is meaningless on another machine, and preimage/postimage bytes shown
+/// on explicit request must not change a journal or transaction identity.
 #[derive(Debug)]
 pub struct PreparedBundle {
     pub change: PreparedChange,
     pub root: jails_protocol::snapshot::CanonicalRoot,
+    /// Runtime-only preimage/postimage material for explicit review output.
+    /// It is not part of the durable operation identity or commit protocol.
+    pub review: crate::review::PreparedReview,
 }
 
 /// Run the preparation algorithm.
@@ -169,6 +175,11 @@ fn apply(
     context: PreparationContext,
 ) -> Result<PreparedBundle> {
     set.validate()?;
+    let semantic_edits = set
+        .ordered
+        .iter()
+        .flat_map(|change| change.edits.iter().cloned())
+        .collect();
 
     // Step 2. The generation the plan was computed against must still be the
     // one observed, or this plan describes a store that has moved on.
@@ -215,6 +226,7 @@ fn apply(
         outputs,
         retired,
         conflicts,
+        merged,
     } = diff::diff(
         &base,
         &projection,
@@ -222,7 +234,10 @@ fn apply(
         &prior,
         &previously_owned,
         &context.objects,
+        &context.timings,
     )?;
+
+    protect_migration_history(&context.observed_store, &operations, &conflicts)?;
 
     // Step 9. Parents for creates only, stopping at the machine root.
     let directories = parents(&base, &operations)?;
@@ -287,6 +302,10 @@ fn apply(
                 stamps,
             },
             post_commit,
+            review: crate::review::ReviewSeed {
+                merged,
+                edits: semantic_edits,
+            },
         },
         context,
     )
@@ -551,10 +570,11 @@ fn parents(base: &ProjectSnapshot, operations: &[FileOp]) -> Result<Vec<Director
         let FileOp::Create { path, .. } = operation else {
             continue;
         };
-        let mut components: Vec<&str> = path.as_str().split('/').collect();
-        components.pop();
-        while !components.is_empty() {
-            let candidate = components.join("/");
+        let components: Vec<&str> = path.as_str().split('/').collect();
+        let mut prefix = Vec::new();
+        for component in &components[..components.len().saturating_sub(1)] {
+            prefix.push(*component);
+            let candidate = prefix.join("/");
             // `.jails` is executor-owned machine structure. It is created by
             // the bootstrap, not by a plan, so a `DirectoryOp` for it would
             // be two owners for one directory.
@@ -562,17 +582,19 @@ fn parents(base: &ProjectSnapshot, operations: &[FileOp]) -> Result<Vec<Director
                 break;
             }
             let parent = ProjectPath::parse(&candidate)?;
-            // A parent that is already a captured *file* cannot become a
-            // directory, and finding that out at commit time would leave the
-            // transaction half applied.
-            if matches!(base.read(&parent), Ok(Captured::Present(_))) {
-                return Err(format!(
-                    "`{parent}` is a file, and `{path}` needs it to be a directory"
-                )
-                .into());
+            match base.directory_fact(&parent)? {
+                DirectoryFact::Missing => {
+                    needed.insert(parent);
+                }
+                DirectoryFact::Directory(_) => {}
+                DirectoryFact::NonDirectory => {
+                    return Err(format!(
+                        "`{parent}` is not a directory, and `{path}` needs it to be a directory.\n       \
+                         fix: move or rename the colliding file, then retry."
+                    )
+                    .into());
+                }
             }
-            needed.insert(parent);
-            components.pop();
         }
     }
     Ok(needed
@@ -580,6 +602,46 @@ fn parents(base: &ProjectSnapshot, operations: &[FileOp]) -> Result<Vec<Director
         .map(|path| DirectoryOp::Create { path })
         .collect())
 }
+
+fn protect_migration_history(
+    store: &ObservedStore,
+    operations: &[FileOp],
+    conflicts: &[diff::Conflict],
+) -> Result<()> {
+    let sealed: BTreeSet<ProjectPath> = store
+        .ledger
+        .iter()
+        .flat_map(|ledger| ledger.resources.iter())
+        .filter_map(|row| match &row.key {
+            jails_protocol::resource::ResourceKey::WholeFile(path)
+                if row.key.is_migration_history() =>
+            {
+                Some(path.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    let changed = operations.iter().find_map(|operation| match operation {
+        FileOp::Replace { path, .. } | FileOp::Delete { path, .. } if sealed.contains(path) => {
+            Some(path)
+        }
+        _ => None,
+    });
+    let conflicted = conflicts
+        .iter()
+        .find(|conflict| sealed.contains(&conflict.path))
+        .map(|conflict| &conflict.path);
+    if let Some(path) = changed.or(conflicted) {
+        return Err(format!(
+            "migration-edited-after-seal: `{path}` is published append-only schema history and \
+             cannot be replaced or deleted.\n       fix: keep its recorded bytes and append the next \
+             migration for the desired schema change."
+        )
+        .into());
+    }
+    Ok(())
+}
+
 /// What one preparation produced, before it is stamped with an identity.
 ///
 /// These five are computed together and consumed together -- `assemble` reads
@@ -594,6 +656,7 @@ struct Produced {
     objects: ObjectBundle,
     recorded: ledger::Recorded,
     post_commit: Vec<jails_protocol::effect::PostCommitEffect>,
+    review: crate::review::ReviewSeed,
 }
 
 impl Produced {
@@ -618,6 +681,7 @@ fn assemble(
         objects,
         recorded,
         post_commit,
+        review,
     } = produced;
     let operation_identity = OperationIdentityV1 {
         snapshot: jails_protocol::snapshot::snapshot_digest(&context.read_set)?,
@@ -678,9 +742,11 @@ fn assemble(
     }
     change.transaction_id = change.identity()?.transaction_id()?;
     change.validate()?;
+    let review = crate::review::PreparedReview::of(&base, &change, review)?;
     Ok(PreparedBundle {
         root: base.root().clone(),
         change,
+        review,
     })
 }
 
@@ -736,12 +802,37 @@ mod tests {
                 SnapshotFile::capture(body.as_bytes().to_vec(), default_mode()),
             );
         }
+        let parents_of = |name: &str| {
+            let mut components: Vec<&str> = name.split('/').collect();
+            components.pop();
+            let mut parents = Vec::new();
+            while !components.is_empty() {
+                parents.push(path(&components.join("/")));
+                components.pop();
+            }
+            parents
+        };
+        let existing_directories: BTreeSet<ProjectPath> = files
+            .iter()
+            .flat_map(|(name, _)| parents_of(name))
+            .collect();
+        let missing_directories: BTreeSet<ProjectPath> = absences
+            .iter()
+            .flat_map(|name| parents_of(name))
+            .filter(|parent| {
+                !existing_directories.contains(parent) && !captured.contains_key(parent)
+            })
+            .collect();
         Arc::new(
-            ProjectSnapshot::new(
+            ProjectSnapshot::with_directory_absences(
                 CanonicalRoot::new("/srv/demo").unwrap(),
                 captured,
                 absences.iter().map(|name| path(name)).collect(),
-                BTreeMap::new(),
+                existing_directories
+                    .into_iter()
+                    .map(|parent| (parent, Vec::new()))
+                    .collect(),
+                missing_directories,
             )
             .unwrap(),
         )
@@ -786,6 +877,7 @@ mod tests {
             // And nothing here reconciles a runtime: these tests are about
             // the file transition.
             start_services: false,
+            timings: Default::default(),
         }
     }
 

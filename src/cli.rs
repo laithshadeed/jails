@@ -19,9 +19,15 @@ use crate::compose::Runtime;
 use crate::generate::ArtifactKind;
 use crate::pom;
 use crate::{generate, kafka};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 use std::path::PathBuf;
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub(crate) enum StoragePolicy {
+    Preserve,
+    Drop,
+}
 
 #[derive(Parser)]
 #[command(
@@ -61,6 +67,14 @@ pub(crate) struct Cli {
     /// encoding of that value rather than a second description of the work.
     #[arg(long, global = true, value_enum, default_value_t = Output::Human)]
     pub(crate) output: Output,
+
+    /// Expand mutation operations as unified current-to-prepared file diffs
+    #[arg(long, global = true)]
+    pub(crate) diff: bool,
+
+    /// Show the typed semantic edits and reconciliation operations in the plan
+    #[arg(long, global = true)]
+    pub(crate) ast: bool,
 }
 
 /// How a mutation's [`CommandEnvelope`] is encoded.
@@ -72,14 +86,16 @@ pub(crate) enum Output {
 
 /// Everything a mutation needs that is not the mutation.
 ///
-/// A parameter object rather than four booleans threaded through every arm:
-/// they arrive together from the global flags, they are consumed together by
-/// [`mutate`], and three of the four are easy to swap at a call site.
+/// A parameter object rather than global presentation and execution flags
+/// threaded through every arm: they arrive together, are consumed together by
+/// [`mutate`], and are easy to swap at a call site.
 #[derive(Clone, Copy)]
 pub(crate) struct Invocation {
     pub(crate) pretend: bool,
     pub(crate) debug: bool,
     pub(crate) output: Output,
+    pub(crate) diff: bool,
+    pub(crate) ast: bool,
 }
 
 impl Invocation {
@@ -91,6 +107,13 @@ impl Invocation {
         Self {
             pretend: true,
             ..self
+        }
+    }
+
+    pub(crate) fn review(self) -> jails_prepare::review::ReviewSelection {
+        jails_prepare::review::ReviewSelection {
+            diff: self.diff,
+            ast: self.ast,
         }
     }
 }
@@ -546,6 +569,12 @@ pub(crate) enum Command {
         /// empty string to write straight into the base package.
         #[arg(long)]
         package: Option<String>,
+        /// Required when a scaffold has published table migration history.
+        #[arg(long, value_enum)]
+        storage: Option<StoragePolicy>,
+        /// Exact generated table name; required with `--storage drop`.
+        #[arg(long, requires = "storage")]
+        confirm_table: Option<String>,
     },
     /// Run tests; bare names become *Test and *IT names use Failsafe
     ///
@@ -723,4 +752,60 @@ pub(crate) enum Undeclare {
     /// the failure the ownership model exists to prevent.
     #[command(name = "fast-test")]
     FastTest,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn feature_inventory_covers_the_live_clap_tree_exactly_once() {
+        let source = include_str!("../docs/feature-inventory.tsv");
+        let mut inventoried = BTreeSet::new();
+        for (number, line) in source.lines().enumerate() {
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let fields: Vec<&str> = line.split('\t').collect();
+            assert_eq!(
+                fields.len(),
+                4,
+                "inventory line {} is not four columns",
+                number + 1
+            );
+            assert!(!fields[1].is_empty(), "line {} has no owner", number + 1);
+            assert!(
+                !fields[2].is_empty(),
+                "line {} has no side-effect class",
+                number + 1
+            );
+            assert!(
+                !fields[3].is_empty(),
+                "line {} has no entry point",
+                number + 1
+            );
+            assert!(
+                inventoried.insert(fields[0].to_string()),
+                "{} is inventoried twice",
+                fields[0]
+            );
+        }
+
+        let mut accepted = BTreeSet::new();
+        collect_commands(&Cli::command(), "", &mut accepted);
+        assert_eq!(inventoried, accepted);
+    }
+
+    fn collect_commands(command: &clap::Command, prefix: &str, paths: &mut BTreeSet<String>) {
+        for child in command.get_subcommands() {
+            let path = match prefix.is_empty() {
+                true => child.get_name().to_string(),
+                false => format!("{prefix} {}", child.get_name()),
+            };
+            paths.insert(path.clone());
+            collect_commands(child, &path, paths);
+        }
+    }
 }

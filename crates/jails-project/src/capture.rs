@@ -62,6 +62,20 @@ impl ReadDeclaration {
 
     /// Declare one file. Absence is a legitimate outcome, not an error.
     pub fn file(mut self, path: ProjectPath) -> Self {
+        let mut components: Vec<&str> = path.as_str().split('/').collect();
+        components.pop();
+        while !components.is_empty() {
+            let candidate = components.join("/");
+            // Machine structure has its own bootstrap/precondition protocol.
+            if candidate == ".jails" || candidate.starts_with(".jails/") {
+                break;
+            }
+            self.directories.insert(
+                ProjectPath::parse(&candidate)
+                    .expect("parents of a validated project path are validated project paths"),
+            );
+            components.pop();
+        }
         self.files.insert(path);
         self
     }
@@ -69,6 +83,12 @@ impl ReadDeclaration {
     /// Declare a directory listing.
     pub fn directory(mut self, path: ProjectPath) -> Self {
         self.directories.insert(path);
+        self
+    }
+
+    pub fn merge(mut self, other: Self) -> Self {
+        self.files.extend(other.files);
+        self.directories.extend(other.directories);
         self
     }
 
@@ -102,10 +122,52 @@ pub fn capture(root: &CanonicalRoot, declaration: &ReadDeclaration) -> Result<Pr
         }
     }
     let mut directories = BTreeMap::new();
+    let mut directory_absences = BTreeSet::new();
     for path in &declaration.directories {
-        directories.insert(path.clone(), list(&resolve(at, path), path)?);
+        let resolved = resolve(at, path);
+        match std::fs::symlink_metadata(&resolved) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(format!(
+                    "refusing directory `{path}` because it is a symlink.\n       \
+                     fix: replace it with a real directory beneath the project root."
+                )
+                .into());
+            }
+            Ok(metadata) if metadata.is_dir() => {
+                directories.insert(path.clone(), list(&resolved, path)?);
+            }
+            Ok(_) => {
+                let file = read_file(&resolved, path)?.ok_or_else(|| {
+                    format!(
+                        "`{path}` changed while its directory fact was captured.\n       \
+                         fix: retry after filesystem activity has settled."
+                    )
+                })?;
+                files.insert(path.clone(), file);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                directory_absences.insert(path.clone());
+            }
+            // A previously captured ancestor is a file. That ancestor's file
+            // identity is the complete guard for this impossible descendant;
+            // preparation walks parents from the root and refuses there.
+            Err(error) if error.kind() == std::io::ErrorKind::NotADirectory => {}
+            Err(error) => {
+                return Err(format!(
+                    "failed to inspect directory `{path}`: {error}.\n       \
+                     fix: correct its permissions or filesystem error, then retry."
+                )
+                .into());
+            }
+        }
     }
-    ProjectSnapshot::new(root.clone(), files, absences, directories)
+    ProjectSnapshot::with_directory_absences(
+        root.clone(),
+        files,
+        absences,
+        directories,
+        directory_absences,
+    )
 }
 
 /// Everything a capability plan is allowed to look at.
@@ -193,7 +255,14 @@ fn resolve(at: &Path, path: &ProjectPath) -> PathBuf {
 fn read_file(at: &Path, path: &ProjectPath) -> Result<Option<SnapshotFile>> {
     let metadata = match at.symlink_metadata() {
         Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            ) =>
+        {
+            return Ok(None);
+        }
         Err(error) => return Err(format!("failed to read {path}: {error}").into()),
     };
     if metadata.file_type().is_symlink() {
@@ -317,6 +386,34 @@ mod tests {
                 .list(&path("src/main/resources/db/migration"))
                 .unwrap()
                 .is_empty()
+        );
+        assert_eq!(
+            snapshot
+                .directory_fact(&path("src/main/resources/db/migration"))
+                .unwrap(),
+            jails_protocol::snapshot::DirectoryFact::Missing
+        );
+        assert!(snapshot.read_set().unwrap().inputs().iter().any(|input| {
+            matches!(
+                input,
+                jails_protocol::snapshot::InputPrecondition::Absent { path }
+                    if path.as_str() == "src/main/resources/db/migration"
+            )
+        }));
+    }
+
+    #[test]
+    fn a_file_at_a_declared_directory_is_captured_as_a_collision() {
+        let scratch = project();
+        jails_support::apply::put(scratch.path().join("src"), "not a directory\n").unwrap();
+        let snapshot = capture(
+            &canonical_root(scratch.path()).unwrap(),
+            &ReadDeclaration::new().file(path("src/test/java/Demo.java")),
+        )
+        .unwrap();
+        assert_eq!(
+            snapshot.directory_fact(&path("src")).unwrap(),
+            jails_protocol::snapshot::DirectoryFact::NonDirectory
         );
     }
 

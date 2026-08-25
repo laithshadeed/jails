@@ -38,7 +38,7 @@ the crawler, the support inbox and the payments gateway are built from — which
 is the claim `app.rs` makes about being domain-blind, tested against a domain
 nobody designed for it.
 
-**Verified**: `jails check` is BUILD SUCCESS — 42 unit tests and 6 integration
+**Verified**: `jails check` is BUILD SUCCESS — 44 unit tests and 6 integration
 tests against a real PostgreSQL through Testcontainers, none skipped.
 
 ## What jails asked for that neither framework had

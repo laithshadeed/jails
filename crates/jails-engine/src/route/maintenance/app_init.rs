@@ -11,9 +11,10 @@ use super::*;
 /// §R4.3 step 2 rechecks under the lock.
 pub fn app_init(run: &Run, manifest: Option<&str>) -> Result<Outcome> {
     let project = run.project();
-    const SKELETON: &str = "\
+    let skeleton = format!(
+        "\
 # Generic application intent. Add capabilities, then one [[generate]] table per slice.
-schema = 1
+schema = {}
 capabilities = []
 
 # [[generate]]
@@ -21,7 +22,9 @@ capabilities = []
 # name = \"Note\"
 # fields = [\"id:uuid@pk\", \"title:string!\"]
 # timestamps = true
-";
+",
+        jails_protocol::compatibility::APP_MANIFEST_SCHEMA
+    );
     let target = ProjectPath::parse(manifest.unwrap_or(".jails/app.toml"))?;
 
     // Seeding is not regeneration, which is why an existing manifest is a
@@ -43,7 +46,7 @@ capabilities = []
     let mut change = DesiredChange::maintenance(MaintenanceAttribution::AppInit);
     change.files.push(DesiredFile {
         path: target.clone(),
-        body: DesiredBody::Bytes(SKELETON.as_bytes().into()),
+        body: DesiredBody::Bytes(skeleton.into_bytes().into()),
         mode: None,
         // No resource, and that is the point. A resource is a claim that jails
         // owns these bytes and will decide about them again; this file belongs

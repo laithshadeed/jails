@@ -40,18 +40,15 @@
 //! length is not a promise.
 
 use crate::Result;
+use crate::compatibility::{
+    DURABLE_ENVELOPE_SCHEMA as SCHEMA, DURABLE_PAYLOAD_CODEC as PAYLOAD_CODEC,
+};
 use jails_support::codec;
 
 /// 32 MiB of decoded payload.
 pub(crate) const MAX_LEDGER_PAYLOAD: usize = 32 * 1024 * 1024;
 /// Two hex characters per byte, plus the fixed envelope allowance.
 pub(crate) const MAX_LEDGER_SOURCE: usize = 2 * MAX_LEDGER_PAYLOAD + 512;
-
-/// The codec name this envelope declares. A different one is a refusal, not a
-/// best-effort read.
-pub(crate) const PAYLOAD_CODEC: &str = "jails-ledger-payload-1";
-/// The schema this module reads and writes.
-pub(crate) const SCHEMA: u32 = 2;
 
 /// Render the envelope for one payload.
 ///
@@ -126,14 +123,17 @@ pub fn parse(source: &str) -> Result<Vec<u8>> {
     if schema != SCHEMA.to_string() {
         return Err(format!(
             "ledger declares schema {schema}.\n       fix: this jails reads schema {SCHEMA}. A \
-             newer schema is refused rather than half-read."
+             newer schema is refused rather than half-read; upgrade jails to a version that \
+             supports it."
         )
         .into());
     }
     let declared_codec = quoted(value_of(lines[1], "codec")?)?;
     if declared_codec != PAYLOAD_CODEC {
         return Err(format!(
-            "ledger declares codec `{declared_codec}`, and this jails writes `{PAYLOAD_CODEC}`"
+            "ledger declares codec `{declared_codec}`, and this jails reads `{PAYLOAD_CODEC}`.\n       \
+             fix: upgrade jails to a version that supports that codec; this version will not \
+             guess."
         )
         .into());
     }
@@ -705,6 +705,24 @@ mod tests {
                 operation: OperationId::from_bytes(jails_support::codec::sha256(b"op")),
             },
         }
+    }
+
+    #[test]
+    fn ledger_file_matches_the_protocol_golden() {
+        let ledger = LedgerV2 {
+            written_by: "0.1.0".to_string(),
+            generation: 7,
+            last_operation: Some(OperationId::from_bytes(jails_support::codec::sha256(b"x"))),
+            applied: vec![intent("Note", &["title:string!"])],
+            one_shots: Vec::new(),
+            resources: Vec::new(),
+            outputs: Vec::new(),
+            pending_conflict: None,
+        };
+        let actual = ledger.render().unwrap();
+        let expected = include_str!("../../../../tests/protocol-golden/ledger-v2.toml");
+        assert_eq!(actual, expected);
+        assert_eq!(LedgerV2::parse_file(expected).unwrap(), ledger);
     }
 
     #[test]

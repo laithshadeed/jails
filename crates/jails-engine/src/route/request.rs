@@ -299,6 +299,13 @@ impl Request {
             .map(|store| store.resources.as_slice())
             .unwrap_or(&[])
         {
+            // A published migration is schema history, not a generated
+            // projection. The durable ledger upgrade below adds the
+            // SchemaHistory owner; skipping retirement here also protects
+            // ledgers written before that owner tag existed.
+            if row.key.is_migration_history() {
+                continue;
+            }
             if row.owners.iter().any(|owner| !gone.contains(owner)) {
                 continue;
             }

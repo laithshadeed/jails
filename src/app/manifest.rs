@@ -11,6 +11,7 @@
 //! way.
 
 use super::*;
+use jails_protocol::compatibility::APP_MANIFEST_SCHEMA;
 
 pub(super) fn manifest_path(root: &Path, requested: Option<&Path>) -> Result<PathBuf> {
     let path = match requested {
@@ -178,10 +179,12 @@ pub(super) fn parse_manifest(text: &str) -> Result<(Manifest, Vec<Intent>)> {
     if let Some(intent) = current {
         resolved.push(intent.finish(resolved.len() + 1)?);
     }
-    if manifest.schema != 1 {
+    if manifest.schema != APP_MANIFEST_SCHEMA {
         return Err(format!(
-            "unsupported schema {}; this Jails release supports schema 1",
-            manifest.schema
+            "unsupported application manifest schema {}; this jails supports schema \
+             {APP_MANIFEST_SCHEMA}.\n       fix: upgrade jails to a version that supports this \
+             manifest; this version will not apply it.",
+            manifest.schema,
         )
         .into());
     }
@@ -296,6 +299,14 @@ pub(super) fn string_array(value: &str, line: usize, key: &str) -> Result<Vec<St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unknown_manifest_schema_fails_closed_with_an_upgrade_instruction() {
+        let error = parse_manifest("schema = 2\ncapabilities = []\n").unwrap_err();
+        assert!(error.contains("manifest schema 2"), "{error}");
+        assert!(error.contains("upgrade jails"), "{error}");
+        assert!(error.contains("will not apply"), "{error}");
+    }
 
     /// One entity, two declarations, different fields.
     ///

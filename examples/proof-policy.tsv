@@ -1,0 +1,12 @@
+# Example-manifest proof policy. This file is enforced by tests/cli/examples.rs.
+# Tier 0 = offline generation, apply, and idempotence; required for every manifest on every run.
+# Tier 1 = a real JDK and the named build tool compile and execute the generated tests.
+# Tier 2 = Tier 1 plus real service/container integration tests (and images where the gate says so).
+# `default-if-available` means the test is in the ordinary suite and reports a skip when its declared toolchain is absent.
+manifest	build_tool	highest_tier	cadence	gate	prerequisites
+examples/ledger-cli/.jails/app.toml	maven	1	default-if-available	ledger_cli_manifest_builds_without_spring	maven,jdk26
+examples/minicom-spring/.jails/app.toml	gradle	1	default-if-available	unheld_gradle_example_manifest_builds_on_its_pinned_toolchain	gradle8.5,jdk21
+examples/minicom/.jails/app.toml	maven	2	default-if-available	unheld_maven_example_manifest_passes_real_verification	maven,jdk26,docker
+examples/payments-gateway/.jails/app.toml	maven	2	default-if-available	app_manifests_pass_the_full_generated_verification_gate	maven,jdk26,docker
+examples/support-inbox/.jails/app.toml	maven	2	default-if-available	app_manifests_pass_the_full_generated_verification_gate	maven,jdk26,docker
+examples/web-crawler/.jails/app.toml	maven	2	default-if-available	app_manifests_pass_the_full_generated_verification_gate	maven,jdk26,docker

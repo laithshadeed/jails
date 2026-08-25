@@ -52,7 +52,9 @@ pub(crate) fn mutate_confirmed(
     assumed: bool,
     route: impl Fn(&jails_engine::route::Run) -> Result<jails_engine::route::Outcome>,
 ) -> Result<()> {
+    let discovering = std::time::Instant::now();
     let project = model::Project::discover()?;
+    let discover_time = discovering.elapsed();
     fn configure(
         mut run: jails_engine::route::Run<'_>,
         no_start: bool,
@@ -68,11 +70,12 @@ pub(crate) fn mutate_confirmed(
     }
     if !assumed && !invocation.pretend {
         let planned = route(&configure(
-            jails_engine::route::Run::pretending(&project),
+            jails_engine::route::Run::pretending(&project)
+                .with_timing(jails_prepare::timing::TimingPhase::Discover, discover_time),
             no_start,
             invocation.debug,
         ))?;
-        if !accepted(&planned)? {
+        if !accepted(&planned, invocation.review(), invocation.debug)? {
             println!("aborted");
             return Ok(());
         }
@@ -81,13 +84,19 @@ pub(crate) fn mutate_confirmed(
         match invocation.pretend {
             true => jails_engine::route::Run::pretending(&project),
             false => jails_engine::route::Run::committing(&project),
-        },
+        }
+        .with_timing(jails_prepare::timing::TimingPhase::Discover, discover_time),
         no_start,
         invocation.debug,
     );
     let outcome = route(&run)?;
     drop_compiled_shadows(&project, &outcome);
-    report(&outcome, invocation.output)
+    report(
+        &outcome,
+        invocation.output,
+        invocation.review(),
+        invocation.debug,
+    )
 }
 
 /// Run a mutation the reader did not ask for, and say nothing if it was
@@ -106,18 +115,26 @@ pub(crate) fn precondition(
     invocation: Invocation,
     route: impl Fn(&jails_engine::route::Run) -> Result<jails_engine::route::Outcome>,
 ) -> Result<()> {
+    let discovering = std::time::Instant::now();
     let project = model::Project::discover()?;
+    let discover_time = discovering.elapsed();
     let mut run = match invocation.pretend {
         true => jails_engine::route::Run::pretending(&project),
         false => jails_engine::route::Run::committing(&project),
-    };
+    }
+    .with_timing(jails_prepare::timing::TimingPhase::Discover, discover_time);
     if invocation.debug {
         run = run.with_debug();
     }
     let outcome = route(&run)?;
     match outcome.operations().is_empty() {
         true => Ok(()),
-        false => report(&outcome, invocation.output),
+        false => report(
+            &outcome,
+            invocation.output,
+            invocation.review(),
+            invocation.debug,
+        ),
     }
 }
 
@@ -127,7 +144,11 @@ pub(crate) fn precondition(
 /// Only deletions are put to the reader. A create or a replace is what they
 /// asked for; a delete is the one operation that loses something they cannot
 /// get back from this command.
-fn accepted(planned: &jails_engine::route::Outcome) -> Result<bool> {
+fn accepted(
+    planned: &jails_engine::route::Outcome,
+    review: jails_prepare::review::ReviewSelection,
+    debug: bool,
+) -> Result<bool> {
     use std::io::{BufRead, Write};
 
     let deleting: Vec<String> = planned
@@ -138,6 +159,18 @@ fn accepted(planned: &jails_engine::route::Outcome) -> Result<bool> {
         .collect();
     if deleting.is_empty() {
         return Ok(true);
+    }
+    if review.any() {
+        print!(
+            "{}",
+            jails_prepare::review::render_human(planned.review(), review)
+        );
+    }
+    if debug {
+        print!(
+            "{}",
+            jails_prepare::report::render_timings(&planned.timings())
+        );
     }
     println!("about to delete:");
     for path in &deleting {
@@ -232,7 +265,12 @@ pub(crate) fn one_transition_each(
 /// nonzero status returns an **empty** `Err`, the same convention `doctor`
 /// uses: the report has already been printed and a second `jails: ` line over
 /// it would say nothing.
-pub(crate) fn report(outcome: &jails_engine::route::Outcome, output: Output) -> Result<()> {
+pub(crate) fn report(
+    outcome: &jails_engine::route::Outcome,
+    output: Output,
+    review: jails_prepare::review::ReviewSelection,
+    debug: bool,
+) -> Result<()> {
     let Some(envelope) = outcome.envelope() else {
         // §R4.3 makes an incomplete commit a success-side value carrying what
         // is known, and it has no single status yet. Saying so is better than
@@ -247,13 +285,26 @@ pub(crate) fn report(outcome: &jails_engine::route::Outcome, output: Output) -> 
             .to_string(),
         ));
     };
-    print!(
-        "{}",
-        match output {
-            Output::Human => jails_prepare::report::render_envelope(&envelope),
-            Output::Json => jails_prepare::report::render_envelope_json(&envelope),
+    let rendered = match output {
+        Output::Human => {
+            let mut rendered = jails_prepare::report::render_envelope(&envelope);
+            if review.any() {
+                rendered.push_str(&jails_prepare::review::render_human(
+                    outcome.review(),
+                    review,
+                ));
+            }
+            if debug {
+                rendered.push_str(&jails_prepare::report::render_timings(&envelope.timings));
+            }
+            rendered
         }
-    );
+        Output::Json => jails_prepare::report::render_envelope_json_with_review(
+            &envelope,
+            review.any().then(|| (outcome.review(), review)),
+        ),
+    };
+    print!("{rendered}");
     // A preview reads exactly like a commit -- one line per operation, in the
     // executor's order -- which is the whole point and also the one thing that
     // could be misread. Said once, here, rather than by each route.

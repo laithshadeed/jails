@@ -148,20 +148,6 @@ pub const SCENARIOS: &[Scenario] = &[
         steps: &[&["g", "repo", "Note", "id:uuid", "title:string"]],
     },
     Scenario {
-        name: "scaffold-plain",
-        fixture: Fixture::Plain,
-        seed: &[],
-        steps: &[&[
-            "g",
-            "scaffold",
-            "Note",
-            "id:uuid@pk",
-            "title:string!",
-            "amount:long@positive",
-            "createdAt:instant",
-        ]],
-    },
-    Scenario {
         name: "migration",
         fixture: Fixture::Plain,
         seed: &[],

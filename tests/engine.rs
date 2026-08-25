@@ -603,6 +603,7 @@ fn destroying_a_record_takes_back_exactly_what_generating_it_wrote() {
         "Note",
         None,
         false,
+        None,
     )
     .unwrap();
 
@@ -651,6 +652,7 @@ fn destroying_one_record_leaves_another_alone() {
         "Note",
         None,
         false,
+        None,
     )
     .unwrap();
 
@@ -686,6 +688,7 @@ fn destroying_what_was_never_generated_names_the_command_that_records_it() {
         "Note",
         None,
         false,
+        None,
     )
     .unwrap_err();
 
@@ -698,15 +701,16 @@ fn destroying_what_was_never_generated_names_the_command_that_records_it() {
 /// Generate through the V2 route, destroy through it, and require the project
 /// to be byte-for-byte what it was before -- the same question
 /// `tests/agreement.rs` asks of V1, but answered from the recorded exact
-/// state rather than from a recomputed path table. A kind that strands a file
-/// fails here with the file named.
+/// state rather than from a recomputed path table. Deletable projections must
+/// return to their starting state; newly published migrations are the one
+/// deliberate remainder because schema history is append-only.
 ///
 /// The scenario table is the source of kinds, per CLAUDE.md's rule that a new
 /// kind adds a `Scenario` and not a fourth list. Single-step scenarios only:
 /// a scenario that installs a capability first is asking about two owners
 /// interacting, which the shared-claim tests cover separately.
 #[test]
-fn every_persistent_kind_destroys_back_to_where_it_started() {
+fn every_persistent_kind_destroys_back_to_its_projection_baseline() {
     use clap::ValueEnum;
     use jails_spec::spec::kind::ArtifactKind;
 
@@ -792,12 +796,19 @@ fn every_persistent_kind_destroys_back_to_where_it_started() {
                 continue;
             }
         }
+        let generated_files = common::scenarios::file_set(&root);
         assert_ne!(
-            common::scenarios::file_set(&root),
-            before,
+            generated_files, before,
             "{}: the generate wrote nothing, so the round trip proves nothing",
             scenario.name
         );
+        let published_migrations: std::collections::BTreeSet<String> = generated_files
+            .difference(&before)
+            .filter(|path| {
+                path.starts_with("src/main/resources/db/migration/") && path.ends_with(".sql")
+            })
+            .cloned()
+            .collect();
 
         jails_engine::route::destroy(
             &committing(&Project::load(&root).unwrap()),
@@ -805,6 +816,7 @@ fn every_persistent_kind_destroys_back_to_where_it_started() {
             step[2],
             invocation.package.as_deref(),
             false,
+            None,
         )
         .unwrap_or_else(|why| panic!("{}: destroy refused: {why}", scenario.name));
 
@@ -815,9 +827,11 @@ fn every_persistent_kind_destroys_back_to_where_it_started() {
             // asked to take back.
             .filter(|path| !path.starts_with(".jails"))
             .collect();
+        let expected_after: std::collections::BTreeSet<String> =
+            before.iter().cloned().chain(published_migrations).collect();
         assert_eq!(
-            after, before,
-            "{}: destroy did not return the project to where it started",
+            after, expected_after,
+            "{}: destroy left something other than append-only migration history",
             scenario.name
         );
         assert_eq!(
@@ -2487,6 +2501,7 @@ fn renaming_a_generated_type_moves_what_the_store_says_it_owns() {
         "Bonus",
         None,
         false,
+        None,
     )
     .unwrap();
     assert!(
@@ -2856,6 +2871,7 @@ fn a_generated_command_is_registered_in_the_dispatcher_that_runs_it() {
         "Greet",
         None,
         false,
+        None,
     )
     .unwrap();
     let after = std::fs::read_to_string(&dispatcher).unwrap();
@@ -2906,6 +2922,7 @@ fn a_recipe_states_the_block_it_puts_in_somebody_elses_file() {
         "ItemDispatcher",
         None,
         false,
+        None,
     )
     .unwrap();
     assert!(!at.exists(), "an empty property source was left behind");
@@ -3310,12 +3327,46 @@ fn a_plan_and_its_commit_are_described_in_the_same_words() {
     };
 
     let project = Project::load(&root).unwrap();
-    let planned = jails_prepare::report::render_envelope(&record(
-        &jails_engine::route::Run::pretending(&project),
-    ));
-    let applied = jails_prepare::report::render_envelope(&record(&committing(
-        &Project::load(&root).unwrap(),
-    )));
+    let planned_envelope = record(&jails_engine::route::Run::pretending(&project));
+    let applied_envelope = record(&committing(&Project::load(&root).unwrap()));
+    let directory_paths = |envelope: &jails_prepare::command::CommandEnvelope| {
+        let Some(jails_prepare::command::CommandReport::Prepared(report)) = &envelope.report else {
+            panic!("expected a prepared command report");
+        };
+        report
+            .operations
+            .iter()
+            .filter(|operation| {
+                operation.kind == jails_prepare::report::ReportedOpKind::CreateDirectory
+            })
+            .map(|operation| operation.path.to_string())
+            .collect::<Vec<_>>()
+    };
+    let planned_directories = directory_paths(&planned_envelope);
+    assert_eq!(
+        planned_directories,
+        [
+            "src/main/java/com/example/demo/domain",
+            "src/test",
+            "src/test/java",
+            "src/test/java/com",
+            "src/test/java/com/example",
+            "src/test/java/com/example/demo",
+            "src/test/java/com/example/demo/domain",
+        ]
+    );
+    let receipt_directories: Vec<String> = applied_envelope
+        .receipt
+        .as_ref()
+        .unwrap()
+        .directories
+        .iter()
+        .map(|directory| directory.path.to_string())
+        .collect();
+    assert_eq!(receipt_directories, planned_directories);
+
+    let planned = jails_prepare::report::render_envelope(&planned_envelope);
+    let applied = jails_prepare::report::render_envelope(&applied_envelope);
 
     // The same files, named the same way, under a heading that says which of
     // the two this was.

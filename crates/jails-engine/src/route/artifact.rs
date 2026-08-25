@@ -7,6 +7,12 @@
 
 use super::*;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RequestedStorageRetirement {
+    Preserve,
+    Drop { confirmed_table: Option<String> },
+}
+
 /// Generate one persistent artifact through the transaction protocol.
 ///
 /// The direct counterpart of `generate_in_project`, and the subject is one
@@ -98,6 +104,7 @@ pub fn destroy(
     name: &str,
     package: Option<&str>,
     force: bool,
+    storage: Option<RequestedStorageRetirement>,
 ) -> Result<Outcome> {
     // Decided before anything is looked up: these three are *forward-only*,
     // and "no such row" would be the wrong reason to refuse. A migration that
@@ -154,8 +161,111 @@ pub fn destroy(
         .into());
     }
     let owner = ResourceOwner::Entity(entity.clone());
+    if kind != ArtifactKind::Scaffold && storage.is_some() {
+        return Err(format!(
+            "`--storage` applies only to a table-backed scaffold.\n       \
+             fix: remove the option when destroying `{}`.",
+            label(kind)
+        )
+        .into());
+    }
+    let table_backed = store
+        .ledger
+        .iter()
+        .flat_map(|ledger| ledger.resources.iter())
+        .any(|row| row.owners.contains(&owner) && row.key.is_migration_history());
+    let expected_table = jails_protocol::request::SqlName::parse(
+        &jails_generate::sql::table_name(id.name.as_str()),
+    )?;
+    let (storage, drop_change) = if kind == ArtifactKind::Scaffold && table_backed {
+        match storage {
+            None => {
+                return Err(format!(
+                    "storage-policy-required: `{}` is backed by table `{}`.\n       \
+                     fix: preserve it with `jails destroy scaffold {} --storage preserve`, or \
+                     plan data loss with `jails destroy scaffold {} --storage drop \
+                     --confirm-table {}`.",
+                    id.name,
+                    expected_table.as_str(),
+                    id.name,
+                    id.name,
+                    expected_table.as_str(),
+                )
+                .into());
+            }
+            Some(RequestedStorageRetirement::Preserve) => (
+                Some(jails_protocol::request::StorageRetirement::Preserve { expected_table }),
+                None,
+            ),
+            Some(RequestedStorageRetirement::Drop { confirmed_table }) => {
+                let Some(confirmed) = confirmed_table else {
+                    return Err(format!(
+                        "dropping `{}` needs its exact table confirmation.\n       \
+                         fix: pass `--storage drop --confirm-table {}`.",
+                        id.name,
+                        expected_table.as_str()
+                    )
+                    .into());
+                };
+                if confirmed != expected_table.as_str() {
+                    return Err(format!(
+                        "confirmed table `{confirmed}` is not `{}` for `{}`.\n       \
+                         fix: pass `--confirm-table {}` exactly, or use `--storage preserve`.",
+                        expected_table.as_str(),
+                        id.name,
+                        expected_table.as_str()
+                    )
+                    .into());
+                }
+                let drop_change =
+                    jails_generate::generate::drop_table_change(project, expected_table.as_str())?;
+                (
+                    Some(jails_protocol::request::StorageRetirement::Drop {
+                        confirmed_table: expected_table,
+                    }),
+                    Some(drop_change),
+                )
+            }
+        }
+    } else {
+        if storage.is_some() {
+            return Err(format!(
+                "`{}` has no recorded table migration to retire.\n       \
+                 fix: omit `--storage` for this scaffold.",
+                id.name
+            )
+            .into());
+        }
+        (None, None)
+    };
     let mut reads = retiring(&store, &owner)?;
     let mut changes = Vec::new();
+    if let Some(change) = drop_change {
+        let mut desired = desire::contribution(&owner, &change, project)?;
+        let spec = store
+            .ledger
+            .as_ref()
+            .and_then(|ledger| ledger.applied.iter().find(|row| row.id == entity))
+            .map(|row| row.version.spec.clone())
+            .ok_or_else(|| {
+                format!(
+                    "the recorded `{}` disappeared while its drop migration was planned.\n       \
+                     fix: re-run the command against the current project state.",
+                    id.name
+                )
+            })?;
+        provenance::stamp_files(
+            &mut desired,
+            project,
+            RendererId::Recipe(ArtifactKind::Migration),
+            Some(RenderedSubjectContext::Entity {
+                id: entity.clone(),
+                spec,
+            }),
+        )?;
+        reads = reads.merge(declaration(project, &change, &desired)?);
+        changes.push(desired);
+    }
     if kind == ArtifactKind::Strategy {
         let strays = unnamed_implementations(project, &store, &owner, id.name.as_str())?;
         if !strays.is_empty() {
@@ -180,14 +290,29 @@ pub fn destroy(
         declared: BTreeMap::new(),
         changes,
     };
+    let canonical = match storage.clone() {
+        Some(storage) => CanonicalMutationRequest::destroy_resource(entity, storage, force)?,
+        None => CanonicalMutationRequest::destroy_entity(entity, force)?,
+    };
+    let options = match storage {
+        Some(jails_protocol::request::StorageRetirement::Preserve { .. }) => {
+            BTreeMap::from([("storage".to_string(), vec!["preserve".to_string()])])
+        }
+        Some(jails_protocol::request::StorageRetirement::Drop { .. }) => {
+            BTreeMap::from([("storage".to_string(), vec!["drop".to_string()])])
+        }
+        None => BTreeMap::new(),
+    };
     commit(
         run,
         request,
         &reads,
-        &Asked::plain(
-            CanonicalMutationRequest::destroy_entity(entity, force)?,
+        &Asked::new(
+            canonical,
             &["destroy"],
-            &[&label(kind), name],
+            vec![label(kind), name.to_string()],
+            options,
+            BTreeSet::new(),
         ),
     )
 }

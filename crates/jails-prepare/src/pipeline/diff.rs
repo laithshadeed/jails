@@ -29,6 +29,9 @@ pub(super) struct Diffed {
     /// reader is supposed to resolve, and would refuse the *whole* transition
     /// over one file when every other path in it merged cleanly.
     pub(super) conflicts: Vec<Conflict>,
+    /// Paths whose postimage is the clean result of base/current/desired
+    /// reconciliation rather than the generator's desired bytes alone.
+    pub(super) merged: BTreeSet<ProjectPath>,
 }
 
 /// One path where both sides changed the same lines.
@@ -54,12 +57,14 @@ pub(super) fn diff(
     prior: &BTreeMap<ProjectPath, crate::reconcile::PriorOutput>,
     previously_owned: &BTreeSet<ProjectPath>,
     read_object: &super::ObjectReader,
+    timings: &crate::timing::TimingTrace,
 ) -> Result<Diffed> {
     let mut operations = Vec::new();
     let mut objects: BTreeMap<ObjectId, Arc<[u8]>> = BTreeMap::new();
     let mut outputs: BTreeMap<ProjectPath, (StoredFileImage, LiveFileImage)> = BTreeMap::new();
     let mut retired: BTreeSet<ProjectPath> = BTreeSet::new();
     let mut conflicts: Vec<Conflict> = Vec::new();
+    let mut merged_paths: BTreeSet<ProjectPath> = BTreeSet::new();
 
     for (path, entry) in projection.overlay() {
         let before = base.read(path)?;
@@ -176,7 +181,9 @@ pub(super) fn diff(
                                          aside, or destroy and regenerate."
                                     )
                                 })?;
-                            match crate::merge::three_way(path, &base_bytes, &file.bytes, &body)? {
+                            match timings.measure(crate::timing::TimingPhase::Process, || {
+                                crate::merge::three_way(path, &base_bytes, &file.bytes, &body)
+                            })? {
                                 crate::merge::Merged::Clean(merged) => {
                                     // The merged bytes go on disk; the *base*
                                     // still advances to what the generator
@@ -184,6 +191,7 @@ pub(super) fn diff(
                                     // delta from the newest render rather than
                                     // becoming the baseline.
                                     let after = intern(&mut objects, merged);
+                                    merged_paths.insert(path.clone());
                                     outputs.insert(
                                         path.clone(),
                                         (
@@ -262,6 +270,7 @@ pub(super) fn diff(
         outputs,
         retired,
         conflicts,
+        merged: merged_paths,
     })
 }
 

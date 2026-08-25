@@ -399,6 +399,20 @@ pub fn render_envelope(envelope: &crate::command::CommandEnvelope) -> String {
     out
 }
 
+/// Human-only timing expansion used by `--debug`.
+pub fn render_timings(timings: &[crate::timing::TimingSpan]) -> String {
+    timings
+        .iter()
+        .map(|span| {
+            format!(
+                "  timing  {:<9} {} us\n",
+                span.phase.label(),
+                span.duration_micros
+            )
+        })
+        .collect()
+}
+
 /// The same envelope, as one JSON object.
 ///
 /// **One projection, two encodings.** A preview and a commit produce the same
@@ -412,6 +426,20 @@ pub fn render_envelope(envelope: &crate::command::CommandEnvelope) -> String {
 /// dependency, and a serialiser earns its place when something has to *read*
 /// JSON, which nothing here does.
 pub fn render_envelope_json(envelope: &crate::command::CommandEnvelope) -> String {
+    render_envelope_json_with_review(envelope, None)
+}
+
+/// The canonical JSON envelope with optional, explicitly requested review
+/// fields. With no review this is byte-for-byte [`render_envelope_json`]; the
+/// transaction result remains the same value and `diffs`/`ast` are additional
+/// views over the prepared bytes and semantic edits.
+pub fn render_envelope_json_with_review(
+    envelope: &crate::command::CommandEnvelope,
+    review: Option<(
+        &crate::review::PreparedReview,
+        crate::review::ReviewSelection,
+    )>,
+) -> String {
     use jails_support::json;
 
     let (transaction, kind, operations, ledger, effects, warnings) =
@@ -534,9 +562,29 @@ pub fn render_envelope_json(envelope: &crate::command::CommandEnvelope) -> Strin
         ),
         None => "null".to_string(),
     };
+    let timings = envelope
+        .timings
+        .iter()
+        .map(|span| {
+            format!(
+                "    {{\"phase\": {}, \"duration_micros\": {}}}",
+                json::string(span.phase.label()),
+                json::string(&span.duration_micros.to_string())
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",\n");
+
+    let review_fields = review
+        .filter(|(_, selection)| selection.any())
+        .map(|(review, selection)| crate::review::render_json_fields(review, selection))
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(name, value)| format!(",\n  {}: {value}", json::string(name)))
+        .collect::<String>();
 
     format!(
-        "{{\n  \"schema_version\": 1,\n  \"status\": {},\n  \"project_commit\": {},\n  \"transaction\": {},\n  \"kind\": {},\n  \"ledger\": {},\n  \"recovery\": [{}],\n  \"operations\": [{}],\n  \"effects\": [{}],\n  \"warnings\": [{}],\n  \"error\": {error}\n}}",
+        "{{\n  \"schema_version\": 1,\n  \"status\": {},\n  \"project_commit\": {},\n  \"transaction\": {},\n  \"kind\": {},\n  \"ledger\": {},\n  \"recovery\": [{}],\n  \"operations\": [{}],\n  \"effects\": [{}],\n  \"warnings\": [{}],\n  \"error\": {error},\n  \"timings\": [{}]{review_fields}\n}}",
         json::string(envelope.status.label()),
         json::string(envelope.project_commit.label()),
         json::optional_string(transaction.as_deref()),
@@ -546,6 +594,7 @@ pub fn render_envelope_json(envelope: &crate::command::CommandEnvelope) -> Strin
         wrap(&operations),
         wrap(&effects),
         wrap(&warnings),
+        wrap(&timings),
     )
 }
 
@@ -661,6 +710,23 @@ fn recovery_line(change: &crate::recovery::RecoveryChange) -> String {
 mod tests {
     use super::*;
     use crate::prepare::tests::{change_with, create};
+
+    #[test]
+    fn human_and_json_envelopes_match_the_protocol_golden() {
+        let report = Report::of(&change_with(vec![create(
+            "src/main/java/com/example/Note.java",
+            b"package com.example;\n\npublic record Note(String title) {}\n",
+        )]))
+        .unwrap();
+        let envelope = crate::command::CommandEnvelope::preview(report);
+        let actual = format!(
+            "=== human ===\n{}=== json ===\n{}\n",
+            render_envelope(&envelope),
+            render_envelope_json(&envelope)
+        );
+        let expected = include_str!("../../../tests/protocol-golden/command-envelope.txt");
+        assert_eq!(actual, expected);
+    }
 
     /// The projection follows the prepared change's own order, which is
     /// path order: a report whose lines depend on a hash map is a report two

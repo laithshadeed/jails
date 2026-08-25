@@ -851,6 +851,7 @@ mod tests {
             )
             .unwrap(),
             change,
+            review: jails_prepare::review::PreparedReview::default(),
         }
     }
 

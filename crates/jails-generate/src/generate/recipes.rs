@@ -48,12 +48,19 @@ pub(crate) fn artifacts_for(
     } = *recipe;
 
     let artifacts = match recipe.kind {
-        ArtifactKind::Scaffold => scaffold_artifacts(
-            &crate::model::Slice::new(project, package),
-            name,
-            fields,
-            indexes,
-        )?,
+        ArtifactKind::Scaffold => {
+            // A scaffold includes a Spring MVC controller and a JdbcClient
+            // adapter. Emitting that shape into a plain Maven project produces
+            // Java that cannot compile; refuse while generation is still a
+            // pure query, before the prepare/commit path can write anything.
+            require_spring_project(project, "scaffold")?;
+            scaffold_artifacts(
+                &crate::model::Slice::new(project, package),
+                name,
+                fields,
+                indexes,
+            )?
+        }
         ArtifactKind::Controller => {
             let web = place(layout::WEB);
             // One value, read by the class and by its test. See `web::Endpoint`

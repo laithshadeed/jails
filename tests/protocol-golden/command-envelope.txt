@@ -1,0 +1,20 @@
+=== human ===
+plan 604e4e212377c2d59cfd14a33b76d0388e9dab623df736f0ff2a38a44adaf7ec apply
+  create  src/main/java/com/example/Note.java
+=== json ===
+{
+  "schema_version": 1,
+  "status": "preview",
+  "project_commit": "none",
+  "transaction": "604e4e212377c2d59cfd14a33b76d0388e9dab623df736f0ff2a38a44adaf7ec",
+  "kind": "apply",
+  "ledger": null,
+  "recovery": [],
+  "operations": [
+    {"kind": "create", "target": {"kind": "project", "path": "src/main/java/com/example/Note.java"}}
+  ],
+  "effects": [],
+  "warnings": [],
+  "error": null,
+  "timings": []
+}

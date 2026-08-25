@@ -70,6 +70,16 @@ pub(super) fn record_store(
     store.generation = generation;
     store.last_operation = Some(operation);
 
+    // Adopt every already-recorded migration into append-only history before
+    // applying a retirement. This is a metadata-only upgrade: its file bytes
+    // and output image remain exactly the ones the prior receipt recorded.
+    for row in &mut store.resources {
+        if row.key.is_migration_history() {
+            row.owners
+                .insert(jails_protocol::resource::ResourceOwner::SchemaHistory);
+        }
+    }
+
     for entity in &intent.entities_after {
         let applied = jails_protocol::record::AppliedEntity {
             id: entity.id.clone(),
@@ -117,7 +127,13 @@ pub(super) fn record_store(
                 .resources
                 .push(jails_protocol::resource::ResourceRecord {
                     key: desired.key.clone(),
-                    owners: desired.owners.clone(),
+                    owners: {
+                        let mut owners = desired.owners.clone();
+                        if desired.key.is_migration_history() {
+                            owners.insert(jails_protocol::resource::ResourceOwner::SchemaHistory);
+                        }
+                        owners
+                    },
                     value: desired.value.clone(),
                 }),
         }

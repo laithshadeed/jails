@@ -11,7 +11,7 @@
     <artifactId>demo</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <properties>
-        <java.version>25</java.version>
+        <java.version>26</java.version>
     </properties>
     <dependencies>
         <dependency>

@@ -144,18 +144,20 @@ fn explanation(kind: &str, rel: &str) -> Option<&'static str> {
 /// becomes a test failure and the wording ossifies. The JSON is §R3.4's one
 /// projection of the same envelope, so this reads exactly what the commit
 /// would have done.
-fn would_remove(root: &Path, kind: &str, name: &str) -> Result<BTreeSet<String>, String> {
+fn would_remove(
+    root: &Path,
+    kind: &str,
+    name: &str,
+    preserve_storage: bool,
+) -> Result<BTreeSet<String>, String> {
+    let mut args = vec!["destroy", kind, name];
+    if preserve_storage {
+        args.extend(["--storage", "preserve"]);
+    }
+    args.extend(["--pretend", "--force", "--output", "json"]);
     let output = Command::new(common::bin())
         .current_dir(root)
-        .args([
-            "destroy",
-            kind,
-            name,
-            "--pretend",
-            "--force",
-            "--output",
-            "json",
-        ])
+        .args(args)
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -213,7 +215,7 @@ fn destroy_refuses_rather_than_guessing_on_a_project_with_no_record() {
                 continue;
             }
             let where_ = format!("{}/{kind} {name} (no record)", scenario.name);
-            match would_remove(&root, kind, name) {
+            match would_remove(&root, kind, name, false) {
                 Ok(removed) => findings.push(format!(
                     "{where_}: destroy succeeded with no record, naming {} path(s). \
                      Without a record jails cannot know it wrote them.",
@@ -274,7 +276,11 @@ fn destroy_removes_exactly_what_generate_created() {
             let created = &created_by[&index];
             let where_ = format!("{}/{kind} {name}", scenario.name);
 
-            let removed = match would_remove(&root, kind, name) {
+            let table_backed = kind == "scaffold"
+                && created
+                    .iter()
+                    .any(|path| path.starts_with("src/main/resources/db/migration/"));
+            let removed = match would_remove(&root, kind, name, table_backed) {
                 Ok(paths) => {
                     if FORWARD_ONLY.contains(&kind) {
                         findings.push(format!(

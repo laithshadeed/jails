@@ -35,15 +35,11 @@ use crate::Result;
 use crate::store;
 use jails_prepare::prepare::PreparedIdentityV1;
 use jails_prepare::receipt::EffectReceipt;
+use jails_protocol::compatibility::{JOURNAL_MAGIC, RECEIPT_MAGIC};
 use jails_protocol::conflict::FileMode;
 use jails_protocol::identity::{ObjectId, ProjectPath, TransactionId};
 use jails_support::codec::{self, Codec, Decoder, Encoder};
 use std::path::Path;
-
-/// `JAILS-JOURNAL-1\0`, sixteen bytes.
-pub(crate) const JOURNAL_MAGIC: &[u8; 16] = b"JAILS-JOURNAL-1\0";
-/// `JAILS-RECEIPT-1\0`, sixteen bytes.
-pub(crate) const RECEIPT_MAGIC: &[u8; 16] = b"JAILS-RECEIPT-1\0";
 
 /// The largest record either format may reach.
 pub(crate) const MAX_RECORD: usize = codec::MAX_PROTOCOL_RECORD;
@@ -392,7 +388,10 @@ impl JournalV1 {
         }
         if &magic != JOURNAL_MAGIC {
             return Err(jails_support::Failure::Told(
-                "this is not a jails journal".to_string(),
+                "unsupported transaction journal format.\n       fix: upgrade jails to the \
+                 version that wrote this journal; this version will not recover through an \
+                 unknown format."
+                    .to_string(),
             ));
         }
         let record = Self {
@@ -560,7 +559,10 @@ impl ReceiptV1 {
         }
         if &magic != RECEIPT_MAGIC {
             return Err(jails_support::Failure::Told(
-                "this is not a jails receipt".to_string(),
+                "unsupported transaction receipt format.\n       fix: upgrade jails to the \
+                 version that wrote this receipt; this version will not accept an unknown \
+                 format."
+                    .to_string(),
             ));
         }
         let transaction = TransactionId::decode(&mut decoder)?;
@@ -816,6 +818,16 @@ mod tests {
         assert!(JournalV1::decode(&bytes).is_err());
     }
 
+    #[test]
+    fn an_unknown_journal_version_fails_closed_with_an_upgrade_instruction() {
+        let mut bytes = journal(JournalState::Active).encode().unwrap();
+        bytes[..16].copy_from_slice(b"JAILS-JOURNAL-2\0");
+        let error = JournalV1::decode(&bytes).unwrap_err();
+        assert!(error.contains("unsupported transaction journal"), "{error}");
+        assert!(error.contains("upgrade jails"), "{error}");
+        assert!(error.contains("will not recover"), "{error}");
+    }
+
     /// A state rewrite keeps the transaction id and changes the checksum;
     /// changing an immutable prepared byte changes both.
     #[test]
@@ -909,6 +921,19 @@ mod tests {
         let scratch = ScratchDir::in_temp("jails-receipt").unwrap();
         let (directory, _, receipt) = published(&scratch);
         assert_eq!(ReceiptV1::read(&directory).unwrap(), receipt);
+        scratch.close().unwrap();
+    }
+
+    #[test]
+    fn an_unknown_receipt_version_fails_closed_with_an_upgrade_instruction() {
+        let scratch = ScratchDir::in_temp("jails-receipt-version").unwrap();
+        let (_, _, receipt) = published(&scratch);
+        let mut bytes = receipt.encode().unwrap();
+        bytes[..16].copy_from_slice(b"JAILS-RECEIPT-2\0");
+        let error = ReceiptV1::decode(&bytes).unwrap_err();
+        assert!(error.contains("unsupported transaction receipt"), "{error}");
+        assert!(error.contains("upgrade jails"), "{error}");
+        assert!(error.contains("will not accept"), "{error}");
         scratch.close().unwrap();
     }
 

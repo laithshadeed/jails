@@ -97,7 +97,8 @@ pub fn read(root: &Path) -> MachineState {
         // schema and translate what it thinks it found.
         Err(why) => MachineState::Unreadable(format!(
             "{} cannot be read by this jails: {why}\n       fix: it was written by a different \
-             version. Delete `.jails/` to start its history over, or use the jails that wrote it.",
+             version. Upgrade to, or use, the jails version that wrote it; this version will not \
+             treat unknown state as empty.",
             path.display()
         )),
     }
@@ -129,6 +130,26 @@ mod tests {
         let state = read(scratch.path());
         assert!(matches!(state, MachineState::Unreadable(_)), "{state:?}");
         assert!(state.ledger().is_err());
+        scratch.close().unwrap();
+    }
+
+    #[test]
+    fn a_newer_store_schema_fails_closed_with_an_upgrade_instruction() {
+        let scratch = project();
+        let source = jails_protocol::envelope::render(b"payload")
+            .unwrap()
+            .replace("schema = 2", "schema = 3");
+        apply::put(scratch.path().join(".jails/ledger.toml"), source).unwrap();
+        let state = read(scratch.path());
+        let MachineState::Unreadable(why) = state else {
+            panic!("newer state was not unreadable")
+        };
+        assert!(why.contains("schema 3"), "{why}");
+        assert!(why.contains("Upgrade"), "{why}");
+        assert!(
+            why.contains("will not treat unknown state as empty"),
+            "{why}"
+        );
         scratch.close().unwrap();
     }
 

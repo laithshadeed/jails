@@ -69,6 +69,86 @@ impl RequestSyntaxFingerprint {
         self.0.to_hex()
     }
 }
+
+/// A validated unquoted SQL identifier used at destructive lifecycle
+/// boundaries. Generated table names are lowercase snake case, so accepting a
+/// broader SQL expression here would make exact confirmation meaningless.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+pub struct SqlName(String);
+
+impl SqlName {
+    pub fn parse(value: &str) -> Result<Self> {
+        let mut chars = value.chars();
+        let Some(first) = chars.next() else {
+            return Err(
+                "SQL name is empty.\n       fix: pass the exact generated table name.".into(),
+            );
+        };
+        if !(first.is_ascii_lowercase() || first == '_')
+            || !chars.all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_')
+        {
+            return Err(format!(
+                "`{value}` is not a lowercase unquoted SQL name.\n       \
+                 fix: pass the exact generated table name, for example `tasks`."
+            )
+            .into());
+        }
+        Ok(Self(value.to_string()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Codec for SqlName {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        encoder.string(&self.0)
+    }
+
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Self::parse(&decoder.string()?)
+    }
+}
+
+/// The explicit storage decision attached to retirement of a table-backed
+/// resource. `force` is deliberately separate and cannot choose either arm.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum StorageRetirement {
+    Preserve { expected_table: SqlName },
+    Drop { confirmed_table: SqlName },
+}
+
+impl Codec for StorageRetirement {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        match self {
+            Self::Preserve { expected_table } => {
+                encoder.tag(0);
+                expected_table.encode(encoder)
+            }
+            Self::Drop { confirmed_table } => {
+                encoder.tag(1);
+                confirmed_table.encode(encoder)
+            }
+        }
+    }
+
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(match decoder.tag()? {
+            0 => Self::Preserve {
+                expected_table: SqlName::decode(decoder)?,
+            },
+            1 => Self::Drop {
+                confirmed_table: SqlName::decode(decoder)?,
+            },
+            other => Err(format!(
+                "unknown storage retirement tag {other}.\n       \
+                 fix: use the jails version that wrote this state, or restore its `.jails` data \
+                 from a compatible backup."
+            ))?,
+        })
+    }
+}
 impl Codec for RequestSyntaxFingerprint {
     fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.0.encode(encoder)?;
@@ -294,6 +374,11 @@ pub enum CanonicalMutationRequest {
         id: crate::entity::DeclaredId,
         force: bool,
     },
+    DestroyResource {
+        subject: EntityId,
+        storage: StorageRetirement,
+        force: bool,
+    },
 }
 
 impl CanonicalMutationRequest {
@@ -380,6 +465,21 @@ impl CanonicalMutationRequest {
         })
     }
 
+    pub fn destroy_resource(id: EntityId, storage: StorageRetirement, force: bool) -> Result<Self> {
+        if !matches!(id, EntityId::Intent(_)) {
+            return Err(jails_support::Failure::Told(
+                "resource retirement removes a persistent intent.\n       fix: use `jails \
+                 remove` for a capability or tool feature."
+                    .to_string(),
+            ));
+        }
+        Ok(Self::DestroyResource {
+            subject: id,
+            storage,
+            force,
+        })
+    }
+
     /// `destroy cases`: the only one-shot with a destroy route.
     ///
     /// A field or migration has none by design — a field cannot be un-added
@@ -453,6 +553,7 @@ impl CanonicalMutationRequest {
             Self::RemoveToolFeature { .. } => 12,
             Self::Declare { .. } => 13,
             Self::Undeclare { .. } => 14,
+            Self::DestroyResource { .. } => 15,
         }
     }
 }
@@ -503,6 +604,15 @@ impl Codec for CanonicalMutationRequest {
             }
             Self::Undeclare { id, force } => {
                 id.encode(encoder)?;
+                encoder.bool(*force);
+            }
+            Self::DestroyResource {
+                subject,
+                storage,
+                force,
+            } => {
+                subject.encode(encoder)?;
+                storage.encode(encoder)?;
                 encoder.bool(*force);
             }
         }
@@ -564,6 +674,11 @@ impl Codec for CanonicalMutationRequest {
                 id: crate::entity::DeclaredId::decode(decoder)?,
                 force: decoder.bool()?,
             },
+            15 => Self::destroy_resource(
+                EntityId::decode(decoder)?,
+                StorageRetirement::decode(decoder)?,
+                decoder.bool()?,
+            )?,
             other => Err(format!("unknown mutation request tag {other}"))?,
         })
     }
@@ -948,6 +1063,29 @@ mod tests {
             let error = CanonicalMutationRequest::destroy_entity(id, false).unwrap_err();
             assert!(error.contains("jails remove"), "{error}");
         }
+    }
+
+    #[test]
+    fn storage_retirement_has_a_new_request_tag_and_round_trips() {
+        let request = CanonicalMutationRequest::destroy_resource(
+            intent_id(),
+            StorageRetirement::Preserve {
+                expected_table: SqlName::parse("tasks").unwrap(),
+            },
+            true,
+        )
+        .unwrap();
+        assert_eq!(request.tag(), 15);
+
+        let mut encoder = Encoder::new();
+        request.encode(&mut encoder).unwrap();
+        let bytes = encoder.finish().unwrap();
+        let mut decoder = Decoder::new(&bytes).unwrap();
+        assert_eq!(
+            CanonicalMutationRequest::decode(&mut decoder).unwrap(),
+            request
+        );
+        decoder.finish().unwrap();
     }
 
     /// Cases is the only one-shot with a destroy route, and the other two say

@@ -740,10 +740,7 @@ impl Project {
     /// constant is the other one.
     pub fn source_of(&self, package: &str, ty: &str) -> Option<String> {
         let relative = format!("src/main/java/{}/{ty}.java", package.replace('.', "/"));
-        match self.projected_source(&relative) {
-            Some(projected) => Some(projected),
-            None => std::fs::read_to_string(self.root.join(&relative)).ok(),
-        }
+        self.projected_text(&relative)
     }
 
     /// Whether this project has a type at all, as the plan leaves it.
@@ -769,14 +766,17 @@ impl Project {
 
     /// A file's text as the plan leaves it, when this project is projected.
     ///
-    /// `None` means "ask the disk": either there is no projection, or the
-    /// projection says nothing about this path -- and a path a change did not
-    /// touch is still whatever is on disk.
-    fn projected_source(&self, path: &str) -> Option<String> {
-        let overlay = self.overlay.as_ref()?;
-        let key = ProjectPath::parse(path).ok()?;
-        let bytes = overlay.get(&key)?;
-        String::from_utf8(bytes.clone()).ok()
+    /// The projection wins for a path it changes; every other path is read
+    /// from disk. This is public because SQL generators need the same truthful
+    /// view as Java generators when an earlier manifest row creates a
+    /// migration that a later row must inspect.
+    pub fn projected_text(&self, path: &str) -> Option<String> {
+        let projected = self.overlay.as_ref().and_then(|overlay| {
+            let key = ProjectPath::parse(path).ok()?;
+            let bytes = overlay.get(&key)?;
+            String::from_utf8(bytes.clone()).ok()
+        });
+        projected.or_else(|| std::fs::read_to_string(self.root.join(path)).ok())
     }
 
     /// Every Java source under `src/main/java`, as the plan leaves them.
@@ -1021,7 +1021,7 @@ mod tests {
         fs::create_dir_all(root.join("src/main/java/com/example/demo")).unwrap();
         fs::write(
             root.join("pom.xml"),
-            "<project><properties><maven.compiler.release>25</maven.compiler.release></properties></project>\n",
+            "<project><properties><maven.compiler.release>21</maven.compiler.release></properties></project>\n",
         )
         .unwrap();
         fs::write(
@@ -1044,7 +1044,7 @@ mod tests {
         assert_eq!(project.root(), root);
         assert_eq!(project.base(), "com.example.demo");
         assert_eq!(project.flavor(), Flavor::PlainMaven);
-        assert_eq!(project.java_release(), Some(25));
+        assert_eq!(project.java_release(), Some(21));
         assert_eq!(project.layers().get(Layer::Domain), "model");
         assert_eq!(project.capabilities(), &["json"]);
         assert_eq!(

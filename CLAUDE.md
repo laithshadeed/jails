@@ -799,14 +799,12 @@ jails knows nothing about.
   outbox sink port and its Kafka implementation being stranded on the first
   run. A file that is *deliberately* kept — a migration, a fixture, a shared
   `SchedulingConfig` — goes in `ALLOWED_LEFTOVER` **with its reason**.
-- **Generated projects target Java 25** (`pom::TARGET_RELEASE`), the current
-  LTS. This was 27 and was changed deliberately: 27 is non-LTS, was not GA
-  until 2026-09-15, had no vendor build in mise's registry (so an EA build had
-  to be symlinked in), had no `eclipse-temurin:27-jre` image for `add docker`,
-  and made `doctor` FAIL by default on any shell without mise's activation
-  hook. Everything jails generates is available at 25. `java` on a bare PATH
-  here is 26, which accepts `--release 25`, so the tier-3 tests no longer skip
-  for that reason.
+- **Generated projects target Java 26** (`pom::TARGET_RELEASE`), the current
+  GA product default. Adopted Maven and Gradle projects keep their configured
+  release, with 21 as the supported compatibility floor; generation must not
+  rewrite an adopted release merely because the default advanced. The checked
+  mise toolchain is 26 so strict generated-project tests exercise the same
+  release new projects declare.
 - **Tier-3 tests gate on `real_java_supports_target_release()`, not just
   on a JDK being present.** A JDK older than the target rejects
   `--release N` outright, so presence is not enough. Without the gate the

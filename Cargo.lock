@@ -214,6 +214,7 @@ dependencies = [
  "jails-generate",
  "jails-java",
  "jails-project",
+ "jails-protocol",
  "jails-report",
  "jails-spec",
  "jails-support",

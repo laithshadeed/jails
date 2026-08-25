@@ -57,7 +57,6 @@ pub(crate) fn scaffold_artifacts_from_fields(
     let domain_in = |user: &str| import_of(user, &domain, name);
     let columns = crate::sql::columns(parsed, slice.project(), &domain, &lower_first(name));
     for (field, column) in parsed.iter().zip(&columns) {
-        eprintln!("PROBE field={field:?} column={column:?}");
         if column.mapped() {
             continue;
         }

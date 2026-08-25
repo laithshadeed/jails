@@ -13,6 +13,65 @@ use crate::board::gates;
 use crate::measure::*;
 use std::path::Path;
 
+/// Modules whose contract is to render a command result or transparently
+/// forward a child process' output. A production `print*` macro anywhere else
+/// bypasses the result/report protocol and is indistinguishable from forgotten
+/// debug output to both human and JSON callers.
+fn owns_terminal_output(path: &Path) -> bool {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let relative = path
+        .strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/");
+
+    relative == "src/main.rs"
+        || relative == "src/dispatch.rs"
+        || relative == "src/new.rs"
+        || relative.starts_with("src/new/")
+        || relative == "crates/jails-support/src/lib.rs"
+        || relative == "crates/jails-support/src/process.rs"
+        || relative == "crates/jails-java/src/template.rs"
+        || relative == "crates/jails-project/src/compose.rs"
+        || relative == "crates/jails-project/src/inspect.rs"
+        || relative == "crates/jails-project/src/project.rs"
+        || relative == "crates/jails-generate/src/generate.rs"
+        || relative == "crates/jails-generate/src/generate/recipes.rs"
+        || relative.starts_with("crates/jails-drive/src/")
+        || relative.starts_with("crates/jails-report/src/")
+        || relative == "crates/jails-engine/src/route/capability.rs"
+        || relative.starts_with("crates/jails-engine/src/route/maintenance/")
+}
+
+#[test]
+fn only_deliberate_output_modules_print_to_the_terminal() {
+    let mut offenders = Vec::new();
+    for file in sources() {
+        if owns_terminal_output(&file.path) {
+            continue;
+        }
+        for spelling in ["println!", "dbg!"] {
+            for (at, _) in file.production.match_indices(spelling) {
+                let line = file.production[..at]
+                    .bytes()
+                    .filter(|byte| *byte == b'\n')
+                    .count()
+                    + 1;
+                offenders.push(format!("  {}:{line}: {spelling}", file.path.display()));
+            }
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "production code printed outside a deliberate terminal-output module:\n{}\n\n\
+         Return structured data or a diagnostic to the owning report/CLI layer. If a module's \
+         public contract genuinely is terminal output, classify it in `owns_terminal_output` \
+         with that boundary change.",
+        offenders.join("\n")
+    );
+}
+
 #[test]
 fn the_abstract_md_ladder_gates_are_ratchets_that_only_move_down() {
     let rows = gates();
@@ -216,6 +275,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-spec", "build", 2),
     ("jails-spec", "spec", 2),
     // jails-protocol: the validated values every closed format is built from.
+    ("jails-protocol", "compatibility", 3),
     ("jails-protocol", "durable", 3),
     ("jails-protocol", "intent", 3),
     ("jails-protocol", "observe", 3),
@@ -257,8 +317,10 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-prepare", "reconcile", 6),
     ("jails-prepare", "recovery", 6),
     ("jails-prepare", "report", 6),
+    ("jails-prepare", "review", 6),
     ("jails-prepare", "sandbox", 6),
     ("jails-prepare", "serialize", 6),
+    ("jails-prepare", "timing", 6),
     ("jails-prepare", "tool", 6),
     // jails-commit: making a prepared transaction durable, and recovering one.
     ("jails-commit", "activate", 7),

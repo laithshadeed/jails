@@ -19,7 +19,9 @@
 mod common;
 
 mod app;
+mod behavior_matrix;
 mod capabilities;
+mod examples;
 mod generate;
 mod new;
 mod reports;
