@@ -84,6 +84,26 @@ pub(crate) enum Output {
     Json,
 }
 
+#[derive(Subcommand)]
+pub(crate) enum ResourceCommand {
+    /// Reconcile recorded identity, generated source, and sealed migrations
+    Status {
+        /// Simple entity name or fully qualified generated Java type
+        selector: String,
+        /// Also request live catalog evidence from this datasource
+        #[arg(long)]
+        datasource: Option<String>,
+    },
+    /// Restore projections for preserved storage without another create migration
+    Revive {
+        /// Simple entity name or fully qualified generated Java type
+        selector: String,
+        /// Exact preserved SQL table name
+        #[arg(long)]
+        table: String,
+    },
+}
+
 /// Everything a mutation needs that is not the mutation.
 ///
 /// A parameter object rather than global presentation and execution flags
@@ -575,6 +595,11 @@ pub(crate) enum Command {
         /// Exact generated table name; required with `--storage drop`.
         #[arg(long, requires = "storage")]
         confirm_table: Option<String>,
+    },
+    /// Inspect or change a generated resource by its durable identity
+    Resource {
+        #[command(subcommand)]
+        command: ResourceCommand,
     },
     /// Run tests; bare names become *Test and *IT names use Failsafe
     ///

@@ -12,4 +12,5 @@ pub mod bootstrap;
 pub mod context;
 pub mod fact;
 pub mod provenance;
+pub mod resource_status;
 pub mod snapshot;

@@ -298,6 +298,8 @@ fn seal_migrations(
 ) -> Result<BTreeSet<ProjectPath>> {
     let mut observed_paths = BTreeSet::new();
     let mut paths = BTreeSet::new();
+    paths.extend(seals.iter().map(|seal| seal.path.clone()));
+    observed_paths.extend(seals.iter().map(|seal| seal.path.clone()));
     if let Some(ledger) = &context.observed.ledger {
         collect_resource_paths(&mut observed_paths, &ledger.resources, entity);
         paths.extend(observed_paths.iter().cloned());

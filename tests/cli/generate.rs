@@ -367,6 +367,81 @@ fn task_scaffold_cannot_rewrite_or_delete_its_published_v001() {
     assert_eq!(lifecycle.table.as_ref().unwrap().table.as_str(), "tasks");
     assert_eq!(lifecycle.migrations.len(), 1);
     assert_eq!(lifecycle.migrations[0].version.get(), 1);
+    let entity_before_revive = lifecycle.entity.clone();
+    let seal_before_revive = lifecycle.migrations[0].clone();
+
+    let status = jails_cmd(&root, None)
+        .args(["resource", "status", "Task", "--output", "json"])
+        .output()
+        .unwrap();
+    assert!(status.status.success(), "{status:?}");
+    let status_json = String::from_utf8(status.stdout).unwrap();
+    assert!(
+        status_json.contains("\"state\":\"retired-storage-present\""),
+        "{status_json}"
+    );
+    assert!(
+        status_json.contains("jails resource revive Task --table tasks"),
+        "{status_json}"
+    );
+
+    let before_wrong_table = snapshot_tree(&root);
+    let wrong_table = jails_cmd(&root, None)
+        .args(["resource", "revive", "Task", "--table", "task"])
+        .output()
+        .unwrap();
+    assert!(!wrong_table.status.success(), "{wrong_table:?}");
+    assert!(
+        String::from_utf8_lossy(&wrong_table.stderr).contains("pass `--table tasks` exactly"),
+        "{}",
+        String::from_utf8_lossy(&wrong_table.stderr)
+    );
+    assert_eq!(
+        snapshot_tree(&root),
+        before_wrong_table,
+        "refusal wrote files"
+    );
+
+    let revived = jails_cmd(&root, None)
+        .args(["resource", "revive", "Task", "--table", "tasks"])
+        .output()
+        .unwrap();
+    assert!(revived.status.success(), "{revived:?}");
+    assert_eq!(fs::read_to_string(&migration).unwrap(), sealed);
+    assert!(
+        !root
+            .join("src/main/resources/db/migration/V002__create_tasks.sql")
+            .exists(),
+        "revive published a second create migration"
+    );
+    assert!(
+        root.join("src/main/java/com/example/demo/web/TaskController.java")
+            .is_file()
+    );
+    let revived_store = jails_commit::store::Store::at(&root)
+        .observe()
+        .unwrap()
+        .ledger
+        .unwrap();
+    let revived_lifecycle = &revived_store.lifecycles[0];
+    assert!(matches!(
+        revived_lifecycle.state,
+        jails_protocol::lifecycle::ResourceState::Active
+    ));
+    assert_eq!(revived_lifecycle.entity, entity_before_revive);
+    assert_eq!(revived_lifecycle.migrations, vec![seal_before_revive]);
+    assert_eq!(revived_store.applied.len(), 1);
+
+    let active_status = jails_cmd(&root, None)
+        .args(["resource", "status", "Task", "--output", "json"])
+        .output()
+        .unwrap();
+    assert!(active_status.status.success(), "{active_status:?}");
+    assert!(
+        String::from_utf8_lossy(&active_status.stdout).contains("\"state\":\"consistent\""),
+        "{}",
+        String::from_utf8_lossy(&active_status.stdout)
+    );
 }
 
 #[test]
@@ -452,6 +527,19 @@ fn task_drop_keeps_v001_and_appends_an_exact_forward_migration() {
             .collect::<Vec<_>>(),
         vec![1, 2]
     );
+
+    let before_revive = snapshot_tree(&root);
+    let revive = jails_cmd(&root, None)
+        .args(["resource", "revive", "Task", "--table", "tasks"])
+        .output()
+        .unwrap();
+    assert!(!revive.status.success(), "{revive:?}");
+    assert!(
+        String::from_utf8_lossy(&revive.stderr).contains("append-only drop planned"),
+        "{}",
+        String::from_utf8_lossy(&revive.stderr)
+    );
+    assert_eq!(snapshot_tree(&root), before_revive, "refusal wrote files");
 }
 
 #[test]

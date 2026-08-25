@@ -43,7 +43,7 @@ mod vocabulary;
 // renaming those would have made a filing decision look like an API change.
 pub use durable::{conflict, envelope, lifecycle, pending, record};
 pub use intent::{change, edit, effect, ownership, plan, render, request, transition};
-pub use observe::{bootstrap, context, fact, provenance, snapshot};
+pub use observe::{bootstrap, context, fact, provenance, resource_status, snapshot};
 pub use vocabulary::{coordinate, declaration, entity, feature, identity, recipe, resource};
 
 pub(crate) use jails_support::Result;

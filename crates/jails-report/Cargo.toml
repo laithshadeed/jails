@@ -10,7 +10,9 @@ clap.workspace = true
 jails-generate.workspace = true
 jails-java.workspace = true
 jails-project.workspace = true
+jails-protocol.workspace = true
 jails-spec.workspace = true
+jails-state.workspace = true
 jails-support.workspace = true
 
 [lints]

@@ -6,7 +6,7 @@ pub(crate) use jails_drive::{bench, console, kafka, lint, migrate, run, testd};
 pub(crate) use jails_generate::{add, generate};
 pub(crate) use jails_java::template;
 pub(crate) use jails_project::{compose, inspect, model, pom, project};
-pub(crate) use jails_report::{commands, doctor, explain, source, why};
+pub(crate) use jails_report::{commands, doctor, explain, lifecycle_status, source, why};
 mod app;
 mod arguments;
 mod cli;
@@ -15,7 +15,7 @@ mod new;
 
 // What the CLI accepts lives in `cli`; what it does is the match below.
 pub(crate) use add::Capability;
-pub(crate) use cli::{Cli, Command, Declare, Invocation, Output, Undeclare};
+pub(crate) use cli::{Cli, Command, Declare, Invocation, Output, ResourceCommand, Undeclare};
 
 use clap::{CommandFactory, Parser};
 
@@ -260,6 +260,21 @@ fn main() -> std::process::ExitCode {
             };
             jails_engine::route::destroy(run, kind, &name, package.as_deref(), force, storage)
         }),
+        Command::Resource { command } => match command {
+            ResourceCommand::Status {
+                selector,
+                datasource,
+            } => lifecycle_status::status(
+                &selector,
+                datasource.as_deref(),
+                matches!(invocation.output, Output::Json),
+            ),
+            ResourceCommand::Revive { selector, table } => {
+                dispatch::mutate(invocation, false, |run| {
+                    jails_engine::route::revive(run, &selector, &table)
+                })
+            }
+        },
         Command::Start { services } => compose::start(&services, debug),
         Command::Stop { services } => compose::stop_cmd(&services, debug),
         Command::Adopt => dispatch::mutate(invocation, false, jails_engine::route::adopt_layout),

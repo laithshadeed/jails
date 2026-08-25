@@ -342,6 +342,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-report", "explain", 7),
     ("jails-report", "commands", 7),
     ("jails-report", "source", 7),
+    ("jails-report", "lifecycle_status", 7),
     // jails-drive: commands that start something.
     ("jails-drive", "run", 8),
     ("jails-drive", "launcher", 8),

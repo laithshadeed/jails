@@ -34,6 +34,7 @@ use jails_protocol::change::DesiredChange;
 use jails_protocol::conflict::{FileImage, FileMode, LiveFileImage, StoredFileImage};
 use jails_protocol::envelope::LedgerV2;
 use jails_protocol::identity::{ObjectId, ObjectRef, ProjectPath, TemplateKey};
+use jails_protocol::lifecycle::ResourceLifecycleV1;
 use jails_protocol::plan::LedgerIntent;
 use jails_protocol::render::DesiredProvenance;
 use jails_protocol::render::{DesiredBody, TemplateValue};
@@ -74,6 +75,13 @@ impl ObservedStore {
     /// The generation a plan computed against this store must claim.
     pub fn generation(&self) -> u64 {
         self.ledger.as_ref().map_or(0, |ledger| ledger.generation)
+    }
+
+    /// Resource identities captured with the observed machine state.
+    pub fn lifecycles(&self) -> &[ResourceLifecycleV1] {
+        self.ledger
+            .as_ref()
+            .map_or(&[], |state| state.lifecycles.as_slice())
     }
 
     fn validate(&self) -> Result<()> {

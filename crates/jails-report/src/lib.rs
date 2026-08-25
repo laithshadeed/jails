@@ -19,6 +19,7 @@
 pub mod commands;
 pub mod doctor;
 pub mod explain;
+pub mod lifecycle_status;
 pub mod source;
 pub mod why;
 
