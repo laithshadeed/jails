@@ -308,7 +308,9 @@ fn test_once_with_fallback(
         options.failed = false;
     }
     let requested = execution_requested.as_slice();
-    let plan = test_plan::plan(build, requested, &options)?;
+    let compiled_outputs_current =
+        build == crate::build::Build::Maven && crate::launcher::staleness(&root).is_none();
+    let plan = test_plan::plan(build, requested, &options, compiled_outputs_current)?;
     if options.explain_selection || options.fast {
         test_plan::explain(&plan);
     }

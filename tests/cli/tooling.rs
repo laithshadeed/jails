@@ -304,7 +304,7 @@ fn test_command_explains_the_canonical_partition() {
 }
 
 #[test]
-fn automatic_warm_execution_delegates_fork_sensitive_tests_but_strict_warm_refuses() {
+fn compile_none_never_compiles_ineligible_warm_tests_and_strict_warm_refuses() {
     let root = temp_dir("mock-test-isolation");
     write_plain_fixture(&root);
     let source = root.join("src/test/java/com/example/demo/ContextTest.java");
@@ -334,9 +334,16 @@ fn automatic_warm_execution_delegates_fork_sensitive_tests_but_strict_warm_refus
         String::from_utf8_lossy(&automatic.stdout),
         String::from_utf8_lossy(&automatic.stderr)
     );
-    assert!(automatic.status.success(), "{report}");
-    assert!(report.contains("delegated to the build tool"), "{report}");
-    assert!(read_log(&log).contains("test -Dtest=ContextTest"));
+    assert!(!automatic.status.success(), "{report}");
+    assert!(
+        report.contains("automatic warm execution is ineligible")
+            && report.contains("compile explicitly"),
+        "{report}"
+    );
+    assert!(
+        read_log(&log).is_empty(),
+        "--compile none must not invoke Maven"
+    );
 
     let strict = jails_cmd(&root, Some(&fake_dir))
         .args([
@@ -1126,6 +1133,18 @@ fn testd_refuses_stale_classes_and_sees_a_recompile_after_it_started() {
     assert!(
         report.contains("tests successful"),
         "the daemon must report a real JUnit run: {report}"
+    );
+    let normalized = jails_cmd_with_path(&root, &path)
+        .args(["test", "--engine", "warm", "--compile", "none", "--json"])
+        .output()
+        .unwrap();
+    let json = String::from_utf8_lossy(&normalized.stdout);
+    assert!(normalized.status.success(), "{json}");
+    assert!(
+        json.contains("\"selector\":\"com.example.demo.AppTest#passes\"")
+            && json.contains("\"engine\":\"testd-v2\"")
+            && json.contains("\"duration_us\":"),
+        "the warm engine must return actual normalized cases: {json}"
     );
 
     // Now add a failing test *after* the daemon is up, recompile, and run

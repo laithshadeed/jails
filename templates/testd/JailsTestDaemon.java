@@ -182,7 +182,16 @@ final class JailsTestDaemon {
             }
         }
         arguments.add("--details=testfeed");
-        Result result = runJUnit(arguments);
+        Path reportDirectory = root.resolve(".jails/run/testd-reports").resolve(toHex(request.id));
+        deleteTree(reportDirectory);
+        Files.createDirectories(reportDirectory);
+        arguments.add("--reports-dir=" + reportDirectory);
+        Result result;
+        try {
+            result = runJUnit(arguments, reportDirectory);
+        } finally {
+            deleteTree(reportDirectory);
+        }
         long durationUs = (System.nanoTime() - started) / 1_000L;
         byte[] accepted = accepted(request.id, request.epoch);
         byte[] completed = completed(request, result, durationUs);
@@ -237,6 +246,10 @@ final class JailsTestDaemon {
     }
 
     private static Result runJUnit(List<String> arguments) {
+        return runJUnit(arguments, null);
+    }
+
+    private static Result runJUnit(List<String> arguments, Path reportDirectory) {
         var buffer = new ByteArrayOutputStream();
         var writer = new PrintWriter(buffer, true, StandardCharsets.UTF_8);
         int exitCode;
@@ -253,7 +266,69 @@ final class JailsTestDaemon {
         writer.flush();
         String output = buffer.toString(StandardCharsets.UTF_8);
         if (output.length() > 65_536) output = output.substring(0, 65_536) + "\n[testd output truncated]\n";
-        return new Result(output, exitCode);
+        List<Case> cases = List.of();
+        if (reportDirectory != null) {
+            try {
+                cases = readCases(reportDirectory);
+                if (cases.isEmpty()) {
+                    output += "\njails testd: JUnit produced no readable case report\n";
+                    exitCode = 2;
+                }
+            } catch (Exception failure) {
+                output += "\njails testd: could not normalize JUnit reports: " + failure + "\n";
+                exitCode = 2;
+            }
+        }
+        return new Result(output, exitCode, cases);
+    }
+
+    private static List<Case> readCases(Path directory) throws Exception {
+        var factory = javax.xml.parsers.DocumentBuilderFactory.newInstance();
+        factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+        factory.setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_DTD, "");
+        factory.setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
+        var builder = factory.newDocumentBuilder();
+        var cases = new ArrayList<Case>();
+        try (var paths = Files.walk(directory)) {
+            for (Path report : paths.filter(path -> path.toString().endsWith(".xml")).sorted().toList()) {
+                var document = builder.parse(report.toFile());
+                var nodes = document.getElementsByTagName("testcase");
+                for (int index = 0; index < nodes.getLength(); index++) {
+                    var element = (org.w3c.dom.Element) nodes.item(index);
+                    String className = element.getAttribute("classname");
+                    String method = element.getAttribute("name");
+                    if (method.endsWith("()")) method = method.substring(0, method.length() - 2);
+                    if (className.isBlank() || method.isBlank()) continue;
+                    int outcome = 0;
+                    var children = element.getChildNodes();
+                    for (int child = 0; child < children.getLength(); child++) {
+                        String name = children.item(child).getNodeName();
+                        if (name.equals("error")) outcome = 3;
+                        else if (name.equals("failure") && outcome != 3) outcome = 1;
+                        else if (name.equals("skipped") && outcome == 0) outcome = 2;
+                    }
+                    long durationUs = 0;
+                    try {
+                        durationUs = Math.max(0L,
+                                Math.round(Double.parseDouble(element.getAttribute("time")) * 1_000_000.0));
+                    } catch (NumberFormatException ignored) {
+                        // A malformed duration is unknown, not a reason to lose the case.
+                    }
+                    cases.add(new Case(className + "#" + method, outcome, durationUs));
+                }
+            }
+        }
+        cases.sort(java.util.Comparator.comparing(Case::selector));
+        return List.copyOf(cases);
+    }
+
+    private static void deleteTree(Path directory) throws Exception {
+        if (!Files.exists(directory)) return;
+        try (var paths = Files.walk(directory)) {
+            for (Path path : paths.sorted(java.util.Comparator.reverseOrder()).toList()) {
+                Files.deleteIfExists(path);
+            }
+        }
     }
 
     private static byte[] accepted(byte[] id, long epoch) throws Exception {
@@ -272,15 +347,15 @@ final class JailsTestDaemon {
         body.bool(result.exitCode == 0);
         body.tag(0); // unit scope
         body.strings(request.selectors);
-        List<String> cases = request.selectors.isEmpty() ? List.of("all-tests") : request.selectors;
-        body.u32(cases.size());
-        for (int index = 0; index < cases.size(); index++) {
+        body.u32(result.cases.size());
+        for (int index = 0; index < result.cases.size(); index++) {
+            Case testCase = result.cases.get(index);
             body.tag(2); // TestdV2
             body.tag(3); // compile owner: none (the coordinator compiled)
-            body.string(cases.get(index));
+            body.string(testCase.selector);
             body.tag(0); // source absent
-            body.tag(result.exitCode == 0 ? 0 : result.exitCode == 1 ? 1 : 3);
-            body.u64(durationUs);
+            body.tag(testCase.outcome);
+            body.u64(testCase.durationUs);
             body.string(index == 0 ? result.output : "");
             body.string("");
             body.u32(1);
@@ -404,7 +479,8 @@ final class JailsTestDaemon {
         return text.toString();
     }
 
-    private record Result(String output, int exitCode) {}
+    private record Result(String output, int exitCode, List<Case> cases) {}
+    private record Case(String selector, int outcome, long durationUs) {}
     private record Output(String path, long size, long modifiedNs, byte[] digest) {}
     private record Cached(byte[] request, byte[] response) {}
 

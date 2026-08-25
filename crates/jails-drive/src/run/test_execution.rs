@@ -64,6 +64,14 @@ pub(super) fn run_inherited_timeout(
 
 pub(super) fn run_warm(requested: &[String], options: &TestOptions, debug: bool) -> Result<()> {
     let (root, _) = either_root("test --engine warm")?;
+    if options.compile == jails_protocol::testing::TestCompilePolicy::Ide {
+        return delegate_or_refuse(
+            requested,
+            options,
+            debug,
+            "no current negotiated IDE output epoch is available".into(),
+        );
+    }
     let ineligible = super::isolation::refusals(&root, requested);
     if !ineligible.is_empty() {
         return delegate_or_refuse(requested, options, debug, ineligible.join("; "));
@@ -113,6 +121,18 @@ fn delegate_or_refuse(
     reason: String,
 ) -> Result<()> {
     if options.engine == jails_protocol::testing::TestEnginePolicy::Auto {
+        if options.compile == jails_protocol::testing::TestCompilePolicy::None {
+            return Err(format!(
+                "automatic warm execution is ineligible: {reason}\n       fix: compile explicitly, or choose `--compile auto` so the build tool may own this partition"
+            )
+            .into());
+        }
+        if options.compile == jails_protocol::testing::TestCompilePolicy::Ide {
+            return Err(format!(
+                "automatic warm execution is ineligible: {reason}; no current negotiated IDE output epoch is available\n       fix: connect an editor epoch, or choose `--compile auto`"
+            )
+            .into());
+        }
         println!("test engine delegated to the build tool: {reason}");
         let mut delegated = options.clone();
         delegated.engine = jails_protocol::testing::TestEnginePolicy::Build;

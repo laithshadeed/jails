@@ -10,6 +10,7 @@ pub(super) fn plan(
     build: crate::build::Build,
     requested: &[String],
     options: &TestOptions,
+    compiled_outputs_current: bool,
 ) -> Result<TestExecutionPlanV1> {
     let mut selectors: Vec<TestSelector> = requested
         .iter()
@@ -42,6 +43,13 @@ pub(super) fn plan(
         {
             TestEngine::TestdV2
         }
+        TestEnginePolicy::Auto
+            if options.compile == jails_protocol::testing::TestCompilePolicy::Auto
+                && compiled_outputs_current
+                && build_engine == TestEngine::Maven =>
+        {
+            TestEngine::TestdV2
+        }
         TestEnginePolicy::Auto => build_engine,
     };
     let reasons = if options.fast {
@@ -66,6 +74,20 @@ pub(super) fn plan(
             reasons,
         }],
     };
+    if matches!(
+        options.compile,
+        jails_protocol::testing::TestCompilePolicy::Ide
+            | jails_protocol::testing::TestCompilePolicy::None
+    ) && plan
+        .partitions
+        .iter()
+        .any(|partition| partition.engine != TestEngine::TestdV2)
+    {
+        return Err(
+            "the selected compile policy cannot supply a current warm-engine output for this project\n       fix: use `--compile auto` or `--compile build`"
+                .into(),
+        );
+    }
     plan.validate()?;
     Ok(plan)
 }
@@ -203,6 +225,7 @@ mod tests {
             crate::build::Build::Maven,
             &["BetaTest".into(), "AlphaTest".into(), "AlphaTest".into()],
             &options(),
+            false,
         )
         .unwrap();
         assert_eq!(plan.requested.len(), 2);
@@ -214,8 +237,50 @@ mod tests {
     fn strict_warm_never_creates_a_build_partition() {
         let mut options = options();
         options.engine = TestEnginePolicy::Warm;
-        let plan = plan(crate::build::Build::Maven, &["AlphaTest".into()], &options).unwrap();
+        let plan = plan(
+            crate::build::Build::Maven,
+            &["AlphaTest".into()],
+            &options,
+            true,
+        )
+        .unwrap();
         assert_eq!(plan.partitions[0].engine, TestEngine::TestdV2);
+    }
+
+    #[test]
+    fn automatic_compile_uses_current_maven_outputs_and_builds_when_stale() {
+        let current = plan(
+            crate::build::Build::Maven,
+            &["AlphaTest".into()],
+            &options(),
+            true,
+        )
+        .unwrap();
+        assert_eq!(current.partitions[0].engine, TestEngine::TestdV2);
+
+        let stale = plan(
+            crate::build::Build::Maven,
+            &["AlphaTest".into()],
+            &options(),
+            false,
+        )
+        .unwrap();
+        assert_eq!(stale.partitions[0].engine, TestEngine::Maven);
+    }
+
+    #[test]
+    fn gradle_cannot_compile_implicitly_under_none() {
+        let mut no_compile = options();
+        no_compile.compile = TestCompilePolicy::None;
+        assert!(
+            plan(
+                crate::build::Build::Gradle,
+                &["AlphaTest".into()],
+                &no_compile,
+                false,
+            )
+            .is_err()
+        );
     }
 
     #[test]

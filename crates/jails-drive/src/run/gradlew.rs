@@ -56,21 +56,13 @@ pub(super) fn test(
     fallback_reason: Option<String>,
     debug: bool,
 ) -> Result<()> {
-    if options.fast {
+    let build_script = std::fs::read_to_string(root.join("build.gradle")).unwrap_or_default();
+    if (!options.tags.is_empty() || options.fail_fast) && !build_script.contains("jails.test.tags")
+    {
         return Err(jails_support::Failure::Told(
-            "`jails test --fast` needs a classpath resolved by Maven, and this project is \
-             built by Gradle.\n       fix: `jails test` runs the suite here, and `--failed`, \
-             `--json` and `--slowest` all work -- they read the JUnit XML Gradle already \
-             writes. The flag is refused rather than ignored, because one that silently did \
-             something else is worse than one that says it cannot."
-                .to_string(),
-        ));
-    }
-    if !options.tags.is_empty() {
-        return Err(jails_support::Failure::Told(
-            "this Gradle build does not expose JUnit tag selection as a command-line contract.\n       \
-             fix: add a tagged `Test` task to the build, or select classes explicitly with \
-             `jails test <class>...`"
+            "this Gradle build does not expose jails' tag and fail-fast test properties.\n       \
+             fix: add the generated `tasks.withType(Test)` contract, or omit `--tags` and \
+             `--fail-fast`"
                 .to_string(),
         ));
     }
@@ -101,6 +93,12 @@ pub(super) fn test(
         }
     };
     let mut selectors: Vec<String> = execution_tasks.into_iter().map(str::to_string).collect();
+    if !options.tags.is_empty() {
+        selectors.push(format!("-Djails.test.tags={}", options.tags.join(",")));
+    }
+    if options.fail_fast {
+        selectors.push("-Djails.test.failFast=true".into());
+    }
     for pattern in &patterns {
         // Gradle's own selector, and repeatable: `--tests` takes a class or
         // method pattern, which is the same shape the reader already types for

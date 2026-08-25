@@ -31,6 +31,14 @@ repositories {
 dependencies {
 {{dependencies}}}
 
-tasks.named('test') {
-    useJUnitPlatform()
+tasks.withType(Test).configureEach {
+    useJUnitPlatform {
+        def jailsTags = System.getProperty('jails.test.tags', '')
+                .split(',')
+                .findAll { !it.isBlank() }
+        if (!jailsTags.isEmpty()) {
+            includeTags(jailsTags)
+        }
+    }
+    failFast = Boolean.getBoolean('jails.test.failFast')
 }
