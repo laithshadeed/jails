@@ -1,10 +1,12 @@
 //! How a parsed command becomes a transition, and a transition a report.
 //!
-//! Named `invoke` rather than `dispatch` because `jails-java` already has a
+//! It shipped as `invoke` for two years because `jails-java` already has a
 //! `dispatch` -- the splice that registers a generated command in a project's
-//! own CLI -- and every architecture gate identifies a file by its first path
-//! component, so two modules sharing a name are measured against each other's
-//! rules.
+//! own CLI -- and every architecture gate identified a file by its basename, so
+//! two modules sharing a name were measured against each other's rules. That
+//! made a *test* the reason this file was not called what it is.
+//! `tests/architecture.rs`'s `module_of` answers `(crate, module)` now, and
+//! `pending.md` §10.3 is the entry about it.
 //!
 //! Split out of `main.rs` under the ladder's largest-module gate, and the cut
 //! is a real seam rather than a size one: `main.rs` says what the CLI

@@ -1107,19 +1107,35 @@ re-point those citations:
 Leave the rest citing `plan.md §N`. A *historical* citation is fine; a
 load-bearing one is not.
 
-### 10.3 A test is choosing production names
+### 10.3 A test was choosing production names — **closed 2026-08-25**
 
-`src/invoke.rs` opens by explaining it is named `invoke` rather than `dispatch`
-because `jails-java` already has a `dispatch`, and
-`no_two_crates_share_a_module_name` (`tests/architecture.rs:730`) identifies a
-file by its first path component.
+`src/invoke.rs` opened by explaining it was named `invoke` rather than
+`dispatch` because `jails-java` already has a `dispatch`, and
+`no_two_crates_share_a_module_name` identified a file by its first path
+component.
 
-Identify a module by `(crate, path)` rather than by basename and the constraint
-goes away. `cargo metadata` can supply the crate-dependency table the test
-rebuilds from source text, which also removes the reason it needs a Rust parser.
-Then rename `invoke` back to `dispatch`, which is what it is.
+`module_of` answers `(crate, module)` now, so the collision cannot arise, the
+gate that forbade it is gone, and the file is `src/dispatch.rs`.
 
----
+Two things came out of it that were not in the original item.
+
+**`LAYERS` had four rows naming modules that are not there** — `ledger` and
+`migration` had become submodules (`pipeline/ledger.rs`,
+`generate/migration.rs`), `rename` was deleted, and `main.rs` is excluded by
+`module_of` by design. Nothing had ever checked the other direction. It does
+now, with the same rule `SUBPROCESS_CLASSIFICATION` is held to: a row naming a
+module that is no longer there is permission for nothing, and it hides the fact
+that the module went.
+
+**The table is crate-qualified**, which makes it say out loud what its comments
+were saying in prose, and makes the same-crate case explicit: a reference within
+one crate is a same-level edge by construction, so only the crates above are
+checked.
+
+Not done: reading the crate-dependency table from `cargo metadata` instead of
+rebuilding it from source text. §10.3 offered it as a way to drop the Rust
+parser, but the parser is not there for the dependency table — it is there for
+`blank()`, which every other gate in the file needs.
 
 ## 11. Not started, and open by design
 

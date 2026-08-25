@@ -11,7 +11,7 @@ pub(crate) use jails_tooling::{
 };
 mod app;
 mod arguments;
-mod invoke;
+mod dispatch;
 mod new;
 
 use add::Capability;
@@ -812,7 +812,7 @@ fn main() -> std::process::ExitCode {
                 yields: strategy_yields,
                 method,
             };
-            invoke::mutate(invocation, false, |run| {
+            dispatch::mutate(invocation, false, |run| {
                 jails_engine::route::recipe(run, &intent)
             })
         }
@@ -825,7 +825,7 @@ fn main() -> std::process::ExitCode {
                 }),
             ..
         } => arguments::maven_coordinate(&coordinate).and_then(|coordinate| {
-            invoke::mutate(invocation, false, |run| {
+            dispatch::mutate(invocation, false, |run| {
                 jails_engine::route::add_dependency(
                     run,
                     coordinate.clone(),
@@ -840,7 +840,7 @@ fn main() -> std::process::ExitCode {
             no_start,
             package,
             declare: None,
-        } => invoke::mutate(invocation, no_start, |run| {
+        } => dispatch::mutate(invocation, no_start, |run| {
             // Every capability is checked before any is applied. Each one is
             // its own transition, so without this `jails add db security` on a
             // plain Maven project would install the database and *then* refuse
@@ -852,10 +852,10 @@ fn main() -> std::process::ExitCode {
                 name.as_deref(),
                 package.as_deref(),
             )?;
-            let asked = invoke::declarations(&capabilities, name.as_deref(), package.as_deref())?;
-            invoke::one_transition_each(run, &asked, jails_engine::route::install)
+            let asked = dispatch::declarations(&capabilities, name.as_deref(), package.as_deref())?;
+            dispatch::one_transition_each(run, &asked, jails_engine::route::install)
         }),
-        Command::Sync { no_start } => invoke::mutate(invocation, no_start, |run| {
+        Command::Sync { no_start } => dispatch::mutate(invocation, no_start, |run| {
             // Most projects never write a manifest, so an empty list is not an
             // error and "nothing to do" would not explain itself. Said before
             // the transition rather than inside it: what follows is a real
@@ -885,29 +885,29 @@ fn main() -> std::process::ExitCode {
             Some(Undeclare::Dependency { coordinate }) => arguments::maven_coordinate(&coordinate)
                 .map(jails_protocol::entity::DeclaredId::Dependency)
                 .and_then(|id| {
-                    invoke::mutate(invocation, false, |run| {
+                    dispatch::mutate(invocation, false, |run| {
                         jails_engine::route::undeclare(run, id.clone())
                     })
                 }),
-            None => invoke::mutate_confirmed(invocation, false, force, |run| {
+            None => dispatch::mutate_confirmed(invocation, false, force, |run| {
                 let asked =
-                    invoke::declarations(&capabilities, name.as_deref(), package.as_deref())?;
-                invoke::one_transition_each(run, &asked, jails_engine::route::remove)
+                    dispatch::declarations(&capabilities, name.as_deref(), package.as_deref())?;
+                dispatch::one_transition_each(run, &asked, jails_engine::route::remove)
             }),
         },
         Command::Set { setting, tests } => {
             arguments::split_setting(&setting).and_then(|(key, value)| {
-                invoke::mutate(invocation, false, |run| {
+                dispatch::mutate(invocation, false, |run| {
                     jails_engine::route::set_property(run, key.clone(), value.clone(), tests)
                 })
             })
         }
         Command::Unset { key, tests } => arguments::declared_property(&key, tests).and_then(|id| {
-            invoke::mutate(invocation, false, |run| {
+            dispatch::mutate(invocation, false, |run| {
                 jails_engine::route::undeclare(run, id.clone())
             })
         }),
-        Command::Rename { old, new, force } => invoke::mutate(invocation, false, |run| {
+        Command::Rename { old, new, force } => dispatch::mutate(invocation, false, |run| {
             jails_engine::route::rename(run, &old, &new, force)
         }),
         Command::Destroy {
@@ -915,12 +915,12 @@ fn main() -> std::process::ExitCode {
             name,
             force,
             package,
-        } => invoke::mutate_confirmed(invocation, false, force, |run| {
+        } => dispatch::mutate_confirmed(invocation, false, force, |run| {
             jails_engine::route::destroy(run, kind, &name, package.as_deref(), force)
         }),
         Command::Start { services } => compose::start(&services, debug),
         Command::Stop { services } => compose::stop_cmd(&services, debug),
-        Command::Adopt => invoke::mutate(invocation, false, jails_engine::route::adopt_layout),
+        Command::Adopt => dispatch::mutate(invocation, false, jails_engine::route::adopt_layout),
         Command::Src { type_name, json } => source::src(&type_name, json),
         Command::Bench {
             vus,
@@ -997,7 +997,7 @@ fn main() -> std::process::ExitCode {
         ),
         Command::Build => run::build(debug),
         Command::Clean => run::clean(debug),
-        Command::Fmt => invoke::mutate(invocation, false, jails_engine::route::format),
+        Command::Fmt => dispatch::mutate(invocation, false, jails_engine::route::format),
         Command::Check => run::check(debug),
         Command::Mvn { args } => run::mvn(&args, debug),
         Command::Gradle { args } => run::gradle(&args, debug),

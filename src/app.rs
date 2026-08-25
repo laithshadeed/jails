@@ -189,16 +189,16 @@ impl ResolvedIntent {
 /// lock, so what it names is exactly what the apply then writes.
 pub(crate) fn run(command: AppCommand, invocation: crate::Invocation) -> Result<()> {
     match command {
-        AppCommand::Init { manifest } => crate::invoke::mutate(invocation, false, |run| {
+        AppCommand::Init { manifest } => crate::dispatch::mutate(invocation, false, |run| {
             jails_engine::route::app_init(run, manifest.as_deref().and_then(Path::to_str))
         }),
         AppCommand::Plan { manifest } => {
-            crate::invoke::mutate(invocation.pretending(), false, |run| {
+            crate::dispatch::mutate(invocation.pretending(), false, |run| {
                 declared(run, manifest.as_deref())
             })
         }
         AppCommand::Apply { manifest, no_start } => {
-            crate::invoke::mutate(invocation, no_start, |run| {
+            crate::dispatch::mutate(invocation, no_start, |run| {
                 declared(run, manifest.as_deref())
             })
         }
@@ -240,7 +240,7 @@ pub(crate) fn apply_in(root: &Path, no_start: bool, debug: bool) -> Result<()> {
         run = run.with_debug();
     }
     let outcome = declared(&run, None)?;
-    crate::invoke::report(&outcome, crate::Output::Human)
+    crate::dispatch::report(&outcome, crate::Output::Human)
 }
 
 #[cfg(test)]

@@ -825,32 +825,67 @@ fn the_abstract_md_ladder_gates_are_ratchets_that_only_move_down() {
 #[test]
 fn no_module_depends_on_a_layer_above_its_own() {
     let mut offenders = Vec::new();
+    let mut assigned: std::collections::BTreeSet<(&str, &str)> = Default::default();
     for file in sources() {
-        let Some(owner) = module_of(&file.path) else {
+        let Some((krate, owner)) = module_of(&file.path) else {
             continue;
         };
-        let Some(&level) = LAYERS.iter().find(|(m, _)| *m == owner).map(|(_, l)| l) else {
+        let row = LAYERS.iter().find(|(c, m, _)| *c == krate && *m == owner);
+        let Some(&(_, _, level)) = row else {
             panic!(
-                "{} belongs to module `{owner}`, which is not assigned a layer in \
-                 `LAYERS`. Add it there in the same change that adds the module -- \
-                 an unassigned module is an unenforced boundary.",
+                "{} belongs to `{krate}`'s module `{owner}`, which is not assigned a layer \
+                 in `LAYERS`. Add it there in the same change that adds the module -- an \
+                 unassigned module is an unenforced boundary.",
                 file.path.display()
             );
         };
-        for (other, other_level) in LAYERS {
-            if *other == owner || *other_level <= level {
+        assigned.insert((
+            LAYERS
+                .iter()
+                .find(|(c, _, _)| *c == krate)
+                .map(|(c, _, _)| *c)
+                .unwrap_or_default(),
+            LAYERS
+                .iter()
+                .find(|(c, m, _)| *c == krate && *m == owner)
+                .map(|(_, m, _)| *m)
+                .unwrap_or_default(),
+        ));
+        // A same-crate reference is a same-level edge by construction, so only
+        // the crates above this one can be reached up into.
+        for (other_crate, other, other_level) in LAYERS {
+            if *other_crate == krate || *other_level <= level {
                 continue;
             }
             if file.production.contains(&format!("crate::{other}::"))
                 || file.production.contains(&format!("crate::{other};"))
             {
                 offenders.push(format!(
-                    "  {} ({owner}, L{level}) -> {other} (L{other_level})",
+                    "  {} ({krate}::{owner}, L{level}) -> {other_crate}::{other} \
+                     (L{other_level})",
                     file.path.display()
                 ));
             }
         }
     }
+
+    // Both directions, the same rule `SUBPROCESS_CLASSIFICATION` is held to: a
+    // row naming a module that is no longer there is permission for nothing,
+    // and it hides the fact that the module went. Four such rows were found
+    // when this was added -- `ledger` and `migration` had become submodules,
+    // `rename` was deleted, and `main.rs` is excluded by `module_of` by design.
+    let stale: Vec<String> = LAYERS
+        .iter()
+        .filter(|(c, m, _)| !assigned.contains(&(*c, *m)))
+        .map(|(c, m, _)| format!("  {c}::{m}"))
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "`LAYERS` assigns a layer to modules that are not there:\n{}\n\n\
+         Take them out. A name in the list that nothing matches is a rule \
+         nobody is subject to.",
+        stale.join("\n")
+    );
     assert!(
         offenders.is_empty(),
         "these modules reach up into a higher layer:\n{}\n\n\
@@ -862,177 +897,151 @@ fn no_module_depends_on_a_layer_above_its_own() {
     );
 }
 
-/// Two crates must not declare the same top-level module name.
+/// `LAYERS` must not list one module twice.
 ///
-/// `module_of` identifies a file by its first path component, so
-/// `crates/a/src/spec.rs` and `crates/b/src/spec.rs` are one name to every
-/// gate here — and the layering check would silently measure one of them
-/// against the other's level. That happened once, between `jails_spec::spec`
-/// and a `spec` module in `jails-protocol`, and nothing reported it: the test
-/// simply passed while checking the wrong thing.
+/// The gate that used to live here forbade two crates from declaring the same
+/// top-level module name, because `module_of` identified a file by its
+/// basename alone and the layering check would then measure one module against
+/// another's level. That was a real hazard -- it happened once, between
+/// `jails_spec::spec` and a `spec` module in `jails-protocol`, and nothing
+/// reported it.
+///
+/// It was also **a test choosing production names**: `src/dispatch.rs` shipped
+/// as `invoke` for no reason other than that `jails-java` already had a
+/// `dispatch`, and its module docs said so. `pending.md` §10.3. `module_of`
+/// answers `(crate, module)` now, so the collision cannot arise and the module
+/// is called what it is.
+///
+/// What is left is the one property the pair still has to have: a duplicate row
+/// would make the `find` above pick whichever came first.
 #[test]
-fn no_two_crates_share_a_module_name() {
-    let mut owners: std::collections::BTreeMap<String, Vec<String>> = Default::default();
-    for file in sources() {
-        let Some(module) = module_of(&file.path) else {
-            continue;
-        };
-        let crate_name = file
-            .path
-            .strip_prefix(Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
-            .ok()
-            .and_then(|rest| rest.components().next())
-            .map(|part| part.as_os_str().to_string_lossy().into_owned())
-            .unwrap_or_else(|| "jails".to_string());
-        let seen = owners.entry(module).or_default();
-        if !seen.contains(&crate_name) {
-            seen.push(crate_name);
-        }
-    }
-    let clashes: Vec<String> = owners
-        .iter()
-        .filter(|(_, crates)| crates.len() > 1)
-        .map(|(module, crates)| format!("  `{module}` is declared by {}", crates.join(" and ")))
-        .collect();
-    assert!(
-        clashes.is_empty(),
-        "these module names are ambiguous across crates:\n{}\n\n\
-         Every gate here identifies a file by its first path component, so a \
-         shared name makes one module be measured against another's rules. \
-         Rename one.",
-        clashes.join("\n")
-    );
-
-    let mut names: Vec<&str> = LAYERS.iter().map(|(name, _)| *name).collect();
+fn layers_lists_each_module_once() {
+    let mut names: Vec<(&str, &str)> = LAYERS.iter().map(|(c, m, _)| (*c, *m)).collect();
     names.sort_unstable();
     let before = names.len();
     names.dedup();
-    assert_eq!(before, names.len(), "`LAYERS` lists a module name twice");
+    assert_eq!(before, names.len(), "`LAYERS` lists one module twice");
 }
 
 /// Which crate each module ships in, lowest first. The 7-crate workspace this
 /// documents is `jails-support`, `jails-java`, `jails-spec`, `jails-project`,
 /// `jails-generate`, `jails-tooling` and the `jails-cli` binary.
-const LAYERS: &[(&str, usize)] = &[
+const LAYERS: &[(&str, &str, usize)] = &[
     // jails-support: no jails concepts at all -- writing, running, encoding.
-    ("apply", 0),
-    ("process", 0),
-    ("runner", 0),
-    ("scratch", 0),
-    ("codec", 0),
-    ("codemod", 0),
-    ("json", 0),
-    ("lock", 0),
+    ("jails-support", "apply", 0),
+    ("jails-support", "process", 0),
+    ("jails-support", "runner", 0),
+    ("jails-support", "scratch", 0),
+    ("jails-support", "codec", 0),
+    ("jails-support", "codemod", 0),
+    ("jails-support", "json", 0),
+    ("jails-support", "lock", 0),
     // jails-java: reading Java and rendering templates into it.
-    ("annotate", 1),
-    ("tidy", 1),
-    ("java", 1),
-    ("dispatch", 1),
-    ("classfile", 1),
-    ("identifier", 1),
-    ("template", 1),
+    ("jails-java", "annotate", 1),
+    ("jails-java", "tidy", 1),
+    ("jails-java", "java", 1),
+    ("jails-java", "dispatch", 1),
+    ("jails-java", "classfile", 1),
+    ("jails-java", "identifier", 1),
+    ("jails-java", "template", 1),
     // jails-spec: what a jails project is -- where it is, how it is laid out,
     // what a field means, and the closed CLI vocabularies.
-    ("build", 2),
-    ("spec", 2),
+    ("jails-spec", "build", 2),
+    ("jails-spec", "spec", 2),
     // jails-protocol: the validated values every closed format is built from.
-    ("bootstrap", 3),
-    ("change", 3),
-    ("conflict", 3),
-    ("coordinate", 3),
-    ("context", 3),
-    ("declaration", 3),
-    ("edit", 3),
-    ("effect", 3),
-    ("fact", 3),
-    ("envelope", 3),
-    ("entity", 3),
-    ("identity", 3),
-    ("ownership", 3),
-    ("pending", 3),
-    ("plan", 3),
-    ("provenance", 3),
-    ("recipe", 3),
-    ("record", 3),
-    ("render", 3),
-    ("request", 3),
-    ("resource", 3),
-    ("snapshot", 3),
-    ("transition", 3),
+    ("jails-protocol", "bootstrap", 3),
+    ("jails-protocol", "change", 3),
+    ("jails-protocol", "conflict", 3),
+    ("jails-protocol", "coordinate", 3),
+    ("jails-protocol", "context", 3),
+    ("jails-protocol", "declaration", 3),
+    ("jails-protocol", "edit", 3),
+    ("jails-protocol", "effect", 3),
+    ("jails-protocol", "fact", 3),
+    ("jails-protocol", "envelope", 3),
+    ("jails-protocol", "entity", 3),
+    ("jails-protocol", "identity", 3),
+    ("jails-protocol", "ownership", 3),
+    ("jails-protocol", "pending", 3),
+    ("jails-protocol", "plan", 3),
+    ("jails-protocol", "provenance", 3),
+    ("jails-protocol", "recipe", 3),
+    ("jails-protocol", "record", 3),
+    ("jails-protocol", "render", 3),
+    ("jails-protocol", "request", 3),
+    ("jails-protocol", "resource", 3),
+    ("jails-protocol", "snapshot", 3),
+    ("jails-protocol", "transition", 3),
     // jails-project: the resolved project and everything jails records about it.
-    ("gradle", 4),
-    ("pom", 4),
-    ("maven", 4),
-    ("capability", 4),
-    ("config", 4),
-    ("junit", 4),
-    ("synonyms", 4),
-    ("capture", 4),
-    ("compat", 4),
-    ("compose", 4),
-    ("model", 4),
-    ("project", 4),
-    ("projection", 4),
-    ("properties", 4),
-    ("ledger", 4),
-    ("generated_files", 4),
-    ("inspect", 4),
+    ("jails-project", "gradle", 4),
+    ("jails-project", "pom", 4),
+    ("jails-project", "maven", 4),
+    ("jails-project", "capability", 4),
+    ("jails-project", "config", 4),
+    ("jails-project", "junit", 4),
+    ("jails-project", "synonyms", 4),
+    ("jails-project", "capture", 4),
+    ("jails-project", "compat", 4),
+    ("jails-project", "compose", 4),
+    ("jails-project", "model", 4),
+    ("jails-project", "project", 4),
+    ("jails-project", "projection", 4),
+    ("jails-project", "properties", 4),
+    ("jails-project", "generated_files", 4),
+    ("jails-project", "inspect", 4),
     // jails-generate: everything that decides what Java to write.
-    ("sql", 5),
-    ("generate", 5),
-    ("spring", 5),
-    ("add", 5),
+    ("jails-generate", "sql", 5),
+    ("jails-generate", "generate", 5),
+    ("jails-generate", "spring", 5),
+    ("jails-generate", "add", 5),
     // jails-prepare: turning desire into an exact executable transition.
-    ("command", 5),
-    ("desire", 5),
-    ("migration", 5),
-    ("operation", 5),
-    ("pipeline", 5),
-    ("prepare", 5),
-    ("receipt", 5),
-    ("merge", 5),
-    ("reconcile", 5),
-    ("recovery", 5),
-    ("report", 5),
-    ("sandbox", 5),
-    ("serialize", 5),
-    ("tool", 5),
+    ("jails-prepare", "command", 5),
+    ("jails-prepare", "desire", 5),
+    ("jails-prepare", "operation", 5),
+    ("jails-prepare", "pipeline", 5),
+    ("jails-prepare", "prepare", 5),
+    ("jails-prepare", "receipt", 5),
+    ("jails-prepare", "merge", 5),
+    ("jails-prepare", "reconcile", 5),
+    ("jails-prepare", "recovery", 5),
+    ("jails-prepare", "report", 5),
+    ("jails-prepare", "sandbox", 5),
+    ("jails-prepare", "serialize", 5),
+    ("jails-prepare", "tool", 5),
     // jails-commit: making a prepared transaction durable, and recovering one.
-    ("activate", 6),
-    ("execute", 6),
-    ("fault", 6),
-    ("gc", 6),
-    ("runtime", 6),
-    ("journal", 6),
-    ("outcome", 6),
-    ("recover", 6),
-    ("store", 6),
+    ("jails-commit", "activate", 6),
+    ("jails-commit", "execute", 6),
+    ("jails-commit", "fault", 6),
+    ("jails-commit", "gc", 6),
+    ("jails-commit", "runtime", 6),
+    ("jails-commit", "journal", 6),
+    ("jails-commit", "outcome", 6),
+    ("jails-commit", "recover", 6),
+    ("jails-commit", "store", 6),
     // jails-engine: one request, as one transition. Above the executor because
     // it drives it, and below the CLI because it is not about arguments.
-    ("route", 7),
+    ("jails-engine", "route", 7),
     // jails-tooling: commands that drive a toolchain or report on a project.
-    ("run", 7),
-    ("launcher", 7),
-    ("testd", 7),
-    ("affected", 7),
-    ("doctor", 7),
-    ("why", 7),
-    ("kafka", 7),
-    ("migrate", 7),
-    ("console", 7),
-    ("bench", 7),
-    ("reports", 7),
-    ("lint", 7),
-    ("rename", 7),
-    ("source", 7),
-    ("explain", 7),
-    ("commands", 7),
+    ("jails-tooling", "run", 7),
+    ("jails-tooling", "launcher", 7),
+    ("jails-tooling", "testd", 7),
+    ("jails-tooling", "affected", 7),
+    ("jails-tooling", "doctor", 7),
+    ("jails-tooling", "why", 7),
+    ("jails-tooling", "kafka", 7),
+    ("jails-tooling", "migrate", 7),
+    ("jails-tooling", "console", 7),
+    ("jails-tooling", "bench", 7),
+    ("jails-tooling", "reports", 7),
+    ("jails-tooling", "lint", 7),
+    ("jails-tooling", "source", 7),
+    ("jails-tooling", "explain", 7),
+    ("jails-tooling", "commands", 7),
     // jails-cli: the binary and the whole-project lifecycle commands.
-    ("new", 8),
-    ("app", 8),
-    ("invoke", 8),
-    ("arguments", 8),
-    ("main", 8),
+    ("jails", "new", 8),
+    ("jails", "app", 8),
+    ("jails", "dispatch", 8),
+    ("jails", "arguments", 8),
 ];
 
 /// Every module that starts a process, and which R6.6 row it is.
@@ -1079,14 +1088,31 @@ const SUBPROCESS_CLASSIFICATION: &[(&str, &str)] = &[
     ("sandbox", "the one executor"),
 ];
 
-/// `src/spring/durable.rs` -> `spring`; `src/ledger.rs` -> `ledger`.
-fn module_of(path: &Path) -> Option<String> {
+/// Which module a file belongs to: `(crate, module)`.
+///
+/// `crates/jails-generate/src/spring/durable.rs` ->
+/// `("jails-generate", "spring")`.
+///
+/// **The crate half is not decoration.** This used to answer with the basename
+/// alone, so `crates/a/src/spec.rs` and `crates/b/src/spec.rs` were one name to
+/// every gate here, and the layering check would silently measure one against
+/// the other's level. That happened once, between `jails_spec::spec` and a
+/// `spec` module in `jails-protocol`, and nothing reported it -- the test
+/// passed while checking the wrong thing. A separate gate,
+/// `no_two_crates_share_a_module_name`, existed to forbid the collision, which
+/// made a *test* the reason a production module could not be called what it is:
+/// `src/dispatch.rs` was named `invoke` because `jails-java` already had a
+/// `dispatch`. `pending.md` §10.3.
+///
+/// Identify a module by `(crate, module)` and the constraint goes away.
+fn module_of(path: &Path) -> Option<(String, String)> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut crate_name = "jails".to_string();
     let rest = path.strip_prefix(root.join("src")).ok().or_else(|| {
         let from_crates = path.strip_prefix(root.join("crates")).ok()?;
         // crates/<member>/src/<module>...
         let mut parts = from_crates.components();
-        parts.next()?;
+        crate_name = parts.next()?.as_os_str().to_string_lossy().into_owned();
         let src = parts.next()?;
         (src.as_os_str() == "src").then(|| Path::new(parts.as_path()))
     })?;
@@ -1094,7 +1120,10 @@ fn module_of(path: &Path) -> Option<String> {
     if first == "lib.rs" || first == "main.rs" {
         return None;
     }
-    Some(first.strip_suffix(".rs").unwrap_or(first).to_string())
+    Some((
+        crate_name,
+        first.strip_suffix(".rs").unwrap_or(first).to_string(),
+    ))
 }
 
 /// §R6.6: "The audit must leave no unclassified production mutation."
@@ -1115,7 +1144,7 @@ fn every_module_that_starts_a_process_is_classified() {
         let spawns = ["Command::new", "CommandSpec", "process::run", "runner::run"]
             .iter()
             .any(|spelling| file.production.contains(spelling));
-        if spawns && let Some(module) = module_of(&file.path) {
+        if spawns && let Some((_, module)) = module_of(&file.path) {
             starts.insert(module);
         }
     }
