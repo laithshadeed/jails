@@ -1,230 +1,533 @@
 import java.io.ByteArrayOutputStream;
 import java.io.PrintWriter;
+import java.lang.management.ManagementFactory;
 import java.net.StandardProtocolFamily;
 import java.net.UnixDomainSocketAddress;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
-/**
- * The resident JVM behind `jails testd`.
- *
- * <p>It exists for one measured reason. plan.md 19.1 found that both
- * {@code mvnd} and {@code jails test --fast} sit at ~0.6 s for a single test
- * method, and that what is left in both is a cold {@code java} process. 19.2
- * then measured where that time actually goes: the first JUnit session in a
- * fresh JVM costs 464 ms where the warm ones cost 20 ms. This process pays
- * that once.
- *
- * <p><b>It does not compile.</b> The design 10.2 sketched had the daemon hold
- * {@code ToolProvider.getSystemJavaCompiler()} and compile in-process, and
- *19.5's measurement removed the need: the editor's language server already
- * writes {@code target/classes} on every save. So the daemon runs what is on
- * disk and the Rust side refuses when a source is newer, which is the same
- * staleness gate {@code --fast} uses. One less thing to be subtly wrong about
- * -- 10.2 itself notes that compiling only the changed file is unsound.
- *
- * <p><b>Freshness comes from JUnit, not from here.</b> Each run goes through
- * {@code ConsoleLauncher} with {@code --class-path} naming the project's
- * output directories, and JUnit builds a child loader for them and closes it
- * afterwards. That is why the output directories must NOT be on this process's
- * own classpath: the child delegates to its parent first, so a copy up there
- * would serve the stale class on every run and the daemon would report on code
- * that no longer exists -- silently, which is the failure mode the whole
- * staleness gate exists to prevent.
- *
- * <p>Started only by `jails testd`, which owns the socket path, the classpath
- * and the protocol on the other side.
- */
-public final class JailsTestDaemon {
+/** Authenticated, project-local warm engine for {@code jails test}. */
+final class JailsTestDaemon {
+    private static final int PROTOCOL_MIN = @JAILS_TESTD_PROTOCOL_MIN@;
+    private static final int PROTOCOL_MAX = @JAILS_TESTD_PROTOCOL_MAX@;
+    private static final int MAX_PAYLOAD = 8 * 1024 * 1024;
+    private static final int MAX_GENERATIONS = 50;
+    private static final long MAX_METASPACE_GROWTH = 128L * 1024L * 1024L;
 
-    /** Ends a response; cannot occur in JUnit's output, which is text. */
-    private static final byte END = 4;
-    /** Replaced from jails-protocol when this template is written to the cache. */
-    private static final String PROTOCOL = "@JAILS_TESTD_PROTOCOL@";
+    private final Path root;
+    private final byte[] project;
+    private final byte[] cookie;
+    private final String outputs;
+    private final long baselineMetaspace;
+    private final Map<String, Cached> completed = new LinkedHashMap<>() {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, Cached> eldest) {
+            return size() > 1024;
+        }
+    };
+    private int generations;
+
+    private JailsTestDaemon(Path root, byte[] project, byte[] cookie, String outputs) {
+        this.root = root;
+        this.project = project;
+        this.cookie = cookie;
+        this.outputs = outputs;
+        this.baselineMetaspace = metaspace();
+    }
 
     public static void main(String[] args) throws Exception {
-        if (args.length < 3) {
-            System.err.println("usage: JailsTestDaemon <socket> <idle-seconds> <output-classpath>");
+        if (args.length != 5) {
+            System.err.println("usage: JailsTestDaemon <socket> <idle-seconds> <outputs> <project> <cookie>");
             System.exit(2);
         }
         Path socket = Path.of(args[0]);
         long idleMillis = Long.parseLong(args[1]) * 1000L;
-        String outputs = args[2];
-
+        var daemon = new JailsTestDaemon(
+                Path.of("").toAbsolutePath().normalize(), fromHex(args[3]), fromHex(args[4]), args[2]);
         Files.deleteIfExists(socket);
-        if (socket.getParent() != null) {
-            Files.createDirectories(socket.getParent());
-        }
+        Files.createDirectories(socket.getParent());
         try (ServerSocketChannel server = ServerSocketChannel.open(StandardProtocolFamily.UNIX)) {
             server.bind(UnixDomainSocketAddress.of(socket));
-            // Announce readiness only once the socket is bound, so the client
-            // never races a socket that exists but is not listening yet.
             System.out.println("ready");
             System.out.flush();
-            warmUp(outputs);
-            serve(server, socket, outputs, idleMillis);
+            daemon.warmUp();
+            daemon.serve(server, idleMillis);
         } finally {
             Files.deleteIfExists(socket);
         }
     }
 
-    /**
-     * Pay the 464 ms first-session cost before anyone is waiting on it.
-     *
-     * <p>Discovery alone loads the engine, the launcher's ServiceLoader graph
-     * and most of what a run touches. {@code --dry-run} is deliberate: warming
-     * up by *executing* the suite would run the project's tests as a side
-     * effect of starting a daemon, which is the sort of surprise that makes a
-     * tool untrustworthy.
-     */
-    private static void warmUp(String outputs) {
+    private void warmUp() {
         try {
-            run(List.of("--class-path", outputs, "--scan-class-path", "--dry-run", "--details=none"));
+            runJUnit(List.of("--class-path", outputs, "--scan-class-path", "--dry-run", "--details=none"));
         } catch (Throwable ignored) {
-            // A warm-up that fails costs the first real run its 464 ms and
-            // nothing else. It must never stop the daemon starting.
+            // Warming is an optimization. A real request still gets the full diagnostic.
         }
     }
 
-    private static void serve(ServerSocketChannel server, Path socket, String outputs, long idleMillis)
-            throws Exception {
+    private void serve(ServerSocketChannel server, long idleMillis) throws Exception {
         while (true) {
-            server.configureBlocking(true);
             SocketChannel channel = acceptWithin(server, idleMillis);
-            if (channel == null) {
-                return; // idle timeout: exit rather than linger for a session that ended
-            }
+            if (channel == null) return;
+            boolean stop;
             try (SocketChannel client = channel) {
-                List<String> request = readRequest(client);
-                if (request.isEmpty()) {
-                    reply(client, "testd: request has no protocol version\n", 2);
-                    continue;
-                }
-                if (!request.get(0).equals(PROTOCOL)) {
-                    reply(client,
-                            "testd: unsupported client protocol `" + request.get(0) + "`; this daemon requires `"
-                                    + PROTOCOL + "`.\nfix: upgrade jails or restart the daemon with the matching version.\n",
-                            2);
-                    continue;
-                }
-                if (request.size() < 2) {
-                    reply(client, "testd: request has no command\n", 2);
-                    continue;
-                }
-                if (request.get(1).equals("STOP")) {
-                    reply(client, "", 0);
-                    return;
-                }
-                if (request.get(1).equals("PING")) {
-                    reply(client, "ok\n", 0);
-                    continue;
-                }
-                if (!request.get(1).equals("RUN")) {
-                    reply(client, "testd: unknown command `" + request.get(1) + "`\n", 2);
-                    continue;
-                }
-                List<String> arguments = new ArrayList<>();
-                arguments.add("--class-path");
-                arguments.add(outputs);
-                arguments.addAll(request.subList(2, request.size()));
-                Result result = run(arguments);
-                reply(client, result.output, result.exitCode);
+                stop = handle(client);
             } catch (Exception failure) {
-                // One malformed request must not take the daemon down; the
-                // client falls back to a cold run and says why.
                 System.err.println("jails testd: " + failure);
+                stop = false;
             }
+            if (stop) return;
         }
     }
 
-    /** Accept, or return null if nothing arrives within the idle window. */
-    private static SocketChannel acceptWithin(ServerSocketChannel server, long idleMillis) throws Exception {
-        server.configureBlocking(false);
-        long deadline = System.currentTimeMillis() + idleMillis;
-        while (System.currentTimeMillis() < deadline) {
-            SocketChannel client = server.accept();
-            if (client != null) {
-                return client;
-            }
-            Thread.sleep(25);
+    private boolean handle(SocketChannel client) throws Exception {
+        byte[] payload = readFrame(client);
+        Request request;
+        try {
+            request = Request.decode(payload);
+        } catch (Exception invalid) {
+            System.err.println("jails testd: invalid frame: " + invalid.getMessage());
+            return false;
         }
+        String id = toHex(request.id);
+        Cached cached = completed.get(id);
+        if (cached != null) {
+            if (MessageDigest.isEqual(cached.request, payload)) {
+                writeAll(client, cached.response);
+            } else {
+                writeAll(client, refused(request.id, "request-id-reused",
+                        "request ID was reused for different bytes", "retry with a new request ID"));
+            }
+            return false;
+        }
+        byte[] response = execute(request);
+        completed.put(id, new Cached(payload, response));
+        writeAll(client, response);
+        if (request.tag == 4) return true;
+        if (request.tag == 1) {
+            generations++;
+            return generations >= MAX_GENERATIONS
+                    || metaspace() - baselineMetaspace >= MAX_METASPACE_GROWTH
+                    || leakedThread();
+        }
+        return false;
+    }
+
+    private byte[] execute(Request request) throws Exception {
+        if (!MessageDigest.isEqual(project, request.project)
+                || !MessageDigest.isEqual(cookie, request.cookie)) {
+            return refused(request.id, "authentication-failed",
+                    "project digest or daemon cookie does not match",
+                    "remove .jails/run/testd-v2.* and retry from this project");
+        }
+        return switch (request.tag) {
+            case 0 -> hello(request);
+            case 1 -> run(request);
+            case 2 -> event(request.id, 0, request.epoch, true, null);
+            case 3 -> refused(request.id, "nothing-to-cancel",
+                    "the daemon has no active request", "retry the test command if work is still needed");
+            case 4 -> event(request.id, 3, 0, false, "stop requested");
+            default -> refused(request.id, "unknown-request", "unknown request tag " + request.tag,
+                    "upgrade both testd protocol peers");
+        };
+    }
+
+    private byte[] hello(Request request) throws Exception {
+        if (request.protocolMin > PROTOCOL_MAX || request.protocolMax < PROTOCOL_MIN) {
+            return refused(request.id, "protocol-mismatch",
+                    "no mutually supported testd protocol version",
+                    "restart the daemon with a compatible jails version");
+        }
+        var body = new Wire();
+        body.tag(0);
+        body.bytes(request.id);
+        body.u32(PROTOCOL_MAX);
+        return frame(body.done());
+    }
+
+    private byte[] run(Request request) throws Exception {
+        if (request.isolation != 0) {
+            return refused(request.id, "isolation-ineligible",
+                    "fork-sensitive tests cannot run in the warm daemon",
+                    "choose --engine auto so the build tool owns this partition");
+        }
+        String stale = verifyOutputs(request.outputs);
+        if (stale != null) {
+            return refused(request.id, "classes-stale", stale,
+                    "compile through the selected owner, then retry the current epoch");
+        }
+        long started = System.nanoTime();
+        List<String> arguments = new ArrayList<>();
+        arguments.add("--class-path");
+        arguments.add(outputs);
+        if (request.selectors.isEmpty()) {
+            arguments.add("--scan-class-path");
+            arguments.add("--fail-if-no-tests");
+        } else {
+            for (String selector : request.selectors) {
+                arguments.add(selector.contains("#")
+                        ? "--select-method=" + selector
+                        : "--select-class=" + selector);
+            }
+        }
+        arguments.add("--details=testfeed");
+        Result result = runJUnit(arguments);
+        long durationUs = (System.nanoTime() - started) / 1_000L;
+        byte[] accepted = accepted(request.id, request.epoch);
+        byte[] completed = completed(request, result, durationUs);
+        return concat(accepted, completed);
+    }
+
+    private String verifyOutputs(List<Output> expected) throws Exception {
+        Map<String, byte[]> actual = new LinkedHashMap<>();
+        for (Path output : splitPaths(outputs)) {
+            if (!Files.isDirectory(output)) continue;
+            try (var paths = Files.walk(output)) {
+                for (Path path : paths.filter(Files::isRegularFile).sorted().toList()) {
+                    String relative = root.relativize(path.toAbsolutePath().normalize()).toString().replace('\\', '/');
+                    actual.put(relative, sha256(Files.readAllBytes(path)));
+                }
+            }
+        }
+        if (actual.size() != expected.size()) {
+            return "output snapshot changed from " + expected.size() + " to " + actual.size() + " files";
+        }
+        long newestClass = 0;
+        for (Output entry : expected) {
+            byte[] digest = actual.remove(entry.path);
+            if (digest == null || !MessageDigest.isEqual(digest, entry.digest)) {
+                return entry.path + " changed after the coordinator snapshot";
+            }
+            if (entry.path.endsWith(".class")) newestClass = Math.max(newestClass, entry.modifiedNs);
+        }
+        if (!actual.isEmpty()) return actual.keySet().iterator().next() + " appeared after the snapshot";
+        long newestSource = newestJava(root.resolve("src"));
+        if (newestClass == 0 || newestSource > newestClass) return "a Java source is newer than its class output";
         return null;
     }
 
-    private record Result(String output, int exitCode) {}
+    private static long newestJava(Path sourceRoot) throws Exception {
+        if (!Files.isDirectory(sourceRoot)) return 0;
+        long newest = 0;
+        try (var paths = Files.walk(sourceRoot)) {
+            for (Path path : paths.filter(path -> path.toString().endsWith(".java")).toList()) {
+                newest = Math.max(newest, Files.getLastModifiedTime(path).toMillis() * 1_000_000L);
+            }
+        }
+        return newest;
+    }
 
-    private static Result run(List<String> arguments) {
-        List<String> full = new ArrayList<>();
-        full.add("execute");
-        full.addAll(arguments);
+    private static List<Path> splitPaths(String joined) {
+        List<Path> paths = new ArrayList<>();
+        for (String path : joined.split(java.io.File.pathSeparator, -1)) {
+            if (!path.isEmpty()) paths.add(Path.of(path));
+        }
+        return paths;
+    }
+
+    private static Result runJUnit(List<String> arguments) {
         var buffer = new ByteArrayOutputStream();
         var writer = new PrintWriter(buffer, true, StandardCharsets.UTF_8);
         int exitCode;
         try {
-            // INTERNAL in JUnit's own @API terms, and the only entry point that
-            // returns rather than calling System.exit -- which a resident JVM
-            // obviously cannot have. `jails testd` pins the console artifact to
-            // the project's own JUnit version (see launcher.rs), so this moves
-            // only when the project's JUnit does, and a break surfaces as a
-            // daemon that refuses to start rather than as a wrong result.
+            List<String> full = new ArrayList<>();
+            full.add("execute");
+            full.addAll(arguments);
             exitCode = org.junit.platform.console.ConsoleLauncher
-                    .run(writer, writer, full.toArray(String[]::new))
-                    .getExitCode();
+                    .run(writer, writer, full.toArray(String[]::new)).getExitCode();
         } catch (Throwable failure) {
             writer.println("jails testd: " + failure);
             exitCode = 2;
         }
         writer.flush();
-        return new Result(buffer.toString(StandardCharsets.UTF_8), exitCode);
+        String output = buffer.toString(StandardCharsets.UTF_8);
+        if (output.length() > 65_536) output = output.substring(0, 65_536) + "\n[testd output truncated]\n";
+        return new Result(output, exitCode);
     }
 
-    /** Lines until a blank one. */
-    private static List<String> readRequest(SocketChannel client) throws Exception {
-        var bytes = new ByteArrayOutputStream();
-        var buffer = ByteBuffer.allocate(4096);
-        while (true) {
-            buffer.clear();
-            int read = client.read(buffer);
-            if (read < 0) {
-                break;
-            }
-            buffer.flip();
-            byte[] chunk = new byte[buffer.remaining()];
-            buffer.get(chunk);
-            bytes.write(chunk);
-            String seen = bytes.toString(StandardCharsets.UTF_8);
-            if (seen.contains("\n\n")) {
-                break;
-            }
-        }
-        List<String> lines = new ArrayList<>();
-        for (String line : bytes.toString(StandardCharsets.UTF_8).split("\n", -1)) {
-            if (line.isEmpty()) {
-                break;
-            }
-            lines.add(line);
-        }
-        return lines;
+    private static byte[] accepted(byte[] id, long epoch) throws Exception {
+        var body = new Wire();
+        body.tag(1);
+        body.bytes(id);
+        body.u64(epoch);
+        return frame(body.done());
     }
 
-    private static void reply(SocketChannel client, String output, int exitCode) throws Exception {
-        var payload = new ByteArrayOutputStream();
-        payload.write((PROTOCOL + "\n").getBytes(StandardCharsets.UTF_8));
-        payload.write(output.getBytes(StandardCharsets.UTF_8));
-        payload.write(END);
-        payload.write(Integer.toString(exitCode).getBytes(StandardCharsets.UTF_8));
-        payload.write('\n');
-        var buffer = ByteBuffer.wrap(payload.toByteArray());
+    private static byte[] completed(Request request, Result result, long durationUs) throws Exception {
+        var body = new Wire();
+        body.tag(3);
+        body.bytes(request.id);
+        body.u64(request.epoch);
+        body.tag(0); // unit scope
+        body.strings(request.selectors);
+        List<String> cases = request.selectors.isEmpty() ? List.of("all-tests") : request.selectors;
+        body.u32(cases.size());
+        for (int index = 0; index < cases.size(); index++) {
+            body.tag(2); // TestdV2
+            body.tag(3); // compile owner: none (the coordinator compiled)
+            body.string(cases.get(index));
+            body.tag(0); // source absent
+            body.tag(result.exitCode == 0 ? 0 : result.exitCode == 1 ? 1 : 3);
+            body.u64(durationUs);
+            body.string(index == 0 ? result.output : "");
+            body.string("");
+            body.u32(1);
+            if (request.selectors.isEmpty()) {
+                body.tag(1); // scope
+                body.tag(0); // unit
+            } else {
+                body.tag(0); // requested
+            }
+            body.tag(0); // fallback absent
+        }
+        body.u32(0); // fallback reasons
+        return frame(body.done());
+    }
+
+    private static byte[] event(byte[] id, int kind, long epoch, boolean current, String reason)
+            throws Exception {
+        var body = new Wire();
+        body.tag(2);
+        body.bytes(id);
+        body.tag(kind);
+        body.u64(epoch);
+        if (kind == 0) body.bool(current);
+        else if (kind == 1) body.tag(0);
+        else body.string(reason == null ? "" : reason);
+        return frame(body.done());
+    }
+
+    private static byte[] refused(byte[] id, String code, String message, String fix) throws Exception {
+        var body = new Wire();
+        body.tag(4);
+        body.bytes(id);
+        body.string(code);
+        body.string(message);
+        if (fix == null) body.tag(0);
+        else {
+            body.tag(1);
+            body.string(fix);
+        }
+        return frame(body.done());
+    }
+
+    private static SocketChannel acceptWithin(ServerSocketChannel server, long idleMillis) throws Exception {
+        server.configureBlocking(false);
+        long deadline = System.currentTimeMillis() + idleMillis;
+        while (System.currentTimeMillis() < deadline) {
+            SocketChannel client = server.accept();
+            if (client != null) return client;
+            Thread.sleep(25);
+        }
+        return null;
+    }
+
+    private static byte[] readFrame(SocketChannel client) throws Exception {
+        ByteBuffer header = ByteBuffer.allocate(4).order(ByteOrder.BIG_ENDIAN);
+        readFully(client, header);
+        header.flip();
+        int length = header.getInt();
+        if (length < 0 || length > MAX_PAYLOAD) throw new IllegalArgumentException("payload length " + length);
+        ByteBuffer payload = ByteBuffer.allocate(length);
+        readFully(client, payload);
+        return payload.array();
+    }
+
+    private static void readFully(SocketChannel client, ByteBuffer buffer) throws Exception {
         while (buffer.hasRemaining()) {
-            client.write(buffer);
+            if (client.read(buffer) < 0) throw new IllegalArgumentException("truncated frame");
         }
     }
 
-    private JailsTestDaemon() {}
+    private static byte[] frame(byte[] payload) throws Exception {
+        if (payload.length > MAX_PAYLOAD) throw new IllegalArgumentException("response is too large");
+        var framed = new ByteArrayOutputStream(payload.length + 4);
+        framed.write(ByteBuffer.allocate(4).putInt(payload.length).array());
+        framed.write(payload);
+        return framed.toByteArray();
+    }
+
+    private static void writeAll(SocketChannel client, byte[] bytes) throws Exception {
+        ByteBuffer buffer = ByteBuffer.wrap(bytes);
+        while (buffer.hasRemaining()) client.write(buffer);
+    }
+
+    private static byte[] concat(byte[] left, byte[] right) {
+        byte[] joined = Arrays.copyOf(left, left.length + right.length);
+        System.arraycopy(right, 0, joined, left.length, right.length);
+        return joined;
+    }
+
+    private static byte[] sha256(byte[] bytes) throws Exception {
+        return MessageDigest.getInstance("SHA-256").digest(bytes);
+    }
+
+    private static long metaspace() {
+        return ManagementFactory.getMemoryPoolMXBeans().stream()
+                .filter(pool -> pool.getName().contains("Metaspace"))
+                .mapToLong(pool -> pool.getUsage().getUsed()).sum();
+    }
+
+    private static boolean leakedThread() {
+        return Thread.getAllStackTraces().keySet().stream()
+                .anyMatch(thread -> thread.isAlive() && !thread.isDaemon()
+                        && thread != Thread.currentThread() && !thread.getName().equals("DestroyJavaVM"));
+    }
+
+    private static byte[] fromHex(String text) {
+        if (text.length() != 64) throw new IllegalArgumentException("digest must be 64 hex characters");
+        byte[] bytes = new byte[32];
+        for (int index = 0; index < bytes.length; index++) {
+            int high = Character.digit(text.charAt(index * 2), 16);
+            int low = Character.digit(text.charAt(index * 2 + 1), 16);
+            if (high < 0 || low < 0) throw new IllegalArgumentException("digest is not hex");
+            bytes[index] = (byte) ((high << 4) | low);
+        }
+        return bytes;
+    }
+
+    private static String toHex(byte[] bytes) {
+        StringBuilder text = new StringBuilder(bytes.length * 2);
+        for (byte value : bytes) text.append(String.format("%02x", value & 0xff));
+        return text.toString();
+    }
+
+    private record Result(String output, int exitCode) {}
+    private record Output(String path, long size, long modifiedNs, byte[] digest) {}
+    private record Cached(byte[] request, byte[] response) {}
+
+    private record Request(int tag, byte[] id, int protocolMin, int protocolMax, byte[] project,
+            byte[] cookie, long epoch, List<String> selectors, byte[] classpath,
+            List<Output> outputs, int isolation) {
+        static Request decode(byte[] payload) {
+            Cursor cursor = new Cursor(payload);
+            int tag = cursor.tag();
+            byte[] id = cursor.bytes(32);
+            int min = 0, max = 0;
+            byte[] project;
+            byte[] cookie;
+            long epoch = 0;
+            List<String> selectors = List.of();
+            byte[] classpath = new byte[32];
+            List<Output> outputs = List.of();
+            int isolation = 0;
+            if (tag == 0) {
+                min = cursor.u32();
+                max = cursor.u32();
+                project = cursor.bytes(32);
+                cookie = cursor.bytes(32);
+            } else {
+                project = cursor.bytes(32);
+                cookie = cursor.bytes(32);
+                if (tag == 1) {
+                    epoch = cursor.u64();
+                    selectors = cursor.strings();
+                    classpath = cursor.bytes(32);
+                    int count = cursor.u32();
+                    var entries = new ArrayList<Output>(count);
+                    String previous = null;
+                    for (int index = 0; index < count; index++) {
+                        String path = cursor.string();
+                        if (previous != null && previous.compareTo(path) >= 0) {
+                            throw new IllegalArgumentException("output paths are not canonical");
+                        }
+                        previous = path;
+                        entries.add(new Output(path, cursor.u64(), cursor.u64(), cursor.bytes(32)));
+                    }
+                    outputs = List.copyOf(entries);
+                    isolation = cursor.tag();
+                } else if (tag < 2 || tag > 4) {
+                    throw new IllegalArgumentException("unknown request tag " + tag);
+                }
+            }
+            cursor.finish();
+            return new Request(tag, id, min, max, project, cookie, epoch, selectors,
+                    classpath, outputs, isolation);
+        }
+    }
+
+    private static final class Cursor {
+        private final ByteBuffer bytes;
+
+        Cursor(byte[] payload) {
+            this.bytes = ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN);
+        }
+
+        int tag() {
+            require(1);
+            return bytes.get() & 0xff;
+        }
+
+        int u32() {
+            require(4);
+            int value = bytes.getInt();
+            if (value < 0) throw new IllegalArgumentException("u32 exceeds Java protocol limit");
+            return value;
+        }
+
+        long u64() {
+            require(8);
+            long value = bytes.getLong();
+            if (value < 0) throw new IllegalArgumentException("u64 exceeds Java protocol limit");
+            return value;
+        }
+
+        byte[] bytes(int count) {
+            require(count);
+            byte[] value = new byte[count];
+            bytes.get(value);
+            return value;
+        }
+
+        String string() {
+            int count = u32();
+            return new String(bytes(count), StandardCharsets.UTF_8);
+        }
+
+        List<String> strings() {
+            int count = u32();
+            var values = new ArrayList<String>(count);
+            for (int index = 0; index < count; index++) values.add(string());
+            return List.copyOf(values);
+        }
+
+        void finish() {
+            if (bytes.hasRemaining()) throw new IllegalArgumentException("trailing request bytes");
+        }
+
+        private void require(int count) {
+            if (count < 0 || bytes.remaining() < count) throw new IllegalArgumentException("truncated request");
+        }
+    }
+
+    private static final class Wire {
+        private final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+
+        void tag(int value) { bytes.write(value); }
+        void bool(boolean value) { tag(value ? 1 : 0); }
+        void bytes(byte[] value) { bytes.writeBytes(value); }
+        void u32(long value) { bytes.writeBytes(ByteBuffer.allocate(4).putInt((int) value).array()); }
+        void u64(long value) { bytes.writeBytes(ByteBuffer.allocate(8).putLong(value).array()); }
+        void string(String value) {
+            byte[] encoded = value.getBytes(StandardCharsets.UTF_8);
+            u32(encoded.length);
+            bytes(encoded);
+        }
+        void strings(List<String> values) {
+            u32(values.size());
+            for (String value : values) string(value);
+        }
+        byte[] done() { return bytes.toByteArray(); }
+    }
 }

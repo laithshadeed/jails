@@ -70,6 +70,7 @@
 
 use crate::Result;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// Create the parent directory chain for a file about to be written.
@@ -228,6 +229,137 @@ pub fn ensure_directory_outside_project(path: impl AsRef<Path>) -> Result<()> {
     ensure_directory(path)
 }
 
+/// Create the user-only directory for disposable daemon process state.
+///
+/// `.jails/run` is explicitly not project authority: it holds sockets,
+/// authentication cookies, and generated process sources that disappear when
+/// the daemon stops. Keeping this path checked and its permissions here makes
+/// that exception narrower than a general write inside `.jails`.
+pub fn ensure_runtime_directory(project: &Path) -> Result<PathBuf> {
+    let jails = project.join(".jails");
+    let run = project.join(".jails/run");
+    for path in [&jails, &run] {
+        match path.symlink_metadata() {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(format!(
+                    "{} is a symlink and cannot hold authenticated process state\n       fix: replace it with a directory owned by this project",
+                    path.display()
+                )
+                .into());
+            }
+            Ok(metadata) if !metadata.is_dir() => {
+                return Err(format!(
+                    "{} is not a directory and cannot hold process state\n       fix: move it aside and retry",
+                    path.display()
+                )
+                .into());
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!(
+                    "failed to inspect {}: {error}\n       fix: restore access to the project's `.jails` directory and retry",
+                    path.display()
+                )
+                .into());
+            }
+        }
+    }
+    ensure_directory(&run)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&run, fs::Permissions::from_mode(0o700))
+            .map_err(|error| format!("failed to protect {}: {error}", run.display()))?;
+    }
+    Ok(run)
+}
+
+/// Atomically publish one user-only file directly beneath `.jails/run`.
+pub fn put_runtime_state(project: &Path, path: &Path, contents: &[u8]) -> Result<()> {
+    let run = project.join(".jails/run");
+    runtime_child(&run, path)?;
+    let run = ensure_runtime_directory(project)?;
+    let unique = format!("tmp.{}.{}", std::process::id(), monotonic_nonce());
+    let temp = run.join(unique);
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let publish = (|| -> Result<()> {
+        let mut file = options
+            .open(&temp)
+            .map_err(|error| format!("failed to create {}: {error}", temp.display()))?;
+        file.write_all(contents)
+            .map_err(|error| format!("failed to write {}: {error}", temp.display()))?;
+        file.sync_all()
+            .map_err(|error| format!("failed to sync {}: {error}", temp.display()))?;
+        fs::rename(&temp, path)
+            .map_err(|error| format!("failed to publish {}: {error}", path.display()).into())
+    })();
+    if publish.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    publish?;
+    sync_directory(&run)
+}
+
+/// Remove one socket or file directly beneath `.jails/run`; absence succeeds.
+pub fn remove_runtime_state(project: &Path, path: &Path) -> Result<()> {
+    let jails = project.join(".jails");
+    let run = project.join(".jails/run");
+    runtime_child(&run, path)?;
+    for authority in [&jails, &run] {
+        match authority.symlink_metadata() {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(format!(
+                    "{} is a symlink and cannot hold authenticated process state\n       fix: replace it with a directory owned by this project",
+                    authority.display()
+                )
+                .into());
+            }
+            Ok(metadata) if !metadata.is_dir() => {
+                return Err(format!(
+                    "{} is not a directory and cannot hold process state\n       fix: move it aside and retry",
+                    authority.display()
+                )
+                .into());
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => {
+                return Err(format!(
+                    "failed to inspect {}: {error}\n       fix: restore access to the project's `.jails` directory and retry",
+                    authority.display()
+                )
+                .into());
+            }
+        }
+    }
+    remove(path)
+}
+
+fn runtime_child(run: &Path, path: &Path) -> Result<()> {
+    if path.parent() == Some(run) && path.file_name().is_some() {
+        return Ok(());
+    }
+    Err(format!(
+        "{} is not a direct child of {} and cannot be process state\n       fix: keep daemon state directly beneath `.jails/run`",
+        path.display(),
+        run.display()
+    )
+    .into())
+}
+
+fn monotonic_nonce() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
 /// The build tool's output directory, which is not the project.
 ///
 /// **Derived output is deliberately outside the transaction.** `target/` and
@@ -318,6 +450,8 @@ pub(crate) fn sync_directory(path: impl AsRef<Path>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
     fn scratch() -> std::path::PathBuf {
         crate::scratch::ScratchDir::in_temp("jails-apply")
             .unwrap()
@@ -367,6 +501,76 @@ mod tests {
         fs::create_dir_all(&path).unwrap();
         let error = put_named(&path, "<project/>", "pom.xml").unwrap_err();
         assert!(error.starts_with("failed to write pom.xml:"), "{error}");
+    }
+
+    #[test]
+    fn runtime_state_is_private_atomic_and_directly_beneath_run() {
+        let project = scratch();
+        let path = project.join(".jails/run/testd-v2.meta");
+        put_runtime_state(&project, &path, b"first\n").unwrap();
+        put_runtime_state(&project, &path, b"second\n").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"second\n");
+
+        #[cfg(unix)]
+        {
+            assert_eq!(
+                fs::metadata(project.join(".jails/run"))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o700
+            );
+            assert_eq!(
+                fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+
+        remove_runtime_state(&project, &path).unwrap();
+        assert!(!path.exists());
+        remove_runtime_state(&project, &path).unwrap();
+    }
+
+    #[test]
+    fn runtime_state_refuses_nested_and_external_paths() {
+        let project = scratch();
+        let nested = project.join(".jails/run/nested/state");
+        let external = project.join("state");
+        assert!(put_runtime_state(&project, &nested, b"no").is_err());
+        assert!(put_runtime_state(&project, &external, b"no").is_err());
+        assert!(!nested.exists());
+        assert!(!external.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn runtime_state_refuses_a_symlinked_authority_directory() {
+        use std::os::unix::fs::symlink;
+
+        let project = scratch();
+        let outside = scratch();
+        symlink(&outside, project.join(".jails")).unwrap();
+        let path = project.join(".jails/run/testd-v2.meta");
+        let error = put_runtime_state(&project, &path, b"secret").unwrap_err();
+        assert!(error.contains("is a symlink"), "{error}");
+        assert!(!outside.join("run/testd-v2.meta").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn runtime_cleanup_refuses_to_follow_a_symlinked_authority_directory() {
+        use std::os::unix::fs::symlink;
+
+        let project = scratch();
+        let outside = scratch();
+        fs::write(outside.join("testd-v2.meta"), b"keep").unwrap();
+        fs::create_dir(project.join(".jails")).unwrap();
+        symlink(&outside, project.join(".jails/run")).unwrap();
+        let path = project.join(".jails/run/testd-v2.meta");
+        let error = remove_runtime_state(&project, &path).unwrap_err();
+        assert!(error.contains("is a symlink"), "{error}");
+        assert_eq!(fs::read(outside.join("testd-v2.meta")).unwrap(), b"keep");
     }
 }
 

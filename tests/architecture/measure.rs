@@ -808,6 +808,12 @@ pub(crate) fn executor_bypasses(src: &[Source]) -> usize {
                 "apply::put_in_scratch",
                 "apply::remove_derived",
                 "apply::ensure_derived_directory",
+                // Authenticated sockets and metadata under `.jails/run` are
+                // disposable process state, not project authority. These
+                // verbs check the exact directory and refuse all other paths.
+                "apply::ensure_runtime_directory",
+                "apply::put_runtime_state",
+                "apply::remove_runtime_state",
             ]
             .iter()
             .map(|verb| file.production.matches(verb).count())

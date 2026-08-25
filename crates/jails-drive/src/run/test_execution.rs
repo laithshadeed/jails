@@ -76,13 +76,6 @@ pub(super) fn run_warm(requested: &[String], options: &TestOptions, debug: bool)
                 .into(),
         );
     }
-    if options.json || options.slowest.is_some() {
-        return Err(
-            "the v1 warm engine does not emit the normalized report required by this option\n       \
-             fix: choose `--engine build` until the v2 report transport is active"
-                .into(),
-        );
-    }
     if options.timeout.is_some() {
         return Err(
             "the v1 warm transport cannot cancel a timed-out request\n       fix: choose `--engine \
@@ -100,16 +93,8 @@ pub(super) fn run_warm(requested: &[String], options: &TestOptions, debug: bool)
         }
         return crate::testd::testd(crate::testd::Action::Affected, debug);
     }
-    match requested {
-        [] => crate::testd::testd(crate::testd::Action::Run(None), debug),
-        [one] => crate::testd::testd(crate::testd::Action::Run(Some(one.clone())), debug),
-        many => {
-            for selector in many {
-                crate::testd::testd(crate::testd::Action::Run(Some(selector.clone())), debug)?;
-            }
-            Ok(())
-        }
-    }
+    let report = crate::testd::run_report(requested, 0, debug)?;
+    crate::testd::render(report)
 }
 
 pub(super) fn test_watch(requested: &[String], options: TestOptions, debug: bool) -> Result<()> {

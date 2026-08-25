@@ -31,4 +31,4 @@ pub(crate) use jails_java::{classfile, java};
 pub(crate) use jails_project::{compose, maven, model, pom};
 pub(crate) use jails_report::why;
 pub(crate) use jails_spec::build;
-pub(crate) use jails_support::{apply, json, process};
+pub(crate) use jails_support::{json, process};
