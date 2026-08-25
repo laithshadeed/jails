@@ -645,7 +645,32 @@ fields = ["id", "userId", "total", "paidAt"]
 
 Generate a sealed policy decision type, explicit authorizer port, table-driven unit tests, Spring adapter configuration, event record, JSON Schema/OpenAPI component, and producer/consumer contract tests. A policy matrix is high-risk: `--pretend` should summarize added/removed permissions separately from ordinary file edits.
 
-### 4.8 Terminal-native studio
+### 4.8 Modern Java 21 projections
+
+Modern syntax should make generated decisions easier to read, not become a compatibility trick:
+
+- records are the default for domain values, commands, query parameters/results, events, request/response DTOs, and problem extensions;
+- sealed interfaces model genuinely closed outcomes—such as `PolicyDecision.Permit` / `Deny` or `TransitionResult.Applied` / `Conflict`—and exhaustive pattern matching turns a newly generated outcome into a compile error at every unhandled adapter;
+- pattern matching for `switch` belongs at explicit translation boundaries (domain outcome → HTTP response/event), not in reflection-like registries that discover behavior implicitly;
+- JSpecify `@NullMarked` is generated at package boundaries; nullable database/transport facts use `@Nullable`, while domain optionality remains a deliberate type/invariant decision;
+- virtual threads are an opt-in execution profile for blocking JDBC and request/worker adapters. They do not make transactions parallel, remove connection-pool limits, or justify unbounded fan-out. Generated load tests and configuration should size concurrency against the database pool and print the chosen policy;
+- ordinary executors, `JdbcClient`, Spring MVC, and JDK types remain visible. `jails` must not generate a scheduler, continuation wrapper, or concurrency runtime of its own.
+
+For example, a generated sealed application result can be translated exhaustively:
+
+```java
+return switch (service.cancel(id)) {
+    case CancelResult.Cancelled(var order) -> ResponseEntity.ok(OrderResponse.from(order));
+    case CancelResult.NotFound(var missingId) -> throw new OrderNotFoundException(missingId);
+    case CancelResult.AlreadyPaid(var order) -> ResponseEntity
+            .status(HttpStatus.CONFLICT)
+            .body(OrderResponse.from(order));
+};
+```
+
+The project model must verify the configured Java release before emitting such syntax. If an adopted project targets an older release, planning reports the exact unsupported features and either proposes a separately reviewable Java upgrade or selects an explicitly documented older template; it never emits code that the configured compiler cannot accept.
+
+### 4.9 Terminal-native studio
 
 `jails studio` is a TUI front-end to `jails app`, not another data model.
 
@@ -1548,3 +1573,276 @@ final class ArchitectureTest {
 
 This is intentionally executable documentation. The generator derives package patterns from the adopted/project layout rather than hard-coding `com.acme` or the directory names shown here.
 
+---
+
+## Section 8: Phased Roadmap and Crate-by-Crate Implementation Plan
+
+### 8.1 Sequencing principles
+
+The roadmap should extend the current pipeline rather than create a `jails-v2` path. Five dependencies determine the order:
+
+1. A versioned semantic model must land before either the TUI or richer generators; otherwise each front end invents its own meaning.
+2. SQL catalog and verification must land before query code generation; generated types are trustworthy only when their source metadata is trustworthy.
+3. Durable receipts and inverse candidates must precede user-facing undo; recovery and undo are different operations and must never share ambiguous semantics.
+4. The incremental source/bytecode index must precede advanced affected testing and causal diagnostics; all three consume the same facts.
+5. CLI-owned service discovery must precede live SQL verification and repeatable integration-test loops; otherwise every feature grows its own container lifecycle.
+
+Each phase must ship as a coherent vertical increment behind stable protocol versions. A feature is complete only when human and JSON output agree, `--pretend` exercises the real preparation path, failures say whether anything changed, and the no-daemon/no-Docker fallback remains useful.
+
+### 8.2 Phases and exit gates
+
+#### Phase 0 — Measure and freeze the contracts (1–2 weeks)
+
+Deliver:
+
+- timing spans for discover, observe, parse, project, prepare, verify, commit, process, and container work;
+- benchmark fixtures for small, medium, and multi-module Java projects;
+- protocol golden tests for current human/JSON envelopes, prepared bundles, ledgers, and testd IPC;
+- a checked-in feature inventory mapping every existing command to its owner crate and side-effect class;
+- explicit compatibility versions for CLI manifests, daemon messages, SQL contracts, and durable state.
+
+Exit gates:
+
+- benchmark variance is documented and repeatable in CI;
+- every mutating route has a dry-run parity test;
+- unknown persisted/protocol versions fail closed with an upgrade instruction;
+- no performance claim combines JVM/container cold start with the warm operation being measured.
+
+#### Phase 1 — Canonical application and slice compiler (2–4 weeks)
+
+Deliver:
+
+- `AppSpec`, `SliceSpec`, `EntitySpec`, `RelationSpec`, `PolicySpec`, and `EventSpec` as versioned values;
+- the expanded field grammar, with source spans and stable diagnostic codes;
+- TOML/JSON manifest decoding through the same constructors used by CLI arguments;
+- deterministic projection from one semantic model to existing generator recipes;
+- `jails app plan`, `app apply`, and `app export` without a TUI yet.
+
+Exit gates:
+
+- equivalent CLI and manifest input serialize to the same canonical request digest;
+- reordering semantically unordered manifest entries does not change generated bytes;
+- all diagnostics include an input span or semantic path such as `slices.Billing.entities.Order.fields.total`;
+- generators accept typed values only—no downstream reparsing of field strings.
+
+#### Phase 2 — SQL contract compiler (3–5 weeks)
+
+Deliver:
+
+- dialect-neutral catalog IR plus a production-quality PostgreSQL adapter first;
+- migration-to-catalog application, named-query parsing, cardinality declarations, bind metadata, result metadata, and query digests;
+- `jails sql init/check/generate/diff/explain` with `parse-only`, `offline`, and `live` evidence levels;
+- generated parameter/result records, repository/query ports, explicit binders and row mappers, fakes, and contract tests;
+- checked-in redaction-safe `.jails/sql-contracts/*.json` suitable for frozen CI.
+
+Exit gates:
+
+- every generated Java type points to a query/catalog evidence record;
+- the same field mapping table drives DDL, binders, row reads, domain constructors, and fake values;
+- nullable/unknown/vendor-specific types fail with a targeted override mechanism rather than collapsing to `Object` silently;
+- `--frozen` detects query, migration-order, dialect, server-major, and catalog drift without contacting production.
+
+Do not implement a general SQL optimizer or ORM. Delegate syntax and live description to mature parsers/databases where possible; keep `jails` responsible for normalization, evidence, and Java projection.
+
+#### Phase 3 — Schema observation and three-way reconciliation (3–5 weeks)
+
+Deliver:
+
+- PostgreSQL observation for schemas, tables, columns, keys, indexes, enums, domains, views, routines, and policies;
+- `jails introspect db`, `pull`, and `schema diff`;
+- a normalized `SchemaOp` graph with dependency ordering and destructive-risk classification;
+- three authorities recorded independently: declared manifest, generated/migration baseline, and observed live catalog;
+- explicit rename acceptance and ignored-object policy.
+
+Exit gates:
+
+- observation is read-only and credential-redacted in every output mode;
+- an ambiguous rename can never be committed without a user-recorded choice;
+- an import followed by a no-change pull is byte-for-byte idempotent;
+- live drift never silently rewrites declared intent or generated Java;
+- destructive operations show row/data evidence when the connected database permits it.
+
+#### Phase 4 — Warm workbench and safe incremental graph (3–6 weeks)
+
+Deliver:
+
+- testd protocol v2 with project identity, epochs, cache fingerprints, selection reasons, and structured results;
+- persistent source facts, class ownership, bytecode reverse edges, JUnit inventory, and last-outcome caches;
+- watcher overflow recovery and build/classpath invalidation;
+- `--affected`, `--failed`, explicit selectors, tags, repeat/until-fail, and isolation controls composed predictably;
+- `jails dev` compile → affected-test → explicit classloader/process restart loop.
+
+Exit gates:
+
+- a randomized correctness harness compares every affected selection with an all-tests oracle and records every widening reason;
+- deleting, renaming, failing to compile, changing resources, changing processors, and changing the classpath all widen safely;
+- stale epoch results are rejected by both daemon and client;
+- daemon crash, protocol mismatch, or unusable cache falls back to an ordinary build-tool test run with no lost test coverage;
+- warm-loop p50/p95 measurements meet the budgets in Section 1 on the reference projects.
+
+#### Phase 5 — Ambient development services (2–4 weeks)
+
+Deliver:
+
+- declarative service specs for Postgres first, then Kafka and Redis;
+- discovery order: explicit application config → already-running labelled service → reusable CLI-managed service → new ephemeral service;
+- image/config/port/health fingerprints, ownership labels, log/status commands, and reuse policy;
+- service leases shared by `dev`, `sql check --live`, migration verification, and integration tests;
+- `jails services up/status/logs/reset/down` with precise destructive boundaries.
+
+Exit gates:
+
+- no service starts during `--pretend`, read-only static reporting, shell completion, or help;
+- explicit configuration always wins and is explained;
+- concurrently invoked clients cannot race to provision duplicate project services;
+- reset/down target only resolved, labelled resources and report data-loss implications;
+- CI can force `--services none` and supply ordinary environment configuration.
+
+#### Phase 6 — Evidence-driven diagnostics and architecture fitness (2–4 weeks)
+
+Deliver:
+
+- a shared fact/cause graph for routes, beans, source owners, build facts, migrations, SQL contracts, services, and generated provenance;
+- `why bean/migration/query`, routes conflicts/OpenAPI comparison, missing/cyclic bean reports, and shortest cause paths;
+- registered typed doctor fixes routed back through canonical requests and preparation;
+- generated ArchUnit rules plus a baseline/adoption mode for existing projects;
+- `explain` for generated decisions and transaction operations using recorded provenance.
+
+Exit gates:
+
+- reports distinguish static inference, live observation, and hypothesis;
+- every suggested automatic fix names preconditions and has a preview test;
+- diagnostics do not acquire a write lock, start services, or mutate machine state;
+- architecture rules fail on seeded violations and do not depend on generated production runtime code.
+
+#### Phase 7 — Transaction UX, TUI, and ecosystem hardening (3–5 weeks)
+
+Deliver:
+
+- operation receipts with reason, owner, before/after digest, verification evidence, risk, and inverse candidate;
+- `history`, `show`, and safe forward `undo`, distinct from crash `recover`;
+- portable `plan-out/plan-in` with root, protocol, input, and template preconditions;
+- `jails studio` over the canonical manifest and planner, with deterministic session replay;
+- completion, documentation, upgrade notes, telemetry-free local performance summaries, and plugin/template safety policy.
+
+Exit gates:
+
+- undo refuses or three-way merges user-edited after-images; it never rolls back an applied database migration implicitly;
+- replayed TUI sessions and equivalent non-interactive manifests produce identical plans;
+- a prepared plan cannot be applied to another root, protocol version, or changed preimage;
+- full crash-point sweeps preserve the existing roll-forward durability guarantee;
+- a generated project builds and tests after removing the `jails` executable.
+
+### 8.3 Crate-by-crate ownership plan
+
+| Workspace member | Keep as its invariant | Add for this roadmap | Must not absorb |
+|---|---|---|---|
+| root `jails` CLI | Clap parsing, dispatch, consistent terminal entry point | New command trees, common review flags, progress/TUI adapter, shell completions | Semantic validation, generation logic, container ownership, a second result model |
+| `jails-protocol` | Shared typed vocabulary and durable wire/state contracts; no direct filesystem I/O | Versioned app/slice/query/schema/service specs, evidence level, cause nodes, daemon messages, plan/receipt schemas | Project discovery, parsing Java, running tools, rendering templates |
+| `jails-spec` | Pure parsing and structural validation | Expanded field grammar, manifest decoder, schema/query/policy IR validation, cross-entity relation checks | Live database observation, filesystem mutation, Java rendering |
+| `jails-project` | Observation and surgical project-file models | Cached build model, migration discovery, catalog observation adapters, service declarations and fingerprints | Starting long-running tools, durable commits, report formatting |
+| `jails-java` | Lightweight Java/class-file facts and surgical edits | Persistent source fact format, complete descriptor/annotation bytecode edges, class ownership, source-span-preserving edits | Becoming a Java compiler or language server, application classloading |
+| `jails-generate` | Pure deterministic projections to desired artifacts | Manifest/slice projection, named-query Java, contracts/factories/ArchUnit/OpenAPI templates, semantic ownership markers | Reading the live database, writing files, executing formatter/build tools |
+| `jails-prepare` | Pure in-memory reconciliation and exact prepared bundle | Typed semantic edit reports, risk/evidence aggregation, plan serialization checks, schema-op presentation, inverse candidates | Taking locks, starting services, making hidden observations during apply |
+| `jails-commit` | Lock, WAL, atomic publication, ledger, roll-forward recovery | Rich receipts, plan precondition enforcement, forward undo transaction preparation hooks, state migrations | Domain planning, database rollback, shell/container side effects |
+| `jails-engine` | One orchestration path and global execution policy | Routes for app/SQL/pull/schema/history; phase barriers for observe → plan → verify → commit → reconcile | Feature-specific ad hoc writes or alternate pretend behavior |
+| `jails-drive` | Explicit external process/service execution | Workbench daemon v2, compiler/watch coordination, affected graph store, DevServices lifecycle, live SQL description | Static reporting, canonical domain rules, owning generated source |
+| `jails-report` | Read-only human/JSON diagnosis and explanation | Cause graph, evidence rendering, query/migration/bean explanations, route/OpenAPI conflicts, benchmark summaries | Registered fixes' mutation implementation, implicit service startup |
+| `jails-state` | Fail-closed read-only interpretation of `.jails/` | Versioned readers for contracts, cache metadata, service leases, transactions, history and compatibility diagnostics | Writing/migrating state in place, application project observation |
+| `jails-testkit` | Shared test-only concurrency and fixture support | Golden protocol harness, crash sweep helpers, fake catalog/database facts, daemon epoch simulator, generated-project assertions | Production utilities or public runtime APIs |
+| `jails-support` | Domain-neutral OS, process, lock, codec and error primitives | Framed local IPC, bounded watcher abstraction, clock/process fakes, secure redaction helpers if broadly reusable | Java/SQL/project concepts or user-facing feature policy |
+
+The dependency direction should stay acyclic and visible:
+
+```text
+protocol/spec
+     ↓
+project/java → generate
+     ↓           ↓
+        prepare
+           ↓
+state → commit
+           ↑
+         engine
+      ↙          ↘
+ report          drive
+      ↖          ↗
+          CLI
+```
+
+This is a responsibility diagram, not permission to introduce all arrows. `report` remains structurally unable to mutate or launch services; `generate` remains unable to observe live state; `prepare` remains unable to write. Cross-cutting cached fact schemas belong in `protocol`, while their on-disk readers belong in `state` and their producers remain in `project`, `java`, or `drive`.
+
+### 8.4 First releasable slice
+
+The smallest release that changes the product meaningfully is not the TUI. It is:
+
+1. canonical `AppSpec`/`SliceSpec` and `jails app plan`;
+2. one named PostgreSQL query checked against migrations offline and a Testcontainers database live;
+3. explicit generated Java parameter/result records and `JdbcClient` adapter;
+4. a checked-in contract digest and `--frozen` CI check;
+5. a prepared diff showing provenance and evidence;
+6. affected tests widened on the new query/migration dependency rule.
+
+That slice proves the central compiler loop—intent → SQL evidence → ordinary Java → tests → safe plan—without waiting for service reuse, full introspection, or a terminal studio. Phase 5 service leases can then remove the remaining container ceremony, and Phase 7 can make the same model interactive.
+
+### 8.5 Verification strategy and release scorecard
+
+| Property | Test method | Release gate |
+|---|---|---|
+| Determinism | Generate twice across randomized input order, locale and temp roots | Identical desired bytes, operation ordering and semantic digest |
+| Dry-run parity | Compare pretend bundle with the bundle passed to commit | Same operation/evidence digests; only commit and post-commit effects absent |
+| Crash safety | Inject a stop at every durable commit transition | Next invocation reaches exactly the intended after-state or reports unreadable state |
+| Incremental safety | Mutation corpus: source, resource, migration, deletion, rename, processor, classpath | Selected tests are a superset of the oracle's failures; unknowns widen |
+| SQL correctness | Dialect fixtures plus live PostgreSQL version matrix | Generated bind/read types match described metadata; frozen drift fails |
+| Merge safety | Property tests over base/user/generated triples and ownership regions | User-owned text is preserved or a conflict is returned; never silently dropped |
+| Runtime independence | Build/test generated fixtures after removing `jails` and clearing `.jails/` | Standard Java build remains green |
+| Architectural purity | Workspace dependency checks plus generated ArchUnit suite | No runtime dependency, no JPA generation, domain remains framework-free |
+| Latency | Hyperfine/criterion-style warm and cold suites with cache reasons | Section 1 p50/p95 budgets, or a published miss reason and regression waiver |
+| Output contract | Golden human/JSON results for success, no-op, conflict and failure | One semantic result; stable machine-readable codes and schema version |
+
+Release reporting should publish distributions and fixture sizes, not a single “1000x” number. The trustworthy claim is concrete: which former workflow collapsed, its before/after p50 and p95, what was warm, and which safety checks still ran.
+
+### 8.6 Principal risks and controls
+
+| Risk | Control |
+|---|---|
+| A broad manifest becomes a hidden framework | Keep it optional and ejectable; generated standard Java/SQL remains authoritative to normal tools |
+| Static SQL support grows into an incomplete database | PostgreSQL-first scope, evidence levels, live prepare/describe, explicit unsupported constructs |
+| Affected testing misses reflective/resource coupling | Rule-based external edges, compile/source completeness checks, and fail-safe widening |
+| Daemon caches return plausible stale answers | Content/build/protocol digests, epochs, atomic cache publication, visible invalidation reasons |
+| Schema pull destroys hand modeling | Three independent authorities, preview by default, rename conflicts, granular ownership |
+| DevServices leaks resources or takes over explicit config | Labelled leases, strict discovery priority, bounded lifetime, targeted reset/down |
+| “Undo” implies database rollback or history erasure | Forward file transaction only; recovery stays roll-forward; migrations require explicit forward/down plans |
+| The TUI forks semantics from CLI/CI | TUI edits a canonical manifest and invokes the same plan API; deterministic replay is a gate |
+| Too many features erode crate boundaries | Dependency-denial tests and the ownership table above reviewed with every new cross-crate edge |
+
+---
+
+## Source and Evidence Notes
+
+### Current `jails` implementation inspected
+
+The recommendations were anchored in the current source responsibilities, particularly:
+
+- `crates/jails-spec/src/spec/field.rs` for field parsing and derived projections;
+- `crates/jails-generate/src/generate/scaffold.rs` and `crates/jails-generate/src/sql.rs` for vertical slices and the shared field-to-DDL/binder/row-mapper path;
+- `crates/jails-prepare/src/pipeline.rs`, `merge.rs`, and `reconcile.rs` for pure preparation and three-way reconciliation;
+- `crates/jails-commit/src/execute.rs`, `journal.rs`, and `recover.rs` for durable commit and roll-forward recovery;
+- `crates/jails-engine/src/route/artifact.rs` and `route/commit.rs` for orchestration;
+- `crates/jails-java/src/classfile.rs` for constant-pool dependency extraction;
+- `crates/jails-drive/src/testd.rs` and `affected.rs` for the resident test runner and selection;
+- `crates/jails-report/src/doctor.rs` and `why.rs` for read-only diagnostics;
+- `src/cli.rs` for the existing command surface.
+
+The local graph was used for symbol discovery and call relationships, then current files were inspected because the index generation predated worktree changes and did not yet track the `jails-drive`, `jails-report`, and `jails-state` split. Consequently, no negative/exhaustive claim in this report depends solely on the stale index.
+
+### Primary upstream references
+
+- Java/JVM: [Java Virtual Machine Specification, class-file format](https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html); [Java 21 Instrumentation API](https://docs.oracle.com/en/java/javase/21/docs/api/java.instrument/java/lang/instrument/Instrumentation.html).
+- Spring: [`JdbcClient`](https://docs.spring.io/spring-framework/reference/data-access/jdbc/core.html); [RFC 9457 `ProblemDetail`](https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-ann-rest-exceptions.html); [JSpecify null safety](https://docs.spring.io/spring-framework/reference/core/null-safety.html); [DevTools](https://docs.spring.io/spring-boot/reference/using/devtools.html); [Testcontainers service connections](https://docs.spring.io/spring-boot/reference/testing/testcontainers.html); [failure analyzers](https://docs.spring.io/spring-boot/reference/features/spring-application.html#features.spring-application.application-startup-failure).
+- Testing and architecture: [Testcontainers reusable containers](https://java.testcontainers.org/features/reuse/); [ArchUnit user guide](https://www.archunit.org/userguide/html/000_Index.html).
+- SQL and schema: [sqlc documentation](https://docs.sqlc.dev/en/stable/); [SQLx checked query macro and offline mode](https://docs.rs/sqlx/latest/sqlx/macro.query.html); [jOOQ code generation](https://www.jooq.org/doc/latest/manual/code-generation/); [Prisma introspection](https://www.prisma.io/docs/orm/prisma-schema/introspection); [Alembic autogenerate](https://alembic.sqlalchemy.org/en/latest/autogenerate.html); [PostgREST schema cache](https://postgrest.org/en/v10/schema_cache.html).
+- Framework generation and testing patterns: [Rails command line/generators](https://guides.rubyonrails.org/command_line.html); [Rails migrations](https://guides.rubyonrails.org/active_record_migrations.html); [Django migrations](https://docs.djangoproject.com/en/6.0/topics/migrations/); [Phoenix context generator](https://hexdocs.pm/phoenix/Mix.Tasks.Phx.Gen.Context.html); [Ecto changesets](https://hexdocs.pm/ecto/Ecto.Changeset.html); [Ecto SQL Sandbox](https://hexdocs.pm/ecto_sql/Ecto.Adapters.SQL.Sandbox.html); [FastAPI features](https://fastapi.tiangolo.com/features/); [AdonisJS scaffolding](https://docs.adonisjs.com/guides/concepts/scaffolding); [Loco generators](https://loco.rs/docs/reference/generators/).
+- Declarative and ambient-service patterns: [Quarkus Dev Services](https://quarkus.io/guides/dev-services); [Wasp application specification](https://wasp.sh/docs/general/spec); [JHipster JDL](https://www.jhipster.tech/jdl/intro/).
+
+Where the translation matrix lists an ecosystem for breadth rather than a source used for a material behavioral claim, the linked official repository is the catalogue pointer; implementation recommendations remain constrained by the primary evidence above and by `jails`' no-runtime-dependency rule.

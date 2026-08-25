@@ -25,6 +25,12 @@ available.
 This file describes what the code *is* and the traps in it; `pending.md`
 describes what is not done and why. Do not add proposals here.
 
+**`pending.md` holds only what is open.** A closed item is *deleted* from it
+rather than marked done, so `git log -p -- pending.md` is where a closed one and
+the measurement it closed on live. Section numbers are stable and never reused,
+and the file ends with a one-line index of the closed ones so a `pending.md §N`
+citation in the code still resolves to a subject.
+
 **Six design documents were deleted and folded into `pending.md`:** `plan.md`,
 `abstract.md`, `playground.md`, and -- on 2026-08-24 and 2026-08-25 --
 `missing.md` (what one real migration needed and did not get, all eight entries
