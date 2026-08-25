@@ -28,7 +28,7 @@ use crate::coordinate::{DependencySpec, MavenCoordinate, PluginSpec};
 use crate::entity::{CapabilityId, CapabilitySpec};
 use crate::identity::{JavaType, MarkerId, Name, ObjectId, ProjectPath, PropertyKey, ServiceName};
 use crate::resource::ComposeServiceSpec;
-use jails_support::codec::{Decoder, Encoder, MAX_CODEC_DEPTH, ordered};
+use jails_support::codec::{Codec, Decoder, Encoder, MAX_CODEC_DEPTH, ordered};
 use std::collections::BTreeMap;
 
 // ---------------------------------------------------------------------------
@@ -56,8 +56,9 @@ impl FactKind {
             Self::JavaSource(_) => 4,
         }
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for FactKind {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.tag(self.tag());
         match self {
             Self::Pom | Self::HumanConfig | Self::Compose => Ok(()),
@@ -65,7 +66,7 @@ impl FactKind {
         }
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::Pom,
             1 => Self::HumanConfig,
@@ -87,20 +88,20 @@ pub enum FactSourceState {
     Present { sha256: ObjectId, len: u64 },
 }
 
-impl FactSourceState {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for FactSourceState {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         match self {
             Self::Absent => encoder.tag(0),
             Self::Present { sha256, len } => {
                 encoder.tag(1);
-                sha256.encode(encoder);
+                sha256.encode(encoder)?;
                 encoder.u64(*len);
             }
         }
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::Absent,
             1 => Self::Present {
@@ -151,8 +152,9 @@ impl ProjectFactKey {
             Self::JavaType(_) => 7,
         }
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for ProjectFactKey {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.tag(self.tag());
         match self {
             Self::MavenDependency(coordinate) | Self::MavenPlugin(coordinate) => {
@@ -179,7 +181,7 @@ impl ProjectFactKey {
         }
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::MavenDependency(MavenCoordinate::decode(decoder)?),
             1 => Self::MavenPlugin(MavenCoordinate::decode(decoder)?),
@@ -272,8 +274,9 @@ impl ProjectFact {
             _ => Ok(()),
         }
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for ProjectFact {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.tag(self.tag());
         match self {
             Self::MavenDependency(spec) => spec.encode(encoder),
@@ -281,7 +284,7 @@ impl ProjectFact {
             Self::ComposeService(spec) => spec.encode(encoder),
             Self::Property(value) => encoder.string(value),
             Self::MarkedBlock { body_sha256 } => {
-                body_sha256.encode(encoder);
+                body_sha256.encode(encoder)?;
                 Ok(())
             }
             Self::CommandRegistration => Ok(()),
@@ -290,7 +293,7 @@ impl ProjectFact {
         }
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::MavenDependency(DependencySpec::decode(decoder)?),
             1 => Self::MavenPlugin(PluginSpec::decode(decoder)?),
@@ -376,8 +379,9 @@ impl ProjectFacts {
     pub fn values(&self) -> impl Iterator<Item = (&ProjectFactKey, &ProjectFact)> {
         self.values.iter().map(|(key, (_, fact))| (key, fact))
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for ProjectFacts {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.count(self.sources.len())?;
         let mut previous: Option<&FactKind> = None;
         for (kind, state) in &self.sources {
@@ -399,7 +403,7 @@ impl ProjectFacts {
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         let count = decoder.count()?;
         let mut sources = BTreeMap::new();
         let mut previous: Option<FactKind> = None;
@@ -427,7 +431,7 @@ impl ProjectFacts {
 
 /// The delta form: a plain key-to-fact map, with no source. A delta is what
 /// a recipe *declares*; where it came from is the recipe, not an input file.
-pub fn encode_fact_map(
+pub(crate) fn encode_fact_map(
     encoder: &mut Encoder,
     values: &BTreeMap<ProjectFactKey, ProjectFact>,
 ) -> Result<()> {
@@ -443,7 +447,9 @@ pub fn encode_fact_map(
     Ok(())
 }
 
-pub fn decode_fact_map(decoder: &mut Decoder<'_>) -> Result<BTreeMap<ProjectFactKey, ProjectFact>> {
+pub(crate) fn decode_fact_map(
+    decoder: &mut Decoder<'_>,
+) -> Result<BTreeMap<ProjectFactKey, ProjectFact>> {
     let count = decoder.count()?;
     let mut values = BTreeMap::new();
     let mut previous: Option<ProjectFactKey> = None;
@@ -501,8 +507,8 @@ pub struct JavaTypeFact {
     pub enum_constants: Vec<Name>,
 }
 
-impl JavaTypeFact {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for JavaTypeFact {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.source.encode(encoder)?;
         encoder.tag(self.kind.tag());
         encoder.count(self.supertypes.len())?;
@@ -520,12 +526,12 @@ impl JavaTypeFact {
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         let source = ProjectPath::decode(decoder)?;
         let kind = JavaTypeKind::from_tag(decoder.tag()?)?;
-        let supertypes = decode_vec(decoder, JavaType::decode)?;
-        let constructor = decode_vec(decoder, JavaParameterFact::decode)?;
-        let enum_constants = decode_vec(decoder, Name::decode)?;
+        let supertypes = decoder.seq::<JavaType>()?;
+        let constructor = decoder.seq::<JavaParameterFact>()?;
+        let enum_constants = decoder.seq::<Name>()?;
         Ok(Self {
             source,
             kind,
@@ -536,18 +542,6 @@ impl JavaTypeFact {
     }
 }
 
-fn decode_vec<T>(
-    decoder: &mut Decoder<'_>,
-    mut decode: impl FnMut(&mut Decoder<'_>) -> Result<T>,
-) -> Result<Vec<T>> {
-    let count = decoder.count()?;
-    let mut out = Vec::new();
-    for _ in 0..count {
-        out.push(decode(decoder)?);
-    }
-    Ok(out)
-}
-
 /// One constructor parameter. Order is preserved: a record's components are
 /// positional, so reordering them changes what the constructor means.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -556,13 +550,13 @@ pub struct JavaParameterFact {
     pub type_expression: JavaTypeExpression,
 }
 
-impl JavaParameterFact {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for JavaParameterFact {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.name.encode(encoder)?;
         self.type_expression.encode(encoder, 0)
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
             name: Name::decode(decoder)?,
             type_expression: JavaTypeExpression::decode(decoder, 0)?,
@@ -582,6 +576,8 @@ pub enum JavaPrimitive {
     Double,
 }
 
+/// Nothing calls either of these -- no fact is built from a primitive yet.
+/// `pending.md` §7.2.
 impl JavaPrimitive {
     pub fn parse(text: &str) -> Option<Self> {
         Some(match text {

@@ -32,7 +32,7 @@ use std::path::Path;
 
 use jails_protocol::effect::{EffectFailureCode, EffectId, EffectState, PostCommitEffect};
 use jails_protocol::identity::{ObjectId, OperationId, ServiceName};
-use jails_support::codec::{Encoder, domain_hash};
+use jails_support::codec::{Codec, Encoder, domain_hash};
 use jails_support::process::{Diagnostics, OutputMode, compose_spec, run as run_process};
 
 use crate::journal::ReceiptV1;
@@ -46,13 +46,13 @@ use jails_support::lock::{Contention, Lock};
 /// The index is in the key because a future transition with two effects would
 /// otherwise give identical descriptors the same identity, and a retry could
 /// not tell which one it had already run.
-pub fn identify(
+pub(crate) fn identify(
     operation: OperationId,
     index: u32,
     effect: &PostCommitEffect,
 ) -> Result<EffectId, String> {
     let mut encoder = Encoder::new();
-    operation.encode(&mut encoder);
+    operation.encode(&mut encoder)?;
     encoder.u32(index);
     effect.encode(&mut encoder)?;
     Ok(EffectId::from_object(ObjectId::from_bytes(domain_hash(

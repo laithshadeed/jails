@@ -32,10 +32,10 @@ use crate::render::TemplateBindings;
 use crate::request::CanonicalCapability;
 use crate::snapshot::InputPrecondition;
 use jails_spec::spec::layout::Layer;
-use jails_support::codec::{self, Decoder, Encoder, ordered};
+use jails_support::codec::{self, Codec, Decoder, Encoder, ordered};
 
 /// The one context version.
-pub const CONTEXT_SCHEMA: u32 = 1;
+pub(crate) const CONTEXT_SCHEMA: u32 = 1;
 
 /// What a renderer was rendering.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -52,7 +52,22 @@ impl RenderedSubjectContext {
         }
     }
 
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+    /// Identity and spec must describe the same thing.
+    pub fn validate(&self) -> Result<()> {
+        match self {
+            Self::Entity { id, spec } if !spec.matches(id) => Err(
+                "a renderer context pairs an entity identity and a spec of different kinds"
+                    .to_string(),
+            ),
+            Self::OneShot { id, spec } if !spec.matches(id) => Err(
+                "a renderer context pairs a one-shot identity and a spec that disagree".to_string(),
+            ),
+            _ => Ok(()),
+        }
+    }
+}
+impl Codec for RenderedSubjectContext {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.tag(self.tag());
         match self {
             Self::Entity { id, spec } => {
@@ -66,7 +81,7 @@ impl RenderedSubjectContext {
         }
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::Entity {
                 id: EntityId::decode(decoder)?,
@@ -78,20 +93,6 @@ impl RenderedSubjectContext {
             },
             other => Err(format!("unknown rendered subject tag {other}"))?,
         })
-    }
-
-    /// Identity and spec must describe the same thing.
-    pub fn validate(&self) -> Result<()> {
-        match self {
-            Self::Entity { id, spec } if !spec.matches(id) => Err(
-                "a renderer context pairs an entity identity and a spec of different kinds"
-                    .to_string(),
-            ),
-            Self::OneShot { id, spec } if !spec.matches(id) => Err(
-                "a renderer context pairs a one-shot identity and a spec that disagree".to_string(),
-            ),
-            _ => Ok(()),
-        }
     }
 }
 
@@ -131,14 +132,14 @@ pub struct ResolvedReferenceContext {
     pub managed: Option<EntityId>,
 }
 
-impl ResolvedReferenceContext {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for ResolvedReferenceContext {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.tag(self.role.tag());
         self.target.encode(encoder)?;
         encoder.option(self.managed.as_ref(), |e, id| id.encode(e))
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
             role: ReferenceRole::from_tag(decoder.tag()?)?,
             target: JavaType::decode(decoder)?,
@@ -219,7 +220,15 @@ impl RendererContextV1 {
         Ok(())
     }
 
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+    /// The exact bytes stored as `context_object`.
+    pub fn to_object(&self) -> Result<Vec<u8>> {
+        let mut encoder = Encoder::new();
+        self.encode(&mut encoder)?;
+        encoder.finish()
+    }
+}
+impl Codec for RendererContextV1 {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.validate()?;
         encoder.u32(CONTEXT_SCHEMA);
         self.renderer.encode(encoder)?;
@@ -243,7 +252,7 @@ impl RendererContextV1 {
         self.bindings.encode(encoder)
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         let schema = decoder.u32()?;
         if schema != CONTEXT_SCHEMA {
             return Err(format!(
@@ -290,13 +299,6 @@ impl RendererContextV1 {
         };
         context.validate()?;
         Ok(context)
-    }
-
-    /// The exact bytes stored as `context_object`.
-    pub fn to_object(&self) -> Result<Vec<u8>> {
-        let mut encoder = Encoder::new();
-        self.encode(&mut encoder)?;
-        encoder.finish()
     }
 }
 

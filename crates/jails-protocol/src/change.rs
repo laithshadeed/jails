@@ -22,7 +22,7 @@ use crate::Result;
 use crate::edit::{FactDelta, SemanticEdit, SemanticPrecondition};
 use crate::render::{DesiredFile, ManagedPath};
 use crate::resource::{DesiredResource, ResourceKey, ResourceOwner};
-use jails_support::codec::{Decoder, Encoder};
+use jails_support::codec::{Codec, Decoder, Encoder};
 use std::collections::BTreeSet;
 
 // ---------------------------------------------------------------------------
@@ -36,8 +36,8 @@ pub enum ChangeAttribution {
     Maintenance(MaintenanceAttribution),
 }
 
-impl ChangeAttribution {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for ChangeAttribution {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         match self {
             Self::Resource(owner) => {
                 encoder.tag(0);
@@ -51,7 +51,7 @@ impl ChangeAttribution {
         }
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::Resource(ResourceOwner::decode(decoder)?),
             1 => Self::Maintenance(MaintenanceAttribution::from_tag(decoder.tag()?)?),
@@ -198,8 +198,9 @@ impl DesiredChange {
         }
         self.fact_delta.validate()
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for DesiredChange {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.validate()?;
         self.attribution.encode(encoder)?;
         encode_all(encoder, &self.resources, DesiredResource::encode)?;
@@ -211,7 +212,7 @@ impl DesiredChange {
         self.fact_delta.encode(encoder)
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         let change = Self {
             attribution: ChangeAttribution::decode(decoder)?,
             resources: decode_all(decoder, DesiredResource::decode)?,

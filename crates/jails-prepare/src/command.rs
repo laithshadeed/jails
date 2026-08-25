@@ -27,7 +27,7 @@ use jails_protocol::identity::{OperationId, TransactionId};
 use jails_protocol::transition::EffectResumeReason;
 
 /// The schema string a machine reader keys on.
-pub const SCHEMA: &str = "jails.command-result.v1";
+pub(crate) const SCHEMA: &str = "jails.command-result.v1";
 
 /// How a command ended.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

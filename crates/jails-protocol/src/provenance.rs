@@ -27,7 +27,7 @@ use crate::Result;
 use crate::entity::{Recipe, ToolFeature};
 use crate::identity::{ObjectId, ProjectPath, TemplateId};
 use jails_spec::spec::kind::Capability;
-use jails_support::codec::{self, Decoder, Encoder};
+use jails_support::codec::{self, Codec, Decoder, Encoder};
 
 /// Which renderer produced an output.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -147,8 +147,8 @@ impl OneShotKind {
     }
 }
 
-impl RendererId {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for RendererId {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         match self {
             Self::Recipe(recipe) => {
                 encoder.tag(0);
@@ -174,7 +174,7 @@ impl RendererId {
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::Recipe(crate::entity::recipe_from_label(&decoder.string()?)?),
             1 => Self::Capability(crate::entity::capability_from_label(&decoder.string()?)?),
@@ -189,8 +189,8 @@ impl RendererId {
     }
 }
 
-impl TemplateOrigin {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for TemplateOrigin {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         match self {
             Self::BuiltIn { name } => {
                 encoder.tag(0);
@@ -207,7 +207,7 @@ impl TemplateOrigin {
         }
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::BuiltIn {
                 name: TemplateId::decode(decoder)?,
@@ -223,14 +223,14 @@ impl TemplateOrigin {
     }
 }
 
-impl TemplateStamp {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for TemplateStamp {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.origin.encode(encoder)?;
-        self.source_object.encode(encoder);
+        self.source_object.encode(encoder)?;
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
             origin: TemplateOrigin::decode(decoder)?,
             source_object: ObjectId::decode(decoder)?,
@@ -239,22 +239,44 @@ impl TemplateStamp {
 }
 
 impl RendererStamp {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+    /// `SHA256("JAILS-RELEVANT-INPUT-1" || encode(rows))`.
+    ///
+    /// Only the inputs a renderer declared. Hashing every project file would
+    /// make any unrelated edit appear to explain a changed render, which is
+    /// the opposite of what provenance is for.
+    pub fn relevant_input_hash(rows: &[(ProjectPath, ObjectId)]) -> Result<ObjectId> {
+        let mut encoder = Encoder::new();
+        encoder.count(rows.len())?;
+        let mut previous: Option<&ProjectPath> = None;
+        for (path, object) in rows {
+            codec::ordered(previous, path)?;
+            previous = Some(path);
+            path.encode(&mut encoder)?;
+            object.encode(&mut encoder)?;
+        }
+        Ok(ObjectId::from_bytes(codec::domain_hash(
+            "JAILS-RELEVANT-INPUT-1",
+            &encoder.finish()?,
+        )))
+    }
+}
+impl Codec for RendererStamp {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.renderer.encode(encoder)?;
         encoder.u32(self.renderer_schema);
         encoder.string(&self.jails_version)?;
         encoder.option(self.template.as_ref(), |e, stamp| stamp.encode(e))?;
         encoder.u32(self.context_schema);
-        self.context_object.encode(encoder);
-        self.relevant_inputs.encode(encoder);
+        self.context_object.encode(encoder)?;
+        self.relevant_inputs.encode(encoder)?;
         encoder.count(self.tools.len())?;
         for tool in &self.tools {
-            tool.encode(encoder);
+            tool.encode(encoder)?;
         }
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         let renderer = RendererId::decode(decoder)?;
         let renderer_schema = decoder.u32()?;
         let jails_version = decoder.string()?;
@@ -277,27 +299,6 @@ impl RendererStamp {
             relevant_inputs,
             tools,
         })
-    }
-
-    /// `SHA256("JAILS-RELEVANT-INPUT-1" || encode(rows))`.
-    ///
-    /// Only the inputs a renderer declared. Hashing every project file would
-    /// make any unrelated edit appear to explain a changed render, which is
-    /// the opposite of what provenance is for.
-    pub fn relevant_input_hash(rows: &[(ProjectPath, ObjectId)]) -> Result<ObjectId> {
-        let mut encoder = Encoder::new();
-        encoder.count(rows.len())?;
-        let mut previous: Option<&ProjectPath> = None;
-        for (path, object) in rows {
-            codec::ordered(previous, path)?;
-            previous = Some(path);
-            path.encode(&mut encoder)?;
-            object.encode(&mut encoder);
-        }
-        Ok(ObjectId::from_bytes(codec::domain_hash(
-            "JAILS-RELEVANT-INPUT-1",
-            &encoder.finish()?,
-        )))
     }
 }
 

@@ -34,10 +34,9 @@ use jails_protocol::change::DesiredChange;
 use jails_protocol::conflict::{FileImage, FileMode, LiveFileImage, StoredFileImage};
 use jails_protocol::envelope::LedgerV2;
 use jails_protocol::identity::{ObjectId, ObjectRef, ProjectPath, TemplateKey};
-use jails_protocol::plan::{LedgerIntent, PlannedSubject};
+use jails_protocol::plan::LedgerIntent;
 use jails_protocol::render::DesiredProvenance;
 use jails_protocol::render::{DesiredBody, TemplateValue};
-use jails_protocol::resource::ResourceOwner;
 use jails_protocol::snapshot::{Captured, ProjectSnapshot, ReadSet, TemplateStore};
 use jails_protocol::transition::{AbortPlan, CommitPlan, FinalisationPlan};
 use jails_support::codec::sha256;
@@ -132,12 +131,7 @@ pub struct PreparationContext {
 }
 
 /// Reads one object out of whatever holds them.
-pub type ObjectReader = std::sync::Arc<dyn Fn(&ObjectId) -> Option<Vec<u8>> + Send + Sync>;
-
-/// An object store with nothing in it.
-pub fn no_objects() -> ObjectReader {
-    std::sync::Arc::new(|_| None)
-}
+pub(crate) type ObjectReader = std::sync::Arc<dyn Fn(&ObjectId) -> Option<Vec<u8>> + Send + Sync>;
 
 /// The prepared change plus the runtime-only bindings a commit needs.
 ///
@@ -545,7 +539,7 @@ fn flat(value: Option<&TemplateValue>, key: &TemplateKey) -> Result<String> {
 }
 
 /// The bodies a prepared change will write, keyed by content address.
-pub type ObjectBundle = BTreeMap<ObjectId, Arc<[u8]>>;
+pub(crate) type ObjectBundle = BTreeMap<ObjectId, Arc<[u8]>>;
 
 fn intern(objects: &mut ObjectBundle, body: Vec<u8>) -> ObjectRef {
     let id = ObjectId::from_bytes(sha256(&body));
@@ -673,22 +667,20 @@ fn default_mode() -> FileMode {
     FileMode::new(0o644).expect("0o644 is a permission mode")
 }
 
-/// The subject a prepared apply describes, for a report.
-pub fn subject_of(change: &PreparedChange) -> Option<&PlannedSubject> {
-    match &change.operation_identity.semantics {
-        OperationSemanticsV1::Apply(apply) => Some(&apply.subject),
-        _ => None,
-    }
-}
-
-/// The owners a file operation is charged to, for a report.
-pub fn contributors_of(operation: &FileOp) -> &BTreeSet<ResourceOwner> {
-    operation.contributors()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jails_protocol::plan::PlannedSubject;
+    use jails_protocol::resource::ResourceOwner;
+
+    /// An object store with nothing in it.
+    ///
+    /// Production always has a real one -- `no_objects()` sat beside
+    /// `ObjectReader` as if it were a general constructor and only these tests
+    /// ever called it, which is what `pending.md` §7.2's narrowing surfaced.
+    fn no_objects() -> ObjectReader {
+        std::sync::Arc::new(|_| None)
+    }
     use jails_project::pom::Flavor;
     use jails_protocol::bootstrap::Bootstrap;
     use jails_protocol::entity::{EntityId, IntentId, Recipe};

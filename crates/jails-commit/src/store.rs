@@ -30,7 +30,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// The machine root inside a project.
-pub const MACHINE_ROOT: &str = ".jails";
+pub(crate) const MACHINE_ROOT: &str = ".jails";
 
 /// Where machine state for one project lives.
 #[derive(Clone, Debug)]
@@ -150,7 +150,7 @@ impl Store {
 ///
 /// Sharded because a flat directory of a hundred thousand entries is slow to
 /// list on every filesystem and pathological on some.
-pub fn object_path(objects: &Path, id: &ObjectId) -> PathBuf {
+pub(crate) fn object_path(objects: &Path, id: &ObjectId) -> PathBuf {
     let hex = id.to_hex();
     objects.join("sha256").join(&hex[..2]).join(&hex[2..])
 }
@@ -163,7 +163,7 @@ pub fn object_path(objects: &Path, id: &ObjectId) -> PathBuf {
 /// directly at the final name would leave a partially written file under a
 /// content address for as long as the write took, and a concurrent reader
 /// would see bytes that do not hash to their own name.
-pub fn put_object(objects: &Path, id: &ObjectId, bytes: &[u8]) -> Result<PathBuf> {
+pub(crate) fn put_object(objects: &Path, id: &ObjectId, bytes: &[u8]) -> Result<PathBuf> {
     let actual = ObjectId::from_bytes(sha256(bytes));
     if &actual != id {
         return Err(format!(
@@ -239,7 +239,7 @@ pub fn is_object_name(shard: &str, rest: &str) -> bool {
 /// §R5.1: promotion happens **before** the ledger that references the
 /// objects, so a committed store can never point at bytes that only exist
 /// inside a transaction directory somebody later cleans up.
-pub fn promote(from: &Path, into: &Path, ids: &[ObjectId]) -> Result<usize> {
+pub(crate) fn promote(from: &Path, into: &Path, ids: &[ObjectId]) -> Result<usize> {
     let mut promoted = 0;
     for id in ids {
         let bytes = read_object(from, id)?;
@@ -250,6 +250,9 @@ pub fn promote(from: &Path, into: &Path, ids: &[ObjectId]) -> Result<usize> {
 }
 
 /// Every object a store holds, by id.
+///
+/// `gc::sweep`'s reader, and so unreached for the same reason -- see that
+/// module's header.
 pub fn list_objects(objects: &Path) -> Result<Vec<ObjectId>> {
     let sha256 = objects.join("sha256");
     let shards = match std::fs::read_dir(&sha256) {
@@ -316,7 +319,7 @@ pub fn read_object(objects: &Path, id: &ObjectId) -> Result<Vec<u8>> {
 
 /// A directory only this user can read. Machine state includes prepared
 /// bytes for files the project may keep private.
-pub fn create_private_dir(path: &Path) -> Result<()> {
+pub(crate) fn create_private_dir(path: &Path) -> Result<()> {
     if let Some(parent) = path.parent()
         && !parent.exists()
     {
@@ -350,13 +353,19 @@ fn set_private(path: &Path, mode: u32) -> Result<()> {
 }
 
 /// fsync a directory, so an entry created in it survives a power loss.
-pub fn sync_dir(path: &Path) -> Result<()> {
+pub(crate) fn sync_dir(path: &Path) -> Result<()> {
     File::open(path)
         .and_then(|dir| dir.sync_all())
         .map_err(|error| format!("could not sync {}: {error}", path.display()))
 }
 
 /// Every device a publication will cross, refused before activation.
+///
+/// **Nothing calls it**, which means the refusal it describes is not being
+/// made: `publish_tree` renames onto whatever path it is given. On one
+/// filesystem that is exactly right and the check is redundant; the case it
+/// exists for is a `.jails/` on a different mount from the project, where the
+/// rename silently becomes a copy. `pending.md` §7.2.
 ///
 /// A rename across a device boundary is not atomic — it is a copy — so a
 /// receipt published onto another filesystem could be seen half-written. Path

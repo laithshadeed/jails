@@ -17,7 +17,7 @@
 
 use crate::Result;
 use crate::identity::{ManagedVersion, MavenId};
-use jails_support::codec::{Decoder, Encoder};
+use jails_support::codec::{Codec, Decoder, Encoder};
 
 /// The `(groupId, artifactId)` pair a managed dependency or plugin is
 /// identified by. The version is deliberately not part of it: two rows for one
@@ -35,13 +35,14 @@ impl MavenCoordinate {
             artifact_id: MavenId::parse(artifact_id)?,
         })
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for MavenCoordinate {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.group_id.encode(encoder)?;
         self.artifact_id.encode(encoder)
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
             group_id: MavenId::decode(decoder)?,
             artifact_id: MavenId::decode(decoder)?,
@@ -74,8 +75,9 @@ impl MavenVersion {
             Self::Pinned(_) => 1,
         }
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for MavenVersion {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.tag(self.tag());
         match self {
             Self::Managed => Ok(()),
@@ -83,7 +85,7 @@ impl MavenVersion {
         }
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         match decoder.tag()? {
             0 => Ok(Self::Managed),
             1 => Ok(Self::Pinned(ManagedVersion::decode(decoder)?)),
@@ -162,8 +164,9 @@ impl DependencySpec {
             optional: false,
         }
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for DependencySpec {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.coordinate.encode(encoder)?;
         self.version.encode(encoder)?;
         encoder.tag(self.scope.tag());
@@ -171,7 +174,7 @@ impl DependencySpec {
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
             coordinate: MavenCoordinate::decode(decoder)?,
             version: MavenVersion::decode(decoder)?,
@@ -182,7 +185,7 @@ impl DependencySpec {
 }
 
 /// Maven's own default group for a plugin with no `<groupId>`.
-pub const DEFAULT_PLUGIN_GROUP: &str = "org.apache.maven.plugins";
+pub(crate) const DEFAULT_PLUGIN_GROUP: &str = "org.apache.maven.plugins";
 
 /// Exactly one `<plugin>` element, LF-terminated, with no surrounding POM.
 ///
@@ -239,12 +242,13 @@ impl CanonicalPluginXml {
             .ok_or_else(|| "plugin block declares no <artifactId>".to_string())?;
         MavenCoordinate::parse(group, artifact)
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for CanonicalPluginXml {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.string(&self.0)
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Self::parse(&decoder.string()?)
     }
 }
@@ -276,13 +280,14 @@ impl PluginSpec {
         }
         Ok(Self { coordinate, block })
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for PluginSpec {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.coordinate.encode(encoder)?;
         self.block.encode(encoder)
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         let coordinate = MavenCoordinate::decode(decoder)?;
         let block = CanonicalPluginXml::decode(decoder)?;
         Self::new(coordinate, block)

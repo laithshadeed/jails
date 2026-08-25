@@ -58,7 +58,7 @@ impl Drop for Armed {
 
 /// Fail here if this point is armed.
 #[cfg(any(test, feature = "fault-injection"))]
-pub fn trip(name: &str) -> crate::Result<()> {
+pub(crate) fn trip(name: &str) -> crate::Result<()> {
     let armed = armed::ARMED.with(|slot| slot.borrow().clone());
     match armed {
         Some(armed) if armed == name => Err(format!("fault injected at `{name}`")),
@@ -69,7 +69,7 @@ pub fn trip(name: &str) -> crate::Result<()> {
 /// Nothing. Compiled out of a release build entirely.
 #[cfg(not(any(test, feature = "fault-injection")))]
 #[inline(always)]
-pub fn trip(_name: &str) -> crate::Result<()> {
+pub(crate) fn trip(_name: &str) -> crate::Result<()> {
     Ok(())
 }
 

@@ -20,7 +20,7 @@ use jails_protocol::resource::ResourceOwner;
 use std::collections::BTreeSet;
 
 /// The schema string a machine reader keys on.
-pub const SCHEMA: &str = "jails.prepared-change.v1";
+pub(crate) const SCHEMA: &str = "jails.prepared-change.v1";
 
 /// What a reported operation does.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -259,7 +259,7 @@ fn ledger_of(before: FileImage, after: FileImage) -> ReportedLedger {
 /// effects and the warnings. It never prints file contents, secrets or an
 /// absolute user-template path — a report is read in terminals and CI logs
 /// that outlive the run.
-pub fn render(report: &Report) -> String {
+pub(crate) fn render(report: &Report) -> String {
     let mut out = format!("plan {} {}\n", report.transaction, kind_label(&report.kind));
     for operation in &report.operations {
         out.push_str(&format!(
@@ -284,7 +284,7 @@ pub fn render(report: &Report) -> String {
     out
 }
 
-pub fn kind_label(kind: &PreparedKind) -> &'static str {
+pub(crate) fn kind_label(kind: &PreparedKind) -> &'static str {
     match kind {
         PreparedKind::Apply => "apply",
         PreparedKind::Conflict { .. } => "conflict",
@@ -312,6 +312,12 @@ fn effect_label(effect: &PostCommitEffect) -> String {
 /// A run that found everything already in place is a real outcome, and
 /// printing a confident "applied" over it is how a tool teaches people to
 /// stop reading its output.
+///
+/// **Nothing calls it.** `render_envelope` below also says "nothing to do",
+/// but for a different case -- no report, no receipt and no error at all --
+/// so the distinction this draws, *a prepared Apply whose plan turned out to
+/// be empty*, is one no command currently makes. `pending.md` §7.2 is what
+/// surfaced that; the fix is a call site, not a deletion.
 pub fn summary(report: &Report) -> String {
     match &report.kind {
         PreparedKind::Conflict { paths } => format!(
@@ -584,7 +590,7 @@ fn verb_label(file: &crate::receipt::FileReceipt) -> &'static str {
 }
 
 /// What a commit did, in the same shape as what a plan would have done.
-pub fn render_receipt(receipt: &AppliedReceipt) -> String {
+pub(crate) fn render_receipt(receipt: &AppliedReceipt) -> String {
     let mut out = format!("{} {}\n", receipt.outcome.label(), receipt.transaction_id);
     for directory in &receipt.directories {
         out.push_str(&format!("  {:<7} {}\n", "mkdir", directory.path));

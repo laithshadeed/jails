@@ -38,7 +38,7 @@ use std::path::{Path, PathBuf};
 ///
 /// Named rather than being the scratch root itself so the tool's own cache
 /// and home can sit beside it — inside scratch, outside the project it sees.
-pub const PROJECT_CHILD: &str = "project";
+pub(crate) const PROJECT_CHILD: &str = "project";
 
 /// One file as the sandbox will lay it down.
 #[derive(Clone, Debug, Eq, PartialEq)]

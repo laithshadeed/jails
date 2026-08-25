@@ -29,10 +29,22 @@
 //! Every semantic, object and effect field is included, and finalisation
 //! recomputes the hash from the current ledger rather than trusting a stored
 //! one.
+//!
+//! ## Nothing calls this yet
+//!
+//! Closing this crate's API to `pub(crate)` (`pending.md` §7.2) made that
+//! visible: with `dead_code = "deny"`, 11 items here are reachable from
+//! nothing. They are `pub` for that reason and no other. This is not stale
+//! code -- it is encoded, round-tripped and unit-tested -- it is `pending.md`
+//! §11's "conflicted merges cannot be resumed", which lands as one piece or
+//! not at all: the frozen record, the refusal while it stands, and the
+//! continue/abort commands. Building only the enter side was tried and backed
+//! out, so a project that can enter a conflicted state and not leave it is
+//! exactly what these types must not be wired up to produce.
 
 use crate::Result;
 use crate::identity::{ObjectId, ObjectRef, ProjectPath};
-use jails_support::codec::{self, Decoder, Encoder, ordered};
+use jails_support::codec::{self, Codec, Decoder, Encoder, ordered};
 
 /// The committed live image of a file: content, length and mode together.
 ///
@@ -65,19 +77,20 @@ pub enum FileImage {
     Present { object: ObjectRef, mode: FileMode },
 }
 
-impl FileImage {
-    pub fn encode(&self, encoder: &mut Encoder) {
+impl Codec for FileImage {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         match self {
             Self::Absent => encoder.tag(0),
             Self::Present { object, mode } => {
                 encoder.tag(1);
-                object.encode(encoder);
-                mode.encode(encoder);
+                object.encode(encoder)?;
+                mode.encode(encoder)?;
             }
         }
+        Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::Absent,
             1 => Self::Present {
@@ -105,12 +118,14 @@ impl PendingIdentity {
     pub fn object(&self) -> ObjectId {
         self.0
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) {
-        self.0.encode(encoder);
+}
+impl Codec for PendingIdentity {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        self.0.encode(encoder)?;
+        Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self(ObjectId::decode(decoder)?))
     }
 }
@@ -128,14 +143,14 @@ pub struct ResolutionIdentity {
     pub resolved: FileImage,
 }
 
-impl ResolutionIdentity {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for ResolutionIdentity {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.path.encode(encoder)?;
-        self.resolved.encode(encoder);
+        self.resolved.encode(encoder)?;
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
             path: ProjectPath::decode(decoder)?,
             resolved: FileImage::decode(decoder)?,
@@ -155,15 +170,15 @@ pub struct RestoreIdentity {
     pub restore_to: FileImage,
 }
 
-impl RestoreIdentity {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for RestoreIdentity {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.path.encode(encoder)?;
-        self.guarded_from.encode(encoder);
-        self.restore_to.encode(encoder);
+        self.guarded_from.encode(encoder)?;
+        self.restore_to.encode(encoder)?;
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
             path: ProjectPath::decode(decoder)?,
             guarded_from: FileImage::decode(decoder)?,
@@ -197,25 +212,28 @@ impl FileMode {
     pub fn bits(self) -> u32 {
         self.0
     }
+}
 
-    pub fn encode(self, encoder: &mut Encoder) {
+impl Codec for FileMode {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.u32(self.0);
+        Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Self::new(decoder.u32()?)
     }
 }
 
-impl LiveFileImage {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.sha256.encode(encoder);
+impl Codec for LiveFileImage {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        self.sha256.encode(encoder)?;
         encoder.u64(self.len);
-        self.mode.encode(encoder);
+        self.mode.encode(encoder)?;
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
             sha256: ObjectId::decode(decoder)?,
             len: decoder.u64()?,
@@ -224,14 +242,14 @@ impl LiveFileImage {
     }
 }
 
-impl StoredFileImage {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.object.encode(encoder);
-        self.mode.encode(encoder);
+impl Codec for StoredFileImage {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        self.object.encode(encoder)?;
+        self.mode.encode(encoder)?;
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
             object: ObjectRef::decode(decoder)?,
             mode: FileMode::decode(decoder)?,
@@ -250,8 +268,8 @@ pub enum PendingCurrent {
     ResolveFromLive,
 }
 
-impl PendingCurrent {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for PendingCurrent {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         match self {
             Self::Exact(image) => {
                 encoder.tag(0);
@@ -264,7 +282,7 @@ impl PendingCurrent {
         }
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::Exact(LiveFileImage::decode(decoder)?),
             1 => Self::ResolveFromLive,
@@ -306,14 +324,15 @@ impl MarkerTokens {
             close: close.to_string(),
         })
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for MarkerTokens {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.string(&self.open)?;
         encoder.string(&self.separator)?;
         encoder.string(&self.close)
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         let open = decoder.string()?;
         let separator = decoder.string()?;
         let close = decoder.string()?;
@@ -335,8 +354,8 @@ pub struct PendingConflictPath {
     pub hunk_count: u32,
 }
 
-impl PendingConflictPath {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for PendingConflictPath {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.path.encode(encoder)?;
         self.prior_base.encode(encoder)?;
         self.desired_base.encode(encoder)?;
@@ -352,7 +371,7 @@ impl PendingConflictPath {
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         let path = ProjectPath::decode(decoder)?;
         let prior_base = StoredFileImage::decode(decoder)?;
         let desired_base = StoredFileImage::decode(decoder)?;
@@ -383,14 +402,14 @@ pub struct FrozenPath {
     pub postimage: Option<LiveFileImage>,
 }
 
-impl FrozenPath {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for FrozenPath {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.path.encode(encoder)?;
         // `None` is a deletion: the path's postimage is that it is absent.
         encoder.option(self.postimage.as_ref(), |e, image| image.encode(e))
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
             path: ProjectPath::decode(decoder)?,
             postimage: decoder.option(LiveFileImage::decode)?,
@@ -408,6 +427,12 @@ pub fn pending_identity(encoded_fields: &[u8]) -> ObjectId {
 }
 
 /// Encode a conflicted path list, refusing an unsorted or duplicated one.
+///
+/// The one collection helper that is not [`Encoder::set`]: these order by a
+/// *field* of the element (`entry.path`), not by the element, so the bound
+/// `set` needs -- `T: Ord` where `T`'s own order is the wire order -- does not
+/// hold. Six of the seven named copies this file's siblings carried are gone;
+/// this pair is the one with a real reason to exist.
 pub fn encode_paths(encoder: &mut Encoder, paths: &[PendingConflictPath]) -> Result<()> {
     encoder.count(paths.len())?;
     let mut previous: Option<&ProjectPath> = None;

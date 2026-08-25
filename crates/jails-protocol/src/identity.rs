@@ -27,7 +27,7 @@
 //! class of bug not worth accepting for a feature nobody has asked for.
 
 use crate::Result;
-use jails_support::codec::{self, DIGEST_BYTES, Decoder, Encoder};
+use jails_support::codec::{self, Codec, DIGEST_BYTES, Decoder, Encoder};
 
 // ---------------------------------------------------------------------------
 // Digests
@@ -66,12 +66,15 @@ macro_rules! digest_newtype {
             pub fn to_hex(&self) -> String {
                 codec::hex(&self.0)
             }
+        }
 
-            pub fn encode(&self, encoder: &mut Encoder) {
+        impl Codec for $name {
+            fn encode(&self, encoder: &mut Encoder) -> Result<()> {
                 encoder.digest(&self.0);
+                Ok(())
             }
 
-            pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+            fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
                 decoder.digest().map(Self)
             }
         }
@@ -105,12 +108,13 @@ impl Name {
     pub fn as_str(&self) -> &str {
         &self.0
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for Name {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.string(&self.0)
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Self::parse(&decoder.string()?)
     }
 }
@@ -169,12 +173,13 @@ impl Package {
             _ => Package(format!("{}.{}", self.0, sub.0)),
         }
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for Package {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.string(&self.0)
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Self::parse(&decoder.string()?)
     }
 }
@@ -227,12 +232,13 @@ impl JavaType {
             format!("{}.{}", self.package.0, self.name.0)
         }
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for JavaType {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.string(&self.qualified())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Self::parse(&decoder.string()?)
     }
 }
@@ -356,9 +362,9 @@ fn validate_identifier(text: &str, what: &str) -> Result<()> {
 pub struct ProjectPath(String);
 
 /// `.jails/app.toml` — the human-owned application manifest.
-pub const APP_MANIFEST: &str = ".jails/app.toml";
+pub(crate) const APP_MANIFEST: &str = ".jails/app.toml";
 /// `.jails/templates` — the human-owned template override layer.
-pub const TEMPLATE_OVERRIDES: &str = ".jails/templates";
+pub(crate) const TEMPLATE_OVERRIDES: &str = ".jails/templates";
 
 impl ProjectPath {
     pub fn parse(text: &str) -> Result<Self> {
@@ -435,12 +441,13 @@ impl ProjectPath {
     pub fn is_machine_adjacent(&self) -> bool {
         self.0.starts_with(".jails/")
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for ProjectPath {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.path(&self.0)
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Self::parse(&decoder.path()?)
     }
 }
@@ -468,13 +475,15 @@ impl ObjectRef {
     pub fn new(id: ObjectId, len: u64) -> Self {
         Self { id, len }
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) {
-        self.id.encode(encoder);
+}
+impl Codec for ObjectRef {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        self.id.encode(encoder)?;
         encoder.u64(self.len);
+        Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
             id: ObjectId::decode(decoder)?,
             len: decoder.u64()?,
@@ -512,12 +521,14 @@ macro_rules! logical_id {
             pub fn as_str(&self) -> &str {
                 &self.0
             }
+        }
 
-            pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        impl Codec for $name {
+            fn encode(&self, encoder: &mut Encoder) -> Result<()> {
                 encoder.string(&self.0)
             }
 
-            pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+            fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
                 Self::parse(&decoder.string()?)
             }
         }
@@ -789,7 +800,7 @@ mod tests {
         package.encode(&mut encoder).unwrap();
         base.encode(&mut encoder).unwrap();
         ty.encode(&mut encoder).unwrap();
-        object.encode(&mut encoder);
+        object.encode(&mut encoder).unwrap();
         let bytes = encoder.finish().unwrap();
 
         let mut decoder = Decoder::new(&bytes).unwrap();

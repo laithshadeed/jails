@@ -35,7 +35,7 @@ use crate::entity::{
     OneShotId, OneShotSpec, ToolFeature,
 };
 use crate::identity::{JavaType, ObjectId, ProjectPath};
-use jails_support::codec::{self, Decoder, Encoder, ordered};
+use jails_support::codec::{self, Codec, Decoder, Encoder, ordered};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The canonical projection of one command line.
@@ -68,12 +68,14 @@ impl RequestSyntaxFingerprint {
     pub fn to_hex(&self) -> String {
         self.0.to_hex()
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) {
-        self.0.encode(encoder);
+}
+impl Codec for RequestSyntaxFingerprint {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        self.0.encode(encoder)?;
+        Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         ObjectId::decode(decoder).map(Self)
     }
 }
@@ -88,7 +90,28 @@ impl CanonicalRequestSyntaxV1 {
         )))
     }
 
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+    /// Flags and options this projection must never carry.
+    ///
+    /// They change how a run reports rather than what it does, so including
+    /// one would make `--debug` look like a different command from the one
+    /// that stalled — and a stored conflict would refuse to recognise its own
+    /// rerun.
+    pub const EXCLUDED: &'static [&'static str] = &[
+        "debug",
+        "output",
+        "json",
+        "quiet",
+        "verbose",
+        "abort-conflict",
+    ];
+
+    /// Whether a flag or option name belongs in the projection at all.
+    pub fn is_semantic(name: &str) -> bool {
+        !Self::EXCLUDED.contains(&name)
+    }
+}
+impl Codec for CanonicalRequestSyntaxV1 {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.count(self.command_path.len())?;
         for part in &self.command_path {
             reject_dashes(part)?;
@@ -122,7 +145,7 @@ impl CanonicalRequestSyntaxV1 {
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         let mut command_path = Vec::new();
         for _ in 0..decoder.count()? {
             let part = decoder.string()?;
@@ -161,26 +184,6 @@ impl CanonicalRequestSyntaxV1 {
             options,
             flags,
         })
-    }
-
-    /// Flags and options this projection must never carry.
-    ///
-    /// They change how a run reports rather than what it does, so including
-    /// one would make `--debug` look like a different command from the one
-    /// that stalled — and a stored conflict would refuse to recognise its own
-    /// rerun.
-    pub const EXCLUDED: &'static [&'static str] = &[
-        "debug",
-        "output",
-        "json",
-        "quiet",
-        "verbose",
-        "abort-conflict",
-    ];
-
-    /// Whether a flag or option name belongs in the projection at all.
-    pub fn is_semantic(name: &str) -> bool {
-        !Self::EXCLUDED.contains(&name)
     }
 }
 
@@ -448,8 +451,8 @@ impl CanonicalMutationRequest {
     }
 }
 
-impl CanonicalMutationRequest {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for CanonicalMutationRequest {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.tag(self.tag());
         match self {
             Self::Add {
@@ -482,13 +485,7 @@ impl CanonicalMutationRequest {
             }
             Self::AdoptLayout | Self::FastTest => {}
             Self::Format { scopes } => {
-                encoder.count(scopes.len())?;
-                let mut previous: Option<&ProjectPath> = None;
-                for scope in scopes {
-                    ordered(previous, scope)?;
-                    previous = Some(scope);
-                    scope.encode(encoder)?;
-                }
+                encoder.set(scopes)?;
             }
             Self::RemoveToolFeature { feature, force } => {
                 encoder.string(feature.label())?;
@@ -508,7 +505,7 @@ impl CanonicalMutationRequest {
 
     /// Every route back in goes through the same constructor the CLI uses, so
     /// a request recovered from a journal is checked exactly as a typed one.
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::Add {
                 capabilities: Self::capabilities(decode_capabilities(decoder)?)?,
@@ -546,15 +543,7 @@ impl CanonicalMutationRequest {
             8 => Self::AdoptLayout,
             10 => Self::FastTest,
             11 => {
-                let count = decoder.count()?;
-                let mut scopes = BTreeSet::new();
-                let mut previous: Option<ProjectPath> = None;
-                for _ in 0..count {
-                    let scope = ProjectPath::decode(decoder)?;
-                    ordered(previous.as_ref(), &scope)?;
-                    previous = Some(scope.clone());
-                    scopes.insert(scope);
-                }
+                let scopes: BTreeSet<ProjectPath> = decoder.set()?;
                 Self::Format { scopes }
             }
             12 => {
@@ -595,8 +584,8 @@ fn decode_capabilities(decoder: &mut Decoder<'_>) -> Result<Vec<CanonicalCapabil
     Ok(rows)
 }
 
-impl CanonicalGenerateRequest {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for CanonicalGenerateRequest {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         match self {
             Self::Entity { id, spec } => {
                 encoder.tag(0);
@@ -611,7 +600,7 @@ impl CanonicalGenerateRequest {
         }
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::Entity {
                 id: EntityId::decode(decoder)?,
@@ -626,8 +615,8 @@ impl CanonicalGenerateRequest {
     }
 }
 
-impl ChangeSubject {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for ChangeSubject {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         match self {
             Self::Entity(id) => {
                 encoder.tag(0);
@@ -640,7 +629,7 @@ impl ChangeSubject {
         }
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::Entity(EntityId::decode(decoder)?),
             1 => Self::OneShot(OneShotId::decode(decoder)?),
@@ -661,8 +650,8 @@ pub enum ManifestSourceId {
     External { path_id: ExternalPathId },
 }
 
-impl ManifestSourceId {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for ManifestSourceId {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         match self {
             Self::Project(path) => {
                 encoder.tag(0);
@@ -670,13 +659,13 @@ impl ManifestSourceId {
             }
             Self::External { path_id } => {
                 encoder.tag(1);
-                path_id.encode(encoder);
+                path_id.encode(encoder)?;
                 Ok(())
             }
         }
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::Project(ProjectPath::decode(decoder)?),
             1 => Self::External {
@@ -703,16 +692,16 @@ pub struct InvocationFingerprint {
     pub desired_input_sha256: ObjectId,
 }
 
-impl InvocationFingerprint {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.request_syntax.encode(encoder);
+impl Codec for InvocationFingerprint {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        self.request_syntax.encode(encoder)?;
         self.request.encode(encoder)?;
         encoder.option(self.manifest_source.as_ref(), |e, source| source.encode(e))?;
-        self.desired_input_sha256.encode(encoder);
+        self.desired_input_sha256.encode(encoder)?;
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
             request_syntax: RequestSyntaxFingerprint::decode(decoder)?,
             request: CanonicalMutationRequest::decode(decoder)?,

@@ -34,4 +34,4 @@ pub mod resource;
 pub mod snapshot;
 pub mod transition;
 
-pub(crate) use jails_support::Result;
+pub use jails_support::Result;

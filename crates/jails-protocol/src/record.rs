@@ -17,7 +17,7 @@ use crate::entity::{EntityId, EntitySpec, OneShotId, OneShotSpec, OwnerId};
 use crate::identity::{OperationId, ProjectPath};
 use crate::provenance::RendererStamp;
 use crate::resource::{OneShotLifecycle, OneShotState, ResourceOwner};
-use jails_support::codec::{Decoder, Encoder, ordered};
+use jails_support::codec::{Codec, Decoder, Encoder, ordered};
 use std::collections::BTreeSet;
 
 /// One applied entity: its identity, who claims it, and what was applied.
@@ -35,8 +35,8 @@ pub struct AppliedVersion {
     pub operation: OperationId,
 }
 
-impl AppliedEntity {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for AppliedEntity {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.id.encode(encoder)?;
         if self.owners.is_empty() {
             // An entity with no owner is one nobody wants, and a row for it is
@@ -59,11 +59,11 @@ impl AppliedEntity {
             encoder.tag(owner.tag());
         }
         self.version.spec.encode(encoder)?;
-        self.version.operation.encode(encoder);
+        self.version.operation.encode(encoder)?;
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         let id = EntityId::decode(decoder)?;
         let count = decoder.count()?;
         let mut owners = BTreeSet::new();
@@ -108,17 +108,17 @@ pub struct OneShotReceipt {
     pub operation: OperationId,
 }
 
-impl OneShotReceipt {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for OneShotReceipt {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.id.encode(encoder)?;
         self.spec.encode(encoder)?;
-        self.state.encode(encoder);
+        self.state.encode(encoder)?;
         self.lifecycle.encode(encoder)?;
-        self.operation.encode(encoder);
+        self.operation.encode(encoder)?;
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
             id: OneShotId::decode(decoder)?,
             spec: OneShotSpec::decode(decoder)?,
@@ -149,8 +149,8 @@ pub struct OutputRecord {
     pub renderer: RendererStamp,
 }
 
-impl OutputRecord {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for OutputRecord {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.path.encode(encoder)?;
         encoder.count(self.contributors.len())?;
         let mut previous: Option<&ResourceOwner> = None;
@@ -164,17 +164,9 @@ impl OutputRecord {
         self.renderer.encode(encoder)
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         let path = ProjectPath::decode(decoder)?;
-        let count = decoder.count()?;
-        let mut contributors = BTreeSet::new();
-        let mut previous: Option<ResourceOwner> = None;
-        for _ in 0..count {
-            let owner = ResourceOwner::decode(decoder)?;
-            ordered(previous.as_ref(), &owner)?;
-            previous = Some(owner.clone());
-            contributors.insert(owner);
-        }
+        let contributors: BTreeSet<ResourceOwner> = decoder.set()?;
         Ok(Self {
             path,
             contributors,

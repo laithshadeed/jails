@@ -35,7 +35,7 @@ use std::time::Duration;
 
 /// What a three-way merge produced.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Merged {
+pub(crate) enum Merged {
     /// The two edits did not overlap. These are the bytes that go on disk;
     /// the recorded *base* still advances to the generator's output, not to
     /// these, so the reader's edit stays a delta from the newest render.
@@ -67,7 +67,12 @@ fn label(key: &str) -> String {
 }
 
 /// Merge `desired` into `live` against their common `base`.
-pub fn three_way(path: &ProjectPath, base: &[u8], live: &[u8], desired: &[u8]) -> Result<Merged> {
+pub(crate) fn three_way(
+    path: &ProjectPath,
+    base: &[u8],
+    live: &[u8],
+    desired: &[u8],
+) -> Result<Merged> {
     for (side, bytes) in [("base", base), ("current", live), ("desired", desired)] {
         if bytes.contains(&0) || std::str::from_utf8(bytes).is_err() {
             return Err(format!(

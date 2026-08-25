@@ -37,16 +37,16 @@ use jails_prepare::prepare::PreparedIdentityV1;
 use jails_prepare::receipt::EffectReceipt;
 use jails_protocol::conflict::FileMode;
 use jails_protocol::identity::{ObjectId, ProjectPath, TransactionId};
-use jails_support::codec::{self, Decoder, Encoder};
+use jails_support::codec::{self, Codec, Decoder, Encoder};
 use std::path::Path;
 
 /// `JAILS-JOURNAL-1\0`, sixteen bytes.
-pub const JOURNAL_MAGIC: &[u8; 16] = b"JAILS-JOURNAL-1\0";
+pub(crate) const JOURNAL_MAGIC: &[u8; 16] = b"JAILS-JOURNAL-1\0";
 /// `JAILS-RECEIPT-1\0`, sixteen bytes.
-pub const RECEIPT_MAGIC: &[u8; 16] = b"JAILS-RECEIPT-1\0";
+pub(crate) const RECEIPT_MAGIC: &[u8; 16] = b"JAILS-RECEIPT-1\0";
 
 /// The largest record either format may reach.
-pub const MAX_RECORD: usize = codec::MAX_PROTOCOL_RECORD;
+pub(crate) const MAX_RECORD: usize = codec::MAX_PROTOCOL_RECORD;
 
 /// Which filesystem object the project root was when this began.
 ///
@@ -70,10 +70,12 @@ impl RootIdentity {
             inode: metadata.ino(),
         })
     }
-
-    fn encode(&self, encoder: &mut Encoder) {
+}
+impl Codec for RootIdentity {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.u64(self.device);
         encoder.u64(self.inode);
+        Ok(())
     }
 
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
@@ -123,7 +125,8 @@ impl JournalState {
             Self::Blocked { .. } => "blocked",
         }
     }
-
+}
+impl Codec for JournalState {
     fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.tag(self.tag());
         if let Self::Blocked {
@@ -209,14 +212,16 @@ impl ActualImage {
             Self::Other => 4,
         }
     }
-
-    fn encode(&self, encoder: &mut Encoder) {
+}
+impl Codec for ActualImage {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.tag(self.tag());
         if let Self::File { sha256, len, mode } = self {
-            sha256.encode(encoder);
+            sha256.encode(encoder)?;
             encoder.u64(*len);
             encoder.u32(mode.bits());
         }
+        Ok(())
     }
 
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
@@ -241,22 +246,11 @@ impl ActualImage {
 /// the before or the after image, and neither from anything else. A third
 /// value is not "probably fine" — it is an edit nobody recorded.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ObservedImage {
+pub(crate) enum ObservedImage {
     Before,
     After,
     Unknown { actual: ActualImage },
     Unreadable { error_kind: String },
-}
-
-impl ObservedImage {
-    pub fn tag(&self) -> u8 {
-        match self {
-            Self::Before => 0,
-            Self::After => 1,
-            Self::Unknown { .. } => 2,
-            Self::Unreadable { .. } => 3,
-        }
-    }
 }
 
 /// Why a transaction stopped.
@@ -280,38 +274,6 @@ impl BlockReason {
             Self::CorruptObject(_) => 4,
             Self::MultipleTransactions => 5,
         }
-    }
-
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(self.tag());
-        match self {
-            Self::UnknownLiveImage { actual } => {
-                actual.encode(encoder);
-                Ok(())
-            }
-            Self::Unreadable { error_kind } => encoder.string(error_kind),
-            Self::CorruptObject(id) => {
-                id.encode(encoder);
-                Ok(())
-            }
-            Self::RootChanged | Self::CorruptJournal | Self::MultipleTransactions => Ok(()),
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::UnknownLiveImage {
-                actual: ActualImage::decode(decoder)?,
-            },
-            1 => Self::Unreadable {
-                error_kind: decoder.string()?,
-            },
-            2 => Self::RootChanged,
-            3 => Self::CorruptJournal,
-            4 => Self::CorruptObject(ObjectId::decode(decoder)?),
-            5 => Self::MultipleTransactions,
-            other => Err(format!("unknown block reason tag {other}"))?,
-        })
     }
 
     /// What a person is told, and what they can do about it.
@@ -343,6 +305,39 @@ impl BlockReason {
         }
     }
 }
+impl Codec for BlockReason {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        encoder.tag(self.tag());
+        match self {
+            Self::UnknownLiveImage { actual } => {
+                actual.encode(encoder)?;
+                Ok(())
+            }
+            Self::Unreadable { error_kind } => encoder.string(error_kind),
+            Self::CorruptObject(id) => {
+                id.encode(encoder)?;
+                Ok(())
+            }
+            Self::RootChanged | Self::CorruptJournal | Self::MultipleTransactions => Ok(()),
+        }
+    }
+
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(match decoder.tag()? {
+            0 => Self::UnknownLiveImage {
+                actual: ActualImage::decode(decoder)?,
+            },
+            1 => Self::Unreadable {
+                error_kind: decoder.string()?,
+            },
+            2 => Self::RootChanged,
+            3 => Self::CorruptJournal,
+            4 => Self::CorruptObject(ObjectId::decode(decoder)?),
+            5 => Self::MultipleTransactions,
+            other => Err(format!("unknown block reason tag {other}"))?,
+        })
+    }
+}
 
 /// The durable record of one transaction.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -371,9 +366,9 @@ impl JournalV1 {
         for byte in JOURNAL_MAGIC {
             encoder.tag(*byte);
         }
-        self.transaction.encode(&mut encoder);
+        self.transaction.encode(&mut encoder)?;
         encoder.u64(self.generation);
-        self.root_identity.encode(&mut encoder);
+        self.root_identity.encode(&mut encoder)?;
         self.state.encode(&mut encoder)?;
         self.prepared.encode(&mut encoder)?;
         encoder.finish()
@@ -530,13 +525,13 @@ impl ReceiptV1 {
         for byte in RECEIPT_MAGIC {
             encoder.tag(*byte);
         }
-        self.transaction.encode(&mut encoder);
+        self.transaction.encode(&mut encoder)?;
         encoder.u64(self.generation);
         self.prepared.encode(&mut encoder)?;
-        self.complete_journal_checksum.encode(&mut encoder);
+        self.complete_journal_checksum.encode(&mut encoder)?;
         encoder.count(self.post_commit.len())?;
         for effect in &self.post_commit {
-            effect.id.encode(&mut encoder);
+            effect.id.encode(&mut encoder)?;
             effect.effect.encode(&mut encoder)?;
             effect.state.encode(&mut encoder)?;
         }

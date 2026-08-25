@@ -10,7 +10,7 @@
 
 pub mod command;
 pub mod desire;
-pub mod merge;
+pub(crate) mod merge;
 pub mod operation;
 pub mod pipeline;
 pub mod prepare;

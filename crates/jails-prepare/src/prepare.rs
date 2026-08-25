@@ -30,13 +30,13 @@ use jails_protocol::conflict::{FileImage, FileMode};
 use jails_protocol::effect::PostCommitEffect;
 use jails_protocol::identity::{ObjectId, ObjectRef, OperationId, ProjectPath, TransactionId};
 use jails_protocol::resource::ResourceOwner;
-use jails_protocol::snapshot::{InputPrecondition, ReadSet};
-use jails_support::codec::{self, Decoder, Encoder, ordered};
+use jails_protocol::snapshot::InputPrecondition;
+use jails_support::codec::{self, Codec, Decoder, Encoder, ordered};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 /// This crate's one format version.
-pub const FORMAT: u32 = 1;
+pub(crate) const FORMAT: u32 = 1;
 
 /// The bytes and mode a file operation expects to find.
 ///
@@ -48,13 +48,14 @@ pub struct GuardedImage {
     pub mode: FileMode,
 }
 
-impl GuardedImage {
-    pub fn encode(&self, encoder: &mut Encoder) {
-        self.object.encode(encoder);
-        self.mode.encode(encoder);
+impl Codec for GuardedImage {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        self.object.encode(encoder)?;
+        self.mode.encode(encoder)?;
+        Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
             object: ObjectRef::decode(decoder)?,
             mode: FileMode::decode(decoder)?,
@@ -117,8 +118,9 @@ impl FileOp {
             Self::Delete { .. } => 2,
         }
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for FileOp {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.tag(self.tag());
         match self {
             Self::Create {
@@ -128,9 +130,9 @@ impl FileOp {
                 contributors,
             } => {
                 path.encode(encoder)?;
-                after.encode(encoder);
-                mode.encode(encoder);
-                encode_contributors(encoder, contributors)
+                after.encode(encoder)?;
+                mode.encode(encoder)?;
+                encoder.set(contributors)
             }
             Self::Replace {
                 path,
@@ -140,10 +142,10 @@ impl FileOp {
                 contributors,
             } => {
                 path.encode(encoder)?;
-                before.encode(encoder);
-                after.encode(encoder);
-                mode.encode(encoder);
-                encode_contributors(encoder, contributors)
+                before.encode(encoder)?;
+                after.encode(encoder)?;
+                mode.encode(encoder)?;
+                encoder.set(contributors)
             }
             Self::Delete {
                 path,
@@ -151,43 +153,35 @@ impl FileOp {
                 contributors,
             } => {
                 path.encode(encoder)?;
-                before.encode(encoder);
-                encode_contributors(encoder, contributors)
+                before.encode(encoder)?;
+                encoder.set(contributors)
             }
         }
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::Create {
                 path: ProjectPath::decode(decoder)?,
                 after: ObjectRef::decode(decoder)?,
                 mode: FileMode::decode(decoder)?,
-                contributors: decode_contributors(decoder)?,
+                contributors: decoder.set()?,
             },
             1 => Self::Replace {
                 path: ProjectPath::decode(decoder)?,
                 before: GuardedImage::decode(decoder)?,
                 after: ObjectRef::decode(decoder)?,
                 mode: FileMode::decode(decoder)?,
-                contributors: decode_contributors(decoder)?,
+                contributors: decoder.set()?,
             },
             2 => Self::Delete {
                 path: ProjectPath::decode(decoder)?,
                 before: GuardedImage::decode(decoder)?,
-                contributors: decode_contributors(decoder)?,
+                contributors: decoder.set()?,
             },
             other => Err(format!("unknown file operation tag {other}"))?,
         })
     }
-}
-
-fn encode_contributors(encoder: &mut Encoder, owners: &BTreeSet<ResourceOwner>) -> Result<()> {
-    jails_protocol::resource::encode_owners(encoder, owners)
-}
-
-fn decode_contributors(decoder: &mut Decoder<'_>) -> Result<BTreeSet<ResourceOwner>> {
-    jails_protocol::resource::decode_owners(decoder)
 }
 
 /// A directory this transaction creates.
@@ -206,13 +200,14 @@ impl DirectoryOp {
             Self::Create { path } => path,
         }
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for DirectoryOp {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.tag(0);
         self.path().encode(encoder)
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         match decoder.tag()? {
             0 => Ok(Self::Create {
                 path: ProjectPath::decode(decoder)?,
@@ -249,12 +244,15 @@ impl PreparedKind {
             Self::Abort { .. } => 3,
         }
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for PreparedKind {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.tag(self.tag());
         match self {
             Self::Apply => Ok(()),
             Self::Conflict { paths } => {
+                // A sorted list rather than a set, so the `set` bound does
+                // not apply -- see `snapshot.rs` for the same case.
                 encoder.count(paths.len())?;
                 let mut previous: Option<&ProjectPath> = None;
                 for path in paths {
@@ -265,13 +263,13 @@ impl PreparedKind {
                 Ok(())
             }
             Self::Finalise { origin } | Self::Abort { origin } => {
-                origin.encode(encoder);
+                origin.encode(encoder)?;
                 Ok(())
             }
         }
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::Apply,
             1 => {
@@ -318,36 +316,6 @@ pub struct PreparedIdentityV1 {
 }
 
 impl PreparedIdentityV1 {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.u32(FORMAT);
-        self.operation_identity.encode(encoder)?;
-        self.operation_id.encode(encoder);
-        self.preparation.encode(encoder)?;
-        encoder.count(self.input_preconditions.len())?;
-        for precondition in &self.input_preconditions {
-            precondition.encode(encoder)?;
-        }
-        encoder.count(self.operations.len())?;
-        for operation in &self.operations {
-            operation.encode(encoder)?;
-        }
-        encoder.count(self.directories.len())?;
-        for directory in &self.directories {
-            directory.encode(encoder)?;
-        }
-        self.ledger_before.encode(encoder);
-        self.ledger_after.encode(encoder);
-        encoder.count(self.object_manifest.len())?;
-        for object in &self.object_manifest {
-            object.encode(encoder);
-        }
-        encoder.count(self.post_commit.len())?;
-        for effect in &self.post_commit {
-            effect.encode(encoder)?;
-        }
-        self.kind.encode(encoder)
-    }
-
     /// `SHA256("JAILS-PREPARED-1" || encode(self))`.
     ///
     /// §R4.2 names this prefix, and a journal's directory name and stored
@@ -362,13 +330,70 @@ impl PreparedIdentityV1 {
         )))
     }
 
+    /// The checks that hold for a prepared identity however it arrived.
+    pub fn validate(&self) -> Result<()> {
+        self.operation_identity.semantics.agrees_with(&self.kind)?;
+        if self.operation_id != self.operation_identity.operation_id()? {
+            return Err(
+                "the operation id does not hash its own identity; this record was assembled                  from two different operations"
+                    .to_string(),
+            );
+        }
+        let mut targets = BTreeSet::new();
+        for operation in &self.operations {
+            if !targets.insert(operation.target().clone()) {
+                return Err(format!(
+                    "{} carries two operations in one transaction",
+                    operation.target()
+                ));
+            }
+        }
+        let mut previous: Option<&ObjectRef> = None;
+        for object in &self.object_manifest {
+            ordered(previous, object)?;
+            previous = Some(object);
+        }
+        Ok(())
+    }
+}
+impl Codec for PreparedIdentityV1 {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        encoder.u32(FORMAT);
+        self.operation_identity.encode(encoder)?;
+        self.operation_id.encode(encoder)?;
+        self.preparation.encode(encoder)?;
+        encoder.count(self.input_preconditions.len())?;
+        for precondition in &self.input_preconditions {
+            precondition.encode(encoder)?;
+        }
+        encoder.count(self.operations.len())?;
+        for operation in &self.operations {
+            operation.encode(encoder)?;
+        }
+        encoder.count(self.directories.len())?;
+        for directory in &self.directories {
+            directory.encode(encoder)?;
+        }
+        self.ledger_before.encode(encoder)?;
+        self.ledger_after.encode(encoder)?;
+        encoder.count(self.object_manifest.len())?;
+        for object in &self.object_manifest {
+            object.encode(encoder)?;
+        }
+        encoder.count(self.post_commit.len())?;
+        for effect in &self.post_commit {
+            effect.encode(encoder)?;
+        }
+        self.kind.encode(encoder)
+    }
+
     /// Decode one prepared identity.
     ///
     /// A journal recovered after a crash comes back through here, and it goes
     /// through the same constructors the live path used — a decoder with its
     /// own idea of a valid value is a second validator, and two validators
     /// drift.
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         let format = decoder.u32()?;
         if format != FORMAT {
             return Err(format!("prepared identity format {format} is not {FORMAT}"));
@@ -379,7 +404,7 @@ impl PreparedIdentityV1 {
         let count = decoder.count()?;
         let mut input_preconditions = Vec::new();
         for _ in 0..count {
-            input_preconditions.push(jails_protocol::snapshot::decode_precondition(decoder)?);
+            input_preconditions.push(InputPrecondition::decode(decoder)?);
         }
         let count = decoder.count()?;
         let mut operations = Vec::new();
@@ -419,32 +444,6 @@ impl PreparedIdentityV1 {
         };
         identity.validate()?;
         Ok(identity)
-    }
-
-    /// The checks that hold for a prepared identity however it arrived.
-    pub fn validate(&self) -> Result<()> {
-        self.operation_identity.semantics.agrees_with(&self.kind)?;
-        if self.operation_id != self.operation_identity.operation_id()? {
-            return Err(
-                "the operation id does not hash its own identity; this record was assembled                  from two different operations"
-                    .to_string(),
-            );
-        }
-        let mut targets = BTreeSet::new();
-        for operation in &self.operations {
-            if !targets.insert(operation.target().clone()) {
-                return Err(format!(
-                    "{} carries two operations in one transaction",
-                    operation.target()
-                ));
-            }
-        }
-        let mut previous: Option<&ObjectRef> = None;
-        for object in &self.object_manifest {
-            ordered(previous, object)?;
-            previous = Some(object);
-        }
-        Ok(())
     }
 }
 
@@ -585,14 +584,6 @@ impl PreparedChange {
             && self.post_commit.is_empty()
             && self.ledger_before == self.ledger_after
     }
-}
-
-/// The read set a prepared value's preconditions were built from.
-///
-/// Kept as a function rather than a stored field: the preconditions *are* the
-/// read set in prepared form, and storing both would let them disagree.
-pub fn preconditions_of(read_set: &ReadSet) -> Vec<InputPrecondition> {
-    read_set.inputs().to_vec()
 }
 
 #[cfg(test)]

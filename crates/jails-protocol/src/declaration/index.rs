@@ -8,7 +8,7 @@
 use super::FieldSpec;
 use crate::Result;
 use crate::identity::Name;
-use jails_support::codec::{Decoder, Encoder};
+use jails_support::codec::{Codec, Decoder, Encoder};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum IndexDirection {
@@ -98,8 +98,9 @@ impl IndexSpec {
             .collect::<Vec<_>>()
             .join(", ")
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for IndexSpec {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.count(self.columns.len())?;
         for column in &self.columns {
             column.field.encode(encoder)?;
@@ -111,7 +112,7 @@ impl IndexSpec {
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         let count = decoder.count()?;
         let mut columns = Vec::new();
         for _ in 0..count {

@@ -22,6 +22,20 @@
 //! Garbage collection runs after a successful commit. The project change is
 //! durable; the only cost of an aborted cycle is disk. Reporting it as a
 //! failed commit would tell somebody to retry work that has already happened.
+//!
+//! ## Except that nothing calls it
+//!
+//! Closing this crate's API (`pending.md` §7.2) is what said so: with
+//! `dead_code = "deny"`, [`sweep`] and everything it needs -- `roots_of`,
+//! `promote_receipts`, `store::list_objects`, `store::is_object_name` -- are
+//! reached from nothing. **No commit collects anything, so `.jails/objects`
+//! only grows.** That is not a correctness bug (an unreachable object is
+//! inert) and it is not a small one either: every rendered body, every base
+//! and every preimage a project has ever had is still on disk.
+//!
+//! The module is complete and unit-tested. What is missing is the one call at
+//! the end of a successful commit, plus the decision about where its warnings
+//! go -- which is the paragraph above, already written.
 
 use crate::store;
 use jails_protocol::identity::ObjectId;

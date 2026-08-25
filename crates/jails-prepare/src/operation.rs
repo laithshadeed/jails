@@ -18,7 +18,7 @@ use jails_protocol::conflict::{PendingIdentity, ResolutionIdentity, RestoreIdent
 use jails_protocol::identity::{ObjectId, OperationId, TransactionId};
 use jails_protocol::plan::{LedgerIntent, PlannedSubject};
 use jails_protocol::request::InvocationFingerprint;
-use jails_support::codec::{self, Decoder, Encoder};
+use jails_support::codec::{self, Codec, Decoder, Encoder};
 
 /// An apply's meaning: what is wanted, and what the store should say after.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -74,8 +74,9 @@ impl OperationSemanticsV1 {
         }
         Ok(())
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for OperationSemanticsV1 {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.tag(self.tag());
         match self {
             Self::Apply(apply) => {
@@ -89,9 +90,9 @@ impl OperationSemanticsV1 {
                 pending,
                 resolutions,
             } => {
-                origin.encode(encoder);
-                origin_transaction.encode(encoder);
-                pending.encode(encoder);
+                origin.encode(encoder)?;
+                origin_transaction.encode(encoder)?;
+                pending.encode(encoder)?;
                 encoder.count(resolutions.len())?;
                 for resolution in resolutions {
                     resolution.encode(encoder)?;
@@ -103,8 +104,8 @@ impl OperationSemanticsV1 {
                 origin_transaction,
                 restores,
             } => {
-                origin.encode(encoder);
-                origin_transaction.encode(encoder);
+                origin.encode(encoder)?;
+                origin_transaction.encode(encoder)?;
                 encoder.count(restores.len())?;
                 for restore in restores {
                     restore.encode(encoder)?;
@@ -114,7 +115,7 @@ impl OperationSemanticsV1 {
         }
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::Apply(Box::new(ApplySemantics {
                 subject: PlannedSubject::decode(decoder)?,
@@ -166,24 +167,6 @@ pub struct OperationIdentityV1 {
 }
 
 impl OperationIdentityV1 {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.snapshot.encode(encoder);
-        self.operation_context.encode(encoder)?;
-        encoder.option(self.invocation.as_ref(), |e, one| one.encode(e))?;
-        encoder.u64(self.proposed_generation);
-        self.semantics.encode(encoder)
-    }
-
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            snapshot: ObjectId::decode(decoder)?,
-            operation_context: OperationContextFingerprint::decode(decoder)?,
-            invocation: decoder.option(InvocationFingerprint::decode)?,
-            proposed_generation: decoder.u64()?,
-            semantics: OperationSemanticsV1::decode(decoder)?,
-        })
-    }
-
     /// `SHA256("JAILS-OPERATION-1" || encode(self))`.
     ///
     /// Computed *before* any ID-bearing argument or byte exists, which is what
@@ -196,5 +179,24 @@ impl OperationIdentityV1 {
             "JAILS-OPERATION-1",
             &encoder.finish()?,
         )))
+    }
+}
+impl Codec for OperationIdentityV1 {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        self.snapshot.encode(encoder)?;
+        self.operation_context.encode(encoder)?;
+        encoder.option(self.invocation.as_ref(), |e, one| one.encode(e))?;
+        encoder.u64(self.proposed_generation);
+        self.semantics.encode(encoder)
+    }
+
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(Self {
+            snapshot: ObjectId::decode(decoder)?,
+            operation_context: OperationContextFingerprint::decode(decoder)?,
+            invocation: decoder.option(InvocationFingerprint::decode)?,
+            proposed_generation: decoder.u64()?,
+            semantics: OperationSemanticsV1::decode(decoder)?,
+        })
     }
 }

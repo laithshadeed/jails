@@ -28,7 +28,7 @@ use crate::Result;
 use crate::coordinate::{DependencySpec, MavenCoordinate, PluginSpec};
 use crate::entity::{CapabilitySpec, EntityId, OneShotId};
 use crate::identity::{JavaType, MarkerId, ProjectPath, PropertyKey, ServiceName, VolumeName};
-use jails_support::codec::{Decoder, Encoder, ordered};
+use jails_support::codec::{Codec, Decoder, Encoder, ordered};
 use std::collections::BTreeSet;
 
 // ---------------------------------------------------------------------------
@@ -83,12 +83,13 @@ impl CanonicalYamlMapping {
     pub fn as_str(&self) -> &str {
         &self.0
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for CanonicalYamlMapping {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.string(&self.0)
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Self::parse(&decoder.string()?)
     }
 }
@@ -102,8 +103,8 @@ pub struct ComposeServiceSpec {
     pub volumes: BTreeSet<VolumeName>,
 }
 
-impl ComposeServiceSpec {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for ComposeServiceSpec {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.name.encode(encoder)?;
         self.marker.encode(encoder)?;
         self.mapping.encode(encoder)?;
@@ -117,19 +118,11 @@ impl ComposeServiceSpec {
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         let name = ServiceName::decode(decoder)?;
         let marker = MarkerId::decode(decoder)?;
         let mapping = CanonicalYamlMapping::decode(decoder)?;
-        let count = decoder.count()?;
-        let mut volumes = BTreeSet::new();
-        let mut previous: Option<VolumeName> = None;
-        for _ in 0..count {
-            let volume = VolumeName::decode(decoder)?;
-            ordered(previous.as_ref(), &volume)?;
-            previous = Some(volume.clone());
-            volumes.insert(volume);
-        }
+        let volumes: BTreeSet<VolumeName> = decoder.set()?;
         Ok(Self {
             name,
             marker,
@@ -202,8 +195,9 @@ impl ResourceKey {
             Self::MavenMainClass(_) => 9,
         }
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for ResourceKey {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.tag(self.tag());
         match self {
             Self::WholeFile(path) => path.encode(encoder),
@@ -235,7 +229,7 @@ impl ResourceKey {
         }
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::WholeFile(ProjectPath::decode(decoder)?),
             1 => Self::MavenDependency(MavenCoordinate::decode(decoder)?),
@@ -311,8 +305,9 @@ impl PropertySetting {
             comment: Vec::new(),
         }
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for PropertySetting {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.string(&self.value)?;
         encoder.count(self.comment.len())?;
         for line in &self.comment {
@@ -321,7 +316,7 @@ impl PropertySetting {
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         let value = decoder.string()?;
         let count = decoder.count()?;
         let mut comment = Vec::new();
@@ -432,8 +427,9 @@ impl ResourceValue {
             _ => Ok(()),
         }
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for ResourceValue {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.tag(self.tag());
         match self {
             Self::WholeFile => Ok(()),
@@ -455,7 +451,7 @@ impl ResourceValue {
         }
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::WholeFile,
             1 => Self::MavenDependency(DependencySpec::decode(decoder)?),
@@ -488,8 +484,8 @@ pub enum ResourceOwner {
     OneShot(OneShotId),
 }
 
-impl ResourceOwner {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for ResourceOwner {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         match self {
             Self::Entity(id) => {
                 encoder.tag(0);
@@ -502,37 +498,13 @@ impl ResourceOwner {
         }
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::Entity(EntityId::decode(decoder)?),
             1 => Self::OneShot(OneShotId::decode(decoder)?),
             other => Err(format!("unknown resource owner tag {other}"))?,
         })
     }
-}
-
-pub fn encode_owners(encoder: &mut Encoder, owners: &BTreeSet<ResourceOwner>) -> Result<()> {
-    encoder.count(owners.len())?;
-    let mut previous: Option<&ResourceOwner> = None;
-    for owner in owners {
-        ordered(previous, owner)?;
-        previous = Some(owner);
-        owner.encode(encoder)?;
-    }
-    Ok(())
-}
-
-pub fn decode_owners(decoder: &mut Decoder<'_>) -> Result<BTreeSet<ResourceOwner>> {
-    let count = decoder.count()?;
-    let mut owners = BTreeSet::new();
-    let mut previous: Option<ResourceOwner> = None;
-    for _ in 0..count {
-        let owner = ResourceOwner::decode(decoder)?;
-        ordered(previous.as_ref(), &owner)?;
-        previous = Some(owner.clone());
-        owners.insert(owner);
-    }
-    Ok(owners)
 }
 
 /// A resource as it is to be, with the complete owner set.
@@ -562,16 +534,17 @@ impl DesiredResource {
         }
         Ok(Self { key, owners, value })
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for DesiredResource {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.key.encode(encoder)?;
-        encode_owners(encoder, &self.owners)?;
+        encoder.set(&self.owners)?;
         self.value.encode(encoder)
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         let key = ResourceKey::decode(decoder)?;
-        let owners = decode_owners(decoder)?;
+        let owners = decoder.set()?;
         let value = ResourceValue::decode(decoder)?;
         Self::new(key, owners, value)
     }
@@ -615,12 +588,15 @@ impl OneShotState {
             Self::RetiredTargetRemoved => 1,
         }
     }
+}
 
-    pub fn encode(self, encoder: &mut Encoder) {
+impl Codec for OneShotState {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.tag(self.tag());
+        Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         match decoder.tag()? {
             0 => Ok(Self::Active),
             1 => Ok(Self::RetiredTargetRemoved),
@@ -652,56 +628,33 @@ impl OneShotLifecycle {
             Self::Cases => 2,
         }
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for OneShotLifecycle {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.tag(self.tag());
         match self {
             Self::Field {
                 target_coupled,
                 append_only,
             } => {
-                encode_keys(encoder, target_coupled)?;
-                encode_keys(encoder, append_only)
+                encoder.set(target_coupled)?;
+                encoder.set(append_only)
             }
             Self::Migration | Self::Cases => Ok(()),
         }
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::Field {
-                target_coupled: decode_keys(decoder)?,
-                append_only: decode_keys(decoder)?,
+                target_coupled: decoder.set()?,
+                append_only: decoder.set()?,
             },
             1 => Self::Migration,
             2 => Self::Cases,
             other => Err(format!("unknown one-shot lifecycle tag {other}"))?,
         })
     }
-}
-
-pub fn encode_keys(encoder: &mut Encoder, keys: &BTreeSet<ResourceKey>) -> Result<()> {
-    encoder.count(keys.len())?;
-    let mut previous: Option<&ResourceKey> = None;
-    for key in keys {
-        ordered(previous, key)?;
-        previous = Some(key);
-        key.encode(encoder)?;
-    }
-    Ok(())
-}
-
-pub fn decode_keys(decoder: &mut Decoder<'_>) -> Result<BTreeSet<ResourceKey>> {
-    let count = decoder.count()?;
-    let mut keys = BTreeSet::new();
-    let mut previous: Option<ResourceKey> = None;
-    for _ in 0..count {
-        let key = ResourceKey::decode(decoder)?;
-        ordered(previous.as_ref(), &key)?;
-        previous = Some(key.clone());
-        keys.insert(key);
-    }
-    Ok(keys)
 }
 
 #[cfg(test)]
@@ -820,7 +773,7 @@ mod tests {
         owner("Alpha").encode(&mut encoder).unwrap();
         let bytes = encoder.finish().unwrap();
         let mut decoder = Decoder::new(&bytes).unwrap();
-        assert!(decode_owners(&mut decoder).is_err());
+        assert!(decoder.set::<ResourceOwner>().is_err());
     }
 
     #[test]

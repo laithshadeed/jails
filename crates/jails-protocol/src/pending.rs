@@ -22,6 +22,18 @@
 //! It is presentation — the sentence a person is shown. Including it would
 //! make improving that sentence invalidate every pending conflict in
 //! existence.
+//!
+//! ## Nothing calls this yet
+//!
+//! Closing this crate's API to `pub(crate)` (`pending.md` §7.2) made that
+//! visible: with `dead_code = "deny"`, 16 items here are reachable from
+//! nothing. They are `pub` for that reason and no other. This is not stale
+//! code -- it is encoded, round-tripped and unit-tested -- it is `pending.md`
+//! §11's "conflicted merges cannot be resumed", which lands as one piece or
+//! not at all: the frozen record, the refusal while it stands, and the
+//! continue/abort commands. Building only the enter side was tried and backed
+//! out, so a project that can enter a conflicted state and not leave it is
+//! exactly what these types must not be wired up to produce.
 
 use crate::Result;
 use crate::conflict::{
@@ -33,11 +45,8 @@ use crate::identity::{ObjectId, OperationId, ProjectPath};
 use crate::provenance::RendererStamp;
 use crate::record::AppliedEntity;
 use crate::request::{InvocationFingerprint, ManifestSourceId};
-use crate::resource::{
-    OneShotLifecycle, OneShotState, ResourceKey, ResourceOwner, ResourceValue, decode_owners,
-    encode_owners,
-};
-use jails_support::codec::{Decoder, Encoder, ordered};
+use crate::resource::{OneShotLifecycle, OneShotState, ResourceKey, ResourceOwner, ResourceValue};
+use jails_support::codec::{Codec, Decoder, Encoder, ordered};
 use std::collections::BTreeSet;
 
 /// Which human input a frozen candidate depended on.
@@ -58,8 +67,9 @@ impl DesiredInputId {
             Self::CasesBrief(_) => 3,
         }
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for DesiredInputId {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.tag(self.tag());
         match self {
             Self::AppManifest(source) => source.encode(encoder),
@@ -68,7 +78,7 @@ impl DesiredInputId {
         }
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::HumanConfig,
             1 => Self::AppManifest(ManifestSourceId::decode(decoder)?),
@@ -105,18 +115,19 @@ impl DesiredInputGuard {
             Self::Absent => 2,
         }
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for DesiredInputGuard {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.tag(self.tag());
         match self {
             Self::Exact { sha256, len } => {
-                sha256.encode(encoder);
+                sha256.encode(encoder)?;
                 encoder.u64(*len);
                 Ok(())
             }
             Self::ProjectedTransactionOutput { path, sha256, len } => {
                 path.encode(encoder)?;
-                sha256.encode(encoder);
+                sha256.encode(encoder)?;
                 encoder.u64(*len);
                 Ok(())
             }
@@ -124,7 +135,7 @@ impl DesiredInputGuard {
         }
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::Exact {
                 sha256: ObjectId::decode(decoder)?,
@@ -148,13 +159,13 @@ pub struct FrozenDesiredInput {
     pub guard: DesiredInputGuard,
 }
 
-impl FrozenDesiredInput {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for FrozenDesiredInput {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.id.encode(encoder)?;
         self.guard.encode(encoder)
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
             id: DesiredInputId::decode(decoder)?,
             guard: DesiredInputGuard::decode(decoder)?,
@@ -172,19 +183,19 @@ pub struct PendingOutput {
     pub renderer: RendererStamp,
 }
 
-impl PendingOutput {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for PendingOutput {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.path.encode(encoder)?;
-        encode_owners(encoder, &self.contributors)?;
+        encoder.set(&self.contributors)?;
         self.current.encode(encoder)?;
         self.base.encode(encoder)?;
         self.renderer.encode(encoder)
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
             path: ProjectPath::decode(decoder)?,
-            contributors: decode_owners(decoder)?,
+            contributors: decoder.set()?,
             current: crate::conflict::PendingCurrent::decode(decoder)?,
             base: StoredFileImage::decode(decoder)?,
             renderer: RendererStamp::decode(decoder)?,
@@ -200,17 +211,17 @@ pub struct PendingResource {
     pub value: ResourceValue,
 }
 
-impl PendingResource {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for PendingResource {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.value.agrees_with(&self.key)?;
         self.key.encode(encoder)?;
-        encode_owners(encoder, &self.owners)?;
+        encoder.set(&self.owners)?;
         self.value.encode(encoder)
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         let key = ResourceKey::decode(decoder)?;
-        let owners = decode_owners(decoder)?;
+        let owners = decoder.set()?;
         let value = ResourceValue::decode(decoder)?;
         value.agrees_with(&key)?;
         Ok(Self { key, owners, value })
@@ -226,15 +237,15 @@ pub struct PendingOneShot {
     pub lifecycle: OneShotLifecycle,
 }
 
-impl PendingOneShot {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for PendingOneShot {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.id.encode(encoder)?;
         self.spec.encode(encoder)?;
-        self.state.encode(encoder);
+        self.state.encode(encoder)?;
         self.lifecycle.encode(encoder)
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
             id: OneShotId::decode(decoder)?,
             spec: OneShotSpec::decode(decoder)?,
@@ -253,8 +264,8 @@ pub struct PendingLedgerState {
     pub outputs: Vec<PendingOutput>,
 }
 
-impl PendingLedgerState {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for PendingLedgerState {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.count(self.applied.len())?;
         for entity in &self.applied {
             entity.encode(encoder)?;
@@ -274,7 +285,7 @@ impl PendingLedgerState {
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         let mut state = Self::default();
         for _ in 0..decoder.count()? {
             state.applied.push(AppliedEntity::decode(decoder)?);
@@ -313,7 +324,7 @@ impl PendingConflict {
     /// Everything semantic, in canonical order, with presentation excluded.
     fn identity_bytes(&self) -> Result<Vec<u8>> {
         let mut encoder = Encoder::new();
-        self.operation.encode(&mut encoder);
+        self.operation.encode(&mut encoder)?;
         encoder.u64(self.generation);
         self.invocation.encode(&mut encoder)?;
         encoder.count(self.desired_inputs.len())?;

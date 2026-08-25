@@ -19,7 +19,7 @@ use crate::conflict::FileMode;
 use crate::identity::{JavaType, Name, Package, ProjectPath, TemplateId, TemplateKey};
 use crate::provenance::RendererStamp;
 use crate::resource::ResourceKey;
-use jails_support::codec::{Decoder, Encoder, MAX_CODEC_DEPTH, ordered};
+use jails_support::codec::{Codec, Decoder, Encoder, MAX_CODEC_DEPTH, ordered};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -41,8 +41,8 @@ pub enum DesiredBody {
     },
 }
 
-impl DesiredBody {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for DesiredBody {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         match self {
             Self::Bytes(bytes) => {
                 encoder.tag(0);
@@ -56,7 +56,7 @@ impl DesiredBody {
         }
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::Bytes(
                 decoder
@@ -102,8 +102,9 @@ impl TemplateBindings {
     pub fn keys(&self) -> impl Iterator<Item = &TemplateKey> {
         self.0.keys()
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for TemplateBindings {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.count(self.0.len())?;
         let mut previous: Option<&TemplateKey> = None;
         for (key, value) in &self.0 {
@@ -115,7 +116,7 @@ impl TemplateBindings {
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         let count = decoder.count()?;
         let mut bindings = BTreeMap::new();
         let mut previous: Option<TemplateKey> = None;
@@ -242,8 +243,8 @@ pub struct DesiredProvenance {
     pub context: Arc<[u8]>,
 }
 
-impl DesiredProvenance {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for DesiredProvenance {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.stamp.encode(encoder)?;
         encoder.object(
             &self.context,
@@ -251,7 +252,7 @@ impl DesiredProvenance {
         )
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
             stamp: RendererStamp::decode(decoder)?,
             context: Arc::from(
@@ -263,19 +264,19 @@ impl DesiredProvenance {
     }
 }
 
-impl DesiredFile {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for DesiredFile {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.path.encode(encoder)?;
         self.body.encode(encoder)?;
         encoder.option(self.mode.as_ref(), |e, mode| {
-            mode.encode(e);
+            mode.encode(e)?;
             Ok(())
         })?;
         encoder.option(self.resource.as_ref(), |e, key| key.encode(e))?;
         encoder.option(self.renderer.as_ref(), |e, provenance| provenance.encode(e))
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
             path: ProjectPath::decode(decoder)?,
             body: DesiredBody::decode(decoder)?,
@@ -298,15 +299,15 @@ pub struct ManagedPath {
     pub force: bool,
 }
 
-impl ManagedPath {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for ManagedPath {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.path.encode(encoder)?;
         self.resource.encode(encoder)?;
         encoder.bool(self.force);
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
             path: ProjectPath::decode(decoder)?,
             resource: ResourceKey::decode(decoder)?,

@@ -40,13 +40,38 @@
 //! what lets a second implementation reproduce the exact hex.
 
 use crate::Result;
+use std::collections::{BTreeMap, BTreeSet};
+
+/// A type with one canonical encoding on this wire.
+///
+/// plan.md §R1.1 states the property this makes checkable: *"there is one
+/// constructor per type and the codec calls it."* Before the trait existed
+/// that was prose. Every value on the wire had an inherent `encode`/`decode`
+/// pair with byte-identical signatures -- 114 of them -- and nothing in the
+/// language connected them, so nothing generic could be written over them.
+///
+/// The cost was visible in the shape of this module rather than in any bug.
+/// [`Encoder::option`] and [`Encoder::nested`] take **closures**, because a
+/// bound was not available to take instead. And where one collection shape
+/// recurred, somebody wrote a named monomorphisation of it -- `encode_strings`,
+/// `decode_strings`, `encode_paths`, `encode_owners`, `encode_service_set`,
+/// `decode_service_map`, `decode_vec` -- seven copies of a function that
+/// could not be written once.
+///
+/// With the bound, "this type is on the wire" is something the compiler
+/// knows, and [`Encoder::seq`]/[`Decoder::seq`] can be written for all of
+/// them at once.
+pub trait Codec: Sized {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()>;
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self>;
+}
 
 /// 4,096 bytes per project path.
 pub const MAX_PATH_BYTES: usize = 4 * 1024;
 /// 1 MiB per ordinary string or diagnostic.
 pub const MAX_STRING_BYTES: usize = 1024 * 1024;
 /// 1,000,000 entries in any one collection.
-pub const MAX_COLLECTION_ENTRIES: u32 = 1_000_000;
+pub(crate) const MAX_COLLECTION_ENTRIES: u32 = 1_000_000;
 /// The default per-object ceiling. A command may lower it; raising it needs an
 /// explicit CLI or config value.
 pub const DEFAULT_MAX_OBJECT_BYTES: u64 = 256 * 1024 * 1024;
@@ -176,6 +201,71 @@ impl Encoder {
                 encode(self, inner)
             }
         }
+    }
+
+    /// A count followed by that many canonical elements.
+    ///
+    /// The list/set/map row of the table above, written once. Callers pass an
+    /// iterator rather than a slice so a `BTreeSet` or a map's values encode
+    /// without being collected first -- but the count has to be exact and
+    /// known up front, which is why it is taken separately from the iterator
+    /// rather than derived by walking it twice.
+    pub fn seq<'item, T: Codec + 'item>(
+        &mut self,
+        len: usize,
+        items: impl IntoIterator<Item = &'item T>,
+    ) -> Result<()> {
+        self.count(len)?;
+        let mut written = 0usize;
+        for item in items {
+            item.encode(self)?;
+            written += 1;
+        }
+        if written != len {
+            return Err(format!(
+                "a sequence declared {len} elements and encoded {written}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// A sorted, duplicate-free set: the count, then the elements in order.
+    ///
+    /// The ordering check is [`ordered`]'s, applied here so every set on the
+    /// wire gets it. Before the trait, each set that needed it carried its own
+    /// copy of this loop -- `encode_owners` and `encode_service_set` were the
+    /// same eight lines with one type changed -- and a set whose author forgot
+    /// the check simply did not get one.
+    pub fn set<T: Codec + Ord + std::fmt::Debug>(&mut self, items: &BTreeSet<T>) -> Result<()> {
+        self.count(items.len())?;
+        let mut previous: Option<&T> = None;
+        for item in items {
+            ordered(previous, item)?;
+            previous = Some(item);
+            item.encode(self)?;
+        }
+        Ok(())
+    }
+
+    /// A sorted map: the count, then key/value pairs in key order.
+    pub fn map<K: Codec + Ord + std::fmt::Debug, V: Codec>(
+        &mut self,
+        entries: &BTreeMap<K, V>,
+    ) -> Result<()> {
+        self.count(entries.len())?;
+        let mut previous: Option<&K> = None;
+        for (key, value) in entries {
+            ordered(previous, key)?;
+            previous = Some(key);
+            key.encode(self)?;
+            value.encode(self)?;
+        }
+        Ok(())
+    }
+
+    /// `Option<T>` for a type that is on the wire, with no closure.
+    pub fn maybe<T: Codec>(&mut self, value: Option<&T>) -> Result<()> {
+        self.option(value, |encoder, inner| inner.encode(encoder))
     }
 
     /// Encode a recursive node under the depth counter.
@@ -328,6 +418,54 @@ impl<'a> Decoder<'a> {
             1 => decode(self).map(Some),
             other => Err(format!("expected an option tag 0 or 1, found {other}")),
         }
+    }
+
+    /// The inverse of [`Encoder::seq`]: a count, then that many elements.
+    ///
+    /// The count is checked against the bytes remaining before anything is
+    /// reserved -- see this module's header -- so a four-byte length cannot
+    /// ask for a four-gigabyte allocation.
+    pub fn seq<T: Codec>(&mut self) -> Result<Vec<T>> {
+        let count = self.count()? as usize;
+        let mut out = Vec::with_capacity(count.min(1024));
+        for _ in 0..count {
+            out.push(T::decode(self)?);
+        }
+        Ok(out)
+    }
+
+    /// The inverse of [`Encoder::set`], refusing an unsorted or duplicated one.
+    ///
+    /// Refusing rather than tolerating is the whole point: if `{a,b}` and
+    /// `{b,a}` both decoded, one set would have two encodings and therefore
+    /// two identities. See [`ordered`].
+    pub fn set<T: Codec + Ord + std::fmt::Debug>(&mut self) -> Result<BTreeSet<T>> {
+        let count = self.count()? as usize;
+        let mut out = BTreeSet::new();
+        for _ in 0..count {
+            let item = T::decode(self)?;
+            ordered(out.last(), &item)?;
+            out.insert(item);
+        }
+        Ok(out)
+    }
+
+    /// The inverse of [`Encoder::map`].
+    pub fn map<K: Codec + Ord + std::fmt::Debug, V: Codec>(&mut self) -> Result<BTreeMap<K, V>> {
+        let count = self.count()? as usize;
+        let mut out = BTreeMap::new();
+        for _ in 0..count {
+            let key = K::decode(self)?;
+            ordered(out.last_key_value().map(|(last, _)| last), &key)?;
+            let value = V::decode(self)?;
+            out.insert(key, value);
+        }
+        Ok(out)
+    }
+
+    /// The inverse of [`Encoder::maybe`].
+    pub fn perhaps<T: Codec>(&mut self) -> Result<Option<T>> {
+        self.option(T::decode)
     }
 
     pub fn nested<T>(&mut self, decode: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {

@@ -23,6 +23,18 @@
 //!        |- Pending(..)       // frozen record only; no ordinary parser exists
 //!        `- Ready(OrdinaryBootstrap)  // the permission, and the only one
 //! ```
+//!
+//! ## Nothing calls this yet
+//!
+//! Closing this crate's API to `pub(crate)` (`pending.md` §7.2) made that
+//! visible: with `dead_code = "deny"`, 6 items here are reachable from
+//! nothing. They are `pub` for that reason and no other. This is not stale
+//! code -- it is encoded, round-tripped and unit-tested -- it is `pending.md`
+//! §11's "conflicted merges cannot be resumed", which lands as one piece or
+//! not at all: the frozen record, the refusal while it stands, and the
+//! continue/abort commands. Building only the enter side was tried and backed
+//! out, so a project that can enter a conflicted state and not leave it is
+//! exactly what these types must not be wired up to produce.
 
 use crate::Result;
 use crate::envelope::{LedgerV2, PendingMarker};

@@ -175,7 +175,7 @@ pub(crate) fn matches(actual: &ActualImage, expected: Option<&GuardedImage>) -> 
 
 /// What is actually there. A symlink or a directory is its own answer, never
 /// followed: a plan that named a file must not act on something else.
-pub(crate) fn observe(at: &Path) -> std::result::Result<ActualImage, String> {
+pub fn observe(at: &Path) -> std::result::Result<ActualImage, String> {
     let metadata = match std::fs::symlink_metadata(at) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {

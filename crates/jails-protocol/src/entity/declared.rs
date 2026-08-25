@@ -14,7 +14,7 @@
 //! owners claiming one key.
 
 use crate::Result;
-use jails_support::codec::{Decoder, Encoder};
+use jails_support::codec::{Codec, Decoder, Encoder};
 
 /// Which resource was asked for.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
@@ -40,8 +40,9 @@ impl DeclaredId {
             Self::Property { .. } => 1,
         }
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for DeclaredId {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.tag(self.tag());
         match self {
             Self::Dependency(coordinate) => coordinate.encode(encoder),
@@ -52,7 +53,7 @@ impl DeclaredId {
         }
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         match decoder.tag()? {
             0 => crate::coordinate::MavenCoordinate::decode(decoder).map(Self::Dependency),
             1 => Ok(Self::Property {
@@ -96,8 +97,9 @@ impl DeclaredSpec {
             _ => false,
         }
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for DeclaredSpec {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.tag(self.tag());
         match self {
             Self::Dependency(spec) => spec.encode(encoder),
@@ -105,7 +107,7 @@ impl DeclaredSpec {
         }
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         match decoder.tag()? {
             0 => crate::coordinate::DependencySpec::decode(decoder).map(Self::Dependency),
             1 => crate::resource::PropertySetting::decode(decoder).map(Self::Property),

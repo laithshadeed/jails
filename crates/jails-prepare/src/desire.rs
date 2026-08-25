@@ -57,12 +57,14 @@ use crate::Result;
 
 /// The files a recipe's contributions land in.
 ///
-/// Four paths, stated once. Each is a *format owner's* file — a file jails
-/// edits surgically rather than owns whole — which is why none of them is
-/// a `WholeFile` resource and all four are addressed by the key of the thing
-/// inside them.
-pub const POM: &str = "pom.xml";
-pub const COMPOSE: &str = "compose.yaml";
+/// The two property files, stated once. Each is a *format owner's* file — a
+/// file jails edits surgically rather than owns whole — which is why neither is
+/// a `WholeFile` resource and both are addressed by the key of the thing inside
+/// them.
+///
+/// `pom.xml` and `compose.yaml` were named here too and by nobody: their paths
+/// are resolved in `projection.rs`, which is the module that opens them, and a
+/// second constant for a path is a second answer about where a file is.
 pub const APPLICATION_PROPERTIES: &str = "src/main/resources/application.properties";
 /// The test overlay. See `model::Change::test_properties` for why this path
 /// and not `src/test/resources/application.properties`.

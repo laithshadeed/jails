@@ -26,8 +26,8 @@ use crate::journal::BlockReason;
 // below this crate. They are re-exported here so every existing caller keeps
 // its spelling.
 use jails_prepare::receipt::AppliedReceipt;
-pub use jails_prepare::recovery::{
-    RecoverableEffect, RecoveryChange, RecoveryOutcome, RecoveryTransactionAction,
+pub(crate) use jails_prepare::recovery::{
+    RecoveryChange, RecoveryOutcome, RecoveryTransactionAction,
 };
 use jails_protocol::effect::EffectId;
 #[cfg(test)]
@@ -163,6 +163,7 @@ impl std::fmt::Display for RecoveryError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jails_prepare::recovery::RecoverableEffect;
 
     /// An effect nobody ran changed nothing, so reporting one does not make
     /// the caller's plan stale.

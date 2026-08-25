@@ -25,7 +25,7 @@ use crate::Result;
 use crate::declaration::{FieldSpec, IntentSpec};
 use crate::identity::{JavaType, Name, ObjectId, Package, ProjectPath};
 use jails_spec::spec::kind::{ArtifactKind, Capability};
-use jails_support::codec::{self, Decoder, Encoder};
+use jails_support::codec::{self, Codec, Decoder, Encoder};
 
 mod declared;
 
@@ -67,14 +67,15 @@ impl IntentId {
             package,
         }
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for IntentId {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.string(recipe_label(self.recipe))?;
         self.name.encode(encoder)?;
         self.package.encode(encoder)
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         let recipe = recipe_from_label(&decoder.string()?)?;
         Ok(Self {
             recipe,
@@ -203,8 +204,9 @@ impl CapabilityId {
             }
         }
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for CapabilityId {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.string(self.kind.label())?;
         match &self.instance {
             CapabilityInstance::Singleton => encoder.tag(0),
@@ -217,7 +219,7 @@ impl CapabilityId {
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         let kind = capability_from_label(&decoder.string()?)?;
         let instance = match decoder.tag()? {
             0 => CapabilityInstance::Singleton,
@@ -276,8 +278,8 @@ pub enum EntityId {
     Declared(DeclaredId),
 }
 
-impl EntityId {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for EntityId {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         match self {
             Self::Capability(id) => {
                 encoder.tag(0);
@@ -299,7 +301,7 @@ impl EntityId {
         }
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         match decoder.tag()? {
             0 => CapabilityId::decode(decoder).map(Self::Capability),
             1 => IntentId::decode(decoder).map(Self::Intent),
@@ -355,12 +357,12 @@ pub struct CapabilitySpec {
     pub placement: Option<Package>,
 }
 
-impl CapabilitySpec {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for CapabilitySpec {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.option(self.placement.as_ref(), |e, package| package.encode(e))
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
             placement: decoder.option(Package::decode)?,
         })
@@ -383,12 +385,12 @@ pub struct ToolFeatureSpec {
     pub console_version: crate::coordinate::MavenVersion,
 }
 
-impl ToolFeatureSpec {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for ToolFeatureSpec {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.console_version.encode(encoder)
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
             console_version: crate::coordinate::MavenVersion::decode(decoder)?,
         })
@@ -432,8 +434,9 @@ impl EntitySpec {
             _ => false,
         }
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for EntitySpec {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         match self {
             Self::Capability(spec) => {
                 encoder.tag(0);
@@ -454,7 +457,7 @@ impl EntitySpec {
         }
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::Capability(CapabilitySpec::decode(decoder)?),
             1 => Self::Intent(IntentSpec::decode(decoder)?),
@@ -479,8 +482,8 @@ pub enum TypeTargetId {
     Existing(JavaType),
 }
 
-impl TypeTargetId {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for TypeTargetId {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         match self {
             Self::Managed(id) => {
                 encoder.tag(0);
@@ -493,7 +496,7 @@ impl TypeTargetId {
         }
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::Managed(IntentId::decode(decoder)?),
             1 => Self::Existing(JavaType::decode(decoder)?),
@@ -541,18 +544,20 @@ impl ExternalPathId {
     pub fn object(&self) -> ObjectId {
         self.0
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) {
-        self.0.encode(encoder);
+}
+impl Codec for ExternalPathId {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        self.0.encode(encoder)?;
+        Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self(ObjectId::decode(decoder)?))
     }
 }
 
-impl SourceInputId {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for SourceInputId {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         match self {
             Self::Project(path) => {
                 encoder.tag(0);
@@ -560,13 +565,13 @@ impl SourceInputId {
             }
             Self::External { path_id } => {
                 encoder.tag(1);
-                path_id.0.encode(encoder);
+                path_id.0.encode(encoder)?;
                 Ok(())
             }
         }
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::Project(ProjectPath::decode(decoder)?),
             1 => Self::External {
@@ -593,8 +598,9 @@ impl OneShotId {
             Self::Cases { .. } => 2,
         }
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for OneShotId {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.tag(self.tag());
         match self {
             Self::Field { target, field } => {
@@ -606,7 +612,7 @@ impl OneShotId {
         }
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::Field {
                 target: TypeTargetId::decode(decoder)?,
@@ -705,8 +711,9 @@ impl OneShotSpec {
             _ => false,
         }
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for OneShotSpec {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.tag(self.tag());
         match self {
             Self::Field { target, field } => {
@@ -722,7 +729,7 @@ impl OneShotSpec {
                 encoder.string(description)?;
                 encoder.u64(*allocated_version);
                 path.encode(encoder)?;
-                body.encode(encoder);
+                body.encode(encoder)?;
                 Ok(())
             }
             Self::Cases {
@@ -731,13 +738,13 @@ impl OneShotSpec {
                 output,
             } => {
                 source.encode(encoder)?;
-                source_sha256.encode(encoder);
+                source_sha256.encode(encoder)?;
                 output.encode(encoder)
             }
         }
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::Field {
                 target: TypeTargetId::decode(decoder)?,
@@ -793,6 +800,8 @@ pub(crate) fn capability_from_label(label: &str) -> Result<Capability> {
 
 /// `SHA256("JAILS-ENTITY-1" || encode(id))`, for use as a stable map key in
 /// formats that cannot hold the structured value.
+///
+/// No such format exists yet; nothing calls this. `pending.md` §7.2.
 pub fn entity_digest(id: &EntityId) -> Result<[u8; codec::DIGEST_BYTES]> {
     let mut encoder = Encoder::new();
     id.encode(&mut encoder)?;

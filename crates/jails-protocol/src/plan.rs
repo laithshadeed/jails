@@ -14,7 +14,7 @@ use crate::entity::{EntityId, EntitySpec, OneShotId, OneShotSpec, OwnerId};
 use crate::identity::{JavaType, ProjectPath};
 use crate::ownership::{DesiredEntity, DesiredState, ReconcileScope};
 use crate::resource::{DesiredResource, OneShotLifecycle, OneShotState};
-use jails_support::codec::{Decoder, Encoder, ordered};
+use jails_support::codec::{Codec, Decoder, Encoder, ordered};
 use std::collections::{BTreeMap, BTreeSet};
 
 // ---------------------------------------------------------------------------
@@ -91,8 +91,9 @@ impl LedgerIntent {
         }
         Ok(())
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for LedgerIntent {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.validate()?;
         encoder.u64(self.generation_before);
         encode_all(encoder, &self.entities_after, DesiredAppliedEntity::encode)?;
@@ -106,7 +107,7 @@ impl LedgerIntent {
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         let generation_before = decoder.u64()?;
         let entities_after = decode_all(decoder, DesiredAppliedEntity::decode)?;
         let one_shots_after = decode_all(decoder, DesiredOneShotReceipt::decode)?;
@@ -132,8 +133,8 @@ pub struct DesiredAppliedEntity {
     pub spec: EntitySpec,
 }
 
-impl DesiredAppliedEntity {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for DesiredAppliedEntity {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.id.encode(encoder)?;
         encoder.count(self.owners.len())?;
         let mut previous: Option<&OwnerId> = None;
@@ -145,7 +146,7 @@ impl DesiredAppliedEntity {
         self.spec.encode(encoder)
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         let id = EntityId::decode(decoder)?;
         let count = decoder.count()?;
         let mut owners = BTreeSet::new();
@@ -173,15 +174,15 @@ pub struct DesiredOneShotReceipt {
     pub lifecycle: OneShotLifecycle,
 }
 
-impl DesiredOneShotReceipt {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for DesiredOneShotReceipt {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.id.encode(encoder)?;
         self.spec.encode(encoder)?;
-        self.state.encode(encoder);
+        self.state.encode(encoder)?;
         self.lifecycle.encode(encoder)
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
             id: OneShotId::decode(decoder)?,
             spec: OneShotSpec::decode(decoder)?,
@@ -269,15 +270,16 @@ impl DesiredChangeSet {
         }
         self.ledger_intent.validate()
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for DesiredChangeSet {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.validate()?;
         encode_all(encoder, &self.ordered, DesiredChange::encode)?;
         self.subject.encode(encoder)?;
         self.ledger_intent.encode(encoder)
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         let set = Self {
             ordered: decode_all(decoder, DesiredChange::decode)?,
             subject: PlannedSubject::decode(decoder)?,
@@ -300,8 +302,9 @@ impl PlannedSubject {
             Self::Format { .. } => 7,
         }
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for PlannedSubject {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.tag(self.tag());
         match self {
             Self::Reconcile(state) => encode_desired_state(encoder, state),
@@ -323,19 +326,13 @@ impl PlannedSubject {
             }
             Self::AdoptLayout => Ok(()),
             Self::Format { scopes } => {
-                encoder.count(scopes.len())?;
-                let mut previous: Option<&ProjectPath> = None;
-                for scope in scopes {
-                    ordered(previous, scope)?;
-                    previous = Some(scope);
-                    scope.encode(encoder)?;
-                }
+                encoder.set(scopes)?;
                 Ok(())
             }
         }
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::Reconcile(decode_desired_state(decoder)?),
             1 => Self::ApplyOneShot {
@@ -356,15 +353,7 @@ impl PlannedSubject {
             },
             5 => Self::AdoptLayout,
             7 => {
-                let count = decoder.count()?;
-                let mut scopes = BTreeSet::new();
-                let mut previous: Option<ProjectPath> = None;
-                for _ in 0..count {
-                    let scope = ProjectPath::decode(decoder)?;
-                    ordered(previous.as_ref(), &scope)?;
-                    previous = Some(scope.clone());
-                    scopes.insert(scope);
-                }
+                let scopes: BTreeSet<ProjectPath> = decoder.set()?;
                 Self::Format { scopes }
             }
             other => Err(format!("unknown planned subject tag {other}"))?,

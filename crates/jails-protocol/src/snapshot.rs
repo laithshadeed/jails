@@ -33,7 +33,7 @@ use crate::conflict::FileMode;
 use crate::entity::ExternalPathId;
 use crate::identity::{ObjectId, ObjectRef, ProjectPath, TemplateId, TemplateKey, TransactionId};
 use crate::provenance::TemplateOrigin;
-use jails_support::codec::{self, Decoder, Encoder, ordered};
+use jails_support::codec::{self, Codec, Decoder, Encoder, ordered};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -72,8 +72,8 @@ pub enum ExternalInputId {
     CasesBrief { path_id: ExternalPathId },
 }
 
-impl ExternalInputId {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for ExternalInputId {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         match self {
             Self::AppManifest => {
                 encoder.tag(0);
@@ -85,13 +85,13 @@ impl ExternalInputId {
             }
             Self::CasesBrief { path_id } => {
                 encoder.tag(2);
-                path_id.encode(encoder);
+                path_id.encode(encoder)?;
                 Ok(())
             }
         }
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::AppManifest,
             1 => Self::UserTemplate(TemplateId::decode(decoder)?),
@@ -103,15 +103,16 @@ impl ExternalInputId {
     }
 }
 
-impl MachineRootPresence {
-    pub fn encode(&self, encoder: &mut Encoder) {
+impl Codec for MachineRootPresence {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.tag(match self {
             Self::Absent => 0,
             Self::Present => 1,
         });
+        Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::Absent,
             1 => Self::Present,
@@ -182,58 +183,6 @@ impl InputPrecondition {
         }
     }
 
-    /// Tag and body. Every variant, because this is the encoder the snapshot
-    /// digest, the prepared identity and the journal all use.
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(self.tag());
-        match self {
-            Self::Absent { path } => path.encode(encoder)?,
-            Self::File {
-                path,
-                sha256,
-                len,
-                mode,
-            } => {
-                path.encode(encoder)?;
-                sha256.encode(encoder);
-                encoder.u64(*len);
-                encoder.u32(mode.bits());
-            }
-            Self::Directory {
-                path,
-                entries,
-                entries_sha256,
-            } => {
-                path.encode(encoder)?;
-                encoder.count(entries.len())?;
-                let mut previous: Option<&ProjectPath> = None;
-                for entry in entries {
-                    ordered(previous, entry)?;
-                    previous = Some(entry);
-                    entry.encode(encoder)?;
-                }
-                entries_sha256.encode(encoder);
-            }
-            Self::ExternalAbsent { id } => id.encode(encoder)?,
-            Self::ExternalFile { id, sha256, len } => {
-                id.encode(encoder)?;
-                sha256.encode(encoder);
-                encoder.u64(*len);
-            }
-            Self::MachineReceipt {
-                transaction,
-                generation,
-                record_checksum,
-            } => {
-                transaction.encode(encoder);
-                encoder.u64(*generation);
-                record_checksum.encode(encoder);
-            }
-            Self::MachineRoot { presence } => presence.encode(encoder),
-        }
-        Ok(())
-    }
-
     /// The canonical sort key, so a read set has one encoding.
     fn order_key(&self) -> (u8, String) {
         let detail = match self {
@@ -245,6 +194,114 @@ impl InputPrecondition {
             Self::MachineRoot { .. } => String::new(),
         };
         (self.tag(), detail)
+    }
+}
+
+impl Codec for InputPrecondition {
+    /// Tag and body. Every variant, because this is the encoder the snapshot
+    /// digest, the prepared identity and the journal all use.
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        encoder.tag(self.tag());
+        match self {
+            Self::Absent { path } => path.encode(encoder)?,
+            Self::File {
+                path,
+                sha256,
+                len,
+                mode,
+            } => {
+                path.encode(encoder)?;
+                sha256.encode(encoder)?;
+                encoder.u64(*len);
+                encoder.u32(mode.bits());
+            }
+            Self::Directory {
+                path,
+                entries,
+                entries_sha256,
+            } => {
+                path.encode(encoder)?;
+                // A *sorted list*, not a set: the entries are a `Vec` whose
+                // order is the wire order, so `Encoder::set`'s bound does not
+                // apply. Same reason `conflict::encode_paths` survives.
+                encoder.count(entries.len())?;
+                let mut previous: Option<&ProjectPath> = None;
+                for entry in entries {
+                    ordered(previous, entry)?;
+                    previous = Some(entry);
+                    entry.encode(encoder)?;
+                }
+                entries_sha256.encode(encoder)?;
+            }
+            Self::ExternalAbsent { id } => id.encode(encoder)?,
+            Self::ExternalFile { id, sha256, len } => {
+                id.encode(encoder)?;
+                sha256.encode(encoder)?;
+                encoder.u64(*len);
+            }
+            Self::MachineReceipt {
+                transaction,
+                generation,
+                record_checksum,
+            } => {
+                transaction.encode(encoder)?;
+                encoder.u64(*generation);
+                record_checksum.encode(encoder)?;
+            }
+            Self::MachineRoot { presence } => presence.encode(encoder)?,
+        }
+        Ok(())
+    }
+
+    /// Decode one precondition. Every variant, because a prepared identity puts
+    /// the whole read set on the wire and a recovered journal has to reconstruct
+    /// exactly what the plan rested on.
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(match decoder.tag()? {
+            0 => Self::Absent {
+                path: ProjectPath::decode(decoder)?,
+            },
+            1 => Self::File {
+                path: ProjectPath::decode(decoder)?,
+                sha256: ObjectId::decode(decoder)?,
+                len: decoder.u64()?,
+                mode: FileMode::new(decoder.u32()?)?,
+            },
+            2 => {
+                let path = ProjectPath::decode(decoder)?;
+                let count = decoder.count()?;
+                let mut entries = Vec::new();
+                let mut previous: Option<ProjectPath> = None;
+                for _ in 0..count {
+                    let entry = ProjectPath::decode(decoder)?;
+                    ordered(previous.as_ref(), &entry)?;
+                    previous = Some(entry.clone());
+                    entries.push(entry);
+                }
+                Self::Directory {
+                    path,
+                    entries,
+                    entries_sha256: ObjectId::decode(decoder)?,
+                }
+            }
+            3 => Self::ExternalAbsent {
+                id: ExternalInputId::decode(decoder)?,
+            },
+            4 => Self::ExternalFile {
+                id: ExternalInputId::decode(decoder)?,
+                sha256: ObjectId::decode(decoder)?,
+                len: decoder.u64()?,
+            },
+            9 => Self::MachineReceipt {
+                transaction: TransactionId::decode(decoder)?,
+                generation: decoder.u64()?,
+                record_checksum: ObjectId::decode(decoder)?,
+            },
+            11 => Self::MachineRoot {
+                presence: MachineRootPresence::decode(decoder)?,
+            },
+            other => return Err(format!("unknown input precondition tag {other}")),
+        })
     }
 }
 
@@ -509,57 +566,6 @@ pub fn snapshot_digest(read_set: &ReadSet) -> Result<ObjectId> {
     )))
 }
 
-/// Decode one precondition. Every variant, because a prepared identity puts
-/// the whole read set on the wire and a recovered journal has to reconstruct
-/// exactly what the plan rested on.
-pub fn decode_precondition(decoder: &mut Decoder<'_>) -> Result<InputPrecondition> {
-    Ok(match decoder.tag()? {
-        0 => InputPrecondition::Absent {
-            path: ProjectPath::decode(decoder)?,
-        },
-        1 => InputPrecondition::File {
-            path: ProjectPath::decode(decoder)?,
-            sha256: ObjectId::decode(decoder)?,
-            len: decoder.u64()?,
-            mode: FileMode::new(decoder.u32()?)?,
-        },
-        2 => {
-            let path = ProjectPath::decode(decoder)?;
-            let count = decoder.count()?;
-            let mut entries = Vec::new();
-            let mut previous: Option<ProjectPath> = None;
-            for _ in 0..count {
-                let entry = ProjectPath::decode(decoder)?;
-                ordered(previous.as_ref(), &entry)?;
-                previous = Some(entry.clone());
-                entries.push(entry);
-            }
-            InputPrecondition::Directory {
-                path,
-                entries,
-                entries_sha256: ObjectId::decode(decoder)?,
-            }
-        }
-        3 => InputPrecondition::ExternalAbsent {
-            id: ExternalInputId::decode(decoder)?,
-        },
-        4 => InputPrecondition::ExternalFile {
-            id: ExternalInputId::decode(decoder)?,
-            sha256: ObjectId::decode(decoder)?,
-            len: decoder.u64()?,
-        },
-        9 => InputPrecondition::MachineReceipt {
-            transaction: TransactionId::decode(decoder)?,
-            generation: decoder.u64()?,
-            record_checksum: ObjectId::decode(decoder)?,
-        },
-        11 => InputPrecondition::MachineRoot {
-            presence: MachineRootPresence::decode(decoder)?,
-        },
-        other => return Err(format!("unknown input precondition tag {other}")),
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -775,7 +781,7 @@ mod tests {
                 mode,
             } => {
                 path.encode(&mut encoder).unwrap();
-                sha256.encode(&mut encoder);
+                sha256.encode(&mut encoder).unwrap();
                 encoder.u64(*len);
                 encoder.u32(mode.bits());
             }
@@ -783,7 +789,7 @@ mod tests {
         }
         let bytes = encoder.finish().unwrap();
         let mut decoder = Decoder::new(&bytes).unwrap();
-        assert_eq!(decode_precondition(&mut decoder).unwrap(), input);
+        assert_eq!(InputPrecondition::decode(&mut decoder).unwrap(), input);
         decoder.finish().unwrap();
     }
 }

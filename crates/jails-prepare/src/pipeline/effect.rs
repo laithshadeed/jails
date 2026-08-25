@@ -34,7 +34,7 @@ use jails_protocol::effect::PostCommitEffect;
 use jails_protocol::identity::{ObjectId, ProjectPath, ServiceName};
 use jails_protocol::resource::{ResourceKey, ResourceValue};
 use jails_protocol::snapshot::{Captured, ProjectSnapshot};
-use jails_support::codec::{Encoder, domain_hash};
+use jails_support::codec::{Codec, Encoder, domain_hash};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 

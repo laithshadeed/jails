@@ -20,7 +20,7 @@
 
 use crate::Result;
 use crate::identity::{ObjectId, OperationId, ProjectPath, ServiceName};
-use jails_support::codec::{Decoder, Encoder, ordered};
+use jails_support::codec::{Codec, Decoder, Encoder};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Where one effect has got to.
@@ -79,8 +79,8 @@ impl EffectFailureCode {
     }
 }
 
-impl EffectState {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for EffectState {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         match self {
             Self::Deferred => encoder.tag(0),
             Self::Pending { next_attempt } => {
@@ -108,7 +108,7 @@ impl EffectState {
             Self::Superseded { by } => {
                 encoder.tag(5);
                 encoder.option(by.as_ref(), |e, id| {
-                    id.encode(e);
+                    id.encode(e)?;
                     Ok(())
                 })?;
             }
@@ -116,7 +116,7 @@ impl EffectState {
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::Deferred,
             1 => {
@@ -179,12 +179,14 @@ impl EffectId {
     pub fn to_hex(&self) -> String {
         self.0.to_hex()
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) {
-        self.0.encode(encoder);
+}
+impl Codec for EffectId {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        self.0.encode(encoder)?;
+        Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self(ObjectId::decode(decoder)?))
     }
 }
@@ -208,8 +210,8 @@ pub enum PostCommitEffect {
     },
 }
 
-impl PostCommitEffect {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for PostCommitEffect {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         match self {
             Self::ComposeReconcile {
                 compose_output,
@@ -223,23 +225,23 @@ impl PostCommitEffect {
                 compose_output.encode(encoder)?;
                 encode_optional_object(encoder, before_document.as_ref())?;
                 encode_optional_object(encoder, after_document.as_ref())?;
-                encode_service_map(encoder, prior_managed_services)?;
-                encode_service_map(encoder, desired_services)?;
-                encode_service_set(encoder, stop_services)?;
+                encoder.map(prior_managed_services)?;
+                encoder.map(desired_services)?;
+                encoder.set(stop_services)?;
             }
         }
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         match decoder.tag()? {
             0 => Ok(Self::ComposeReconcile {
                 compose_output: ProjectPath::decode(decoder)?,
                 before_document: decoder.option(ObjectId::decode)?,
                 after_document: decoder.option(ObjectId::decode)?,
-                prior_managed_services: decode_service_map(decoder)?,
-                desired_services: decode_service_map(decoder)?,
-                stop_services: decode_service_set(decoder)?,
+                prior_managed_services: decoder.map()?,
+                desired_services: decoder.map()?,
+                stop_services: decoder.set()?,
             }),
             other => Err(format!("unknown post-commit effect tag {other}")),
         }
@@ -257,8 +259,8 @@ pub enum DeferredEffectIntent {
     },
 }
 
-impl DeferredEffectIntent {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for DeferredEffectIntent {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         match self {
             Self::ComposeReconcile {
                 before_document,
@@ -269,20 +271,20 @@ impl DeferredEffectIntent {
                 encoder.tag(0);
                 encode_optional_object(encoder, before_document.as_ref())?;
                 compose_output.encode(encoder)?;
-                encode_service_map(encoder, prior_managed_services)?;
-                encode_service_map(encoder, desired_services)?;
+                encoder.map(prior_managed_services)?;
+                encoder.map(desired_services)?;
             }
         }
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         match decoder.tag()? {
             0 => Ok(Self::ComposeReconcile {
                 before_document: decoder.option(ObjectId::decode)?,
                 compose_output: ProjectPath::decode(decoder)?,
-                prior_managed_services: decode_service_map(decoder)?,
-                desired_services: decode_service_map(decoder)?,
+                prior_managed_services: decoder.map()?,
+                desired_services: decoder.map()?,
             }),
             other => Err(format!("unknown deferred effect tag {other}")),
         }
@@ -291,61 +293,9 @@ impl DeferredEffectIntent {
 
 fn encode_optional_object(encoder: &mut Encoder, value: Option<&ObjectId>) -> Result<()> {
     encoder.option(value, |e, id| {
-        id.encode(e);
+        id.encode(e)?;
         Ok(())
     })
-}
-
-fn encode_service_map(
-    encoder: &mut Encoder,
-    services: &BTreeMap<ServiceName, ObjectId>,
-) -> Result<()> {
-    encoder.count(services.len())?;
-    let mut previous: Option<&ServiceName> = None;
-    for (name, object) in services {
-        ordered(previous, name)?;
-        previous = Some(name);
-        name.encode(encoder)?;
-        object.encode(encoder);
-    }
-    Ok(())
-}
-
-fn decode_service_map(decoder: &mut Decoder<'_>) -> Result<BTreeMap<ServiceName, ObjectId>> {
-    let count = decoder.count()?;
-    let mut out = BTreeMap::new();
-    let mut previous: Option<ServiceName> = None;
-    for _ in 0..count {
-        let name = ServiceName::decode(decoder)?;
-        ordered(previous.as_ref(), &name)?;
-        previous = Some(name.clone());
-        out.insert(name, ObjectId::decode(decoder)?);
-    }
-    Ok(out)
-}
-
-fn encode_service_set(encoder: &mut Encoder, services: &BTreeSet<ServiceName>) -> Result<()> {
-    encoder.count(services.len())?;
-    let mut previous: Option<&ServiceName> = None;
-    for name in services {
-        ordered(previous, name)?;
-        previous = Some(name);
-        name.encode(encoder)?;
-    }
-    Ok(())
-}
-
-fn decode_service_set(decoder: &mut Decoder<'_>) -> Result<BTreeSet<ServiceName>> {
-    let count = decoder.count()?;
-    let mut out = BTreeSet::new();
-    let mut previous: Option<ServiceName> = None;
-    for _ in 0..count {
-        let name = ServiceName::decode(decoder)?;
-        ordered(previous.as_ref(), &name)?;
-        previous = Some(name.clone());
-        out.insert(name);
-    }
-    Ok(out)
 }
 
 #[cfg(test)]
@@ -468,13 +418,13 @@ mod tests {
         let mut encoder = Encoder::new();
         encoder.count(2).unwrap();
         service("postgres").encode(&mut encoder).unwrap();
-        object("a").encode(&mut encoder);
+        object("a").encode(&mut encoder).unwrap();
         service("kafka").encode(&mut encoder).unwrap();
-        object("b").encode(&mut encoder);
+        object("b").encode(&mut encoder).unwrap();
         let bytes = encoder.finish().unwrap();
 
         let mut decoder = Decoder::new(&bytes).unwrap();
-        let error = decode_service_map(&mut decoder).unwrap_err();
+        let error = decoder.map::<ServiceName, ObjectId>().unwrap_err();
         assert!(error.contains("not canonically ordered"), "{error}");
     }
 

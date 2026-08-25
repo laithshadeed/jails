@@ -14,7 +14,7 @@ use crate::effect::{DeferredEffectIntent, EffectId, EffectState, PostCommitEffec
 use crate::identity::{ObjectId, OperationId, TransactionId};
 use crate::plan::DesiredChangeSet;
 use crate::request::InvocationFingerprint;
-use jails_support::codec::{Decoder, Encoder};
+use jails_support::codec::{Codec, Decoder, Encoder};
 use std::collections::BTreeSet;
 
 // ---------------------------------------------------------------------------
@@ -33,14 +33,15 @@ pub struct ReceiptGuard {
     pub record_checksum: ObjectId,
 }
 
-impl ReceiptGuard {
-    pub fn encode(&self, encoder: &mut Encoder) {
-        self.transaction.encode(encoder);
+impl Codec for ReceiptGuard {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        self.transaction.encode(encoder)?;
         encoder.u64(self.generation);
-        self.record_checksum.encode(encoder);
+        self.record_checksum.encode(encoder)?;
+        Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
             transaction: TransactionId::decode(decoder)?,
             generation: decoder.u64()?,
@@ -59,16 +60,17 @@ pub struct ConflictOrigin {
     pub pending: PendingIdentity,
 }
 
-impl ConflictOrigin {
-    pub fn encode(&self, encoder: &mut Encoder) {
-        self.operation.encode(encoder);
-        self.transaction.encode(encoder);
+impl Codec for ConflictOrigin {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        self.operation.encode(encoder)?;
+        self.transaction.encode(encoder)?;
         encoder.u64(self.generation);
-        self.receipt.encode(encoder);
-        self.pending.encode(encoder);
+        self.receipt.encode(encoder)?;
+        self.pending.encode(encoder)?;
+        Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
             operation: OperationId::decode(decoder)?,
             transaction: TransactionId::decode(decoder)?,
@@ -99,15 +101,16 @@ impl FinalisationPlan {
         }
         Ok(())
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for FinalisationPlan {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.validate()?;
-        self.origin.encode(encoder);
+        self.origin.encode(encoder)?;
         encode_all(encoder, &self.resolutions, ResolutionIdentity::encode)?;
         encode_all(encoder, &self.effect_intents, DeferredEffectIntent::encode)
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         let plan = Self {
             origin: ConflictOrigin::decode(decoder)?,
             resolutions: decode_all(decoder, ResolutionIdentity::decode)?,
@@ -135,14 +138,15 @@ impl AbortPlan {
         }
         Ok(())
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for AbortPlan {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.validate()?;
-        self.origin.encode(encoder);
+        self.origin.encode(encoder)?;
         encode_all(encoder, &self.restores, RestoreIdentity::encode)
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         let plan = Self {
             origin: ConflictOrigin::decode(decoder)?,
             restores: decode_all(decoder, RestoreIdentity::decode)?,
@@ -193,20 +197,20 @@ pub struct EffectRetryPlan {
     pub reason: EffectResumeReason,
 }
 
-impl EffectRetryPlan {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for EffectRetryPlan {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.invocation.encode(encoder)?;
-        self.receipt.encode(encoder);
-        self.operation.encode(encoder);
+        self.receipt.encode(encoder)?;
+        self.operation.encode(encoder)?;
         encoder.u32(self.effect_index);
-        self.effect_id.encode(encoder);
+        self.effect_id.encode(encoder)?;
         self.effect.encode(encoder)?;
         self.expected_state.encode(encoder)?;
         encoder.tag(self.reason.tag());
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
             invocation: InvocationFingerprint::decode(decoder)?,
             receipt: ReceiptGuard::decode(decoder)?,
@@ -252,6 +256,10 @@ impl CommitPlan {
 }
 
 /// The closed set of things a resolved invocation becomes.
+///
+/// Nothing constructs one: the routes pass `CommitPlan` and `EffectRetryPlan`
+/// separately rather than through the sum. `pending.md` §7.2 surfaced it, and
+/// §6.2 is where the sum belongs once one request object exists.
 ///
 /// Both arms are boxed. Each carries a few hundred bytes of plan, exactly one
 /// exists per run, and an unboxed enum would size every one of them for the

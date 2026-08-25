@@ -43,15 +43,15 @@ use crate::Result;
 use jails_support::codec;
 
 /// 32 MiB of decoded payload.
-pub const MAX_LEDGER_PAYLOAD: usize = 32 * 1024 * 1024;
+pub(crate) const MAX_LEDGER_PAYLOAD: usize = 32 * 1024 * 1024;
 /// Two hex characters per byte, plus the fixed envelope allowance.
-pub const MAX_LEDGER_SOURCE: usize = 2 * MAX_LEDGER_PAYLOAD + 512;
+pub(crate) const MAX_LEDGER_SOURCE: usize = 2 * MAX_LEDGER_PAYLOAD + 512;
 
 /// The codec name this envelope declares. A different one is a refusal, not a
 /// best-effort read.
-pub const PAYLOAD_CODEC: &str = "jails-ledger-payload-1";
+pub(crate) const PAYLOAD_CODEC: &str = "jails-ledger-payload-1";
 /// The schema this module reads and writes.
-pub const SCHEMA: u32 = 2;
+pub(crate) const SCHEMA: u32 = 2;
 
 /// Render the envelope for one payload.
 ///
@@ -228,7 +228,7 @@ use crate::entity::{EntityId, EntitySpec, OneShotId};
 use crate::identity::{OperationId, ProjectPath};
 use crate::record::{AppliedEntity, OneShotReceipt, OutputRecord};
 use crate::resource::{ResourceKey, ResourceOwner, ResourceRecord, ResourceValue};
-use jails_support::codec::{Decoder, Encoder, ordered};
+use jails_support::codec::{Codec, Decoder, Encoder, ordered};
 use std::collections::BTreeSet;
 
 /// The schema-2 ledger payload.
@@ -273,14 +273,14 @@ pub struct PendingMarker {
     pub resume_display: String,
 }
 
-impl PendingMarker {
+impl Codec for PendingMarker {
     fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.operation.encode(encoder);
+        self.operation.encode(encoder)?;
         if self.generation == 0 {
             return Err("a pending conflict records generation zero".to_string());
         }
         encoder.u64(self.generation);
-        self.request_syntax.encode(encoder);
+        self.request_syntax.encode(encoder)?;
         encoder.string(&self.resume_display)
     }
 
@@ -311,7 +311,7 @@ impl LedgerV2 {
         }
         encoder.u64(self.generation);
         encoder.option(self.last_operation.as_ref(), |e, id| {
-            id.encode(e);
+            id.encode(e)?;
             Ok(())
         })?;
         encoder.count(self.applied.len())?;

@@ -26,7 +26,7 @@
 
 use crate::Result;
 use jails_protocol::identity::{ObjectId, ProjectPath, ToolId};
-use jails_support::codec::{Decoder, Encoder, ordered};
+use jails_support::codec::{Codec, Decoder, Encoder, ordered};
 use std::collections::BTreeSet;
 
 /// What makes two invocations of a tool the same invocation.
@@ -38,13 +38,13 @@ pub struct ToolInvocationKey {
     pub subject: Option<ProjectPath>,
 }
 
-impl ToolInvocationKey {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for ToolInvocationKey {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.tool.encode(encoder)?;
         encoder.option(self.subject.as_ref(), |e, path| path.encode(e))
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
             tool: ToolId::decode(decoder)?,
             subject: decoder.option(ProjectPath::decode)?,
@@ -59,14 +59,14 @@ pub struct ToolInput {
     pub sha256: ObjectId,
 }
 
-impl ToolInput {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for ToolInput {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.path.encode(encoder)?;
-        self.sha256.encode(encoder);
+        self.sha256.encode(encoder)?;
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
             path: ProjectPath::decode(decoder)?,
             sha256: ObjectId::decode(decoder)?,
@@ -109,12 +109,13 @@ impl ToolIdentityFingerprint {
         }
         Ok(())
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for ToolIdentityFingerprint {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.validate()?;
         self.key.encode(encoder)?;
-        self.executable_sha256.encode(encoder);
-        self.version_stdout_sha256.encode(encoder);
+        self.executable_sha256.encode(encoder)?;
+        self.version_stdout_sha256.encode(encoder)?;
         encoder.u32(self.runner_schema);
         encoder.u64(self.timeout_ms);
         encoder.count(self.mutable_scopes.len())?;
@@ -131,21 +132,13 @@ impl ToolIdentityFingerprint {
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         let key = ToolInvocationKey::decode(decoder)?;
         let executable_sha256 = ObjectId::decode(decoder)?;
         let version_stdout_sha256 = ObjectId::decode(decoder)?;
         let runner_schema = decoder.u32()?;
         let timeout_ms = decoder.u64()?;
-        let count = decoder.count()?;
-        let mut mutable_scopes = BTreeSet::new();
-        let mut previous: Option<ProjectPath> = None;
-        for _ in 0..count {
-            let scope = ProjectPath::decode(decoder)?;
-            ordered(previous.as_ref(), &scope)?;
-            previous = Some(scope.clone());
-            mutable_scopes.insert(scope);
-        }
+        let mutable_scopes: BTreeSet<ProjectPath> = decoder.set()?;
         let count = decoder.count()?;
         let mut offline_inputs = Vec::new();
         for _ in 0..count {
@@ -172,14 +165,14 @@ pub struct ToolFingerprint {
     pub canonical_args_sha256: ObjectId,
 }
 
-impl ToolFingerprint {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for ToolFingerprint {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.identity.encode(encoder)?;
-        self.canonical_args_sha256.encode(encoder);
+        self.canonical_args_sha256.encode(encoder)?;
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
             identity: ToolIdentityFingerprint::decode(decoder)?,
             canonical_args_sha256: ObjectId::decode(decoder)?,
@@ -194,6 +187,12 @@ impl ToolFingerprint {
 /// duplicate timeout/scope/input authority on `ToolSpec`"* — everything about
 /// how the tool may run lives in the identity, so a caller cannot widen a
 /// scope or a timeout by building a different spec around the same identity.
+///
+/// **Nothing constructs one.** `route::format` -- the only tool jails runs --
+/// hands `Sandbox::run` an identity and a `Vec<String>` of arguments as two
+/// parameters, which is the shape this type exists to make impossible. Closing
+/// this crate's API (`pending.md` §7.2) is what said so; the fix is to have
+/// that call site build a `ToolSpec`, not to delete the guard.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ToolSpec {
     pub fingerprint: ToolFingerprint,
@@ -266,8 +265,9 @@ impl ToolArgTemplate {
         }
         Ok(())
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for ToolArgTemplate {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.validate()?;
         match self {
             Self::Literal(text) => {
@@ -283,7 +283,7 @@ impl ToolArgTemplate {
         }
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         let template = match decoder.tag()? {
             0 => Self::Literal(decoder.string()?),
             1 => Self::OperationLabel {
@@ -305,8 +305,8 @@ pub struct OperationToolFingerprint {
     pub args: Vec<ToolArgTemplate>,
 }
 
-impl OperationToolFingerprint {
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+impl Codec for OperationToolFingerprint {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.identity.encode(encoder)?;
         encoder.count(self.args.len())?;
         for arg in &self.args {
@@ -315,7 +315,7 @@ impl OperationToolFingerprint {
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         let identity = ToolIdentityFingerprint::decode(decoder)?;
         let count = decoder.count()?;
         let mut args = Vec::new();
@@ -333,7 +333,7 @@ pub struct OperationContextFingerprint {
 }
 
 /// The schema this fingerprint speaks. Exactly one exists.
-pub const CONTEXT_SCHEMA: u32 = 1;
+pub(crate) const CONTEXT_SCHEMA: u32 = 1;
 
 impl OperationContextFingerprint {
     /// Two entries for one key would let the same tool carry two policies,
@@ -346,8 +346,9 @@ impl OperationContextFingerprint {
         }
         Ok(())
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for OperationContextFingerprint {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.validate()?;
         encoder.u32(CONTEXT_SCHEMA);
         encoder.count(self.tools.len())?;
@@ -357,7 +358,7 @@ impl OperationContextFingerprint {
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         expect_schema(decoder.u32()?)?;
         let count = decoder.count()?;
         let mut tools = Vec::new();
@@ -385,8 +386,9 @@ impl PreparationContextFingerprint {
         }
         Ok(())
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for PreparationContextFingerprint {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.validate()?;
         encoder.u32(CONTEXT_SCHEMA);
         encoder.count(self.tools.len())?;
@@ -396,7 +398,7 @@ impl PreparationContextFingerprint {
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         expect_schema(decoder.u32()?)?;
         let count = decoder.count()?;
         let mut tools = Vec::new();

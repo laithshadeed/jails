@@ -13,7 +13,7 @@ use crate::fact::{ProjectFact, ProjectFactKey};
 use crate::identity::JavaType;
 use crate::resource::{ComposeServiceSpec, PropertySetting, ResourceKey};
 use jails_spec::spec::layout::Layer;
-use jails_support::codec::{Decoder, Encoder, ordered};
+use jails_support::codec::{Codec, Decoder, Encoder, ordered};
 use std::collections::{BTreeMap, BTreeSet};
 
 // ---------------------------------------------------------------------------
@@ -177,8 +177,9 @@ impl SemanticEdit {
         }
         Ok(())
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for SemanticEdit {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.validate()?;
         encoder.tag(self.tag());
         match self {
@@ -236,7 +237,7 @@ impl SemanticEdit {
         }
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         let edit = match decoder.tag()? {
             0 => Self::MavenDependency {
                 key: ResourceKey::decode(decoder)?,
@@ -324,8 +325,9 @@ impl SemanticPrecondition {
             Self::ResourceUnclaimed(_) => 3,
         }
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for SemanticPrecondition {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.tag(self.tag());
         match self {
             Self::RequiresCapability(id) => id.encode(encoder),
@@ -334,7 +336,7 @@ impl SemanticPrecondition {
         }
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::RequiresCapability(CapabilityId::decode(decoder)?),
             1 => Self::RequiresFact(ProjectFactKey::decode(decoder)?),
@@ -370,8 +372,9 @@ impl FactDelta {
         }
         Ok(())
     }
-
-    pub fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+}
+impl Codec for FactDelta {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.validate()?;
         crate::fact::encode_fact_map(encoder, &self.add)?;
         encoder.count(self.remove.len())?;
@@ -384,17 +387,9 @@ impl FactDelta {
         Ok(())
     }
 
-    pub fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         let add = crate::fact::decode_fact_map(decoder)?;
-        let count = decoder.count()?;
-        let mut remove = BTreeSet::new();
-        let mut previous: Option<ProjectFactKey> = None;
-        for _ in 0..count {
-            let key = ProjectFactKey::decode(decoder)?;
-            ordered(previous.as_ref(), &key)?;
-            previous = Some(key.clone());
-            remove.insert(key);
-        }
+        let remove: BTreeSet<ProjectFactKey> = decoder.set()?;
         let delta = Self { add, remove };
         delta.validate()?;
         Ok(delta)
