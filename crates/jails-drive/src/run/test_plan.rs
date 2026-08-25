@@ -112,13 +112,6 @@ pub(super) fn validate_runtime_options(options: &TestOptions) -> Result<()> {
                 .into(),
         );
     }
-    if options.watch && options.json {
-        return Err(
-            "`--watch --json` cannot be one finite JSON document\n       fix: omit `--json`; \
-                    the event stream uses JSON Lines when selected"
-                .into(),
-        );
-    }
     if let Some(timeout) = &options.timeout {
         parse_duration(timeout)?;
     }

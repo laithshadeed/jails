@@ -264,7 +264,16 @@ pub fn test(requested: &[String], options: TestOptions, debug: bool) -> Result<(
     Ok(())
 }
 
-fn test_once(requested: &[String], mut options: TestOptions, debug: bool) -> Result<()> {
+fn test_once(requested: &[String], options: TestOptions, debug: bool) -> Result<()> {
+    test_once_with_fallback(requested, options, debug, None)
+}
+
+fn test_once_with_fallback(
+    requested: &[String],
+    mut options: TestOptions,
+    debug: bool,
+    fallback_reason: Option<String>,
+) -> Result<()> {
     let (root, build) = either_root("test")?;
     let mut execution_requested = requested.to_vec();
     if options.failed {
@@ -322,7 +331,7 @@ fn test_once(requested: &[String], mut options: TestOptions, debug: bool) -> Res
         }
     }
     if build == crate::build::Build::Gradle {
-        return gradlew::test(&root, requested, options, debug);
+        return gradlew::test(&root, requested, options, fallback_reason, debug);
     }
     let root = maven_root("test")?;
 
@@ -333,6 +342,7 @@ fn test_once(requested: &[String], mut options: TestOptions, debug: bool) -> Res
             let context = test_execution::MavenTestContext {
                 project: &root,
                 options: &options,
+                fallback_reason: fallback_reason.as_deref(),
                 debug,
             };
             return test_execution::test_many_maven(&context, requested);
@@ -461,7 +471,15 @@ fn test_once(requested: &[String], mut options: TestOptions, debug: bool) -> Res
             .stderr(std::process::Stdio::piped())
             .output()
             .map_err(|error| format!("failed to run Maven: {error}"))?;
-        return crate::reports::report_json(&root, captured.status.success());
+        let report = crate::reports::normalized(
+            &root,
+            jails_protocol::testing::TestEngine::Maven,
+            options.scope,
+            requested,
+            captured.status.success(),
+            fallback_reason,
+        )?;
+        return crate::reports::render(&report, true, options.slowest);
     }
 
     let outcome = match options.timeout.as_deref() {
@@ -473,44 +491,18 @@ fn test_once(requested: &[String], mut options: TestOptions, debug: bool) -> Res
         None => run_inherited(cmd, debug),
     };
 
-    if let Some(count) = options.slowest {
-        crate::reports::report_slowest(&root, count);
-    }
     if outcome.is_err() {
-        report_rerun_line(&root, rerun_hint.as_deref());
+        crate::reports::rerun_line(&root, rerun_hint.as_deref());
     }
-    outcome
-}
-
-/// After a failing run, the command that reruns just what broke.
-///
-/// Copied from Rails, which prints a runnable `bin/rails test path:LINE`
-/// rather than making you assemble one. The plan credited
-/// `--only-failures` to Rails; that is RSpec's, and **the copy-pasteable
-/// line is the part worth having** (plan.md §7).
-fn report_rerun_line(root: &Path, already_filtered: Option<&str>) {
-    let failures = crate::reports::failed_selectors(root);
-    println!();
-    match failures.len() {
-        0 => {
-            // Nothing in the reports: the build failed before any test ran,
-            // or Maven itself did. Repeating the filter is still useful and
-            // pretending to know which test failed is not.
-            if let Some(filter) = already_filtered {
-                println!("jails: rerun with  jails test '{filter}'");
-            }
-        }
-        1 => println!("jails: rerun with  jails test '{}'", failures[0]),
-        n => {
-            println!("jails: {n} test(s) failed. Rerun just those with  jails test --failed");
-            for selector in failures.iter().take(5) {
-                println!("         {selector}");
-            }
-            if n > 5 {
-                println!("         ... and {} more", n - 5);
-            }
-        }
-    }
+    let report = crate::reports::normalized(
+        &root,
+        jails_protocol::testing::TestEngine::Maven,
+        options.scope,
+        requested,
+        outcome.is_ok(),
+        fallback_reason,
+    )?;
+    crate::reports::render(&report, false, options.slowest)
 }
 
 /// Why `--fast` cannot be used for this run, if it cannot.

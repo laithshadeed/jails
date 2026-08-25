@@ -27,6 +27,10 @@
 //! between those two is exactly the kind of quiet wrong answer that makes a
 //! tool untrustworthy.
 
+use jails_protocol::testing::{
+    SelectionReason, TestCaseResultV1, TestCompileOwner, TestEngine, TestOutcome, TestReportV1,
+    TestScope, TestSelector,
+};
 use jails_support::Result;
 use std::path::{Path, PathBuf};
 
@@ -38,6 +42,8 @@ pub(crate) struct Case {
     /// Seconds, as Surefire recorded them.
     pub seconds: f64,
     pub failed: bool,
+    pub skipped: bool,
+    pub error: bool,
 }
 
 impl Case {
@@ -56,6 +62,10 @@ impl Case {
     /// at the call site.
     pub fn pattern(&self) -> String {
         format!("{}.{}", self.class, self.method)
+    }
+
+    fn canonical_selector(&self) -> Result<TestSelector> {
+        TestSelector::parse(&format!("{}#{}", self.class, self.method))
     }
 }
 
@@ -134,17 +144,6 @@ pub(crate) fn failed_selectors(root: &Path) -> Vec<String> {
     selectors
 }
 
-/// The `count` slowest cases, slowest first.
-pub(crate) fn slowest(root: &Path, count: usize) -> Vec<Case> {
-    let mut all = cases(root);
-    // Descending by time. `total_cmp` rather than `partial_cmp().unwrap()`:
-    // a malformed `time` attribute parses to NaN, and a comparator that
-    // panics on one bad report is worse than one that sorts it to the end.
-    all.sort_by(|a, b| b.seconds.total_cmp(&a.seconds));
-    all.truncate(count);
-    all
-}
-
 fn xml_reports(dir: &Path) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -198,11 +197,209 @@ pub(crate) fn parse(xml: &str) -> Vec<Case> {
                 // "failed" would make `--failed` rerun every `@Disabled`
                 // test in the project.
                 failed: body.contains("<failure") || body.contains("<error"),
+                skipped: body.contains("<skipped"),
+                error: body.contains("<error"),
             });
         }
         rest = &after[close..];
     }
     found
+}
+
+/// Convert Maven and Gradle's common JUnit XML into the engine-independent
+/// result contract consumed by every renderer.
+pub(crate) fn normalized(
+    root: &Path,
+    engine: TestEngine,
+    scope: TestScope,
+    requested: &[String],
+    passed: bool,
+    fallback_reason: Option<String>,
+) -> Result<TestReportV1> {
+    let requested = requested
+        .iter()
+        .map(|selector| TestSelector::parse(selector))
+        .collect::<Result<Vec<_>>>()?;
+    let compile_owner = match engine {
+        TestEngine::Maven => TestCompileOwner::Maven,
+        TestEngine::Gradle => TestCompileOwner::Gradle,
+        TestEngine::TestdV2 => TestCompileOwner::None,
+    };
+    let selection_reasons = if requested.is_empty() {
+        vec![SelectionReason::Scope(scope)]
+    } else {
+        vec![SelectionReason::Requested]
+    };
+    let results = cases(root)
+        .into_iter()
+        .map(|case| {
+            let outcome = if case.error {
+                TestOutcome::Error
+            } else if case.failed {
+                TestOutcome::Failed
+            } else if case.skipped {
+                TestOutcome::Skipped
+            } else {
+                TestOutcome::Passed
+            };
+            Ok(TestCaseResultV1 {
+                engine,
+                compile_owner,
+                selector: case.canonical_selector()?,
+                source: None,
+                outcome,
+                duration_us: (case.seconds.max(0.0) * 1_000_000.0) as u64,
+                stdout_summary: String::new(),
+                stderr_summary: String::new(),
+                selection_reasons: selection_reasons.clone(),
+                fallback_reason: fallback_reason.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(TestReportV1 {
+        epoch: 0,
+        passed,
+        scope,
+        requested,
+        cases: results,
+        fallback_reasons: fallback_reason.into_iter().collect(),
+    })
+}
+
+pub(crate) fn render(
+    report: &TestReportV1,
+    json: bool,
+    slowest_count: Option<usize>,
+) -> Result<()> {
+    if json {
+        println!("{}", json_line(report));
+    } else {
+        for case in &report.cases {
+            if !case.stdout_summary.is_empty() {
+                print!("{}", case.stdout_summary);
+            }
+            if !case.stderr_summary.is_empty() {
+                eprint!("{}", case.stderr_summary);
+            }
+        }
+        if let Some(count) = slowest_count {
+            report_slowest_normalized(report, count);
+        }
+    }
+    if report.succeeded() {
+        Ok(())
+    } else {
+        Err(jails_support::Failure::Reported)
+    }
+}
+
+pub(crate) fn json_line(report: &TestReportV1) -> String {
+    let cases = report.cases.iter().map(|case| {
+        format!(
+            "{{\"engine\":{},\"compile_owner\":{},\"selector\":{},\"outcome\":{},\"duration_us\":{},\"stdout_summary\":{},\"stderr_summary\":{},\"fallback_reason\":{}}}",
+            crate::json::string(engine_name(case.engine)),
+            crate::json::string(compile_owner_name(case.compile_owner)),
+            crate::json::string(case.selector.as_str()),
+            crate::json::string(outcome_name(case.outcome)),
+            case.duration_us,
+            crate::json::string(&case.stdout_summary),
+            crate::json::string(&case.stderr_summary),
+            case.fallback_reason.as_ref().map_or_else(|| "null".into(), |reason| crate::json::string(reason)),
+        )
+    }).collect::<Vec<_>>().join(",");
+    let requested = report
+        .requested
+        .iter()
+        .map(|selector| crate::json::string(selector.as_str()))
+        .collect::<Vec<_>>()
+        .join(",");
+    let fallbacks = report
+        .fallback_reasons
+        .iter()
+        .map(|reason| crate::json::string(reason))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "{{\"schema_version\":1,\"epoch\":{},\"scope\":{},\"passed\":{},\"requested\":[{}],\"fallback_reasons\":[{}],\"cases\":[{}]}}",
+        report.epoch,
+        crate::json::string(scope_name(report.scope)),
+        report.succeeded(),
+        requested,
+        fallbacks,
+        cases
+    )
+}
+
+fn report_slowest_normalized(report: &TestReportV1, count: usize) {
+    let mut cases = report.cases.iter().collect::<Vec<_>>();
+    cases.sort_by_key(|case| std::cmp::Reverse(case.duration_us));
+    cases.truncate(count);
+    println!();
+    println!("slowest {} test(s):", cases.len());
+    for case in cases {
+        println!(
+            "  {:>8.2}s  {}",
+            case.duration_us as f64 / 1_000_000.0,
+            case.selector
+        );
+    }
+}
+
+fn engine_name(engine: TestEngine) -> &'static str {
+    match engine {
+        TestEngine::Maven => "maven",
+        TestEngine::Gradle => "gradle",
+        TestEngine::TestdV2 => "testd-v2",
+    }
+}
+
+fn compile_owner_name(owner: TestCompileOwner) -> &'static str {
+    match owner {
+        TestCompileOwner::Ide => "ide",
+        TestCompileOwner::Maven => "maven",
+        TestCompileOwner::Gradle => "gradle",
+        TestCompileOwner::None => "none",
+    }
+}
+
+fn outcome_name(outcome: TestOutcome) -> &'static str {
+    match outcome {
+        TestOutcome::Passed => "passed",
+        TestOutcome::Failed => "failed",
+        TestOutcome::Skipped => "skipped",
+        TestOutcome::Error => "error",
+    }
+}
+
+fn scope_name(scope: TestScope) -> &'static str {
+    match scope {
+        TestScope::Unit => "unit",
+        TestScope::Integration => "integration",
+        TestScope::All => "all",
+    }
+}
+
+/// Print the canonical command that reruns the failures recorded by the build.
+pub(crate) fn rerun_line(root: &Path, already_filtered: Option<&str>) {
+    let failures = failed_selectors(root);
+    println!();
+    match failures.len() {
+        0 => {
+            if let Some(filter) = already_filtered {
+                println!("jails: rerun with  jails test '{filter}'");
+            }
+        }
+        1 => println!("jails: rerun with  jails test '{}'", failures[0]),
+        count => {
+            println!("jails: {count} test(s) failed. Rerun just those with  jails test --failed");
+            for selector in failures.iter().take(5) {
+                println!("         {selector}");
+            }
+            if count > 5 {
+                println!("         ... and {} more", count - 5);
+            }
+        }
+    }
 }
 
 /// `name="value"` out of an attribute list. Single quotes too: Surefire
@@ -220,60 +417,6 @@ fn attribute(attributes: &str, name: &str) -> Option<String> {
     None
 }
 
-/// The finished run, as data.
-///
-/// `passed` is the build's own verdict rather than "no failed cases": a build
-/// can fail before a single test runs -- a compile error, a missing dependency
-/// -- and an empty failure list would then read as success. The `cases` array
-/// says what actually executed, which is the other half a consumer needs to
-/// tell "all green" from "nothing ran".
-pub(crate) fn report_json(root: &Path, passed: bool) -> Result<()> {
-    let cases = cases(root);
-    let rows: Vec<String> = cases
-        .iter()
-        .map(|case| {
-            format!(
-                "    {{\"class\": {}, \"method\": {}, \"seconds\": {:.3}, \"failed\": {}, \
-                 \"selector\": {}}}",
-                crate::json::string(&case.class),
-                crate::json::string(&case.method),
-                case.seconds,
-                case.failed,
-                crate::json::string(&case.selector())
-            )
-        })
-        .collect();
-    let failed = cases.iter().filter(|case| case.failed).count();
-    println!(
-        "{{\n  \"schema_version\": 1,\n  \"passed\": {passed},\n  \"total\": {},\n  \
-         \"failed\": {failed},\n  \"cases\": [\n{}\n  ]\n}}",
-        cases.len(),
-        rows.join(",\n")
-    );
-    if passed {
-        Ok(())
-    } else {
-        Err(jails_support::Failure::Reported)
-    }
-}
-/// The slowest tests of the run that just finished.
-///
-/// Read from the reports rather than timed here: Maven already measured
-/// each one, and a wall-clock number jails invented would include its own
-/// startup.
-pub(crate) fn report_slowest(root: &Path, count: usize) {
-    let slowest = slowest(root, count);
-    if slowest.is_empty() {
-        println!();
-        println!("jails: no test reports to read -- nothing ran, or the build failed first.");
-        return;
-    }
-    println!();
-    println!("slowest {} test(s):", slowest.len());
-    for case in slowest {
-        println!("  {:>8.2}s  {}", case.seconds, case.selector());
-    }
-}
 #[cfg(test)]
 mod tests {
     /// Gradle writes the method name with its parentheses; Surefire does not.
@@ -350,6 +493,34 @@ mod tests {
         let mut times: Vec<f64> = cases.iter().map(|c| c.seconds).collect();
         times.sort_by(f64::total_cmp);
         assert_eq!(times, vec![0.0, 0.05, 0.25, 1.20]);
+    }
+
+    #[test]
+    fn normalized_reports_keep_run_verdict_and_canonical_case_identity() {
+        let root = jails_support::scratch::ScratchDir::in_temp("normalized-test-report").unwrap();
+        let directory = root.path().join("target/surefire-reports");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(directory.join("TEST-PayoutTest.xml"), REPORT).unwrap();
+        let report = normalized(
+            root.path(),
+            TestEngine::Maven,
+            TestScope::Unit,
+            &[],
+            false,
+            Some("warm partition delegated".into()),
+        )
+        .unwrap();
+        assert!(!report.succeeded());
+        assert_eq!(
+            report.cases[0].selector.as_str(),
+            "com.example.demo.PayoutTest#settles"
+        );
+        assert_eq!(report.cases[2].outcome, TestOutcome::Error);
+        assert_eq!(report.cases[3].outcome, TestOutcome::Skipped);
+        let json = json_line(&report);
+        assert!(json.contains("\"engine\":\"maven\""));
+        assert!(json.contains("\"passed\":false"));
+        assert!(json.contains("warm partition delegated"));
     }
 
     #[test]

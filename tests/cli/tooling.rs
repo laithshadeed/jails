@@ -67,7 +67,10 @@ fn test_flags_rerun_failures_stop_early_and_name_the_slowest() {
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("slowest 2 test(s)"), "{stdout}");
-    assert!(stdout.contains("2.50s  PayoutTest#settles"), "{stdout}");
+    assert!(
+        stdout.contains("2.50s  com.example.demo.PayoutTest#settles"),
+        "{stdout}"
+    );
 
     let _ = jails_cmd(&root, Some(&fake_dir))
         .args(["test", "--fail-fast"])

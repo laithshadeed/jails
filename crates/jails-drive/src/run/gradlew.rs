@@ -53,6 +53,7 @@ pub(super) fn test(
     root: &Path,
     requested: &[String],
     options: TestOptions,
+    fallback_reason: Option<String>,
     debug: bool,
 ) -> Result<()> {
     if options.fast {
@@ -123,11 +124,13 @@ pub(super) fn test(
 
     // After the run, over the reports it just wrote. `--json` owns the exit
     // status because its whole point is being the machine-readable answer.
-    if let Some(count) = options.slowest {
-        crate::reports::report_slowest(root, count);
-    }
-    match options.json {
-        true => crate::reports::report_json(root, outcome.is_ok()),
-        false => outcome,
-    }
+    let report = crate::reports::normalized(
+        root,
+        jails_protocol::testing::TestEngine::Gradle,
+        options.scope,
+        requested,
+        outcome.is_ok(),
+        fallback_reason,
+    )?;
+    crate::reports::render(&report, options.json, options.slowest)
 }

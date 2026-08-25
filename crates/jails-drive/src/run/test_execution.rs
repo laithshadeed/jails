@@ -2,7 +2,7 @@
 
 use super::{
     TestOptions, either_root, expand_filter, fingerprint, forced_color, is_maven_program,
-    report_rerun_line, resolve_filter, run_inherited, split_method, test_once, test_plan,
+    resolve_filter, run_inherited, split_method, test_once, test_once_with_fallback, test_plan,
 };
 use jails_support::Result;
 use std::path::Path;
@@ -11,6 +11,7 @@ use std::process::Command;
 pub(super) struct MavenTestContext<'run> {
     pub project: &'run Path,
     pub options: &'run TestOptions,
+    pub fallback_reason: Option<&'run str>,
     pub debug: bool,
 }
 
@@ -102,7 +103,7 @@ pub(super) fn run_warm(requested: &[String], options: &TestOptions, debug: bool)
         return crate::testd::testd(crate::testd::Action::Affected, debug);
     }
     let report = crate::testd::run_report(requested, 0, debug)?;
-    crate::testd::render(report)
+    crate::reports::render(&report, options.json, options.slowest)
 }
 
 fn delegate_or_refuse(
@@ -117,7 +118,7 @@ fn delegate_or_refuse(
         delegated.engine = jails_protocol::testing::TestEnginePolicy::Build;
         delegated.compile = jails_protocol::testing::TestCompilePolicy::Build;
         delegated.fast = false;
-        return test_once(requested, delegated, debug);
+        return test_once_with_fallback(requested, delegated, debug, Some(reason));
     }
     Err(format!(
         "strict warm execution is ineligible: {reason}\n       fix: choose `--engine auto` so the build tool owns this partition"
@@ -140,8 +141,9 @@ pub(super) fn test_watch(requested: &[String], options: TestOptions, debug: bool
         .into());
     }
     test_once(requested, once.clone(), debug)?;
-    println!("test watch: ready; waiting for project changes (Ctrl-C to stop)");
+    watch_ready(once.json, 0);
     let mut pending = super::watch::Batch::default();
+    let mut epoch = 0_u64;
     loop {
         std::thread::sleep(super::watch::POLL);
         let current = fingerprint::fingerprint(&root);
@@ -158,18 +160,42 @@ pub(super) fn test_watch(requested: &[String], options: TestOptions, debug: bool
             continue;
         }
         let (changes, overflowed) = pending.take();
-        println!();
-        for change in &changes {
-            println!("test watch: {change}");
+        epoch = epoch.saturating_add(1);
+        if !once.json {
+            println!();
+            for change in &changes {
+                println!("test watch: {change}");
+            }
         }
         let mut run = once.clone();
         if overflowed {
-            println!("test watch: watcher overflow; full rescan complete, widening this run");
+            if once.json {
+                println!("{{\"schema_version\":1,\"event\":\"overflow\",\"action\":\"widen\"}}");
+            } else {
+                println!("test watch: watcher overflow; full rescan complete, widening this run");
+            }
             run.affected = false;
         }
         if let Err(error) = test_once(requested, run, debug) {
-            eprintln!("test watch: {error}");
+            if once.json {
+                println!(
+                    "{{\"schema_version\":1,\"event\":\"error\",\"message\":{}}}",
+                    crate::json::string(&error.to_string())
+                );
+            } else {
+                eprintln!("test watch: {error}");
+            }
         }
+        watch_ready(once.json, epoch);
+    }
+}
+
+fn watch_ready(json: bool, epoch: u64) {
+    if json {
+        println!(
+            "{{\"schema_version\":1,\"event\":\"ready\",\"epoch\":{epoch},\"output_current\":true}}"
+        );
+    } else {
         println!("test watch: ready; waiting for project changes (Ctrl-C to stop)");
     }
 }
@@ -207,7 +233,7 @@ pub(super) fn test_many_maven(context: &MavenTestContext<'_>, requested: &[Strin
     if !integration.is_empty() {
         passed &= run_maven_selection(context, "verify", "-Dit.test", &integration).is_ok();
     }
-    finish_test_report(context, passed)
+    finish_test_report(context, requested, passed)
 }
 
 fn run_maven_selection(
@@ -239,16 +265,21 @@ fn run_maven_selection(
     }
 }
 
-fn finish_test_report(context: &MavenTestContext<'_>, passed: bool) -> Result<()> {
-    if let Some(count) = context.options.slowest {
-        crate::reports::report_slowest(context.project, count);
+fn finish_test_report(
+    context: &MavenTestContext<'_>,
+    requested: &[String],
+    passed: bool,
+) -> Result<()> {
+    if !passed && !context.options.json {
+        crate::reports::rerun_line(context.project, None);
     }
-    if context.options.json {
-        crate::reports::report_json(context.project, passed)
-    } else if passed {
-        Ok(())
-    } else {
-        report_rerun_line(context.project, None);
-        Err(jails_support::Failure::Reported)
-    }
+    let report = crate::reports::normalized(
+        context.project,
+        jails_protocol::testing::TestEngine::Maven,
+        context.options.scope,
+        requested,
+        passed,
+        context.fallback_reason.map(str::to_string),
+    )?;
+    crate::reports::render(&report, context.options.json, context.options.slowest)
 }

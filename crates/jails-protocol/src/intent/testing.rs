@@ -360,6 +360,9 @@ impl Codec for TestCaseResultV1 {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TestReportV1 {
     pub epoch: u64,
+    /// The execution owner's verdict. A build can fail before producing a
+    /// case, so this cannot be reconstructed from `cases`.
+    pub passed: bool,
     pub scope: TestScope,
     pub requested: Vec<TestSelector>,
     pub cases: Vec<TestCaseResultV1>,
@@ -368,9 +371,7 @@ pub struct TestReportV1 {
 
 impl TestReportV1 {
     pub fn succeeded(&self) -> bool {
-        self.cases
-            .iter()
-            .all(|case| matches!(case.outcome, TestOutcome::Passed | TestOutcome::Skipped))
+        self.passed
     }
 }
 
@@ -378,6 +379,7 @@ impl Codec for TestReportV1 {
     fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         unique_selectors("requested test", &self.requested)?;
         encoder.u64(self.epoch);
+        encoder.bool(self.passed);
         self.scope.encode(encoder)?;
         encoder.seq(self.requested.len(), &self.requested)?;
         encoder.seq(self.cases.len(), &self.cases)?;
@@ -389,6 +391,7 @@ impl Codec for TestReportV1 {
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         let report = Self {
             epoch: decoder.u64()?,
+            passed: decoder.bool()?,
             scope: TestScope::decode(decoder)?,
             requested: decoder.seq()?,
             cases: decoder.seq()?,
@@ -463,6 +466,7 @@ mod tests {
     fn report_round_trips_and_derives_success() {
         let report = TestReportV1 {
             epoch: 42,
+            passed: true,
             scope: TestScope::Unit,
             requested: vec![selector("ExampleTest#works")],
             cases: vec![TestCaseResultV1 {

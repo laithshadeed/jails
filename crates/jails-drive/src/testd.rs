@@ -106,19 +106,7 @@ fn run_affected(project: &Project, debug: bool) -> Result<()> {
 }
 
 pub(crate) fn render(report: TestReportV1) -> Result<()> {
-    for case in &report.cases {
-        if !case.stdout_summary.is_empty() {
-            print!("{}", case.stdout_summary);
-        }
-        if !case.stderr_summary.is_empty() {
-            eprint!("{}", case.stderr_summary);
-        }
-    }
-    if report.succeeded() {
-        Ok(())
-    } else {
-        Err(jails_support::Failure::Reported)
-    }
+    crate::reports::render(&report, false, None)
 }
 
 #[cfg(test)]

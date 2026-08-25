@@ -269,6 +269,7 @@ final class JailsTestDaemon {
         body.tag(3);
         body.bytes(request.id);
         body.u64(request.epoch);
+        body.bool(result.exitCode == 0);
         body.tag(0); // unit scope
         body.strings(request.selectors);
         List<String> cases = request.selectors.isEmpty() ? List.of("all-tests") : request.selectors;
