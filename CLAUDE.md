@@ -43,20 +43,31 @@ what is still outstanding, re-measured rather than transcribed.
 
 ## Workspace
 
-Seven crates, lowest first. A crate may only depend on one below it, and
+Ten crates, lowest first. A crate may only depend on one below it, and
 Cargo enforces that; `no_module_depends_on_a_layer_above_its_own` in
 `tests/architecture.rs` enforces the same rule for module-level edges the
-compiler cannot see, and assigns every module its crate.
+compiler cannot see, and assigns every module its crate. **That table
+(`LAYERS`, `tests/architecture.rs:785`) is the authority on which crate a
+module belongs to** — this one is the prose, and prose is what goes stale.
 
 | crate | what belongs in it |
 |---|---|
 | `jails-support` | writing, running, splicing, encoding. Nothing here knows what a Java project is. `Result`, `debug_cmd` and `CWD_LOCK` live here. |
 | `jails-java` | reading Java (`java`, `classfile`) and rendering templates into it (`template`). |
 | `jails-spec` | where a project is and how it is laid out (`build`, `spec::paths`, `spec::layout`), what a field spec means (`spec::field`), and the closed CLI vocabularies (`spec::kind`). |
-| `jails-project` | one resolved `model::Project`, plus every file jails writes *about* a project — the reader's (`config`, `compose`) and the read-only view of jails' own (`compat`, `projection`). |
-| `jails-generate` | everything that decides what Java to write: `generate`, `spring`, `add`, `sql`. |
-| `jails-tooling` | commands that drive a toolchain or report on a project: `run`, `testd`, `doctor`, `why` and the rest. |
-| `jails` (root) | the binary: `main`, `new`, `app`, `adopt`, and `tests/`. |
+| `jails-protocol` | **the validated values every closed jails format is built from** — `Recipe`, `Name`, `Package`, `FieldSpec`, `EntityId`, `ResourceKey`, and the plan/transition/effect vocabulary above them. One constructor per type, and every wire decoder calls it, so a value rejected at the CLI cannot arrive through a recovered journal instead. 23 flat modules; §7.4 of `pending.md` groups them. |
+| `jails-project` | one resolved `model::Project`, plus every file jails writes *about* a project — the reader's (`config`, `compose`, `pom`, `gradle`) and the read-only view of jails' own (`compat`, `projection`, `ledger`). |
+| `jails-generate` | everything that decides what Java to write: `generate`, `spring`, `add`, `sql`. Its planning half (`plan_for`, `artifacts_for`) is what the engine calls and is pure. |
+| `jails-prepare` | **turning semantic desire into an exact executable transition**: `desire`, `reconcile`, `pipeline`, `merge`, `sandbox`, `report`. Plan-only — nothing here creates `.jails/` or commits anything. Everything a commit needs to *decide* is decided here, so the executor applies a value rather than re-deriving one. |
+| `jails-commit` | **making a prepared transition durable, and recovering one**: `store`, `journal`, `execute`, `activate`, `recover`, `gc`. Crash recovery rolls a fully persisted, validated journal *forward*; preimages exist for a guarded explicit abort and for audit, not as the crash policy. That is what keeps this crate small — there is one direction to finish in. |
+| `jails-tooling` | commands that drive a toolchain or report on a project: `run`, `testd`, `doctor`, `why` and the rest. Two jobs in one name; `pending.md` §7.6. |
+| `jails-engine` | **one request, as one transition.** `route` and its submodules are where a parsed command becomes a capture, a desire, a preparation and a commit. Above the executor because it drives it; below the CLI because it is not about arguments. |
+| `jails` (root) | the binary: `main`, `new`, `app`, `invoke`, and `tests/`. |
+
+`jails-engine` and `jails-tooling` sit at the same level and do not reference
+each other; so do `jails-generate` and `jails-prepare`. The layering is a DAG,
+not a line, and `LAYERS` records it as one number per module because a
+same-level edge is allowed.
 
 **This existed because `src/` was one twelve-module cycle** — `add`, `compose`,
 `config`, `generate`, `inspect`, `launcher`, `model`, `project`, `run`,
