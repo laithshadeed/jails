@@ -3386,7 +3386,7 @@ pub struct MigrationSealV1 {
     pub version: MigrationVersion,
     pub path: ProjectPath,
     pub content_digest: ObjectId,
-    pub introduced_by: EntityId,
+    pub contributors: BTreeSet<EntityId>,
     pub receipt: ReceiptId,
 }
 ~~~
