@@ -13,6 +13,8 @@ pub const TESTD_PROTOCOL: &str = "jails.testd.v1";
 /// Numeric component used where a filesystem-safe, compact daemon tag is
 /// required (notably Unix socket names).
 pub const TESTD_PROTOCOL_VERSION: u32 = 1;
+/// Canonical framed protocol used by the unified test coordinator.
+pub const TESTD_V2_PROTOCOL: &str = "jails.testd.v2";
 
 /// Reserved for the SQL contract format described by the roadmap. No reader
 /// or writer ships yet; reserving the identifier prevents a future format
@@ -55,6 +57,7 @@ mod tests {
         for identifier in [
             format!("schema={APP_MANIFEST_SCHEMA}"),
             TESTD_PROTOCOL.to_string(),
+            TESTD_V2_PROTOCOL.to_string(),
             SQL_CONTRACT_SCHEMA.to_string(),
             format!("schema={DURABLE_ENVELOPE_SCHEMA}"),
             DURABLE_PAYLOAD_CODEC.to_string(),

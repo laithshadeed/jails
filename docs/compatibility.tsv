@@ -1,7 +1,8 @@
 # Compatibility roots. `reserved` means the identifier is allocated but no reader or writer ships yet.
 # surface	identifier	status	owner	unknown-version behaviour
 application_manifest	schema=1	current	jails CLI	refuse before planning; instruct upgrade
-test_daemon	jails.testd.v1	current	jails-drive + JailsTestDaemon.java	refuse reply/request; instruct upgrade
+test_daemon	jails.testd.v1	compatibility	jails-drive + JailsTestDaemon.java	refuse reply/request; instruct upgrade
+test_daemon_v2	jails.testd.v2	current	jails-protocol + jails-drive + JailsTestDaemon.java	length prefix, canonical codec, authenticated project binding
 sql_contract	jails.sql-contract.v1	reserved	jails-protocol	no reader or writer exists yet
 ledger_envelope	schema=2	current	jails-protocol	refuse before payload decode; instruct upgrade
 ledger_payload_v1	jails-ledger-payload-1	read-only	jails-protocol	decode with an empty lifecycle registry; rewrite as v2 on commit

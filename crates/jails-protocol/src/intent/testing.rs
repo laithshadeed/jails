@@ -11,6 +11,8 @@ use crate::identity::ProjectPath;
 use jails_support::codec::{Codec, Decoder, Encoder};
 use std::collections::BTreeSet;
 
+pub mod testd;
+
 /// A class or class-and-method selector accepted by every test engine.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TestSelector(String);
