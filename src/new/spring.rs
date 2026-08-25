@@ -235,7 +235,7 @@ fn new_offline(request: &Request<'_>, deps: &str) -> Result<()> {
         "pom.xml",
     )?;
     crate::generate::write_new_file(
-        tree.root(),
+        tree,
         &source.join(format!("{class}Application.java")),
         &crate::template::render(
             crate::template_here!("new/offline_application.java"),
@@ -243,7 +243,7 @@ fn new_offline(request: &Request<'_>, deps: &str) -> Result<()> {
         ),
     )?;
     crate::generate::write_new_file(
-        tree.root(),
+        tree,
         &tests.join(format!("{class}ApplicationTests.java")),
         &crate::template::render(
             crate::template_here!("new/offline_application_test.java"),

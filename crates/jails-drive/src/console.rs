@@ -105,7 +105,7 @@ fn find_jshell() -> Option<PathBuf> {
 fn project_classpath(root: &Path, debug: bool) -> Result<String> {
     let out = root.join("target/jails-classpath");
     if let Some(parent) = out.parent() {
-        jails_support::apply::ensure_directory(parent)
+        jails_support::apply::ensure_derived_directory(parent)
             .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
     }
     let mut mvn = Command::new(crate::maven::binary(root));

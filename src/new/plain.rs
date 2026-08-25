@@ -106,12 +106,12 @@ pub fn new_cli(request: &Request<'_>) -> Result<()> {
     // `package-info.java` every other package gets -- the lookup this
     // replaced either found the surrounding project or found nothing.
     crate::generate::write_new_file(
-        tree.root(),
+        tree,
         &src_dir.join("App.java"),
         &crate::generate::cli_java(&package, "App", name),
     )?;
     crate::generate::write_new_file(
-        tree.root(),
+        tree,
         &test_dir.join("AppTest.java"),
         &crate::generate::cli_test(&package, "App"),
     )?;

@@ -206,6 +206,9 @@ fn main() -> std::process::ExitCode {
                         jails_engine::route::undeclare(run, id.clone())
                     })
                 }),
+            Some(Undeclare::FastTest) => {
+                dispatch::mutate(invocation, false, jails_engine::route::remove_fast_test)
+            }
             None => dispatch::mutate_confirmed(invocation, false, force, |run| {
                 let asked =
                     dispatch::declarations(&capabilities, name.as_deref(), package.as_deref())?;
@@ -284,17 +287,32 @@ fn main() -> std::process::ExitCode {
             slowest,
             json,
             fast,
-        } => run::test(
-            filter.as_deref(),
-            run::TestOptions {
-                failed,
-                fail_fast,
-                slowest,
-                json,
-                fast,
-            },
-            debug,
-        ),
+        } => {
+            // The launcher class has to be on the test classpath before
+            // `--fast` can run anything, and that is a dependency in the
+            // reader's POM -- so it is an owned entity installed by an
+            // ordinary transition, not a side effect of how the tests were
+            // run. V1 spliced it from inside `run::test`, recorded nothing,
+            // and left no way to take it back out; `jails remove fast-test`
+            // is that way. Idempotent, so every later `--fast` writes nothing.
+            let installed = match fast {
+                true => dispatch::precondition(invocation, jails_engine::route::install_fast_test),
+                false => Ok(()),
+            };
+            installed.and_then(|()| {
+                run::test(
+                    filter.as_deref(),
+                    run::TestOptions {
+                        failed,
+                        fail_fast,
+                        slowest,
+                        json,
+                        fast,
+                    },
+                    debug,
+                )
+            })
+        }
         Command::Testd {
             filter,
             affected,

@@ -263,9 +263,14 @@ pub(crate) fn root_path_parameters(src: &[Source]) -> usize {
 /// passing the caller's `Project` would be the bug.
 ///
 /// The distinction rung 1 is actually about: envy is asking the disk for a fact
-/// somebody already resolved. These four ask the disk because the resolved
-/// answer is **stale or absent** -- jails has been splicing the pom in the same
-/// run, or there is no project yet. Declared rather than counted, because a
+/// somebody already resolved. These two ask the disk because the resolved
+/// answer is **absent** -- there is no project yet.
+///
+/// It was four. `ensure_console_launcher` went with `pending.md` §7.7's move
+/// of the `--fast` splice into a transition, and `ensure_package_info` stopped
+/// taking a `root` at all when `write_new_file` started taking an
+/// `apply::Tree` -- it reads the pom out of the staging tree it was handed,
+/// which is not a second read of anything. Declared rather than counted, because a
 /// number nobody can reach is a gate nobody reads; the pattern is
 /// `SILENT_WITHOUT_A_RECORD`'s, and a stale entry here fails the test below the
 /// same way.
@@ -275,15 +280,6 @@ pub(crate) const A_FRESH_READ_IS_CORRECT: &[(&str, &str)] = &[
         "`jails new --app` has just created the project on disk, so there is no earlier \
          `Project` for this to be a second read of. Passing one in would mean resolving it \
          at the call site instead, which is the same read one frame up",
-    ),
-    (
-        "ensure_console_launcher",
-        "the same: it checks for and splices `junit-platform-console`",
-    ),
-    (
-        "ensure_package_info",
-        "reached from `write_new_file`, whose nine callers include `new` -- which is \
-         creating the very pom this asks about, so there is no project to have resolved",
     ),
     (
         "read_build_file",
@@ -707,7 +703,24 @@ pub(crate) fn write_sites_outside_apply(src: &[Source]) -> usize {
 /// project through other names, so the gate read green over exactly the
 /// surface R6 has to migrate.
 /// Where the count stands today. Lowered by each migrated surface.
-pub(crate) const MUTATION_CEILING: usize = 6;
+///
+/// **Zero, 2026-08-25 — the rung is reached.** 56 → 46 → 11 → 6 → 0, and the
+/// last six were the ones `pending.md` §7.7 called "a real decision rather
+/// than a migration nobody got to". Each was decided rather than moved:
+///
+/// - `generate/write.rs`'s two took an `apply::Tree` instead of a `&Path`.
+///   Every caller of `write_new_file` is on the `jails new` path, so the
+///   signature now says what a comment used to, and a write outside the
+///   staging tree is refused.
+/// - `run.rs`'s `pom.xml` splice for `test --fast` became the transition that
+///   was already written and unwired: `route::install_fast_test`, with
+///   `jails remove fast-test` as the other half.
+/// - `add/database.rs`, `console.rs` and `testd.rs` write build output and
+///   machine state, not a project. They go through `remove_derived`,
+///   `ensure_derived_directory` and `ensure_directory_outside_project`, and
+///   the first two **refuse** a path outside `target/` or `build/` — so the
+///   exemption below is checked rather than promised.
+pub(crate) const MUTATION_CEILING: usize = 0;
 
 pub(crate) const MUTATION_APIS: &[&str] = &[
     "fs::write",
@@ -742,20 +755,44 @@ pub(crate) fn executor_bypasses(src: &[Source]) -> usize {
         .filter(|file| !owns_writing(&file.path))
         .map(|file| {
             let all = file.production.matches("apply::").count();
-            // Two verbs say in their own names that they are not writing into a
-            // project, which is what this row is about. `put_outside_project`
-            // is deliberately long so `jails setup`'s `~/.testcontainers
-            // .properties` and `testd`'s daemon source cannot be reached by
-            // accident from anything editing a project; `put_in_scratch` writes
-            // a tree jails created empty moments earlier and removes when the
-            // run ends. Counting them made the gate ask for something that
-            // would be wrong to do -- there is no transaction to put a write
-            // outside every project into.
-            let exempt = file
-                .production
-                .matches("apply::put_outside_project")
-                .count()
-                + file.production.matches("apply::put_in_scratch").count();
+            // Five verbs say in their own names that they are not writing
+            // into a project, which is what this row is about. Counting them
+            // made the gate ask for something that would be wrong to do:
+            // there is no transaction to put a write outside every project
+            // into, and none that owns `target/`.
+            //
+            // - `put_outside_project` / `ensure_directory_outside_project`:
+            //   `jails setup`'s `~/.testcontainers.properties`, `testd`'s
+            //   daemon source and its cache directory. Deliberately long, so
+            //   nothing editing a project reaches one by accident.
+            // - `put_in_scratch`: a tree jails created empty moments earlier
+            //   and removes when the run ends.
+            // - `remove_derived` / `ensure_derived_directory`: build output.
+            //   `target/` is Maven's and `build/` is Gradle's; nothing in the
+            //   ledger claims a byte of either, and both verbs *refuse* a path
+            //   outside one -- so the exemption is checked rather than
+            //   promised. `pending.md` §7.7.
+            //
+            // Order matters in one place: `apply::remove_derived` contains
+            // `apply::remove` as a prefix, so it would be counted by a shorter
+            // literal. `remove` is not in this list, so there is nothing to
+            // subtract twice -- but a future exemption of `apply::remove`
+            // would have to account for it.
+            let exempt: usize = [
+                // Not a verb at all: `apply::Tree` is the *type* a staging
+                // write goes through, and a `use` of it is the opposite of a
+                // bypass -- a function taking one cannot reach a published
+                // project.
+                "apply::Tree",
+                "apply::put_outside_project",
+                "apply::ensure_directory_outside_project",
+                "apply::put_in_scratch",
+                "apply::remove_derived",
+                "apply::ensure_derived_directory",
+            ]
+            .iter()
+            .map(|verb| file.production.matches(verb).count())
+            .sum();
             all - exempt
         })
         .sum()

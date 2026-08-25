@@ -1005,29 +1005,47 @@ is real, it is one-way, and it puts the read-only crate underneath.
 alias for `process::on_path`, and it was `doctor`'s only reason to name `run` at
 all. The `doctor` module-lines ratchet fell 1481 → 1479 as a result.
 
-### 7.7 `jails-generate` still writes — **six left, each a decision**
+### 7.7 Every mutation goes through the executor — **done 2026-08-25**
 
-The largest crate holds one job — *decide what Java to write* — and one
-leftover. §7.2 deleted most of it (`generate/write.rs`'s four
-dependency-ensuring functions, `scaffold.rs`'s three, `spring/durable.rs`'s
-install/uninstall pair), and §5's `publish::Tree` took the `jails new` path out
-of the count. §4's row reads **6**, down from the 56 it started at.
+The largest crate holds one job — *decide what Java to write* — and held one
+leftover. §7.2 deleted most of it, §5's `publish::Tree` took the `jails new`
+path out of the count, and §4's row went 56 → 46 → 11 → 6.
 
-Each of the six is a real decision rather than a migration nobody got to:
+**It is 0, and the R6.4 rung is reached.** Each of the last six was a decision
+rather than a migration, and each was decided:
 
-| where | what it writes | the question |
+| where | what it was | what it is |
 |---|---|---|
-| `generate/write.rs` ×2 | `apply::create` and the `package-info.java` write | both reached only on the `jails new` path, so they belong behind `publish::Tree` — which is a signature change through `write_new_file`, not a transaction |
-| `add/database.rs` | a delete under `target/` after a source is removed, so incremental `mvn test` stops using a stale class | derived output, excluded from the snapshot. Arguably the same row `SUBPROCESS_CLASSIFICATION` calls *derived build process*, and the honest fix is to say so rather than to journal it |
-| `run.rs` | splices `junit-platform-console` into `pom.xml` for `test --fast` | a **real** project write outside a transaction, and the one on this list that should become one |
-| `console.rs` | a classpath directory for `jshell` | derived |
-| `testd.rs` | the daemon's scratch directory | derived |
+| `generate/write.rs` ×2 | `apply::create` and the `package-info.java` write, on a `root: &Path` | `write_new_file` takes an `apply::Tree`. Every one of its nine callers is on the `jails new` path, so the signature says what a comment used to — and a write outside the staging tree is now *refused* rather than merely not attempted |
+| `run.rs` | spliced `junit-platform-console` into `pom.xml` from inside `test --fast` | `route::install_fast_test`, which was already written and unwired. `jails remove fast-test` is the other half |
+| `add/database.rs` | a delete under `target/` after a source is removed | `apply::remove_derived` |
+| `console.rs` | a classpath directory under `target/` | `apply::ensure_derived_directory` |
+| `testd.rs` | the daemon's cache directory under the user's home | `apply::ensure_directory_outside_project` |
 
-Two verbs stopped counting, and that was a measurement fix rather than work:
-`apply::put_outside_project` (`jails setup`'s `~/.testcontainers.properties`,
-`testd`'s daemon source) and `apply::put_in_scratch`. Both say in their own
-names that they are not writing into a project, and there is no transaction to
-put a write outside every project into.
+Three things worth keeping from how it went.
+
+**`Tree` moved down to `jails-support::apply`.** §5 put it beside `jails new`
+because that is the only thing that publishes; the generators write into it
+too, and a type is where the writes are. `Publication` — the lock, the scratch,
+the rename, the "already exists" refusal — stays in `src/new/publish.rs`, which
+is the half that knows what a *new project* is.
+
+**The two derived verbs refuse rather than promise.** `remove_derived` and
+`ensure_derived_directory` check for a `target` or `build` path segment and
+error otherwise, so "this is build output, not the project" is a claim the
+program enforces. That matters because the exemption is what lets the gate stop
+counting them: an exemption on a name anybody could apply to a `src/` path
+would be the gate reading green over exactly what it exists to catch.
+
+**`apply::Tree` had to be exempted too, and for the opposite reason.** The gate
+counts the literal `apply::`, and `use jails_support::apply::Tree;` is an
+import of the type that makes a staging write checkable — the opposite of a
+bypass. That one import was the difference between 1 and 0.
+
+**Two follow-on measurements.** `root: &Path` fell 80 → 77, because
+`write_new_file` and `ensure_package_info` stopped taking a root at all; and
+`A_FRESH_READ_IS_CORRECT` lost two of its four entries, since neither
+`ensure_console_launcher` nor `ensure_package_info` re-reads a pom any more.
 
 **A limitation of §7.2's pass, recorded so it is not mistaken for coverage.**
 The narrowing reopened items by name, taken from the compiler's error text —
@@ -1424,10 +1442,12 @@ Each PR leaves `cargo build --workspace && cargo test --workspace` green.
 5. ~~**One table per kind**~~ (§6.4) — **done 2026-08-25.** Four of the seven
    were never mergeable tables; the two that were are one, and the third real
    copy (`Capability::label`) is pinned to clap by a test.
-6. **One transaction protocol** (§5, §7.7) — `new --app` becomes an ordinary V2
-   transition and the remaining `apply::` calls move behind the executor. §4's
-   gate reaches its target, honestly this time. It is at **46**, down from the
-   56 it started at, entirely as a side effect of step 2 deleting V1 writers.
+6. ~~**One transaction protocol**~~ (§5, §7.7) — **done 2026-08-25.** §4's gate
+   reads **0** against a target of 0, honestly: 56 → 46 → 11 → 6 → 0. `jails
+   new` did not become a V2 transition and should not — §5 re-measured that and
+   found publication-by-rename already gives the guarantee — but it says so in
+   a type now, and the last six direct writes were each decided rather than
+   moved.
 7. **Crate boundaries** (§7.3, §7.4, §7.5) and the file splits (§8).
 
 The three new proof applications (§2.1, §2.2, §2.3) sequence against §9 rather

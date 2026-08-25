@@ -70,7 +70,7 @@
 
 use crate::Result;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Create the parent directory chain for a file about to be written.
 fn ensure_parent(path: &Path) -> Result<()> {
@@ -219,6 +219,60 @@ pub fn ensure_directory(path: impl AsRef<Path>) -> Result<()> {
         .map_err(|error| format!("failed to create {}: {error}", path.display()))?)
 }
 
+/// Create a directory outside any project, on the machine.
+///
+/// [`put_outside_project`]'s counterpart, and long for the same reason: the
+/// caller is a cache or a config directory under the user's home, and nothing
+/// that edits a *project* should reach for it.
+pub fn ensure_directory_outside_project(path: impl AsRef<Path>) -> Result<()> {
+    ensure_directory(path)
+}
+
+/// The build tool's output directory, which is not the project.
+///
+/// **Derived output is deliberately outside the transaction.** `target/` and
+/// `build/` are Maven's and Gradle's, nothing in the ledger claims a byte of
+/// them, and a transition that rewrote one would be claiming ownership of
+/// something jails does not own. `dispatch::drop_compiled_shadows` says the
+/// same thing from the other end: the compiled shadow of a deleted source has
+/// to go, and it goes *after* the commit rather than inside it.
+///
+/// So these two verbs exist to make that claim checkable instead of implied.
+/// A `remove` on a path under `target/` and a `remove` on a path under `src/`
+/// are the same call today, which is why the R6.4 gate had to count both;
+/// naming the first separately is what lets it stop counting, and the refusal
+/// below is what stops the name being a lie. `pending.md` §7.7.
+fn derived(path: &Path) -> Result<()> {
+    if path
+        .components()
+        .any(|part| matches!(part.as_os_str().to_str(), Some("target" | "build")))
+    {
+        return Ok(());
+    }
+    Err(format!(
+        "{} is not build output, so it may not be written outside a transaction.\n       \
+         fix: this is a bug in jails, not something a project can cause -- please report the \
+         command.",
+        path.display()
+    )
+    .into())
+}
+
+/// Remove a file the build tool derived, once its source is gone.
+pub fn remove_derived(path: impl AsRef<Path>) -> Result<()> {
+    let path = path.as_ref();
+    derived(path)?;
+    remove(path)
+}
+
+/// Create a directory under the build tool's output, for something jails is
+/// about to ask the build tool to write there.
+pub fn ensure_derived_directory(path: impl AsRef<Path>) -> Result<()> {
+    let path = path.as_ref();
+    derived(path)?;
+    ensure_directory(path)
+}
+
 /// Publish a completed tree by renaming it onto a destination that must be
 /// absent, then flushing the directory entry that now names it.
 ///
@@ -313,5 +367,120 @@ mod tests {
         fs::create_dir_all(&path).unwrap();
         let error = put_named(&path, "<project/>", "pom.xml").unwrap_err();
         assert!(error.starts_with("failed to write pom.xml:"), "{error}");
+    }
+}
+
+/// The staging tree, and the only way to write into it.
+///
+/// **This exists so a claim can be checked rather than believed.** `jails new`
+/// writes ~33 files with no project to lock and no ledger to journal, which the
+/// R6.4 gate counted as mutations that bypass the executor -- and they are not.
+/// Every one lands inside a reserved scratch that is published by a single
+/// `rename` or discarded entire, which is the same guarantee the executor
+/// gives, bought the way this module's header describes.
+///
+/// What was missing was any way to *say* that. `root: &Path` is a path like any
+/// other, so nothing distinguished a write into the staging tree from a write
+/// into a live project, and the gate could only assume the worst. A function
+/// that takes a `Tree` is a function that cannot reach a published project --
+/// [`Tree::inside`] refuses a path outside it. `pending.md` §5.
+///
+/// It lives here rather than beside `jails new` because the generators write
+/// into it too: `generate::write_new_file` is called only from the publication
+/// path, and taking a `Tree` is what says so in the signature rather than in a
+/// comment. `pending.md` §7.7.
+///
+/// The verbs are `apply`'s, unchanged, and deliberately not the full set: a
+/// staging tree is jails' own, created empty moments earlier, so there is
+/// nothing to preserve and nothing to merge.
+#[derive(Clone, Copy, Debug)]
+pub struct Tree<'a> {
+    root: &'a Path,
+}
+
+impl<'a> Tree<'a> {
+    /// A `Tree` over a directory the caller has just reserved for itself.
+    pub fn at(root: &'a Path) -> Self {
+        Self { root }
+    }
+
+    /// The staging root. For the few callers that must read a path rather than
+    /// write one -- `git init`, a pom re-read, a `.gitkeep` probe.
+    pub fn root(&self) -> &Path {
+        self.root
+    }
+
+    /// A path inside this tree.
+    pub fn join(&self, relative: impl AsRef<Path>) -> PathBuf {
+        self.root.join(relative)
+    }
+
+    pub fn put(&self, relative: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<()> {
+        put(self.join(relative), contents)
+    }
+
+    pub fn put_named(
+        &self,
+        relative: impl AsRef<Path>,
+        contents: impl AsRef<str>,
+        label: &str,
+    ) -> Result<()> {
+        put_named(self.join(relative), contents, label)
+    }
+
+    /// The same verbs for a caller that already holds an absolute path.
+    ///
+    /// **Containment is checked, not assumed.** A relative path cannot escape
+    /// this tree; an absolute one can, and half of `new`'s writes arrive as
+    /// absolute paths because the source and test directories are computed once
+    /// from the package name and joined many times. So the check happens here:
+    /// a write outside the staging tree is a refusal rather than a write, which
+    /// turns "`new` only ever writes into a reserved scratch" from a claim into
+    /// something the program enforces.
+    pub fn put_at(&self, path: &Path, contents: impl AsRef<str>) -> Result<()> {
+        self.inside(path)?;
+        put(path, contents)
+    }
+
+    /// The one verb whose meaning is not "jails owns this": the file must not
+    /// already exist. A staging tree is created empty, so this can only fail
+    /// when one generator writes over another's output.
+    pub fn create_at(&self, path: &Path, contents: impl AsRef<str>) -> Result<()> {
+        self.inside(path)?;
+        create(path, contents)
+    }
+
+    pub fn put_named_at(&self, path: &Path, contents: impl AsRef<str>, label: &str) -> Result<()> {
+        self.inside(path)?;
+        put_named(path, contents, label)
+    }
+
+    pub fn put_executable_at(&self, path: &Path, contents: impl AsRef<str>) -> Result<()> {
+        self.inside(path)?;
+        put_executable(path, contents)
+    }
+
+    pub fn ensure_directory_at(&self, path: &Path) -> Result<()> {
+        self.inside(path)?;
+        ensure_directory(path)
+    }
+
+    pub fn remove_at(&self, path: &Path) -> Result<()> {
+        self.inside(path)?;
+        remove(path)
+    }
+
+    fn inside(&self, path: &Path) -> Result<()> {
+        if path.starts_with(self.root) {
+            return Ok(());
+        }
+        Err(format!(
+            "{} is outside the tree `jails new` reserved ({}), so writing it would leave \
+             bytes behind that publication cannot take back.\n       fix: this is a bug in \
+             `jails new`, not something a project can cause -- please report the command.",
+            path.display(),
+            self.root.display()
+        )
+        .into())
     }
 }

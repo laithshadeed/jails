@@ -24,7 +24,7 @@ pub mod sql;
 pub use jails_java::{java, template};
 pub(crate) use jails_project::{compose, generated_files, gradle, inspect, model, pom, project};
 pub use jails_spec::{build, spec};
-pub(crate) use jails_support::{apply, json};
+pub(crate) use jails_support::json;
 
 /// This crate's templates live at the repository root, two levels up from its
 /// own manifest.

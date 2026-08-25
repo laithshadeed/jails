@@ -162,7 +162,12 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // `apply_build_change`. `route::support` states the same
                 // dependencies as claims now, so these were the write path that
                 // no route takes.
-                ceiling: 80,
+                //
+                // 80 -> 77 when `write_new_file` and `ensure_package_info`
+                // followed the same cure as the thirteen above: they take the
+                // `apply::Tree` they are writing into rather than the root of a
+                // project that does not exist yet. `pending.md` §7.7.
+                ceiling: 77,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;

@@ -14,6 +14,7 @@
 
 use crate::model::Artifact;
 use jails_support::Result;
+use jails_support::apply::Tree;
 use std::path::Path;
 
 /// Whether this change writes an integration test and therefore needs the
@@ -51,19 +52,25 @@ pub(crate) fn writes_a_test(artifacts: &[Artifact]) -> bool {
         .any(|a| a.path.to_string_lossy().contains("src/test/java"))
 }
 
-/// Write a file jails is creating, into a project whose root the caller
-/// names.
+/// Write a file jails is creating, into the staging tree of a project being
+/// published.
 ///
-/// `root` is a parameter rather than something this rediscovers, because it
-/// cannot be rediscovered correctly: the side effect below needs the project
-/// being *written to*, and process CWD is not it. `new-cli` writes into a
-/// directory that does not contain the CWD, so the lookup either found the
-/// surrounding project (wrong pom, wrong package) or found nothing -- which
-/// is why a `new-cli` project's own base package never got the
+/// **The tree is a parameter, and its type is the point.** It was `root:
+/// &Path`, which cannot be rediscovered correctly -- the side effect below
+/// needs the project being *written to*, and the process CWD is not it;
+/// `new-cli` writes into a directory that does not contain the CWD, which is
+/// why a `new-cli` project's own base package never got the
 /// `package-info.java` every other package gets.
-pub fn write_new_file(root: &Path, path: &Path, contents: &str) -> Result<()> {
-    // The refusal stays here rather than in `crate::apply::create`, because this is
-    // the one a person reads: it names the three ways forward. `crate::apply::create`
+///
+/// A path, though, says nothing about what it is. Every one of this function's
+/// nine callers is on the `jails new` path, where the destination is a
+/// reserved scratch published by a single `rename`; taking an
+/// [`apply::Tree`](jails_support::apply::Tree) is what says so in the signature
+/// rather than in a comment, and it makes the claim checkable -- a write
+/// outside the staging tree is refused. `pending.md` §7.7.
+pub fn write_new_file(tree: Tree<'_>, path: &Path, contents: &str) -> Result<()> {
+    // The refusal stays here rather than in the write layer, because this is
+    // the one a person reads: it names the three ways forward. `Tree::create_at`
     // repeats the check underneath, which costs nothing and closes the window
     // between the two.
     if path.exists() {
@@ -73,12 +80,12 @@ pub fn write_new_file(root: &Path, path: &Path, contents: &str) -> Result<()> {
         ).into());
     }
     let contents = if path.extension().is_some_and(|e| e == "java") {
-        ensure_package_info(root, path)?;
+        ensure_package_info(tree, path)?;
         jails_java::tidy::tidy_blank_lines(&jails_java::tidy::normalize_imports(contents))
     } else {
         contents.to_string()
     };
-    crate::apply::create(path, &contents)
+    tree.create_at(path, &contents)
 }
 
 /// Give a package a null-marked `package-info.java` the first time jails puts
@@ -102,7 +109,7 @@ pub fn write_new_file(root: &Path, path: &Path, contents: &str) -> Result<()> {
 /// `org.jspecify:jspecify` dependency would not compile with the annotation,
 /// so nothing is written unless the annotation is actually available. That is
 /// checked by the caller chain rather than here; see `jspecify_available`.
-pub(crate) fn ensure_package_info(root: &Path, class_path: &Path) -> Result<()> {
+pub(crate) fn ensure_package_info(tree: Tree<'_>, class_path: &Path) -> Result<()> {
     let Some(dir) = class_path.parent() else {
         return Ok(());
     };
@@ -124,13 +131,13 @@ pub(crate) fn ensure_package_info(root: &Path, class_path: &Path) -> Result<()> 
     // pure `jspecify_available` above is the half that matters -- this is the
     // belt to `planned_package_infos`' braces, and it runs only for a path
     // that has no `package-info.java` yet.
-    if !jspecify_available(&crate::pom::read(root).unwrap_or_default()) {
+    if !jspecify_available(&crate::pom::read(tree.root()).unwrap_or_default()) {
         return Ok(());
     }
-    let Some(pkg) = package_of_dir(root, dir) else {
+    let Some(pkg) = package_of_dir(tree.root(), dir) else {
         return Ok(());
     };
-    crate::apply::put(&info, package_info_java(&pkg))?;
+    tree.put_at(&info, package_info_java(&pkg))?;
     Ok(())
 }
 

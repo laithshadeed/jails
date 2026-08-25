@@ -256,11 +256,12 @@ pub fn test(filter: Option<&str>, options: TestOptions, debug: bool) -> Result<(
     // over classes that no longer match the source, which is worse than any
     // slowness.
     if options.fast {
-        // One Maven run, the first time: the launcher class has to be on the
-        // test classpath, and jails supplies what it needs to run rather than
-        // handing the reader a `ClassNotFoundException` for a line they did
-        // not write. Idempotent, so every later `--fast` skips it.
-        ensure_console_launcher(&root, debug)?;
+        // The console launcher is already on the test classpath: `main.rs`
+        // installs it as an owned entity before calling this, so a reader can
+        // take it back out with `jails remove fast-test`. It used to be
+        // spliced from here, which recorded nothing and left no way to undo
+        // it -- `pending.md` §7.7's one real project write outside a
+        // transaction.
         match fast_path_refusal(&root, &options) {
             Some(reason) => {
                 println!("--fast not taken: {reason}");
@@ -372,54 +373,6 @@ fn report_rerun_line(root: &Path, already_filtered: Option<&str>) {
             }
         }
     }
-}
-
-/// Turn whatever the reader typed into something Surefire understands.
-///
-/// Only one shape needs work: `path/to/FooTest.java:42`, which JUnit cannot
-/// resolve itself -- Jupiter has no `FileSelector` -- so an editor
-/// keybinding has nothing to send unless jails does it.
-/// Put JUnit's console launcher on the test classpath, once.
-fn ensure_console_launcher(root: &Path, debug: bool) -> Result<()> {
-    let pom = crate::pom::read(root)?;
-    if pom.contains("junit-platform-console") {
-        return Ok(());
-    }
-    let version = match crate::junit::console_version(&pom) {
-        crate::junit::ConsoleVersion::Managed => None,
-        // Leaked deliberately: `pom::Dependency` is a compile-time constant
-        // everywhere else, this one string is derived once per process, and it
-        // has to outlive the splice. Threading a lifetime through forty const
-        // declarations to avoid one CLI-lifetime allocation is the worse trade.
-        crate::junit::ConsoleVersion::Pinned(version) => Some(&*version.leak()),
-        crate::junit::ConsoleVersion::Unknown => {
-            return Err(jails_support::Failure::Told(
-                "this project declares no JUnit version, so jails cannot align the console \
-                 launcher with it.\n       \
-                 A mismatched launcher resolves fine and then dies with NoSuchMethodError.\n       \
-                 fix: declare org.junit.jupiter:junit-jupiter (or import junit-bom), then \
-                 retry --fast."
-                    .to_string(),
-            ));
-        }
-    };
-    let dependency = crate::pom::Dependency {
-        group_id: "org.junit.platform",
-        artifact_id: "junit-platform-console",
-        version,
-        scope: Some("test"),
-        optional: false,
-    };
-    let Some(updated) = crate::pom::add_dependency(&pom, &dependency)? else {
-        return Ok(());
-    };
-    crate::apply::put_named(root.join("pom.xml"), updated, "pom.xml")?;
-    println!(
-        "added {}:{} (test scope) -- `--fast` runs JUnit's console launcher directly",
-        dependency.group_id, dependency.artifact_id
-    );
-    let _ = debug;
-    Ok(())
 }
 
 /// Why `--fast` cannot be used for this run, if it cannot.

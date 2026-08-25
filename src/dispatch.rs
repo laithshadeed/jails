@@ -90,6 +90,37 @@ pub(crate) fn mutate_confirmed(
     report(&outcome, invocation.output)
 }
 
+/// Run a mutation the reader did not ask for, and say nothing if it was
+/// already done.
+///
+/// One caller: `jails test --fast` needs JUnit's console launcher on the test
+/// classpath, and that is a dependency in the reader's POM -- so it is an
+/// owned entity installed by an ordinary transition rather than a splice from
+/// inside the test runner. The first `--fast` reports it like any other
+/// mutation; every later one changes nothing, and `nothing to do` printed
+/// before every test run would be noise about something nobody typed.
+///
+/// The silence is only over an *empty* outcome. A failure still fails, and a
+/// transition that writes anything still reports what it wrote.
+pub(crate) fn precondition(
+    invocation: Invocation,
+    route: impl Fn(&jails_engine::route::Run) -> Result<jails_engine::route::Outcome>,
+) -> Result<()> {
+    let project = model::Project::discover()?;
+    let mut run = match invocation.pretend {
+        true => jails_engine::route::Run::pretending(&project),
+        false => jails_engine::route::Run::committing(&project),
+    };
+    if invocation.debug {
+        run = run.with_debug();
+    }
+    let outcome = route(&run)?;
+    match outcome.operations().is_empty() {
+        true => Ok(()),
+        false => report(&outcome, invocation.output),
+    }
+}
+
 /// Show what a plan would delete and ask, or say yes for a plan that deletes
 /// nothing.
 ///

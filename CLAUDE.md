@@ -174,7 +174,15 @@ Four things to know before touching it:
   and is passed in rendered. A template under ~15 lines stays inline, since a
   file for four lines is indirection with nothing to show for it.
 - `crates/jails-support/src/apply/` — **the only module that writes.** `fs::write` appears nowhere
-  else, and `tests/architecture/` fails when it does. Four verbs, and the
+  else, and `tests/architecture/` fails when it does. It also fails on a direct
+  `apply::` call from anywhere that is not the write layer: the gate is at
+  **zero**, so every mutation goes through the executor. Five verbs are exempt
+  and say so in their names — `put_outside_project` and
+  `ensure_directory_outside_project` (the machine, not a project),
+  `put_in_scratch`, and `remove_derived`/`ensure_derived_directory`, which
+  **refuse** a path outside `target/` or `build/` so the exemption is checked
+  rather than promised. `apply::Tree` is exempt as a type: a function taking one
+  cannot reach a published project. Four verbs, and the
   distinction between them is *what the caller believes is already there*:
   `create` (must not exist — the refusal `g scaffold` and `g record` are built
   on), `replace` (jails owns this file and is rewriting its own output),

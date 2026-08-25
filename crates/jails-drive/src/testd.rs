@@ -333,7 +333,7 @@ fn daemon_source() -> Result<PathBuf> {
         "/../../templates/testd/JailsTestDaemon.java"
     ));
     let dir = cache_dir()?.join(env!("CARGO_PKG_VERSION"));
-    jails_support::apply::ensure_directory(&dir)
+    jails_support::apply::ensure_directory_outside_project(&dir)
         .map_err(|error| format!("failed to create {}: {error}", dir.display()))?;
     let path = dir.join("JailsTestDaemon.java");
     if std::fs::read_to_string(&path).ok().as_deref() != Some(SOURCE) {

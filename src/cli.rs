@@ -715,4 +715,12 @@ pub(crate) enum Undeclare {
         /// group:artifact
         coordinate: String,
     },
+    /// Take JUnit's console launcher back off the test classpath
+    ///
+    /// `jails test --fast` puts it there, and records it as an entity jails
+    /// owns rather than as a side effect of how the tests were run. This is
+    /// the other half: a dependency nothing can name and nothing can remove is
+    /// the failure the ownership model exists to prevent.
+    #[command(name = "fast-test")]
+    FastTest,
 }

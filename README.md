@@ -221,6 +221,10 @@ there the unit is a whole service block rather than a setting.)
 - `jails remove|rm <capability>... [--force]` — the inverse of `add`: unsplices
   the same dependencies, deletes the same files, removes compose services, and
   stops their containers. Confirms unless `--force`.
+- `jails remove fast-test` — take JUnit's console launcher back off the test
+  classpath. `jails test --fast` puts it there, and records it as an entity
+  jails owns rather than as a side effect of how the tests were run; this is
+  the other half.
 - `jails start [db|kafka]...` — `docker compose up -d` for the named services,
   or everything in `compose.yaml` when invoked with no arguments.
 - `jails stop [db|kafka]...` — stop those containers (`db` is the postgres
@@ -621,6 +625,12 @@ there the unit is a whole service block rather than a setting.)
   the full Maven path instead. Running stale classes silently would be green
   over code that no longer exists, which is the one outcome worse than being
   slow. `jails check` is always `mvn clean verify` and is not affected.
+
+  The launcher itself is a dependency in your POM, and the first `--fast`
+  installs it as an owned entity — one line in the report, then silence on
+  every later run. `jails remove fast-test` takes it back out. A dependency
+  that appeared because of *how* somebody ran their tests, that nothing can
+  name and nothing can remove, is what that ownership prevents.
   Any command that writes an `*IT` also splices the Failsafe plugin, because
   it is *not* part of the Spring Boot parent's default build — without it
   `mvn verify` completes, reports success, and runs none of them.
@@ -663,7 +673,7 @@ there the unit is a whole service block rather than a setting.)
   resource file, which is one more reason `jails check` stays `mvn clean
   verify`.
 
-  Needs the console launcher, which `jails test --fast` splices for you. The
+  Needs the console launcher, which `jails test --fast` installs for you. The
   daemon exits after 30 minutes idle, restarts itself when `pom.xml` changes,
   and is per-project. `jails check` is still `mvn clean verify` — nothing fast
   is allowed to be the last word.

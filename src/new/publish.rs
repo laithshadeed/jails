@@ -29,120 +29,13 @@
 //!   the rename.
 
 use jails_support::Result;
+pub(crate) use jails_support::apply::Tree;
 use jails_support::lock::Lock;
 use jails_support::scratch::ScratchDir;
 use std::path::{Path, PathBuf};
 
 /// The name of the advisory lock two concurrent `jails new` runs contend on.
 pub(crate) const LOCK_FILE: &str = ".jails-new.lock";
-
-/// The staging tree, and the only way to write into it.
-///
-/// **This exists so a claim can be checked rather than believed.** `jails new`
-/// writes ~33 files with no project to lock and no ledger to journal, which the
-/// R6.4 gate counted as mutations that bypass the executor -- and they are not.
-/// Every one lands inside a reserved scratch that is published by a single
-/// `rename` or discarded entire, which is the same guarantee the executor
-/// gives, bought the way this module's header describes.
-///
-/// What was missing was any way to *say* that. `root: &Path` is a path like any
-/// other, so nothing distinguished a write into the staging tree from a write
-/// into a live project, and the gate could only assume the worst. A `Tree` can
-/// be obtained from a [`Publication`] and nowhere else, so a function that takes
-/// one is a function that cannot reach a published project. `pending.md` §5.
-///
-/// The verbs are `apply`'s, unchanged, and deliberately not the full set: a
-/// staging tree is jails' own, created empty moments earlier, so there is
-/// nothing to preserve and nothing to merge.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct Tree<'a> {
-    root: &'a Path,
-}
-
-impl<'a> Tree<'a> {
-    /// A `Tree` over a plain path, for the tests that build one directly.
-    #[cfg(test)]
-    pub(crate) fn at(root: &'a Path) -> Self {
-        Self { root }
-    }
-
-    /// The staging root. For the few callers that must read a path rather than
-    /// write one -- `git init`, a pom re-read, a `.gitkeep` probe.
-    pub(crate) fn root(&self) -> &Path {
-        self.root
-    }
-
-    /// A path inside this tree.
-    pub(crate) fn join(&self, relative: impl AsRef<Path>) -> PathBuf {
-        self.root.join(relative)
-    }
-
-    pub(crate) fn put(&self, relative: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<()> {
-        jails_support::apply::put(self.join(relative), contents)
-    }
-
-    pub(crate) fn put_named(
-        &self,
-        relative: impl AsRef<Path>,
-        contents: impl AsRef<str>,
-        label: &str,
-    ) -> Result<()> {
-        jails_support::apply::put_named(self.join(relative), contents, label)
-    }
-
-    /// The same verbs for a caller that already holds an absolute path.
-    ///
-    /// **Containment is checked, not assumed.** A relative path cannot escape
-    /// this tree; an absolute one can, and half of `new`'s writes arrive as
-    /// absolute paths because the source and test directories are computed once
-    /// from the package name and joined many times. So the check happens here:
-    /// a write outside the staging tree is a refusal rather than a write, which
-    /// turns "`new` only ever writes into a reserved scratch" from a claim into
-    /// something the program enforces.
-    pub(crate) fn put_at(&self, path: &Path, contents: impl AsRef<str>) -> Result<()> {
-        self.inside(path)?;
-        jails_support::apply::put(path, contents)
-    }
-
-    pub(crate) fn put_named_at(
-        &self,
-        path: &Path,
-        contents: impl AsRef<str>,
-        label: &str,
-    ) -> Result<()> {
-        self.inside(path)?;
-        jails_support::apply::put_named(path, contents, label)
-    }
-
-    pub(crate) fn put_executable_at(&self, path: &Path, contents: impl AsRef<str>) -> Result<()> {
-        self.inside(path)?;
-        jails_support::apply::put_executable(path, contents)
-    }
-
-    pub(crate) fn ensure_directory_at(&self, path: &Path) -> Result<()> {
-        self.inside(path)?;
-        jails_support::apply::ensure_directory(path)
-    }
-
-    pub(crate) fn remove_at(&self, path: &Path) -> Result<()> {
-        self.inside(path)?;
-        jails_support::apply::remove(path)
-    }
-
-    fn inside(&self, path: &Path) -> Result<()> {
-        if path.starts_with(self.root) {
-            return Ok(());
-        }
-        Err(format!(
-            "{} is outside the tree `jails new` reserved ({}), so writing it would leave \
-             bytes behind that publication cannot take back.\n       fix: this is a bug in \
-             `jails new`, not something a project can cause -- please report the command.",
-            path.display(),
-            self.root.display()
-        )
-        .into())
-    }
-}
 
 /// A reserved destination and the scratch tree standing in for it.
 #[derive(Debug)]
@@ -213,9 +106,7 @@ impl Publication {
 
     /// This publication's tree, as the only thing `jails new` may write to.
     pub(crate) fn tree(&self) -> Tree<'_> {
-        Tree {
-            root: &self.staging,
-        }
+        Tree::at(&self.staging)
     }
 
     /// The directory `root()` sits in.

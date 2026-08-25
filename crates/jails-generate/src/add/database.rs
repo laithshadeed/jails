@@ -274,7 +274,7 @@ pub(super) fn delete_maven_output(root: &Path, src: &Path) {
         return;
     };
     if out.exists() {
-        let _ = jails_support::apply::remove(&out);
+        let _ = jails_support::apply::remove_derived(&out);
     }
 }
 

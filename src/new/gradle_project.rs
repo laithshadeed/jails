@@ -528,7 +528,7 @@ pub(super) fn create(request: &super::Request<'_>, deps: &str, boot: &str) -> Re
     write_wrapper(&plan, &tree, request.offline, request.debug)?;
 
     crate::generate::write_new_file(
-        tree.root(),
+        tree,
         &source.join(format!("{class}Application.java")),
         &crate::template::render(
             crate::template_here!("new/offline_application.java"),
@@ -536,7 +536,7 @@ pub(super) fn create(request: &super::Request<'_>, deps: &str, boot: &str) -> Re
         ),
     )?;
     crate::generate::write_new_file(
-        tree.root(),
+        tree,
         &tests.join(format!("{class}ApplicationTests.java")),
         &crate::template::render(
             crate::template_here!("new/offline_application_test.java"),

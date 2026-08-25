@@ -28,7 +28,7 @@ pub mod testd;
 // `crate::…` wherever it ships.
 pub(crate) use jails_generate::generate;
 pub(crate) use jails_java::{classfile, java};
-pub(crate) use jails_project::{compose, junit, maven, model, pom};
+pub(crate) use jails_project::{compose, maven, model, pom};
 pub(crate) use jails_report::why;
 pub(crate) use jails_spec::build;
 pub(crate) use jails_support::{apply, json, process};
