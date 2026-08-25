@@ -241,7 +241,7 @@ fn gates() -> Vec<(Ratchet, usize)> {
                       value: a Data Clump producing connascence of position at degree 12, \
                       which is the highest-cost coupling in Page-Jones's ranking.",
             },
-            over_five_params(&src, "spring.rs"),
+            over_five_params(&src, SPRING_RS),
         ),
         (
             Ratchet {
@@ -345,7 +345,7 @@ fn gates() -> Vec<(Ratchet, usize)> {
                       of it is a second answer to what `remove db` deletes.",
             },
             src.iter()
-                .filter(|file| !file.path.ends_with("codemod.rs"))
+                .filter(|file| !file.path.ends_with(CODEMOD_RS))
                 .map(|file| {
                     file.production.matches("# jails:").count()
                         + file.production.matches("# /jails:").count()
@@ -653,7 +653,7 @@ fn gates() -> Vec<(Ratchet, usize)> {
             // when the lines move to a sibling file.
             src.iter()
                 .filter(|file| {
-                    file.path.ends_with("doctor.rs")
+                    file.path.ends_with(DOCTOR_RS)
                         || file.path.to_string_lossy().contains("doctor/")
                 })
                 .map(production_lines)
@@ -711,7 +711,7 @@ fn gates() -> Vec<(Ratchet, usize)> {
                       2,500 target against.",
             },
             src.iter()
-                .find(|file| file.path.ends_with("spring.rs"))
+                .find(|file| file.path.ends_with(SPRING_RS))
                 .map_or(0, production_lines),
         ),
         (
@@ -1078,6 +1078,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     // jails-cli: the binary and the whole-project lifecycle commands.
     ("jails", "new", 9),
     ("jails", "app", 9),
+    ("jails", "cli", 9),
     ("jails", "dispatch", 9),
     ("jails", "arguments", 9),
 ];
@@ -1255,7 +1256,7 @@ fn every_fresh_read_of_the_pom_is_a_decision_somebody_wrote_down() {
 fn production_scratch_directories_are_exclusively_created() {
     let mut offenders = Vec::new();
     for file in sources() {
-        if file.path.ends_with("scratch.rs") {
+        if file.path.ends_with(SCRATCH_RS) {
             continue;
         }
         if file.production.contains("env::temp_dir()") {
@@ -1902,6 +1903,24 @@ fn inherent_codec_halves(src: &[Source]) -> usize {
     count
 }
 
+/// The `spring.rs` these two rows are about.
+///
+/// The **path**, not the basename. `src/new/spring.rs` is a different file --
+/// `jails new`'s Spring half, split out under `pending.md` §8.1 -- and a gate
+/// matching `ends_with("spring.rs")` counted its functions against
+/// `jails-generate`'s ceiling the moment it appeared. Two rows went red for a
+/// file neither of them is about, which is the same failure `module_of`
+/// carried until §10.3: a name is not an identity.
+const SPRING_RS: &str = "jails-generate/src/spring.rs";
+
+/// The other three files a gate here names. Paths for the same reason: a
+/// second `doctor.rs` or `codemod.rs` anywhere in the workspace would silently
+/// join or leave the set its gate measures, and the gate would report a number
+/// about a different file without saying so.
+const CODEMOD_RS: &str = "jails-project/src/codemod.rs";
+const DOCTOR_RS: &str = "jails-report/src/doctor.rs";
+const SCRATCH_RS: &str = "jails-support/src/scratch.rs";
+
 /// Where the count stands today. Lowered per message, never by a sweep.
 const REFUSALS_WITHOUT_A_FIX: usize = 443;
 
@@ -2083,7 +2102,7 @@ fn inline_java_bodies(src: &[Source]) -> usize {
     // Counted on the *raw* source: `blank` deliberately erases these bodies,
     // which is what makes them invisible to every other measurement here.
     src.iter()
-        .filter(|file| file.path.ends_with("spring.rs"))
+        .filter(|file| file.path.ends_with(SPRING_RS))
         .map(|file| {
             fs::read_to_string(&file.path)
                 .expect("spring.rs was read once already")

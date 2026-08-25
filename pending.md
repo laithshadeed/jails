@@ -963,47 +963,45 @@ unwired-protocol bodies from §7.2's table, not new findings.
 
 ## 8. Files and tests
 
-### 8.1 Modules with a visible seam
+### 8.1 Modules with a visible seam — **the four named ones are split**
 
-The architecture board's own listing, today:
+All four cuts §8.1 named have landed. Sizes are raw lines, since that is what a
+reader scrolls:
 
-```
-  644  jails-project/src/pom.rs             flavour detection | splice | unsplice
-  642  jails-project/src/projection.rs
-  633  jails-protocol/src/fact.rs
-  631  src/new.rs
-  624  jails-project/src/config.rs           jails.toml parse | LAYERS_IN_ORDER | writeback
-  622  jails-project/src/inspect.rs
-  619  src/main.rs
-  614  jails-report/src/doctor/wiring.rs
-```
+| was | is now |
+|---|---|
+| `route.rs` 880 | `route.rs` 136 + `route/request.rs` 586 + `route/commit.rs` 195 |
+| `route/maintenance.rs` 717 | a module root of 28 + `rename` 320, `format` 182, `adopt` 132, `app_init` 84 |
+| `src/main.rs` 1,071 | `main.rs` 377 + `cli.rs` 718 |
+| `src/new.rs` 1,283 | `new.rs` 386 + `new/spring.rs` 575 + `new/plain.rs` 237 + `new/seed.rs` 138 |
 
-(Production lines, comments and `#[cfg(test)]` blanked. Print it with
-`cargo test --test architecture -- --nocapture --test-threads=1`.)
+Each cut is the seam the item named, not a size one:
 
-Two with named seams rather than just size:
+- **`route`**: *assembling a request* against *driving a commit*. Everything in
+  `request.rs` is testable against a `Project` and a store with no transaction
+  in sight; everything in `commit.rs` needs a lock, a journal and a project on
+  disk.
+- **`maintenance`**: *"maintenance" is a filing category, not a secret*, so it
+  is a module root and one file per command. What the four share is a rule
+  about *not* creating a desired entity, and a rule nobody can violate by
+  accident does not need them in one file to hold.
+- **`main.rs`**: what the CLI *accepts* against what it *does*. `cli.rs` is read
+  when somebody asks "what can I type"; `main`'s match when they ask "what does
+  it do".
+- **`new.rs`**: the half that knows what Spring is, the half that does not, and
+  what both seed. `seed.rs` is its own file rather than a section of either,
+  because a helper both call from a file one of them owns is a helper that will
+  grow a special case for its owner.
 
-- **`crates/jails-engine/src/route.rs`** (879 raw lines) is a module root plus
-  helpers that are **two** subjects: *assembling a request* (`intent`, `spec`,
-  `as_field_names`, `declaration`, `declared_capabilities`, `Asked`,
-  `impl Request`) and *driving a commit* (`observed`, `commit`, `commit_set`,
-  `prepare_set`, `reconciled`, `describe`, `relative_path`). Split into
-  `route/request.rs` and `route/commit.rs`. Its ratchet is no longer red, so
-  this is now a readability item rather than a blocked build.
-- **`crates/jails-engine/src/route/maintenance.rs`** (~30 KB) is four unrelated
-  commands sharing a file because none is big enough to justify one.
-  "Maintenance" is a filing category, not a secret; one file per command.
+**A gate caught the split, and the gate was wrong.** `functions in spring.rs
+taking over 5 parameters` matched `ends_with("spring.rs")`, so the new
+`src/new/spring.rs` joined the set the moment it appeared and two rows went red
+for a file neither is about. That is `module_of`'s failure from §10.3 in another
+place: a name is not an identity. Four gates now name their file by path
+(`SPRING_RS`, `CODEMOD_RS`, `DOCTOR_RS`, `SCRATCH_RS`).
 
-For the binary:
-
-```text
-  src/main.rs      → cli/mod.rs (the clap definition) + cli/dispatch.rs + main.rs
-  src/new.rs       → new/spring.rs (start.spring.io + offline)
-                     new/plain.rs  (hand-written pom/App/AppTest)
-                     new/seed.rs   (mise.toml, AGENTS.md, .gitkeep, git init)
-                     new/gradle_project.rs (already split — keep)
-                     new/publish.rs        (already split — keep)
-```
+Still open from this item: the largest module is `projection.rs` at 662, and it
+is the honest answer to the next rise there rather than another ceiling.
 
 ### 8.2 Test files
 
