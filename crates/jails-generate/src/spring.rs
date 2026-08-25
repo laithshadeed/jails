@@ -164,6 +164,41 @@ pub fn require_spring(flavor: Flavor, capability: &str) -> Result<()> {
     }
 }
 
+/// Refuse a generator whose companion test is written against
+/// `MockMvcTester`, on a project whose Spring Framework does not have it.
+///
+/// `MockMvcTester` (`org.springframework.test.web.servlet.assertj`) arrived in
+/// Spring Framework 6.2, which is Spring Boot 3.4. Nine of jails' generated
+/// tests are written against it. Two of them -- the `controller` stub and
+/// `add cors` -- have a classic `MockMvc` variant and pick it by version; the
+/// rest do not, and this is what stops them writing a test that cannot compile.
+///
+/// A refusal rather than a silent downgrade, because a downgrade jails has not
+/// written does not exist, and emitting the Boot 4 shape anyway is the exact
+/// failure the Gradle reader's `None` answer exists to prevent: confident, and
+/// wrong at a step far from its cause. The message names the version and the
+/// commands that do work, so it is a route forward rather than a wall.
+///
+/// Reachable only since `jails new --gradle --boot <2.x>`: before that every
+/// project jails created or adopted was Boot 3 or later, so the assumption was
+/// true everywhere it was made.
+pub fn require_mockmvc_tester(project: &crate::model::Project, what: &str) -> Result<()> {
+    let major = project.boot_major();
+    if major >= crate::generate::MOCKMVC_TESTER_BOOT_MAJOR {
+        return Ok(());
+    }
+    Err(format!(
+        "`{what}` generates a test written against MockMvcTester, and this project is Spring \
+         Boot {major}.\n       \
+         MockMvcTester is Spring Framework 6.2 (Boot 3.4) and later; on this project the \
+         generated test would not compile, and the error would name a package rather than a \
+         version.\n       \
+         fix: `jails g controller <Name> --method <verb>` and `jails add cors` write the \
+         classic MockMvc form and work here, as do every non-web kind -- `record`, `value`, \
+         `enum`, `sealed`, `repo`, `migration`, `service`."
+    ))
+}
+
 // ---------------------------------------------------------------------------
 // Shared helpers -- used by more than one kind, so they live above all of them.
 // ---------------------------------------------------------------------------

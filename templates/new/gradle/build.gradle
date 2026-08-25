@@ -1,0 +1,36 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '{{boot}}'
+}
+
+// Applied by id with no version: the dependency-management plugin arrives on
+// the buildscript classpath as a dependency of the Boot plugin above. This is
+// the form Boot's own `configure-bom.gradle` documentation example uses.
+//
+// Gradle's native bom support is the other option Boot documents, and is
+// rejected here on purpose: it states the coordinate as an expression rather
+// than a string literal, so jails' own build-file reader cannot read the
+// dependency list at all and correctly answers "cannot tell" -- which would
+// make every `jails add` and `jails generate` refuse on a project jails had
+// just written.
+apply plugin: 'io.spring.dependency-management'
+
+group = '{{group}}'
+version = '0.0.1-SNAPSHOT'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of({{java}})
+    }
+}
+{{jar}}
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+{{dependencies}}}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}

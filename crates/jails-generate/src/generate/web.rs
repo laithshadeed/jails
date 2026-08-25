@@ -241,12 +241,26 @@ class {name}Test {{
 /// instead of being thrown, and the test method needs no `throws Exception`
 /// -- which is what makes the generated body a thing you extend rather than
 /// a thing you first have to reshape.
+/// The Spring Boot major at which `MockMvcTester` can be relied on.
+///
+/// It arrived in Spring Framework 6.2, which is Boot 3.4 -- but `boot_major`
+/// reads a major and nothing finer, so the threshold is drawn at 4 rather than
+/// guessed at 3-point-something. A Boot 3.4+ project therefore gets the classic
+/// entry point it does not strictly need, which costs a fluent chain; a Boot 2
+/// project that got the fluent one instead would not compile, and the error
+/// would name a package rather than a version.
+pub(crate) const MOCKMVC_TESTER_BOOT_MAJOR: u32 = 4;
+
 pub(super) fn controller_stub_test(
     pkg: &str,
     name: &str,
     mockmvc_import: &str,
     endpoint: &Endpoint<'_>,
+    boot_major: u32,
 ) -> String {
+    if boot_major < MOCKMVC_TESTER_BOOT_MAJOR {
+        return controller_stub_test_classic(pkg, name, mockmvc_import, endpoint);
+    }
     let executable = endpoint.is_executable();
     let assertion = match executable {
         true => format!(
@@ -285,6 +299,69 @@ pub(super) fn controller_stub_test(
             ),
         ],
     )
+}
+
+/// The same test for a project whose Spring Framework predates
+/// `MockMvcTester`.
+///
+/// `perform(...).andExpect(...)` is the entry point that has existed since
+/// Spring 3 and is still present in 7, so this is the one shape that compiles
+/// everywhere -- which is why it is the fallback rather than the other way
+/// round. `throws Exception` comes back with it, and that is the honest cost:
+/// `perform` declares it.
+fn controller_stub_test_classic(
+    pkg: &str,
+    name: &str,
+    mockmvc_import: &str,
+    endpoint: &Endpoint<'_>,
+) -> String {
+    let executable = endpoint.is_executable();
+    let assertion = match executable {
+        true => format!(
+            "\n                .andExpect(status().isOk())\n                \
+             .andExpect(content().string(\"{name}\"))"
+        ),
+        false => "\n                .andExpect(status().is2xxSuccessful())".to_string(),
+    };
+    let mut rendered = crate::template::render(
+        crate::template_here!("generate/controller_stub_test_classic.java"),
+        &[
+            ("pkg", pkg),
+            ("name", name),
+            ("mockmvc_import", mockmvc_import),
+            ("route", &name.to_lowercase()),
+            ("handler", endpoint.method.handler_name()),
+            ("assertion", &assertion),
+            (
+                "disabled",
+                match executable {
+                    true => "",
+                    false => concat!(
+                        "    @Disabled(\"todo: implement the handler, then delete this ",
+                        "@Disabled\")\n"
+                    ),
+                },
+            ),
+            (
+                "disabled_import",
+                match executable {
+                    true => "",
+                    false => "import org.junit.jupiter.api.Disabled;\n",
+                },
+            ),
+        ],
+    );
+    // `content()` is a second static import, and only the executable shape
+    // asserts a body. Added here rather than as a placeholder so the template
+    // stays a file an editor can compile.
+    if executable {
+        rendered = rendered.replace(
+            "import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;",
+            "import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;\n\
+             import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;",
+        );
+    }
+    rendered
 }
 
 pub(super) fn service_stub_test(pkg: &str, name: &str) -> String {

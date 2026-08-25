@@ -1,0 +1,32 @@
+buildscript {
+    repositories {
+        mavenCentral()
+    }
+    dependencies {
+        classpath("org.springframework.boot:spring-boot-gradle-plugin:{{boot}}")
+    }
+}
+
+apply plugin: 'java'
+apply plugin: 'eclipse'
+apply plugin: 'idea'
+apply plugin: 'org.springframework.boot'
+apply plugin: 'io.spring.dependency-management'
+{{jar}}
+repositories {
+    mavenCentral()
+}
+
+sourceCompatibility = {{java}}
+targetCompatibility = {{java}}
+
+dependencies {
+{{dependencies}}}
+
+// Without this Gradle runs the JUnit 4 provider, finds no JUnit 5 test at all,
+// and reports BUILD SUCCESSFUL over a suite that did not execute. The Boot 2
+// Gradle plugin does not configure it; Initializr writes it into every Gradle
+// project for exactly this reason.
+test {
+    useJUnitPlatform()
+}

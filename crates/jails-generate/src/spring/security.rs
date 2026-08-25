@@ -68,7 +68,11 @@ pub fn cors_slice(slice: &Slice) -> Change {
             artifact(main.join("CorsConfig.java"), cors_config_java(pkg)),
             artifact(
                 test.join("CorsConfigTest.java"),
-                cors_config_test_java(pkg, slice.project().mockmvc_autoconfigure_import()),
+                cors_config_test_java(
+                    pkg,
+                    slice.project().mockmvc_autoconfigure_import(),
+                    slice.project().boot_major(),
+                ),
             ),
         ],
         properties: vec![
@@ -95,9 +99,16 @@ fn cors_config_java(pkg: &str) -> String {
 /// never a browser origin, so it could not have been right anywhere.
 pub(crate) const PLACEHOLDER_ORIGIN: &str = "https://example.invalid";
 
-fn cors_config_test_java(pkg: &str, mockmvc_import: &str) -> String {
+fn cors_config_test_java(pkg: &str, mockmvc_import: &str, boot_major: u32) -> String {
+    // Same threshold and same reason as the controller stub: `MockMvcTester`
+    // is Spring Framework 6.2, and the classic entry point compiles against
+    // every version jails supports.
+    let template = match boot_major >= crate::generate::MOCKMVC_TESTER_BOOT_MAJOR {
+        true => crate::template_here!("spring/cors_config_test_java.java"),
+        false => crate::template_here!("spring/cors_config_test_classic_java.java"),
+    };
     crate::template::render(
-        crate::template_here!("spring/cors_config_test_java.java"),
+        template,
         &[
             ("pkg", pkg),
             ("mockmvc_import", mockmvc_import),

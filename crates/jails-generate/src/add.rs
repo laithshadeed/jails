@@ -253,6 +253,11 @@ fn spring_slice_plan(
     build: fn(&Slice) -> Change,
 ) -> Result<Change> {
     crate::spring::require_spring(slice.flavor(), capability)?;
+    // `api` and `security` write a `MockMvcTester` test and have no classic
+    // variant. `cors` does have one and picks it by version, so it is not here.
+    if matches!(capability, "api" | "security") {
+        crate::spring::require_mockmvc_tester(slice.project(), capability)?;
+    }
     Ok(build(slice))
 }
 

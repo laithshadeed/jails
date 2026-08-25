@@ -368,6 +368,9 @@ impl Layers {
     }
 }
 
+/// What an unreadable build file means. See `Project::boot_major`.
+const DEFAULT_BOOT_MAJOR: u32 = 3;
+
 /// One immutable snapshot of the project facts every recipe needs.
 #[derive(Clone, Debug)]
 pub struct Project {
@@ -482,7 +485,15 @@ impl Project {
         // overlay and every other fact is the resolved value `live` already
         // holds -- which is what a projection *is*, and is why this takes a
         // project rather than a root.
-        let pom = text("pom.xml").unwrap_or_else(|| live.pom.clone());
+        // The build file this project actually has, not `pom.xml` unconditionally.
+        // `load` and `inspect` both go through `read_build_file` for exactly
+        // this reason and `projected` did not, so a projected Gradle project
+        // read its Groovy through the POM parser: `flavor` came back
+        // `PlainMaven` and `release_level` came back `None`, on a project whose
+        // live value had both right. That is why `jails app apply` refused
+        // every Spring capability on a Gradle build with "this is a plain Maven
+        // project" while `jails about` on the same directory said Spring Boot.
+        let pom = text(build_file_name(live.build)).unwrap_or_else(|| live.pom.clone());
         let (layers, installed, declared) = match text("jails.toml") {
             Some(projected) => {
                 let config = Config::parse(&projected)?;
@@ -504,8 +515,8 @@ impl Project {
             // writes renames the application class, and a manifest that did
             // would be describing a different project.
             base: live.base.clone(),
-            flavor: pom::flavor(&pom),
-            java_release: pom::release_level(&pom),
+            flavor: build_flavor(live.build, &pom),
+            java_release: build_release_level(live.build, &pom),
             layers,
             installed,
             declared,
@@ -651,11 +662,26 @@ impl Project {
         self.has_dependency("org.springframework.boot", "spring-boot-starter-jdbc")
     }
 
-    /// The Spring Boot major version, defaulting to 3 when the parent cannot
-    /// be read -- the conservative choice, since pre-4 package names still
-    /// exist as deprecated aliases while the 4 ones simply do not exist before 4.
+    /// The Spring Boot major version, defaulting to 3 when the build file
+    /// cannot be read -- the conservative choice, since pre-4 package names
+    /// still exist as deprecated aliases while the 4 ones simply do not exist
+    /// before 4.
+    ///
+    /// Routed by build kind for the same reason `build_flavor` and
+    /// `build_release_level` are: on a Gradle project `self.pom` holds
+    /// `build.gradle`, and handing Groovy to a reader looking for
+    /// `<artifactId>spring-boot-starter-parent</artifactId>` finds nothing and
+    /// returns the default. That is not "unknown", it is **3, confidently** --
+    /// so every Boot-4-only artifact and property name jails picks off this
+    /// answer was picked correctly by accident, and a Boot 2.7 Gradle build got
+    /// the same answer as a Boot 4 one.
     pub fn boot_major(&self) -> u32 {
-        crate::pom::spring_boot_major_of(&self.pom)
+        match self.build {
+            crate::build::Build::Gradle => {
+                crate::gradle::spring_boot_major(&self.pom).unwrap_or(DEFAULT_BOOT_MAJOR)
+            }
+            _ => crate::pom::spring_boot_major_of(&self.pom),
+        }
     }
 
     /// `@AutoConfigureMockMvc`'s package, moved in the same Boot 4 change.
@@ -914,6 +940,19 @@ impl<'a> Slice<'a> {
 /// through it, because they had drifted: `load` learned to read `build.gradle`
 /// and `inspect` did not, so `doctor` -- which uses `inspect` -- reported a
 /// Gradle project as having no build file at all.
+/// Which file a build's dependencies are declared in.
+///
+/// Split out of `read_build_file` so the projection can name the same path
+/// without touching disk -- a projected project reads its build file out of the
+/// overlay, and asking for the wrong name there is indistinguishable from the
+/// plan not having touched it.
+fn build_file_name(build: Build) -> &'static str {
+    match build {
+        Build::Gradle => crate::gradle::FILE,
+        _ => "pom.xml",
+    }
+}
+
 fn read_build_file(build: Build, root: &Path) -> Result<String> {
     match build {
         Build::Maven => pom::read(root),

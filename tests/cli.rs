@@ -6944,6 +6944,353 @@ fn a_template_override_missing_a_placeholder_is_refused_by_name() {
     );
 }
 
+/// The whole point of `--gradle`: the project `build.rs`'s header names as the
+/// reason jails learned to read Gradle at all is now one jails can also write.
+///
+/// Offline throughout. The wrapper jar is the one file this path fetches, and a
+/// test that needed the network would be a test that fails on a train.
+#[test]
+fn new_gradle_writes_a_legacy_boot_build_file_the_maven_path_cannot_produce() {
+    let parent = temp_dir("new-gradle-legacy");
+    let created = jails_cmd(&parent, None)
+        .args([
+            "new",
+            "spring",
+            "--gradle",
+            "--offline",
+            "--boot",
+            "2.7.18",
+            "--java",
+            "21",
+            "--package",
+            "com.intercom.spring",
+            "--jar-name",
+            "gs-rest-service",
+            "--jar-version",
+            "0.1.0",
+            "--deps",
+            "web,data-jdbc,h2",
+            "--no-devtools",
+            "--no-git",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        created.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&created.stdout),
+        String::from_utf8_lossy(&created.stderr)
+    );
+    let root = parent.join("spring");
+    let build = fs::read_to_string(root.join("build.gradle")).unwrap();
+
+    // The `buildscript {}` shape, which is the only one that applies the Boot 2
+    // plugin -- `plugins { id ... version ... }` resolves through the portal.
+    assert!(build.contains("buildscript {"), "{build}");
+    assert!(
+        build.contains("classpath(\"org.springframework.boot:spring-boot-gradle-plugin:2.7.18\")"),
+        "{build}"
+    );
+    assert!(!build.contains("plugins {"), "{build}");
+    assert!(
+        build.contains("archiveBaseName = 'gs-rest-service'"),
+        "{build}"
+    );
+    assert!(build.contains("archiveVersion = '0.1.0'"), "{build}");
+    assert!(build.contains("sourceCompatibility = 21"), "{build}");
+
+    // Boot 2 predates the `spring-boot-starter-web` -> `-webmvc` rename, and
+    // the Boot 4 name resolves to nothing here.
+    assert!(
+        build.contains("implementation 'org.springframework.boot:spring-boot-starter-web'"),
+        "{build}"
+    );
+    assert!(!build.contains("starter-webmvc"), "{build}");
+    assert!(build.contains("runtimeOnly 'com.h2database:h2'"), "{build}");
+
+    // Without this Gradle runs the JUnit 4 provider, collects nothing, and
+    // reports success. The first version of this template omitted it and the
+    // generated project was green over zero tests.
+    assert!(build.contains("useJUnitPlatform()"), "{build}");
+
+    assert_eq!(
+        fs::read_to_string(root.join("settings.gradle"))
+            .unwrap()
+            .trim(),
+        "rootProject.name = 'spring'"
+    );
+    assert!(
+        !root.join("pom.xml").exists(),
+        "--gradle must not write a pom"
+    );
+
+    // The properties are the ones this Boot line actually has. Boot 4 spellings
+    // here would be silently unbound: a file that reads as configured and
+    // configures nothing.
+    let properties =
+        fs::read_to_string(root.join("src/main/resources/application.properties")).unwrap();
+    assert!(
+        properties.contains("server.max-http-header-size="),
+        "{properties}"
+    );
+    assert!(
+        !properties.contains("server.max-http-request-header-size="),
+        "renamed at Boot 3.0: {properties}"
+    );
+    assert!(
+        !properties.contains("spring.mvc.problemdetails"),
+        "Boot 3+: {properties}"
+    );
+    assert!(
+        !properties.contains("spring.threads.virtual"),
+        "Boot 3.2+: {properties}"
+    );
+    // A file written from nothing must not open with a blank line.
+    assert!(
+        !properties.starts_with('\n'),
+        "leading blank line: {properties:?}"
+    );
+
+    // `SpringApplication` is org.springframework.boot's, and a class cannot
+    // shadow the type its own main() calls.
+    assert!(
+        root.join("src/main/java/com/intercom/spring/Application.java")
+            .is_file(),
+        "expected Application.java, not SpringApplication.java"
+    );
+    assert!(
+        !root
+            .join("src/main/java/com/intercom/spring/SpringApplication.java")
+            .exists()
+    );
+}
+
+/// A current pin gets the other shape -- and, more importantly, a dependency
+/// list jails can read back, since it has to splice this file itself.
+#[test]
+fn new_gradle_at_a_current_boot_uses_the_plugins_block_and_a_readable_dependency_list() {
+    let parent = temp_dir("new-gradle-modern");
+    let created = jails_cmd(&parent, None)
+        .args([
+            "new",
+            "shop",
+            "--gradle",
+            "--offline",
+            "--java",
+            "25",
+            "--package",
+            "com.acme.shop",
+            "--no-devtools",
+            "--no-git",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        created.status.success(),
+        "{}",
+        String::from_utf8_lossy(&created.stderr)
+    );
+    let build = fs::read_to_string(parent.join("shop/build.gradle")).unwrap();
+    assert!(
+        build.contains("id 'org.springframework.boot' version"),
+        "{build}"
+    );
+    assert!(build.contains("JavaLanguageVersion.of(25)"), "{build}");
+    // Applied by id, never with a version -- the one number jails has no
+    // source for.
+    assert!(
+        build.contains("apply plugin: 'io.spring.dependency-management'"),
+        "{build}"
+    );
+    assert!(
+        !build.contains("id 'io.spring.dependency-management'"),
+        "{build}"
+    );
+    // The expression form `gradle::declared` cannot read. A build jails writes
+    // and then cannot splice is worse than an older spelling.
+    assert!(!build.contains("BOM_COORDINATES"), "{build}");
+    assert!(build.contains("spring-boot-starter-webmvc"), "{build}");
+    // Nobody named a jar, so there is no block to disagree with the project.
+    assert!(!build.contains("bootJar"), "{build}");
+
+    // The property that matters and is easy to lose: jails has to be able to
+    // operate on the build it just wrote. `add` splices the dependency list, so
+    // a build whose coordinates jails cannot read makes every capability refuse
+    // on a project created thirty seconds earlier.
+    let added = jails_cmd(&parent.join("shop"), None)
+        .args(["add", "cors", "--no-start"])
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "jails must be able to splice its own Gradle output:\n{}{}",
+        String::from_utf8_lossy(&added.stdout),
+        String::from_utf8_lossy(&added.stderr)
+    );
+}
+
+/// A flag that silently does nothing is the `--fast`-on-Gradle failure: it
+/// looks like it worked. `--boot` especially -- the Maven path takes its Boot
+/// version from start.spring.io and cannot honour a pin at all.
+#[test]
+fn the_gradle_only_flags_are_refused_rather_than_ignored_on_the_maven_path() {
+    let parent = temp_dir("new-gradle-stray");
+    for flag in [
+        ["--boot", "2.7.18"],
+        ["--gradle-version", "8.5"],
+        ["--jar-name", "x"],
+    ] {
+        let refused = jails_cmd(&parent, None)
+            .args(["new", "demo", "--offline"])
+            .args(flag)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&refused.stderr);
+        assert!(!refused.status.success(), "{flag:?} should refuse");
+        assert!(stderr.contains(flag[0]), "{flag:?}: {stderr}");
+        assert!(stderr.contains("--gradle"), "{flag:?}: {stderr}");
+        assert!(!parent.join("demo").exists(), "{flag:?} must write nothing");
+    }
+}
+
+/// `--pretend` can be honest here and cannot be on the Maven path, because
+/// jails writes this file set itself rather than unpacking whatever Initializr
+/// returns.
+#[test]
+fn new_gradle_previews_for_real() {
+    let parent = temp_dir("new-gradle-pretend");
+    let preview = jails_cmd(&parent, None)
+        .args(["new", "shop", "--gradle", "--pretend", "--no-git"])
+        .output()
+        .unwrap();
+    let report = String::from_utf8_lossy(&preview.stdout);
+    assert!(
+        preview.status.success(),
+        "{}",
+        String::from_utf8_lossy(&preview.stderr)
+    );
+    assert!(report.contains("build.gradle"), "{report}");
+    assert!(report.contains("settings.gradle"), "{report}");
+    assert!(report.contains("gradle-wrapper.properties"), "{report}");
+    assert!(!parent.join("shop").exists(), "--pretend wrote a project");
+}
+
+/// The generated *code* has a Boot floor the build file does not, and the two
+/// halves of the answer are here: what carries a classic variant works, and
+/// what does not refuses by name instead of writing a test that cannot compile.
+#[test]
+fn a_boot_2_project_gets_the_classic_mockmvc_and_a_named_refusal_for_the_rest() {
+    let parent = temp_dir("gradle-boot2-generators");
+    let created = jails_cmd(&parent, None)
+        .args([
+            "new",
+            "svc",
+            "--gradle",
+            "--offline",
+            "--boot",
+            "2.7.18",
+            "--java",
+            "21",
+            "--package",
+            "com.acme.svc",
+            "--no-devtools",
+            "--no-git",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        created.status.success(),
+        "{}",
+        String::from_utf8_lossy(&created.stderr)
+    );
+    let root = parent.join("svc");
+
+    let generated = jails_cmd(&root, None)
+        .args(["g", "controller", "Foo", "--method", "post"])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&generated.stdout),
+        String::from_utf8_lossy(&generated.stderr)
+    );
+    let test =
+        fs::read_to_string(root.join("src/test/java/com/acme/svc/web/FooControllerTest.java"))
+            .unwrap();
+    // MockMvcTester is Spring Framework 6.2; this project is Framework 5.3.
+    // Asserted on the import rather than the word: the classic templates name
+    // the type in a comment saying why it is not used.
+    assert!(!test.contains("servlet.assertj.MockMvcTester"), "{test}");
+    assert!(
+        test.contains("import org.springframework.test.web.servlet.MockMvc;"),
+        "{test}"
+    );
+    assert!(test.contains("mvc.perform(post(\"/foo\"))"), "{test}");
+    assert!(test.contains("throws Exception"), "{test}");
+
+    // `add cors` has a classic variant too.
+    let cors = jails_cmd(&root, None)
+        .args(["add", "cors", "--no-start"])
+        .output()
+        .unwrap();
+    assert!(
+        cors.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cors.stderr)
+    );
+    let cors_test =
+        fs::read_to_string(root.join("src/test/java/com/acme/svc/CorsConfigTest.java")).unwrap();
+    assert!(
+        !cors_test.contains("servlet.assertj.MockMvcTester"),
+        "{cors_test}"
+    );
+    assert!(cors_test.contains("andExpect(status()"), "{cors_test}");
+
+    // `add h2` must not declare a Boot 4 module or write a Boot 4 property
+    // name. The first is unresolvable; the second is worse, because nothing
+    // rejects it and exception translation simply stays on.
+    let h2 = jails_cmd(&root, None)
+        .args(["add", "h2", "--no-start"])
+        .output()
+        .unwrap();
+    assert!(
+        h2.status.success(),
+        "{}",
+        String::from_utf8_lossy(&h2.stderr)
+    );
+    let build = fs::read_to_string(root.join("build.gradle")).unwrap();
+    assert!(
+        !build.contains("spring-boot-h2console"),
+        "Boot 4 module: {build}"
+    );
+    let properties =
+        fs::read_to_string(root.join("src/main/resources/application.properties")).unwrap();
+    assert!(
+        properties.contains("spring.dao.exceptiontranslation.enabled=false"),
+        "{properties}"
+    );
+    assert!(
+        !properties.contains("spring.persistence.exceptiontranslation"),
+        "{properties}"
+    );
+
+    // The seven with no classic variant refuse, and the refusal is a route
+    // forward rather than a wall.
+    for command in [
+        vec!["add", "api", "--no-start"],
+        vec!["add", "security", "--no-start"],
+        vec!["g", "scaffold", "Note", "id:uuid@pk", "title:string!"],
+    ] {
+        let refused = jails_cmd(&root, None).args(&command).output().unwrap();
+        let stderr = String::from_utf8_lossy(&refused.stderr);
+        assert!(!refused.status.success(), "{command:?} should refuse");
+        assert!(stderr.contains("MockMvcTester"), "{command:?}: {stderr}");
+        assert!(stderr.contains("Boot 2"), "{command:?}: {stderr}");
+        assert!(stderr.contains("g controller"), "{command:?}: {stderr}");
+    }
+}
+
 /// `plan.md` §12. Before this, **zero** of jails' ~30 commands worked on a
 /// project it did not create -- and the whole gate was eleven lines looking for
 /// `pom.xml`, not anything the commands actually do.

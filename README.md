@@ -39,6 +39,24 @@ their exit codes, so `jails doctor --json && deploy` behaves like
   defaults to the Java 25 LTS. Newer GA or EA releases are explicit choices;
   when Initializr only accepts an earlier bootstrap release, Jails retargets
   the generated Maven project to the requested release.
+- `jails new <name> --gradle [--boot 2.7.18] [--gradle-version 8.5]
+  [--jar-name <name>] [--jar-version <version>]` — the same, as a Groovy
+  Gradle build. jails writes every file itself here and never contacts
+  start.spring.io, which is what lets `--boot` name a version Initializr no
+  longer serves and what makes `--pretend` honest on this path. A 2.x
+  `--boot` gets the `buildscript {}` build file, the only shape that applies
+  the Boot 2 Gradle plugin; anything later gets `plugins {}` and Gradle's
+  native bom support. The Gradle distribution defaults from the Boot version
+  rather than to one number — Boot 4's plugin throws below Gradle 8.14, and
+  Boot 2.7 does not run on 9.x. The four Gradle flags are **refused, not
+  ignored**, without `--gradle`.
+
+  `gradlew`, `gradlew.bat` and `gradle-wrapper.properties` are written from
+  templates; `gradle-wrapper.jar` is a binary with no standalone published
+  coordinate, so it is fetched from Gradle's own repository at the matching
+  tag. If it cannot be had, **none** of the three is written and jails says
+  so: `run` falls back to `gradle` on PATH when there is no `gradlew`, so no
+  wrapper is a working project and a wrapper missing its jar is not.
 - `jails new-cli <name> [--release 25] [--no-git]` — new plain Maven CLI
   project (hand-written `pom.xml`, `App.java`, `AppTest.java`), no network
   required. `App.java` is a working command dispatcher, not a Hello World
@@ -1102,9 +1120,19 @@ sandbox with Maven. On Gradle it refuses and points at `./gradlew
 spotlessApply`, which the project is by then configured for and which `check`
 already enforces.
 
-**Maven stays the default.** `jails new` creates a Maven project and goes on
-doing so; the Gradle work is about jails *operating on* a build somebody else
-wrote.
+**Maven stays the default.** `jails new` with no `--gradle` creates a Maven
+project and goes on doing so. `--gradle` is for the case the reading work was
+built for in the first place: a Gradle service you have to work in, which you
+now also have a way to stand up from nothing.
+
+**Generated *tests* have a floor the generated main code does not.**
+`MockMvcTester` (`org.springframework.test.web.servlet.assertj`) is Spring
+Framework 6.2, which is Boot 3.4, and nine of jails' companion tests are
+written against it. `g controller` and `add cors` carry a classic
+`MockMvc` variant and pick it from the project's Boot major. The other seven —
+`add api`, `add security`, `g scaffold`, `g usecase`, `g query`,
+`g transition` — **refuse** on an older project rather than write a test that
+cannot compile, and the refusal names the version and what still works.
 
 Every reader of `build.gradle` has three answers, not two: yes, no, and *"this
 file says something I do not understand"* — and the third refuses rather than

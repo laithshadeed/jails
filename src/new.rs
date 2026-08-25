@@ -1,3 +1,4 @@
+mod gradle_project;
 mod publish;
 
 use jails_support::Result;
@@ -28,21 +29,59 @@ pub(crate) fn seed_manifest(root: &Path, manifest: &Path, debug: bool) -> Result
     crate::app::apply_in(root, false, debug)
 }
 
-pub fn new(
-    name: &str,
-    group: Option<&str>,
-    package: Option<&str>,
-    deps: &str,
-    java: &str,
-    git: bool,
-    devtools: bool,
-    offline: bool,
-    app: Option<&Path>,
-    debug: bool,
-    pretend: bool,
-) -> Result<()> {
+/// What `jails new` was asked for.
+///
+/// A parameter object rather than a fifteenth positional argument, and the
+/// same move `abstract.md` §7 rung 1 records for `Project`: the four Gradle
+/// flags are computed together, consumed together, and meaningless apart --
+/// `--boot` without `--gradle` names a version nothing reads.
+pub struct Request<'a> {
+    pub name: &'a str,
+    pub group: Option<&'a str>,
+    pub package: Option<&'a str>,
+    pub deps: &'a str,
+    pub java: &'a str,
+    pub git: bool,
+    pub devtools: bool,
+    pub offline: bool,
+    /// Write a Groovy Gradle build rather than fetching a Maven project.
+    pub gradle: bool,
+    /// The Spring Boot version to pin. `None` is `pom::TARGET_BOOT`.
+    pub boot: Option<&'a str>,
+    /// The Gradle distribution the wrapper pins. `None` is derived from the
+    /// Boot major, because the Boot plugin refuses some pairings outright.
+    pub gradle_version: Option<&'a str>,
+    /// `bootJar { archiveBaseName }`. `None` leaves the block out.
+    pub jar_name: Option<&'a str>,
+    /// `bootJar { archiveVersion }`. Only read when `jar_name` is set.
+    pub jar_version: Option<&'a str>,
+    pub app: Option<&'a Path>,
+    pub debug: bool,
+    pub pretend: bool,
+}
+
+pub fn new(request: Request<'_>) -> Result<()> {
+    let (name, java, debug, pretend) = (request.name, request.java, request.debug, request.pretend);
     if Path::new(name).exists() {
         return Err(publish::already_exists(Path::new(name)));
+    }
+    gradle_project::require_gradle(&request)?;
+    let (group, package, git, offline, app) = (
+        request.group,
+        request.package,
+        request.git,
+        request.offline,
+        request.app,
+    );
+    let devtools = request.devtools;
+
+    let deps_for_gradle = effective_deps(request.deps, devtools);
+    if request.gradle {
+        return gradle_project::create(
+            &request,
+            &deps_for_gradle,
+            request.boot.unwrap_or(crate::pom::TARGET_BOOT),
+        );
     }
 
     // Refused rather than ignored. The project `new` creates is whatever
@@ -60,8 +99,7 @@ pub fn new(
         );
     }
 
-    let deps = effective_deps(deps, devtools);
-    let deps = deps.as_str();
+    let deps = deps_for_gradle.as_str();
 
     if offline {
         return new_offline(name, group, package, deps, java, git, app, debug, pretend);
@@ -230,6 +268,7 @@ fn new_offline(
             &[
                 ("artifact", name),
                 ("java", java),
+                ("boot", crate::pom::TARGET_BOOT),
                 ("dependencies", &dependencies),
             ],
         ),
@@ -267,7 +306,35 @@ fn new_offline(
     Ok(())
 }
 
+/// The entry point's class name, and the one name it must not be.
+///
+/// `<Name>Application` is Initializr's convention and jails follows it -- but a
+/// project called `spring` derives `SpringApplication`, which is the name of
+/// the Boot class the generated `main` calls. Java resolves the type in the
+/// same compilation unit ahead of the import, so `SpringApplication.run(...)`
+/// binds to the generated class, which has no `run`. The project does not
+/// compile, and the error names a method rather than the collision.
+///
+/// The fallback is `Application`, which is what the Boot 2.7 project this was
+/// built against is actually called. It is printed rather than done quietly:
+/// the reader asked for a name and got a different one.
 fn application_class(name: &str) -> String {
+    // The *stem*: the templates and the paths both append `Application`, so
+    // `Demo` here is `DemoApplication.java` there, and an empty stem is plain
+    // `Application.java`.
+    let derived = camel_case(name);
+    if derived == "Spring" {
+        println!(
+            "  naming the entry point Application: SpringApplication is \
+             org.springframework.boot.SpringApplication, and a class cannot \
+             shadow the type its own main() calls"
+        );
+        return String::new();
+    }
+    derived
+}
+
+fn camel_case(name: &str) -> String {
     let mut out = String::new();
     let mut uppercase = true;
     for character in name.chars() {
@@ -282,11 +349,9 @@ fn application_class(name: &str) -> String {
             out.push(character);
         }
     }
-    if out.is_empty() {
-        "Application".to_string()
-    } else {
-        out
-    }
+    // Empty rather than `"Application"`: the caller appends `Application`, so
+    // returning it here spells `ApplicationApplication`.
+    out
 }
 
 fn offline_dependencies(deps: &str) -> Result<String> {
@@ -330,7 +395,13 @@ fn finish_spring_project(root: &Path, requested_deps: &str) -> Result<()> {
     verify_requested_deps(root, requested_deps);
     drop_initializr_help(root);
     add_jspecify(root)?;
-    write_default_properties(root)?;
+    // Read rather than assumed: the online path takes whatever Boot line
+    // start.spring.io is currently serving, and the properties written below
+    // are the ones that line actually has.
+    let major = crate::pom::read(root)
+        .map(|pom| crate::pom::spring_boot_major_of(&pom))
+        .unwrap_or(4);
+    write_default_properties(root, major)?;
     write_devtools_defaults(root)
 }
 
@@ -454,40 +525,65 @@ fn add_jspecify(root: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Two settings both persona files call the default posture, and which an
-/// empty `application.properties` leaves off.
+/// Settings both persona files call the default posture, and which an empty
+/// `application.properties` leaves off.
 ///
 /// None is discoverable from a failure: an unbounded execution model can
 /// quietly overload a downstream pool, abrupt shutdown drops in-flight work,
 /// and problem-details absent means clients learn Boot's ad-hoc error map.
-fn write_default_properties(root: &Path) -> Result<()> {
+///
+/// **Keyed by the project's Boot major, because a property that does not exist
+/// is silent.** Boot binds what it recognises and ignores the rest, so writing
+/// Boot 3 spellings into a Boot 2.7 project produces a file that reads as
+/// configured and configures nothing -- the confident wrong answer, in the one
+/// place nothing checks. Every entry below is dated from Boot's own
+/// `additional-spring-configuration-metadata.json` under `deps/spring-boot`,
+/// which records `server.max-http-header-size` as replaced by
+/// `server.max-http-request-header-size` at 3.0.0.
+fn write_default_properties(root: &Path, boot_major: u32) -> Result<()> {
     let path = root.join("src/main/resources/application.properties");
     let existing = fs::read_to_string(&path).unwrap_or_default();
+    let modern = boot_major >= 3;
     let defaults = [
         (
             "# Explicit by design: virtual threads move the concurrency bound to every\n\
              # downstream dependency. Enable them only with measured pool and rate limits.",
             "spring.threads.virtual.enabled=false",
+            // Boot 3.2. There is no 2.x spelling to fall back to; the feature
+            // is not there.
+            modern,
         ),
         (
             "# RFC 9457 problem+json error bodies instead of Boot's default error map.",
             "spring.mvc.problemdetails.enabled=true",
+            modern,
         ),
         (
             "# Large signed tokens and tracing baggage can exceed the older 8KB default.",
             "server.max-http-request-header-size=16KB",
+            modern,
+        ),
+        (
+            "# Large signed tokens and tracing baggage can exceed the older 8KB default.",
+            "server.max-http-header-size=16KB",
+            !modern,
         ),
         (
             "# Stop accepting work, then give in-flight requests and transactions time to finish.",
             "server.shutdown=graceful",
+            true,
         ),
         (
             "# Bound graceful shutdown so an unhealthy instance cannot stall a rollout forever.",
             "spring.lifecycle.timeout-per-shutdown-phase=30s",
+            true,
         ),
     ];
     let mut addition = String::new();
-    for (comment, property) in defaults {
+    for (comment, property, applies) in defaults {
+        if !applies {
+            continue;
+        }
         let key = property.split('=').next().unwrap_or(property);
         if existing.contains(key) {
             continue;
@@ -501,14 +597,26 @@ fn write_default_properties(root: &Path) -> Result<()> {
     if addition.is_empty() {
         return Ok(());
     }
+    // `trim_start` on the addition when there was nothing before it: the
+    // separator blank line exists to keep jails' block off the end of somebody
+    // else's last property, and a file that did not exist has no last property
+    // to keep off. Without this the Gradle path, which writes this file from
+    // nothing, opened every project with two blank lines.
     let mut next = existing.trim_end().to_string();
+    if next.is_empty() {
+        return write_properties(&path, addition.trim_start().to_string());
+    }
     next.push('\n');
     next.push_str(&addition);
+    write_properties(&path, next)
+}
+
+fn write_properties(path: &Path, body: String) -> Result<()> {
     if let Some(parent) = path.parent() {
         jails_support::apply::ensure_directory(parent)
             .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
     }
-    crate::apply::put(&path, next)
+    crate::apply::put(path, body)
 }
 
 fn initializr_java(requested: &str) -> &str {

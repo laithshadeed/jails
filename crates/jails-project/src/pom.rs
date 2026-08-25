@@ -39,6 +39,18 @@ pub const TARGET_RELEASE: &str = "25";
 /// default is still one `add` can grow.
 pub const MIN_RELEASE: u32 = 21;
 
+/// The Spring Boot line jails' own templates are written against.
+///
+/// One owner, for the same reason `TARGET_RELEASE` has one: it was spelled
+/// only inside `templates/new/offline_pom.xml`, where nothing could read it.
+/// `jails new --gradle` has to *name* the Boot version in the build file it
+/// writes, and a second literal is how the Maven fixture and the Gradle
+/// fixture come to bootstrap different Boot versions with nothing saying so.
+///
+/// It is a default, not a floor. `--boot` overrides it, and a Boot version
+/// older than this one is the case that flag exists for.
+pub const TARGET_BOOT: &str = "4.1.0";
+
 /// Which kind of Maven project this is. Capabilities wire themselves up
 /// differently in each (a Spring project gets starters and autoconfiguration;
 /// a plain one gets the library plus hand-rolled glue), and this is always

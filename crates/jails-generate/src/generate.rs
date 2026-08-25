@@ -1288,7 +1288,7 @@ mod tests {
                 )),
                 "{source}"
             );
-            let test = controller_stub_test("com.example.blog", "Post", "x.Y", &endpoint);
+            let test = controller_stub_test("com.example.blog", "Post", "x.Y", &endpoint, 4);
             assert!(
                 test.contains(&format!("mvc.{}().uri(\"/post\")", method.label())),
                 "{test}"
@@ -1325,7 +1325,7 @@ mod tests {
             returns: Some("Verification"),
             ..plain_endpoint()
         };
-        let test = controller_stub_test("com.example.blog", "Post", "x.Y", &endpoint);
+        let test = controller_stub_test("com.example.blog", "Post", "x.Y", &endpoint, 4);
         assert!(test.contains("@Disabled"), "{test}");
         assert!(
             test.contains("import org.junit.jupiter.api.Disabled;"),
@@ -1333,7 +1333,7 @@ mod tests {
         );
         assert!(!test.contains("bodyText()"), "{test}");
 
-        let plain = controller_stub_test("com.example.blog", "Post", "x.Y", &plain_endpoint());
+        let plain = controller_stub_test("com.example.blog", "Post", "x.Y", &plain_endpoint(), 4);
         assert!(!plain.contains("@Disabled"), "{plain}");
         assert!(plain.contains("bodyText()"), "{plain}");
     }

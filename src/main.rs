@@ -139,6 +139,36 @@ enum Command {
         /// start.spring.io
         #[arg(long)]
         offline: bool,
+        /// Write a Groovy Gradle build instead of fetching a Maven project
+        ///
+        /// jails writes every file itself on this path and never contacts
+        /// start.spring.io, which is what makes `--boot` able to name a
+        /// version Initializr no longer serves -- and what makes `--pretend`
+        /// honest here when it cannot be for Maven.
+        #[arg(long)]
+        gradle: bool,
+        /// Spring Boot version to pin, e.g. `2.7.18`. Gradle only
+        ///
+        /// A 2.x version selects the `buildscript {}` build file, which is the
+        /// only shape that applies the Boot 2 Gradle plugin. Anything later
+        /// gets `plugins {}` and Gradle's native bom support.
+        #[arg(long, value_name = "VERSION")]
+        boot: Option<String>,
+        /// Gradle distribution the wrapper pins. Gradle only
+        ///
+        /// Defaults from the Boot version rather than to one number: Boot 4's
+        /// plugin throws below Gradle 8.14, and Boot 2.7 does not run on 9.x.
+        #[arg(long, value_name = "VERSION")]
+        gradle_version: Option<String>,
+        /// `bootJar` archive base name. Gradle only
+        ///
+        /// Omitted, there is no `bootJar` block and Gradle names the jar after
+        /// the project.
+        #[arg(long, value_name = "NAME")]
+        jar_name: Option<String>,
+        /// `bootJar` archive version. Gradle only, and only with `--jar-name`
+        #[arg(long, value_name = "VERSION")]
+        jar_version: Option<String>,
         /// Apply this application manifest to the new project immediately
         ///
         /// Equivalent to `new`, then `mkdir .jails`, then copying the manifest
@@ -715,20 +745,30 @@ fn main() -> std::process::ExitCode {
             no_git,
             no_devtools,
             offline,
+            gradle,
+            boot,
+            gradle_version,
+            jar_name,
+            jar_version,
             app,
-        } => new::new(
-            &name,
-            group.as_deref(),
-            package.as_deref(),
-            &deps,
-            &java,
-            !no_git,
-            !no_devtools,
+        } => new::new(new::Request {
+            name: &name,
+            group: group.as_deref(),
+            package: package.as_deref(),
+            deps: &deps,
+            java: &java,
+            git: !no_git,
+            devtools: !no_devtools,
             offline,
-            app.as_deref(),
+            gradle,
+            boot: boot.as_deref(),
+            gradle_version: gradle_version.as_deref(),
+            jar_name: jar_name.as_deref(),
+            jar_version: jar_version.as_deref(),
+            app: app.as_deref(),
             debug,
             pretend,
-        ),
+        }),
         Command::NewCli {
             name,
             group,

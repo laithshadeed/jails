@@ -136,6 +136,33 @@ pub fn put_bytes(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> Result<(
         .map_err(|error| format!("failed to write {}: {error}", path.display()))
 }
 
+/// Write a file that has to be runnable, not merely present.
+///
+/// A sixth verb rather than a `chmod` at the call site, and for the reason
+/// every other verb here exists: what the caller believes about the result.
+/// `gradlew` is not a file the project *has*, it is the command the project
+/// *is run by* -- `run.rs` prefers it over `gradle` on PATH precisely because
+/// it pins the build's own Gradle version, so a `gradlew` written without the
+/// executable bit is a wrapper that exists, is found, and cannot be executed.
+/// That failure surfaces as "permission denied" from a shell, several steps
+/// away from the write that caused it.
+///
+/// The mode is only applied on Unix. Windows has no permission bit to set and
+/// runs `gradlew.bat` instead, so there is nothing to do and nothing to fail.
+pub fn put_executable(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<()> {
+    let (path, contents) = (path.as_ref(), contents.as_ref());
+    ensure_parent(path)?;
+    fs::write(path, contents)
+        .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+            .map_err(|error| format!("failed to make {} executable: {error}", path.display()))?;
+    }
+    Ok(())
+}
+
 /// The same, reported under a short name rather than an absolute path.
 ///
 /// `failed to write pom.xml` is what a person needs; the absolute path of a

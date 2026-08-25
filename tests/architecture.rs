@@ -521,7 +521,15 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // and `pub use h2::*;` that declare it. The capability itself
                 // is `spring/h2.rs`; this file gains exactly the fixed cost of
                 // a split, which is the shape this ratchet is asking for.
-                ceiling: 480,
+                // 480 -> 488 for `require_mockmvc_tester`. `spring.rs`'s stated
+                // job after the split is "the shared precondition and the
+                // helpers used by more than one kind", and this is the second
+                // precondition beside `require_spring`: seven generators write
+                // a test against an API that is Spring Framework 6.2, and
+                // `jails new --gradle --boot 2.x` made older projects reachable
+                // for the first time. Putting it anywhere else would give two
+                // owners to "is this project new enough".
+                ceiling: 488,
                 target: 2500,
                 why: "Logical cohesion: one file for everything sharing the `require_spring` \
                       precondition. abstract.md §6.2 says turning that precondition into data \
@@ -559,7 +567,17 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // build tool" -- nothing in it knows what Maven or Gradle is.
                 // `pom.rs` holds the record again, at the number it had before
                 // Gradle existed.
-                ceiling: 643,
+                // 643 -> 644. `pom.rs` gained `TARGET_BOOT`, the Spring Boot
+                // line jails' templates are written against, beside
+                // `TARGET_RELEASE` which it is the exact counterpart of. It was
+                // spelled only inside `templates/new/offline_pom.xml`, where
+                // nothing could read it -- and `jails new --gradle` has to
+                // *name* a Boot version in the build file it writes, so leaving
+                // it there would have been a second literal and two fixtures
+                // bootstrapping different Boot versions with nothing saying so.
+                // One line of the rise is the constant; the rest is the reason,
+                // which is the trade this gate exists to make visible.
+                ceiling: 644,
                 target: 700,
                 why: "The row above can be satisfied by *moving* a monolith rather than \
                       decomposing one, so this asks the question the split is actually for: \
@@ -1330,6 +1348,14 @@ const A_FRESH_READ_IS_CORRECT: &[(&str, &str)] = &[
         "ensure_package_info",
         "reached from `write_new_file`, whose nine callers include `new` -- which is \
          creating the very pom this asks about, so there is no project to have resolved",
+    ),
+    (
+        "finish_spring_project",
+        "the same case as `apply_in`: it runs inside `jails new`, on a tree unpacked from \
+         Initializr's zip moments earlier, so there is no `Project` for this to be a second \
+         read of. What it reads is the Boot major, and it has to be read rather than assumed \
+         -- the online path takes whatever line start.spring.io is currently serving, and the \
+         defaults written next are the ones that line actually has",
     ),
     (
         "read_build_file",

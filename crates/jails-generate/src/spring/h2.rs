@@ -43,6 +43,13 @@ const H2: Dependency = Dependency {
 
 /// The console's auto-configuration, which is a *different artifact* from the
 /// database. See the module docs.
+///
+/// **Boot 4 only.** The split that created it is Boot 4's; before that
+/// `H2ConsoleAutoConfiguration` ships inside `spring-boot-autoconfigure`, which
+/// every Boot project already has. Declaring it on a Boot 2 or 3 build is not
+/// a redundant dependency, it is an artifact that does not exist at that
+/// version -- so the build fails to resolve, and the failure names a coordinate
+/// rather than the capability that asked for it.
 const H2_CONSOLE: Dependency = Dependency {
     group_id: "org.springframework.boot",
     artifact_id: "spring-boot-h2console",
@@ -50,6 +57,21 @@ const H2_CONSOLE: Dependency = Dependency {
     scope: None,
     optional: false,
 };
+
+/// Which spelling of the exception-translation switch this project answers to.
+///
+/// Renamed at 4.0.0, recorded as a `level: "error"` deprecation in
+/// `spring-boot-persistence`'s `additional-spring-configuration-metadata.json`
+/// under `deps/`. The pre-4 spelling on a Boot 4 project is rejected outright;
+/// the Boot 4 spelling on an older one is worse, because nothing rejects it --
+/// the property is simply unbound, exception translation stays on, and the
+/// CGLIB proxy this exists to prevent is created anyway.
+fn exception_translation_property(boot_major: u32) -> &'static str {
+    match boot_major >= 4 {
+        true => "spring.persistence.exceptiontranslation.enabled=false",
+        false => "spring.dao.exceptiontranslation.enabled=false",
+    }
+}
 
 /// Where the application's database lives, relative to the working directory.
 ///
@@ -70,24 +92,35 @@ const TEST_URL: &str = "jdbc:h2:mem:test;DB_CLOSE_DELAY=-1";
 pub fn h2_slice(slice: &Slice) -> Change {
     let root: &Path = slice.project().root();
     let pkg: &str = &slice.root_package();
+    let boot_major = slice.project().boot_major();
+    let mut deps = vec![crate::add::SPRING_JDBC, H2];
+    if boot_major >= 4 {
+        deps.push(H2_CONSOLE);
+    }
     Change {
-        deps: vec![crate::add::SPRING_JDBC, H2, H2_CONSOLE],
+        deps,
         files: vec![artifact(
             crate::generate::test_dir(root, pkg).join("H2DatabaseTest.java"),
             h2_database_test_java(pkg),
         )],
-        properties: vec![
-            "# The application's own database, inside the project rather than the home".to_string(),
-            "# directory -- two checkouts must not share one file.".to_string(),
-            format!("spring.datasource.url={FILE_URL}"),
-            "# The console is an auto-configuration module, not the driver: without".to_string(),
-            "# spring-boot-h2console on the classpath this property does nothing.".to_string(),
-            "spring.h2.console.enabled=true".to_string(),
-            "# Open http://localhost:8080/h2-console and connect with the URL above.".to_string(),
-            "spring.h2.console.path=/h2-console".to_string(),
-            "# Raw SQL, no ORM -- so no CGLIB proxy around every @Repository.".to_string(),
-            "spring.persistence.exceptiontranslation.enabled=false".to_string(),
-        ],
+        properties: [
+            vec![
+                "# The application's own database, inside the project rather than the home"
+                    .to_string(),
+                "# directory -- two checkouts must not share one file.".to_string(),
+                format!("spring.datasource.url={FILE_URL}"),
+            ],
+            console_note(boot_major),
+            vec![
+                "spring.h2.console.enabled=true".to_string(),
+                "# Open http://localhost:8080/h2-console and connect with the URL above."
+                    .to_string(),
+                "spring.h2.console.path=/h2-console".to_string(),
+                "# Raw SQL, no ORM -- so no CGLIB proxy around every @Repository.".to_string(),
+                exception_translation_property(boot_major).to_string(),
+            ],
+        ]
+        .concat(),
         test_properties: vec![
             "# Tests get their own in-memory database. Inheriting the file URL above".to_string(),
             "# would write into the working tree, and would fail on H2's file lock the".to_string(),
@@ -95,6 +128,27 @@ pub fn h2_slice(slice: &Slice) -> Change {
             format!("spring.datasource.url={TEST_URL}"),
         ],
         ..Change::default()
+    }
+}
+
+/// The comment jails writes above `spring.h2.console.enabled`.
+///
+/// It names the dependency that makes the property do something, and on a
+/// pre-4 project that dependency is not `spring-boot-h2console` -- telling the
+/// reader to add an artifact that does not exist at their version is the same
+/// wrong answer as adding it.
+fn console_note(boot_major: u32) -> Vec<String> {
+    // One element per line: `Change::properties` is a list of *lines*, and a
+    // `\n` inside one is refused by the writer rather than split.
+    match boot_major >= 4 {
+        true => vec![
+            "# The console is an auto-configuration module, not the driver: without".to_string(),
+            "# spring-boot-h2console on the classpath this property does nothing.".to_string(),
+        ],
+        false => vec![
+            "# Boot auto-configures the console from spring-boot-autoconfigure at this".to_string(),
+            "# version; the separate spring-boot-h2console module is Boot 4 and later.".to_string(),
+        ],
     }
 }
 
