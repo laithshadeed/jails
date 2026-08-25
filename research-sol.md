@@ -743,3 +743,808 @@ Impact codes: **L** = feedback latency, **C** = correctness/trust, **A** = autho
 - infrastructure inferred and applied without a plan: static inference may propose capabilities, but the prepared diff remains the authority.
 - generator plugins executing arbitrary third-party code: template/data extension is compatible with the trust model; an in-process plugin runtime is not.
 
+---
+
+## Section 6: Concrete CLI Command Specifications
+
+### 6.0 Common command contract
+
+Every mutating command supports the existing global contract:
+
+```text
+--pretend, --dry-run     prepare and report; do not commit or run external effects
+--output human|json      two encodings of the same CommandEnvelope
+--debug                  exact subprocesses, cache decisions, timing spans
+```
+
+Add these consistent review flags:
+
+```text
+--diff                   expand file-level unified diffs
+--ast                    expand semantic edits
+--verify none|fast|full  validation gate before acceptance (default: fast)
+--yes                    accept a conflict-free plan non-interactively
+--plan-out <file>        write a redacted, signed/digested prepared plan
+--plan-in <file>         apply only that plan after rechecking all preconditions
+```
+
+`--plan-in` never reparses command arguments. A plan is bound to the canonical project root, observed generation, input digests, tool/protocol version, and template digests. Plans containing redacted-but-required secrets are not portable and say so.
+
+Exit status convention:
+
+| Code | Meaning |
+|---:|---|
+| 0 | success, including a truthful no-op |
+| 2 | invalid request/DSL |
+| 3 | conflict or stale precondition; nothing committed |
+| 4 | verification failed; nothing committed |
+| 5 | recovery required or corrupt machine state |
+| 6 | external tool/service failed after a committed file transaction |
+
+### 6.1 Enhanced `generate scaffold`
+
+```text
+jails generate scaffold <Slice.Entity|Entity> <field>...
+  [--package <java.package>]
+  [--route <path>]
+  [--index <field[,field...]>]...
+  [--unique <field[,field...]>]...
+  [--with-events <Event[,Event...]>]
+  [--with-audit]
+  [--with-policy <policy-file|inline-expression>]
+  [--persistence jdbc|memory|both]
+  [--migration flyway|liquibase|none]
+```
+
+Example:
+
+```text
+$ jails g scaffold Billing.Order \
+    id:uuid@pk userId:ref<User.id>! total:money![positive] \
+    status:enum{PENDING,PAID,CANCELLED}=PENDING createdAt:instant@audit \
+    --index status,createdAt --with-events OrderPaid --with-audit \
+    --pretend --diff
+
+PLAN  Billing.Order  transaction 01K4...
+VERIFY fields 5/5 · relations 1/1 · SQL verified-offline · Java compile pending
+
+CREATE  .../billing/domain/Order.java
+CREATE  .../billing/application/OrderRepository.java
+CREATE  .../billing/adapter/jdbc/JdbcOrderRepository.java
+CREATE  .../billing/adapter/memory/InMemoryOrderRepository.java
+CREATE  .../billing/service/OrderService.java
+CREATE  .../billing/web/OrderRequest.java
+CREATE  .../billing/web/OrderResponse.java
+CREATE  .../billing/web/OrderController.java
+CREATE  .../billing/domain/OrderPaid.java
+CREATE  .../db/migration/V014__create_orders.sql
+CREATE  ... 9 tests/contracts/fixtures/request examples
+EDIT    pom.xml  +ArchUnit test dependency
+EDIT    jails.toml  +entity Billing.Order
+
+RISK    additive 20 · behavior-change 1 · destructive 0
+NO WRITE (--pretend)
+```
+
+The operation list depends on installed capabilities. If Flyway is absent and `--migration` was not explicit, output says `SKIP migration: no database migration capability`; it does not create dead SQL. If `ref<User.id>` cannot be resolved to one stored key, planning fails with candidates and a fix.
+
+Generated layout:
+
+```text
+src/main/java/com/acme/billing/
+├── domain/
+│   ├── Order.java
+│   ├── OrderStatus.java
+│   └── OrderPaid.java
+├── application/
+│   ├── OrderRepository.java
+│   └── AuthorizeOrder.java
+├── service/OrderService.java
+├── adapter/
+│   ├── jdbc/JdbcOrderRepository.java
+│   └── memory/InMemoryOrderRepository.java
+└── web/
+    ├── OrderRequest.java
+    ├── OrderResponse.java
+    ├── OrderController.java
+    └── OrderProblemAdvice.java
+src/main/resources/db/migration/V014__create_orders.sql
+src/test/java/com/acme/billing/
+├── domain/OrderTest.java
+├── service/OrderServiceTest.java
+├── adapter/OrderRepositoryContract.java
+├── adapter/jdbc/JdbcOrderRepositoryIT.java
+├── adapter/memory/InMemoryOrderRepositoryTest.java
+├── web/OrderControllerTest.java
+└── ArchitectureTest.java                 # only if project-level file absent
+src/test/resources/fixtures/orders.json
+requests/orders.http
+```
+
+### 6.2 SQL contracts: `sql check`, `sql generate`, and `sql diff`
+
+```text
+jails sql init [--dialect postgres|mysql|sqlite]
+jails sql check [<file|query-name>] [--offline|--live] [--frozen]
+jails sql generate [<file|query-name>] [--into-slice <Slice>] [--pretend]
+jails sql diff [--generated] [--contracts]
+jails sql explain <query-name> [--plan] [--analyze] [--params <json>]
+```
+
+Semantics:
+
+- `check --offline` applies ordered migrations to the cached static catalog and resolves queries.
+- `check --live` uses an explicit datasource or CLI-managed ephemeral database, migrates it, then prepares/describes every query.
+- `--frozen` requires checked-in contract digests to match inputs and refuses to update them.
+- `generate` writes Java only from verified metadata unless `--allow-parse-only` is explicitly supplied; parse-only results carry TODO/refusal stubs and are unsuitable for CI.
+- `explain --analyze` executes SQL and therefore requires explicit parameter values and confirmation outside a disposable database.
+
+Example:
+
+```text
+$ jails sql check --live
+catalog  postgres 17 · 14 migrations · digest 7a1c9d2
+✓ FindOrder          :optional  1 param   5 columns   18 ms
+✓ FindPayableOrders  :many      3 params  5 columns   21 ms
+✗ CancelOrder        :execrows
+  db/queries/orders.sql:31:19 column "version" does not exist
+  nearest: orders.revision
+  contract unchanged; generated Java unchanged
+```
+
+Generated SQL layout:
+
+```text
+src/main/resources/db/queries/orders.sql
+src/main/java/com/acme/billing/application/query/
+├── FindPayableOrders.java                # port
+├── FindPayableOrdersParams.java
+└── FindPayableOrdersRow.java
+src/main/java/com/acme/billing/adapter/jdbc/JdbcFindPayableOrders.java
+src/test/java/com/acme/billing/adapter/query/FindPayableOrdersContract.java
+.jails/sql-contracts/find-payable-orders.json
+```
+
+The JSON contract includes no data or credentials:
+
+```json
+{
+  "schema_version": 1,
+  "name": "FindPayableOrders",
+  "dialect": "postgresql",
+  "verification": "live",
+  "schema_digest": "sha256:7a1c...",
+  "query_digest": "sha256:f41b...",
+  "cardinality": "many",
+  "parameters": [
+    {"name":"status","sql_type":"order_status","java_type":"OrderStatus","nullable":false},
+    {"name":"minimum","sql_type":"numeric","java_type":"BigDecimal","nullable":false},
+    {"name":"limit","sql_type":"int4","java_type":"int","nullable":false}
+  ],
+  "columns": [
+    {"name":"id","sql_type":"uuid","java_type":"UUID","nullable":false}
+  ]
+}
+```
+
+### 6.3 Database observation and import
+
+```text
+jails introspect db
+  [--url <env:NAME|jdbc-url>] [--schema <name>] [--table <glob>]...
+  [--include views,enums,domains,routines,indexes,policies]
+  [--output human|json|manifest]
+
+jails pull
+  [--url <env:NAME|jdbc-url>] [--schema <name>] [--table <glob>]...
+  [--into-slice <Slice>] [--naming preserve|java]
+  [--baseline] [--ignore <glob>]...
+```
+
+`--url env:DEV_DATABASE_URL` is preferred because it does not put a secret in shell history or process listings. Human output redacts user, host where configured, and password. `introspect` never writes. `pull` always supports `--pretend` and defaults to a conflict-free additive plan; destructive reconciliation requires a separate `schema diff` acceptance.
+
+Example import:
+
+```text
+$ jails pull --schema billing --table 'order*' --into-slice Billing --pretend
+OBSERVED  3 tables · 17 columns · 4 FKs · 6 indexes · 1 enum
+MAP
+  billing.orders       → Billing.Order
+  billing.order_lines  → Billing.OrderLine
+  billing.order_status → Billing.OrderStatus
+WARN
+  orders.metadata jsonb → JsonNode (requires jackson; explicit override recorded)
+  order_totals view → read-only query adapter
+CONFLICT
+  none
+PLAN  31 creates · 2 edits · 0 deletes
+NO WRITE (--pretend)
+```
+
+### 6.4 Schema evolution and migration generation
+
+```text
+jails schema diff
+  [--from declared|migrations|live:<env>]
+  [--to declared|migrations|live:<env>]
+  [--accept-rename <old>=<new>]...
+  [--treat-as-drop-add <old>=<new>]...
+  [--output human|json]
+
+jails schema migration <Name>
+  [<field-change>...]
+  [--from-diff <plan-id>]
+  [--reversible]
+  [--pretend]
+
+jails migrate check [--clean] [--dialect postgres]
+jails migrate apply [--environment dev|test] [--target <version>]
+jails migrate undo <version> [--pretend]
+```
+
+Friendly names may seed an operation, following Loco's useful inference (`AddStatusToOrders`, `CreateOrderLines`), but the normalized operation prints before generation. Loco's current generator explicitly pattern-matches migration names into operation types ([Loco generators](https://loco.rs/docs/reference/generators/)). Fields/flags override inferred words; unknown names produce an empty migration, not guessed SQL.
+
+Destructive example:
+
+```text
+$ jails schema diff --from live:DEV_DATABASE_URL --to declared
+DESTRUCTIVE
+  DROP COLUMN orders.legacy_code  text nullable
+    live rows with non-null value: 18,402
+    declaration: absent
+POSSIBLE RENAME
+  orders.customer_id → buyer_id  confidence 0.82
+REFUSED
+  choose --accept-rename orders.customer_id=buyer_id or
+         --treat-as-drop-add orders.customer_id=buyer_id
+```
+
+### 6.5 Development services and run loop
+
+```text
+jails dev
+  [--services auto|none|postgres,kafka,redis]
+  [--tests affected|failed|none]
+  [--restart classloader|process]
+  [--include <glob>]... [--exclude <glob>]...
+  [--delay <duration>]
+
+jails services up|status|logs|reset|down ...
+```
+
+Example:
+
+```text
+$ jails dev
+postgres  reused  postgres:17.6  localhost:54341  spec 31bf...
+kafka     external KAFKA_BOOTSTRAP_SERVERS
+compile   fresh target/classes from IDE (epoch 92)
+app       started pid 48102 in 812 ms
+
+[edit OrderService.java]
+compile   1 source in 143 ms
+test      4/184 affected: 4 passed in 51 ms
+app       restart-loader refresh in 387 ms (method body + signature)
+ready     http://localhost:8080
+```
+
+`services reset` is destructive to local service data and must always show the exact labelled container/volume and require confirmation unless `--yes` is present. It is not implied by `clean`.
+
+### 6.6 `testd` specification
+
+```text
+jails testd [<test-or-method>...]
+  [--affected] [--failed] [--tag <tag>]...
+  [--until-fail] [--repeat <n>]
+  [--timeout <duration>] [--fork-on <pattern>]
+  [--explain-selection]
+
+jails testd start|status|stop|restart
+```
+
+Selector precedence is intersection except where nonsensical:
+
+```text
+explicit names ∩ tags ∩ affected
++ previous failures when --failed is present
+```
+
+An empty affected set is successful only when there were no relevant changes and the bytecode/source epoch is current. Otherwise it widens. `--until-fail` never reuses application/test static state silently: the daemon resets its test classloader or forks according to the configured isolation boundary and prints it.
+
+### 6.7 Diagnostics and explanations
+
+```text
+jails doctor [--scope <scope>] [--fix] [--pretend]
+jails why [<log>] [--last] [--evidence]
+jails why bean <type> [--path-to <consumer>]
+jails why migration <version>
+jails why query <name>
+jails routes [--conflicts] [--openapi]
+jails beans [--missing] [--cycles]
+jails explain <artifact|capability|operation-id>
+```
+
+`doctor --fix` does not run shell snippets printed by diagnostics. It translates only registered, typed fixes into ordinary canonical requests, previews them by default, and routes them through prepare/commit. Unknown fixes remain advice.
+
+### 6.8 Receipts and undo
+
+```text
+jails history [--limit <n>] [--output human|json]
+jails show <transaction-id> [--diff] [--why]
+jails undo <transaction-id> [--pretend] [--merge]
+jails recover [--status|--continue]
+```
+
+Example:
+
+```text
+$ jails undo 01K4... --pretend
+RESTORE  pom.xml                          exact after-image matches
+DELETE   .../OrderController.java         exact after-image matches
+MERGE    .../Order.java                   user edited after transaction
+KEEP     compose postgres container       external effect; not a file inverse
+REFUSED  migration V014 was applied to dev database
+  fix: generate a forward migration or run `jails migrate undo V014 --pretend`
+NO WRITE (--pretend)
+```
+
+### 6.9 Manifest and TUI
+
+```text
+jails app plan [<manifest>] [--diff]
+jails app apply [<manifest>] [--yes]
+jails app export [--from ledger|live] [--output toml|json]
+jails studio [<manifest>] [--record <session.json>]
+```
+
+`studio` may save an incomplete draft, but `app plan` validates the full model and is the only route to project changes. This preserves scriptability and makes every TUI workflow reproducible in CI.
+
+---
+
+## Section 7: Generated Java Code Blueprints
+
+These examples show the intended shape, not a new runtime API. All types are ordinary Java/Spring/Testcontainers/ArchUnit code. Package names follow ports and adapters; an actual generator uses the project's configured layout.
+
+### 7.1 Pure domain record with intrinsic validation
+
+```java
+package com.acme.billing.domain;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.Objects;
+import java.util.UUID;
+
+public record Order(
+        UUID id,
+        UUID userId,
+        BigDecimal total,
+        OrderStatus status,
+        Instant createdAt) {
+
+    public Order {
+        Objects.requireNonNull(id, "id");
+        Objects.requireNonNull(userId, "userId");
+        Objects.requireNonNull(total, "total");
+        Objects.requireNonNull(status, "status");
+        Objects.requireNonNull(createdAt, "createdAt");
+
+        if (total.signum() <= 0) {
+            throw new IllegalArgumentException("total must be positive");
+        }
+        if (total.scale() > 4) {
+            throw new IllegalArgumentException("total must have at most 4 decimal places");
+        }
+    }
+}
+```
+
+```java
+package com.acme.billing.domain;
+
+public enum OrderStatus {
+    PENDING,
+    PAID,
+    CANCELLED
+}
+```
+
+Why this shape:
+
+- domain invariants use only the JDK and execute on every construction path;
+- transport concerns such as missing JSON fields are not mixed into the domain;
+- a record is immutable and transparent to `javac`, debuggers, serializers, and tests;
+- `BigDecimal`, never `double`, backs money-like decimal values. If currency is part of the invariant, generate a separate `Money(BigDecimal amount, Currency currency)` record.
+
+### 7.2 Repository port and type-safe raw `JdbcClient` adapter with no reflective row mapping
+
+```java
+package com.acme.billing.application;
+
+import com.acme.billing.domain.Order;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+public interface OrderRepository {
+    Order save(Order order);
+    Optional<Order> findById(UUID id);
+    List<Order> findAll();
+    boolean deleteById(UUID id);
+}
+```
+
+```java
+package com.acme.billing.adapter.jdbc;
+
+import com.acme.billing.application.OrderRepository;
+import com.acme.billing.domain.Order;
+import com.acme.billing.domain.OrderStatus;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+import org.springframework.jdbc.core.RowMapper;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.stereotype.Repository;
+
+@Repository
+public final class JdbcOrderRepository implements OrderRepository {
+    private static final RowMapper<Order> ORDER_MAPPER = (result, row) -> new Order(
+            result.getObject("id", UUID.class),
+            result.getObject("user_id", UUID.class),
+            result.getBigDecimal("total"),
+            OrderStatus.valueOf(result.getString("status")),
+            result.getTimestamp("created_at").toInstant());
+
+    private final JdbcClient jdbc;
+
+    public JdbcOrderRepository(JdbcClient jdbc) {
+        this.jdbc = jdbc;
+    }
+
+    @Override
+    public Order save(Order order) {
+        int changed = jdbc.sql("""
+                        INSERT INTO orders (id, user_id, total, status, created_at)
+                        VALUES (:id, :userId, :total, :status, :createdAt)
+                        ON CONFLICT (id) DO UPDATE SET
+                            user_id = EXCLUDED.user_id,
+                            total = EXCLUDED.total,
+                            status = EXCLUDED.status,
+                            created_at = EXCLUDED.created_at
+                        """)
+                .param("id", order.id())
+                .param("userId", order.userId())
+                .param("total", order.total())
+                .param("status", order.status().name())
+                .param("createdAt", order.createdAt())
+                .update();
+        if (changed != 1) {
+            throw new IllegalStateException("saving order changed " + changed + " rows");
+        }
+        return order;
+    }
+
+    @Override
+    public Optional<Order> findById(UUID id) {
+        return jdbc.sql("""
+                        SELECT id, user_id, total, status, created_at
+                        FROM orders
+                        WHERE id = :id
+                        """)
+                .param("id", id)
+                .query(ORDER_MAPPER)
+                .optional();
+    }
+
+    @Override
+    public List<Order> findAll() {
+        return jdbc.sql("""
+                        SELECT id, user_id, total, status, created_at
+                        FROM orders
+                        ORDER BY created_at, id
+                        """)
+                .query(ORDER_MAPPER)
+                .list();
+    }
+
+    @Override
+    public boolean deleteById(UUID id) {
+        return jdbc.sql("DELETE FROM orders WHERE id = :id")
+                .param("id", id)
+                .update() == 1;
+    }
+}
+```
+
+Spring's `JdbcClient` provides a fluent facade over positional/named JDBC operations ([Spring JDBC reference](https://docs.spring.io/spring-framework/reference/data-access/jdbc/core.html)). The generated mapper remains an explicit lambda. `query(Order.class)` is intentionally avoided because its property/constructor mapping is reflective and hides column-to-component decisions.
+
+### 7.3 In-memory test fake implementing the same port
+
+```java
+package com.acme.billing.adapter.memory;
+
+import com.acme.billing.application.OrderRepository;
+import com.acme.billing.domain.Order;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+
+public final class InMemoryOrderRepository implements OrderRepository {
+    private static final Comparator<Order> STABLE_ORDER =
+            Comparator.comparing(Order::createdAt).thenComparing(Order::id);
+
+    private final ConcurrentMap<UUID, Order> orders = new ConcurrentHashMap<>();
+
+    @Override
+    public Order save(Order order) {
+        orders.put(order.id(), order);
+        return order;
+    }
+
+    @Override
+    public Optional<Order> findById(UUID id) {
+        return Optional.ofNullable(orders.get(id));
+    }
+
+    @Override
+    public List<Order> findAll() {
+        return orders.values().stream().sorted(STABLE_ORDER).toList();
+    }
+
+    @Override
+    public boolean deleteById(UUID id) {
+        return orders.remove(id) != null;
+    }
+
+    public void clear() {
+        orders.clear();
+    }
+}
+```
+
+The fake deliberately has no Spring stereotype. Tests or generated test configuration choose it explicitly. Its repository contract must match stable ordering and upsert/delete semantics, while documentation states that it does not emulate SQL isolation, locks, collation, or database constraint timing.
+
+### 7.4 REST controller, JSpecify nullness default, and RFC 9457 errors
+
+`package-info.java` makes non-null the package default:
+
+```java
+@org.jspecify.annotations.NullMarked
+package com.acme.billing.web;
+```
+
+Spring now documents JSpecify annotations as its null-safety model and recommends build-time checking with tools such as NullAway ([Spring null safety](https://docs.spring.io/spring-framework/reference/core/null-safety.html)).
+
+```java
+package com.acme.billing.web;
+
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.NotNull;
+import com.acme.billing.domain.Order;
+import com.acme.billing.service.OrderService;
+import java.math.BigDecimal;
+import java.net.URI;
+import java.util.UUID;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequestMapping("/orders")
+public final class OrderController {
+    private final OrderService orders;
+
+    public OrderController(OrderService orders) {
+        this.orders = orders;
+    }
+
+    @PostMapping
+    public ResponseEntity<OrderResponse> create(@Valid @RequestBody OrderRequest request) {
+        Order created = orders.create(request.userId(), request.total());
+        return ResponseEntity
+                .created(URI.create("/orders/" + created.id()))
+                .body(OrderResponse.from(created));
+    }
+
+    @GetMapping("/{id}")
+    public OrderResponse find(@PathVariable UUID id) {
+        return orders.find(id)
+                .map(OrderResponse::from)
+                .orElseThrow(() -> new OrderNotFoundException(id));
+    }
+}
+
+record OrderRequest(
+        @NotNull UUID userId,
+        @NotNull @DecimalMin(value = "0.0001") BigDecimal total) {}
+
+record OrderResponse(
+        UUID id,
+        UUID userId,
+        BigDecimal total,
+        String status) {
+
+    static OrderResponse from(Order order) {
+        return new OrderResponse(
+                order.id(), order.userId(), order.total(), order.status().name());
+    }
+}
+```
+
+```java
+package com.acme.billing.web;
+
+import java.net.URI;
+import java.util.UUID;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ProblemDetail;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+
+final class OrderNotFoundException extends RuntimeException {
+    private final UUID orderId;
+
+    OrderNotFoundException(UUID orderId) {
+        super("order " + orderId + " was not found");
+        this.orderId = orderId;
+    }
+
+    UUID orderId() {
+        return orderId;
+    }
+}
+
+@RestControllerAdvice
+public final class OrderProblemAdvice {
+    @ExceptionHandler(OrderNotFoundException.class)
+    ResponseEntity<ProblemDetail> notFound(OrderNotFoundException failure) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.NOT_FOUND, "The requested order does not exist.");
+        problem.setType(URI.create("https://api.acme.test/problems/order-not-found"));
+        problem.setTitle("Order not found");
+        problem.setProperty("orderId", failure.orderId());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(problem);
+    }
+}
+```
+
+Spring's `ProblemDetail` is the standard RFC 9457 representation and is rendered with `application/problem+json` ([Spring MVC error responses](https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-ann-rest-exceptions.html)). The generated detail is stable and does not expose an exception message or stack trace.
+
+### 7.5 Flyway migration
+
+```sql
+-- V014__create_orders.sql
+CREATE TYPE order_status AS ENUM ('PENDING', 'PAID', 'CANCELLED');
+
+CREATE TABLE orders (
+    id          uuid           PRIMARY KEY,
+    user_id     uuid           NOT NULL,
+    total       numeric(19, 4) NOT NULL,
+    status      order_status   NOT NULL DEFAULT 'PENDING',
+    created_at  timestamptz    NOT NULL,
+
+    CONSTRAINT fk_orders_user
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT,
+    CONSTRAINT ck_orders_total_positive
+        CHECK (total > 0)
+);
+
+CREATE INDEX ix_orders_status_created_at
+    ON orders (status, created_at, id);
+
+-- rollback (review before use):
+-- DROP TABLE orders;
+-- DROP TYPE order_status;
+```
+
+The migration spells out names and referential actions so later diagnostics can point to stable constraints. An enum migration needs separate additive evolution; removing or renaming values is never inferred as safe.
+
+### 7.6 Slice integration test with Testcontainers
+
+```java
+package com.acme.billing.adapter.jdbc;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import com.acme.billing.application.OrderRepository;
+import com.acme.billing.domain.Order;
+import com.acme.billing.domain.OrderStatus;
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.UUID;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.transaction.annotation.Transactional;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+
+@Testcontainers(disabledWithoutDocker = true)
+@SpringBootTest
+@Transactional
+final class JdbcOrderRepositoryIT {
+    @Container
+    @ServiceConnection
+    static final PostgreSQLContainer<?> POSTGRES =
+            new PostgreSQLContainer<>("postgres:17.6-alpine");
+
+    @Autowired
+    OrderRepository orders;
+
+    @Test
+    void saves_reads_and_deletes_an_order() {
+        Order order = new Order(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                new BigDecimal("19.9500"),
+                OrderStatus.PENDING,
+                Instant.parse("2026-08-25T10:15:30Z"));
+
+        orders.save(order);
+
+        assertThat(orders.findById(order.id())).contains(order);
+        assertThat(orders.findAll()).containsExactly(order);
+        assertThat(orders.deleteById(order.id())).isTrue();
+        assertThat(orders.findById(order.id())).isEmpty();
+    }
+}
+```
+
+In a real generated slice, a `User` fixture is inserted first to satisfy the foreign key. Flyway migrates the Testcontainers datasource through normal Spring Boot configuration. `@Transactional` rolls back each test; tests that intentionally cross threads or commit use an isolated schema/database instead of claiming transactional isolation they do not have.
+
+### 7.7 ArchUnit ports-and-adapters rules
+
+```java
+package com.acme.billing;
+
+import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
+import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.slices;
+
+import com.tngtech.archunit.junit.AnalyzeClasses;
+import com.tngtech.archunit.junit.ArchTest;
+import com.tngtech.archunit.lang.ArchRule;
+
+@AnalyzeClasses(packages = "com.acme")
+final class ArchitectureTest {
+    @ArchTest
+    static final ArchRule DOMAIN_HAS_NO_FRAMEWORK_DEPENDENCIES = noClasses()
+            .that().resideInAPackage("..domain..")
+            .should().dependOnClassesThat().resideInAnyPackage(
+                    "org.springframework..",
+                    "jakarta.persistence..",
+                    "..adapter..",
+                    "..web..");
+
+    @ArchTest
+    static final ArchRule APPLICATION_DOES_NOT_DEPEND_ON_ADAPTERS = noClasses()
+            .that().resideInAPackage("..application..")
+            .should().dependOnClassesThat().resideInAnyPackage(
+                    "..adapter..",
+                    "..web..");
+
+    @ArchTest
+    static final ArchRule ADAPTERS_ARE_ISOLATED = slices()
+            .matching("com.acme.billing.adapter.(*)..")
+            .should().notDependOnEachOther();
+
+    @ArchTest
+    static final ArchRule TOP_LEVEL_SLICES_ARE_ACYCLIC = slices()
+            .matching("com.acme.(*)..")
+            .should().beFreeOfCycles();
+}
+```
+
+This is intentionally executable documentation. The generator derives package patterns from the adopted/project layout rather than hard-coding `com.acme` or the directory names shown here.
+

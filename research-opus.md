@@ -115,9 +115,24 @@ not. And `report_degraded_shape` (`generate.rs:61`) returns early unless
 `project.build()` is `Build::Foreign`, so a Maven-without-Spring project gets
 no warning either — it is neither refused nor degraded nor reported.
 
-This is the exact failure Pillar 2 exists to prevent, in the tool's flagship
-command, on the projects `CLAUDE.md` says `add` is "most useful for". It is
-worth fixing before any idea in this report.
+**And the golden suite pins it as expected output.** `tests/common/scenarios.rs:151`
+has a `scaffold-plain` scenario against `Fixture::Plain`, and its snapshot
+`tests/golden/scaffold-plain/src/main/java/com/example/demo/web/NoteController.java`
+imports `org.springframework.http.ResponseEntity`,
+`org.springframework.web.bind.annotation.RestController` and six more — while
+`tests/golden/scaffold-plain/pom.xml` declares exactly four artifacts:
+`junit-jupiter`, `assertj-core`, `jakarta.validation-api` and
+`maven-failsafe-plugin`. No `spring-web`, no starter, no parent.
+
+So the coverage exists and is doing its job perfectly: it is a *byte* snapshot,
+and the bytes have not changed. What is missing is a tier-3 row — nothing in
+`SCENARIOS` hands a plain-project scaffold to real `javac`. `CLAUDE.md`'s own
+warning applies exactly: *"Don't let tier 2 masquerade as tier 3."*
+
+This is the failure Pillar 2 exists to prevent, in the tool's flagship command,
+on the population `CLAUDE.md` says `add` is "most useful for", with a green
+test asserting the broken bytes. It is worth fixing before any idea in this
+report.
 
 ---
 
@@ -487,7 +502,7 @@ every subsequent run with an unchanged (binary, migrations, statement) triple.
 
 ### 3.2 `jails migrate --lint` — Atlas's catalogue, which jails has one entry of
 
-**The hole.** `sql.rs:637–652` already refuses one dangerous migration by hand:
+**The hole.** `sql.rs:640` already refuses one dangerous migration by hand:
 
 ```
 required unique text field `{}` has no safe automatic backfill.
@@ -630,7 +645,7 @@ build claims it passed"* — is the same trap wearing a different hat.
 
 **Observed:** `springdoc-openapi` and `swagger-core` are both in `deps/`, and
 `grep -rl "springdoc\|openapi" crates/ templates/` returns exactly one file
-(`crates/jails-java/src/template.rs`, and that is an unrelated word match).
+(`crates/jails-java/src/template.rs:45`, and that is a comment citing `openapi-generator` as a naming precedent, not a code path).
 Nothing generates against either.
 
 **The mechanism, from utoipa / Huma / Fuego / Goa.** The unifying pattern across
@@ -994,7 +1009,7 @@ already implements the pattern and the row is recorded so it is not re-proposed.
 | **sqlc** (`internal/metadata/meta.go:60`) | `-- name: X :many` turns a `.sql` file into typed API | `g query-file`: `:one`/`:many`/`:exec`, `:name` params, types read by preparing against the scratch DB — no SQL parser | `jails-generate` + `jails-catalog` | Authoring ★★★ |
 | **sqlc** (`internal/analyzer/analyzer.go:74`) | Analysis is a cached action keyed on (config, schema, query) | `jails verify` caches per (provenance stamp, migrations, statement) in `jails-commit`'s existing CAS | `jails-commit` | Latency ★★ |
 | **sqlc** (`docs/howto/verify.md`) | Old queries checked against *new* schema | `jails verify --against <git-ref>`; git is the deployed record, so no cloud service | `jails-report` | Correctness ★★★ |
-| **Atlas** (`sql/sqlcheck/{destructive,datadepend,condrop,incompatible}`) | Migration linting split by *kind of wrong* | `doctor` (static half) + `migrate --lint` (data-dependent half); jails has 1 of ~8 rules today at `sql.rs:637` | `jails-report`, `jails-drive` | Correctness ★★★ |
+| **Atlas** (`sql/sqlcheck/{destructive,datadepend,condrop,incompatible}`) | Migration linting split by *kind of wrong* | `doctor` (static half) + `migrate --lint` (data-dependent half); jails has 1 of ~8 rules today at `sql.rs:640` | `jails-report`, `jails-drive` | Correctness ★★★ |
 | **Quarkus** (`DevServicesDatasourceProcessor.java:361`) | *Absence* of config starts a container; labels make it reusable | `jails run`/`test` inject a URL for a declared-but-unconfigured service; nothing written to the project | `jails-drive` + new `PostCommitEffect` | Latency ★★★ |
 | **Ecto** (`Ecto.Adapters.SQL.Sandbox`, shared mode) | Per-test transaction rolled back; shared connection for other threads | `add testkit` generates `SandboxDataSource` + `@JailsSandbox`; defeats Spring's `ThreadLocal` binding (`TransactionSynchronizationManager.java:77`) | `jails-generate` | Latency ★★★ |
 | **PostgREST** (`SchemaCache.hs`) | The catalog *is* the API definition | `jails pull` renders catalog → field-spec tokens → the ordinary `g scaffold` path | new `jails-catalog` | Authoring ★★★ |
@@ -1284,3 +1299,885 @@ A TUI over `.jails/app.toml`. Completion comes from `jails commands --json`, so
 it cannot drift from the binary. Writing goes through `app apply`, so it is one
 transition with the same reconciliation and the same `--pretend`. It is a view,
 not a format.
+
+---
+
+## Section 7: Generated Java code blueprints
+
+Every blueprint targets Java 25 (`pom::TARGET_RELEASE`), Spring Boot 4 /
+Framework 7, and was written against the checkouts in `deps/`, not from memory —
+`CLAUDE.md`'s standing rule, because the failure mode is silent: code written
+from memory compiles against the version you happened to have.
+
+Where a blueprint describes something jails already generates, it is shown as
+the *target shape*, with the delta from today called out.
+
+### 7.1 Domain record with validation rules
+
+Already generated today. Shown for completeness and because 7.2–7.3 refer to it.
+
+```java
+// src/main/java/com/example/shop/domain/Order.java
+package com.example.shop.domain;
+
+import java.time.Instant;
+import java.util.Objects;
+import java.util.Optional;
+
+/**
+ * An order, as the domain sees it.
+ *
+ * <p>Validation lives in the compact constructor because a record with an
+ * invalid state cannot be prevented anywhere else -- there is no setter to
+ * guard and no framework between the caller and the canonical constructor.
+ */
+public record Order(
+    Long id,
+    String customerId,
+    long totalMinor,
+    OrderStatus status,
+    Instant placedAt,
+    Optional<String> note) {
+
+  public Order {
+    Objects.requireNonNull(customerId, "customerId");
+    if (customerId.isBlank()) {
+      throw new IllegalArgumentException("customerId must not be blank");
+    }
+    if (totalMinor < 0) {
+      throw new IllegalArgumentException("totalMinor must not be negative");
+    }
+    Objects.requireNonNull(status, "status");
+    Objects.requireNonNull(placedAt, "placedAt");
+    // A null Optional is the one thing worse than a null value.
+    note = Objects.requireNonNullElse(note, Optional.empty());
+  }
+}
+```
+
+`package-info.java` carries `@NullMarked` — written from the write path, and
+only when `org.jspecify:jspecify` is actually a dependency, because annotating a
+package that cannot resolve `@NullMarked` hands the reader a compile error for a
+file they did not ask for.
+
+### 7.2 Type-safe raw JDBC repository
+
+Today's shape, with **one addition marked `NEW`**: the statement is a named
+constant so `ResourceKey::Query` has something to claim and `jails verify` has
+something to prepare.
+
+```java
+// src/main/java/com/example/shop/adapters/JdbcOrderRepository.java
+package com.example.shop.adapters;
+
+import com.example.shop.app.OrderRepository;
+import com.example.shop.domain.Order;
+import com.example.shop.domain.OrderStatus;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.time.Instant;
+import java.util.List;
+import java.util.Optional;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.stereotype.Repository;
+
+@Repository
+public final class JdbcOrderRepository implements OrderRepository {
+
+  // NEW: named, so the ledger can claim it and `jails verify` can prepare it.
+  // One column list produced this, the DDL, the insert and the row mapper --
+  // a hand-written pair drifts, and `amount` against `amount_minor` compiles.
+  static final String FIND_BY_STATUS =
+      """
+      select id, customer_id, total_minor, status, placed_at, note
+        from orders
+       where status = :status
+       order by placed_at desc
+      """;
+
+  private final JdbcClient jdbc;
+
+  JdbcOrderRepository(JdbcClient jdbc) {
+    this.jdbc = jdbc;
+  }
+
+  @Override
+  public List<Order> findByStatus(OrderStatus status) {
+    return jdbc.sql(FIND_BY_STATUS)
+        .param("status", status.name())
+        .query(JdbcOrderRepository::map)
+        .list();
+  }
+
+  private static Order map(ResultSet rows, int rowNum) throws SQLException {
+    return new Order(
+        rows.getLong("id"),
+        rows.getString("customer_id"),
+        rows.getLong("total_minor"),
+        OrderStatus.valueOf(rows.getString("status")),
+        rows.getTimestamp("placed_at").toInstant(),
+        Optional.ofNullable(rows.getString("note")));
+  }
+}
+```
+
+Note `@Repository` is on exactly one adapter. Two make two beans qualify for one
+injection point and the scaffold compiles and cannot start — the ambiguity
+`jails beans` exists to report. `repository_wiring` decides which one gets it,
+and without `spring-boot-starter-jdbc` the `JdbcClient` type does not exist at
+all, so the plain-`Connection` adapter is emitted instead.
+
+### 7.3 Query-file output (`g query-file`) — the sqlc translation
+
+Input, written by the reader:
+
+```sql
+-- src/main/resources/db/queries/invoice.sql
+
+-- name: findOverdue :many
+select i.id, i.customer_id, i.total_minor, i.due_at
+  from invoices i
+ where i.due_at < :cutoff
+   and i.paid_at is null
+ order by i.due_at;
+
+-- name: countUnpaid :one
+select count(*) from invoices where paid_at is null;
+
+-- name: markPaid :exec
+update invoices set paid_at = :paidAt where id = :id;
+```
+
+Generated port, in the app layer, so the domain never sees JDBC:
+
+```java
+// src/main/java/com/example/shop/app/InvoiceQueries.java
+package com.example.shop.app;
+
+import com.example.shop.domain.OverdueInvoice;
+import java.time.Instant;
+import java.util.List;
+
+/**
+ * Generated from {@code db/queries/invoice.sql}.
+ *
+ * <p>Do not edit: re-run {@code jails g query-file} after changing the SQL.
+ * The parameter names and result types were read by preparing each statement
+ * against a scratch database built from this project's own migrations, so a
+ * signature here cannot disagree with the schema it will meet.
+ */
+public interface InvoiceQueries {
+  List<OverdueInvoice> findOverdue(Instant cutoff);
+
+  long countUnpaid();
+
+  int markPaid(long id, Instant paidAt);
+}
+```
+
+The row record, one per distinct result shape:
+
+```java
+// src/main/java/com/example/shop/domain/OverdueInvoice.java
+package com.example.shop.domain;
+
+import java.time.Instant;
+
+/** The shape of {@code findOverdue}'s result. Generated; do not edit. */
+public record OverdueInvoice(long id, String customerId, long totalMinor, Instant dueAt) {}
+```
+
+The adapter:
+
+```java
+// src/main/java/com/example/shop/adapters/JdbcInvoiceQueries.java
+package com.example.shop.adapters;
+
+import com.example.shop.app.InvoiceQueries;
+import com.example.shop.domain.OverdueInvoice;
+import java.time.Instant;
+import java.sql.Timestamp;
+import java.util.List;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.stereotype.Repository;
+
+@Repository
+public final class JdbcInvoiceQueries implements InvoiceQueries {
+
+  static final String FIND_OVERDUE =
+      """
+      select i.id, i.customer_id, i.total_minor, i.due_at
+        from invoices i
+       where i.due_at < :cutoff
+         and i.paid_at is null
+       order by i.due_at
+      """;
+
+  private final JdbcClient jdbc;
+
+  JdbcInvoiceQueries(JdbcClient jdbc) {
+    this.jdbc = jdbc;
+  }
+
+  @Override
+  public List<OverdueInvoice> findOverdue(Instant cutoff) {
+    return jdbc.sql(FIND_OVERDUE)
+        .param("cutoff", Timestamp.from(cutoff))
+        .query(
+            (rows, rowNum) ->
+                new OverdueInvoice(
+                    rows.getLong("id"),
+                    rows.getString("customer_id"),
+                    rows.getLong("total_minor"),
+                    rows.getTimestamp("due_at").toInstant()))
+        .list();
+  }
+  // countUnpaid() and markPaid(...) omitted for brevity.
+}
+```
+
+**Why the `Timestamp.from(cutoff)` bakes in the receiver.** `sql.rs` already
+holds this rule for write expressions and it is worth restating here because the
+query-file generator will hit it on day one: gluing a receiver onto the front
+yields `cutoff.Timestamp.from(...)`, which reads fine and does not compile, and
+only the real-toolchain tier catches it.
+
+### 7.4 In-memory fake
+
+```java
+// src/main/java/com/example/shop/adapters/InMemoryOrderRepository.java
+package com.example.shop.adapters;
+
+import com.example.shop.app.OrderRepository;
+import com.example.shop.domain.Order;
+import com.example.shop.domain.OrderStatus;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
+
+/**
+ * The fake, not a mock: it behaves, so a test can assert on behaviour rather
+ * than on calls.
+ *
+ * <p>Deliberately <em>not</em> {@code @Repository} in a project with the JDBC
+ * starter. Two beans qualifying for one injection point is a context that
+ * compiles and cannot start -- run {@code jails beans} if it does.
+ */
+public final class InMemoryOrderRepository implements OrderRepository {
+
+  private final Map<Long, Order> rows = new ConcurrentHashMap<>();
+  private final AtomicLong ids = new AtomicLong();
+
+  @Override
+  public List<Order> findByStatus(OrderStatus status) {
+    return rows.values().stream()
+        .filter(order -> order.status() == status)
+        .sorted(Comparator.comparing(Order::placedAt).reversed())
+        .toList();
+  }
+}
+```
+
+### 7.5 REST controller with JSpecify and RFC 9457 problem details
+
+```java
+// src/main/java/com/example/shop/web/OrderController.java
+package com.example.shop.web;
+
+import com.example.shop.domain.OrderStatus;
+import com.example.shop.service.OrderService;
+import java.net.URI;
+import java.util.List;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ProblemDetail;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
+import jakarta.validation.Valid;
+
+@RestController
+final class OrderController {
+
+  private final OrderService orders;
+
+  OrderController(OrderService orders) {
+    this.orders = orders;
+  }
+
+  @GetMapping("/orders")
+  List<OrderResponse> byStatus(@RequestParam OrderStatus status) {
+    return orders.findByStatus(status).stream().map(OrderResponse::of).toList();
+  }
+
+  @PostMapping("/orders")
+  ResponseEntity<OrderResponse> create(@Valid @RequestBody OrderRequest request) {
+    var created = orders.create(request.toCommand());
+    URI location =
+        ServletUriComponentsBuilder.fromCurrentRequest()
+            .path("/{id}")
+            .buildAndExpand(created.id())
+            .toUri();
+    return ResponseEntity.created(location).body(OrderResponse.of(created));
+  }
+
+  /**
+   * A duplicate is a 409, not a 500.
+   *
+   * <p>5xx is what alerting pages on and what clients retry, so a duplicate
+   * became an incident and then a retry storm. {@code DuplicateKeyException}
+   * is Spring's, from {@code spring-tx}, which arrives with the JDBC starter --
+   * this arm is rendered only when that starter is present.
+   */
+  @ExceptionHandler(org.springframework.dao.DuplicateKeyException.class)
+  ProblemDetail duplicate(org.springframework.dao.DuplicateKeyException cause) {
+    var problem = ProblemDetail.forStatus(HttpStatus.CONFLICT);
+    problem.setType(URI.create("https://example.com/problems/duplicate-order"));
+    problem.setTitle("Order already exists");
+    problem.setDetail("An order with that unique value is already recorded.");
+    return problem;
+  }
+}
+```
+
+### 7.6 The transactional test sandbox — `add testkit`'s new half
+
+This is the one genuinely new piece of Java in this report. It is ~70 lines, has
+no reflection of its own, and is built on two Spring classes verified in
+`deps/spring-framework`: `DelegatingDataSource`
+(`spring-jdbc/.../DelegatingDataSource.java:61`) and
+`SingleConnectionDataSource(Connection, boolean suppressClose)`
+(`spring-jdbc/.../SingleConnectionDataSource.java:122`).
+
+```java
+// src/test/java/com/example/shop/testkit/SandboxDataSource.java
+package com.example.shop.testkit;
+
+import java.sql.Connection;
+import java.sql.SQLException;
+import javax.sql.DataSource;
+import org.springframework.jdbc.datasource.DelegatingDataSource;
+import org.springframework.jdbc.datasource.SingleConnectionDataSource;
+
+/**
+ * Hands every thread the same physical connection for the duration of one test.
+ *
+ * <p>Spring's {@code @Transactional} test support rolls back, but it binds the
+ * transaction to a {@link ThreadLocal} (see
+ * {@code TransactionSynchronizationManager}), so a request served on Tomcat's
+ * thread during a {@code @SpringBootTest(webEnvironment = RANDOM_PORT)} test
+ * gets a <em>different</em> connection and cannot see the test's uncommitted
+ * rows. That is why integration tests in this ecosystem truncate tables.
+ *
+ * <p>This is Ecto's SQL sandbox in "shared" mode: one connection, pinned, with
+ * {@code close()} suppressed, rolled back when the test ends. Concurrent tests
+ * each pin their own connection, so they may run in parallel against one
+ * database with no truncation and no ordering constraints.
+ *
+ * <p><strong>The trap.</strong> A test that asserts on <em>committed</em> state
+ * -- an outbox worker polling from another thread, anything using
+ * {@code REQUIRES_NEW} -- will not see what it expects, because nothing is
+ * committed. That is why the sandbox is opt-in per class via
+ * {@code @JailsSandbox} and never installed globally.
+ */
+public final class SandboxDataSource extends DelegatingDataSource {
+
+  // Deliberately not a ThreadLocal: the whole point is that every thread,
+  // including the server's, gets the pinned connection.
+  private volatile SingleConnectionDataSource pinned;
+
+  public SandboxDataSource(DataSource target) {
+    super(target);
+  }
+
+  /** Open a connection, start a transaction on it, and pin it. */
+  void begin() throws SQLException {
+    Connection connection = requireTarget().getConnection();
+    connection.setAutoCommit(false);
+    this.pinned = new SingleConnectionDataSource(connection, true);
+  }
+
+  /** Roll the pinned transaction back and release the connection. */
+  void rollback() throws SQLException {
+    SingleConnectionDataSource sandbox = this.pinned;
+    this.pinned = null;
+    if (sandbox == null) {
+      return;
+    }
+    try (Connection connection = sandbox.getConnection()) {
+      connection.rollback();
+    } finally {
+      sandbox.destroy();
+    }
+  }
+
+  @Override
+  public Connection getConnection() throws SQLException {
+    SingleConnectionDataSource sandbox = this.pinned;
+    return sandbox != null ? sandbox.getConnection() : requireTarget().getConnection();
+  }
+
+  @Override
+  public Connection getConnection(String username, String password) throws SQLException {
+    SingleConnectionDataSource sandbox = this.pinned;
+    return sandbox != null ? sandbox.getConnection() : requireTarget().getConnection(username, password);
+  }
+
+  private DataSource requireTarget() {
+    DataSource target = getTargetDataSource();
+    if (target == null) {
+      throw new IllegalStateException("SandboxDataSource has no target DataSource");
+    }
+    return target;
+  }
+}
+```
+
+```java
+// src/test/java/com/example/shop/testkit/SandboxExtension.java
+package com.example.shop.testkit;
+
+import org.junit.jupiter.api.extension.AfterEachCallback;
+import org.junit.jupiter.api.extension.BeforeEachCallback;
+import org.junit.jupiter.api.extension.ExtensionContext;
+import org.springframework.test.context.junit.jupiter.SpringExtension;
+
+/** Begins and rolls back the sandbox around every test method. */
+public final class SandboxExtension implements BeforeEachCallback, AfterEachCallback {
+
+  @Override
+  public void beforeEach(ExtensionContext context) throws Exception {
+    sandbox(context).begin();
+  }
+
+  @Override
+  public void afterEach(ExtensionContext context) throws Exception {
+    sandbox(context).rollback();
+  }
+
+  private static SandboxDataSource sandbox(ExtensionContext context) {
+    return SpringExtension.getApplicationContext(context).getBean(SandboxDataSource.class);
+  }
+}
+```
+
+Used as:
+
+```java
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@Import(TestcontainersConfig.class)
+@JailsSandbox            // @ExtendWith(SandboxExtension.class) + the @Primary DataSource
+final class OrderApiIT {
+  // Every test starts from the same database state. Nothing is truncated.
+  // These may run in parallel.
+}
+```
+
+### 7.7 The ArchUnit rule, rendered from `Config::layers()`
+
+```java
+// src/test/java/com/example/shop/ArchitectureTest.java
+package com.example.shop;
+
+import static com.tngtech.archunit.library.Architectures.onionArchitecture;
+
+import com.tngtech.archunit.core.importer.ImportOption;
+import com.tngtech.archunit.junit.AnalyzeClasses;
+import com.tngtech.archunit.junit.ArchTest;
+import com.tngtech.archunit.lang.ArchRule;
+
+/**
+ * Generated by {@code jails add archunit} from this project's own layer names.
+ *
+ * <p>The package strings below come from {@code jails.toml}'s {@code [layout]}
+ * table, which is why this file is regenerated by {@code jails sync} rather
+ * than maintained by hand: a rule whose packages have been renamed out from
+ * under it matches nothing and <em>passes</em>, which is the worst failure a
+ * gate can have.
+ */
+@AnalyzeClasses(
+    packages = "com.example.shop",
+    importOptions = ImportOption.DoNotIncludeTests.class)
+final class ArchitectureTest {
+
+  @ArchTest
+  static final ArchRule ports_and_adapters_are_respected =
+      onionArchitecture()
+          .domainModels("..domain..")
+          .domainServices("..service..")
+          .applicationServices("..app..")
+          .adapter("web", "..web..")
+          .adapter("api", "..api..")
+          .adapter("persistence", "..adapters..")
+          .adapter("messaging", "..messaging..")
+          .adapter("cli", "..cli..")
+          .adapter("clients", "..clients..")
+          .adapter("jobs", "..jobs..");
+
+  /** The domain owes nothing to any framework. That is the whole scope bar. */
+  @ArchTest
+  static final ArchRule the_domain_is_framework_free =
+      com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses()
+          .that()
+          .resideInAPackage("..domain..")
+          .should()
+          .dependOnClassesThat()
+          .resideInAnyPackage("org.springframework..", "jakarta..", "tools.jackson..");
+}
+```
+
+### 7.8 Migration and the slice integration test
+
+The migration, as `sql::create_table` already renders it, plus what
+`--lint` (Section 3.2) would say about it:
+
+```sql
+-- src/main/resources/db/migration/V001__create_orders.sql
+create table orders (
+  id            bigserial primary key,
+  customer_id   text                     not null,
+  total_minor   bigint                   not null check (total_minor >= 0),
+  status        text                     not null,
+  placed_at     timestamp with time zone not null,
+  note          text
+);
+
+create index orders_placed_at_idx on orders (placed_at);
+```
+
+`timestamptz` is spelled out because that is the *one* name
+`Dialect::column_type` rewrites: it exists in H2 only inside its PostgreSQL wire
+protocol server and fails to parse in a `create table`, confirmed against a real
+H2 2.4.240 both ways.
+
+The integration test, with the container as a bean:
+
+```java
+// src/test/java/com/example/shop/adapters/JdbcOrderRepositoryIT.java
+package com.example.shop.adapters;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import com.example.shop.domain.Order;
+import com.example.shop.domain.OrderStatus;
+import com.example.shop.testkit.TestcontainersConfig;
+import java.time.Instant;
+import java.util.Optional;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
+
+/**
+ * {@code *IT}, so Failsafe runs it -- Surefire runs {@code *Test} and would
+ * not. {@code jails} supplies the Failsafe plugin from the write path for
+ * exactly that reason: an integration test nothing executes is a green build
+ * that proves nothing.
+ */
+@SpringBootTest
+@Import(TestcontainersConfig.class)
+final class JdbcOrderRepositoryIT {
+
+  @Autowired JdbcOrderRepository repository;
+
+  @Test
+  void finds_orders_by_status() {
+    repository.save(
+        new Order(null, "cust-1", 4_200L, OrderStatus.PENDING, Instant.now(), Optional.empty()));
+
+    assertThat(repository.findByStatus(OrderStatus.PENDING))
+        .singleElement()
+        .satisfies(order -> assertThat(order.customerId()).isEqualTo("cust-1"));
+  }
+}
+```
+
+```java
+// src/test/java/com/example/shop/testkit/TestcontainersConfig.java
+package com.example.shop.testkit;
+
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.context.annotation.Bean;
+import org.testcontainers.containers.PostgreSQLContainer;
+
+/**
+ * A {@code @Bean}, not a {@code @Testcontainers}/{@code @Container} static
+ * field: Spring caches the context past the container's JUnit-managed
+ * lifetime, so later tests would run against a stopped container. Nothing
+ * calls {@code start()} -- {@code spring-boot-testcontainers} registers the
+ * lifecycle initializer from its own {@code spring.factories}.
+ */
+@TestConfiguration(proxyBeanMethods = false)
+public class TestcontainersConfig {
+
+  @Bean
+  @ServiceConnection
+  PostgreSQLContainer<?> postgres() {
+    return new PostgreSQLContainer<>("postgres:16-alpine");
+  }
+}
+```
+
+---
+
+## Section 8: Implementation roadmap and crate-by-crate plan
+
+Sequenced so each step leaves `cargo build --workspace && cargo test --workspace`
+green, and so nothing depends on something later in the list. Sizes are
+S (a day), M (a week), L (longer).
+
+### Step 0 — Fix the two live defects (S, do first)
+
+Neither is in `pending.md` and both ship today.
+
+1. Delete `eprintln!("PROBE …")` at
+   `crates/jails-generate/src/generate/scaffold.rs:60`. Consider a
+   `tests/architecture/` gate at zero for `eprintln!`/`println!`/`dbg!` outside
+   the reporting modules — this repository's answer to "a rule every call site
+   has to remember is a rule that decays" is a ratchet, and there is a precedent
+   in the `# jails:` literal gate.
+2. Decide what `g scaffold` does in a Maven-without-Spring project. Three
+   honest options, in order of preference:
+   - **Emit `g handler`'s framework-free shape instead of the Spring
+     controller.** Best: `generate/web.rs` already generates an `HttpHandler` with an
+     `ApiError` envelope and a loopback-socket test, and the repository half
+     already branches on `repository_wiring`. The controller is the only half
+     that does not.
+   - Add `require_spring_project(project, "scaffold")` and refuse. Cheap,
+     honest, and gives up the plain-Java scaffold entirely.
+   - Extend `report_degraded_shape` to fire on `Flavor::Plain`, not only on
+     `Build::Foreign`, and name the starter. Weakest — it still writes code
+     that does not compile, it just says so.
+
+   Whichever is chosen, the `scaffold-plain` golden
+   (`tests/common/scenarios.rs:151`) has to be regenerated — it currently pins
+   the broken bytes — and a **tier-3** plain-project scaffold test has to exist,
+   gated on `real_java_supports_target_release()` like its Spring siblings. The
+   golden was never the gap; the missing compile was.
+
+### Step 1 — `--pretend --diff` (S)
+
+`crates/jails-prepare` only. Both sides of every diff are already in memory at
+`pipeline/diff.rs:50`; `report::render` (`report.rs:262`) is the only thing that
+needs to grow. Three renderings (create, replace, three-way) per Section 6.6.
+
+Ship this first among the features because it makes every later step's output
+inspectable, and because it is the prerequisite for `pending.md` §11's
+conflicted-merge resume.
+
+### Step 2 — `ResourceKey::SchemaObject` and `ResourceKey::Query` (M)
+
+`crates/jails-protocol/src/vocabulary/resource.rs`. Two new variants, tags 10
+and 11. Everything else in this report depends on them, and nothing else in this
+report is worth starting first.
+
+```rust
+/// One table or column jails declared, so a schema is a claim and not
+/// merely a side effect of a file.
+SchemaObject(SchemaObjectKey),   // tag 10
+/// One named statement jails generated, so `verify` has a list and
+/// `destroy` can retire a query the .sql file no longer names.
+Query { file: ProjectPath, name: QueryName },   // tag 11
+```
+
+The work is mostly in `jails-prepare`: `desire`, `reconcile` and `projection`
+each need an arm, and `projection.rs`'s "two owners wanting different values for
+one resource is refused" rule then does the interesting thing for free — two
+entities declaring the same column is a collision the reader sees rather than a
+last-writer-wins.
+
+Encode both through the existing `Codec` trait (`pending.md` §6.1), and add a
+`tests/golden` scenario so the ledger bytes are pinned.
+
+### Step 3 — `add archunit` (S)
+
+`crates/jails-generate`, one new capability, one template
+(`templates/spring/architecture_test_java.java`) plus a plain-project variant, a
+`Scenario` row in `tests/common/scenarios.rs` (which
+`every_kind_and_capability_has_a_golden_scenario` will demand anyway), and a
+pinned `archunit-junit5` version because no BOM manages it. Independent of
+everything else — good work to run in parallel.
+
+### Step 4 — `jails migrate --lint`, static half (S)
+
+`crates/jails-report`. Four analyzers, `why.rs`'s table shape, each carrying a
+`fix:` line. The static three (destructive, condrop, incompatible) go in
+`doctor` as well; the data-dependent one waits for Step 6's scratch database.
+
+Generalises `sql.rs:640`'s existing hand-written refusal rather than replacing it.
+
+### Step 5 — new crate `jails-catalog` (M)
+
+Sits between `jails-state` and `jails-project` in `LAYERS`
+(`tests/architecture/rules.rs` is the authority, and the table must be updated in
+the same change). Its whole job: **read a database and classify what is there**,
+which is `jails-state`'s job description applied to a different substrate.
+
+- Shells out to `psql --csv --tuples-only` / `sqlite3 -json` through
+  `jails-support`'s `process` executor. **No new third-party crate.** The
+  absence of `psql` is a refusal jails explains, not a cost every user pays.
+- Output type is `Vec<FieldSpec>` plus a table name — deliberately not a schema
+  model, because everything downstream is already a pure function of those.
+- An unmappable column is reported by name and type, never dropped.
+
+Gate it with a `tests/architecture/` rule that this crate contains no `pg_` SQL
+outside one module, the same way `codemod.rs` owns `# jails:`.
+
+### Step 6 — `jails verify` (M)
+
+`crates/jails-report`, on top of Steps 2 and 5.
+
+1. `migrate.rs`'s scratch-database pattern, hoisted to something both `verify`
+   and `migrate --check` call.
+2. Prepare each `ResourceKey::Query`.
+3. Cache on the sqlc model: digest = (provenance stamp from
+   `observe/provenance.rs`, ordered migration bytes, statement bytes), stored in
+   `jails-commit`'s existing CAS. **Cache only when the schema came from jails'
+   own migration files**, never from a live connection — sqlc's
+   `if !c.db.Managed` rule, and for the same reason.
+4. `--against <git-ref>` reads migrations from git, which needs no new
+   dependency (`git show <ref>:<path>` through the process executor).
+
+Then Step 4's data-dependent analyzer lands on the same scratch database.
+
+### Step 7 — `jails pull` (M)
+
+`crates/jails-engine` routes it; `jails-catalog` reads; the existing
+`g scaffold` planner does the rest. The four rules in Section 4.2 are the spec.
+The `--baseline` question (a pulled table must not get a `create table`
+migration Flyway will try to run) is the one that must be decided before the
+first byte is written, not after.
+
+### Step 8 — Dev services (M)
+
+`crates/jails-prepare` gets `PostCommitEffect::DevServiceReconcile` (the second
+variant beside `ComposeReconcile`, so the decision stays in prepare);
+`crates/jails-drive` applies it. Quarkus's three rules: explicit configuration
+always wins, containers are located by label rather than counted, and it says so
+every time.
+
+Reuse `doctor`'s existing engine probes — bare `docker info` and
+`docker ps --format '{{.Names}}'` — because this machine's `docker` is podman's
+shim and the Docker-specific spellings exit 125.
+
+### Step 9 — The test sandbox (M)
+
+`crates/jails-generate`, extending `add testkit`: `SandboxDataSource`,
+`SandboxExtension`, `@JailsSandbox`, and a `@Primary` `DataSource` in the test
+configuration. Opt-in per class, never global, with the trap named in the
+generated Javadoc.
+
+**Measure it against `pending.md` §9's baseline before and after**, using §9's
+own reproduction procedure (warm, second invocation, toolchain permit limit
+recorded). If it does not move the 38.54 s warm CLI figure, that is a result
+worth recording in `pending.md` rather than a reason to keep it.
+
+### Step 10 — `jails schema diff` (M) and `g seed` (S)
+
+`SchemaOp` in `jails-protocol`, exhaustively matched by both dialect renderers,
+so adding an operation is a compile error until both render it — `gradle.rs`'s
+`BuildFeature` discipline. `g seed` is small and independent and can land any
+time after Step 2.
+
+### Step 11 — `g query-file` (L)
+
+The largest item, and it should be last among the schema work because it depends
+on Steps 2, 5 and 6 all being real. Needs `ResourceKey::Query` for ownership,
+`jails-catalog` for the prepared-statement metadata, and `verify` for the
+guarantee that makes it worth having.
+
+### Step 12 — `jailsd` (L) and `jails contract` (M), reassessed
+
+Deliberately last and deliberately conditional. If Step 9's sandbox removes the
+Failsafe tail, `jailsd`'s remaining value is a fraction of what it looks like
+today, and this repository's rule is to re-measure rather than transcribe.
+`jails contract` is independent and can be pulled forward if an API consumer
+appears.
+
+### What this does *not* touch
+
+`pending.md` §2's proof-application portfolio, §2.4's tier decision, §9's
+Failsafe tail (except as Step 9's measurement), §11's hosted CI, and §11's
+conflicted-merge resume. Those are the existing plan and this report does not
+reorder them — with one exception worth stating plainly: **Step 1 (`--diff`)
+should land before the conflicted-merge resume**, because a reader cannot be
+asked to resolve a conflict they were never shown.
+
+---
+
+## Appendix A: Repositories consulted
+
+**Already in `deps/` (112 before this work).** Used directly, with the files
+cited above: `sqlc`, `quarkus`, `spring-framework`, `spring-boot`, `postgrest`,
+`django`, `loco`, `jhipster`, `encore`, `templ`, `utoipa`, `huma`, `fuego`,
+`goravel`, `rails`, `laravel`, `phoenix`, `wasp`, `pocketbase`, `supabase`,
+`graphql-engine`, `directus`, `ent`, `sqlx`, `axum`, `bun`, `adonis`, `leptos`,
+`dioxus`, `jetzig`, `zap`, `ziex`, `http.zig`, `testcontainers-java`,
+`springdoc-openapi`, `swagger-core`, `h2database`, `pgjdbc`.
+
+**Cloned during this research (blobless, into the gitignored `deps/`).** Six,
+bringing the tree to 118:
+
+| dir | upstream | why |
+|---|---|---|
+| `ecto` | `elixir-ecto/ecto` | the SQL sandbox concept (its implementation is in `ecto_sql`, a separate repo) |
+| `alembic` | `sqlalchemy/alembic` | per-concern comparator/renderer split |
+| `archunit` | `TNG/ArchUnit` | `Architectures` API for the generated fitness gate |
+| `atlas` | `ariga/atlas` | `sql/sqlcheck` — the migration lint catalogue |
+| `prisma` | `prisma/prisma` | schema-as-truth and its introspection engine |
+| `goose` | `pressly/goose` | embedded migrations, for comparison with Flyway |
+
+Proposed rows for `deps.tsv`, following its `<dir>\t<owner/repo>` format — not
+added, because that file is tracked and this was a research task:
+
+```
+ecto	elixir-ecto/ecto
+alembic	sqlalchemy/alembic
+archunit	TNG/ArchUnit
+atlas	ariga/atlas
+prisma	prisma/prisma
+goose	pressly/goose
+```
+
+`ecto_sql` (`elixir-ecto/ecto_sql`) should be added too if Step 9 proceeds; the
+sandbox implementation this report describes lives there, not in `ecto`.
+
+Repositories from the prompt's catalogue **not** cloned, with the reason: the
+UI-layer projects (`turbo`, `livewire`, `phoenix_live_view`, `htmx`, `next.js`,
+`reflex`, `cedar`) generate a view layer jails does not have and the survey
+found no transferable mechanism; `sinatra`, `roda` and `kamal` cover routing
+trees and deployment, both outside jails' scope bar; `jooq`, `micronaut`,
+`sea-orm` and `diesel` were evaluated from their documented approach and land in
+Section 5.3's rejected list (generated DSL surface, annotation processors,
+runtime jars), so a checkout would not change the verdict.
+
+## Appendix B: The measurements in this report
+
+All taken 2026-08-25 on this machine, dependency-warm, against `main` at
+`9e5f7e7` with the installed `~/.cargo/bin/jails`.
+
+| what | how | result |
+|---|---|---|
+| `jails commands --json` | `time`, warm | 41 ms |
+| `jails new-cli demo --no-git` | `time`, warm | 54 ms |
+| `g scaffold` (2 fields, 17 files) `--pretend` | `time` | 58 ms |
+| same, applied | `/usr/bin/time -f %e` | 130 ms |
+| `mvn -q test` on that project | `time` | 2.55 s (compile failure) |
+| generator kinds / capabilities / subcommands | `jails commands --json` | 36 / 25 / 41 |
+| golden scenarios | `ls tests/golden \| wc -l` | 45 |
+| Java templates | `find templates -name '*.java' \| wc -l` | 126 (101 under `spring/`) |
+| workspace Rust | per-crate `wc -l` over `src` | 75,499 lines, 13 crates |
+| `deps/` checkouts | `ls deps \| wc -l` | 112 → 118 |
+
+Inherited from `pending.md` §9 and `CLAUDE.md`, **not re-measured here**: the
+59.60 s full-suite figure, the 38.54 s warm CLI figure, `testd`'s 0.06–0.10 s
+against `--fast`'s 0.62 s, and the 464 ms cold / 20 ms warm first-JUnit-session
+constant. Anything in this report that leans on those says so at the point of
+use.
