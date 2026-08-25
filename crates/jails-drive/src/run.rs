@@ -1,4 +1,3 @@
-use crate::compose;
 use crate::generate::find_project_root;
 use jails_support::Result;
 use std::fs;
@@ -42,6 +41,7 @@ fn either_root(command: &str) -> Result<(PathBuf, crate::build::Build)> {
     Ok((root, build))
 }
 
+mod application;
 mod filter;
 mod fingerprint;
 mod gradlew;
@@ -49,6 +49,7 @@ mod isolation;
 mod test_execution;
 mod test_plan;
 mod watch;
+pub use application::{RunCompile, RunLauncher, RunOptions, RunServices};
 use filter::*;
 
 /// Run a command with our stdio, failing on a non-zero exit.
@@ -614,10 +615,9 @@ pub fn gradle(args: &[String], debug: bool) -> Result<()> {
 /// running JVM -- jails never kills/restarts the app process, just keeps
 /// target/classes fresh. Without devtools this recompiles for nothing, so
 /// that's checked upfront.
-pub fn watch(debug: bool) -> Result<()> {
+pub(super) fn build_tool_watch(debug: bool) -> Result<()> {
     let (root, build) = either_root("watch")?;
     if build == crate::build::Build::Gradle {
-        compose::up(&root, &[], debug);
         // Gradle's own continuous mode rather than devtools: `--continuous`
         // re-runs the task when an input changes, which is the same loop from
         // the reader's side and needs nothing added to the build. devtools is
@@ -626,7 +626,6 @@ pub fn watch(debug: bool) -> Result<()> {
         return gradlew::tasks(&root, &["--continuous", "bootRun"], debug);
     }
     let root = maven_root("watch")?;
-    compose::up(&root, &[], debug);
     let pom = fs::read_to_string(root.join("pom.xml"))
         .map_err(|e| format!("failed to read pom.xml: {e}"))?;
     if !pom.contains("org.springframework.boot") {
@@ -699,10 +698,13 @@ pub fn watch(debug: bool) -> Result<()> {
 /// `args` is everything after `--`, forwarded verbatim to the program. A tool
 /// that scaffolds CLI projects has to be able to *run* one with arguments, or
 /// the edit loop drops out to raw `mvn` the moment the program takes input.
-pub fn run(no_build: bool, args: &[String], debug: bool) -> Result<()> {
+pub fn run(options: RunOptions, args: &[String], debug: bool) -> Result<()> {
+    application::run(options, args, debug)
+}
+
+pub(super) fn build_tool_run(no_build: bool, args: &[String], debug: bool) -> Result<()> {
     let (root, build) = either_root("run")?;
     if build == crate::build::Build::Gradle {
-        compose::up(&root, &[], debug);
         let mut tasks = vec!["bootRun".to_string()];
         if !args.is_empty() {
             // The Boot Gradle plugin forks a JVM, so argv reaches the
@@ -715,7 +717,6 @@ pub fn run(no_build: bool, args: &[String], debug: bool) -> Result<()> {
         return gradlew::tasks(&root, &borrowed, debug);
     }
     let root = maven_root("run")?;
-    compose::up(&root, &[], debug);
     let pom = fs::read_to_string(root.join("pom.xml"))
         .map_err(|e| format!("failed to read pom.xml: {e}"))?;
 

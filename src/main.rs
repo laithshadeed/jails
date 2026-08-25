@@ -518,15 +518,41 @@ fn main() -> std::process::ExitCode {
         Command::Gradle { args } => run::gradle(&args, debug),
         Command::Run {
             no_build,
+            launcher,
+            compile,
+            services,
+            profiles,
             watch,
             args,
-        } => {
-            if watch {
-                run::watch(debug)
-            } else {
-                run::run(no_build, &args, debug)
-            }
-        }
+        } => run::run(
+            run::RunOptions {
+                launcher: match launcher {
+                    cli::RunLauncherArg::Auto => run::RunLauncher::Auto,
+                    cli::RunLauncherArg::Classpath => run::RunLauncher::Classpath,
+                    cli::RunLauncherArg::BuildTool => run::RunLauncher::BuildTool,
+                    cli::RunLauncherArg::Jar => run::RunLauncher::Jar,
+                },
+                compile: if no_build {
+                    run::RunCompile::None
+                } else {
+                    match compile {
+                        cli::RunCompileArg::Auto => run::RunCompile::Auto,
+                        cli::RunCompileArg::Ide => run::RunCompile::Ide,
+                        cli::RunCompileArg::Build => run::RunCompile::Build,
+                        cli::RunCompileArg::None => run::RunCompile::None,
+                    }
+                },
+                services: match services {
+                    cli::RunServicesArg::Existing => run::RunServices::Existing,
+                    cli::RunServicesArg::Start => run::RunServices::Start,
+                    cli::RunServicesArg::None => run::RunServices::None,
+                },
+                profiles,
+                watch,
+            },
+            &args,
+            debug,
+        ),
         Command::Setup {} => doctor::setup(pretend),
         Command::Explain { kind } => explain::explain(kind),
         Command::Commands { json } => commands::commands(Cli::command(), json),

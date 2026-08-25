@@ -463,10 +463,15 @@ fn check_command_invokes_mvn_clean_verify() {
 }
 
 #[test]
-fn run_command_uses_spring_boot_run_for_spring_projects() {
+fn build_tool_launcher_uses_spring_boot_run_for_spring_projects() {
     let root = temp_dir("mock-run-spring");
     let pkg_dir = root.join("src/main/java/com/example/demo");
     fs::create_dir_all(&pkg_dir).unwrap();
+    fs::write(
+        pkg_dir.join("App.java"),
+        "package com.example.demo;\npublic class App { public static void main(String[] args) {} }\n",
+    )
+    .unwrap();
     fs::write(
         root.join("pom.xml"),
         "<project>org.springframework.boot</project>",
@@ -477,7 +482,7 @@ fn run_command_uses_spring_boot_run_for_spring_projects() {
     write_fake_maven(&fake_dir, &["mvn"], &log);
 
     let status = jails_cmd(&root, Some(&fake_dir))
-        .arg("run")
+        .args(["run", "--launcher", "build-tool"])
         .status()
         .unwrap();
     assert!(status.success());
@@ -485,10 +490,15 @@ fn run_command_uses_spring_boot_run_for_spring_projects() {
 }
 
 #[test]
-fn run_starts_compose_services_when_compose_yaml_exists() {
+fn run_starts_compose_services_only_when_explicitly_requested() {
     let root = temp_dir("mock-run-compose");
     let pkg_dir = root.join("src/main/java/com/example/demo");
     fs::create_dir_all(&pkg_dir).unwrap();
+    fs::write(
+        pkg_dir.join("App.java"),
+        "package com.example.demo;\npublic class App { public static void main(String[] args) {} }\n",
+    )
+    .unwrap();
     fs::write(
         root.join("pom.xml"),
         "<project>org.springframework.boot</project>",
@@ -504,7 +514,7 @@ fn run_starts_compose_services_when_compose_yaml_exists() {
     write_fake_maven(&fake_dir, &["docker", "mvn"], &log);
 
     let status = jails_cmd(&root, Some(&fake_dir))
-        .arg("run")
+        .args(["run", "--launcher", "build-tool", "--services", "start"])
         .status()
         .unwrap();
     assert!(status.success());
@@ -749,7 +759,7 @@ fn run_command_compiles_before_attempting_a_plain_main_class() {
 }
 
 #[test]
-fn run_no_build_skips_mvn_and_runs_an_existing_jar_for_spring_projects() {
+fn run_no_build_refuses_an_unproven_jar_instead_of_running_whatever_exists() {
     let root = temp_dir("no-build-spring");
     fs::create_dir_all(root.join("target")).unwrap();
     fs::write(
@@ -771,15 +781,13 @@ fn run_no_build_skips_mvn_and_runs_an_existing_jar_for_spring_projects() {
         .args(["run", "--no-build"])
         .status()
         .unwrap();
-    assert!(status.success());
+    assert!(!status.success());
 
     let invocation = read_log(&log);
     assert!(
-        invocation.contains("/java "),
-        "expected java to run: {invocation}"
+        !invocation.contains("/java "),
+        "an arbitrary jar must not run: {invocation}"
     );
-    assert!(invocation.contains("-jar"));
-    assert!(invocation.contains("demo.jar"));
     assert!(
         !invocation.contains("/mvn "),
         "mvn should never run with --no-build: {invocation}"
@@ -823,7 +831,7 @@ fn run_no_build_runs_already_compiled_plain_classes_without_mvn() {
     let source = pkg_dir.join("App.java");
     fs::write(
         &source,
-        "package com.example.demo;\n\npublic class App {\n    public static void main(String[] args) {\n        System.out.println(\"no-build-ran\");\n    }\n}\n",
+        "package com.example.demo;\n\npublic class App {\n    public static void main(String[] args) {\n        System.out.println(\"no-build-ran:\" + String.join(\"|\", args));\n    }\n}\n",
     )
     .unwrap();
 
@@ -853,7 +861,15 @@ fn run_no_build_runs_already_compiled_plain_classes_without_mvn() {
     let real_java_dir = real_path_without_mvnd();
     let path = format!("{}:{real_java_dir}", fake_dir.display());
     let output = jails_cmd_with_path(&root, &path)
-        .args(["run", "--no-build"])
+        .args([
+            "run",
+            "--no-build",
+            "--profile",
+            "dev",
+            "--",
+            "hello world",
+            "--flag",
+        ])
         .output()
         .unwrap();
     assert!(
@@ -861,7 +877,32 @@ fn run_no_build_runs_already_compiled_plain_classes_without_mvn() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(String::from_utf8_lossy(&output.stdout).contains("no-build-ran"));
+    assert!(
+        String::from_utf8_lossy(&output.stdout)
+            .contains("no-build-ran:--spring.profiles.active=dev|hello world|--flag"),
+        "direct launch must preserve every argv boundary: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(
+        root.join(".jails/run/runtime-classpath-v1").is_file(),
+        "the direct launcher must persist its content-addressed classpath"
+    );
+
+    fs::write(
+        &source,
+        "package com.example.demo;\nclass App { public static void main(String[] args) {} }\n",
+    )
+    .unwrap();
+    let stale = jails_cmd_with_path(&root, &path)
+        .args(["run", "--compile", "none", "--launcher", "classpath"])
+        .output()
+        .unwrap();
+    assert!(!stale.status.success());
+    assert!(
+        String::from_utf8_lossy(&stale.stderr).contains("classes are stale"),
+        "{}",
+        String::from_utf8_lossy(&stale.stderr)
+    );
 }
 
 /// The end-to-end path the tool exists for: generate a command, and have it

@@ -42,3 +42,9 @@ tasks.withType(Test).configureEach {
     }
     failFast = Boolean.getBoolean('jails.test.failFast')
 }
+
+tasks.register('jailsRuntimeClasspath') {
+    doLast {
+        println 'JAILS_RUNTIME_CLASSPATH=' + sourceSets.main.runtimeClasspath.asPath
+    }
+}

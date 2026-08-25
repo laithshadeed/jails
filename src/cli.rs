@@ -88,6 +88,29 @@ pub(crate) enum TestDatabaseArg {
     Schema,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum RunLauncherArg {
+    Auto,
+    Classpath,
+    BuildTool,
+    Jar,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum RunCompileArg {
+    Auto,
+    Ide,
+    Build,
+    None,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum RunServicesArg {
+    Existing,
+    Start,
+    None,
+}
+
 #[derive(Subcommand)]
 pub(crate) enum TestCommand {
     /// Inspect or control this project's resident test process
@@ -926,9 +949,21 @@ pub(crate) enum Command {
     },
     /// Find, compile and run the project's main class
     Run {
-        /// Skip compiling/building -- run whatever's already in target/
-        #[arg(long)]
+        /// Compatibility alias for --compile none --launcher auto
+        #[arg(long, conflicts_with_all = ["launcher", "compile"])]
         no_build: bool,
+        /// Select direct classpath launch, build-tool diagnosis, or a current jar
+        #[arg(long, value_enum, default_value = "auto")]
+        launcher: RunLauncherArg,
+        /// Select the one owner allowed to compile stale output
+        #[arg(long, value_enum, default_value = "auto")]
+        compile: RunCompileArg,
+        /// Check existing services, explicitly start them, or skip checks
+        #[arg(long, value_enum, default_value = "existing")]
+        services: RunServicesArg,
+        /// Activate a Spring profile; repeatable
+        #[arg(long = "profile")]
+        profiles: Vec<String>,
         /// Recompile on source changes and keep the app running (Spring
         /// Boot + spring-boot-devtools only -- devtools restarts itself
         /// once target/classes changes)
