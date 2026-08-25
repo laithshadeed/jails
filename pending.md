@@ -39,24 +39,46 @@ transcribed** — several had gone stale, and the stale half is recorded in
 
 Highest priority: these are wrong output shipping today.
 
-### 1.1 A `@unique` violation answers 500, not 409
+### 1.1 A `@unique` violation answers 500, not 409 — **fixed 2026-08-25**
 
 Create a resource, then create another with the same value in its unique
 column. jails put that constraint in the schema and `add api` generates an
-`ApiException.Conflict` documented "Becomes a 409" — nothing connects the two,
-so a duplicate reads as the server breaking. 5xx is what alerting pages on and
-what clients retry, so a duplicate becomes an incident and then a retry storm.
+`ApiException.Conflict` documented "Becomes a 409" — nothing connected the two,
+so a duplicate read as the server breaking. 5xx is what alerting pages on and
+what clients retry, so a duplicate became an incident and then a retry storm.
 
-Measured: `grep -rn DuplicateKeyException crates/ templates/` returns **zero**.
+`add api` renders a `DuplicateKeyException` → 409 arm, conditionally: the
+exception is Spring's, from `spring-tx`, which arrives with the JDBC starter,
+and an unconditional arm would hand an `api`-without-`db` project a compile
+error for a file it did not write. The rendered block and its test case are
+Rust-side strings dropped into a template hole, which is `template.rs`'s
+standing rule — structural variation never becomes a template engine.
 
-It is not a one-line handler. `DuplicateKeyException` arrives with the JDBC
-stack; `ApiExceptionHandler` is written by `add api`, which does not require a
-database. An unconditional arm hands an `api`-without-`db` project a compile
-error for a file it did not write. The fix needs a conditional arm plus a pass
-that revisits `api` after `db` lands — `app apply` reconciles the whole manifest
-as one transition and would catch it, `jails add api` then `jails add db` would
-not. **Decide that ordering contract before writing the handler.** The generated
-controller test is where the assertion goes.
+**The ordering contract, which the item asked to be decided first.** A
+capability's plan is a pure function of the project, so `add api` before
+`add db` leaves an advice describing a project that no longer exists. That is
+not a defect to be prevented — it is the ordinary way somebody grows a project
+— and jails already had the repair: `jails sync` re-plans every recorded
+capability and applies the difference. What was missing was anything that
+*says* so, and that is now a `doctor` check: a project with the JDBC starter
+whose `ApiExceptionHandler` does not name `DuplicateKeyException` is a `FAIL`
+with `fix: jails sync`. It reads the file rather than the ledger deliberately —
+the question is what the running application does with a duplicate, so a
+handler the reader taught to answer 409 by hand passes.
+
+**One command was wrong for a reason bigger than this item.**
+`jails add db api` resolved the project **once** and handed the same `Project`
+to both transitions, so `api` planned against a pom that did not yet have the
+starter `db` had just spliced two lines away. `dispatch::one_transition_each`
+re-resolves between capabilities now (`Run::against`), which fixes every
+capability whose rendering depends on what an earlier one installed, not only
+this pair. Four golden ledgers moved as a result — the multi-capability
+scenarios, and only their `.jails/ledger.toml`.
+
+The assertion is `a_duplicate_key_answers_409_whichever_order_db_and_api_arrived`,
+which runs both orders end to end: the together case must have the arm, the
+backwards case must not, `doctor` must name the drift *and* the repair, `sync`
+must apply it, and `doctor` must agree afterwards.
 
 ### 1.2 Seven generated tests have a Boot floor
 

@@ -194,6 +194,7 @@ fn run_checks(project: &Project) -> Vec<Check> {
     checks.extend(container_reuse_check(pom_text));
     checks.push(kafka_check(project));
     checks.push(jackson_check(project));
+    checks.push(duplicate_key_check(project));
     checks.extend(management_checks(project));
     checks.extend(cors_checks(project));
     checks.extend(sql_init_checks(project));

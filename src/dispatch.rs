@@ -208,7 +208,17 @@ pub(crate) fn one_transition_each(
 ) -> Result<jails_engine::route::Outcome> {
     let mut last = None;
     for declaration in asked {
-        last = Some(route(run, declaration)?);
+        // Re-resolved between transitions, not once for the loop. A capability
+        // can render differently because of what an earlier one installed --
+        // `add api`'s advice gains a `DuplicateKeyException` arm only when the
+        // JDBC starter is there, and `add db` is what puts it there -- and a
+        // `Project` resolved before the first commit describes a project that
+        // stopped existing. `pending.md` §1.1.
+        //
+        // On `--pretend` this re-reads a project nothing wrote to, which costs
+        // a few file reads and keeps one code path.
+        let project = model::Project::load(run.project().root())?;
+        last = Some(route(&run.against(&project), declaration)?);
     }
     Ok(last.ok_or_else(|| {
         "name at least one capability.\n       fix: `jails add --help` lists them.".to_string()

@@ -444,6 +444,79 @@ pub(super) fn jackson_check(project: &Project) -> Check {
     }
 }
 
+/// A `@unique` violation answers 409, not 500.
+///
+/// **`pending.md` §1.1.** jails puts `@unique` in the schema and generates an
+/// `ApiException.Conflict` documented "Becomes a 409", and for a long time
+/// nothing connected the two: inserting a duplicate reached the client as a
+/// **500**, which is what alerting pages on and what client libraries retry.
+/// One duplicate became an incident and then a retry storm.
+///
+/// `add api` renders the `DuplicateKeyException` arm when the JDBC starter is
+/// present, so `add db api`, `add db` then `add api`, and any `app apply`
+/// declaring both are all correct. What this catches is the other order --
+/// `add api` first, `add db` later -- where the advice on disk describes a
+/// project without a database, because a capability's plan is a pure function
+/// of the project at the moment it was applied.
+///
+/// That order is not a defect to be prevented; it is the ordinary way somebody
+/// grows a project, and `jails sync` re-plans every recorded capability and
+/// applies the difference. What was missing is anything that *says so*. This
+/// is that.
+///
+/// It reads the file rather than the ledger deliberately. The question is what
+/// the running application does with a duplicate, and that is decided by the
+/// bytes on disk -- including bytes the reader wrote themselves, which is why
+/// a handler they have taught to answer 409 by hand passes.
+pub(super) fn duplicate_key_check(project: &Project) -> Check {
+    if !crate::add::plan_supports_duplicate_keys(project) {
+        return Check::new(
+            Status::Skip,
+            "conflicts",
+            "no JDBC starter -- nothing enforces a unique constraint",
+        );
+    }
+    let Some(handler) = api_advice(project) else {
+        return Check::new(
+            Status::Skip,
+            "conflicts",
+            "no ApiExceptionHandler -- `jails add api` writes the advice a 409 comes from",
+        );
+    };
+    match std::fs::read_to_string(&handler) {
+        Ok(source) if source.contains("DuplicateKeyException") => Check::new(
+            Status::Ok,
+            "conflicts",
+            "a duplicate key answers 409 rather than 500",
+        ),
+        Ok(_) => Check::new(
+            Status::Fail,
+            "conflicts",
+            "this project has a database and unique constraints, and its ApiExceptionHandler \
+             does not map DuplicateKeyException -- a duplicate answers 500, which alerting \
+             pages on and clients retry",
+        )
+        .fix("jails sync"),
+        Err(error) => Check::new(
+            Status::Warn,
+            "conflicts",
+            format!("{} is unreadable: {error}", handler.display()),
+        )
+        .fix("check the file's permissions"),
+    }
+}
+
+/// Where `add api` put the advice, honouring a `jails.toml` layer rename.
+fn api_advice(project: &Project) -> Option<std::path::PathBuf> {
+    let package = project.package_named(jails_spec::spec::layout::API, None);
+    let path = project
+        .root()
+        .join("src/main/java")
+        .join(package.replace('.', "/"))
+        .join("ApiExceptionHandler.java");
+    path.is_file().then_some(path)
+}
+
 /// Static safety checks for an actuator endpoint set. These are warnings,
 /// not startup failures: the application will run with all three mistakes,
 /// which is exactly why they belong in `doctor`.

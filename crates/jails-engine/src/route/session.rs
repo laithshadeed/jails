@@ -68,6 +68,28 @@ impl<'a> Run<'a> {
         }
     }
 
+    /// The same run, against a freshly resolved project.
+    ///
+    /// **`jails add db api` is two transitions, and the second has to plan
+    /// against what the first wrote.** A `Project` is resolved once and holds
+    /// the build file's text, so a later transition reusing it plans against a
+    /// project that stopped existing one commit ago -- which is how `add db
+    /// api` produced an `ApiExceptionHandler` with no `DuplicateKeyException`
+    /// arm while the JDBC starter it keys off sat in the pom two lines away.
+    /// `pending.md` §1.1.
+    ///
+    /// The flags come with it: which run this is (`committing` or
+    /// `pretending`), `--debug` and `--no-start` are properties of the
+    /// invocation, not of the project it is looking at.
+    pub fn against<'b>(&self, project: &'b Project) -> Run<'b> {
+        Run {
+            project,
+            write: self.write,
+            debug: self.debug,
+            start: self.start,
+        }
+    }
+
     /// The same run, with `--no-start`: nothing this installs is started.
     pub fn without_start(mut self) -> Self {
         self.start = false;

@@ -168,6 +168,15 @@ pub fn preflight_in(
 ///
 /// Planning is pure: no writes, no subprocesses. That is what makes it safe
 /// for `doctor`, which is read-only by contract.
+/// Whether `add api` renders its `DuplicateKeyException` arm for this project.
+///
+/// Exposed so `doctor` can ask the same question the plan asks, rather than
+/// keeping a second opinion about what "has a database" means. `pending.md`
+/// §1.1.
+pub fn plan_supports_duplicate_keys(project: &Project) -> bool {
+    crate::spring::handles_duplicate_keys(project)
+}
+
 pub fn plan_for(capability: Capability, project: &Project) -> Result<Change> {
     build_plan(capability, project, None, None)
 }

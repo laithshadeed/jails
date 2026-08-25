@@ -620,7 +620,15 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // and `jails-drive` (§7.6): `doctor` stopped importing
                 // `crate::run`, which was its only reason to name the crate
                 // that starts processes.
-                ceiling: 1479,
+                //
+                // 1479 -> 1524 for `pending.md` §1.1's `duplicate_key_check`.
+                // The check itself is short; most of the rise is the comment
+                // saying why a project can be in this state at all -- `add api`
+                // before `add db` is the ordinary way somebody grows a project,
+                // and the repair is `jails sync` rather than a rule against the
+                // order. A check whose reason is not written down is one the
+                // next reader deletes as noise.
+                ceiling: 1524,
                 // Withdrawn, not reached. abstract.md §8.0.1 audits all ten
                 // checks: none is a re-encoded dependency fact, so the 700
                 // measured a saving that is not there. Ratchet against growth.
@@ -685,7 +693,14 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // `jails new --gradle --boot 2.x` made older projects reachable
                 // for the first time. Putting it anywhere else would give two
                 // owners to "is this project new enough".
-                ceiling: 489,
+                //
+                // 489 -> 522 for §1.1: `handles_duplicate_keys`, the two
+                // rendered blocks and their reasons. It belongs here for the
+                // same reason `require_mockmvc_tester` does -- it is a question
+                // about *this project* that more than one template asks -- and
+                // the row is at a fifth of its target, so this is growth the
+                // gate is meant to allow rather than absorb.
+                ceiling: 522,
                 target: 2500,
                 why: "Logical cohesion: one file for everything sharing the `require_spring` \
                       precondition. abstract.md §6.2 says turning that precondition into data \
@@ -765,7 +780,15 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // reads) and what moved is the rendering, where the two arm
                 // lists have to be read against each other. The largest module
                 // is `doctor.rs`'s neighbourhood again rather than this file.
-                ceiling: 649,
+                //
+                // 649 -> 658, and the file is `doctor/wiring.rs` rather than
+                // `projection.rs`: §1.1's `duplicate_key_check`, which catches
+                // a project whose `ApiExceptionHandler` predates its database
+                // and therefore answers 500 to a duplicate. `wiring.rs` is a
+                // list of independent checks, which is the one shape where
+                // length is not complexity -- but it is the largest module
+                // now, and the next rise there is the split.
+                ceiling: 658,
                 target: 700,
                 why: "The row above can be satisfied by *moving* a monolith rather than \
                       decomposing one, so this asks the question the split is actually for: \

@@ -89,6 +89,13 @@ pub(crate) fn collect(dir: &Path, out: &mut Vec<Source>) {
 /// must not be fooled by `// root: &Path` or by the word `fn` inside one of
 /// `spring.rs`'s inline Java bodies, while offsets and line numbers still line
 /// up with the file on disk.
+/// **Delimiters are matched on bytes, not on `&source[i..]`.** Inside a
+/// comment or a string this walks one byte at a time, so `i` can sit in the
+/// middle of a multi-byte character — and `&source[i..]` panics there rather
+/// than returning false. It did: a `§` inside an `r#"..."#` template body
+/// took eight of these gates down at once, having been latent for as long as
+/// no raw string held a character outside ASCII. Every delimiter here is
+/// ASCII, so a byte comparison is exactly equivalent and cannot panic.
 pub(crate) fn blank(source: &str) -> String {
     let bytes = source.as_bytes();
     let mut out = String::with_capacity(source.len());
@@ -103,11 +110,11 @@ pub(crate) fn blank(source: &str) -> String {
         } else if rest.starts_with("/*") {
             let mut depth = 0;
             while i < bytes.len() {
-                if source[i..].starts_with("/*") {
+                if bytes[i..].starts_with(b"/*") {
                     depth += 1;
                     out.push_str("  ");
                     i += 2;
-                } else if source[i..].starts_with("*/") {
+                } else if bytes[i..].starts_with(b"*/") {
                     depth -= 1;
                     out.push_str("  ");
                     i += 2;
@@ -127,7 +134,7 @@ pub(crate) fn blank(source: &str) -> String {
                 let open = 1 + hashes + 1;
                 out.push_str(&" ".repeat(open));
                 i += open;
-                while i < bytes.len() && !source[i..].starts_with(&close) {
+                while i < bytes.len() && !bytes[i..].starts_with(close.as_bytes()) {
                     out.push(if bytes[i] == b'\n' { '\n' } else { ' ' });
                     i += 1;
                 }

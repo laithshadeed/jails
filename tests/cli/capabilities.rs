@@ -1851,3 +1851,99 @@ fn a_set_property_is_owned_and_the_test_overlay_is_additive() {
             .exists()
     );
 }
+
+/// A `@unique` violation answers 409, in whichever order the two capabilities
+/// arrived.
+///
+/// `pending.md` §1.1. jails puts `@unique` in the schema and generates an
+/// `ApiException.Conflict` documented "Becomes a 409", and nothing connected
+/// them: a duplicate reached the client as a 500, which is what alerting pages
+/// on and what client libraries retry.
+///
+/// The advice can only name `DuplicateKeyException` when `spring-tx` is on the
+/// classpath, which arrives with the JDBC starter — so this is conditional, and
+/// the interesting half is the *order*. `add db api` gets it in one command
+/// because each capability is its own transition and the project is re-resolved
+/// between them. `add api` first cannot, because the plan is a pure function of
+/// the project at the moment it ran; `doctor` says so and `jails sync` repairs
+/// it, which is the contract rather than a workaround.
+#[test]
+fn a_duplicate_key_answers_409_whichever_order_db_and_api_arrived() {
+    let handler = "src/main/java/com/example/demo/api/ApiExceptionHandler.java";
+
+    let together = temp_dir("conflict-together");
+    write_spring_fixture(&together);
+    let fake = temp_dir("conflict-together-bin");
+    write_fake_maven(&fake, &["docker"], &fake.join("log.txt"));
+    let output = jails_cmd(&together, Some(&fake))
+        .args(["add", "db", "api", "--no-start"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let advice = fs::read_to_string(together.join(handler)).unwrap();
+    assert!(
+        advice.contains("DuplicateKeyException"),
+        "one command, both capabilities: the advice must map it\n{advice}"
+    );
+
+    let backwards = temp_dir("conflict-backwards");
+    write_spring_fixture(&backwards);
+    let fake = temp_dir("conflict-backwards-bin");
+    write_fake_maven(&fake, &["docker"], &fake.join("log.txt"));
+    for capability in ["api", "db"] {
+        let output = jails_cmd(&backwards, Some(&fake))
+            .args(["add", capability, "--no-start"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "add {capability}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let advice = fs::read_to_string(backwards.join(handler)).unwrap();
+    assert!(
+        !advice.contains("DuplicateKeyException"),
+        "`add api` planned before the database existed, so it cannot have named it"
+    );
+
+    // Reported, not silently wrong. A capability's plan is a pure function of
+    // the project, so growing a project in this order is ordinary -- what must
+    // not happen is nothing saying so.
+    let doctor = jails_cmd(&backwards, Some(&fake))
+        .arg("doctor")
+        .output()
+        .unwrap();
+    let report = String::from_utf8_lossy(&doctor.stdout);
+    assert!(
+        report.contains("DuplicateKeyException") && report.contains("jails sync"),
+        "doctor must name the drift and the repair:\n{report}"
+    );
+
+    let output = jails_cmd(&backwards, Some(&fake))
+        .args(["sync", "--no-start"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let advice = fs::read_to_string(backwards.join(handler)).unwrap();
+    assert!(
+        advice.contains("DuplicateKeyException"),
+        "`jails sync` re-plans every recorded capability, which is the repair\n{advice}"
+    );
+    let doctor = jails_cmd(&backwards, Some(&fake))
+        .arg("doctor")
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&doctor.stdout).contains("a duplicate key answers 409"),
+        "and doctor agrees afterwards"
+    );
+}

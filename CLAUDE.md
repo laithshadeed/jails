@@ -976,6 +976,17 @@ jails knows nothing about.
   `testcontainers-postgresql`). `doctor` matches on the `org.testcontainers`
   groupId alone for that reason — a check that silently stops applying after
   a dependency bump is worse than no check.
+- **A capability's plan is a pure function of the project, so order matters and
+  `sync` is the repair.** `add api` renders a `DuplicateKeyException` → 409 arm
+  only when the JDBC starter is present, because the exception is Spring's from
+  `spring-tx`; an unconditional arm would hand an `api`-without-`db` project a
+  compile error for a file it did not write. `jails add db api` is right because
+  `dispatch::one_transition_each` **re-resolves the project between
+  transitions** — it did not, and `api` planned against a pom that did not yet
+  have the starter `db` had spliced two lines away. `add api` then `add db`
+  cannot be right, and is not meant to be: `doctor` reports it and `jails sync`
+  re-plans every recorded capability. Anything else whose rendering depends on
+  what an earlier capability installed inherits both halves.
 - **Two capabilities own `management.endpoints.web.exposure.include`.**
   `actuator` and `observability` each install their properties as their own
   marked block, and `.properties` is last-wins — so `add observability` then

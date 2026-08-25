@@ -3,6 +3,7 @@ package {{pkg}};
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
+{{duplicate_key_import}}
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
 import org.springframework.test.web.servlet.setup.StandaloneMockMvcBuilder;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -40,6 +41,7 @@ class ApiExceptionHandlerTest {
         assertThat(mvc.get().uri("/boom/conflict")).hasStatus(HttpStatus.CONFLICT);
     }
 
+{{duplicate_key_test}}
     @Test
     void aDomainRejectionBecomesA422() {
         // 422, not 400: the request was read successfully and the domain said
@@ -61,6 +63,7 @@ class ApiExceptionHandlerTest {
             throw new ApiException.Conflict("already exists");
         }
 
+{{duplicate_key_route}}
         @GetMapping("/boom/rejected")
         String rejected() {
             throw new ApiException.Rejected("amount must be positive");

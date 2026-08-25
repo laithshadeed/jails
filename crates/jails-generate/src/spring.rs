@@ -314,23 +314,105 @@ pub(crate) fn api_slice(slice: &Slice) -> Change {
     let pkg: &str = &slice.placed(Layer::Api);
     let main = crate::generate::main_dir(root, pkg);
     let test = crate::generate::test_dir(root, pkg);
+    let duplicate_key = handles_duplicate_keys(slice.project());
     Change {
         deps: vec![VALIDATION_STARTER],
         files: vec![
             artifact(main.join("ApiException.java"), api_exception_java(pkg)),
             artifact(
                 main.join("ApiExceptionHandler.java"),
-                api_exception_handler_java(pkg),
+                api_exception_handler_java(pkg, duplicate_key),
             ),
             artifact(
                 test.join("ApiExceptionHandlerTest.java"),
-                api_exception_handler_test_java(pkg),
+                api_exception_handler_test_java(pkg, duplicate_key),
             ),
         ],
         properties: Vec::new(),
         ..Change::default()
     }
 }
+
+/// Whether this project's advice can name `DuplicateKeyException`.
+///
+/// **`pending.md` §1.1.** jails puts `@unique` in the schema and generates an
+/// `ApiException.Conflict` documented "Becomes a 409", and nothing connected
+/// the two -- so inserting a duplicate answered **500**, which is what alerting
+/// pages on and what clients retry. A duplicate became an incident and then a
+/// retry storm.
+///
+/// It is conditional because `DuplicateKeyException` is Spring's, from
+/// `spring-tx`, which arrives with the JDBC starter -- and `add api` does not
+/// require a database. An unconditional arm would hand an `api`-without-`db`
+/// project a compile error for a file it did not write.
+///
+/// **The ordering contract, which §1.1 asked to be decided first.** A
+/// capability's plan is a pure function of the project, so `add api` then
+/// `add db` leaves an advice describing a project that no longer exists. That
+/// is not a new problem and it already has an answer: `jails sync` re-plans
+/// every recorded capability and applies the difference. What was missing was
+/// anything that *says so*, which is why `doctor` grew
+/// [`crate::doctor`]-side check for exactly this pairing. `app apply` gets it
+/// right in one pass whenever `db` is declared before `api`, and `jails sync`
+/// is the repair in every other order.
+pub(crate) fn handles_duplicate_keys(project: &crate::model::Project) -> bool {
+    project.has_dependency("org.springframework.boot", "spring-boot-starter-jdbc")
+}
+
+/// The `DuplicateKeyException` arm, as rendered text or nothing.
+///
+/// Structural variation stays in Rust rather than becoming a template engine,
+/// which is the rule `template.rs` states: the template has a hole and this
+/// decides what goes in it.
+fn duplicate_key_parts(present: bool) -> [(&'static str, &'static str); 2] {
+    match present {
+        false => [("duplicate_key_import", ""), ("duplicate_key_handler", "")],
+        true => [
+            (
+                "duplicate_key_import",
+                "import org.springframework.dao.DuplicateKeyException;",
+            ),
+            ("duplicate_key_handler", DUPLICATE_KEY_HANDLER),
+        ],
+    }
+}
+
+const DUPLICATE_KEY_HANDLER: &str = r#"
+    /**
+     * A unique constraint the database enforced, as the 409 it is.
+     *
+     * <p>Without this, a duplicate reaches the client as a 500 -- which is
+     * what alerting pages on and what a client library retries, so one
+     * duplicate becomes an incident and then a retry storm. The row was not
+     * written and never will be; that is a conflict, not a server fault.
+     *
+     * <p>The detail deliberately does not name the column. Spring's message
+     * carries the constraint name from the driver, which is a schema
+     * identifier rather than anything a caller can act on -- and echoing it
+     * tells an unauthenticated client the shape of your database.
+     */
+    @ExceptionHandler(DuplicateKeyException.class)
+    public ProblemDetail handleDuplicateKey(DuplicateKeyException failure) {
+        return ProblemDetail.forStatusAndDetail(
+                HttpStatus.CONFLICT, "a resource with those values already exists");
+    }
+"#;
+
+const DUPLICATE_KEY_TEST: &str = r#"
+    @Test
+    void aDuplicateKeyBecomesA409() {
+        // The database rejected a unique constraint; that is a conflict, not
+        // a server fault. `pending.md` §1.1.
+        assertThat(mvc.get().uri("/boom/duplicate")).hasStatus(HttpStatus.CONFLICT);
+    }
+"#;
+
+const DUPLICATE_KEY_ROUTE: &str = r#"
+        @GetMapping("/boom/duplicate")
+        String duplicate() {
+            throw new DuplicateKeyException("unique constraint violated");
+        }
+"#;
 
 /// The project's own failures, as a sealed set.
 ///
@@ -345,17 +427,28 @@ fn api_exception_java(pkg: &str) -> String {
     )
 }
 
-fn api_exception_handler_java(pkg: &str) -> String {
+fn api_exception_handler_java(pkg: &str, duplicate_key: bool) -> String {
+    let parts = duplicate_key_parts(duplicate_key);
     crate::template::render(
         crate::template_here!("spring/api_exception_handler_java.java"),
-        &[("pkg", pkg)],
+        &[("pkg", pkg), parts[0], parts[1]],
     )
 }
 
-fn api_exception_handler_test_java(pkg: &str) -> String {
+fn api_exception_handler_test_java(pkg: &str, duplicate_key: bool) -> String {
+    let parts = duplicate_key_parts(duplicate_key);
+    let (test, route) = match duplicate_key {
+        true => (DUPLICATE_KEY_TEST, DUPLICATE_KEY_ROUTE),
+        false => ("", ""),
+    };
     crate::template::render(
         crate::template_here!("spring/api_exception_handler_test_java.java"),
-        &[("pkg", pkg)],
+        &[
+            ("pkg", pkg),
+            parts[0],
+            ("duplicate_key_test", test),
+            ("duplicate_key_route", route),
+        ],
     )
 }
 
