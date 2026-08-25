@@ -82,20 +82,25 @@ fn run_report_in(
 
 fn run_affected(project: &Project, debug: bool) -> Result<()> {
     match affected::select(project.root(), debug) {
-        affected::Selection::Nothing => {
-            println!("testd: no affected tests in the current epoch");
+        affected::Selection::Nothing { epoch } => {
+            println!("testd: no affected tests in epoch {epoch}");
             Ok(())
         }
-        affected::Selection::Everything(reason) => {
-            println!("testd: running everything -- {reason}");
-            render(run_report_in(project, &[], 0, debug)?)
+        affected::Selection::Everything { epoch, reasons } => {
+            println!("testd: running everything -- {}", reasons.join("; "));
+            render(run_report_in(project, &[], epoch, debug)?)
         }
-        affected::Selection::Tests(tests) => {
+        affected::Selection::Stale { epoch, reasons } => Err(format!(
+            "testd epoch {epoch} is not runnable: {}\n       fix: compile through `jails test --engine build` and retry",
+            reasons.join("; ")
+        )
+        .into()),
+        affected::Selection::Tests { epoch, tests } => {
             println!(
                 "testd: {} test class(es) reachable from the working tree's changes",
                 tests.len()
             );
-            render(run_report_in(project, &tests, 0, debug)?)
+            render(run_report_in(project, &tests, epoch, debug)?)
         }
     }
 }
