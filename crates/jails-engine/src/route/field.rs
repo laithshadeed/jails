@@ -24,6 +24,8 @@
 use super::*;
 
 use jails_protocol::entity::{OneShotId, OneShotSpec, TypeTargetId};
+use jails_protocol::identity::SqlName;
+use jails_protocol::request::{DataEvolution, EvolveFieldRequestV1, FieldEvolution};
 use jails_protocol::resource::{OneShotLifecycle, OneShotState};
 
 /// Add one component to a generated artifact, and migrate the table for it.
@@ -130,6 +132,17 @@ pub fn field(run: &Run, target: &str, component: &str, package: Option<&str>) ->
     .pop()
     .expect("one field produces one column");
     let table = jails_generate::sql::table_name(id.name.as_str());
+    let expected_path = JavaType::new(
+        Package::parse(&project.package_named(jails_spec::spec::layout::DOMAIN, package))?,
+        id.name.clone(),
+    );
+    let evolution = EvolveFieldRequestV1 {
+        entity: EntityId::Intent(id.clone()),
+        expected_path,
+        expected_table: SqlName::parse(&table)?,
+        action: FieldEvolution::Add(added.clone()),
+        data: DataEvolution::None,
+    };
     let directory = ProjectPath::parse("src/main/resources/db/migration")?;
     let mut migrated = None;
     if project.root().join(directory.as_str()).is_dir() {
@@ -163,6 +176,9 @@ pub fn field(run: &Run, target: &str, component: &str, package: Option<&str>) ->
         owners: BTreeSet::from([OwnerId::DirectCli]),
     };
     let mut reads = declaration(project, &change, &desired)?.directory(directory);
+    for path in recorded_migrations(&store, &id) {
+        reads = reads.file(path);
+    }
     let mut ordered = vec![desired];
     if let Some((path, _)) = &migrated {
         reads = reads.file(path.clone());
@@ -175,18 +191,16 @@ pub fn field(run: &Run, target: &str, component: &str, package: Option<&str>) ->
         changes: ordered,
     };
     let mut set = request.against(&store)?;
+    set.subject = PlannedSubject::EvolveField(Box::new(evolution.clone()));
     let recorded_spec = OneShotSpec::Field {
-        target: TypeTargetId::Managed(id),
-        field: added,
+        target: TypeTargetId::Managed(id.clone()),
+        field: added.clone(),
     };
     // Built from the recorded spec rather than rebuilt beside it: two
     // constructions of one value is how a fingerprint comes to describe
     // something the receipt does not.
     let asked = Asked::new(
-        CanonicalMutationRequest::Generate(CanonicalGenerateRequest::OneShot {
-            id: one_shot.clone(),
-            spec: recorded_spec.clone(),
-        }),
+        CanonicalMutationRequest::EvolveField(evolution),
         &["generate", "field"],
         vec![target.to_string(), component.to_string()],
         match package {
@@ -212,6 +226,34 @@ pub fn field(run: &Run, target: &str, component: &str, package: Option<&str>) ->
     }];
     set.validate()?;
     commit_set(run, set, &reads, &asked)
+}
+
+fn recorded_migrations(store: &ObservedStore, target: &IntentId) -> BTreeSet<ProjectPath> {
+    let lifecycle_paths = store
+        .ledger
+        .iter()
+        .flat_map(|ledger| ledger.lifecycles.iter())
+        .filter(|lifecycle| lifecycle.entity == EntityId::Intent(target.clone()))
+        .flat_map(|lifecycle| lifecycle.migrations.iter().map(|seal| seal.path.clone()));
+    let owned_paths = store
+        .ledger
+        .iter()
+        .flat_map(|ledger| ledger.resources.iter())
+        .filter(|row| {
+            row.owners.iter().any(|owner| match owner {
+                ResourceOwner::Entity(EntityId::Intent(owner)) => owner == target,
+                ResourceOwner::OneShot(OneShotId::Field {
+                    target: TypeTargetId::Managed(owner),
+                    ..
+                }) => owner == target,
+                _ => false,
+            })
+        })
+        .filter_map(|row| match &row.key {
+            ResourceKey::WholeFile(path) if row.key.is_migration_history() => Some(path.clone()),
+            _ => None,
+        });
+    lifecycle_paths.chain(owned_paths).collect()
 }
 
 /// The artifact this field is being added to, as the store records it.

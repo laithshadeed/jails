@@ -1247,12 +1247,19 @@ fn a_field_evolves_the_record_and_migrates_the_table_for_it() {
         None,
     )
     .unwrap();
+    jails_engine::route::field(
+        &committing(&Project::load(&root).unwrap()),
+        "Note",
+        "priority:int?",
+        None,
+    )
+    .unwrap();
 
     let record =
         std::fs::read_to_string(root.join("src/main/java/com/example/demo/domain/Note.java"))
             .unwrap();
     assert!(
-        record.contains("archivedAt"),
+        record.contains("archivedAt") && record.contains("priority"),
         "the derivative was refreshed:\n{record}"
     );
 
@@ -1271,12 +1278,19 @@ fn a_field_evolves_the_record_and_migrates_the_table_for_it() {
     };
     assert_eq!(
         spec.arguments.canonical(),
-        vec!["id:uuid@pk", "title:string!", "archivedAt:instant?"]
+        vec![
+            "id:uuid@pk",
+            "title:string!",
+            "archivedAt:instant?",
+            "priority:int?"
+        ]
     );
 
-    // And one field receipt, whose append-only half is the migration.
-    assert_eq!(store.one_shots.len(), 1, "{:?}", store.one_shots);
+    // And one receipt per field, whose append-only halves are the migrations.
+    assert_eq!(store.one_shots.len(), 2, "{:?}", store.one_shots);
     let migration = root.join("src/main/resources/db/migration/V001__add_archived_at_to_notes.sql");
+    let second_migration =
+        root.join("src/main/resources/db/migration/V002__add_priority_to_notes.sql");
     assert!(
         migration.is_file(),
         "{:?}",
@@ -1285,11 +1299,53 @@ fn a_field_evolves_the_record_and_migrates_the_table_for_it() {
             .filter_map(|e| e.ok().map(|e| e.file_name()))
             .collect::<Vec<_>>()
     );
+    assert!(second_migration.is_file());
+    let migration_bytes = std::fs::read(&migration).unwrap();
+    let second_migration_bytes = std::fs::read(&second_migration).unwrap();
     assert!(
-        std::fs::read_to_string(&migration)
-            .unwrap()
-            .contains("add column"),
+        String::from_utf8_lossy(&migration_bytes).contains("add column"),
         "the migration adds the column"
+    );
+
+    // The same commit records the schema-backed identity and seals the exact
+    // migration bytes. A later sync can now distinguish generated projections
+    // from append-only history without guessing from a path convention.
+    assert_eq!(store.lifecycles.len(), 1, "{:?}", store.lifecycles);
+    let lifecycle = &store.lifecycles[0];
+    assert!(matches!(
+        lifecycle.state,
+        jails_protocol::lifecycle::ResourceState::Active
+    ));
+    assert_eq!(
+        lifecycle.expected_path.qualified(),
+        "com.example.demo.domain.Note"
+    );
+    assert_eq!(lifecycle.table.as_ref().unwrap().table.as_str(), "notes");
+    assert_eq!(lifecycle.last_spec, store.applied[0].version.spec);
+    assert_eq!(lifecycle.migrations.len(), 2);
+    let first_seal = &lifecycle.migrations[0];
+    assert_eq!(first_seal.version.get(), 1);
+    assert_eq!(
+        first_seal.path.as_str(),
+        "src/main/resources/db/migration/V001__add_archived_at_to_notes.sql"
+    );
+    assert_eq!(
+        first_seal.content_digest,
+        jails_protocol::identity::ObjectId::from_bytes(jails_support::codec::sha256(
+            &migration_bytes
+        ))
+    );
+    assert_eq!(
+        first_seal.contributors,
+        std::collections::BTreeSet::from([store.applied[0].id.clone()])
+    );
+    let second_seal = &lifecycle.migrations[1];
+    assert_eq!(second_seal.version.get(), 2);
+    assert_eq!(
+        second_seal.content_digest,
+        jails_protocol::identity::ObjectId::from_bytes(jails_support::codec::sha256(
+            &second_migration_bytes
+        ))
     );
 }
 

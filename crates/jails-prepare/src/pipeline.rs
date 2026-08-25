@@ -714,6 +714,18 @@ fn assemble(
             change.operation_identity.proposed_generation,
         )?;
         ledger::record_outputs(&mut store, &recorded, &change.operations)?;
+        ledger::record_lifecycle(
+            &mut store,
+            ledger::LifecycleContext {
+                observed: &context.observed_store,
+                recorded: &recorded,
+                base: &base,
+                objects: &mut change.objects,
+                subject: &apply.subject,
+                intent: &apply.ledger_intent,
+                operation: change.operation_id,
+            },
+        )?;
         // The context object a stamp names has to be in the store before the
         // ledger that references it (§R5.1), or the next GC cycle collects a
         // row's own provenance.

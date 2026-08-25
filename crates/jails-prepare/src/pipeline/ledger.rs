@@ -7,6 +7,9 @@
 
 use super::*;
 
+mod lifecycle;
+pub(super) use lifecycle::{LifecycleContext, record_lifecycle};
+
 /// Everything the ledger's `outputs` table needs that the operations alone do
 /// not say.
 #[derive(Default)]
@@ -27,12 +30,14 @@ pub(super) fn unchanged(store: &LedgerV2, observed: &Option<LedgerV2>) -> bool {
             && store.one_shots.is_empty()
             && store.resources.is_empty()
             && store.outputs.is_empty()
+            && store.lifecycles.is_empty()
             && store.pending_conflict.is_none();
     };
     store.applied == observed.applied
         && store.one_shots == observed.one_shots
         && store.resources == observed.resources
         && store.outputs == observed.outputs
+        && store.lifecycles == observed.lifecycles
         && store.pending_conflict == observed.pending_conflict
 }
 
