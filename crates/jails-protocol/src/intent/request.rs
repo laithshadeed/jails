@@ -70,85 +70,8 @@ impl RequestSyntaxFingerprint {
     }
 }
 
-/// A validated unquoted SQL identifier used at destructive lifecycle
-/// boundaries. Generated table names are lowercase snake case, so accepting a
-/// broader SQL expression here would make exact confirmation meaningless.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
-pub struct SqlName(String);
-
-impl SqlName {
-    pub fn parse(value: &str) -> Result<Self> {
-        let mut chars = value.chars();
-        let Some(first) = chars.next() else {
-            return Err(
-                "SQL name is empty.\n       fix: pass the exact generated table name.".into(),
-            );
-        };
-        if !(first.is_ascii_lowercase() || first == '_')
-            || !chars.all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_')
-        {
-            return Err(format!(
-                "`{value}` is not a lowercase unquoted SQL name.\n       \
-                 fix: pass the exact generated table name, for example `tasks`."
-            )
-            .into());
-        }
-        Ok(Self(value.to_string()))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl Codec for SqlName {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.string(&self.0)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Self::parse(&decoder.string()?)
-    }
-}
-
-/// The explicit storage decision attached to retirement of a table-backed
-/// resource. `force` is deliberately separate and cannot choose either arm.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum StorageRetirement {
-    Preserve { expected_table: SqlName },
-    Drop { confirmed_table: SqlName },
-}
-
-impl Codec for StorageRetirement {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        match self {
-            Self::Preserve { expected_table } => {
-                encoder.tag(0);
-                expected_table.encode(encoder)
-            }
-            Self::Drop { confirmed_table } => {
-                encoder.tag(1);
-                confirmed_table.encode(encoder)
-            }
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Preserve {
-                expected_table: SqlName::decode(decoder)?,
-            },
-            1 => Self::Drop {
-                confirmed_table: SqlName::decode(decoder)?,
-            },
-            other => Err(format!(
-                "unknown storage retirement tag {other}.\n       \
-                 fix: use the jails version that wrote this state, or restore its `.jails` data \
-                 from a compatible backup."
-            ))?,
-        })
-    }
-}
+mod lifecycle;
+pub use lifecycle::*;
 impl Codec for RequestSyntaxFingerprint {
     fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.0.encode(encoder)?;
@@ -379,6 +302,13 @@ pub enum CanonicalMutationRequest {
         storage: StorageRetirement,
         force: bool,
     },
+    EvolveField(EvolveFieldRequestV1),
+    ReviveResource(ReviveResourceRequestV1),
+    RepairResource(RepairResourceRequestV1),
+    DestroyResourceV2 {
+        request: DestroyResourceRequestV2,
+        force: bool,
+    },
 }
 
 impl CanonicalMutationRequest {
@@ -554,6 +484,10 @@ impl CanonicalMutationRequest {
             Self::Declare { .. } => 13,
             Self::Undeclare { .. } => 14,
             Self::DestroyResource { .. } => 15,
+            Self::EvolveField(_) => 16,
+            Self::ReviveResource(_) => 17,
+            Self::RepairResource(_) => 18,
+            Self::DestroyResourceV2 { .. } => 19,
         }
     }
 }
@@ -613,6 +547,13 @@ impl Codec for CanonicalMutationRequest {
             } => {
                 subject.encode(encoder)?;
                 storage.encode(encoder)?;
+                encoder.bool(*force);
+            }
+            Self::EvolveField(request) => request.encode(encoder)?,
+            Self::ReviveResource(request) => request.encode(encoder)?,
+            Self::RepairResource(request) => request.encode(encoder)?,
+            Self::DestroyResourceV2 { request, force } => {
+                request.encode(encoder)?;
                 encoder.bool(*force);
             }
         }
@@ -679,6 +620,13 @@ impl Codec for CanonicalMutationRequest {
                 StorageRetirement::decode(decoder)?,
                 decoder.bool()?,
             )?,
+            16 => Self::EvolveField(EvolveFieldRequestV1::decode(decoder)?),
+            17 => Self::ReviveResource(ReviveResourceRequestV1::decode(decoder)?),
+            18 => Self::RepairResource(RepairResourceRequestV1::decode(decoder)?),
+            19 => Self::DestroyResourceV2 {
+                request: DestroyResourceRequestV2::decode(decoder)?,
+                force: decoder.bool()?,
+            },
             other => Err(format!("unknown mutation request tag {other}"))?,
         })
     }
@@ -999,7 +947,7 @@ mod tests {
     // The closed admissibility matrix
     // -----------------------------------------------------------------------
 
-    use crate::declaration::IntentSpec;
+    use crate::declaration::{FieldSpec, FieldType, IntentSpec};
     use crate::entity::{CasesReceiptId, Recipe, SourceInputId, TypeTargetId};
     use crate::identity::{Name, Package};
 
@@ -1086,6 +1034,67 @@ mod tests {
             request
         );
         decoder.finish().unwrap();
+    }
+
+    fn assert_request_round_trip(request: CanonicalMutationRequest) {
+        let mut encoder = Encoder::new();
+        request.encode(&mut encoder).unwrap();
+        let bytes = encoder.finish().unwrap();
+        let mut decoder = Decoder::new(&bytes).unwrap();
+        assert_eq!(
+            CanonicalMutationRequest::decode(&mut decoder).unwrap(),
+            request
+        );
+        decoder.finish().unwrap();
+    }
+
+    #[test]
+    fn lifecycle_v1_requests_round_trip_without_reusing_old_tags() {
+        let expected_path = || JavaType::parse("com.example.domain.Note").unwrap();
+        let expected_table = || SqlName::parse("notes").unwrap();
+        let evolve = EvolveFieldRequestV1 {
+            entity: intent_id(),
+            expected_path: expected_path(),
+            expected_table: expected_table(),
+            action: FieldEvolution::ChangeType {
+                field: Name::parse("priority").unwrap(),
+                to: FieldType::parse("long", &Package::base()).unwrap(),
+                strategy: TypeChangeStrategy::Safe,
+            },
+            data: DataEvolution::ReaderOwnedSql(
+                ProjectPath::parse("db/conversions/note_priority.sql").unwrap(),
+            ),
+        };
+        let revive = ReviveResourceRequestV1 {
+            entity: intent_id(),
+            expected_table: expected_table(),
+        };
+        let repair = RepairResourceRequestV1 {
+            entity: intent_id(),
+            expected_path: expected_path(),
+            strategy: RepairStrategy::RollForward,
+            datasource: Some(DatasourceRef::parse("primary").unwrap()),
+        };
+        let destroy = DestroyResourceRequestV2 {
+            entity: intent_id(),
+            expected_path: expected_path(),
+            storage: StorageRetirement::Drop {
+                confirmed_table: expected_table(),
+            },
+            migration_effect: Some(DatasourceRef::parse("primary").unwrap()),
+        };
+
+        for request in [
+            CanonicalMutationRequest::EvolveField(evolve),
+            CanonicalMutationRequest::ReviveResource(revive),
+            CanonicalMutationRequest::RepairResource(repair),
+            CanonicalMutationRequest::DestroyResourceV2 {
+                request: destroy,
+                force: true,
+            },
+        ] {
+            assert_request_round_trip(request);
+        }
     }
 
     /// Cases is the only one-shot with a destroy route, and the other two say
@@ -1269,7 +1278,7 @@ mod tests {
     #[test]
     fn request_tags_match_the_specified_numbers() {
         let path = || ProjectPath::parse("x.txt").unwrap();
-        let cases: [(CanonicalMutationRequest, u8); 8] = [
+        let cases: [(CanonicalMutationRequest, u8); 12] = [
             (CanonicalMutationRequest::Sync { no_start: false }, 2),
             (CanonicalMutationRequest::AppInit { target: path() }, 5),
             (CanonicalMutationRequest::AppApply { no_start: false }, 6),
@@ -1295,6 +1304,48 @@ mod tests {
                     force: false,
                 },
                 7,
+            ),
+            (
+                CanonicalMutationRequest::EvolveField(EvolveFieldRequestV1 {
+                    entity: intent_id(),
+                    expected_path: JavaType::parse("Note").unwrap(),
+                    expected_table: SqlName::parse("notes").unwrap(),
+                    action: FieldEvolution::Add(
+                        FieldSpec::parse("title:string", &Package::base()).unwrap(),
+                    ),
+                    data: DataEvolution::None,
+                }),
+                16,
+            ),
+            (
+                CanonicalMutationRequest::ReviveResource(ReviveResourceRequestV1 {
+                    entity: intent_id(),
+                    expected_table: SqlName::parse("notes").unwrap(),
+                }),
+                17,
+            ),
+            (
+                CanonicalMutationRequest::RepairResource(RepairResourceRequestV1 {
+                    entity: intent_id(),
+                    expected_path: JavaType::parse("Note").unwrap(),
+                    strategy: RepairStrategy::RollForward,
+                    datasource: None,
+                }),
+                18,
+            ),
+            (
+                CanonicalMutationRequest::DestroyResourceV2 {
+                    request: DestroyResourceRequestV2 {
+                        entity: intent_id(),
+                        expected_path: JavaType::parse("Note").unwrap(),
+                        storage: StorageRetirement::Preserve {
+                            expected_table: SqlName::parse("notes").unwrap(),
+                        },
+                        migration_effect: None,
+                    },
+                    force: false,
+                },
+                19,
             ),
         ];
         for (request, tag) in cases {
