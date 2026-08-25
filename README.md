@@ -4,6 +4,10 @@ A small, opinionated scaffolding tool for Spring Boot and plain Maven
 projects. Jails favors immutable Java types, explicit ports, visible SQL, and
 short commands. It does not generate or depend on an ORM.
 
+## Architecture & Internals
+
+For a deep dive into the internal design, crate dependency graph, transaction commit pipeline, and developer onboarding guide, see [**`ARCHITECTURE.md`**](file:///home/laith/code/jails/ARCHITECTURE.md).
+
 ## Build
 
 ```
