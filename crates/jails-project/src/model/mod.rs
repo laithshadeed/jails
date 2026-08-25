@@ -60,7 +60,14 @@ impl SpringTestImport {
 #[derive(Clone, Debug, Default)]
 pub struct Change {
     pub deps: Vec<Dependency>,
-    pub plugins: Vec<(&'static str, String)>,
+    /// The build features this change needs, each with its Maven rendering.
+    ///
+    /// Keyed by what the build has to *do* rather than by the Maven plugin
+    /// that does it — `pending.md` §3. It was `(&'static str, String)`, an
+    /// artifact id and an XML block, which meant a Gradle project's claim was
+    /// filed under a plugin it does not have, and two places had to map the
+    /// coordinate back onto its purpose before they could act.
+    pub plugins: Vec<(jails_protocol::feature::BuildFeature, String)>,
     pub files: Vec<Artifact>,
     pub compose: Vec<ComposeService>,
     pub properties: Vec<String>,

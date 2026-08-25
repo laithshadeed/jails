@@ -878,43 +878,20 @@ dependencies {
 // Build features: what a Maven plugin *does*, said in Gradle
 // ---------------------------------------------------------------------------
 
-/// A thing the build has to do, named by what it is for.
+/// The Gradle half of a [`BuildFeature`].
 ///
-/// The claim in the ledger is keyed by a Maven coordinate, which is a stable
-/// name for a closed set of three -- not a thing Gradle resolves. That is a
-/// naming debt recorded in `pending.md`, and it is deliberately *not* papered
-/// over here: [`feature_of`] is total for what jails emits and returns `None`
-/// for anything else, so an unrecognised plugin refuses rather than being
-/// rendered as a guess.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Feature {
-    /// Run `*IT` classes, and fail the build when they fail.
-    IntegrationTests,
-    /// Enforce line coverage during `check`.
-    Coverage,
-    /// Format on `check`, and offer a task that fixes.
-    ///
-    /// The one feature that cannot be a self-contained appended block:
-    /// Spotless is not bundled with Gradle, so it needs an `id ... version`
-    /// entry inside `plugins {}` -- a block that has to be near the top of the
-    /// file, which is the opposite end from where a marked block goes. See
-    /// [`add_feature`].
-    Formatting,
-}
-
-/// Which feature a Maven plugin coordinate stands for.
+/// The vocabulary lives in `jails-protocol` -- a claim is keyed by the feature
+/// (`pending.md` §3), so the enum has to be below both build tools rather than
+/// beside one of them. What stays here is what only Gradle knows: the marker,
+/// the `plugins {}` entry, and the block.
 ///
-/// Closed on purpose. A plugin jails does not recognise is one it cannot
-/// render an equivalent for, and writing *something* into a build file on the
-/// strength of a name it half-recognised is the confident wrong answer.
-pub fn feature_of(maven_artifact: &str) -> Option<Feature> {
-    match maven_artifact {
-        "maven-failsafe-plugin" => Some(Feature::IntegrationTests),
-        "jacoco-maven-plugin" => Some(Feature::Coverage),
-        "spotless-maven-plugin" => Some(Feature::Formatting),
-        _ => None,
-    }
-}
+/// The four matches below are exhaustive over `BuildFeature` on purpose.
+/// Adding a variant is a compile error here until somebody writes the Gradle
+/// side, which is a better guarantee than the run-time refusal it replaced:
+/// `require_renderable_plugins` existed to catch a Maven plugin with no known
+/// Gradle equivalent, and there is no longer a coordinate to fail to
+/// recognise.
+use jails_protocol::feature::BuildFeature as Feature;
 
 /// The marker comment that owns a block jails wrote into a file it does not
 /// own. Same contract as `codemod::Marked`, spelled here because a Groovy
@@ -1121,7 +1098,7 @@ mod feature_tests {
     #[test]
     fn a_failsafe_claim_becomes_a_gradle_integration_test_task() {
         assert_eq!(
-            feature_of("maven-failsafe-plugin"),
+            Feature::of_maven_plugin("maven-failsafe-plugin"),
             Some(Feature::IntegrationTests)
         );
         let out = add_feature(BARE, Feature::IntegrationTests)
@@ -1143,8 +1120,8 @@ mod feature_tests {
 
     #[test]
     fn a_plugin_with_no_gradle_equivalent_renders_nothing() {
-        assert_eq!(feature_of("maven-surefire-plugin"), None);
-        assert_eq!(feature_of("maven-enforcer-plugin"), None);
+        assert_eq!(Feature::of_maven_plugin("maven-surefire-plugin"), None);
+        assert_eq!(Feature::of_maven_plugin("maven-enforcer-plugin"), None);
     }
 
     /// The one feature that edits both ends of the file, and the reason it
@@ -1154,7 +1131,7 @@ mod feature_tests {
     #[test]
     fn formatting_reaches_the_plugins_block_and_comes_back_out_of_it() {
         assert_eq!(
-            feature_of("spotless-maven-plugin"),
+            Feature::of_maven_plugin("spotless-maven-plugin"),
             Some(Feature::Formatting)
         );
         let out = add_feature(BARE, Feature::Formatting).unwrap().unwrap();

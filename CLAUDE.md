@@ -283,6 +283,14 @@ Four things to know before touching it:
   migrations in an order nobody has tested.
 - `crates/jails-project/src/pom.rs` — flavor and release-level detection, plus a comment-preserving
   dependency/plugin splice and unsplice. `TARGET_RELEASE` lives here.
+- **A build plugin is claimed by what it *does*, not by its coordinate.**
+  `ResourceKey::BuildFeature(BuildFeature)` — `IntegrationTests`, `Coverage`,
+  `Formatting` — because `jacoco-maven-plugin` is not a name Gradle resolves,
+  and keying by it filed a Gradle project's claim under a plugin it does not
+  have. The Maven XML block is one rendering and `gradle.rs`'s block is the
+  other. `gradle.rs`'s four matches are exhaustive over the enum, so **adding a
+  feature is a compile error until the Gradle side exists** — which is what
+  replaced the run-time refusal for an unrecognised plugin.
 - `crates/jails-support/src/codemod.rs` — **the marked block, and only that**: `# jails:<marker>`
   … `# /jails:<marker>`, which is how jails edits a file the reader owns and
   what makes `remove` the exact inverse of `add`. It had five owners

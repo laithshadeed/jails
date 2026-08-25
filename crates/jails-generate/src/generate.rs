@@ -81,17 +81,22 @@ pub fn report_degraded_shape(project: &Project, change: &Change) {
     // name is an instruction the reader cannot carry out -- and the thing they
     // actually have to arrange is that `*IT` classes get run at all, which
     // every build spells differently.
-    for (artifact_id, _) in &change.plugins {
-        if !said.insert(artifact_id.to_string()) {
+    for (feature, _) in &change.plugins {
+        if !said.insert(feature.to_string()) {
             continue;
         }
-        match *artifact_id {
-            crate::spring::FAILSAFE_ARTIFACT => println!(
+        match feature {
+            jails_protocol::feature::BuildFeature::IntegrationTests => println!(
                 "      Arrange yourself: your build must run `*IT` classes. Maven needs \
                  Failsafe for that; whatever {tool} calls it, an integration test nothing \
                  executes is a green build that proves nothing."
             ),
-            other => println!("      Arrange yourself: what `{other}` does for a Maven build."),
+            other => println!(
+                "      Arrange yourself: your build must {}. Maven uses `{}`; {tool} spells \
+                 it differently.",
+                other.purpose(),
+                other.maven_artifact_id()
+            ),
         }
     }
 }
@@ -189,7 +194,7 @@ pub fn plan_recipe(
     }
     if writes_an_it(&change.files) {
         change.plugins.push((
-            crate::spring::FAILSAFE_ARTIFACT,
+            jails_protocol::feature::BuildFeature::IntegrationTests,
             crate::spring::failsafe_plugin(project.flavor()).to_string(),
         ));
     }

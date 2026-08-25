@@ -105,7 +105,7 @@ pub fn with_test_support(project: &Project, mut change: Change) -> Change {
     }
     if writes("IT.java") {
         change.plugins.push((
-            jails_generate::spring::FAILSAFE_ARTIFACT,
+            jails_protocol::feature::BuildFeature::IntegrationTests,
             jails_generate::spring::failsafe_plugin(project.flavor()).to_string(),
         ));
     }

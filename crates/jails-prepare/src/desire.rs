@@ -44,6 +44,7 @@ use jails_protocol::coordinate::{
     CanonicalPluginXml, DependencySpec, MavenCoordinate, MavenScope, MavenVersion, PluginSpec,
 };
 use jails_protocol::edit::SemanticEdit;
+use jails_protocol::feature::BuildFeature;
 use jails_protocol::identity::{
     JavaType, ManagedVersion, MarkerId, ProjectPath, PropertyKey, ServiceName, VolumeName,
 };
@@ -99,15 +100,15 @@ pub fn contribution(
             .edits
             .push(SemanticEdit::MavenDependency { key, value: spec });
     }
-    for (artifact_id, block) in &change.plugins {
-        let (key, value) = plugin_resource(artifact_id, block)?;
+    for (feature, block) in &change.plugins {
+        let (key, value) = plugin_resource(*feature, block)?;
         claim(&mut desired, owner, key.clone(), value.clone())?;
-        let ResourceValue::MavenPlugin(spec) = value else {
+        let ResourceValue::BuildPlugin(spec) = value else {
             unreachable!("plugin_resource returns a plugin value");
         };
         desired
             .edits
-            .push(SemanticEdit::MavenPlugin { key, value: spec });
+            .push(SemanticEdit::BuildPlugin { key, value: spec });
     }
     for service in &change.compose {
         let (key, value) = compose_resource(service)?;
@@ -385,23 +386,27 @@ fn dependency_resource(dependency: &Dependency) -> Result<(ResourceKey, Resource
     ))
 }
 
-fn plugin_resource(artifact_id: &str, block: &str) -> Result<(ResourceKey, ResourceValue)> {
+fn plugin_resource(feature: BuildFeature, block: &str) -> Result<(ResourceKey, ResourceValue)> {
     let xml = CanonicalPluginXml::parse(block)?;
     // The block is the authority on its own coordinate, and the recipe's
-    // artifact id is checked against it rather than trusted: a plugin listed
-    // under one name and declaring another is how an `unsplice` removes the
-    // wrong element.
+    // feature is checked against it rather than trusted: a plugin filed under
+    // one job and doing another is how an `unsplice` removes the wrong
+    // element. The check used to compare two spellings of the same coordinate;
+    // it now compares what the recipe said the build has to *do* with what the
+    // plugin it handed over actually does. `pending.md` §3.
     let coordinate = xml.declared_coordinate()?;
-    if coordinate.artifact_id.as_str() != artifact_id {
+    if BuildFeature::of_maven_plugin(coordinate.artifact_id.as_str()) != Some(feature) {
         return Err(format!(
-            "the plugin block declares {coordinate} but the recipe files it under {artifact_id}"
+            "the plugin block declares {coordinate} but the recipe files it under the \
+             `{feature}` feature.\n       fix: this is a bug in jails, not something a project \
+             can cause -- please report the command."
         )
         .into());
     }
-    let spec = PluginSpec::new(coordinate.clone(), xml)?;
+    let spec = PluginSpec::new(coordinate, xml)?;
     Ok((
-        ResourceKey::MavenPlugin(coordinate),
-        ResourceValue::MavenPlugin(spec),
+        ResourceKey::BuildFeature(feature),
+        ResourceValue::BuildPlugin(spec),
     ))
 }
 

@@ -647,7 +647,13 @@ pub(crate) const SCRATCH_RS: &str = "jails-support/src/scratch.rs";
 /// 443 → 439 on 2026-08-25, and not by writing four `fix:` lines: `pending.md`
 /// §6.3 deleted the second field-spec parser, and four of its refusals went
 /// with it. A duplicate parser is four duplicate refusals.
-pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 439;
+///
+/// 439 → 437 the same day. §3's build-feature key added four internal-invariant
+/// refusals and deleted one user-facing one, and the four were given the fix
+/// line the two `publish::Tree` refusals already use — "this is a bug in jails,
+/// not something a project can cause". That is a real next step rather than a
+/// filler: it tells the reader the one thing they can do.
+pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 437;
 
 /// A refusal that builds a message and does not say what to do next.
 ///

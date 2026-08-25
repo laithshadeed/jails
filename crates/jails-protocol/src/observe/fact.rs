@@ -26,6 +26,7 @@
 use crate::Result;
 use crate::coordinate::{DependencySpec, MavenCoordinate, PluginSpec};
 use crate::entity::{CapabilityId, CapabilitySpec};
+use crate::feature::BuildFeature;
 use crate::identity::{JavaType, MarkerId, Name, ObjectId, ProjectPath, PropertyKey, ServiceName};
 use crate::resource::ComposeServiceSpec;
 use jails_support::codec::{Codec, Decoder, Encoder, MAX_CODEC_DEPTH, ordered};
@@ -121,7 +122,9 @@ impl Codec for FactSourceState {
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
 pub enum ProjectFactKey {
     MavenDependency(MavenCoordinate),
-    MavenPlugin(MavenCoordinate),
+    /// What the build has to do, keyed the way a claim on it is. See
+    /// [`crate::feature::BuildFeature`].
+    BuildFeature(BuildFeature),
     ComposeService(ServiceName),
     Property {
         path: ProjectPath,
@@ -143,7 +146,7 @@ impl ProjectFactKey {
     pub fn tag(&self) -> u8 {
         match self {
             Self::MavenDependency(_) => 0,
-            Self::MavenPlugin(_) => 1,
+            Self::BuildFeature(_) => 1,
             Self::ComposeService(_) => 2,
             Self::Property { .. } => 3,
             Self::MarkedBlock { .. } => 4,
@@ -157,9 +160,8 @@ impl Codec for ProjectFactKey {
     fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.tag(self.tag());
         match self {
-            Self::MavenDependency(coordinate) | Self::MavenPlugin(coordinate) => {
-                coordinate.encode(encoder)
-            }
+            Self::MavenDependency(coordinate) => coordinate.encode(encoder),
+            Self::BuildFeature(feature) => feature.encode(encoder),
             Self::ComposeService(name) => name.encode(encoder),
             Self::Property { path, key } => {
                 path.encode(encoder)?;
@@ -184,7 +186,7 @@ impl Codec for ProjectFactKey {
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::MavenDependency(MavenCoordinate::decode(decoder)?),
-            1 => Self::MavenPlugin(MavenCoordinate::decode(decoder)?),
+            1 => Self::BuildFeature(BuildFeature::decode(decoder)?),
             2 => Self::ComposeService(ServiceName::decode(decoder)?),
             3 => Self::Property {
                 path: ProjectPath::decode(decoder)?,
@@ -209,7 +211,7 @@ impl Codec for ProjectFactKey {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProjectFact {
     MavenDependency(DependencySpec),
-    MavenPlugin(PluginSpec),
+    BuildPlugin(PluginSpec),
     ComposeService(ComposeServiceSpec),
     Property(String),
     /// Only the body's digest: a marked block's content belongs to whoever
@@ -226,7 +228,7 @@ impl ProjectFact {
     pub fn tag(&self) -> u8 {
         match self {
             Self::MavenDependency(_) => 0,
-            Self::MavenPlugin(_) => 1,
+            Self::BuildPlugin(_) => 1,
             Self::ComposeService(_) => 2,
             Self::Property(_) => 3,
             Self::MarkedBlock { .. } => 4,
@@ -257,11 +259,14 @@ impl ProjectFact {
                 )
                 .into())
             }
-            (ProjectFactKey::MavenPlugin(coordinate), Self::MavenPlugin(spec))
-                if spec.coordinate != *coordinate =>
+            (ProjectFactKey::BuildFeature(feature), Self::BuildPlugin(spec))
+                if BuildFeature::of_maven_plugin(spec.coordinate.artifact_id.as_str())
+                    != Some(*feature) =>
             {
                 Err(format!(
-                    "plugin fact {} recorded under key {coordinate}",
+                    "plugin fact {} recorded under the `{feature}` feature, which it does not \
+                     provide.\n       fix: this is a bug in jails, not something a project can \
+                     cause -- please report the command.",
                     spec.coordinate
                 )
                 .into())
@@ -284,7 +289,7 @@ impl Codec for ProjectFact {
         encoder.tag(self.tag());
         match self {
             Self::MavenDependency(spec) => spec.encode(encoder),
-            Self::MavenPlugin(spec) => spec.encode(encoder),
+            Self::BuildPlugin(spec) => spec.encode(encoder),
             Self::ComposeService(spec) => spec.encode(encoder),
             Self::Property(value) => encoder.string(value),
             Self::MarkedBlock { body_sha256 } => {
@@ -300,7 +305,7 @@ impl Codec for ProjectFact {
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(match decoder.tag()? {
             0 => Self::MavenDependency(DependencySpec::decode(decoder)?),
-            1 => Self::MavenPlugin(PluginSpec::decode(decoder)?),
+            1 => Self::BuildPlugin(PluginSpec::decode(decoder)?),
             2 => Self::ComposeService(ComposeServiceSpec::decode(decoder)?),
             3 => Self::Property(decoder.string()?),
             4 => Self::MarkedBlock {
@@ -816,11 +821,8 @@ mod tests {
         facts
             .record(
                 FactKind::Pom,
-                ProjectFactKey::MavenPlugin(coordinate(
-                    DEFAULT_PLUGIN_GROUP,
-                    "maven-failsafe-plugin",
-                )),
-                ProjectFact::MavenPlugin(
+                ProjectFactKey::BuildFeature(BuildFeature::IntegrationTests),
+                ProjectFact::BuildPlugin(
                     PluginSpec::new(
                         coordinate(DEFAULT_PLUGIN_GROUP, "maven-failsafe-plugin"),
                         CanonicalPluginXml::parse(

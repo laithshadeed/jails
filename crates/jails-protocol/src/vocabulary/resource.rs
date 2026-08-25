@@ -27,6 +27,7 @@
 use crate::Result;
 use crate::coordinate::{DependencySpec, MavenCoordinate, PluginSpec};
 use crate::entity::{CapabilitySpec, EntityId, OneShotId};
+use crate::feature::BuildFeature;
 use crate::identity::{JavaType, MarkerId, ProjectPath, PropertyKey, ServiceName, VolumeName};
 use jails_support::codec::{Codec, Decoder, Encoder, ordered};
 use std::collections::BTreeSet;
@@ -153,7 +154,14 @@ impl Codec for ComposeServiceSpec {
 pub enum ResourceKey {
     WholeFile(ProjectPath),
     MavenDependency(MavenCoordinate),
-    MavenPlugin(MavenCoordinate),
+    /// What the build has to *do*, not the plugin that does it.
+    ///
+    /// `pending.md` §3: this was a Maven coordinate, which is not a name Gradle
+    /// resolves -- so a Gradle project's coverage claim was filed under
+    /// `jacoco-maven-plugin`, a plugin it does not have. The Maven plugin block
+    /// is one rendering of the feature and the Gradle block is the other; the
+    /// key is what they are both renderings *of*.
+    BuildFeature(BuildFeature),
     ComposeService(ServiceName),
     Property {
         path: ProjectPath,
@@ -193,7 +201,7 @@ impl ResourceKey {
         match self {
             Self::WholeFile(_) => 0,
             Self::MavenDependency(_) => 1,
-            Self::MavenPlugin(_) => 2,
+            Self::BuildFeature(_) => 2,
             Self::ComposeService(_) => 3,
             Self::Property { .. } => 4,
             Self::MarkedBlock { .. } => 5,
@@ -209,9 +217,8 @@ impl Codec for ResourceKey {
         encoder.tag(self.tag());
         match self {
             Self::WholeFile(path) => path.encode(encoder),
-            Self::MavenDependency(coordinate) | Self::MavenPlugin(coordinate) => {
-                coordinate.encode(encoder)
-            }
+            Self::MavenDependency(coordinate) => coordinate.encode(encoder),
+            Self::BuildFeature(feature) => feature.encode(encoder),
             Self::ComposeService(name) => name.encode(encoder),
             Self::Property { path, key } => {
                 path.encode(encoder)?;
@@ -241,7 +248,7 @@ impl Codec for ResourceKey {
         Ok(match decoder.tag()? {
             0 => Self::WholeFile(ProjectPath::decode(decoder)?),
             1 => Self::MavenDependency(MavenCoordinate::decode(decoder)?),
-            2 => Self::MavenPlugin(MavenCoordinate::decode(decoder)?),
+            2 => Self::BuildFeature(BuildFeature::decode(decoder)?),
             3 => Self::ComposeService(ServiceName::decode(decoder)?),
             4 => Self::Property {
                 path: ProjectPath::decode(decoder)?,
@@ -344,7 +351,11 @@ pub enum ResourceValue {
     /// says the path is claimed.
     WholeFile,
     MavenDependency(DependencySpec),
-    MavenPlugin(PluginSpec),
+    /// The Maven rendering of a [`ResourceKey::BuildFeature`] claim.
+    ///
+    /// Still Maven-shaped, and correctly so: the value is what jails splices
+    /// into a *pom*, and `projection.rs` renders the Gradle side from the key.
+    BuildPlugin(PluginSpec),
     ComposeService(ComposeServiceSpec),
     Property(PropertySetting),
     MarkedBlock(String),
@@ -376,7 +387,7 @@ impl ResourceValue {
         match self {
             Self::WholeFile => 0,
             Self::MavenDependency(_) => 1,
-            Self::MavenPlugin(_) => 2,
+            Self::BuildPlugin(_) => 2,
             Self::ComposeService(_) => 3,
             Self::Property(_) => 4,
             Self::MarkedBlock(_) => 5,
@@ -409,10 +420,20 @@ impl ResourceValue {
                 )
                 .into())
             }
-            (ResourceKey::MavenPlugin(coordinate), Self::MavenPlugin(spec))
-                if spec.coordinate != *coordinate =>
+            // The coordinate is checked rather than keyed on: a claim whose
+            // plugin block is not the one this feature means describes two
+            // different things in its two halves.
+            (ResourceKey::BuildFeature(feature), Self::BuildPlugin(spec))
+                if BuildFeature::of_maven_plugin(spec.coordinate.artifact_id.as_str())
+                    != Some(*feature) =>
             {
-                Err(format!("plugin {} recorded under key {coordinate}", spec.coordinate).into())
+                Err(format!(
+                    "plugin {} recorded under the `{feature}` feature, which it does not \
+                     provide.\n       fix: this is a bug in jails, not something a project can \
+                     cause -- please report the command.",
+                    spec.coordinate
+                )
+                .into())
             }
             (ResourceKey::ComposeService(name), Self::ComposeService(spec))
                 if spec.name != *name =>
@@ -441,7 +462,7 @@ impl Codec for ResourceValue {
         match self {
             Self::WholeFile => Ok(()),
             Self::MavenDependency(spec) => spec.encode(encoder),
-            Self::MavenPlugin(spec) => spec.encode(encoder),
+            Self::BuildPlugin(spec) => spec.encode(encoder),
             Self::ComposeService(spec) => spec.encode(encoder),
             Self::Property(setting) => setting.encode(encoder),
             Self::MarkedBlock(value) => encoder.string(value),
@@ -462,7 +483,7 @@ impl Codec for ResourceValue {
         Ok(match decoder.tag()? {
             0 => Self::WholeFile,
             1 => Self::MavenDependency(DependencySpec::decode(decoder)?),
-            2 => Self::MavenPlugin(PluginSpec::decode(decoder)?),
+            2 => Self::BuildPlugin(PluginSpec::decode(decoder)?),
             3 => Self::ComposeService(ComposeServiceSpec::decode(decoder)?),
             4 => Self::Property(PropertySetting::decode(decoder)?),
             5 => Self::MarkedBlock(decoder.string()?),
@@ -759,7 +780,7 @@ mod tests {
         let keys = [
             ResourceKey::WholeFile(ProjectPath::parse("pom.xml").unwrap()),
             ResourceKey::MavenDependency(coordinate("g", "a")),
-            ResourceKey::MavenPlugin(coordinate("g", "a")),
+            ResourceKey::BuildFeature(BuildFeature::Coverage),
             ResourceKey::ComposeService(ServiceName::parse("db").unwrap()),
         ];
         let mut sorted = keys.to_vec();

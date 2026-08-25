@@ -6,6 +6,7 @@
 //! usable Maven just gets a note.
 
 use super::*;
+use jails_protocol::feature::BuildFeature;
 
 // ---------------------------------------------------------------------------
 // http
@@ -58,12 +59,10 @@ pub(super) fn http_server_test_java(pkg: &str, class: &str) -> String {
 
 /// Spotless, bound to `verify` as a check and available as `jails fmt` to
 /// apply. Formatting nobody has to think about is the only kind that survives.
-pub(super) const SPOTLESS_ARTIFACT: &str = "spotless-maven-plugin";
-
 pub(super) fn format_plan(slice: &Slice) -> Result<Change> {
     let root: &Path = slice.root();
     Ok(Change {
-        plugins: vec![(SPOTLESS_ARTIFACT, SPOTLESS_PLUGIN.to_string())],
+        plugins: vec![(BuildFeature::Formatting, SPOTLESS_PLUGIN.to_string())],
         files: vec![Artifact {
             kind: "capability file",
             path: root.join(".editorconfig"),
@@ -124,14 +123,12 @@ pub(super) const SPOTLESS_PLUGIN: &str = r#"<plugin>
 // coverage
 // ---------------------------------------------------------------------------
 
-pub(super) const JACOCO_ARTIFACT: &str = "jacoco-maven-plugin";
-
 /// Coverage is a gate, not just a report someone may remember to inspect.
 /// The threshold is intentionally explicit and can be raised in the POM as
 /// the project matures; generated projects start with a useful 80% line bar.
 pub(super) fn coverage_plan() -> Result<Change> {
     Ok(Change {
-        plugins: vec![(JACOCO_ARTIFACT, JACOCO_PLUGIN.to_string())],
+        plugins: vec![(BuildFeature::Coverage, JACOCO_PLUGIN.to_string())],
         ..Change::default()
     })
 }

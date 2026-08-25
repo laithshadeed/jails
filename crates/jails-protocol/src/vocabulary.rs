@@ -11,6 +11,7 @@
 pub mod coordinate;
 pub mod declaration;
 pub mod entity;
+pub mod feature;
 pub mod identity;
 pub mod recipe;
 pub mod resource;

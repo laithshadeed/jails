@@ -303,18 +303,32 @@ Still Maven-only:
 | `jails fmt` | The *transactional* half. `route::format` runs the formatter in a sandbox laid out from the projection, so the reformat is a reviewed diff committed in the same transaction — and it drives that with Maven. Gradle in a throwaway tree needs its wrapper, its caches and a writable `build/`, which is a different bargain. It refuses by name and points at `./gradlew spotlessApply`, which the project is already configured for |
 | `testd`, `test --fast`, `test --affected`, `jails console` | All need a *resolved classpath*, which jails gets from `dependency:build-classpath`. Gradle has no equivalent without adding a task to the build — and adding one to a file the reader owns, for a convenience, is a different bargain from splicing a dependency they asked for |
 
-**The naming debt, deliberately taken.** `Change.plugins` is still
-`(artifact_id, xml_block)` — a Maven plugin with Maven's syntax baked in — and
-`ResourceKey::MavenPlugin` keys the claim by a coordinate Gradle does not
-resolve. `gradle::feature_of` maps the coordinate onto what the plugin *does*,
-which is total for the closed set jails emits and `None` for anything else, so
-the behaviour is right and only the name is wrong. Renaming the key to the
-feature is a protocol change across five files; it buys no behaviour and can be
-done whenever the churn is convenient.
+**The naming debt is paid — 2026-08-25.** The claim was keyed by
+`ResourceKey::MavenPlugin(MavenCoordinate)`, so a Gradle project's coverage
+claim was filed under `jacoco-maven-plugin` — a plugin that project does not
+have and never will — and two places in `projection.rs` had to map the
+coordinate back onto what it was *for* before they could act.
 
-What makes the debt safe: a plugin with no known Gradle equivalent **refuses the
-whole capability**, so nothing is half-installed on the strength of a name jails
-half-recognised.
+The key is `ResourceKey::BuildFeature(BuildFeature)` now: `IntegrationTests`,
+`Coverage`, `Formatting`. The Maven plugin block is one rendering of a feature
+and the Gradle block is the other; the key is what they are both renderings of.
+`Change.plugins` carries the feature, so a producer *states* what the build has
+to do rather than jails inferring it from an artifact id, and the enum lives in
+`jails-protocol` because a claim vocabulary has to sit below both build tools.
+
+**It buys one behaviour after all, which the item did not predict.**
+`require_renderable_plugins` — the run-time refusal for a Maven plugin with no
+known Gradle equivalent — is deleted, because there is no longer a coordinate to
+fail to recognise. What replaces it is stronger: `gradle.rs`'s four matches are
+exhaustive over `BuildFeature`, so adding a feature is a **compile error** until
+somebody writes the Gradle side. A guarantee beats a message.
+
+`BuildFeature::of_maven_plugin` survives as a *check* rather than a derivation:
+the plugin XML a claim carries has to be the one that feature means, or the two
+halves of the claim describe different things. `maven_artifact_id` is its
+inverse, for the unsplice — a Maven build is configured by naming a plugin, so
+retiring one still needs the coordinate even though the claim is not keyed by
+it.
 
 ---
 

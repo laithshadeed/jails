@@ -756,7 +756,16 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // is also why §8.1 lists this file: it has been the largest
                 // module since the Gradle branches went in, and the honest
                 // answer to the next rise is the split, not another ceiling.
-                ceiling: 662,
+                //
+                // 662 -> 649, and that is what happened. §3's build-feature key
+                // pushed `projection.rs` to 665; rather than raise this, its
+                // two per-key arm lists -- `apply_edit` and `retire`, 429 lines
+                // between them -- moved to `projection/edit.rs`. The seam is
+                // real: what is left is *state* (the overlay, the facts, the
+                // reads) and what moved is the rendering, where the two arm
+                // lists have to be read against each other. The largest module
+                // is `doctor.rs`'s neighbourhood again rather than this file.
+                ceiling: 649,
                 target: 700,
                 why: "The row above can be satisfied by *moving* a monolith rather than \
                       decomposing one, so this asks the question the split is actually for: \

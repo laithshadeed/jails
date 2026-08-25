@@ -31,7 +31,10 @@ pub enum SemanticEdit {
         key: ResourceKey,
         value: DependencySpec,
     },
-    MavenPlugin {
+    /// The Maven rendering of a [`ResourceKey::BuildFeature`] claim. The key
+    /// says what the build has to do; this says how a *pom* is made to do it,
+    /// and the projection renders the Gradle side from the key alone.
+    BuildPlugin {
         key: ResourceKey,
         value: PluginSpec,
     },
@@ -115,7 +118,7 @@ impl SemanticEdit {
     fn tag(&self) -> u8 {
         match self {
             Self::MavenDependency { .. } => 0,
-            Self::MavenPlugin { .. } => 1,
+            Self::BuildPlugin { .. } => 1,
             Self::ComposeService { .. } => 2,
             Self::Property { .. } => 3,
             Self::MarkedBlock { .. } => 4,
@@ -132,7 +135,7 @@ impl SemanticEdit {
     pub fn key(&self) -> Option<&ResourceKey> {
         match self {
             Self::MavenDependency { key, .. }
-            | Self::MavenPlugin { key, .. }
+            | Self::BuildPlugin { key, .. }
             | Self::ComposeService { key, .. }
             | Self::Property { key, .. }
             | Self::MarkedBlock { key, .. }
@@ -151,7 +154,7 @@ impl SemanticEdit {
     pub fn validate(&self) -> Result<()> {
         let expected = match self {
             Self::MavenDependency { .. } => 1,
-            Self::MavenPlugin { .. } => 2,
+            Self::BuildPlugin { .. } => 2,
             Self::ComposeService { .. } => 3,
             Self::Property { .. } => 4,
             Self::MarkedBlock { .. } => 5,
@@ -188,7 +191,7 @@ impl Codec for SemanticEdit {
                 key.encode(encoder)?;
                 value.encode(encoder)
             }
-            Self::MavenPlugin { key, value } => {
+            Self::BuildPlugin { key, value } => {
                 key.encode(encoder)?;
                 value.encode(encoder)
             }
@@ -244,7 +247,7 @@ impl Codec for SemanticEdit {
                 key: ResourceKey::decode(decoder)?,
                 value: DependencySpec::decode(decoder)?,
             },
-            1 => Self::MavenPlugin {
+            1 => Self::BuildPlugin {
                 key: ResourceKey::decode(decoder)?,
                 value: PluginSpec::decode(decoder)?,
             },
