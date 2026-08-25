@@ -930,10 +930,9 @@ const LAYERS: &[(&str, &str, usize)] = &[
     // jails-support: no jails concepts at all -- writing, running, encoding.
     ("jails-support", "apply", 0),
     ("jails-support", "process", 0),
-    ("jails-support", "runner", 0),
+    ("jails-support", "hermetic", 0),
     ("jails-support", "scratch", 0),
     ("jails-support", "codec", 0),
-    ("jails-support", "codemod", 0),
     ("jails-support", "json", 0),
     ("jails-support", "lock", 0),
     // jails-java: reading Java and rendering templates into it.
@@ -982,6 +981,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-project", "synonyms", 4),
     ("jails-project", "capture", 4),
     ("jails-project", "compat", 4),
+    ("jails-project", "codemod", 4),
     ("jails-project", "compose", 4),
     ("jails-project", "model", 4),
     ("jails-project", "project", 4),
@@ -1084,7 +1084,7 @@ const SUBPROCESS_CLASSIFICATION: &[(&str, &str)] = &[
     ("merge", "transaction input"),
     // The executor's own runner and tool resolver.
     ("process", "the one executor"),
-    ("runner", "the one executor"),
+    ("hermetic", "the one executor"),
     ("sandbox", "the one executor"),
 ];
 
@@ -1141,9 +1141,14 @@ fn every_module_that_starts_a_process_is_classified() {
         // Both spellings: a direct `Command::new`, and the shared
         // `CommandSpec` executor that most callers rightly use instead.
         // Counting only one would classify half the surface.
-        let spawns = ["Command::new", "CommandSpec", "process::run", "runner::run"]
-            .iter()
-            .any(|spelling| file.production.contains(spelling));
+        let spawns = [
+            "Command::new",
+            "CommandSpec",
+            "process::run",
+            "hermetic::run",
+        ]
+        .iter()
+        .any(|spelling| file.production.contains(spelling));
         if spawns && let Some((_, module)) = module_of(&file.path) {
             starts.insert(module);
         }

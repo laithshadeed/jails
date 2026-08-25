@@ -823,29 +823,29 @@ evidence exactly one would: `durable/` belongs with `jails-state` from 6.3,
 because an envelope is a file format and the rest of the crate is values that
 never touch a disk.
 
-### 7.5 `jails-support` is four concepts and a lost-property office
+### 7.5 `jails-support` is three concepts now — **done 2026-08-25**
 
-Eight modules, four subjects: changing the filesystem (`apply`, `scratch`,
-`lock`), running programs (`process`, `runner`), encoding (`codec`, `json`),
-text surgery (`codemod`). Plus `Result`, `debug_cmd` and `CWD_LOCK` at the root.
+It was eight modules and four subjects, plus `Result`, `debug_cmd` and
+`CWD_LOCK` at the root. All three moves landed:
 
-- **`codemod` does not belong here.** Its subject is `# jails:<marker>` blocks
-  in a *project's* `compose.yaml`. `lib.rs` says the boundary is "a module
-  belongs at this layer only when it would still make sense in a tool that had
-  never heard of Maven" — a marked-block splice keyed to jails' own comment
-  syntax does not clear that bar. It belongs beside the files it edits, in
-  `jails-project`.
-- **`runner` should be named for what it is.** `process` runs a program with the
-  user's terminal; `runner` runs one hermetically with a timeout and a byte cap.
-  Different safety rules, near-identical names. Rename to `hermetic`.
-- **`CWD_LOCK` is test infrastructure in production.** Deliberately not
-  `#[cfg(test)]`, and the doc comment explains why correctly — a `#[cfg(test)]`
-  item is invisible to dependent crates' tests. That reasoning is sound, so this
-  is the weakest of the three; a tiny `jails-testkit` taken as a
-  `[dev-dependency]` would say what it is instead of hiding it at the bottom of
-  production.
+- **`codemod` is in `jails-project`.** Its subject is a `# jails:<marker>` block
+  in a *project's* `compose.yaml`, keyed to jails' own comment syntax, which
+  does not clear `lib.rs`'s own bar — *"a module belongs at this layer only when
+  it would still make sense in a tool that had never heard of Maven."* The one
+  reference from below turned out to be a doc comment in
+  `jails-protocol::resource`, not code, so the edge was never real.
+- **`runner` is `hermetic`.** `process` runs a program with the reader's
+  terminal, inherited environment and no timeout; this one runs it with a
+  timeout, a byte cap and nothing inherited. Two near-identical names for two
+  different safety contracts is how a caller reaches for the wrong one.
+- **`CWD_LOCK` is `jails-testkit`**, a crate taken as a `[dev-dependency]` by
+  the three crates whose tests change the process-global working directory. The
+  old doc comment's reasoning was right — a `#[cfg(test)]` item is invisible to
+  a *dependent* crate's tests — and that is a reason to give it a crate, not a
+  reason to ship it in the lowest layer's public API. The scope is unchanged:
+  every test binary is its own process, so each links one instance.
 
-What is left after those moves is coherent: **write, run, encode**.
+What is left is coherent: **write, run, encode.**
 
 ### 7.6 `jails-tooling` is two crates wearing one name
 

@@ -1034,7 +1034,7 @@ fn pom_xml(artifact: &str, group: &str, package: &str, java: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jails_support::CWD_LOCK;
+    use jails_testkit::CWD_LOCK;
     use std::path::PathBuf;
 
     fn scratch(label: &str) -> PathBuf {

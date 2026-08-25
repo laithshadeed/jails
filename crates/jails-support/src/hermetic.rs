@@ -1,5 +1,13 @@
 //! Running an external tool without letting it escape.
 //!
+//! ## Why it is not called `runner`
+//!
+//! It was, and it sat next to [`crate::process`] -- which runs a program with
+//! the reader's terminal, inherited environment and no timeout. Two
+//! near-identical names for two different safety contracts is how a caller
+//! reaches for the wrong one. This module's contract is in its name now:
+//! bounded time, bounded output, nothing inherited. `pending.md` §7.5.
+//!
 //! ## Why this is not `Command::output()`
 //!
 //! Three things go wrong with the obvious version, and all three have been

@@ -13,3 +13,8 @@ jails-spec.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+# `CWD_LOCK`: this crate's tests change the process-global working
+# directory, and they share one process.
+jails-testkit.workspace = true

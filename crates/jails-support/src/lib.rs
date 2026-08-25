@@ -1,20 +1,30 @@
-//! The bottom of the stack: writing, running, splicing and encoding.
+//! The bottom of the stack: **writing, running, encoding.**
 //!
 //! Nothing here knows what a Java project is, let alone what jails generates
 //! into one. That is the boundary — a module belongs at this layer only when it
 //! would still make sense in a tool that had never heard of Maven.
 //!
-//! [`Result`] and [`debug_cmd`] live here rather than in the binary because
-//! every crate above needs them, and a type alias the whole workspace shares has
-//! to sit below all of it.
+//! Three things left when that rule was applied honestly (`pending.md` §7.5).
+//! `codemod` -- the `# jails:<marker>` block splice -- is in `jails-project`
+//! now: its subject is a marked block in a *project's* `compose.yaml`, keyed to
+//! jails' own comment syntax, which does not clear the bar above. `runner` is
+//! [`hermetic`], because `process` runs a program with the reader's terminal
+//! and this one runs it with a timeout, a byte cap and no inherited
+//! environment: different safety rules, and the two names said nothing about
+//! which was which. And `CWD_LOCK` moved to `jails-testkit`, taken as a
+//! `[dev-dependency]` -- it is test infrastructure, and the reason it could not
+//! be `#[cfg(test)]` (a dependent crate's tests cannot see one) was a reason to
+//! give it a crate, not a reason to ship it.
+//!
+//! [`Result`] and [`debug_cmd`] stay, because every crate above needs them and
+//! a type alias the whole workspace shares has to sit below all of it.
 
 pub mod apply;
 pub mod codec;
-pub mod codemod;
+pub mod hermetic;
 pub mod json;
 pub mod lock;
 pub mod process;
-pub mod runner;
 pub mod scratch;
 
 /// Every fallible jails operation returns a message a human can act on, or
@@ -111,12 +121,3 @@ pub fn debug_cmd(cmd: &std::process::Command) {
         .unwrap_or_default();
     eprintln!("+ {program} {}{dir}", args.join(" "));
 }
-
-/// The process-global current directory, as a lock.
-///
-/// Unit tests within one crate share a test binary and therefore one cwd, so a
-/// test that changes it must hold this for the duration. It lives here, and is
-/// not `#[cfg(test)]`, because the crates that need it are not the crate that
-/// would define it: each dependent crate's test binary links one instance,
-/// which is exactly the scope the lock has to cover.
-pub static CWD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

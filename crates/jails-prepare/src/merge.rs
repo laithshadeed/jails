@@ -29,7 +29,7 @@
 use crate::Result;
 use crate::reconcile::{MarkerTokens, path_key, validate_conflict};
 use jails_protocol::identity::ProjectPath;
-use jails_support::runner::{self, Invocation, Outcome};
+use jails_support::hermetic::{self, Invocation, Outcome};
 use jails_support::scratch::ScratchDir;
 use std::time::Duration;
 
@@ -98,7 +98,7 @@ pub(crate) fn three_way(
         separator: "=======".to_string(),
         end: format!(">>>>>>> {}", label(&key)),
     };
-    let run = runner::run(&Invocation {
+    let run = hermetic::run(&Invocation {
         program: "git".into(),
         args: vec![
             "merge-file".into(),

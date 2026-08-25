@@ -562,7 +562,7 @@ mod durable_job_test_properties_tests {
             ]
         );
         assert_eq!(
-            jails_support::codemod::Marked::new(&block.marker).render(&block.rendered()),
+            jails_project::codemod::Marked::new(&block.marker).render(&block.rendered()),
             "# jails:durable-job-item-dispatcher\n\
              jobs.item-dispatcher.initial-delay=PT1H\n\
              jobs.item-dispatcher.max-attempts=2\n\
@@ -581,7 +581,7 @@ mod durable_job_test_properties_tests {
             let block = durable_job_test_properties(name);
             (
                 block.marker.clone(),
-                jails_support::codemod::Marked::new(&block.marker).render(&block.rendered()),
+                jails_project::codemod::Marked::new(&block.marker).render(&block.rendered()),
             )
         };
         let (_, sender) = render("EmailSender");
@@ -589,7 +589,7 @@ mod durable_job_test_properties_tests {
         assert_eq!(email_marker, "durable-job-email");
 
         let both = format!("{sender}{email}");
-        let remaining = jails_support::codemod::Marked::new(&email_marker)
+        let remaining = jails_project::codemod::Marked::new(&email_marker)
             .strip_from(&both)
             .expect("the shorter marker is there to strip");
         assert!(
@@ -613,7 +613,7 @@ mod durable_job_test_properties_tests {
     #[test]
     fn removing_the_only_job_leaves_an_empty_source() {
         let block = durable_job_test_properties("EmailSender");
-        let marked = jails_support::codemod::Marked::new(&block.marker);
+        let marked = jails_project::codemod::Marked::new(&block.marker);
         let only = marked.render(&block.rendered());
         assert_eq!(marked.strip_from(&only).as_deref(), Some(""));
     }
@@ -633,7 +633,7 @@ mod durable_job_test_properties_tests {
             let block = durable_job_test_properties(name);
             (
                 block.marker.clone(),
-                jails_support::codemod::Marked::new(&block.marker).render(&block.rendered()),
+                jails_project::codemod::Marked::new(&block.marker).render(&block.rendered()),
             )
         };
         let (email_marker, email) = render("EmailSender");
@@ -648,7 +648,7 @@ mod durable_job_test_properties_tests {
         assert!(both.contains("jobs.invoice-writer.max-attempts=2"));
 
         // Retiring one leaves the other and the reader's line untouched.
-        let without_email = jails_support::codemod::Marked::new(&email_marker)
+        let without_email = jails_project::codemod::Marked::new(&email_marker)
             .strip_from(&both)
             .expect("the email block is there to strip");
         assert!(

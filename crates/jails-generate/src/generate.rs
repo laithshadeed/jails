@@ -407,7 +407,7 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    use jails_support::CWD_LOCK;
+    use jails_testkit::CWD_LOCK;
 
     fn scratch(label: &str) -> PathBuf {
         jails_support::scratch::ScratchDir::in_temp(&format!("jails-generate-test-{label}"))

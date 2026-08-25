@@ -1,0 +1,7 @@
+[package]
+name = "jails-testkit"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true

@@ -37,6 +37,7 @@
 //! only reason it can be trusted to produce the same plan twice is that it has
 //! nothing else to read.
 
+use crate::codemod::Marked;
 use crate::pom::{self, DependencyRef, Flavor};
 use crate::properties;
 use jails_protocol::change::DesiredChange;
@@ -50,7 +51,6 @@ use jails_protocol::snapshot::{Captured, ProjectSnapshot, SnapshotFile};
 use jails_spec::build::Build;
 use jails_support::Result;
 use jails_support::codec::sha256;
-use jails_support::codemod::Marked;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 

@@ -189,6 +189,7 @@ dependencies = [
  "jails-protocol",
  "jails-spec",
  "jails-support",
+ "jails-testkit",
  "jails-tooling",
  "tempfile",
 ]
@@ -229,6 +230,7 @@ dependencies = [
  "jails-protocol",
  "jails-spec",
  "jails-support",
+ "jails-testkit",
 ]
 
 [[package]]
@@ -258,6 +260,7 @@ dependencies = [
  "jails-protocol",
  "jails-spec",
  "jails-support",
+ "jails-testkit",
 ]
 
 [[package]]
@@ -286,6 +289,10 @@ dependencies = [
  "nix",
  "tempfile",
 ]
+
+[[package]]
+name = "jails-testkit"
+version = "0.1.0"
 
 [[package]]
 name = "jails-tooling"

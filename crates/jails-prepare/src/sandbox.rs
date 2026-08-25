@@ -29,7 +29,7 @@ use crate::Result;
 use crate::tool::ToolIdentityFingerprint;
 use jails_protocol::conflict::FileMode;
 use jails_protocol::identity::ProjectPath;
-use jails_support::runner::{self, Invocation, Run};
+use jails_support::hermetic::{self, Invocation, Run};
 use jails_support::scratch::ScratchDir;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -107,7 +107,7 @@ impl Sandbox {
         environment: BTreeMap<String, String>,
     ) -> Result<(Run, Diff)> {
         identity.validate()?;
-        let run = runner::run(&Invocation {
+        let run = hermetic::run(&Invocation {
             program,
             args,
             working_directory: self.project.clone(),
@@ -119,7 +119,7 @@ impl Sandbox {
                 "{} did not succeed ({:?}).\n       fix: {}",
                 identity.key.tool,
                 run.outcome,
-                runner::summarise(&run, &[&self.project], 2048)
+                hermetic::summarise(&run, &[&self.project], 2048)
             )
             .into());
         }
@@ -284,7 +284,7 @@ mod tests {
             },
             executable_sha256: ObjectId::from_bytes(sha256(b"sh")),
             version_stdout_sha256: ObjectId::from_bytes(sha256(b"1.0")),
-            runner_schema: jails_support::runner::RUNNER_SCHEMA,
+            runner_schema: jails_support::hermetic::RUNNER_SCHEMA,
             timeout_ms: 30_000,
             mutable_scopes: scopes
                 .iter()

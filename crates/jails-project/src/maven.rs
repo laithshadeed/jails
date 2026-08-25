@@ -128,7 +128,7 @@ mod tests {
     /// except by editing `PATH` for every command.
     #[test]
     fn an_explicit_maven_command_wins() {
-        let _guard = jails_support::CWD_LOCK.lock();
+        let _guard = jails_testkit::CWD_LOCK.lock();
         let dir = jails_support::scratch::ScratchDir::in_temp("jails-maven-override")
             .unwrap()
             .keep();
