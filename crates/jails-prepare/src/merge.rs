@@ -79,7 +79,8 @@ pub(crate) fn three_way(
                 "`{path}` has a {side} image that is not UTF-8 text, and a binary three-way \
                  merge is unsupported.\n       fix: resolve it by hand, or destroy and \
                  regenerate."
-            ));
+            )
+            .into());
         }
     }
 
@@ -132,7 +133,8 @@ pub(crate) fn three_way(
             return Err(format!(
                 "`{path}` was changed by both you and the generator, and merging it needs \
                  git: {why}\n       fix: install git, or resolve the file by hand."
-            ));
+            )
+            .into());
         }
     };
     let merged = run.stdout.bytes.clone();
@@ -141,9 +143,9 @@ pub(crate) fn three_way(
     scratch.close()?;
 
     if truncated {
-        return Err(format!(
-            "`{path}` produced more merge output than jails will hold in memory"
-        ));
+        return Err(
+            format!("`{path}` produced more merge output than jails will hold in memory").into(),
+        );
     }
     match outcome {
         Outcome::Exited { code: 0 } => Ok(Merged::Clean(merged)),
@@ -161,7 +163,8 @@ pub(crate) fn three_way(
         other => Err(format!(
             "`{path}`: git merge-file ended as {other:?}, which is neither a clean merge nor \
              conflict output"
-        )),
+        )
+        .into()),
     }
 }
 

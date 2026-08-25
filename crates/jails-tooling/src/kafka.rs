@@ -24,14 +24,13 @@
 //! `spring.json.use.type.headers=false` for exactly this reason, and `jails
 //! kafka send` is what makes that setting testable in one line.
 
+use jails_support::Result;
 use std::path::Path;
 use std::process::Command;
 
 use crate::compose;
 use crate::generate::find_project_root;
 use crate::run;
-
-type Result<T> = std::result::Result<T, String>;
 
 /// The compose service name, and the directory the tools live in inside the
 /// official `apache/kafka` image.
@@ -289,11 +288,11 @@ fn resolve_topic(root: &Path, given: Option<String>) -> Result<String> {
     if let Some(topic) = given {
         return Ok(topic);
     }
-    declared_topics(root).into_iter().next().ok_or_else(|| {
+    Ok(declared_topics(root).into_iter().next().ok_or_else(|| {
         "no topic given, and none found in the source -- pass one, or generate a slice \
          with `jails g event <Name>`"
             .to_string()
-    })
+    })?)
 }
 
 /// Topic names this project declares, read from `@KafkaListener` and from the
@@ -389,7 +388,8 @@ fn resolve_group(root: &Path, given: Option<String>) -> Result<String> {
     }
     let properties = root.join("src/main/resources/application.properties");
     let text = std::fs::read_to_string(&properties).unwrap_or_default();
-    text.lines()
+    Ok(text
+        .lines()
         .filter_map(|line| line.trim().strip_prefix("spring.kafka.consumer.group-id="))
         .map(|value| value.trim().to_string())
         .find(|value| !value.is_empty())
@@ -397,7 +397,7 @@ fn resolve_group(root: &Path, given: Option<String>) -> Result<String> {
             "no consumer group given, and spring.kafka.consumer.group-id is not set -- \
              pass --group"
                 .to_string()
-        })
+        })?)
 }
 
 #[cfg(test)]

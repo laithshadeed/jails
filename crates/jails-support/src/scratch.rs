@@ -79,12 +79,12 @@ impl ScratchDir {
             return Ok(());
         };
         let path = inner.path().to_path_buf();
-        inner.close().map_err(|error| {
+        Ok(inner.close().map_err(|error| {
             format!(
                 "failed to remove scratch directory {}: {error}",
                 path.display()
             )
-        })
+        })?)
     }
 
     /// Give up ownership and keep the directory, for recovery storage.

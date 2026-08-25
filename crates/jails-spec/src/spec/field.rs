@@ -170,7 +170,8 @@ pub(crate) fn resolve_type(token: &str) -> Result<Resolved> {
     if lower == "list" || lower == "map" {
         return Err(format!(
             "'{token}' needs its element type(s) -- list<string>, list<Match>, map<string,double>"
-        ));
+        )
+        .into());
     }
 
     let (java_type, import) = field_type(&lower)?;
@@ -188,13 +189,14 @@ pub(crate) fn resolve_type(token: &str) -> Result<Resolved> {
 pub(crate) fn resolve_element(token: &str, outer: &str) -> Result<Resolved> {
     let token = token.trim();
     if token.is_empty() {
-        return Err(format!("'{outer}' is missing an element type"));
+        return Err(format!("'{outer}' is missing an element type").into());
     }
     let resolved = resolve_type(token).map_err(|e| format!("in '{outer}': {e}"))?;
     if resolved.collection {
         return Err(format!(
             "'{outer}': nested collections are not supported -- introduce a type for the inner one"
-        ));
+        )
+        .into());
     }
     Ok(resolved)
 }
@@ -280,7 +282,8 @@ pub fn field_type(token: &str) -> Result<(&'static str, Option<&'static str>)> {
         known.join(", "),
         token,
         capitalize(token)
-    ))
+    )
+    .into())
 }
 
 /// The Java spellings of the built-in table, so `date:LocalDate` and
@@ -307,7 +310,7 @@ pub fn builtin_by_java_name(ty: &str) -> Option<(&'static str, Option<&'static s
 
 pub fn parse_fields(args: &[String]) -> Result<Vec<Field>> {
     args.iter()
-        .map(|arg| {
+        .map(|arg| -> Result<Field> {
             let (name, ty) = arg
                 .split_once(':')
                 .ok_or_else(|| format!("field '{arg}' must be name:type"))?;
@@ -326,7 +329,7 @@ pub fn parse_fields(args: &[String]) -> Result<Vec<Field>> {
                 },
             };
             if ty.is_empty() {
-                return Err(format!("field '{arg}' has a suffix but no type"));
+                return Err(format!("field '{arg}' has a suffix but no type").into());
             }
             derive_field(name.trim(), ty, optionality, constraints, arg)
         })
@@ -364,12 +367,14 @@ pub fn derive_field(
         return Err(format!(
             "'{arg}': the '!' suffix means non-blank, which only applies to text -- \
              drop it, or use '{name}:{type_token}' if you only meant required"
-        ));
+        )
+        .into());
     }
     if optionality == Optionality::Nullable && resolved.collection {
         return Err(format!(
             "'{arg}': a collection already models absence as an empty one -- drop the '?'"
-        ));
+        )
+        .into());
     }
 
     if let Some(check) = constraints.check {
@@ -384,13 +389,15 @@ pub fn derive_field(
                     NumericCheck::NonNegative => "@nonnegative",
                 },
                 resolved.java_type
-            ));
+            )
+            .into());
         }
     }
     if constraints.primary_key && optionality == Optionality::Nullable {
         return Err(format!(
             "'{arg}': a primary key column cannot be nullable -- drop the '?' or the '@pk'"
-        ));
+        )
+        .into());
     }
 
     Ok(Field {
@@ -427,20 +434,18 @@ pub(crate) fn parse_constraints<'a>(ty: &'a str, arg: &str) -> Result<(&'a str, 
             "positive" => constraints.check = Some(NumericCheck::Positive),
             "nonnegative" => constraints.check = Some(NumericCheck::NonNegative),
             "" => {
-                return Err(format!(
-                    "'{arg}': trailing '@' with no marker. Known: {KNOWN}"
-                ));
+                return Err(format!("'{arg}': trailing '@' with no marker. Known: {KNOWN}").into());
             }
             other => {
-                return Err(format!(
-                    "'{arg}': unknown column marker '@{other}'. Known: {KNOWN}"
-                ));
+                return Err(
+                    format!("'{arg}': unknown column marker '@{other}'. Known: {KNOWN}").into(),
+                );
             }
         }
         rest = &rest[..at];
     }
     if rest.trim().is_empty() {
-        return Err(format!("'{arg}': markers but no type"));
+        return Err(format!("'{arg}': markers but no type").into());
     }
     Ok((rest, constraints))
 }

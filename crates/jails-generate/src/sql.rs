@@ -17,6 +17,7 @@
 //! Javadoc names it.
 
 use crate::generate::{Field, Optionality};
+use jails_support::Result;
 
 /// How one record component crosses the JDBC boundary.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -589,20 +590,21 @@ pub(crate) fn create_table(
 /// Required columns carry a deterministic backfill default so this migration
 /// is valid on a populated table, then drop that default: application code,
 /// not the database, remains responsible for every future value.
-pub fn add_column(type_name: &str, column: &Column) -> Result<String, String> {
+pub fn add_column(type_name: &str, column: &Column) -> Result<String> {
     if !column.mapped() {
         return Err(format!(
             "field `{}` has project type `{}` and cannot be mapped to one column.\n       \
              fix: generate an association for a project record, or use a built-in/enum field type.",
             column.name, column.java_type
-        ));
+        )
+        .into());
     }
     if column.constraints.primary_key {
         return Err(format!(
             "field `{}` cannot be added as a primary key to an existing table.\n       \
              fix: add a nullable/unique field, backfill it deliberately, then write a migration for the key change.",
             column.name
-        ));
+        ).into());
     }
 
     let table = table_name(type_name);
@@ -634,7 +636,7 @@ pub fn add_column(type_name: &str, column: &Column) -> Result<String, String> {
                     "required unique text field `{}` has no safe automatic backfill.\n       \
                      fix: add it as nullable first, backfill distinct values, then add not-null in a deliberate migration.",
                     column.name
-                ));
+                ).into());
             }
             "text" => "''",
             other => {
@@ -642,7 +644,7 @@ pub fn add_column(type_name: &str, column: &Column) -> Result<String, String> {
                     "field `{}` maps to `{other}`, for which jails has no safe backfill default.\n       \
                      fix: make the field nullable, or write the data migration explicitly.",
                     column.name
-                ));
+                ).into());
             }
         })
     } else {
@@ -683,20 +685,21 @@ pub fn add_column(type_name: &str, column: &Column) -> Result<String, String> {
 ///
 /// A typo here fails at `flyway migrate` with "column does not exist", which
 /// is a slow way to find out and happens on whichever machine runs it first.
-pub(crate) fn validate_index(spec: &str, columns: &[Column]) -> Result<(), String> {
+pub(crate) fn validate_index(spec: &str, columns: &[Column]) -> Result<()> {
     let known: Vec<&str> = columns.iter().map(|c| c.name.as_str()).collect();
     for part in spec.split(',') {
         // `created_at desc` -- the column is the first word, the rest is
         // ordering that Postgres parses and jails does not.
         let column = part.split_whitespace().next().unwrap_or("");
         if column.is_empty() {
-            return Err(format!("--index '{spec}': empty column name"));
+            return Err(format!("--index '{spec}': empty column name").into());
         }
         if !known.contains(&column) {
             return Err(format!(
                 "--index '{spec}': no column '{column}' in this table. Columns: {}",
                 known.join(", ")
-            ));
+            )
+            .into());
         }
     }
     Ok(())

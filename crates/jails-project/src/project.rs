@@ -268,7 +268,9 @@ fn nearest_build_root(start: &Path) -> Result<PathBuf> {
             return Ok(dir.to_path_buf());
         }
     }
-    Err("no pom.xml or build.gradle found in this or any parent directory".to_string())
+    Err(jails_support::Failure::Told(
+        "no pom.xml or build.gradle found in this or any parent directory".to_string(),
+    ))
 }
 
 /// `rootProject.name = 'spring'` out of a `settings.gradle`.
@@ -327,8 +329,8 @@ fn collect_modules(
 }
 
 fn read_pom(root: &Path) -> Result<String> {
-    fs::read_to_string(root.join("pom.xml"))
-        .map_err(|e| format!("failed to read {}/pom.xml: {e}", root.display()))
+    Ok(fs::read_to_string(root.join("pom.xml"))
+        .map_err(|e| format!("failed to read {}/pom.xml: {e}", root.display()))?)
 }
 
 /// The module's own artifactId, ignoring the parent's -- which is why the

@@ -51,12 +51,12 @@ impl MachineState {
     pub fn ledger(&self) -> Result<&LedgerV2> {
         match self {
             Self::Current(ledger) => Ok(ledger),
-            Self::Absent => Err(
+            Self::Absent => Err(jails_support::Failure::Told(
                 "this project has no jails state yet.\n       fix: nothing recorded means \
                  nothing to reconcile against."
                     .to_string(),
-            ),
-            Self::Unreadable(why) => Err(why.clone()),
+            )),
+            Self::Unreadable(why) => Err(jails_support::Failure::Told(why.clone())),
         }
     }
 

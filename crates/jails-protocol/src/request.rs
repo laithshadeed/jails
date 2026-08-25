@@ -194,10 +194,13 @@ fn reject_dashes(value: &str) -> Result<()> {
         return Err(format!(
             "`{value}` still has a leading dash; the canonical projection stores names without \
              one, or `--force` and `force` would be two different commands"
-        ));
+        )
+        .into());
     }
     if value.is_empty() {
-        return Err("a command, option or flag name is empty".to_string());
+        return Err(jails_support::Failure::Told(
+            "a command, option or flag name is empty".to_string(),
+        ));
     }
     Ok(())
 }
@@ -300,7 +303,9 @@ impl CanonicalMutationRequest {
     /// with nothing to add is a mistake the user should hear about.
     pub fn capabilities(rows: Vec<CanonicalCapability>) -> Result<Vec<CanonicalCapability>> {
         if rows.is_empty() {
-            return Err("no capability named.\n       fix: name at least one.".to_string());
+            return Err(jails_support::Failure::Told(
+                "no capability named.\n       fix: name at least one.".to_string(),
+            ));
         }
         let mut previous: Option<&CapabilityId> = None;
         for row in &rows {
@@ -316,7 +321,8 @@ impl CanonicalMutationRequest {
                     "`{}` carries its package in its identity, so its spec may not also name \
                      one",
                     row.id.kind.label()
-                ));
+                )
+                .into());
             }
         }
         Ok(rows)
@@ -326,16 +332,16 @@ impl CanonicalMutationRequest {
     /// feature — those have their own requests.
     pub fn generate_entity(id: EntityId, spec: EntitySpec) -> Result<Self> {
         if !matches!(id, EntityId::Intent(_)) {
-            return Err(
+            return Err(jails_support::Failure::Told(
                 "`generate` produces a persistent intent.\n       fix: a capability is `jails \
                  add`, and the fast-test feature is `jails test --fast`."
                     .to_string(),
-            );
+            ));
         }
         if !spec.matches(&id) {
-            return Err(
+            return Err(jails_support::Failure::Told(
                 "this generate request pairs an identity and a spec of different kinds".to_string(),
-            );
+            ));
         }
         Ok(Self::Generate(CanonicalGenerateRequest::Entity {
             id,
@@ -347,11 +353,11 @@ impl CanonicalMutationRequest {
     /// repeated identity field agreeing.
     pub fn generate_one_shot(id: OneShotId, spec: OneShotSpec) -> Result<Self> {
         if !spec.matches(&id) {
-            return Err(
+            return Err(jails_support::Failure::Told(
                 "this one-shot request pairs an identity and a spec that disagree.\n       fix: \
                  their kinds and their repeated target, path or source must be the same value."
                     .to_string(),
-            );
+            ));
         }
         Ok(Self::Generate(CanonicalGenerateRequest::OneShot {
             id,
@@ -362,11 +368,11 @@ impl CanonicalMutationRequest {
     /// `destroy <kind> <name>`: a persistent intent only.
     pub fn destroy_entity(id: EntityId, force: bool) -> Result<Self> {
         if !matches!(id, EntityId::Intent(_)) {
-            return Err(
+            return Err(jails_support::Failure::Told(
                 "`destroy` removes a persistent intent.\n       fix: a capability is `jails \
                  remove`, and the fast-test feature is `jails remove fast-test`."
                     .to_string(),
-            );
+            ));
         }
         Ok(Self::Destroy {
             subject: ChangeSubject::Entity(id),
@@ -385,17 +391,17 @@ impl CanonicalMutationRequest {
                 subject: ChangeSubject::OneShot(id),
                 force,
             }),
-            OneShotId::Field { .. } => Err(
+            OneShotId::Field { .. } => Err(jails_support::Failure::Told(
                 "a field has no destroy route.\n       fix: a later render reapplies every \
                  active overlay, so removing one in isolation would leave the others \
                  inconsistent."
                     .to_string(),
-            ),
-            OneShotId::Migration { .. } => Err(
+            )),
+            OneShotId::Migration { .. } => Err(jails_support::Failure::Told(
                 "a migration is append-only.\n       fix: the database has already run it; \
                  write a forward migration instead."
                     .to_string(),
-            ),
+            )),
         }
     }
 
@@ -421,11 +427,11 @@ impl CanonicalMutationRequest {
     ) -> Result<Self> {
         let entity = crate::entity::EntityId::Declared(id.clone());
         if !crate::entity::EntitySpec::Declared(spec.clone()).matches(&entity) {
-            return Err(
+            return Err(jails_support::Failure::Told(
                 "the resource being declared and the content declared for it are different \
                  things"
                     .to_string(),
-            );
+            ));
         }
         Ok(Self::Declare { id, spec })
     }

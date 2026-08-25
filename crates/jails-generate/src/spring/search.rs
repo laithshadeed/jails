@@ -45,7 +45,8 @@ pub(crate) fn search_files(
     if !slice.project().has_jdbc() {
         return Err(format!(
             "search {name} indexes a PostgreSQL table.\n       fix: run `jails add db` first."
-        ));
+        )
+        .into());
     }
     let root: &Path = slice.project().root();
     let domain: &str = &slice.placed(Layer::Domain);
@@ -56,7 +57,8 @@ pub(crate) fn search_files(
         return Err(format!(
             "search {name} needs the record it searches.\n       \
              fix: `jails g scaffold {name} ...` first, or correct the name."
-        ));
+        )
+        .into());
     };
     let columns = crate::sql::columns(&record, slice.project(), domain, "rows");
     let table = crate::sql::table_name(name);
@@ -163,7 +165,8 @@ fn searched_columns(
             "search {name} needs the components to index, e.g. \
              `jails g search {name} title body`.\n       \
              Indexing every text column would index ids and status codes as prose."
-        ));
+        )
+        .into());
     }
     let mut out = Vec::new();
     for field in fields {
@@ -179,14 +182,16 @@ fn searched_columns(
                     .map(|column| column.name.as_str())
                     .collect::<Vec<_>>()
                     .join(", ")
-            ));
+            )
+            .into());
         };
         if !column.sql_type.contains("text") && !column.sql_type.contains("varchar") {
             return Err(format!(
                 "`{field}` is {} -- full-text search indexes text.\n       \
                  fix: search a text component, or add one.",
                 column.sql_type
-            ));
+            )
+            .into());
         }
         out.push(column.name.clone());
     }

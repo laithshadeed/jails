@@ -56,14 +56,14 @@ pub(super) fn test(
     debug: bool,
 ) -> Result<()> {
     if options.fast {
-        return Err(
+        return Err(jails_support::Failure::Told(
             "`jails test --fast` needs a classpath resolved by Maven, and this project is \
              built by Gradle.\n       fix: `jails test` runs the suite here, and `--failed`, \
              `--json` and `--slowest` all work -- they read the JUnit XML Gradle already \
              writes. The flag is refused rather than ignored, because one that silently did \
              something else is worse than one that says it cannot."
                 .to_string(),
-        );
+        ));
     }
 
     // Resolved before anything runs, and then followed exactly like a filter

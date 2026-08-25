@@ -25,10 +25,10 @@ use jails_support::Result;
 /// file that ignores the convention is one the reader has to think about.
 pub(super) fn parse_constants(args: &[String]) -> Result<Vec<String>> {
     if args.is_empty() {
-        return Err(
+        return Err(jails_support::Failure::Told(
             "an enum needs at least one constant, e.g. `generate enum Currency GBP EUR`"
                 .to_string(),
-        );
+        ));
     }
     let mut constants = Vec::new();
     for arg in args {
@@ -44,10 +44,10 @@ pub(super) fn parse_constants(args: &[String]) -> Result<Vec<String>> {
             })
             .collect();
         if constant.is_empty() || constant.starts_with(|c: char| c.is_ascii_digit()) {
-            return Err(format!("'{arg}' is not a usable enum constant"));
+            return Err(format!("'{arg}' is not a usable enum constant").into());
         }
         if constants.contains(&constant) {
-            return Err(format!("duplicate enum constant '{constant}'"));
+            return Err(format!("duplicate enum constant '{constant}'").into());
         }
         constants.push(constant);
     }
@@ -107,19 +107,19 @@ class {name}Test {{
 
 pub(super) fn parse_variants(args: &[String]) -> Result<Vec<String>> {
     if args.is_empty() {
-        return Err(
+        return Err(jails_support::Failure::Told(
             "a sealed type needs at least one variant, e.g. `generate sealed Result Ok Failed`"
                 .to_string(),
-        );
+        ));
     }
     let mut variants: Vec<String> = Vec::new();
     for arg in args {
         let variant = capitalize(arg.trim());
         if variant.is_empty() || !variant.chars().all(|c| c.is_ascii_alphanumeric()) {
-            return Err(format!("'{arg}' is not a usable variant name"));
+            return Err(format!("'{arg}' is not a usable variant name").into());
         }
         if variants.contains(&variant) {
-            return Err(format!("duplicate variant '{variant}'"));
+            return Err(format!("duplicate variant '{variant}'").into());
         }
         variants.push(variant);
     }

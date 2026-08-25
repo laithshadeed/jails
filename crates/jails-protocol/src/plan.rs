@@ -58,16 +58,18 @@ impl LedgerIntent {
                 return Err(format!(
                     "applied entity {:?} pairs an identity and a spec of different kinds",
                     entity.id
-                ));
+                )
+                .into());
             }
             if entity.owners.is_empty() {
                 return Err(format!(
                     "applied entity {:?} has no owner; it should be absent instead",
                     entity.id
-                ));
+                )
+                .into());
             }
             if !entities.insert(&entity.id) {
-                return Err(format!("entity {:?} appears twice", entity.id));
+                return Err(format!("entity {:?} appears twice", entity.id).into());
             }
         }
         let mut one_shots = BTreeSet::new();
@@ -76,17 +78,18 @@ impl LedgerIntent {
                 return Err(format!(
                     "one-shot receipt {:?} pairs an identity and a spec that disagree",
                     receipt.id
-                ));
+                )
+                .into());
             }
             if !one_shots.insert(&receipt.id) {
-                return Err(format!("one-shot {:?} appears twice", receipt.id));
+                return Err(format!("one-shot {:?} appears twice", receipt.id).into());
             }
         }
         let mut resources = BTreeSet::new();
         for resource in &self.resources_after {
             resource.value.agrees_with(&resource.key)?;
             if !resources.insert(&resource.key) {
-                return Err(format!("resource {:?} appears twice", resource.key));
+                return Err(format!("resource {:?} appears twice", resource.key).into());
             }
         }
         Ok(())
@@ -259,12 +262,14 @@ impl DesiredChangeSet {
                     return Err(format!(
                         "a change attributed to {kind:?} appears under a subject that does not \
                          perform it"
-                    ));
+                    )
+                    .into());
                 }
                 (ChangeAttribution::Resource(owner), Some(_)) => {
                     return Err(format!(
                         "a maintenance subject cannot charge a change to {owner:?}"
-                    ));
+                    )
+                    .into());
                 }
             }
         }

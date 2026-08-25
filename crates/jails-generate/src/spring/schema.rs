@@ -32,12 +32,14 @@ pub(crate) fn association_files(
     if mappings.is_empty() {
         return Err(format!(
             "association {name} needs at least one childField=parentField mapping"
-        ));
+        )
+        .into());
     }
     if !slice.project().has_jdbc() {
         return Err(format!(
             "association {name} needs PostgreSQL/JDBC.\n       fix: run `jails add db` first."
-        ));
+        )
+        .into());
     }
     // plan.md §9.4: one rule for where fields come from, and one refusal that
     // carries the fix. These two used to word it themselves, without one.
@@ -54,7 +56,8 @@ pub(crate) fn association_files(
         if local_name.is_empty() || parent_name.is_empty() || parent_name.contains('=') {
             return Err(format!(
                 "association {name}: mapping `{mapping}` must contain exactly two field names"
-            ));
+            )
+            .into());
         }
         let local = child_fields
             .iter()
@@ -68,7 +71,8 @@ pub(crate) fn association_files(
             return Err(format!(
                 "association {name}: {child}.{local_name} is {}, but {parent}.{parent_name} is {}",
                 local.java_type, remote.java_type
-            ));
+            )
+            .into());
         }
         if pairs.iter().any(
             |(existing, _): &(&crate::generate::Field, &crate::generate::Field)| {
@@ -77,7 +81,8 @@ pub(crate) fn association_files(
         ) {
             return Err(format!(
                 "association {name}: child field `{local_name}` is mapped more than once"
-            ));
+            )
+            .into());
         }
         pairs.push((local, remote));
     }
@@ -107,7 +112,7 @@ pub(crate) fn association_files(
         if identifier.len() > 63 {
             return Err(format!(
                 "association {name} produces PostgreSQL identifier `{identifier}` longer than 63 bytes; use a shorter association name"
-            ));
+            ).into());
         }
     }
 
@@ -256,7 +261,8 @@ pub(crate) fn idempotency_files(slice: &Slice, name: &str) -> jails_support::Res
         return Err(format!(
             "idempotency {name} needs PostgreSQL/JDBC to keep receipts across restarts.\n       \
              fix: run `jails add db` first."
-        ));
+        )
+        .into());
     }
     let root: &Path = slice.project().root();
     let domain: &str = &slice.placed(Layer::Domain);
@@ -388,7 +394,7 @@ pub(crate) fn http_sink_files(
     if !project.projected_main_sources().contains_key(&sink_port) {
         return Err(format!(
             "http-sink {name} cannot find {usecase}OutboxSink.java.\n       fix: generate usecase {usecase} with `--yields {event}` first."
-        ));
+        ).into());
     }
     let event_class = format!("{event}Event");
     let fields = slice
@@ -400,15 +406,15 @@ pub(crate) fn http_sink_files(
         .find(|field| field.name == "id")
         .ok_or_else(|| format!("http-sink {name} needs {event_class}.id for idempotency"))?;
     if id.optionality == crate::generate::Optionality::Nullable {
-        return Err(format!(
-            "http-sink {name} needs a required {event_class}.id for idempotency"
-        ));
+        return Err(
+            format!("http-sink {name} needs a required {event_class}.id for idempotency").into(),
+        );
     }
     let json = crate::generate::main_dir(root, adapters).join("Json.java");
     if !project.projected_main_sources().contains_key(&json) {
         return Err(format!(
             "http-sink {name} needs the generic JSON capability.\n       fix: run `jails add json` first."
-        ));
+        ).into());
     }
 
     let usecase_property = crate::sql::snake_case(usecase).replace('_', "-");

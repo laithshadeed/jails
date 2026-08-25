@@ -124,7 +124,8 @@ pub const ASSERTJ_VERSION: &str = "3.27.7";
 
 pub fn read(root: &Path) -> Result<String> {
     let path = root.join("pom.xml");
-    std::fs::read_to_string(&path).map_err(|e| format!("failed to read {}: {e}", path.display()))
+    Ok(std::fs::read_to_string(&path)
+        .map_err(|e| format!("failed to read {}: {e}", path.display()))?)
 }
 
 pub fn flavor(pom: &str) -> Flavor {

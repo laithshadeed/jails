@@ -182,7 +182,8 @@ impl CapabilityId {
                         "`{}` is one per project, so `--name` has no meaning for it.\n       \
                          fix: drop `--name`; `--package` does move where it is placed.",
                         kind.label()
-                    ));
+                    )
+                    .into());
                 }
                 Ok(Self {
                     kind,
@@ -195,7 +196,8 @@ impl CapabilityId {
                         "`{}` writes project-global or conventional output, so `{rejected}` has \
                          no meaning for it.\n       fix: drop `{rejected}`.",
                         kind.label()
-                    ));
+                    )
+                    .into());
                 }
                 Ok(Self {
                     kind,
@@ -227,7 +229,7 @@ impl Codec for CapabilityId {
                 name: Name::decode(decoder)?,
                 package: Package::decode(decoder)?,
             },
-            other => return Err(format!("unknown capability instance tag {other}")),
+            other => return Err(format!("unknown capability instance tag {other}").into()),
         };
         Ok(Self { kind, instance })
     }
@@ -264,7 +266,7 @@ impl ToolFeature {
     pub fn parse(text: &str) -> Result<Self> {
         match text {
             "fast-test" => Ok(Self::FastTest),
-            other => Err(format!("unknown tool feature `{other}`")),
+            other => Err(format!("unknown tool feature `{other}`").into()),
         }
     }
 }
@@ -307,10 +309,10 @@ impl Codec for EntityId {
             1 => IntentId::decode(decoder).map(Self::Intent),
             2 => match decoder.tag()? {
                 0 => Ok(Self::ToolFeature(ToolFeature::FastTest)),
-                other => Err(format!("unknown tool feature tag {other}")),
+                other => Err(format!("unknown tool feature tag {other}").into()),
             },
             3 => DeclaredId::decode(decoder).map(Self::Declared),
-            other => Err(format!("unknown entity tag {other}")),
+            other => Err(format!("unknown entity tag {other}").into()),
         }
     }
 }
@@ -341,7 +343,7 @@ impl OwnerId {
             0 => Ok(Self::AppManifest),
             1 => Ok(Self::DirectConfig),
             2 => Ok(Self::DirectCli),
-            other => Err(format!("unknown owner tag {other}")),
+            other => Err(format!("unknown owner tag {other}").into()),
         }
     }
 }
@@ -463,7 +465,7 @@ impl Codec for EntitySpec {
             1 => Self::Intent(IntentSpec::decode(decoder)?),
             2 => Self::ToolFeature(ToolFeatureSpec::decode(decoder)?),
             3 => Self::Declared(DeclaredSpec::decode(decoder)?),
-            other => return Err(format!("unknown entity spec tag {other}")),
+            other => return Err(format!("unknown entity spec tag {other}").into()),
         })
     }
 }
@@ -500,7 +502,7 @@ impl Codec for TypeTargetId {
         Ok(match decoder.tag()? {
             0 => Self::Managed(IntentId::decode(decoder)?),
             1 => Self::Existing(JavaType::decode(decoder)?),
-            other => return Err(format!("unknown type target tag {other}")),
+            other => return Err(format!("unknown type target tag {other}").into()),
         })
     }
 }
@@ -531,7 +533,8 @@ impl ExternalPathId {
             return Err(format!(
                 "`{canonical_utf8_path}` is not a canonical absolute path.\n       fix: resolve \
                  the path before taking its identity, so a symlink and its target agree."
-            ));
+            )
+            .into());
         }
         let mut encoder = Encoder::new();
         encoder.string(canonical_utf8_path)?;
@@ -577,7 +580,7 @@ impl Codec for SourceInputId {
             1 => Self::External {
                 path_id: ExternalPathId(ObjectId::decode(decoder)?),
             },
-            other => return Err(format!("unknown source input tag {other}")),
+            other => return Err(format!("unknown source input tag {other}").into()),
         })
     }
 }
@@ -624,7 +627,7 @@ impl Codec for OneShotId {
             2 => Self::Cases {
                 source: SourceInputId::decode(decoder)?,
             },
-            other => return Err(format!("unknown one-shot id tag {other}")),
+            other => return Err(format!("unknown one-shot id tag {other}").into()),
         })
     }
 }
@@ -641,7 +644,9 @@ pub struct CasesReceiptId(ObjectId);
 impl CasesReceiptId {
     pub fn of(id: &OneShotId) -> Result<Self> {
         if !matches!(id, OneShotId::Cases { .. }) {
-            return Err("a cases receipt id is only defined for a cases one-shot".to_string());
+            return Err(jails_support::Failure::Told(
+                "a cases receipt id is only defined for a cases one-shot".to_string(),
+            ));
         }
         let mut encoder = Encoder::new();
         id.encode(&mut encoder)?;
@@ -761,7 +766,7 @@ impl Codec for OneShotSpec {
                 source_sha256: ObjectId::decode(decoder)?,
                 output: ProjectPath::decode(decoder)?,
             },
-            other => return Err(format!("unknown one-shot spec tag {other}")),
+            other => return Err(format!("unknown one-shot spec tag {other}").into()),
         })
     }
 }
@@ -786,16 +791,16 @@ pub(crate) fn recipe_label(recipe: Recipe) -> &'static str {
 
 pub(crate) fn recipe_from_label(label: &str) -> Result<Recipe> {
     use clap::ValueEnum;
-    Recipe::from_str(label, false).map_err(|_| format!("unknown recipe `{label}`"))
+    Ok(Recipe::from_str(label, false).map_err(|_| format!("unknown recipe `{label}`"))?)
 }
 
 pub(crate) fn capability_from_label(label: &str) -> Result<Capability> {
     use clap::ValueEnum;
-    Capability::value_variants()
+    Ok(Capability::value_variants()
         .iter()
         .find(|candidate| candidate.label() == label)
         .copied()
-        .ok_or_else(|| format!("unknown capability `{label}`"))
+        .ok_or_else(|| format!("unknown capability `{label}`"))?)
 }
 
 /// `SHA256("JAILS-ENTITY-1" || encode(id))`, for use as a stable map key in

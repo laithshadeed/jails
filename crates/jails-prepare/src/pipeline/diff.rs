@@ -132,7 +132,8 @@ pub(super) fn diff(
                              -- so it cannot tell your edits from a regeneration.\n       fix: \
                              destroy and regenerate, or keep the file. It was written before \
                              this jails recorded output bases."
-                        ));
+                        )
+                        .into());
                     }
                     let live_image = FileImage::Present {
                         object: live,
@@ -140,7 +141,9 @@ pub(super) fn diff(
                     };
                     let desired = FileImage::Present { object, mode };
                     match crate::reconcile::reconcile(path, recorded, live_image, desired)? {
-                        crate::reconcile::Decision::Refuse(why) => return Err(why),
+                        crate::reconcile::Decision::Refuse(why) => {
+                            return Err(jails_support::Failure::Told(why));
+                        }
                         // Nobody moved, or only the reader did. Either way no
                         // operation, and the base stays where it was -- which
                         // is what keeps the reader's edit an edit rather than

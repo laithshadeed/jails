@@ -208,7 +208,8 @@ impl ProjectedProject {
                 "`{path}` is a deferred render, so its bytes do not exist yet.\n       fix: a \
                  planner may read its declared facts; only preparation renders it, and it \
                  renders it exactly once."
-            )),
+            )
+            .into()),
             None => Ok(match self.base.read(path)? {
                 Captured::Present(file) => Projected::Present(file),
                 Captured::Absent => Projected::Absent,
@@ -219,9 +220,9 @@ impl ProjectedProject {
     /// The projected text of a path, or `None` when it is absent.
     pub fn text(&self, path: &ProjectPath) -> Result<Option<String>> {
         match self.read(path)? {
-            Projected::Present(file) => String::from_utf8(file.bytes.to_vec())
+            Projected::Present(file) => Ok(String::from_utf8(file.bytes.to_vec())
                 .map(Some)
-                .map_err(|_| format!("`{path}` is not UTF-8")),
+                .map_err(|_| format!("`{path}` is not UTF-8"))?),
             Projected::Absent => Ok(None),
         }
     }
@@ -298,7 +299,8 @@ impl ProjectedProject {
                     return Err(format!(
                         "two owners want different values for the same resource {key:?}.\n       \
                          fix: a shared resource has one value; reconcile the two declarations."
-                    ));
+                    )
+                    .into());
                 }
                 existing.owners.extend(owners.iter().cloned());
             }
@@ -396,7 +398,9 @@ impl ProjectedProject {
             }
             SemanticEdit::Property { key, value } => {
                 let ResourceKey::Property { path, key } = key else {
-                    return Err("a property edit filed under another key".to_string());
+                    return Err(jails_support::Failure::Told(
+                        "a property edit filed under another key".to_string(),
+                    ));
                 };
                 let text = self.text(path)?.unwrap_or_default();
                 self.write_text(
@@ -407,7 +411,9 @@ impl ProjectedProject {
             }
             SemanticEdit::MarkedBlock { key, body } => {
                 let ResourceKey::MarkedBlock { path, marker } = key else {
-                    return Err("a marked-block edit filed under another key".to_string());
+                    return Err(jails_support::Failure::Told(
+                        "a marked-block edit filed under another key".to_string(),
+                    ));
                 };
                 let text = self.text(path)?.unwrap_or_default();
                 let marked = Marked::new(marker.as_str());
@@ -420,7 +426,9 @@ impl ProjectedProject {
             }
             SemanticEdit::HumanConfigCapability { key, spec } => {
                 let ResourceKey::HumanConfigCapability(id) = key else {
-                    return Err("a capability edit filed under another key".to_string());
+                    return Err(jails_support::Failure::Told(
+                        "a capability edit filed under another key".to_string(),
+                    ));
                 };
                 let path = human_config_path()?;
                 let text = self.text(&path)?.unwrap_or_default();
@@ -463,10 +471,12 @@ impl ProjectedProject {
                 statement,
             } => {
                 let ResourceKey::SpringTestImport { path, class: keyed } = key else {
-                    return Err("a test-import edit filed under another key".to_string());
+                    return Err(jails_support::Failure::Told(
+                        "a test-import edit filed under another key".to_string(),
+                    ));
                 };
                 if keyed != class {
-                    return Err(format!("test import {class} filed under key {keyed}"));
+                    return Err(format!("test import {class} filed under key {keyed}").into());
                 }
                 // Absent rather than an error: the reader may have deleted the
                 // test since this was planned, and the recheck under the lock
@@ -489,7 +499,9 @@ impl ProjectedProject {
             // make `destroy command` delete the CLI.
             SemanticEdit::CommandRegistration { key, command } => {
                 let ResourceKey::CommandRegistration { dispatcher, .. } = key else {
-                    return Err("a registration filed under another key".to_string());
+                    return Err(jails_support::Failure::Told(
+                        "a registration filed under another key".to_string(),
+                    ));
                 };
                 let path = java_source_of(dispatcher)?;
                 let Some(text) = self.text(&path)? else {
@@ -615,7 +627,8 @@ impl ProjectedProject {
                     return Err(format!(
                         "{key:?} is not a recorded compose service, so there is nothing to say \
                          which marker wraps it"
-                    ));
+                    )
+                    .into());
                 };
                 let volume = spec.volumes.iter().next().map(|volume| volume.as_str());
                 let removed = crate::compose::remove_service_ref(
@@ -754,7 +767,8 @@ impl ProjectedProject {
             ResourceKey::WholeFile(_) => Err(format!(
                 "{key:?} is not retired by an edit.\n       fix: a whole file leaves as an \
                  absence, which is what the executor can guard a preimage for."
-            )),
+            )
+            .into()),
         }
     }
 
@@ -874,7 +888,8 @@ impl ProjectedProject {
                         "the planner declared a fact for {key:?} that the projected bytes \
                          contradict.\n       fix: one of the two describes a project that does \
                          not exist; they are not differences to reconcile."
-                    ));
+                    )
+                    .into());
                 }
                 continue;
             }

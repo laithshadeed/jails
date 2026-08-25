@@ -110,14 +110,16 @@ pub(super) fn compose_reconcile(
              stop them with.\n       fix: restore `{path}`, or pass `--no-start` to leave the \
              running containers alone. jails will not guess a document it did not read.",
             list(&stop_services)
-        ));
+        )
+        .into());
     }
     if !desired_services.is_empty() && after_document.is_none() {
         return Err(format!(
             "this change wants compose services running and commits no `{path}`.\n       fix: \
              pass `--no-start`; starting a service from a document that will not exist is not \
              something a retry could repeat."
-        ));
+        )
+        .into());
     }
     if let Some(bytes) = &before_bytes {
         let declared = names(bytes)?;
@@ -127,7 +129,8 @@ pub(super) fn compose_reconcile(
                  last read does not declare it, so there is no truthful file to stop it \
                  with.\n       fix: pass `--no-start`, or put the service block back before \
                  removing it."
-            ));
+            )
+            .into());
         }
     }
 
@@ -166,7 +169,8 @@ fn managed(key: &ResourceKey, value: &ResourceValue) -> Option<Result<(ServiceNa
     let ResourceValue::ComposeService(spec) = value else {
         return Some(Err(format!(
             "`{name}` is keyed as a compose service and its value is not one"
-        )));
+        )
+        .into()));
     };
     let mut encoder = Encoder::new();
     Some(

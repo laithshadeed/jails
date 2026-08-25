@@ -113,17 +113,20 @@ impl DesiredState {
                 return Err(format!(
                     "desired entity {:?} is filed under the identity {id:?}",
                     entity.id
-                ));
+                )
+                .into());
             }
             if !entity.spec.matches(id) {
                 return Err(format!(
                     "desired entity {id:?} pairs an identity and a spec of different kinds"
-                ));
+                )
+                .into());
             }
             if entity.owners.is_empty() {
                 return Err(format!(
                     "desired entity {id:?} has no owner; an unowned declaration is an absence"
-                ));
+                )
+                .into());
             }
         }
         Ok(Self { scope, entities })
@@ -202,13 +205,13 @@ pub fn reconcile(
                     .filter(|existing| *existing != owner)
                     .collect();
                 if !outside.is_empty() && applied.spec != declaration.spec {
-                    return Err(disagreement(
+                    return Err(jails_support::Failure::Told(disagreement(
                         id,
                         owner,
                         &outside,
                         &applied.spec,
                         &declaration.spec,
-                    ));
+                    )));
                 }
                 declaration.spec.clone()
             }
@@ -242,7 +245,8 @@ pub fn reconcile(
                     .collect::<Vec<_>>()
                     .join(", "),
                 describe(gone)
-            ));
+            )
+            .into());
         }
     }
 

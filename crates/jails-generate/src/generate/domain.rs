@@ -433,7 +433,7 @@ pub(crate) fn fields_from_spec_or_record(
         return Ok((parsed, false));
     }
 
-    project
+    Ok(project
         .record_in(pkg, name)
         .map(|fields| (fields, true))
         .ok_or_else(|| {
@@ -441,7 +441,7 @@ pub(crate) fn fields_from_spec_or_record(
                 "no {name} record found under {pkg}, and no field spec was given.\n       \
                  fix: run `jails g record {name} <field:type ...>` first, or pass the fields to this command."
             )
-        })
+        })?)
 }
 
 /// The first constant of a project enum, for a fixture sample. Reads the

@@ -35,7 +35,7 @@ pub(crate) fn outbox_files(
     if !slice.project().projected_main_sources().contains_key(&json) {
         return Err(format!(
             "usecase {usecase} --yields {event} needs the generic JSON capability for durable payloads.\n       fix: run `jails add json` first."
-        ));
+        ).into());
     }
     let event_class = format!("{event}Event");
     let event_fields = slice.project().record_in(messaging, &event_class)
@@ -53,7 +53,8 @@ pub(crate) fn outbox_files(
     {
         return Err(format!(
             "transactional outbox v1 requires {event_class}.id to be a required UUID"
-        ));
+        )
+        .into());
     }
     let target_fields = Target::read(slice, "usecase", usecase, target)?.fields;
     let mut expressions = Vec::with_capacity(event_fields.len());
@@ -101,7 +102,8 @@ pub(crate) fn outbox_files(
                  {target}'s own id, or a required Instant named `...At`.",
                 event_field.name,
                 crate::generate::lower_first(target)
-            ));
+            )
+            .into());
         }
     }
     let table = format!("{}_outbox", crate::sql::snake_case(usecase));
@@ -180,7 +182,8 @@ fn ensure_outbox_type(
         return Err(format!(
             "usecase {usecase} cannot map event field `{}` ({}) from {owner} ({})",
             event.name, event.java_type, source.java_type
-        ));
+        )
+        .into());
     }
     Ok(())
 }

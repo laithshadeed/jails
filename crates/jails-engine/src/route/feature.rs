@@ -134,12 +134,12 @@ fn console_version(
                 },
             ))
         }
-        jails_project::junit::ConsoleVersion::Unknown => Err(
+        jails_project::junit::ConsoleVersion::Unknown => Err(jails_support::Failure::Told(
             "this project declares no JUnit version, so jails cannot align the console \
              launcher with it.\n       A mismatched launcher resolves fine and then dies with \
              NoSuchMethodError.\n       fix: declare org.junit.jupiter:junit-jupiter (or import \
              junit-bom), then retry --fast."
                 .to_string(),
-        ),
+        )),
     }
 }

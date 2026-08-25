@@ -61,7 +61,8 @@ pub fn render(payload: &[u8]) -> Result<String> {
         return Err(format!(
             "ledger payload is {} bytes, over the {MAX_LEDGER_PAYLOAD}-byte limit",
             payload.len()
-        ));
+        )
+        .into());
     }
     let digest = codec::hex(&codec::sha256(payload));
     let hex = codec::hex_bytes(payload);
@@ -89,16 +90,23 @@ pub fn parse(source: &str) -> Result<Vec<u8>> {
         return Err(format!(
             "ledger file is {} bytes, over the {MAX_LEDGER_SOURCE}-byte limit",
             source.len()
-        ));
+        )
+        .into());
     }
     if source.starts_with('\u{feff}') {
-        return Err("ledger begins with a byte-order mark".to_string());
+        return Err(jails_support::Failure::Told(
+            "ledger begins with a byte-order mark".to_string(),
+        ));
     }
     if source.contains('\r') {
-        return Err("ledger contains a CR; line endings are LF".to_string());
+        return Err(jails_support::Failure::Told(
+            "ledger contains a CR; line endings are LF".to_string(),
+        ));
     }
     if !source.ends_with('\n') {
-        return Err("ledger does not end with a newline".to_string());
+        return Err(jails_support::Failure::Told(
+            "ledger does not end with a newline".to_string(),
+        ));
     }
 
     let lines: Vec<&str> = source
@@ -110,7 +118,8 @@ pub fn parse(source: &str) -> Result<Vec<u8>> {
         return Err(format!(
             "ledger has {} line(s); schema {SCHEMA} is exactly five, in a fixed order",
             lines.len()
-        ));
+        )
+        .into());
     }
 
     let schema = value_of(lines[0], "schema")?;
@@ -118,13 +127,15 @@ pub fn parse(source: &str) -> Result<Vec<u8>> {
         return Err(format!(
             "ledger declares schema {schema}.\n       fix: this jails reads schema {SCHEMA}. A \
              newer schema is refused rather than half-read."
-        ));
+        )
+        .into());
     }
     let declared_codec = quoted(value_of(lines[1], "codec")?)?;
     if declared_codec != PAYLOAD_CODEC {
         return Err(format!(
             "ledger declares codec `{declared_codec}`, and this jails writes `{PAYLOAD_CODEC}`"
-        ));
+        )
+        .into());
     }
 
     let declared_len = decimal(value_of(lines[2], "payload_len")?)?;
@@ -132,7 +143,8 @@ pub fn parse(source: &str) -> Result<Vec<u8>> {
         return Err(format!(
             "ledger declares a {declared_len}-byte payload, over the \
              {MAX_LEDGER_PAYLOAD}-byte limit"
-        ));
+        )
+        .into());
     }
     let declared_digest = quoted(value_of(lines[3], "payload_sha256")?)?.to_string();
     let hex = quoted(value_of(lines[4], "payload_hex")?)?;
@@ -147,7 +159,8 @@ pub fn parse(source: &str) -> Result<Vec<u8>> {
             "ledger declares {declared_len} byte(s) but carries {} hex character(s); \
              {expected_hex} were expected",
             hex.len()
-        ));
+        )
+        .into());
     }
     let payload = codec::unhex_bytes(hex)?;
 
@@ -155,7 +168,8 @@ pub fn parse(source: &str) -> Result<Vec<u8>> {
         return Err(format!(
             "ledger payload decoded to {} byte(s), not the declared {declared_len}",
             payload.len()
-        ));
+        )
+        .into());
     }
     let actual = codec::hex(&codec::sha256(&payload));
     if actual != declared_digest {
@@ -163,19 +177,20 @@ pub fn parse(source: &str) -> Result<Vec<u8>> {
             "ledger payload hashes to {actual}, not the recorded {declared_digest}.\n       \
              fix: the file is corrupt. Restore it from version control; jails will not guess \
              what it recorded."
-        ));
+        )
+        .into());
     }
 
     // A file that parses but does not re-render identically has a second
     // spelling, and a ledger with two spellings cannot be compared byte for
     // byte -- which is what every identity here rests on.
     if render(&payload)? != source {
-        return Err(
+        return Err(jails_support::Failure::Told(
             "ledger is not in canonical form.\n       fix: it parses, but re-rendering it \
              produces different bytes, so two files would mean one ledger. Rewrite it with \
              this jails."
                 .to_string(),
-        );
+        ));
     }
     Ok(payload)
 }
@@ -183,8 +198,9 @@ pub fn parse(source: &str) -> Result<Vec<u8>> {
 /// `key = value`, with the exact single spaces the format fixes.
 fn value_of<'a>(line: &'a str, key: &str) -> Result<&'a str> {
     let prefix = format!("{key} = ");
-    line.strip_prefix(&prefix)
-        .ok_or_else(|| format!("expected a line `{key} = …`, found `{line}`"))
+    Ok(line
+        .strip_prefix(&prefix)
+        .ok_or_else(|| format!("expected a line `{key} = …`, found `{line}`"))?)
 }
 
 fn quoted(value: &str) -> Result<&str> {
@@ -197,7 +213,8 @@ fn quoted(value: &str) -> Result<&str> {
     if inner.contains('\\') || inner.contains('"') {
         return Err(format!(
             "value `{inner}` contains a quote or backslash; this format has no escapes"
-        ));
+        )
+        .into());
     }
     Ok(inner)
 }
@@ -205,19 +222,19 @@ fn quoted(value: &str) -> Result<&str> {
 /// Unsigned canonical decimal: no sign, no leading zero except `0` itself.
 fn decimal(value: &str) -> Result<usize> {
     if value.is_empty() {
-        return Err("expected a decimal number, found nothing".to_string());
+        return Err(jails_support::Failure::Told(
+            "expected a decimal number, found nothing".to_string(),
+        ));
     }
     if !value.bytes().all(|byte| byte.is_ascii_digit()) {
-        return Err(format!("`{value}` is not an unsigned decimal number"));
+        return Err(format!("`{value}` is not an unsigned decimal number").into());
     }
     if value.len() > 1 && value.starts_with('0') {
-        return Err(format!(
-            "`{value}` has a leading zero; the canonical form has none"
-        ));
+        return Err(format!("`{value}` has a leading zero; the canonical form has none").into());
     }
     value
         .parse()
-        .map_err(|_| format!("`{value}` does not fit this platform's usize"))
+        .map_err(|_| format!("`{value}` does not fit this platform's usize").into())
 }
 
 // ---------------------------------------------------------------------------
@@ -277,7 +294,9 @@ impl Codec for PendingMarker {
     fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.operation.encode(encoder)?;
         if self.generation == 0 {
-            return Err("a pending conflict records generation zero".to_string());
+            return Err(jails_support::Failure::Told(
+                "a pending conflict records generation zero".to_string(),
+            ));
         }
         encoder.u64(self.generation);
         self.request_syntax.encode(encoder)?;
@@ -288,7 +307,9 @@ impl Codec for PendingMarker {
         let operation = OperationId::decode(decoder)?;
         let generation = decoder.u64()?;
         if generation == 0 {
-            return Err("a pending conflict records generation zero".to_string());
+            return Err(jails_support::Failure::Told(
+                "a pending conflict records generation zero".to_string(),
+            ));
         }
         Ok(Self {
             operation,
@@ -304,10 +325,10 @@ impl LedgerV2 {
         let mut encoder = Encoder::new();
         encoder.string(&self.written_by)?;
         if self.generation == 0 {
-            return Err(
+            return Err(jails_support::Failure::Told(
                 "generation is zero; it is incremented once per commit and starts at one"
                     .to_string(),
-            );
+            ));
         }
         encoder.u64(self.generation);
         encoder.option(self.last_operation.as_ref(), |e, id| {
@@ -360,7 +381,9 @@ impl LedgerV2 {
         let written_by = decoder.string()?;
         let generation = decoder.u64()?;
         if generation == 0 {
-            return Err("ledger generation is zero".to_string());
+            return Err(jails_support::Failure::Told(
+                "ledger generation is zero".to_string(),
+            ));
         }
         let last_operation = decoder.option(OperationId::decode)?;
         let count = decoder.count()?;

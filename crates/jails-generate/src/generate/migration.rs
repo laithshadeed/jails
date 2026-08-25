@@ -64,9 +64,9 @@ pub fn next_migration_version(dir: &Path) -> Result<u32> {
             highest = highest.max(version);
         }
     }
-    highest
+    Ok(highest
         .checked_add(1)
-        .ok_or_else(|| "migration version overflow".to_string())
+        .ok_or_else(|| "migration version overflow".to_string())?)
 }
 
 pub fn sql_name(value: &str) -> Result<String> {
@@ -85,14 +85,16 @@ pub fn sql_name(value: &str) -> Result<String> {
             }
             previous_was_lower_or_digit = false;
         } else {
-            return Err(format!("'{value}' is not a usable SQL migration name"));
+            return Err(format!("'{value}' is not a usable SQL migration name").into());
         }
     }
     while out.ends_with('_') {
         out.pop();
     }
     if out.is_empty() {
-        Err("a migration needs a description, e.g. `jails g migration create_rewards`".to_string())
+        Err(jails_support::Failure::Told(
+            "a migration needs a description, e.g. `jails g migration create_rewards`".to_string(),
+        ))
     } else {
         Ok(out)
     }
@@ -124,7 +126,8 @@ pub fn plan_cases(project: &Project, pkg: &str, brief: &Path) -> Result<(Change,
         return Err(format!(
             "no list items found in {} -- `generate cases` turns markdown bullets into test cases",
             brief.display()
-        ));
+        )
+        .into());
     }
     let class = cases_class_name(brief)?;
     let path = test_dir(project.root(), pkg).join(format!("{class}.java"));
@@ -285,10 +288,7 @@ pub(super) fn cases_class_name(brief: &Path) -> Result<String> {
         }
     }
     if class.is_empty() {
-        return Err(format!(
-            "cannot derive a class name from {}",
-            brief.display()
-        ));
+        return Err(format!("cannot derive a class name from {}", brief.display()).into());
     }
     if class.starts_with(|c: char| c.is_ascii_digit()) {
         class.insert_str(0, "Case");

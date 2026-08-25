@@ -126,7 +126,8 @@ impl ScalarFieldType {
                 "unknown field type `{token}`.\n       fix: capitalise it to mean a type this \
                  project owns, or use one of: string, int, long, boolean, date, datetime, \
                  instant, uuid, currency, decimal, bytes, duration, zone-id, uri, path, double."
-            ));
+            )
+            .into());
         }
         // Already qualified stays as written; a bare name joins the base.
         let qualified = if token.contains('.') {
@@ -165,7 +166,7 @@ impl Codec for ScalarFieldType {
             14 => Self::Path,
             15 => Self::Double,
             16 => Self::Project(JavaType::decode(decoder)?),
-            other => return Err(format!("unknown scalar field type tag {other}")),
+            other => return Err(format!("unknown scalar field type tag {other}").into()),
         })
     }
 }
@@ -216,7 +217,8 @@ impl FieldType {
                 "`{outer}<{token}>` nests a collection, which jails has no column or component \
                  shape for.\n       fix: introduce a record for the inner value and hold a \
                  collection of that."
-            ));
+            )
+            .into());
         }
         ScalarFieldType::parse(token, base)
     }
@@ -258,7 +260,7 @@ impl Codec for FieldType {
                 key: ScalarFieldType::decode(decoder)?,
                 value: ScalarFieldType::decode(decoder)?,
             },
-            other => return Err(format!("unknown field type tag {other}")),
+            other => return Err(format!("unknown field type tag {other}").into()),
         })
     }
 }
@@ -286,9 +288,7 @@ fn split_map(inner: &str) -> Result<(&str, &str)> {
             _ => {}
         }
     }
-    Err(format!(
-        "`map<{inner}>` needs a key and a value separated by a comma"
-    ))
+    Err(format!("`map<{inner}>` needs a key and a value separated by a comma").into())
 }
 
 /// Whether a value may be absent, and how absence is expressed.
@@ -315,7 +315,7 @@ impl Optionality {
             0 => Ok(Self::Required),
             1 => Ok(Self::NonBlank),
             2 => Ok(Self::Nullable),
-            other => Err(format!("unknown optionality tag {other}")),
+            other => Err(format!("unknown optionality tag {other}").into()),
         }
     }
 }
@@ -370,7 +370,8 @@ impl FieldConstraints {
                                     NumericConstraint::Positive => "positive",
                                     NumericConstraint::NonNegative => "nonnegative",
                                 }
-                            ));
+                            )
+                            .into());
                         }
                     }
                 }
@@ -380,11 +381,12 @@ impl FieldConstraints {
                          @index, @scope, @positive, @nonnegative. An unrecognised marker is an \
                          error rather than a no-op, so a schema cannot quietly lack a \
                          constraint somebody asked for."
-                    ));
+                    )
+                    .into());
                 }
             };
             if already {
-                return Err(format!("`@{marker}` is repeated on the same field"));
+                return Err(format!("`@{marker}` is repeated on the same field").into());
             }
         }
         Ok(out)
@@ -414,7 +416,7 @@ impl Codec for FieldConstraints {
             numeric: decoder.option(|d| match d.tag()? {
                 0 => Ok(NumericConstraint::Positive),
                 1 => Ok(NumericConstraint::NonNegative),
-                other => Err(format!("unknown numeric constraint tag {other}")),
+                other => Err(format!("unknown numeric constraint tag {other}").into()),
             })?,
         })
     }
@@ -462,28 +464,31 @@ impl FieldSpec {
                 "`{}` is not text, so `!` (non-blank) has no meaning for it.\n       fix: drop \
                  the `!`, or use `@positive`/`@nonnegative` for a numeric bound.",
                 field_type.canonical()
-            ));
+            )
+            .into());
         }
         if optionality == Optionality::Nullable && field_type.is_collection() {
             return Err(format!(
                 "`{}` is a collection, and a null collection is worse than an empty one.\n       \
                  fix: drop the `?`; an absent collection is the empty one.",
                 field_type.canonical()
-            ));
+            )
+            .into());
         }
         if optionality == Optionality::Nullable && constraints.primary_key {
-            return Err(
+            return Err(jails_support::Failure::Told(
                 "a nullable primary key is not a key.\n       fix: drop the `?` or the \
                         `@pk`."
                     .to_string(),
-            );
+            ));
         }
         if constraints.numeric.is_some() && !is_numeric(field_type.element()) {
             return Err(format!(
                 "`{}` is not numeric, so a numeric constraint cannot be checked against \
                  it.\n       fix: drop the constraint.",
                 field_type.canonical()
-            ));
+            )
+            .into());
         }
         Ok(Self {
             name,

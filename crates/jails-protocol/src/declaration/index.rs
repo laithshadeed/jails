@@ -42,7 +42,7 @@ impl IndexSpec {
         for part in token.split(',') {
             let part = part.trim();
             if part.is_empty() {
-                return Err(format!("index `{token}` has an empty column"));
+                return Err(format!("index `{token}` has an empty column").into());
             }
             let mut words = part.split_whitespace();
             let field = words.next().expect("a non-empty part has a first word");
@@ -54,13 +54,15 @@ impl IndexSpec {
                         "`{other}` follows the index column `{field}`, and only `asc` or `desc` \
                          may.\n       fix: arbitrary SQL is refused here rather than recorded as \
                          trusted generated SQL."
-                    ));
+                    )
+                    .into());
                 }
             };
             if let Some(trailing) = words.next() {
                 return Err(format!(
                     "`{trailing}` follows the index column `{field}` and its direction"
-                ));
+                )
+                .into());
             }
             let field = Name::parse(field)?;
             if !fields.iter().any(|declared| declared.name == field) {
@@ -72,18 +74,21 @@ impl IndexSpec {
                         .map(|f| f.name.as_str())
                         .collect::<Vec<_>>()
                         .join(", ")
-                ));
+                )
+                .into());
             }
             if columns
                 .iter()
                 .any(|existing: &IndexColumn| existing.field == field)
             {
-                return Err(format!("index column `{field}` is repeated"));
+                return Err(format!("index column `{field}` is repeated").into());
             }
             columns.push(IndexColumn { field, direction });
         }
         if columns.is_empty() {
-            return Err("an index needs at least one column".to_string());
+            return Err(jails_support::Failure::Told(
+                "an index needs at least one column".to_string(),
+            ));
         }
         Ok(Self { columns })
     }
@@ -120,12 +125,14 @@ impl Codec for IndexSpec {
             let direction = match decoder.tag()? {
                 0 => IndexDirection::Ascending,
                 1 => IndexDirection::Descending,
-                other => return Err(format!("unknown index direction tag {other}")),
+                other => return Err(format!("unknown index direction tag {other}").into()),
             };
             columns.push(IndexColumn { field, direction });
         }
         if columns.is_empty() {
-            return Err("an index needs at least one column".to_string());
+            return Err(jails_support::Failure::Told(
+                "an index needs at least one column".to_string(),
+            ));
         }
         Ok(Self { columns })
     }

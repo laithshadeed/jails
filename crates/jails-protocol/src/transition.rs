@@ -96,7 +96,7 @@ impl FinalisationPlan {
         let mut paths = BTreeSet::new();
         for resolution in &self.resolutions {
             if !paths.insert(&resolution.path) {
-                return Err(format!("{} is resolved twice", resolution.path));
+                return Err(format!("{} is resolved twice", resolution.path).into());
             }
         }
         Ok(())
@@ -133,7 +133,7 @@ impl AbortPlan {
         let mut paths = BTreeSet::new();
         for restore in &self.restores {
             if !paths.insert(&restore.path) {
-                return Err(format!("{} is restored twice", restore.path));
+                return Err(format!("{} is restored twice", restore.path).into());
             }
         }
         Ok(())
@@ -243,14 +243,14 @@ impl CommitPlan {
         match (&self, project) {
             (Self::Apply(_), LoadedProject::Ready(_)) => Ok(self),
             (Self::Finalise(_) | Self::Abort(_), LoadedProject::Pending(_)) => Ok(self),
-            (Self::Apply(_), LoadedProject::Pending(_)) => Err(
+            (Self::Apply(_), LoadedProject::Pending(_)) => Err(jails_support::Failure::Told(
                 "this project has a frozen conflict.\n       fix: resolve the marked files, \
                  then `jails continue` — or `jails abort` to put them back."
                     .to_string(),
+            )),
+            (Self::Finalise(_) | Self::Abort(_), LoadedProject::Ready(_)) => Err(
+                jails_support::Failure::Told("there is no conflict to finish here.".to_string()),
             ),
-            (Self::Finalise(_) | Self::Abort(_), LoadedProject::Ready(_)) => {
-                Err("there is no conflict to finish here.".to_string())
-            }
         }
     }
 }

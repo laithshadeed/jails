@@ -62,7 +62,9 @@ pub(crate) fn apply_operations(
                 }
                 crate::fault::trip("after-directory-sync").map_err(|error| Blocked {
                     path: Some(path.clone()),
-                    reason: BlockReason::Unreadable { error_kind: error },
+                    reason: BlockReason::Unreadable {
+                        error_kind: error.to_string(),
+                    },
                 })?;
             }
         }
@@ -73,7 +75,9 @@ pub(crate) fn apply_operations(
         .and_then(|()| crate::fault::trip("after-live-temp-sync"))
         .map_err(|error| Blocked {
             path: None,
-            reason: BlockReason::Unreadable { error_kind: error },
+            reason: BlockReason::Unreadable {
+                error_kind: error.to_string(),
+            },
         })?;
 
     for (index, operation) in change.operations.iter().enumerate() {
@@ -108,15 +112,21 @@ pub(crate) fn apply_operations(
         }
         crate::fault::trip("before-file").map_err(|error| Blocked {
             path: Some(path.clone()),
-            reason: BlockReason::Unreadable { error_kind: error },
+            reason: BlockReason::Unreadable {
+                error_kind: error.to_string(),
+            },
         })?;
         apply_one(operation, &at, &publish, objects, index).map_err(|error| Blocked {
             path: Some(path.clone()),
-            reason: BlockReason::Unreadable { error_kind: error },
+            reason: BlockReason::Unreadable {
+                error_kind: error.to_string(),
+            },
         })?;
         crate::fault::trip("after-file-dirsync").map_err(|error| Blocked {
             path: Some(path.clone()),
-            reason: BlockReason::Unreadable { error_kind: error },
+            reason: BlockReason::Unreadable {
+                error_kind: error.to_string(),
+            },
         })?;
     }
     Ok(())
@@ -257,7 +267,8 @@ pub(crate) fn stage(
             object.id,
             bytes.len(),
             object.len
-        ));
+        )
+        .into());
     }
     let staged = publish.join(format!("{index}.publish"));
     let _ = std::fs::remove_file(&staged);
@@ -280,7 +291,8 @@ pub(crate) fn stage(
         return Err(format!(
             "{} does not hold the bytes it was staged from",
             staged.display()
-        ));
+        )
+        .into());
     }
     Ok(staged)
 }
@@ -288,8 +300,10 @@ pub(crate) fn stage(
 #[cfg(unix)]
 pub(crate) fn set_mode(at: &Path, mode: FileMode) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(at, std::fs::Permissions::from_mode(mode.bits()))
-        .map_err(|error| format!("could not set the mode of {}: {error}", at.display()))
+    Ok(
+        std::fs::set_permissions(at, std::fs::Permissions::from_mode(mode.bits()))
+            .map_err(|error| format!("could not set the mode of {}: {error}", at.display()))?,
+    )
 }
 
 pub(crate) fn sync_parent(at: &Path) -> Result<()> {

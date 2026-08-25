@@ -70,7 +70,7 @@ pub fn write_new_file(root: &Path, path: &Path, contents: &str) -> Result<()> {
         return Err(format!(
             "{} already exists.\n       fix: choose a different name, destroy the generated artifact first, or use `jails g field` to evolve an existing model.",
             path.display()
-        ));
+        ).into());
     }
     let contents = if path.extension().is_some_and(|e| e == "java") {
         ensure_package_info(root, path)?;

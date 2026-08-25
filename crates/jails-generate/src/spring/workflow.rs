@@ -44,7 +44,7 @@ pub(crate) fn require_scope_authorizer(
     {
         return Err(format!(
             "{kind} {name} uses @scope, but the project has no ScopeAuthorizer.\n       fix: run `jails add security` before generating scoped HTTP operations."
-        ));
+        ).into());
     }
     Ok(())
 }
@@ -116,7 +116,7 @@ impl Target {
     /// location and verify persistence, or a refusal saying why it needs one.
     pub fn id(&self, kind: &str, name: &str) -> jails_support::Result<&crate::generate::Field> {
         let target = &self.name;
-        self.fields
+        Ok(self.fields
             .iter()
             .find(|field| {
                 field.name == "id" && field.optionality != crate::generate::Optionality::Nullable
@@ -125,7 +125,7 @@ impl Target {
                 format!(
                     "{kind} {name} needs {target} to have a stable non-optional `id` component so it can return a resource location and verify persistence"
                 )
-            })
+            })?)
     }
 }
 
@@ -159,7 +159,8 @@ pub(crate) fn usecase_files(
             return Err(format!(
                 "usecase {name} accepts `{}`, but {target} has no component with that name",
                 field.name
-            ));
+            )
+            .into());
         };
         if usecase_normalized_type(&field.java_type)
             != usecase_normalized_type(&target_field.java_type)
@@ -176,7 +177,8 @@ pub(crate) fn usecase_files(
                 } else {
                     ""
                 }
-            ));
+            )
+            .into());
         }
     }
 
@@ -191,7 +193,7 @@ pub(crate) fn usecase_files(
             return Err(format!(
                 "usecase {name} cannot safely infer `{}` ({}) for {target}.\n       fix: add `{}:<type>` to the usecase fields; Jails only infers ids, timestamps, status defaults, counters, flags, and empty optional/collection values.",
                 field.name, field.java_type, field.name
-            ));
+            ).into());
         };
         expressions.push(expression);
         default_imports.extend(imports);

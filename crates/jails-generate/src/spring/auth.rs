@@ -36,7 +36,8 @@ pub(crate) fn auth_files(slice: &Slice, name: &str) -> jails_support::Result<Vec
             "auth {name} needs Spring Security: the encoder, the decoder and the filter \
              chain that reads the token are one story.\n       \
              fix: run `jails add security` first."
-        ));
+        )
+        .into());
     }
     let root: &Path = slice.project().root();
     let pkg: &str = &slice.root_package();

@@ -61,7 +61,7 @@ impl Drop for Armed {
 pub(crate) fn trip(name: &str) -> crate::Result<()> {
     let armed = armed::ARMED.with(|slot| slot.borrow().clone());
     match armed {
-        Some(armed) if armed == name => Err(format!("fault injected at `{name}`")),
+        Some(armed) if armed == name => Err(format!("fault injected at `{name}`").into()),
         _ => Ok(()),
     }
 }

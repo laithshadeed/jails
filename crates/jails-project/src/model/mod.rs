@@ -175,7 +175,8 @@ impl Change {
                     return Err(format!(
                         "conflicting dependency plans for {}:{}",
                         dep.group_id, dep.artifact_id
-                    ));
+                    )
+                    .into());
                 }
                 Some(_) => {}
                 None => self.deps.push(dep),
@@ -188,7 +189,7 @@ impl Change {
                 .find(|(current, _)| *current == artifact_id)
             {
                 Some((_, current)) if current != &body => {
-                    return Err(format!("conflicting plugin plans for {artifact_id}"));
+                    return Err(format!("conflicting plugin plans for {artifact_id}").into());
                 }
                 Some(_) => {}
                 None => self.plugins.push((artifact_id, body)),
@@ -200,7 +201,8 @@ impl Change {
                     return Err(format!(
                         "two recipes would write different contents to {}",
                         file.path.display()
-                    ));
+                    )
+                    .into());
                 }
                 Some(_) => {}
                 None => self.files.push(file),
@@ -213,10 +215,9 @@ impl Change {
                 .find(|current| current.name == service.name)
             {
                 Some(current) if current != &service => {
-                    return Err(format!(
-                        "conflicting compose service plans for {}",
-                        service.name
-                    ));
+                    return Err(
+                        format!("conflicting compose service plans for {}", service.name).into(),
+                    );
                 }
                 Some(_) => {}
                 None => self.compose.push(service),
@@ -249,7 +250,8 @@ impl Change {
                     return Err(format!(
                         "conflicting `# jails:{}` block plans for {}",
                         block.marker, block.path
-                    ));
+                    )
+                    .into());
                 }
                 Some(_) => {}
                 None => self.marked.push(block),
@@ -260,14 +262,17 @@ impl Change {
                 return Err(format!(
                     "two recipes would point the packaged jar at different classes: {current} and \
                      {next}"
-                ));
+                )
+                .into());
             }
             (Some(current), _) => Some(current),
             (None, next) => next,
         };
         self.spring_test_import = match (self.spring_test_import, other.spring_test_import) {
             (Some(current), Some(next)) if current != next => {
-                return Err("two recipes require different Spring test imports".to_string());
+                return Err(jails_support::Failure::Told(
+                    "two recipes require different Spring test imports".to_string(),
+                ));
             }
             (Some(current), _) => Some(current),
             (None, next) => next,
@@ -974,8 +979,8 @@ fn read_build_file(build: Build, root: &Path) -> Result<String> {
         Build::Maven => pom::read(root),
         Build::Gradle => {
             let path = root.join(crate::gradle::FILE);
-            std::fs::read_to_string(&path)
-                .map_err(|error| format!("failed to read {}: {error}", path.display()))
+            Ok(std::fs::read_to_string(&path)
+                .map_err(|error| format!("failed to read {}: {error}", path.display()))?)
         }
         _ => Ok(String::new()),
     }

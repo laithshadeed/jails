@@ -244,7 +244,8 @@ impl ProjectFact {
                 "project fact kind {} does not match key kind {}",
                 self.tag(),
                 key.tag()
-            ));
+            )
+            .into());
         }
         match (key, self) {
             (ProjectFactKey::MavenDependency(coordinate), Self::MavenDependency(spec))
@@ -253,7 +254,8 @@ impl ProjectFact {
                 Err(format!(
                     "dependency fact {} recorded under key {coordinate}",
                     spec.coordinate
-                ))
+                )
+                .into())
             }
             (ProjectFactKey::MavenPlugin(coordinate), Self::MavenPlugin(spec))
                 if spec.coordinate != *coordinate =>
@@ -261,7 +263,8 @@ impl ProjectFact {
                 Err(format!(
                     "plugin fact {} recorded under key {coordinate}",
                     spec.coordinate
-                ))
+                )
+                .into())
             }
             (ProjectFactKey::ComposeService(name), Self::ComposeService(spec))
                 if spec.name != *name =>
@@ -269,7 +272,8 @@ impl ProjectFact {
                 Err(format!(
                     "compose service fact {} recorded under key {name}",
                     spec.name
-                ))
+                )
+                .into())
             }
             _ => Ok(()),
         }
@@ -344,9 +348,7 @@ impl ProjectFacts {
             if existing == &fact && existing_source == &source {
                 return Ok(());
             }
-            return Err(format!(
-                "project fact key {key:?} already holds a different value"
-            ));
+            return Err(format!("project fact key {key:?} already holds a different value").into());
         }
         self.values.insert(key, (source, fact));
         Ok(())
@@ -492,7 +494,7 @@ impl JavaTypeKind {
             1 => Ok(Self::Record),
             2 => Ok(Self::Interface),
             3 => Ok(Self::Enum),
-            other => Err(format!("unknown Java type kind tag {other}")),
+            other => Err(format!("unknown Java type kind tag {other}").into()),
         }
     }
 }
@@ -629,7 +631,7 @@ impl JavaPrimitive {
             5 => Ok(Self::Char),
             6 => Ok(Self::Float),
             7 => Ok(Self::Double),
-            other => Err(format!("unknown Java primitive tag {other}")),
+            other => Err(format!("unknown Java primitive tag {other}").into()),
         }
     }
 }
@@ -757,7 +759,8 @@ fn deeper(depth: usize) -> Result<usize> {
     if depth >= MAX_CODEC_DEPTH {
         return Err(format!(
             "Java type nested deeper than {MAX_CODEC_DEPTH}; the grammar is closed, not unbounded"
-        ));
+        )
+        .into());
     }
     Ok(depth + 1)
 }

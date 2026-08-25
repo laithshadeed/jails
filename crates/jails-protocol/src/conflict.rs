@@ -204,7 +204,8 @@ impl FileMode {
                 "file mode {bits:#o} sets bits outside {:#o}; jails generates no setuid, setgid \
                  or sticky files",
                 Self::PERMITTED
-            ));
+            )
+            .into());
         }
         Ok(Self(bits))
     }
@@ -286,7 +287,7 @@ impl Codec for PendingCurrent {
         Ok(match decoder.tag()? {
             0 => Self::Exact(LiveFileImage::decode(decoder)?),
             1 => Self::ResolveFromLive,
-            other => return Err(format!("unknown pending current tag {other}")),
+            other => return Err(format!("unknown pending current tag {other}").into()),
         })
     }
 }
@@ -307,16 +308,16 @@ impl MarkerTokens {
     pub fn new(open: &str, separator: &str, close: &str) -> Result<Self> {
         for (label, token) in [("open", open), ("separator", separator), ("close", close)] {
             if token.is_empty() {
-                return Err(format!("the {label} conflict marker is empty"));
+                return Err(format!("the {label} conflict marker is empty").into());
             }
             if token.contains('\n') {
-                return Err(format!("the {label} conflict marker spans a line"));
+                return Err(format!("the {label} conflict marker spans a line").into());
             }
         }
         if open == separator || separator == close || open == close {
-            return Err(
+            return Err(jails_support::Failure::Told(
                 "two conflict markers are identical, so a hunk could not be delimited".to_string(),
-            );
+            ));
         }
         Ok(Self {
             open: open.to_string(),
@@ -365,7 +366,8 @@ impl Codec for PendingConflictPath {
             return Err(format!(
                 "`{}` is recorded as conflicted with zero hunks, which is not a conflict",
                 self.path
-            ));
+            )
+            .into());
         }
         encoder.u32(self.hunk_count);
         Ok(())
@@ -381,7 +383,8 @@ impl Codec for PendingConflictPath {
         if hunk_count == 0 {
             return Err(format!(
                 "`{path}` is recorded as conflicted with zero hunks, which is not a conflict"
-            ));
+            )
+            .into());
         }
         Ok(Self {
             path,

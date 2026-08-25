@@ -89,7 +89,7 @@ impl Codec for MavenVersion {
         match decoder.tag()? {
             0 => Ok(Self::Managed),
             1 => Ok(Self::Pinned(ManagedVersion::decode(decoder)?)),
-            other => Err(format!("unknown Maven version tag {other}")),
+            other => Err(format!("unknown Maven version tag {other}").into()),
         }
     }
 }
@@ -114,7 +114,8 @@ impl MavenScope {
             "test" => Ok(Self::Test),
             other => Err(format!(
                 "unsupported Maven scope `{other}`; jails emits compile, runtime and test"
-            )),
+            )
+            .into()),
         }
     }
 
@@ -139,7 +140,7 @@ impl MavenScope {
             0 => Ok(Self::Compile),
             1 => Ok(Self::Runtime),
             2 => Ok(Self::Test),
-            other => Err(format!("unknown Maven scope tag {other}")),
+            other => Err(format!("unknown Maven scope tag {other}").into()),
         }
     }
 }
@@ -202,17 +203,21 @@ impl CanonicalPluginXml {
         // silently dropped, which gives one canonical value two source
         // spellings — the thing this type exists to prevent.
         if text.contains('\r') {
-            return Err("plugin block contains CR; canonical XML is LF-only".to_string());
+            return Err(jails_support::Failure::Told(
+                "plugin block contains CR; canonical XML is LF-only".to_string(),
+            ));
         }
         let body = text.trim();
         if !body.starts_with("<plugin>") || !body.ends_with("</plugin>") {
-            return Err(
+            return Err(jails_support::Failure::Told(
                 "plugin block must be exactly one <plugin> element with no surrounding POM bytes"
                     .to_string(),
-            );
+            ));
         }
         if body.matches("<plugin>").count() != 1 || body.matches("</plugin>").count() != 1 {
-            return Err("plugin block contains more than one <plugin> element".to_string());
+            return Err(jails_support::Failure::Told(
+                "plugin block contains more than one <plugin> element".to_string(),
+            ));
         }
         Ok(Self(body.to_string()))
     }
@@ -276,7 +281,8 @@ impl PluginSpec {
         if declared != coordinate {
             return Err(format!(
                 "plugin block declares {declared} but the resource key says {coordinate}"
-            ));
+            )
+            .into());
         }
         Ok(Self { coordinate, block })
     }

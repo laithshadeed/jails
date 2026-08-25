@@ -128,7 +128,7 @@ pub fn doctor(json: bool) -> Result<()> {
         // habit, so the failure is deliberately quiet -- the list above has
         // already said everything, and main.rs would otherwise print a
         // second, redundant `jails: ...` line.
-        return Err(String::new());
+        return Err(jails_support::Failure::Reported);
     }
     Ok(())
 }
@@ -167,7 +167,7 @@ fn report_json(checks: &[Check]) -> Result<()> {
         rows.join(",\n")
     );
     if failures > 0 {
-        return Err(String::new());
+        return Err(jails_support::Failure::Reported);
     }
     Ok(())
 }
@@ -623,7 +623,9 @@ fn beans_check(root: &Path) -> Check {
 /// `ryuk.disabled` or a registry mirror. Same rule as `pom.xml`.
 pub fn setup(dry_run: bool) -> Result<()> {
     let Some(home) = std::env::var_os("HOME") else {
-        return Err("no HOME, so there is no ~/.testcontainers.properties to write".to_string());
+        return Err(jails_support::Failure::Told(
+            "no HOME, so there is no ~/.testcontainers.properties to write".to_string(),
+        ));
     };
     let path = Path::new(&home).join(".testcontainers.properties");
     let existing = std::fs::read_to_string(&path).unwrap_or_default();

@@ -68,9 +68,7 @@ fn db_client(name: &str) -> Result<PathBuf> {
     if run::find_on_path(name) {
         return Ok(PathBuf::from(name));
     }
-    Err(format!(
-        "{name} not on PATH -- install the {name} client and try again"
-    ))
+    Err(format!("{name} not on PATH -- install the {name} client and try again").into())
 }
 
 /// `jshell` with compiled classes and Maven dependencies on the classpath.
@@ -127,7 +125,7 @@ fn project_classpath(root: &Path, debug: bool) -> Result<String> {
             entries.extend(std::env::split_paths(deps));
         }
     }
-    std::env::join_paths(entries)
+    Ok(std::env::join_paths(entries)
         .map(|p| p.to_string_lossy().into_owned())
-        .map_err(|e| format!("failed to join classpath: {e}"))
+        .map_err(|e| format!("failed to join classpath: {e}"))?)
 }

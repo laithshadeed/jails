@@ -70,7 +70,8 @@ impl ProjectHandle {
                 "{} is a symlink.\n       fix: a project root must be a real directory; the \
                  transaction's root identity would name something else.",
                 root.display()
-            ));
+            )
+            .into());
         }
         Ok(Self {
             root: root.to_path_buf(),
@@ -107,7 +108,8 @@ impl LockedProject {
         handle: ProjectHandle,
         description: &str,
     ) -> std::result::Result<Self, CommitError> {
-        store::create_private_dir(handle.store.root()).map_err(CommitError::PreActivationIo)?;
+        store::create_private_dir(handle.store.root())
+            .map_err(|failure| CommitError::PreActivationIo(failure.to_string()))?;
         let lock =
             Lock::acquire(&handle.store.lock_path(), description).map_err(|why| match why {
                 Contention::Held(_) => CommitError::MutationBusy(why.to_string()),
@@ -116,8 +118,9 @@ impl LockedProject {
         handle
             .store
             .create_subdirectories()
-            .map_err(CommitError::PreActivationIo)?;
-        let root_identity = RootIdentity::of(&handle.root).map_err(CommitError::PreActivationIo)?;
+            .map_err(|failure| CommitError::PreActivationIo(failure.to_string()))?;
+        let root_identity = RootIdentity::of(&handle.root)
+            .map_err(|failure| CommitError::PreActivationIo(failure.to_string()))?;
         Ok(Self {
             handle,
             root_identity,
@@ -148,7 +151,9 @@ pub fn commit(
     bundle: &PreparedBundle,
 ) -> std::result::Result<CommitResult, CommitError> {
     let change = &bundle.change;
-    change.validate().map_err(CommitError::InvalidPrepared)?;
+    change
+        .validate()
+        .map_err(|failure| CommitError::InvalidPrepared(failure.to_string()))?;
 
     // Step 1. The plan and the project it is about to be applied to have to be
     // the same project.
@@ -161,12 +166,14 @@ pub fn commit(
     // written with A's plan.
     require_same_project(locked, &bundle.root)?;
 
-    crate::fault::trip("after-lock").map_err(CommitError::PreActivationIo)?;
+    crate::fault::trip("after-lock")
+        .map_err(|failure| CommitError::PreActivationIo(failure.to_string()))?;
 
     // Step 2. Recheck every guard under the lock. A mismatch is stale, and
     // stale is a refusal — commit never substitutes changed operations.
     recheck(locked, change)?;
-    crate::fault::trip("after-recheck").map_err(CommitError::PreActivationIo)?;
+    crate::fault::trip("after-recheck")
+        .map_err(|failure| CommitError::PreActivationIo(failure.to_string()))?;
 
     // Step 3. Truthful *because* it comes after the recheck rather than
     // before it.
@@ -183,35 +190,44 @@ pub fn commit(
             change.transaction_id
         )));
     }
-    store::create_private_dir(&directory).map_err(CommitError::PreActivationIo)?;
+    store::create_private_dir(&directory)
+        .map_err(|failure| CommitError::PreActivationIo(failure.to_string()))?;
     let objects = directory.join("objects");
     for (id, body) in &change.objects {
-        store::put_object(&objects, id, body).map_err(CommitError::PreActivationIo)?;
+        store::put_object(&objects, id, body)
+            .map_err(|failure| CommitError::PreActivationIo(failure.to_string()))?;
     }
-    crate::fault::trip("after-objects-sync").map_err(CommitError::PreActivationIo)?;
+    crate::fault::trip("after-objects-sync")
+        .map_err(|failure| CommitError::PreActivationIo(failure.to_string()))?;
 
     let journal = JournalV1 {
         transaction: change.transaction_id,
         generation: change.operation_identity.proposed_generation,
         root_identity: locked.root_identity,
         state: JournalState::Prepared,
-        prepared: change.identity().map_err(CommitError::InvalidPrepared)?,
+        prepared: change
+            .identity()
+            .map_err(|failure| CommitError::InvalidPrepared(failure.to_string()))?,
     };
     journal
         .persist(&directory)
-        .map_err(CommitError::PreActivationIo)?;
-    crate::fault::trip("after-journal-prepared").map_err(CommitError::PreActivationIo)?;
+        .map_err(|failure| CommitError::PreActivationIo(failure.to_string()))?;
+    crate::fault::trip("after-journal-prepared")
+        .map_err(|failure| CommitError::PreActivationIo(failure.to_string()))?;
 
     // Step 6. From here a failure leaves recovery work, never "nothing
     // written".
     let active = journal.advanced(JournalState::Active);
     active
         .persist(&directory)
-        .map_err(CommitError::PreActivationIo)?;
+        .map_err(|failure| CommitError::PreActivationIo(failure.to_string()))?;
     // Armed here, the failure is *after* activation: recovery owns it.
-    crate::fault::trip("after-journal-active").map_err(CommitError::PreActivationIo)?;
+    crate::fault::trip("after-journal-active")
+        .map_err(|failure| CommitError::PreActivationIo(failure.to_string()))?;
 
-    let identity = change.identity().map_err(CommitError::InvalidPrepared)?;
+    let identity = change
+        .identity()
+        .map_err(|failure| CommitError::InvalidPrepared(failure.to_string()))?;
     crate::activate::apply_operations(locked, &identity, &directory, &objects)
         .map_err(|blocked| blocked.into_error(&directory, &active))?;
 
@@ -221,7 +237,8 @@ pub fn commit(
     // the moment that directory was cleaned up.
     let durable = locked.handle.store.objects();
     let promoted: Vec<ObjectId> = change.objects.keys().copied().collect();
-    store::promote(&objects, &durable, &promoted).map_err(CommitError::PreActivationIo)?;
+    store::promote(&objects, &durable, &promoted)
+        .map_err(|failure| CommitError::PreActivationIo(failure.to_string()))?;
 
     // Step 10. The ledger last, with the same guarded primitive. It is the
     // commit point: everything before it can be abandoned, and this is what
@@ -305,7 +322,8 @@ pub(crate) fn write_ledger(
 ) -> std::result::Result<(), LedgerFailure> {
     let path = locked.handle.store.root().join("ledger.toml");
     let publish = directory.join("live-temp");
-    crate::fault::trip("before-ledger").map_err(LedgerFailure::BeforeCommit)?;
+    crate::fault::trip("before-ledger")
+        .map_err(|failure| LedgerFailure::BeforeCommit(failure.to_string()))?;
     match change.ledger_after {
         FileImage::Absent => {
             if path.exists() {
@@ -317,16 +335,19 @@ pub(crate) fn write_ledger(
         }
         FileImage::Present { object, mode } => {
             let staged = crate::activate::stage(&publish, objects, &object, mode, usize::MAX)
-                .map_err(LedgerFailure::BeforeCommit)?;
+                .map_err(|failure| LedgerFailure::BeforeCommit(failure.to_string()))?;
             std::fs::rename(&staged, &path).map_err(|error| {
                 LedgerFailure::BeforeCommit(format!("could not write the store: {error}"))
             })?;
         }
     }
     // The rename is the commit point. Everything after it is durable.
-    crate::fault::trip("after-ledger-rename").map_err(LedgerFailure::AfterCommit)?;
-    store::sync_dir(locked.handle.store.root()).map_err(LedgerFailure::AfterCommit)?;
-    crate::fault::trip("after-ledger-dirsync").map_err(LedgerFailure::AfterCommit)
+    crate::fault::trip("after-ledger-rename")
+        .map_err(|failure| LedgerFailure::AfterCommit(failure.to_string()))?;
+    store::sync_dir(locked.handle.store.root())
+        .map_err(|failure| LedgerFailure::AfterCommit(failure.to_string()))?;
+    crate::fault::trip("after-ledger-dirsync")
+        .map_err(|failure| LedgerFailure::AfterCommit(failure.to_string()))
 }
 
 /// Step 11: complete the journal, build and publish the receipt, and move the
@@ -356,23 +377,23 @@ fn publish(
         .persist(directory)
         .and_then(|()| crate::fault::trip("after-journal-ledger-committed"))
     {
-        return required(PostCommitStage::JournalCompletion, error);
+        return required(PostCommitStage::JournalCompletion, error.to_string());
     }
     let complete = active.advanced(JournalState::Complete);
     if let Err(error) = complete
         .persist(directory)
         .and_then(|()| crate::fault::trip("after-journal-complete"))
     {
-        return required(PostCommitStage::JournalCompletion, error);
+        return required(PostCommitStage::JournalCompletion, error.to_string());
     }
 
     let witness = match ReceiptV1::witness_of(&complete) {
         Ok(witness) => witness,
-        Err(error) => return required(PostCommitStage::ReceiptPublication, error),
+        Err(error) => return required(PostCommitStage::ReceiptPublication, error.to_string()),
     };
     let post_commit = match effect_receipts(change) {
         Ok(rows) => rows,
-        Err(error) => return required(PostCommitStage::ReceiptPublication, error),
+        Err(error) => return required(PostCommitStage::ReceiptPublication, error.to_string()),
     };
     let receipt = ReceiptV1 {
         transaction: complete.transaction,
@@ -389,7 +410,7 @@ fn publish(
         .persist(directory)
         .and_then(|()| crate::fault::trip("after-receipt-sync"))
     {
-        return required(PostCommitStage::ReceiptPublication, error);
+        return required(PostCommitStage::ReceiptPublication, error.to_string());
     }
 
     // Only derived temps are removed; the journal and the receipt stay, and
@@ -397,11 +418,11 @@ fn publish(
     // and therefore no window with neither placement.
     let _ = std::fs::remove_dir_all(directory.join("live-temp"));
     if let Err(error) = store::sync_dir(directory) {
-        return required(PostCommitStage::ReceiptPublication, error);
+        return required(PostCommitStage::ReceiptPublication, error.to_string());
     }
 
     if let Err(error) = crate::fault::trip("before-receipt-move") {
-        return required(PostCommitStage::ReceiptPublication, error);
+        return required(PostCommitStage::ReceiptPublication, error.to_string());
     }
     let destination = locked.handle.store.receipt(&change.transaction_id);
     if destination.exists() {
@@ -417,7 +438,7 @@ fn publish(
         );
     }
     if let Err(error) = crate::fault::trip("after-receipt-move") {
-        return required(PostCommitStage::ReceiptPublication, error);
+        return required(PostCommitStage::ReceiptPublication, error.to_string());
     }
     for (parent, point) in [
         (
@@ -428,7 +449,7 @@ fn publish(
         (locked.handle.store.root().to_path_buf(), "after-root-sync"),
     ] {
         if let Err(error) = store::sync_dir(&parent).and_then(|()| crate::fault::trip(point)) {
-            return required(PostCommitStage::ReceiptPublication, error);
+            return required(PostCommitStage::ReceiptPublication, error.to_string());
         }
     }
 
@@ -538,7 +559,7 @@ impl Blocked {
         // would find an Active journal and roll forward over the same
         // unclassifiable image.
         if let Err(error) = blocked.persist(directory) {
-            return CommitError::CorruptMachineState(error);
+            return CommitError::CorruptMachineState(error.to_string());
         }
         CommitError::RecoveryBlocked(self.reason)
     }
@@ -643,9 +664,9 @@ fn recheck_inputs(
             } => {
                 let listed =
                     jails_project::capture::list_directory(&root.join(path.as_str()), path)
-                        .map_err(CommitError::StaleInput)?;
+                        .map_err(|failure| CommitError::StaleInput(failure.to_string()))?;
                 let actual = jails_protocol::snapshot::directory_digest(&listed)
-                    .map_err(CommitError::StaleInput)?;
+                    .map_err(|failure| CommitError::StaleInput(failure.to_string()))?;
                 if actual != *entries_sha256 {
                     return Err(CommitError::StaleInput(format!(
                         "`{path}` does not hold what it held when this plan was made.\n       \

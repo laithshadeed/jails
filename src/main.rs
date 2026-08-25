@@ -946,7 +946,7 @@ fn main() -> std::process::ExitCode {
                     "`--check` is the only mode jails has: it applies the migrations to a \
                      scratch database and drops it. Applying them for real is Flyway's job, \
                      which the application does at startup.\n\nfix: run `jails migrate`."
-                        .to_string(),
+                        .into(),
                 )
             } else {
                 migrate::check(no_start, debug)
@@ -1021,13 +1021,16 @@ fn main() -> std::process::ExitCode {
         }
     };
 
-    if let Err(err) = result {
-        // An empty message means the command has already printed everything
-        // the user needs (`doctor` prints a report and then fails only to
-        // set the exit code); printing a bare `jails: ` under it would be
-        // noise.
-        if !err.is_empty() {
-            eprintln!("jails: {err}");
+    if let Err(failure) = result {
+        // `Failure::Reported` means the command has already printed everything
+        // the reader needs -- `doctor` prints a full report and then fails only
+        // to make the shell see it -- so a bare `jails: ` under it would be
+        // noise. This used to read `if !err.is_empty()`, which said the same
+        // thing by testing for the absence of characters in a message, and let
+        // any path that happened to build an empty string exit non-zero having
+        // printed nothing at all. `pending.md` §6.5.
+        if let Some(message) = failure.message() {
+            eprintln!("jails: {message}");
         }
         return std::process::ExitCode::FAILURE;
     }

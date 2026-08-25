@@ -120,7 +120,8 @@ impl Sandbox {
                 identity.key.tool,
                 run.outcome,
                 runner::summarise(&run, &[&self.project], 2048)
-            ));
+            )
+            .into());
         }
         let diff = self.diff(identity)?;
         Ok((run, diff))
@@ -173,7 +174,8 @@ fn in_scope(path: &ProjectPath, identity: &ToolIdentityFingerprint) -> Result<()
          writes where it said it would not has produced output nothing recorded; widen its \
          declared scope deliberately or stop it writing there.",
         identity.key.tool
-    ))
+    )
+    .into())
 }
 
 /// Every regular file under the scratch `tree`, as project-relative paths.
@@ -195,7 +197,8 @@ fn enumerate(tree: &Path, at: &Path) -> Result<BTreeMap<ProjectPath, SandboxFile
                 "the tool created a symlink at {}.\n       fix: a symlink in a prepared tree \
                  points somewhere this transaction never validated.",
                 path.display()
-            ));
+            )
+            .into());
         }
         if metadata.is_dir() {
             // `target/` is derived output no transaction can name, and a
@@ -215,7 +218,8 @@ fn enumerate(tree: &Path, at: &Path) -> Result<BTreeMap<ProjectPath, SandboxFile
             return Err(format!(
                 "the tool created {}, which is not a regular file",
                 path.display()
-            ));
+            )
+            .into());
         }
         let relative = path
             .strip_prefix(tree)
@@ -251,8 +255,10 @@ fn mode_of(metadata: &std::fs::Metadata) -> Result<FileMode> {
 #[cfg(unix)]
 fn set_mode(at: &Path, mode: FileMode) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(at, std::fs::Permissions::from_mode(mode.bits()))
-        .map_err(|error| format!("could not set the mode of {}: {error}", at.display()))
+    Ok(
+        std::fs::set_permissions(at, std::fs::Permissions::from_mode(mode.bits()))
+            .map_err(|error| format!("could not set the mode of {}: {error}", at.display()))?,
+    )
 }
 
 #[cfg(test)]

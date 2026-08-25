@@ -79,11 +79,11 @@ impl ObservedStore {
     fn validate(&self) -> Result<()> {
         match (&self.image, &self.ledger) {
             (FileImage::Absent, None) | (FileImage::Present { .. }, Some(_)) => Ok(()),
-            _ => Err(
+            _ => Err(jails_support::Failure::Told(
                 "the observed store's file and its decoded value disagree about whether it \
                  exists"
                     .to_string(),
-            ),
+            )),
         }
     }
 }
@@ -177,7 +177,8 @@ fn apply(
             "this plan was computed against generation {}, and the store is at {}.\n       fix: \
              replan; applying it would write a store that never existed.",
             set.ledger_intent.generation_before, context.observed_generation
-        ));
+        )
+        .into());
     }
 
     // Step 1. Replay onto a fresh projection and require the same resources.
@@ -246,7 +247,8 @@ fn apply(
              plan.md §R5.4, which is not wired to this route yet. Move your version aside, or \
              destroy and regenerate.",
             conflicts.len()
-        ));
+        )
+        .into());
     }
 
     // §R3.3's one aggregate effect, decided from the same operations and
@@ -406,7 +408,8 @@ fn abort_plan(
                 return Err(format!(
                     "{} is restored from absence to absence, which is not a restore",
                     restore.path
-                ));
+                )
+                .into());
             }
         };
         operations.push(op);
@@ -459,20 +462,22 @@ fn require_intent_matches(
                     "the changes and the ledger intent disagree about {key:?}.\n       fix: they \
                      are computed from one plan; a difference means the files and the store \
                      would describe different projects."
-                ));
+                )
+                .into());
             }
             None => {
                 return Err(format!(
                     "the changes claim {key:?} and the ledger intent does not record it"
-                ));
+                )
+                .into());
             }
         }
     }
     for key in declared.keys() {
         if !projection.resources().contains_key(key) {
-            return Err(format!(
-                "the ledger intent records {key:?} and no change claims it"
-            ));
+            return Err(
+                format!("the ledger intent records {key:?} and no change claims it").into(),
+            );
         }
     }
     Ok(())
@@ -532,9 +537,10 @@ fn flat(value: Option<&TemplateValue>, key: &TemplateKey) -> Result<String> {
             return Err(format!(
                 "`{key}` is an ordered value, and a template is substitution only.\n       fix: \
                  render the list where its separator is known and bind the result."
-            ));
+            )
+            .into());
         }
-        None => return Err(format!("`{key}` is bound to nothing")),
+        None => return Err(format!("`{key}` is bound to nothing").into()),
     })
 }
 
@@ -576,7 +582,8 @@ fn parents(base: &ProjectSnapshot, operations: &[FileOp]) -> Result<Vec<Director
             if matches!(base.read(&parent), Ok(Captured::Present(_))) {
                 return Err(format!(
                     "`{parent}` is a file, and `{path}` needs it to be a directory"
-                ));
+                )
+                .into());
             }
             needed.insert(parent);
             components.pop();

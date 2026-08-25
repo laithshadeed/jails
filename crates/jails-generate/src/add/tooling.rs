@@ -180,9 +180,11 @@ pub(super) fn loadtest_plan(slice: &Slice) -> Result<Change> {
     let root: &Path = slice.root();
     let routes = crate::inspect::collect_routes(root);
     if routes.is_empty() {
-        return Err("no HTTP routes were found under src/main/java.\n       \
+        return Err(jails_support::Failure::Told(
+            "no HTTP routes were found under src/main/java.\n       \
              fix: generate a controller, scaffold, or handler before `jails add loadtest`."
-            .to_string());
+                .to_string(),
+        ));
     }
     let dir = root.join("load-tests");
     Ok(Change {
@@ -380,15 +382,16 @@ pub(super) fn k8s_plan(slice: &Slice) -> Result<Change> {
         if !pom.contains(needle) {
             return Err(format!(
                 "k8s probes and burn-rate alerts need `{needle}`.\n       fix: run `{fix}` first."
-            ));
+            )
+            .into());
         }
     }
     if !root.join("Dockerfile").is_file() {
-        return Err(
+        return Err(jails_support::Failure::Told(
             "k8s needs the production image contract before it can deploy it.\n       \
              fix: run `jails add docker` first."
                 .to_string(),
-        );
+        ));
     }
 
     let raw_name = crate::project::artifact_id(&pom)
@@ -576,10 +579,10 @@ spec:
 /// its smallest form: two answers to one question in one run, and the second
 /// one arrives after `add` may have spliced the pom.
 fn project_release(project: &crate::model::Project) -> Result<u32> {
-    project.java_release().ok_or_else(|| {
+    Ok(project.java_release().ok_or_else(|| {
         "pom.xml has no Java release; Jails cannot choose a compatible CI or container toolchain"
             .to_string()
-    })
+    })?)
 }
 
 fn ci_workflow(release: u32, wrapper: bool) -> String {

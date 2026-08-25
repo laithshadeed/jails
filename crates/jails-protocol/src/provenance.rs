@@ -123,7 +123,7 @@ impl FormatOwner {
             4 => Self::MarkedSource,
             5 => Self::CommandRegistration,
             6 => Self::WholeFile,
-            other => return Err(format!("unknown format owner tag {other}")),
+            other => return Err(format!("unknown format owner tag {other}").into()),
         })
     }
 }
@@ -142,7 +142,7 @@ impl OneShotKind {
             0 => Self::Field,
             1 => Self::Migration,
             2 => Self::Cases,
-            other => return Err(format!("unknown one-shot kind tag {other}")),
+            other => return Err(format!("unknown one-shot kind tag {other}").into()),
         })
     }
 }
@@ -182,9 +182,9 @@ impl Codec for RendererId {
             3 => Self::OneShot(OneShotKind::from_tag(decoder.tag()?)?),
             4 => match decoder.tag()? {
                 0 => Self::ToolFeature(ToolFeature::FastTest),
-                other => return Err(format!("unknown tool feature tag {other}")),
+                other => return Err(format!("unknown tool feature tag {other}").into()),
             },
-            other => return Err(format!("unknown renderer tag {other}")),
+            other => return Err(format!("unknown renderer tag {other}").into()),
         })
     }
 }
@@ -218,7 +218,7 @@ impl Codec for TemplateOrigin {
             2 => Self::UserOverride {
                 logical_name: TemplateId::decode(decoder)?,
             },
-            other => return Err(format!("unknown template origin tag {other}")),
+            other => return Err(format!("unknown template origin tag {other}").into()),
         })
     }
 }

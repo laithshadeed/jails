@@ -67,7 +67,9 @@ impl Store {
             jails_project::compat::MachineState::Absent => {
                 return Ok(jails_prepare::pipeline::ObservedStore::default());
             }
-            jails_project::compat::MachineState::Unreadable(why) => return Err(why.clone()),
+            jails_project::compat::MachineState::Unreadable(why) => {
+                return Err(jails_support::Failure::Told(why.clone()));
+            }
             jails_project::compat::MachineState::Current(ledger) => ledger.clone(),
         };
         let source = match std::fs::read(&path) {
@@ -75,7 +77,7 @@ impl Store {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 return Ok(jails_prepare::pipeline::ObservedStore::default());
             }
-            Err(error) => return Err(format!("failed to read {}: {error}", path.display())),
+            Err(error) => return Err(format!("failed to read {}: {error}", path.display()).into()),
         };
         let metadata = std::fs::metadata(&path)
             .map_err(|error| format!("failed to stat {}: {error}", path.display()))?;
@@ -166,9 +168,9 @@ pub(crate) fn object_path(objects: &Path, id: &ObjectId) -> PathBuf {
 pub(crate) fn put_object(objects: &Path, id: &ObjectId, bytes: &[u8]) -> Result<PathBuf> {
     let actual = ObjectId::from_bytes(sha256(bytes));
     if &actual != id {
-        return Err(format!(
-            "object {id} does not hash its own bytes; it hashes to {actual}"
-        ));
+        return Err(
+            format!("object {id} does not hash its own bytes; it hashes to {actual}").into(),
+        );
     }
     let path = object_path(objects, id);
     let parent = path.parent().expect("object paths have parents");
@@ -210,7 +212,7 @@ pub(crate) fn put_object(objects: &Path, id: &ObjectId, bytes: &[u8]) -> Result<
         }
         Err(error) => {
             let _ = std::fs::remove_file(&temporary);
-            return Err(format!("could not link {}: {error}", path.display()));
+            return Err(format!("could not link {}: {error}", path.display()).into());
         }
     }
     let _ = std::fs::remove_file(&temporary);
@@ -258,7 +260,7 @@ pub fn list_objects(objects: &Path) -> Result<Vec<ObjectId>> {
     let shards = match std::fs::read_dir(&sha256) {
         Ok(shards) => shards,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(format!("could not read {}: {error}", sha256.display())),
+        Err(error) => return Err(format!("could not read {}: {error}", sha256.display()).into()),
     };
     let mut out = Vec::new();
     for shard in shards {
@@ -291,14 +293,16 @@ fn verify(path: &Path, id: &ObjectId, len: u64) -> Result<()> {
             "{} is {} bytes and should be {len}",
             path.display(),
             bytes.len()
-        ));
+        )
+        .into());
     }
     if &ObjectId::from_bytes(sha256(&bytes)) != id {
         return Err(format!(
             "{} does not hash to {id}.\n       fix: the object store is corrupt; the bytes at \
              a content address are not the bytes it names.",
             path.display()
-        ));
+        )
+        .into());
     }
     Ok(())
 }
@@ -312,7 +316,8 @@ pub fn read_object(objects: &Path, id: &ObjectId) -> Result<Vec<u8>> {
         return Err(format!(
             "{} does not hash to {id}; the object store is corrupt",
             path.display()
-        ));
+        )
+        .into());
     }
     Ok(bytes)
 }
@@ -330,7 +335,7 @@ pub(crate) fn create_private_dir(path: &Path) -> Result<()> {
         // A racing creator is fine; the mode is set below either way.
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(error) => {
-            return Err(format!("could not create {}: {error}", path.display()));
+            return Err(format!("could not create {}: {error}", path.display()).into());
         }
     }
     set_private(path, 0o700)
@@ -346,17 +351,20 @@ fn set_private(path: &Path, mode: u32) -> Result<()> {
             "{} is a symlink.\n       fix: machine state must be a real directory; a symlink \
              here points somewhere this transaction never validated.",
             path.display()
-        ));
+        )
+        .into());
     }
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
-        .map_err(|error| format!("could not set the mode of {}: {error}", path.display()))
+    Ok(
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+            .map_err(|error| format!("could not set the mode of {}: {error}", path.display()))?,
+    )
 }
 
 /// fsync a directory, so an entry created in it survives a power loss.
 pub(crate) fn sync_dir(path: &Path) -> Result<()> {
-    File::open(path)
+    Ok(File::open(path)
         .and_then(|dir| dir.sync_all())
-        .map_err(|error| format!("could not sync {}: {error}", path.display()))
+        .map_err(|error| format!("could not sync {}: {error}", path.display()))?)
 }
 
 /// Every device a publication will cross, refused before activation.
@@ -378,9 +386,9 @@ pub fn same_device(one: &Path, other: &Path) -> Result<bool> {
 #[cfg(unix)]
 fn device_of(path: &Path) -> Result<u64> {
     use std::os::unix::fs::MetadataExt;
-    std::fs::metadata(path)
+    Ok(std::fs::metadata(path)
         .map(|metadata| metadata.dev())
-        .map_err(|error| format!("could not stat {}: {error}", path.display()))
+        .map_err(|error| format!("could not stat {}: {error}", path.display()))?)
 }
 
 #[cfg(unix)]

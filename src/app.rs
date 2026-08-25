@@ -70,7 +70,7 @@ impl GenerateIntent {
             .name
             .ok_or_else(|| format!("[[generate]] #{number} is missing `name`"))?;
         if name.is_empty() {
-            return Err(format!("[[generate]] #{number} has an empty `name`"));
+            return Err(format!("[[generate]] #{number} has an empty `name`").into());
         }
         for value in self
             .fields
@@ -83,7 +83,8 @@ impl GenerateIntent {
             if value.contains(['\n', '\r', '|']) {
                 return Err(format!(
                     "[[generate]] #{number} contains a newline or `|`, which is not allowed"
-                ));
+                )
+                .into());
             }
         }
         Ok(ResolvedIntent {

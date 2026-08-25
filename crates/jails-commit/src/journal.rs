@@ -377,7 +377,7 @@ impl JournalV1 {
     /// Decode and validate. §R4.2's order: limits, checksum, then identity.
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         if bytes.len() > MAX_RECORD {
-            return Err(format!("journal is {} bytes; too large", bytes.len()));
+            return Err(format!("journal is {} bytes; too large", bytes.len()).into());
         }
         let split = bytes
             .len()
@@ -391,7 +391,9 @@ impl JournalV1 {
             *slot = decoder.tag()?;
         }
         if &magic != JOURNAL_MAGIC {
-            return Err("this is not a jails journal".to_string());
+            return Err(jails_support::Failure::Told(
+                "this is not a jails journal".to_string(),
+            ));
         }
         let record = Self {
             transaction: TransactionId::decode(&mut decoder)?,
@@ -405,11 +407,11 @@ impl JournalV1 {
         // Checked before anything is believed: a rewrite interrupted
         // mid-write leaves a record that decodes.
         if stored != codec::domain_hash("JAILS-JOURNAL-STATE-1", body) {
-            return Err(
+            return Err(jails_support::Failure::Told(
                 "the journal does not match its own checksum.\n       fix: it is corrupt, not \
                  an incomplete state transition to guess through."
                     .to_string(),
-            );
+            ));
         }
         record.validate()?;
         Ok(record)
@@ -419,14 +421,16 @@ impl JournalV1 {
     pub fn validate(&self) -> Result<()> {
         self.prepared.validate()?;
         if self.transaction != self.prepared.transaction_id()? {
-            return Err(
+            return Err(jails_support::Failure::Told(
                 "the journal's transaction id is not its prepared identity's hash".to_string(),
-            );
+            ));
         }
         // Zero would make "never committed" and "generation zero" the same
         // recorded value, and a recovery has to tell them apart.
         if self.generation == 0 {
-            return Err("a journal's generation is counted from one".to_string());
+            return Err(jails_support::Failure::Told(
+                "a journal's generation is counted from one".to_string(),
+            ));
         }
         Ok(())
     }
@@ -478,7 +482,8 @@ impl JournalV1 {
                 "{} holds the journal of transaction {}",
                 directory.display(),
                 record.transaction
-            ));
+            )
+            .into());
         }
         Ok(record)
     }
@@ -540,7 +545,7 @@ impl ReceiptV1 {
 
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         if bytes.len() > MAX_RECORD {
-            return Err(format!("receipt is {} bytes; too large", bytes.len()));
+            return Err(format!("receipt is {} bytes; too large", bytes.len()).into());
         }
         let split = bytes
             .len()
@@ -554,7 +559,9 @@ impl ReceiptV1 {
             *slot = decoder.tag()?;
         }
         if &magic != RECEIPT_MAGIC {
-            return Err("this is not a jails receipt".to_string());
+            return Err(jails_support::Failure::Told(
+                "this is not a jails receipt".to_string(),
+            ));
         }
         let transaction = TransactionId::decode(&mut decoder)?;
         let generation = decoder.u64()?;
@@ -572,7 +579,9 @@ impl ReceiptV1 {
         decoder.finish()?;
 
         if stored != codec::domain_hash("JAILS-RECEIPT-STATE-1", body) {
-            return Err("the receipt does not match its own checksum".to_string());
+            return Err(jails_support::Failure::Told(
+                "the receipt does not match its own checksum".to_string(),
+            ));
         }
         let record = Self {
             transaction,
@@ -588,12 +597,14 @@ impl ReceiptV1 {
     pub fn validate(&self) -> Result<()> {
         self.prepared.validate()?;
         if self.transaction != self.prepared.transaction_id()? {
-            return Err(
+            return Err(jails_support::Failure::Told(
                 "the receipt's transaction id is not its prepared identity's hash".to_string(),
-            );
+            ));
         }
         if self.generation == 0 {
-            return Err("a receipt's generation is counted from one".to_string());
+            return Err(jails_support::Failure::Told(
+                "a receipt's generation is counted from one".to_string(),
+            ));
         }
         // Exactly one effect receipt per prepared descriptor, in order. A
         // mismatch is corruption: the receipt would be reporting on work the
@@ -603,13 +614,14 @@ impl ReceiptV1 {
                 "the receipt carries {} effect states for {} prepared effects",
                 self.post_commit.len(),
                 self.prepared.post_commit.len()
-            ));
+            )
+            .into());
         }
         for (receipt, descriptor) in self.post_commit.iter().zip(&self.prepared.post_commit) {
             if &receipt.effect != descriptor {
-                return Err(
+                return Err(jails_support::Failure::Told(
                     "an effect receipt describes work this transaction did not plan".to_string(),
-                );
+                ));
             }
         }
         Ok(())
@@ -652,7 +664,8 @@ impl ReceiptV1 {
                 "{} holds a receipt beside a journal in state {}",
                 directory.display(),
                 journal.state.label()
-            ));
+            )
+            .into());
         }
         let witness = ObjectId::from_bytes(codec::sha256(&journal.encode()?));
         if witness != receipt.complete_journal_checksum {
@@ -660,13 +673,15 @@ impl ReceiptV1 {
                 "{} holds a receipt that names another journal.\n       fix: the two published \
                  records must be the same transaction; one of them has been edited.",
                 directory.display()
-            ));
+            )
+            .into());
         }
         if journal.prepared != receipt.prepared || journal.generation != receipt.generation {
             return Err(format!(
                 "{}'s journal and receipt disagree about what was prepared",
                 directory.display()
-            ));
+            )
+            .into());
         }
         Ok(receipt)
     }
@@ -677,7 +692,8 @@ impl ReceiptV1 {
             return Err(format!(
                 "a receipt witnesses a Complete journal, not one in state {}",
                 journal.state.label()
-            ));
+            )
+            .into());
         }
         Ok(ObjectId::from_bytes(codec::sha256(&journal.encode()?)))
     }

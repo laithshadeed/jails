@@ -82,20 +82,21 @@ impl AppliedReceipt {
         let mut seen = BTreeSet::new();
         for file in &self.files {
             if !seen.insert(&file.path) {
-                return Err(format!("{} appears twice in one receipt", file.path));
+                return Err(format!("{} appears twice in one receipt", file.path).into());
             }
             if file.before == file.after {
                 return Err(format!(
                     "{} records the same image before and after; a receipt records what \
                      changed",
                     file.path
-                ));
+                )
+                .into());
             }
         }
         let mut effects = BTreeSet::new();
         for effect in &self.post_commit {
             if !effects.insert(effect.id) {
-                return Err(format!("effect {} appears twice in one receipt", effect.id));
+                return Err(format!("effect {} appears twice in one receipt", effect.id).into());
             }
         }
         Ok(())

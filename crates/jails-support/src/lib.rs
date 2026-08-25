@@ -17,12 +17,85 @@ pub mod process;
 pub mod runner;
 pub mod scratch;
 
-/// Every fallible jails operation returns a message a human can act on.
+/// Every fallible jails operation returns a message a human can act on, or
+/// says that it has already said everything.
 ///
-/// A `String` rather than an error enum, deliberately: the only consumer is
-/// `main`, which prints it. An enum would buy pattern-matching nobody does and
-/// cost a variant per failure mode.
-pub type Result<T> = std::result::Result<T, String>;
+/// **The message stays free text**, deliberately, and the doc comment this
+/// replaces got that trade right: the only consumer is `main`, which prints it,
+/// so an enum per failure mode would buy pattern-matching nobody does and cost
+/// a variant per message.
+///
+/// What it did *not* get right is that there were two outcomes, not one, and
+/// the second was encoded as **the absence of characters in the first**.
+/// `main` read `if !err.is_empty()`, and an empty string meant "the command has
+/// already printed its report; set the exit code and say nothing" -- a
+/// control-flow decision spelled as an empty message, which `doctor`, `lint`,
+/// `run`, `migrate`, `testd`, `reports` and `invoke` all depended on and
+/// nothing named. The failure mode it allows is quiet: any code path that
+/// happens to build an empty message becomes "already reported" and the process
+/// exits non-zero having printed nothing at all.
+///
+/// `pending.md` §6.5. Two variants, which is exactly the number of distinctions
+/// actually in use.
+pub type Result<T> = std::result::Result<T, Failure>;
+
+/// Why a command stopped.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Failure {
+    /// A message for the reader. Free text, and by convention it carries a
+    /// `fix:` line saying what to do next.
+    Told(String),
+    /// The command has already reported. Set the exit code and say nothing
+    /// more -- `doctor` prints a full report and then fails only to make the
+    /// shell see it.
+    Reported,
+}
+
+impl Failure {
+    /// The message to print, or `None` when the command has already spoken.
+    pub fn message(&self) -> Option<&str> {
+        match self {
+            Self::Told(what) => Some(what),
+            Self::Reported => None,
+        }
+    }
+}
+
+/// A failure reads as its message.
+///
+/// Deliberate, and the alternative was worse: 131 assertions say
+/// `error.contains("...")`, and rewriting every one to `error.to_string()
+/// .contains(...)` would have made the migration to this type look like a
+/// change to what the tests assert. The target is `str` rather than `String`
+/// because `Reported` has no message and borrowing `""` is the honest answer
+/// -- which is also why [`Self::message`] exists: code that needs to *know*
+/// whether anything was said asks for the `Option`, and nothing else can
+/// reconstruct that distinction from the text.
+impl std::ops::Deref for Failure {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        self.message().unwrap_or_default()
+    }
+}
+
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.message().unwrap_or_default())
+    }
+}
+
+impl From<String> for Failure {
+    fn from(what: String) -> Self {
+        Self::Told(what)
+    }
+}
+
+impl From<&str> for Failure {
+    fn from(what: &str) -> Self {
+        Self::Told(what.to_string())
+    }
+}
 
 /// Prints the program, args and working directory of a command about to be
 /// run, for `--debug`.

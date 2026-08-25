@@ -850,7 +850,7 @@ fn every_persistent_kind_destroys_back_to_where_it_started() {
 /// makes this a two-arm match rather than a second dispatcher. Anything else
 /// is reported, never quietly run through V1 -- a mixed-engine project is
 /// exactly the state §R6.1 says cannot exist.
-fn route_step(root: &std::path::Path, step: &[&str]) -> Result<(), String> {
+fn route_step(root: &std::path::Path, step: &[&str]) -> Result<(), jails_support::Failure> {
     use clap::ValueEnum;
 
     let project = Project::load(root)?;
@@ -881,7 +881,7 @@ fn route_step(root: &std::path::Path, step: &[&str]) -> Result<(), String> {
             )
             .map(|_| ())
         }
-        _ => Err(format!("`{}` has no V2 route yet", step.join(" "))),
+        _ => Err(format!("`{}` has no V2 route yet", step.join(" ")).into()),
     }
 }
 

@@ -24,7 +24,8 @@ pub(super) fn manifest_path(root: &Path, requested: Option<&Path>) -> Result<Pat
         return Err(format!(
             "application manifest not found: {}\n\nfix: create {DEFAULT_MANIFEST}, or pass `--manifest <path>`.",
             path.display()
-        ));
+        )
+        .into());
     }
     Ok(path)
 }
@@ -32,7 +33,7 @@ pub(super) fn manifest_path(root: &Path, requested: Option<&Path>) -> Result<Pat
 pub(super) fn read_manifest(path: &Path) -> Result<(Manifest, Vec<ResolvedIntent>)> {
     let text =
         fs::read_to_string(path).map_err(|e| format!("failed to read {}: {e}", path.display()))?;
-    parse_manifest(&text).map_err(|e| format!("{}: {e}", path.display()))
+    parse_manifest(&text).map_err(|e| format!("{}: {e}", path.display()).into())
 }
 
 pub(super) fn parse_manifest(text: &str) -> Result<(Manifest, Vec<ResolvedIntent>)> {
@@ -56,7 +57,8 @@ pub(super) fn parse_manifest(text: &str) -> Result<(Manifest, Vec<ResolvedIntent
         if line.starts_with('[') {
             return Err(format!(
                 "line {line_number}: unknown table `{line}`; only `[[generate]]` is supported"
-            ));
+            )
+            .into());
         }
         let (key, raw_value) = line
             .split_once('=')
@@ -89,7 +91,8 @@ pub(super) fn parse_manifest(text: &str) -> Result<(Manifest, Vec<ResolvedIntent
                         _ => {
                             return Err(format!(
                                 "line {line_number}: `timestamps` must be true or false"
-                            ));
+                            )
+                            .into());
                         }
                     }
                 }
@@ -120,7 +123,8 @@ pub(super) fn parse_manifest(text: &str) -> Result<(Manifest, Vec<ResolvedIntent
                         return Err(format!(
                             "line {line_number}: `on` is already set for this intent; \
                              `strategy_on` is a deprecated alias for it, so pass one or the other"
-                        ));
+                        )
+                        .into());
                     }
                     intent.strategy_on = Some(string(value, line_number, key)?.to_string())
                 }
@@ -129,7 +133,7 @@ pub(super) fn parse_manifest(text: &str) -> Result<(Manifest, Vec<ResolvedIntent
                         return Err(format!(
                             "line {line_number}: `yields` is already set for this intent; \
                              `strategy_yields` is a deprecated alias for it, so pass one or the other"
-                        ));
+                        ).into());
                     }
                     intent.strategy_yields = Some(string(value, line_number, key)?.to_string())
                 }
@@ -137,7 +141,8 @@ pub(super) fn parse_manifest(text: &str) -> Result<(Manifest, Vec<ResolvedIntent
                     return Err(format!(
                         "line {line_number}: unknown [[generate]] key `{key}`; known: \
                          kind, name, fields, timestamps, indexes, package, on, yields"
-                    ));
+                    )
+                    .into());
                 }
             }
             continue;
@@ -166,7 +171,7 @@ pub(super) fn parse_manifest(text: &str) -> Result<(Manifest, Vec<ResolvedIntent
                     }
                 }
             }
-            _ => return Err(format!("line {line_number}: unknown top-level key `{key}`")),
+            _ => return Err(format!("line {line_number}: unknown top-level key `{key}`").into()),
         }
     }
 
@@ -177,7 +182,8 @@ pub(super) fn parse_manifest(text: &str) -> Result<(Manifest, Vec<ResolvedIntent
         return Err(format!(
             "unsupported schema {}; this Jails release supports schema 1",
             manifest.schema
-        ));
+        )
+        .into());
     }
     // On identity, not on identity-plus-content. Keyed on both, a manifest
     // declaring one entity twice with *different* fields was accepted and both
@@ -199,7 +205,8 @@ pub(super) fn parse_manifest(text: &str) -> Result<(Manifest, Vec<ResolvedIntent
                     true => String::new(),
                     false => format!(" --package {package}"),
                 }
-            ));
+            )
+            .into());
         }
     }
     Ok((manifest, resolved))
@@ -224,10 +231,10 @@ pub(super) fn strip_comment(line: &str) -> &str {
 }
 
 pub(super) fn string<'a>(value: &'a str, line: usize, key: &str) -> Result<&'a str> {
-    value
+    Ok(value
         .strip_prefix('"')
         .and_then(|value| value.strip_suffix('"'))
-        .ok_or_else(|| format!("line {line}: `{key}` must be a double-quoted string"))
+        .ok_or_else(|| format!("line {line}: `{key}` must be a double-quoted string"))?)
 }
 
 pub(super) fn string_array(value: &str, line: usize, key: &str) -> Result<Vec<String>> {
@@ -247,9 +254,9 @@ pub(super) fn string_array(value: &str, line: usize, key: &str) -> Result<Vec<St
             at += 1;
         }
         if at == bytes.len() || bytes[at] != b'"' {
-            return Err(format!(
-                "line {line}: `{key}` must contain only double-quoted strings"
-            ));
+            return Err(
+                format!("line {line}: `{key}` must contain only double-quoted strings").into(),
+            );
         }
         at += 1;
         let start = at;
@@ -268,7 +275,7 @@ pub(super) fn string_array(value: &str, line: usize, key: &str) -> Result<Vec<St
             at += 1;
         }
         if at == bytes.len() {
-            return Err(format!("line {line}: unterminated string in `{key}`"));
+            return Err(format!("line {line}: unterminated string in `{key}`").into());
         }
         values.push(inner[start..at].to_string());
         at += 1;
@@ -279,9 +286,7 @@ pub(super) fn string_array(value: &str, line: usize, key: &str) -> Result<Vec<St
             break;
         }
         if bytes[at] != b',' {
-            return Err(format!(
-                "line {line}: expected a comma between strings in `{key}`"
-            ));
+            return Err(format!("line {line}: expected a comma between strings in `{key}`").into());
         }
         at += 1;
     }

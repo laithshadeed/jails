@@ -66,7 +66,8 @@ pub(crate) fn scaffold_artifacts_from_fields(
                  fix: generate a record for the element and model the relationship explicitly \
                  with `jails g association`.",
                 field.name, field.java_type
-            ));
+            )
+            .into());
         }
         if main_dir(root, &domain)
             .join(format!("{}.java", field.java_type))
@@ -86,7 +87,7 @@ pub(crate) fn scaffold_artifacts_from_fields(
                     field.name,
                     key.name,
                     field.java_type
-                ));
+                ).into());
             }
             return Err(format!(
                 "scaffold {name} cannot persist `{}:{}`: {} is a record in this project, but \
@@ -94,7 +95,8 @@ pub(crate) fn scaffold_artifacts_from_fields(
                  fix: give {} exactly one @pk component, or model the foreign key as a \
                  built-in scalar field and relate them with `jails g association`.",
                 field.name, field.java_type, field.java_type, field.java_type
-            ));
+            )
+            .into());
         }
         return Err(format!(
             "scaffold {name} cannot persist `{}:{}`: jails has no SQL/JDBC mapping for that \
@@ -102,7 +104,8 @@ pub(crate) fn scaffold_artifacts_from_fields(
              fix: use a built-in field type or an enum (stored by name), or generate {} as a \
              record and relate them with `jails g association`.",
             field.name, field.java_type, field.java_type
-        ));
+        )
+        .into());
     }
 
     // The migration is emitted only when the project has somewhere to put

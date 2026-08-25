@@ -188,19 +188,18 @@ fn read_file(at: &Path, path: &ProjectPath) -> Result<Option<SnapshotFile>> {
     let metadata = match at.symlink_metadata() {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(format!("failed to read {path}: {error}")),
+        Err(error) => return Err(format!("failed to read {path}: {error}").into()),
     };
     if metadata.file_type().is_symlink() {
         return Err(format!(
             "{path} is a symlink.\n       fix: jails snapshots the bytes it will later replace, \
              and a link means those can be two different files. Replace it with the file itself, \
              or keep it outside the project."
-        ));
+        )
+        .into());
     }
     if metadata.is_dir() {
-        return Err(format!(
-            "{path} is a directory, and the plan declared it as a file"
-        ));
+        return Err(format!("{path} is a directory, and the plan declared it as a file").into());
     }
     let bytes = std::fs::read(at).map_err(|error| format!("failed to read {path}: {error}"))?;
     Ok(Some(SnapshotFile::capture(bytes, mode_of(&metadata)?)))
@@ -226,7 +225,7 @@ fn list(at: &Path, path: &ProjectPath) -> Result<Vec<ProjectPath>> {
     let entries = match std::fs::read_dir(at) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(format!("failed to list {path}: {error}")),
+        Err(error) => return Err(format!("failed to list {path}: {error}").into()),
     };
     let mut names = Vec::new();
     for entry in entries {

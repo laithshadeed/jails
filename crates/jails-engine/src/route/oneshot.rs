@@ -133,7 +133,7 @@ pub fn cases(run: &Run, brief: &str, package: Option<&str>) -> Result<Outcome> {
             .components()
             .any(|part| part == std::path::Component::ParentDir)
     {
-        return Err(outside());
+        return Err(jails_support::Failure::Told(outside()));
     }
     let relative = project
         .root()

@@ -91,7 +91,8 @@ pub(super) fn require_gradle(request: &super::Request<'_>) -> Result<()> {
          fix: add `--gradle`, or drop {}.",
         stray.join(" and "),
         stray.join(" and ")
-    ))
+    )
+    .into())
 }
 
 /// Which `build.gradle` shape a Boot version needs.
@@ -134,7 +135,8 @@ pub(super) struct Plan<'a> {
 /// -- and a version string jails cannot read is one where every one of those
 /// three would be a guess.
 pub(super) fn boot_major(boot: &str) -> Result<u32> {
-    boot.split('.')
+    Ok(boot
+        .split('.')
         .next()
         .and_then(|major| major.parse::<u32>().ok())
         .ok_or_else(|| {
@@ -144,7 +146,7 @@ pub(super) fn boot_major(boot: &str) -> Result<u32> {
                  or `--boot {}`.",
                 crate::pom::TARGET_BOOT
             )
-        })
+        })?)
 }
 
 fn shape(major: u32) -> Shape {
@@ -237,7 +239,8 @@ pub(super) fn starter(id: &str, major: u32) -> Result<(String, &'static str)> {
                  fix: use one of web, validation, jdbc, data-jdbc, actuator, security, \
                  data-jpa, devtools, h2 -- or create the project and add the rest with \
                  `jails add`."
-            ));
+            )
+            .into());
         }
     };
     Ok((found.coordinate, found.configuration))
@@ -426,7 +429,7 @@ fn fetch_wrapper_jar(plan: &Plan<'_>, debug: bool) -> Result<()> {
         // and a zero-byte jar is the one shape that looks like a wrapper and
         // is not.
         let _ = crate::apply::remove(&path);
-        return Err(format!("{url} could not be fetched"));
+        return Err(format!("{url} could not be fetched").into());
     }
     Ok(())
 }
@@ -449,7 +452,8 @@ pub(super) fn create(request: &super::Request<'_>, deps: &str, boot: &str) -> Re
         return Err(format!(
             "--java {java} is below Java {}, which jails' generated code needs",
             crate::pom::MIN_RELEASE
-        ));
+        )
+        .into());
     }
     let major = boot_major(boot)?;
     let gradle = request

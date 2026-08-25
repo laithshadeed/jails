@@ -126,9 +126,9 @@ impl TestClasspath {
 }
 
 fn join<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Result<String> {
-    std::env::join_paths(paths)
+    Ok(std::env::join_paths(paths)
         .map(|joined| joined.to_string_lossy().into_owned())
-        .map_err(|error| format!("failed to join classpath: {error}"))
+        .map_err(|error| format!("failed to join classpath: {error}"))?)
 }
 
 /// The test classpath, from cache when the pom has not moved since.

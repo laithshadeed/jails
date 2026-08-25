@@ -115,11 +115,11 @@ pub fn destroy(
         kind,
         ArtifactKind::Migration | ArtifactKind::Association | ArtifactKind::Field
     ) {
-        return Err(
+        return Err(jails_support::Failure::Told(
             "migrations, associations, and field changes are forward-only; create a new \
              migration instead of destroying one"
                 .to_string(),
-        );
+        ));
     }
     // `cases` is the fourth one-shot and the one that used to be an
     // exception. V1 destroyed it by rebuilding the test path from the
@@ -134,7 +134,8 @@ pub fn destroy(
              than as an entity jails owns.\n       fix: delete the generated test yourself. \
              Re-running `jails g cases {name}` over the same brief changes nothing, so \
              nothing has to be taken back first."
-        ));
+        )
+        .into());
     }
     let project = run.project();
     let id = intent(project, kind, name, package, &[], &[], None, None)?;
@@ -155,7 +156,8 @@ pub fn destroy(
             id.name,
             label(kind),
             id.name,
-        ));
+        )
+        .into());
     }
     let owner = ResourceOwner::Entity(entity.clone());
     let mut reads = retiring(&store, &owner)?;
@@ -300,12 +302,12 @@ pub fn recipe(run: &Run, intent: &Intent) -> Result<Outcome> {
         // recipe sees it, through the same helper the manifest uses.
         jails_protocol::recipe::LifecycleClass::OneShotField => {
             if !intent.indexes.is_empty() || intent.on.is_some() || intent.yields.is_some() {
-                return Err(
+                return Err(jails_support::Failure::Told(
                     "field accepts one `name:type` component; --index/--on/--yields do not \
                      apply.\n       fix: put @index on the field itself, for example \
                      `createdAt:instant@index`."
                         .to_string(),
-                );
+                ));
             }
             let [component] = intent.fields.as_slice() else {
                 return Err(format!(
@@ -313,7 +315,8 @@ pub fn recipe(run: &Run, intent: &Intent) -> Result<Outcome> {
                      \x20  fix: add one component per call. A field is one overlay on one \
                      recorded target, and two at once could not be undone separately.",
                     intent.fields.len()
-                ));
+                )
+                .into());
             };
             super::field(run, &intent.name, component, package)
         }

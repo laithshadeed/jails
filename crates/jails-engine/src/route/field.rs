@@ -43,7 +43,8 @@ pub fn field(run: &Run, target: &str, component: &str, package: Option<&str>) ->
             label(id.recipe),
             id.name,
             added.name
-        ));
+        )
+        .into());
     }
 
     // The whole target, at the spec it becomes. Nothing here compares
@@ -226,12 +227,12 @@ fn recorded_target(
             }
             _ => None,
         });
-    found.ok_or_else(|| {
+    Ok(found.ok_or_else(|| {
         format!(
             "no `{name}` is recorded in this project.\n       fix: `jails g scaffold {name} \
              ...` or `jails g record {name} ...` first. Adding a component to something the \
              store never recorded would mean guessing what its other components were declared \
              as, and a declaration is not readable from the Java it produced."
         )
-    })
+    })?)
 }

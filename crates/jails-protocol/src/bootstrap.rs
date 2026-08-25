@@ -69,14 +69,16 @@ impl Bootstrap {
     /// ledger jails cannot read is not a project jails owns nothing in.
     pub fn with_ledger(mut self, ledger: Option<LedgerV2>) -> Result<Self> {
         if self.ledger_seen {
-            return Err("the ledger was supplied twice to one bootstrap".to_string());
+            return Err(jails_support::Failure::Told(
+                "the ledger was supplied twice to one bootstrap".to_string(),
+            ));
         }
         if matches!(self.machine_root, MachineRootPresence::Absent) && ledger.is_some() {
-            return Err(
+            return Err(jails_support::Failure::Told(
                 "a ledger was decoded although `.jails` is recorded absent; the two \
                  observations disagree"
                     .to_string(),
-            );
+            ));
         }
         self.ledger = ledger;
         self.ledger_seen = true;
@@ -87,11 +89,11 @@ impl Bootstrap {
     /// ordinary parsers.
     pub fn classify(self) -> Result<LoadedProject> {
         if !self.ledger_seen {
-            return Err(
+            return Err(jails_support::Failure::Told(
                 "classify() was called before the ledger was read.\n       fix: the ledger \
                  decides whether the ordinary parsers are safe to run at all."
                     .to_string(),
-            );
+            ));
         }
         match self
             .ledger

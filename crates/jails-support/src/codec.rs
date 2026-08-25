@@ -111,7 +111,8 @@ impl Encoder {
                 "encoded record is {} bytes, over the {MAX_PROTOCOL_RECORD}-byte protocol \
                  record limit",
                 self.out.len()
-            ));
+            )
+            .into());
         }
         Ok(self.out)
     }
@@ -149,10 +150,9 @@ impl Encoder {
 
     fn limited(&mut self, value: &str, cap: usize, what: &str) -> Result<()> {
         if value.len() > cap {
-            return Err(format!(
-                "{what} is {} bytes, over the {cap}-byte limit",
-                value.len()
-            ));
+            return Err(
+                format!("{what} is {} bytes, over the {cap}-byte limit", value.len()).into(),
+            );
         }
         let length = u32::try_from(value.len()).expect("checked against a usize cap above");
         self.u32(length);
@@ -164,9 +164,7 @@ impl Encoder {
     pub fn object(&mut self, body: &[u8], cap: u64) -> Result<()> {
         let length = u64::try_from(body.len()).map_err(|_| "object length overflows u64")?;
         if length > cap {
-            return Err(format!(
-                "object is {length} bytes, over the {cap}-byte limit"
-            ));
+            return Err(format!("object is {length} bytes, over the {cap}-byte limit").into());
         }
         self.u64(length);
         self.out.extend_from_slice(body);
@@ -179,7 +177,8 @@ impl Encoder {
         if count > MAX_COLLECTION_ENTRIES {
             return Err(format!(
                 "collection has {count} entries, over the {MAX_COLLECTION_ENTRIES} limit"
-            ));
+            )
+            .into());
         }
         self.u32(count);
         Ok(())
@@ -222,9 +221,7 @@ impl Encoder {
             written += 1;
         }
         if written != len {
-            return Err(format!(
-                "a sequence declared {len} elements and encoded {written}"
-            ));
+            return Err(format!("a sequence declared {len} elements and encoded {written}").into());
         }
         Ok(())
     }
@@ -271,7 +268,7 @@ impl Encoder {
     /// Encode a recursive node under the depth counter.
     pub fn nested(&mut self, encode: impl FnOnce(&mut Self) -> Result<()>) -> Result<()> {
         if self.depth >= MAX_CODEC_DEPTH {
-            return Err(format!("value nests deeper than {MAX_CODEC_DEPTH}"));
+            return Err(format!("value nests deeper than {MAX_CODEC_DEPTH}").into());
         }
         self.depth += 1;
         let outcome = encode(self);
@@ -298,7 +295,8 @@ impl<'a> Decoder<'a> {
             return Err(format!(
                 "record is {} bytes, over the {MAX_PROTOCOL_RECORD}-byte protocol record limit",
                 bytes.len()
-            ));
+            )
+            .into());
         }
         Ok(Self {
             bytes,
@@ -317,7 +315,8 @@ impl<'a> Decoder<'a> {
             return Err(format!(
                 "{} trailing byte(s) after a complete value",
                 self.bytes.len() - self.at
-            ));
+            )
+            .into());
         }
         Ok(())
     }
@@ -356,7 +355,7 @@ impl<'a> Decoder<'a> {
         match self.tag()? {
             0 => Ok(false),
             1 => Ok(true),
-            other => Err(format!("expected a boolean 0 or 1, found {other}")),
+            other => Err(format!("expected a boolean 0 or 1, found {other}").into()),
         }
     }
 
@@ -380,21 +379,17 @@ impl<'a> Decoder<'a> {
     fn limited(&mut self, cap: usize, what: &str) -> Result<String> {
         let length = self.u32()? as usize;
         if length > cap {
-            return Err(format!(
-                "{what} claims {length} bytes, over the {cap}-byte limit"
-            ));
+            return Err(format!("{what} claims {length} bytes, over the {cap}-byte limit").into());
         }
         let bytes = self.take(length)?;
-        String::from_utf8(bytes.to_vec())
-            .map_err(|error| format!("{what} is not valid UTF-8: {error}"))
+        Ok(String::from_utf8(bytes.to_vec())
+            .map_err(|error| format!("{what} is not valid UTF-8: {error}"))?)
     }
 
     pub fn object(&mut self, cap: u64) -> Result<Vec<u8>> {
         let length = self.u64()?;
         if length > cap {
-            return Err(format!(
-                "object claims {length} bytes, over the {cap}-byte limit"
-            ));
+            return Err(format!("object claims {length} bytes, over the {cap}-byte limit").into());
         }
         let length =
             usize::try_from(length).map_err(|_| "object length exceeds this platform's usize")?;
@@ -407,7 +402,8 @@ impl<'a> Decoder<'a> {
         if count > MAX_COLLECTION_ENTRIES {
             return Err(format!(
                 "collection claims {count} entries, over the {MAX_COLLECTION_ENTRIES} limit"
-            ));
+            )
+            .into());
         }
         Ok(count)
     }
@@ -416,7 +412,7 @@ impl<'a> Decoder<'a> {
         match self.tag()? {
             0 => Ok(None),
             1 => decode(self).map(Some),
-            other => Err(format!("expected an option tag 0 or 1, found {other}")),
+            other => Err(format!("expected an option tag 0 or 1, found {other}").into()),
         }
     }
 
@@ -470,7 +466,7 @@ impl<'a> Decoder<'a> {
 
     pub fn nested<T>(&mut self, decode: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
         if self.depth >= MAX_CODEC_DEPTH {
-            return Err(format!("value nests deeper than {MAX_CODEC_DEPTH}"));
+            return Err(format!("value nests deeper than {MAX_CODEC_DEPTH}").into());
         }
         self.depth += 1;
         let outcome = decode(self);
@@ -489,10 +485,11 @@ pub fn ordered<K: Ord + std::fmt::Debug>(previous: Option<&K>, next: &K) -> Resu
     match previous {
         None => Ok(()),
         Some(last) if last < next => Ok(()),
-        Some(last) if last == next => Err(format!("duplicate key {next:?} in a set or map")),
+        Some(last) if last == next => Err(format!("duplicate key {next:?} in a set or map").into()),
         Some(last) => Err(format!(
             "key {next:?} follows {last:?}, so the collection is not canonically ordered"
-        )),
+        )
+        .into()),
     }
 }
 
@@ -525,7 +522,8 @@ pub fn unhex(text: &str) -> Result<[u8; DIGEST_BYTES]> {
             "expected {} lowercase hex characters, found {}",
             DIGEST_BYTES * 2,
             text.len()
-        ));
+        )
+        .into());
     }
     let mut out = [0u8; DIGEST_BYTES];
     let bytes = text.as_bytes();
@@ -555,7 +553,8 @@ pub fn unhex_bytes(text: &str) -> Result<Vec<u8>> {
         return Err(format!(
             "hex has an odd length ({}); every byte is two characters",
             text.len()
-        ));
+        )
+        .into());
     }
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(text.len() / 2);
@@ -569,10 +568,7 @@ fn nibble(byte: u8) -> Result<u8> {
     match byte {
         b'0'..=b'9' => Ok(byte - b'0'),
         b'a'..=b'f' => Ok(byte - b'a' + 10),
-        _ => Err(format!(
-            "`{}` is not a lowercase hexadecimal digit",
-            byte as char
-        )),
+        _ => Err(format!("`{}` is not a lowercase hexadecimal digit", byte as char).into()),
     }
 }
 

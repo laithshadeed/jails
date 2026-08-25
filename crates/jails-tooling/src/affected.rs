@@ -27,6 +27,7 @@
 //! why `jails check` stays `mvn clean verify` and why this is opt-in.
 
 use crate::process::{CommandSpec, Diagnostics, OutputMode};
+use jails_support::Result;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 
@@ -44,7 +45,7 @@ pub(crate) fn select(root: &Path, debug: bool) -> Selection {
     let changed = match changed_sources(root, debug) {
         Ok(changed) if changed.is_empty() => return Selection::Nothing,
         Ok(changed) => changed,
-        Err(reason) => return Selection::Everything(reason),
+        Err(reason) => return Selection::Everything(reason.to_string()),
     };
 
     let main = root.join("target/classes");
@@ -187,7 +188,7 @@ fn class_files(dir: &Path) -> Vec<(String, Vec<u8>)> {
 /// and after a red run with nothing changed it would select nothing and report
 /// green. "What I have changed since my last commit" is a set the person at
 /// the keyboard already knows without being told.
-fn changed_sources(root: &Path, debug: bool) -> Result<Vec<PathBuf>, String> {
+fn changed_sources(root: &Path, debug: bool) -> Result<Vec<PathBuf>> {
     let spec = CommandSpec::new("git")
         .args(["status", "--porcelain", "--untracked-files=all", "--"])
         .arg("src/main/java")

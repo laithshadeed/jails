@@ -44,12 +44,13 @@ impl Codec for AppliedEntity {
             return Err(format!(
                 "{:?} is recorded with no owner, which is not a thing that can be applied",
                 self.id
-            ));
+            )
+            .into());
         }
         if !self.version.spec.matches(&self.id) {
-            return Err(
+            return Err(jails_support::Failure::Told(
                 "an applied row pairs an identity and a spec of different kinds".to_string(),
-            );
+            ));
         }
         encoder.count(self.owners.len())?;
         let mut previous: Option<&OwnerId> = None;
@@ -75,13 +76,15 @@ impl Codec for AppliedEntity {
             owners.insert(owner);
         }
         if owners.is_empty() {
-            return Err("an applied row carries no owner".to_string());
+            return Err(jails_support::Failure::Told(
+                "an applied row carries no owner".to_string(),
+            ));
         }
         let spec = EntitySpec::decode(decoder)?;
         if !spec.matches(&id) {
-            return Err(
+            return Err(jails_support::Failure::Told(
                 "an applied row pairs an identity and a spec of different kinds".to_string(),
-            );
+            ));
         }
         Ok(Self {
             id,

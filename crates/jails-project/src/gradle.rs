@@ -432,7 +432,8 @@ pub fn add_dependency_ref(text: &str, dep: DependencyRef<'_>) -> Result<Option<S
                  have this one under another spelling -- and two declarations at different \
                  versions is the failure that costs an afternoon.",
                 dep.group_id, dep.artifact_id
-            ));
+            )
+            .into());
         }
     }
     let coordinate_for_new_block = match dep.version {
@@ -1059,7 +1060,8 @@ fn add_plugin_line(text: &str, line: &str) -> Result<String> {
              one.\n       fix: add the block yourself -- it has to be the first statement in \
              the script, and jails will not guess where the top of your build file is. Then \
              re-run this command."
-        ));
+        )
+        .into());
     };
     let spliced = format!("{}{line}\n", indent_of(text, body.clone()));
     let at = trailing_insert_point(text, body);

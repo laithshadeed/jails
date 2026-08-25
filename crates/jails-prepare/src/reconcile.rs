@@ -209,7 +209,8 @@ pub(crate) fn merge_mode(
         live.bits(),
         desired.bits(),
         base.bits()
-    ))
+    )
+    .into())
 }
 
 /// `SHA256("JAILS-MERGE-PATH-1" || encode(path))`, lowercase hex.
@@ -269,36 +270,45 @@ pub(crate) fn validate_conflict(
     for line in text.lines() {
         if line == tokens.start {
             if state != Where::Outside {
-                return Err("merge output nests conflict markers".to_string());
+                return Err(jails_support::Failure::Told(
+                    "merge output nests conflict markers".to_string(),
+                ));
             }
             state = Where::InCurrent;
         } else if line == tokens.separator {
             if state != Where::InCurrent {
-                return Err("merge output has a separator outside a conflict".to_string());
+                return Err(jails_support::Failure::Told(
+                    "merge output has a separator outside a conflict".to_string(),
+                ));
             }
             state = Where::InDesired;
         } else if line == tokens.end {
             if state != Where::InDesired {
-                return Err("merge output closes a conflict that never opened".to_string());
+                return Err(jails_support::Failure::Told(
+                    "merge output closes a conflict that never opened".to_string(),
+                ));
             }
             state = Where::Outside;
             hunks += 1;
         }
     }
     if state != Where::Outside {
-        return Err("merge output leaves a conflict unclosed".to_string());
+        return Err(jails_support::Failure::Told(
+            "merge output leaves a conflict unclosed".to_string(),
+        ));
     }
     if hunks == 0 {
-        return Err(
+        return Err(jails_support::Failure::Told(
             "the merge tool reported a conflict and produced no conflict markers".to_string(),
-        );
+        ));
     }
     let expected = hunks.min(127) as i32;
     if exit_status != expected {
         return Err(format!(
             "the merge tool exited {exit_status} and produced {hunks} conflict(s); it reports \
              the count, truncated at 127"
-        ));
+        )
+        .into());
     }
     Ok(hunks)
 }

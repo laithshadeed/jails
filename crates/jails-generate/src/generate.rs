@@ -127,7 +127,8 @@ pub fn plan_recipe(
              fix: plan it through its own policy -- an overlay, a serial allocation or a \
              source-hash receipt. See plan.md §R6.2.",
             format!("{kind:?}").to_lowercase()
-        ));
+        )
+        .into());
     }
     let root = project.root().to_path_buf();
     let name = recorded_name(kind, recipe.name);
@@ -228,9 +229,9 @@ pub fn plan_recipe(
 pub fn with_timestamps(kind: ArtifactKind, fields: &[String]) -> Result<Vec<String>> {
     if !matches!(kind, ArtifactKind::Scaffold) {
         return Err(
-            "--timestamps belongs to scaffold, where the record, DDL, adapter, and HTTP contracts can evolve together.\n       \
+            jails_support::Failure::Told("--timestamps belongs to scaffold, where the record, DDL, adapter, and HTTP contracts can evolve together.\n       \
              fix: use `jails g scaffold <Name> ... --timestamps`."
-                .to_string(),
+                .to_string()),
         );
     }
     let parsed = parse_fields(fields)?;
@@ -239,7 +240,8 @@ pub fn with_timestamps(kind: ArtifactKind, fields: &[String]) -> Result<Vec<Stri
             return Err(format!(
                 "--timestamps would duplicate `{conventional}`.\n       \
                  fix: remove the hand-declared timestamp or omit --timestamps."
-            ));
+            )
+            .into());
         }
     }
     Ok(fields

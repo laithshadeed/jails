@@ -80,8 +80,8 @@ fn ensure_parent(path: &Path) -> Result<()> {
     if parent.as_os_str().is_empty() {
         return Ok(());
     }
-    fs::create_dir_all(parent)
-        .map_err(|error| format!("failed to create {}: {error}", parent.display()))
+    Ok(fs::create_dir_all(parent)
+        .map_err(|error| format!("failed to create {}: {error}", parent.display()))?)
 }
 
 /// Write a file that must not already exist.
@@ -97,11 +97,12 @@ pub fn create(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<()> {
         return Err(format!(
             "{} already exists; refusing to overwrite it",
             path.display()
-        ));
+        )
+        .into());
     }
     ensure_parent(path)?;
-    fs::write(path, contents)
-        .map_err(|error| format!("failed to write {}: {error}", path.display()))
+    Ok(fs::write(path, contents)
+        .map_err(|error| format!("failed to write {}: {error}", path.display()))?)
 }
 
 /// Replace a file jails previously wrote.
@@ -112,8 +113,8 @@ pub fn create(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<()> {
 pub fn replace(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<()> {
     let (path, contents) = (path.as_ref(), contents.as_ref());
     ensure_parent(path)?;
-    fs::write(path, contents)
-        .map_err(|error| format!("failed to write {}: {error}", path.display()))
+    Ok(fs::write(path, contents)
+        .map_err(|error| format!("failed to write {}: {error}", path.display()))?)
 }
 
 /// Write content that already accounts for whatever was there.
@@ -126,8 +127,8 @@ pub fn replace(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<()> 
 pub fn put(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<()> {
     let (path, contents) = (path.as_ref(), contents.as_ref());
     ensure_parent(path)?;
-    fs::write(path, contents)
-        .map_err(|error| format!("failed to write {}: {error}", path.display()))
+    Ok(fs::write(path, contents)
+        .map_err(|error| format!("failed to write {}: {error}", path.display()))?)
 }
 
 /// Write a file that has to be runnable, not merely present.
@@ -164,7 +165,7 @@ pub fn put_executable(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Resu
 pub fn put_named(path: impl AsRef<Path>, contents: impl AsRef<str>, label: &str) -> Result<()> {
     let (path, contents) = (path.as_ref(), contents.as_ref());
     ensure_parent(path)?;
-    fs::write(path, contents).map_err(|error| format!("failed to write {label}: {error}"))
+    Ok(fs::write(path, contents).map_err(|error| format!("failed to write {label}: {error}"))?)
 }
 
 /// Write a file outside the project, on the machine.
@@ -174,8 +175,8 @@ pub fn put_named(path: impl AsRef<Path>, contents: impl AsRef<str>, label: &str)
 pub fn put_outside_project(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<()> {
     let (path, contents) = (path.as_ref(), contents.as_ref());
     ensure_parent(path)?;
-    fs::write(path, contents)
-        .map_err(|error| format!("failed to write {}: {error}", path.display()))
+    Ok(fs::write(path, contents)
+        .map_err(|error| format!("failed to write {}: {error}", path.display()))?)
 }
 
 /// Write a file into a scratch tree jails owns for the duration of one run.
@@ -188,8 +189,8 @@ pub fn put_outside_project(path: impl AsRef<Path>, contents: impl AsRef<str>) ->
 pub fn put_in_scratch(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> Result<()> {
     let path = path.as_ref();
     ensure_parent(path)?;
-    fs::write(path, contents)
-        .map_err(|error| format!("failed to write {}: {error}", path.display()))
+    Ok(fs::write(path, contents)
+        .map_err(|error| format!("failed to write {}: {error}", path.display()))?)
 }
 
 /// Remove a file jails wrote.
@@ -203,7 +204,7 @@ pub fn remove(path: impl AsRef<Path>) -> Result<()> {
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(format!("failed to remove {}: {error}", path.display())),
+        Err(error) => Err(format!("failed to remove {}: {error}", path.display()).into()),
     }
 }
 
@@ -214,8 +215,8 @@ pub fn remove(path: impl AsRef<Path>) -> Result<()> {
 /// it, and a reader tracing what a command touched should see that.
 pub fn ensure_directory(path: impl AsRef<Path>) -> Result<()> {
     let path = path.as_ref();
-    fs::create_dir_all(path)
-        .map_err(|error| format!("failed to create {}: {error}", path.display()))
+    Ok(fs::create_dir_all(path)
+        .map_err(|error| format!("failed to create {}: {error}", path.display()))?)
 }
 
 /// Publish a completed tree by renaming it onto a destination that must be
@@ -236,7 +237,7 @@ pub fn ensure_directory(path: impl AsRef<Path>) -> Result<()> {
 pub fn publish_tree(from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<()> {
     let (from, to) = (from.as_ref(), to.as_ref());
     if to.symlink_metadata().is_ok() {
-        return Err(format!("{} already exists", to.display()));
+        return Err(format!("{} already exists", to.display()).into());
     }
     fs::rename(from, to).map_err(|error| {
         format!(
@@ -255,9 +256,9 @@ pub fn publish_tree(from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<()> 
 /// renamed survives a crash rather than only the bytes it points at.
 pub(crate) fn sync_directory(path: impl AsRef<Path>) -> Result<()> {
     let path = path.as_ref();
-    std::fs::File::open(path)
+    Ok(std::fs::File::open(path)
         .and_then(|dir| dir.sync_all())
-        .map_err(|error| format!("failed to flush {}: {error}", path.display()))
+        .map_err(|error| format!("failed to flush {}: {error}", path.display()))?)
 }
 
 #[cfg(test)]

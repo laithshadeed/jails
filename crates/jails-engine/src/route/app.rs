@@ -209,7 +209,8 @@ fn declare(
                  first's files.",
                 label(intent.kind),
                 id.name
-            ));
+            )
+            .into());
         }
         reads = widen(reads, &planned, &change, &desired)?;
         changes.push(desired);

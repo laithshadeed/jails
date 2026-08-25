@@ -68,9 +68,9 @@ impl OperationSemanticsV1 {
             _ => false,
         };
         if !ok {
-            return Err(
+            return Err(jails_support::Failure::Told(
                 "the prepared kind and its semantics describe different transitions".to_string(),
-            );
+            ));
         }
         Ok(())
     }

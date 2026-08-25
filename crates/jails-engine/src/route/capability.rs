@@ -279,7 +279,8 @@ pub fn remove(run: &Run, asked: &Declaration) -> Result<Outcome> {
              what is installed. Removing something the store never recorded would mean guessing \
              which lines to take out of files jails does not own.",
             declared_as.display()
-        ));
+        )
+        .into());
     }
     let mut declared = declared_capabilities(&store, None)?;
     declared.remove(&entity);
@@ -355,7 +356,8 @@ fn require_renderable_plugins(project: &Project, change: &Change) -> Result<()> 
              configuration would record the capability as present while nothing it needs \
              runs.\n       fix: add the Gradle plugin yourself, then re-run. `jails doctor` \
              will tell you what else is missing."
-        ));
+        )
+        .into());
     }
     Ok(())
 }

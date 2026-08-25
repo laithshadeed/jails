@@ -50,7 +50,8 @@ pub fn src(type_name: &str, json: bool) -> Result<()> {
                 Ok(path) if !path.is_empty() => format!(" or {path}"),
                 _ => String::new(),
             }
-        ));
+        )
+        .into());
     }
     if json {
         let items = found

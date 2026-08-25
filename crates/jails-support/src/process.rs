@@ -223,12 +223,13 @@ pub fn spawn(spec: &CommandSpec, diagnostics: Diagnostics) -> Result<Child> {
     if diagnostics == Diagnostics::Debug {
         eprintln!("{}", spec.render());
     }
-    spec.to_command()
+    Ok(spec
+        .to_command()
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|error| format!("failed to run {}: {error}", spec.program.to_string_lossy()))
+        .map_err(|error| format!("failed to run {}: {error}", spec.program.to_string_lossy()))?)
 }
 
 /// Run a command to completion.
@@ -336,7 +337,7 @@ pub fn run_checked(spec: &CommandSpec, diagnostics: Diagnostics) -> Result<Done>
     let done = run(spec, diagnostics)?;
     if !done.status.success() {
         let program = spec.program.to_string_lossy();
-        return Err(format!("{program} exited with {}", done.status));
+        return Err(format!("{program} exited with {}", done.status).into());
     }
     Ok(done)
 }

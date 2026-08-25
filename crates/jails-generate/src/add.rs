@@ -98,7 +98,8 @@ pub fn require_java_release(build: Build, release: Option<u32>) -> Result<()> {
         Some(level) if level < MIN_RELEASE => Err(format!(
             "this project targets Java {level}, but jails generates Java {MIN_RELEASE}+ \
              code.\n       {raise}"
-        )),
+        )
+        .into()),
         None => Err(format!(
             "{} does not set a Java release level, and jails generates Java {MIN_RELEASE}+ \
              code.\n       {add}",
@@ -106,7 +107,8 @@ pub fn require_java_release(build: Build, release: Option<u32>) -> Result<()> {
                 Build::Gradle => crate::gradle::FILE,
                 _ => "pom.xml",
             }
-        )),
+        )
+        .into()),
         Some(_) => Ok(()),
     }
 }

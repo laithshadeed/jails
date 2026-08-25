@@ -127,9 +127,9 @@ impl Outcome {
     pub fn committed(self) -> Result<CommitResult> {
         match self {
             Self::Committed(result) | Self::CommittedAfterRecovery(result, _) => Ok(result),
-            Self::Planned(_) => {
-                Err("this run was asked to pretend, so there is no commit".to_string())
-            }
+            Self::Planned(_) => Err(jails_support::Failure::Told(
+                "this run was asked to pretend, so there is no commit".to_string(),
+            )),
         }
     }
 

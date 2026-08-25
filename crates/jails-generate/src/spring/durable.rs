@@ -115,7 +115,7 @@ pub(crate) fn durable_job_files(
     if !slice.project().has_jdbc() {
         return Err(format!(
             "durable-job {name} needs PostgreSQL/JDBC for durable leasing.\n       fix: run `jails add db` before generating it."
-        ));
+        ).into());
     }
     let id = fields
         .iter()
@@ -127,7 +127,8 @@ pub(crate) fn durable_job_files(
         return Err(format!(
             "durable-job {name} needs required `id:uuid`; it received id:{}",
             id.java_type
-        ));
+        )
+        .into());
     }
     if let Some(field) = fields.iter().find(|field| {
         field.optionality == crate::generate::Optionality::Nullable || field.collection
@@ -135,7 +136,7 @@ pub(crate) fn durable_job_files(
         return Err(format!(
             "durable-job {name} field `{}` is optional or a collection. Durable payload v1 accepts required scalar JDBC fields so storage and equality are exact.",
             field.name
-        ));
+        ).into());
     }
     let service: &str = &slice.owned(Layer::Service);
     let domain: &str = &slice.owned(Layer::Domain);
@@ -162,7 +163,7 @@ pub(crate) fn durable_job_files(
             .join(", ");
         return Err(format!(
             "durable-job {name} fields must exactly match {command_name} in declaration order.\n       expected: {wanted}"
-        ));
+        ).into());
     }
     let target_fields = Target::read(slice, "durable-job", name, target)?.fields;
     let target_id = target_fields
@@ -172,7 +173,7 @@ pub(crate) fn durable_job_files(
     if usecase_normalized_type(&target_id.java_type) != "UUID" {
         return Err(format!(
             "durable-job {name} v1 needs {target}.id to be UUID so work and effect share one stable identity"
-        ));
+        ).into());
     }
 
     let columns = crate::sql::columns(fields, slice.project(), domain, "work");
@@ -185,7 +186,8 @@ pub(crate) fn durable_job_files(
         return Err(format!(
             "durable-job {name} cannot map payload column(s): {}",
             unmapped.join(", ")
-        ));
+        )
+        .into());
     }
 
     let table = format!("{}_jobs", crate::sql::snake_case(name));

@@ -63,7 +63,9 @@ pub struct Request<'a> {
 pub fn new(request: Request<'_>) -> Result<()> {
     let (name, java, debug, pretend) = (request.name, request.java, request.debug, request.pretend);
     if Path::new(name).exists() {
-        return Err(publish::already_exists(Path::new(name)));
+        return Err(jails_support::Failure::Told(publish::already_exists(
+            Path::new(name),
+        )));
     }
     gradle_project::require_gradle(&request)?;
     let (group, package, git, offline, app) = (
@@ -90,13 +92,13 @@ pub fn new(request: Request<'_>) -> Result<()> {
     // would have done is not a preview. `new-cli` writes a file set jails
     // knows, so that one previews for real.
     if pretend && !offline {
-        return Err(
+        return Err(jails_support::Failure::Told(
             "`--pretend` is not supported for `new`: the project comes from start.spring.io, \
              so jails cannot say what is in it without downloading it.\n\n\
              fix: run `jails new-cli --pretend` to preview a project jails writes itself, or \
              run `jails new` and inspect the result."
                 .to_string(),
-        );
+        ));
     }
 
     let deps = deps_for_gradle.as_str();
@@ -180,8 +182,8 @@ fn download_starter(
 
     if !status.success() {
         return Err(
-            "starter.zip request failed.\n       fix: retry when start.spring.io is reachable, or run the same command with `--offline`."
-                .to_string(),
+            jails_support::Failure::Told("starter.zip request failed.\n       fix: retry when start.spring.io is reachable, or run the same command with `--offline`."
+                .to_string()),
         );
     }
 
@@ -202,7 +204,9 @@ fn download_starter(
         .map_err(|e| format!("failed to run unzip: {e}"))?;
 
     if !status.success() {
-        return Err("failed to extract starter.zip".to_string());
+        return Err(jails_support::Failure::Told(
+            "failed to extract starter.zip".to_string(),
+        ));
     }
     Ok(())
 }
@@ -225,7 +229,8 @@ fn new_offline(
         return Err(format!(
             "--java {java} is below Java {}, which jails' generated code needs",
             crate::pom::MIN_RELEASE
-        ));
+        )
+        .into());
     }
     let package = resolved_package(name, group, package);
     let class = application_class(name);
@@ -369,7 +374,7 @@ fn offline_dependencies(deps: &str) -> Result<String> {
                 return Err(format!(
                     "offline fixture does not know Initializr dependency `{other}`.\n       \
                      fix: use one of web, validation, jdbc, actuator, security, data-jpa, devtools; or create online."
-                ));
+                ).into());
             }
         };
         out.push_str("        <dependency>\n");
@@ -636,7 +641,8 @@ fn set_java_release(root: &Path, from: &str, to: &str) -> Result<()> {
         return Err(format!(
             "could not set Java {to}: {} does not contain {old}",
             path.display()
-        ));
+        )
+        .into());
     }
     crate::apply::put(
         &path,
@@ -658,7 +664,9 @@ pub fn new_cli(
     pretend: bool,
 ) -> Result<()> {
     if Path::new(name).exists() {
-        return Err(publish::already_exists(Path::new(name)));
+        return Err(jails_support::Failure::Told(publish::already_exists(
+            Path::new(name),
+        )));
     }
 
     // A generic tool cannot hardcode one release level: the LTS most people
@@ -668,10 +676,11 @@ pub fn new_cli(
             return Err(format!(
                 "--release {java} is below Java {}, which is what jails' generated code needs",
                 crate::pom::MIN_RELEASE
-            ));
+            )
+            .into());
         }
         Ok(_) => {}
-        Err(_) => return Err(format!("--release must be a number, got '{java}'")),
+        Err(_) => return Err(format!("--release must be a number, got '{java}'").into()),
     }
 
     let package = resolved_package(name, group, package);

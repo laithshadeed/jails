@@ -207,12 +207,12 @@ pub(crate) fn event_files(
         return Err(format!(
             "an event payload needs a stable `id` field for deduplication and Kafka partitioning.\n       \
              Add `id:string!` or `id:uuid` to `jails g event {name} ...`."
-        ));
+        ).into());
     }
     if id.is_some_and(|field| field.optionality == crate::generate::Optionality::Nullable) {
-        return Err(
+        return Err(jails_support::Failure::Told(
             "an event `id` cannot be optional: a null key loses per-entity ordering".to_string(),
-        );
+        ));
     }
     let key = id
         .filter(|field| field.java_type != "String")

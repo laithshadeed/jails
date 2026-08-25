@@ -136,7 +136,7 @@ pub(crate) fn http_workflow_files(
     if !slice.project().has_jdbc() {
         return Err(format!(
             "http-workflow {name} needs PostgreSQL/JDBC for its durable frontier.\n       fix: run `jails add db` first."
-        ));
+        ).into());
     }
     // Through the project, so a fetcher this same manifest declares two rows
     // above counts. `Path::is_file` answers about disk, and in one transition
@@ -147,7 +147,7 @@ pub(crate) fn http_workflow_files(
     {
         return Err(format!(
             "http-workflow {name} cannot find {fetcher}Fetcher.java.\n       fix: generate fetcher {fetcher} first."
-        ));
+        ).into());
     }
     let table = crate::sql::snake_case(name);
     let property = table.replace('_', "-");

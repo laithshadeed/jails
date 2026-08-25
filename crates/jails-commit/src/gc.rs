@@ -86,7 +86,8 @@ impl std::fmt::Display for Warning {
 /// function does not derive it: an incomplete root set computed here would be
 /// indistinguishable from an object legitimately becoming garbage.
 pub fn sweep(objects: &Path, roots: &BTreeSet<ObjectId>) -> std::result::Result<Swept, Warning> {
-    let present = store::list_objects(objects).map_err(Warning::Unreadable)?;
+    let present =
+        store::list_objects(objects).map_err(|failure| Warning::Unreadable(failure.to_string()))?;
     let held: BTreeSet<ObjectId> = present.iter().copied().collect();
 
     // A root the store does not hold means the reachability graph is
@@ -99,7 +100,8 @@ pub fn sweep(objects: &Path, roots: &BTreeSet<ObjectId>) -> std::result::Result<
 
     // Every object is verified before any is deleted.
     for id in &present {
-        store::read_object(objects, id).map_err(Warning::Unreadable)?;
+        store::read_object(objects, id)
+            .map_err(|failure| Warning::Unreadable(failure.to_string()))?;
     }
 
     let mut swept = Swept::default();
@@ -148,8 +150,10 @@ pub fn promote_receipts(receipts: &Path, durable: &Path) -> std::result::Result<
         if !local.is_dir() {
             continue;
         }
-        let ids = store::list_objects(&local).map_err(Warning::Unreadable)?;
-        promoted += store::promote(&local, durable, &ids).map_err(Warning::Unreadable)?;
+        let ids = store::list_objects(&local)
+            .map_err(|failure| Warning::Unreadable(failure.to_string()))?;
+        promoted += store::promote(&local, durable, &ids)
+            .map_err(|failure| Warning::Unreadable(failure.to_string()))?;
     }
     Ok(promoted)
 }

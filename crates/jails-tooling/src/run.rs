@@ -22,7 +22,8 @@ fn maven_root(command: &str) -> Result<PathBuf> {
              jails reads and splices `build.gradle` -- `add`, `generate`, `doctor` and the \
              rest work here -- but it does not drive this command's Gradle equivalent \
              yet.\n       fix: run it through the wrapper, `./gradlew <task>`."
-        ));
+        )
+        .into());
     }
     Ok(root)
 }
@@ -91,7 +92,8 @@ pub(crate) fn run_inherited(mut cmd: Command, debug: bool) -> Result<()> {
         "{} exited with {}",
         cmd.get_program().to_string_lossy(),
         done.status
-    ))
+    )
+    .into())
 }
 
 fn is_maven_program(program: &std::ffi::OsStr) -> bool {
@@ -184,7 +186,7 @@ fn run_watched(mut cmd: Command, debug: bool) -> Result<()> {
 
     if !status.success() {
         report_maven_failure(&log);
-        return Err(format!("{program} exited with {status}"));
+        return Err(format!("{program} exited with {status}").into());
     }
     if !crate::why::looks_fatal(&log) {
         return Ok(());
@@ -200,7 +202,7 @@ fn run_watched(mut cmd: Command, debug: bool) -> Result<()> {
     }
     // The report above is the message; main.rs prints nothing for an empty
     // error and just sets the exit code.
-    Err(String::new())
+    Err(jails_support::Failure::Reported)
 }
 
 /// Force colour back on for a piped child. Maven and Spring Boot both turn
@@ -395,14 +397,14 @@ fn ensure_console_launcher(root: &Path, debug: bool) -> Result<()> {
         // declarations to avoid one CLI-lifetime allocation is the worse trade.
         crate::junit::ConsoleVersion::Pinned(version) => Some(&*version.leak()),
         crate::junit::ConsoleVersion::Unknown => {
-            return Err(
+            return Err(jails_support::Failure::Told(
                 "this project declares no JUnit version, so jails cannot align the console \
                  launcher with it.\n       \
                  A mismatched launcher resolves fine and then dies with NoSuchMethodError.\n       \
                  fix: declare org.junit.jupiter:junit-jupiter (or import junit-bom), then \
                  retry --fast."
                     .to_string(),
-            );
+            ));
         }
     };
     let dependency = crate::pom::Dependency {
@@ -515,11 +517,11 @@ pub fn mvn(args: &[String], debug: bool) -> Result<()> {
 pub fn gradle(args: &[String], debug: bool) -> Result<()> {
     let root = find_project_root()?;
     if crate::build::detect(&root) != crate::build::Build::Gradle {
-        return Err(
+        return Err(jails_support::Failure::Told(
             "`jails gradle` needs a Gradle project.\n       fix: this one is not built by \
              Gradle -- `jails mvn` is the escape hatch for a Maven build."
                 .to_string(),
-        );
+        ));
     }
     let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
     gradlew::tasks(&root, &borrowed, debug)
@@ -547,7 +549,9 @@ pub fn watch(debug: bool) -> Result<()> {
     let pom = fs::read_to_string(root.join("pom.xml"))
         .map_err(|e| format!("failed to read pom.xml: {e}"))?;
     if !pom.contains("org.springframework.boot") {
-        return Err("--watch only supports Spring Boot projects".to_string());
+        return Err(jails_support::Failure::Told(
+            "--watch only supports Spring Boot projects".to_string(),
+        ));
     }
     if !pom.contains("devtools") {
         eprintln!(
@@ -685,7 +689,7 @@ pub fn run(no_build: bool, args: &[String], debug: bool) -> Result<()> {
     {
         return Err(format!(
             "target/classes has no compiled {fqcn} -- run `jails build` or `jails run` (without --no-build) first"
-        ));
+        ).into());
     }
 
     let mut run = Command::new("java");
@@ -704,14 +708,14 @@ fn find_built_jar(root: &Path) -> Result<PathBuf> {
         "no target/ directory -- run `jails build` or `jails run` (without --no-build) first"
             .to_string()
     })?;
-    entries
+    Ok(entries
         .flatten()
         .map(|e| e.path())
         .find(|p| p.extension().is_some_and(|ext| ext == "jar"))
         .ok_or_else(|| {
             "no jar under target/ -- run `jails build` or `jails run` (without --no-build) first"
                 .to_string()
-        })
+        })?)
 }
 
 /// Find the file with `static void main` under src/main/java and return

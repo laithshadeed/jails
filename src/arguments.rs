@@ -49,11 +49,13 @@ pub(crate) fn maven_coordinate(text: &str) -> Result<jails_protocol::coordinate:
         (_, _, Some(_)) => Err(format!(
             "`{text}` names a version as well as a coordinate.\n       \
              fix: jails add dependency <group>:<artifact> --version <version>"
-        )),
+        )
+        .into()),
         _ => Err(format!(
             "`{text}` is not a Maven coordinate.\n       \
              fix: jails add dependency <group>:<artifact>"
-        )),
+        )
+        .into()),
     }
 }
 
@@ -64,7 +66,8 @@ pub(crate) fn split_setting(text: &str) -> Result<(String, String)> {
         None => Err(format!(
             "`{text}` is not a `key=value` setting.\n       \
              fix: jails set server.port=3000"
-        )),
+        )
+        .into()),
     }
 }
 

@@ -173,7 +173,8 @@ impl SemanticEdit {
             return Err(format!(
                 "semantic edit of kind {expected} filed under a resource key of kind {}",
                 key.tag()
-            ));
+            )
+            .into());
         }
         Ok(())
     }
@@ -297,11 +298,13 @@ impl Codec for SemanticEdit {
 /// outside the project on the reader's behalf.
 fn validate_layout_directory(directory: &str) -> Result<()> {
     if directory.is_empty() {
-        return Err("layout directory is empty".to_string());
+        return Err(jails_support::Failure::Told(
+            "layout directory is empty".to_string(),
+        ));
     }
     for part in directory.split('.') {
         if part.is_empty() || part == "." || part == ".." || part.contains('/') {
-            return Err(format!("`{directory}` is not a relative package component"));
+            return Err(format!("`{directory}` is not a relative package component").into());
         }
     }
     Ok(())
@@ -367,7 +370,8 @@ impl FactDelta {
             if self.remove.contains(key) {
                 return Err(format!(
                     "fact delta both adds and removes {key:?}; the result would depend on order"
-                ));
+                )
+                .into());
             }
         }
         Ok(())

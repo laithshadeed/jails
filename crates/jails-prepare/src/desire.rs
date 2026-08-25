@@ -188,7 +188,8 @@ pub fn contribution(
                  documents nothing.\n       \
                  fix: a property comment introduces the line beneath it. A trailing one would be \
                  written above whichever property happened to be added next."
-            ));
+            )
+            .into());
         }
     }
     for artifact in &change.files {
@@ -209,9 +210,7 @@ pub fn contribution(
     for dependency in &change.legacy_deps {
         let (key, _) = dependency_resource(dependency)?;
         if desired.resources.iter().any(|held| held.key == key) {
-            return Err(format!(
-                "this capability both installs and supersedes {key:?}"
-            ));
+            return Err(format!("this capability both installs and supersedes {key:?}").into());
         }
         if !desired.adopted.contains(&key) {
             desired.adopted.push(key);
@@ -354,9 +353,7 @@ fn claim(
 ) -> Result<()> {
     if let Some(existing) = desired.resources.iter().find(|held| held.key == key) {
         if existing.value != value {
-            return Err(format!(
-                "one change states two different values for {key:?}"
-            ));
+            return Err(format!("one change states two different values for {key:?}").into());
         }
         return Ok(());
     }
@@ -398,7 +395,8 @@ fn plugin_resource(artifact_id: &str, block: &str) -> Result<(ResourceKey, Resou
     if coordinate.artifact_id.as_str() != artifact_id {
         return Err(format!(
             "the plugin block declares {coordinate} but the recipe files it under {artifact_id}"
-        ));
+        )
+        .into());
     }
     let spec = PluginSpec::new(coordinate.clone(), xml)?;
     Ok((
@@ -454,7 +452,8 @@ fn project_path(path: &std::path::Path, project: &Project) -> Result<ProjectPath
                 "{} is outside {}, so no owner in this project can claim it",
                 path.display(),
                 project.root().display()
-            ));
+            )
+            .into());
         }
     };
     let text = relative

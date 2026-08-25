@@ -300,7 +300,7 @@ impl Codec for InputPrecondition {
             11 => Self::MachineRoot {
                 presence: MachineRootPresence::decode(decoder)?,
             },
-            other => return Err(format!("unknown input precondition tag {other}")),
+            other => return Err(format!("unknown input precondition tag {other}").into()),
         })
     }
 }
@@ -343,7 +343,8 @@ impl CanonicalRoot {
             return Err(format!(
                 "`{path}` is not a canonical absolute root.\n       fix: resolve it before \
                  taking a snapshot, so two runs from different directories agree."
-            ));
+            )
+            .into());
         }
         Ok(Self(path.to_string()))
     }
@@ -403,7 +404,8 @@ impl TemplateStore {
                 return Err(format!(
                     "template `{}` was resolved twice; its origin is frozen once per run",
                     template.id
-                ));
+                )
+                .into());
             }
         }
         Ok(Self { templates: map })
@@ -412,13 +414,13 @@ impl TemplateStore {
     /// An unresolved template is an error for the same reason an undeclared
     /// read is: the run would render from bytes nothing recorded.
     pub fn resolve(&self, id: &TemplateId) -> Result<&ResolvedTemplate> {
-        self.templates.get(id).ok_or_else(|| {
+        Ok(self.templates.get(id).ok_or_else(|| {
             format!(
                 "template `{id}` was not resolved, so this run may not render it.\n       fix: \
                  declare it in the snapshot; its origin is frozen once so two files cannot \
                  render from two different versions of it."
             )
-        })
+        })?)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &ResolvedTemplate> {
@@ -454,7 +456,7 @@ impl ProjectSnapshot {
         // would silently win, and which one is an implementation detail.
         for path in &absences {
             if files.contains_key(path) {
-                return Err(format!("`{path}` is captured as both present and absent"));
+                return Err(format!("`{path}` is captured as both present and absent").into());
             }
         }
         Ok(Self {
@@ -487,12 +489,14 @@ impl ProjectSnapshot {
             "`{path}` was not captured, so planning may not read it.\n       fix: declare it in \
              the read set. Reaching past the snapshot would decide on a fact nothing recorded, \
              and the commit-time staleness check would have nothing to compare."
-        ))
+        )
+        .into())
     }
 
     /// List a declared directory. Undeclared is an error for the same reason.
     pub fn list(&self, path: &ProjectPath) -> Result<&[ProjectPath]> {
-        self.directories
+        Ok(self
+            .directories
             .get(path)
             .map(Vec::as_slice)
             .ok_or_else(|| {
@@ -500,7 +504,7 @@ impl ProjectSnapshot {
                     "directory `{path}` was not enumerated, so planning may not list it.\n       \
                  fix: declare it in the read set."
                 )
-            })
+            })?)
     }
 
     /// The complete read set this snapshot justifies.

@@ -348,6 +348,43 @@ fn gates() -> Vec<(Ratchet, usize)> {
         ),
         (
             Ratchet {
+                name: "refusals with no `fix:` line (target withdrawn)",
+                rung: "R3.4 — a refusal says what to do next",
+                // `pending.md` §6.5: the `fix:` convention is real and
+                // load-bearing -- every `doctor` FAIL is supposed to carry one,
+                // and an integration test says so -- but it is a substring
+                // convention over free text, so it could only ever be checked
+                // where somebody grepped for it. `doctor` was that one place.
+                //
+                // This counts it everywhere: a `return Err(..)` or `Err(..)`
+                // whose argument builds a message, and whose message has no
+                // `fix:` in it. Measured for the first time here, so the
+                // ceiling is today's number and the target is what the
+                // convention actually claims.
+                //
+                // **The target is withdrawn, not reached**, for the same reason
+                // §8.0 withdrew `root: &Path`'s: the count includes refusals
+                // that genuinely have no next step to name. A decoder rejecting
+                // a corrupt tag, a length over its cap, a duplicate row in a
+                // receipt -- these can only say what they found, and a `fix:`
+                // line on one would be an invented instruction. Demanding zero
+                // would read as "put a fix line on everything", which is worse
+                // than the drift it is trying to stop.
+                //
+                // What the row is for is that the number cannot *rise*: a new
+                // refusal has to either carry a fix or lower something else.
+                // Separating the two kinds is per-message work, not a sweep,
+                // and it is what brings this down.
+                ceiling: REFUSALS_WITHOUT_A_FIX,
+                target: REFUSALS_WITHOUT_A_FIX,
+                why: "A refusal that names no next step leaves the reader to guess, and jails' \
+                      whole argument for refusing rather than guessing is that it can say what \
+                      would work instead.",
+            },
+            refusals_without_a_fix(&src),
+        ),
+        (
+            Ratchet {
                 name: "codec halves outside `impl Codec`",
                 rung: "R1.1 — one constructor per type, and the codec calls it",
                 // 130 -> 4 when the `Codec` trait was declared and the
@@ -543,7 +580,12 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // with no `schema.sql` starts perfectly and leaves the tables
                 // absent, so the first query to need one fails in front of a
                 // user -- a silent failure `doctor` exists to make loud.
-                ceiling: 1479,
+                //
+                // 1479 -> 1481, and 488 -> 489 in the row below, for the same
+                // reason as the largest-module row: `Result`'s error type is
+                // `Failure` now, so `Err(format!(..))` sites gained `.into()`
+                // and rustfmt wrapped a few of them. `pending.md` §6.5.
+                ceiling: 1481,
                 // Withdrawn, not reached. abstract.md §8.0.1 audits all ten
                 // checks: none is a re-encoded dependency fact, so the 700
                 // measured a saving that is not there. Ratchet against growth.
@@ -608,7 +650,7 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // `jails new --gradle --boot 2.x` made older projects reachable
                 // for the first time. Putting it anywhere else would give two
                 // owners to "is this project new enough".
-                ceiling: 488,
+                ceiling: 489,
                 target: 2500,
                 why: "Logical cohesion: one file for everything sharing the `require_spring` \
                       precondition. abstract.md §6.2 says turning that precondition into data \
@@ -669,7 +711,17 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // asymmetry invisible. Three production lines for two silent
                 // wrong answers is the trade -- four after `cargo fmt` split
                 // one of them, which is the number that counts.
-                ceiling: 648,
+                //
+                // 648 -> 662 for `pending.md` §6.5: `Result`'s error type is
+                // `Failure` rather than `String`, so every `return Err(format!
+                // (..))` in the workspace gained `.into()` and rustfmt put the
+                // closing `)` on its own line. Fourteen lines of that landed
+                // here, which is the largest single file's share of a
+                // workspace-wide type change and not a design regression. It
+                // is also why §8.1 lists this file: it has been the largest
+                // module since the Gradle branches went in, and the honest
+                // answer to the next rise is the split, not another ceiling.
+                ceiling: 662,
                 target: 700,
                 why: "The row above can be satisfied by *moving* a monolith rather than \
                       decomposing one, so this asks the question the split is actually for: \
@@ -1779,6 +1831,49 @@ fn inherent_codec_halves(src: &[Source]) -> usize {
                 && (head.contains("fn encode(&self, encoder: &mut Encoder)")
                     || head.contains("fn decode(decoder: &mut Decoder<'_>)"));
             if is_half && !in_codec_impl {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+/// Where the count stands today. Lowered per message, never by a sweep.
+const REFUSALS_WITHOUT_A_FIX: usize = 443;
+
+/// A refusal that builds a message and does not say what to do next.
+///
+/// Located on the blanked production text -- so `#[cfg(test)]` bodies are out
+/// and parentheses inside string literals cannot confuse the scan -- and then
+/// *read* from the raw file at the same byte offsets, because the message is
+/// exactly what blanking erases.
+///
+/// Only calls whose argument contains a string literal count. `Err(error)`,
+/// `Err(Failure::Reported)` and `Err(CommitError::Io(..))` are forwarding a
+/// refusal somebody else worded, and a `fix:` is that somebody's job.
+fn refusals_without_a_fix(src: &[Source]) -> usize {
+    let mut count = 0;
+    for file in src {
+        let raw = fs::read_to_string(&file.path).expect("this file was read once already");
+        if raw.len() != file.production.len() {
+            // Blanking preserves length; if it ever stops, this gate is reading
+            // the wrong bytes and should say so rather than report a number.
+            panic!("{} blanked to a different length", file.path.display());
+        }
+        let bytes = file.production.as_bytes();
+        for (at, _) in file.production.match_indices("Err(") {
+            // `.map_err(` and similar are not refusal sites of their own.
+            if at > 0 && (bytes[at - 1].is_ascii_alphanumeric() || bytes[at - 1] == b'_') {
+                continue;
+            }
+            let Some(end) = matching_paren(&file.production, at + 3) else {
+                continue;
+            };
+            let argument = &raw[at + 4..end];
+            if !argument.contains('"') {
+                continue;
+            }
+            if !argument.contains("fix:") {
                 count += 1;
             }
         }

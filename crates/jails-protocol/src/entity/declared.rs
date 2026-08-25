@@ -60,7 +60,7 @@ impl Codec for DeclaredId {
                 path: crate::identity::ProjectPath::decode(decoder)?,
                 key: crate::identity::PropertyKey::decode(decoder)?,
             }),
-            other => Err(format!("unknown declared resource tag {other}")),
+            other => Err(format!("unknown declared resource tag {other}").into()),
         }
     }
 }
@@ -111,7 +111,7 @@ impl Codec for DeclaredSpec {
         match decoder.tag()? {
             0 => crate::coordinate::DependencySpec::decode(decoder).map(Self::Dependency),
             1 => crate::resource::PropertySetting::decode(decoder).map(Self::Property),
-            other => Err(format!("unknown declared spec tag {other}")),
+            other => Err(format!("unknown declared spec tag {other}").into()),
         }
     }
 }

@@ -27,6 +27,7 @@
 //! resolved against it -- pointing it at the object store would silently
 //! relocate every volume.
 
+use jails_support::Result;
 use std::collections::BTreeSet;
 use std::path::Path;
 
@@ -50,7 +51,7 @@ pub(crate) fn identify(
     operation: OperationId,
     index: u32,
     effect: &PostCommitEffect,
-) -> Result<EffectId, String> {
+) -> Result<EffectId> {
     let mut encoder = Encoder::new();
     operation.encode(&mut encoder)?;
     encoder.u32(index);
@@ -78,7 +79,7 @@ pub fn reconcile(
         Ok(receipt) => receipt,
         // The commit itself succeeded; a receipt this process cannot read back
         // is a machine-state problem to report, never a reason to rerun files.
-        Err(why) => return Err(CommitError::CorruptMachineState(why)),
+        Err(why) => return Err(CommitError::CorruptMachineState(why.to_string())),
     };
     let Some(row) = receipt.post_commit.first().cloned() else {
         return Ok(CommitEffectOutcome::NotApplicable);
@@ -138,7 +139,7 @@ fn settled(state: &EffectState, id: EffectId) -> Option<CommitEffectOutcome> {
     }
 }
 
-struct Failure {
+struct EffectFailure {
     code: EffectFailureCode,
     summary: String,
 }
@@ -154,7 +155,7 @@ fn attempt(
     project_root: &Path,
     effect: &PostCommitEffect,
     debug: bool,
-) -> Result<(), Failure> {
+) -> std::result::Result<(), EffectFailure> {
     let PostCommitEffect::ComposeReconcile {
         before_document,
         after_document,
@@ -178,14 +179,17 @@ fn attempt(
     Ok(())
 }
 
-fn object(store: &Store, id: &Option<ObjectId>) -> Result<std::path::PathBuf, Failure> {
-    let id = id.ok_or_else(|| Failure {
+fn object(
+    store: &Store,
+    id: &Option<ObjectId>,
+) -> std::result::Result<std::path::PathBuf, EffectFailure> {
+    let id = id.ok_or_else(|| EffectFailure {
         code: EffectFailureCode::Protocol,
         summary: "the effect names no compose document to run against".to_string(),
     })?;
     let path = store::object_path(&store.objects(), &id);
     if !path.is_file() {
-        return Err(Failure {
+        return Err(EffectFailure {
             code: EffectFailureCode::Protocol,
             summary: format!("the frozen compose document {id} is not in the object store"),
         });
@@ -229,10 +233,10 @@ fn run(
     verb: &[&str],
     names: &[String],
     debug: bool,
-) -> Result<(), Failure> {
+) -> std::result::Result<(), EffectFailure> {
     let args = compose_args(project_root, document, verb, names);
 
-    let spec = compose_spec(args).ok_or_else(|| Failure {
+    let spec = compose_spec(args).ok_or_else(|| EffectFailure {
         code: EffectFailureCode::Spawn,
         summary: "neither `docker compose` nor `docker-compose` is on PATH".to_string(),
     })?;
@@ -242,7 +246,7 @@ fn run(
     let spec = spec.output(OutputMode::Capture);
     match run_process(&spec, Diagnostics::from_flag(debug)) {
         Ok(done) if done.status.success() => Ok(()),
-        Ok(done) => Err(Failure {
+        Ok(done) => Err(EffectFailure {
             code: EffectFailureCode::ExitNonzero,
             summary: format!(
                 "`compose {}` exited with {}: {}",
@@ -251,7 +255,7 @@ fn run(
                 first_line(&String::from_utf8_lossy(&done.stderr))
             ),
         }),
-        Err(why) => Err(Failure {
+        Err(why) => Err(EffectFailure {
             code: EffectFailureCode::Spawn,
             summary: format!("could not run compose: {why}"),
         }),

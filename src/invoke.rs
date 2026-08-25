@@ -177,9 +177,9 @@ pub(crate) fn one_transition_each(
     for declaration in asked {
         last = Some(route(run, declaration)?);
     }
-    last.ok_or_else(|| {
+    Ok(last.ok_or_else(|| {
         "name at least one capability.\n       fix: `jails add --help` lists them.".to_string()
-    })
+    })?)
 }
 
 /// The one rendering of what a mutation did.
@@ -195,12 +195,14 @@ pub(crate) fn report(outcome: &jails_engine::route::Outcome, output: Output) -> 
         // is known, and it has no single status yet. Saying so is better than
         // inventing one: the transaction is on disk and the next invocation
         // finishes it.
-        return Err(concat!(
-            "the commit was recorded and then left work behind. Nothing is lost -- the ",
-            "transaction is on disk.\n       fix: run the same command again; it finishes ",
-            "the interrupted one before doing anything new.",
-        )
-        .to_string());
+        return Err(jails_support::Failure::Told(
+            concat!(
+                "the commit was recorded and then left work behind. Nothing is lost -- the ",
+                "transaction is on disk.\n       fix: run the same command again; it finishes ",
+                "the interrupted one before doing anything new.",
+            )
+            .to_string(),
+        ));
     };
     print!(
         "{}",
@@ -217,6 +219,6 @@ pub(crate) fn report(outcome: &jails_engine::route::Outcome, output: Output) -> 
     }
     match envelope.exit_code() {
         0 => Ok(()),
-        _ => Err(String::new()),
+        _ => Err(jails_support::Failure::Reported),
     }
 }

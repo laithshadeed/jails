@@ -212,7 +212,7 @@ impl Codec for DirectoryOp {
             0 => Ok(Self::Create {
                 path: ProjectPath::decode(decoder)?,
             }),
-            other => Err(format!("unknown directory operation tag {other}")),
+            other => Err(format!("unknown directory operation tag {other}").into()),
         }
     }
 }
@@ -335,8 +335,8 @@ impl PreparedIdentityV1 {
         self.operation_identity.semantics.agrees_with(&self.kind)?;
         if self.operation_id != self.operation_identity.operation_id()? {
             return Err(
-                "the operation id does not hash its own identity; this record was assembled                  from two different operations"
-                    .to_string(),
+                jails_support::Failure::Told("the operation id does not hash its own identity; this record was assembled                  from two different operations"
+                    .to_string()),
             );
         }
         let mut targets = BTreeSet::new();
@@ -345,7 +345,8 @@ impl PreparedIdentityV1 {
                 return Err(format!(
                     "{} carries two operations in one transaction",
                     operation.target()
-                ));
+                )
+                .into());
             }
         }
         let mut previous: Option<&ObjectRef> = None;
@@ -396,7 +397,7 @@ impl Codec for PreparedIdentityV1 {
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         let format = decoder.u32()?;
         if format != FORMAT {
-            return Err(format!("prepared identity format {format} is not {FORMAT}"));
+            return Err(format!("prepared identity format {format} is not {FORMAT}").into());
         }
         let operation_identity = OperationIdentityV1::decode(decoder)?;
         let operation_id = OperationId::decode(decoder)?;
@@ -475,11 +476,11 @@ impl PreparedChange {
         self.operation_identity.semantics.agrees_with(&self.kind)?;
 
         if self.operation_id != self.operation_identity.operation_id()? {
-            return Err(
+            return Err(jails_support::Failure::Told(
                 "the operation id does not hash its own identity; this plan was assembled from \
                  two different operations"
                     .to_string(),
-            );
+            ));
         }
 
         // One operation per target. Two would make the order decide the
@@ -490,7 +491,8 @@ impl PreparedChange {
                 return Err(format!(
                     "{} carries two operations in one transaction",
                     operation.target()
-                ));
+                )
+                .into());
             }
         }
 
@@ -504,7 +506,8 @@ impl PreparedChange {
                              prepared value carries every byte it will write, so recovery can \
                              finish without re-deriving anything.",
                             operation.target()
-                        ));
+                        )
+                        .into());
                     }
                     Some(bytes) if bytes.len() as u64 != after.len => {
                         return Err(format!(
@@ -512,7 +515,8 @@ impl PreparedChange {
                             operation.target(),
                             after.len,
                             bytes.len()
-                        ));
+                        )
+                        .into());
                     }
                     Some(_) => {}
                 }
@@ -523,14 +527,17 @@ impl PreparedChange {
             if &actual != id {
                 return Err(format!(
                     "object {id} does not hash its own bytes; the bundle is corrupt"
-                ));
+                )
+                .into());
             }
         }
 
         self.validate_effects()?;
 
         if self.transaction_id != self.identity()?.transaction_id()? {
-            return Err("the transaction id does not hash its own prepared identity".to_string());
+            return Err(jails_support::Failure::Told(
+                "the transaction id does not hash its own prepared identity".to_string(),
+            ));
         }
         Ok(())
     }
@@ -543,14 +550,15 @@ impl PreparedChange {
             return Err(format!(
                 "{} post-commit effects; V1 permits at most one aggregate effect",
                 self.post_commit.len()
-            ));
+            )
+            .into());
         }
         if !self.post_commit.is_empty() && !matches!(self.kind, PreparedKind::Apply) {
-            return Err(
+            return Err(jails_support::Failure::Told(
                 "only an apply carries an executable effect.\n       fix: a conflict freezes the \
                  intent and waits for the resolved postimage; an abort discards it."
                     .to_string(),
-            );
+            ));
         }
         Ok(())
     }

@@ -151,7 +151,7 @@ impl IntentArguments {
                 for token in tokens {
                     let field = FieldSpec::parse(token, base)?;
                     if fields.iter().any(|existing| existing.name == field.name) {
-                        return Err(format!("field `{}` is declared twice", field.name));
+                        return Err(format!("field `{}` is declared twice", field.name).into());
                     }
                     fields.push(field);
                 }
@@ -162,7 +162,7 @@ impl IntentArguments {
                 for token in tokens {
                     let name = Name::parse(token.trim())?;
                     if names.contains(&name) {
-                        return Err(format!("`{name}` is declared twice"));
+                        return Err(format!("`{name}` is declared twice").into());
                     }
                     names.push(name);
                 }
@@ -173,7 +173,7 @@ impl IntentArguments {
                 for token in tokens {
                     let mapping = FieldMapping::parse(token)?;
                     if mappings.iter().any(|held| held.child == mapping.child) {
-                        return Err(format!("`{}` is mapped twice", mapping.child));
+                        return Err(format!("`{}` is mapped twice", mapping.child).into());
                     }
                     mappings.push(mapping);
                 }
@@ -203,7 +203,7 @@ impl Codec for IntentArguments {
                     // two fields may not share a name, and that is checked
                     // here rather than trusted.
                     if previous == Some(&field.name) {
-                        return Err(format!("field `{}` is declared twice", field.name));
+                        return Err(format!("field `{}` is declared twice", field.name).into());
                     }
                     previous = Some(&field.name);
                     field.encode(encoder)?;
@@ -214,7 +214,7 @@ impl Codec for IntentArguments {
                 let mut previous: Option<&Name> = None;
                 for name in names {
                     if previous == Some(name) {
-                        return Err(format!("`{name}` is declared twice"));
+                        return Err(format!("`{name}` is declared twice").into());
                     }
                     previous = Some(name);
                     name.encode(encoder)?;
@@ -225,7 +225,7 @@ impl Codec for IntentArguments {
                 let mut previous: Option<&Name> = None;
                 for mapping in mappings {
                     if previous == Some(&mapping.child) {
-                        return Err(format!("`{}` is mapped twice", mapping.child));
+                        return Err(format!("`{}` is mapped twice", mapping.child).into());
                     }
                     previous = Some(&mapping.child);
                     mapping.encode(encoder)?;
@@ -260,7 +260,7 @@ impl Codec for IntentArguments {
                 }
                 Self::Mappings(mappings)
             }
-            other => return Err(format!("unknown intent argument tag {other}")),
+            other => return Err(format!("unknown intent argument tag {other}").into()),
         })
     }
 }
@@ -314,7 +314,8 @@ impl IntentSpec {
             return Err(format!(
                 "`{}` does not take fields, so there is nothing for an index to name.",
                 crate::entity::recipe_label(recipe)
-            ));
+            )
+            .into());
         }
         let fields = arguments.fields();
         let mut indexes = Vec::new();
@@ -326,7 +327,7 @@ impl IntentSpec {
                 seen = Some(column);
             }
             if indexes.contains(&index) {
-                return Err(format!("index `{}` is declared twice", index.canonical()));
+                return Err(format!("index `{}` is declared twice", index.canonical()).into());
             }
             indexes.push(index);
         }

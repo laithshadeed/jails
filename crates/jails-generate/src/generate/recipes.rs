@@ -155,10 +155,10 @@ pub(crate) fn artifacts_for(
         ArtifactKind::Fetcher => {
             require_spring_project(project, "fetcher")?;
             if !fields.is_empty() || strategy_on.is_some() || strategy_yields.is_some() {
-                return Err(
+                return Err(jails_support::Failure::Told(
                     "fetcher takes only a name; limits and policy are external configuration"
                         .to_string(),
-                );
+                ));
             }
             crate::spring::fetcher_files(&crate::model::Slice::new(project, package), name)
         }
@@ -170,8 +170,8 @@ pub(crate) fn artifacts_for(
             require_spring_project(project, "http-workflow")?;
             if !fields.is_empty() || strategy_yields.is_some() {
                 return Err(
-                    "http-workflow takes a name and `--on <Fetcher>`; bounds are request/configuration data"
-                        .to_string(),
+                    jails_support::Failure::Told("http-workflow takes a name and `--on <Fetcher>`; bounds are request/configuration data"
+                        .to_string()),
                 );
             }
             let fetcher = strategy_on.ok_or_else(|| {
@@ -190,7 +190,8 @@ pub(crate) fn artifacts_for(
             if fields.is_empty() {
                 return Err(format!(
                     "association {name} needs at least one `childField=parentField` mapping"
-                ));
+                )
+                .into());
             }
             let child = strategy_on.ok_or_else(|| {
                 format!(
@@ -213,34 +214,34 @@ pub(crate) fn artifacts_for(
         ArtifactKind::Idempotency => {
             require_spring_project(project, "idempotency")?;
             if !fields.is_empty() || strategy_on.is_some() || strategy_yields.is_some() {
-                return Err(
+                return Err(jails_support::Failure::Told(
                     "idempotency takes only a name; the scope, key and request bytes are \
                      runtime values the caller supplies, not generation-time ones"
                         .to_string(),
-                );
+                ));
             }
             crate::spring::idempotency_files(&crate::model::Slice::new(project, package), name)?
         }
         ArtifactKind::Auth => {
             require_spring_project(project, "auth")?;
             if !fields.is_empty() || strategy_on.is_some() || strategy_yields.is_some() {
-                return Err(
+                return Err(jails_support::Failure::Told(
                     "auth takes only a name; the subject and scopes are runtime values the \
                      caller supplies, not generation-time ones"
                         .to_string(),
-                );
+                ));
             }
             crate::spring::auth_files(&crate::model::Slice::new(project, package), name)?
         }
         ArtifactKind::Webhook => {
             require_spring_project(project, "webhook")?;
             if !fields.is_empty() || strategy_on.is_some() || strategy_yields.is_some() {
-                return Err(
+                return Err(jails_support::Failure::Told(
                     "webhook takes only a name; the payload is whatever the sender posts, \
                      and binding it before the signature is checked is the bug this kind \
                      exists to avoid"
                         .to_string(),
-                );
+                ));
             }
             crate::spring::webhook_files(&crate::model::Slice::new(project, package), name)?
         }
@@ -251,10 +252,10 @@ pub(crate) fn artifacts_for(
         ArtifactKind::HttpSink => {
             require_spring_project(project, "http-sink")?;
             if !fields.is_empty() {
-                return Err(
+                return Err(jails_support::Failure::Told(
                     "http-sink payloads come from the typed outbox event; do not repeat fields"
                         .to_string(),
-                );
+                ));
             }
             let usecase = strategy_on.ok_or_else(|| {
                 format!(
@@ -332,10 +333,10 @@ pub(crate) fn artifacts_for(
                 )
             })?;
             if strategy_yields.is_some() {
-                return Err(
+                return Err(jails_support::Failure::Told(
                     "`--yields` is not valid for a query; queries return the target resource"
                         .to_string(),
-                );
+                ));
             }
             let slice = crate::model::Slice::new(project, package);
             let parsed = parse_fields(fields)?;
@@ -351,8 +352,8 @@ pub(crate) fn artifacts_for(
             })?;
             if strategy_yields.is_some() {
                 return Err(
-                    "`--yields` is not valid for a transition; transitions return the updated target resource"
-                        .to_string(),
+                    jails_support::Failure::Told("`--yields` is not valid for a transition; transitions return the updated target resource"
+                        .to_string()),
                 );
             }
             let slice = crate::model::Slice::new(project, package);
@@ -402,7 +403,8 @@ pub(crate) fn artifacts_for(
                 return Err(format!(
                     "factory {name} reads the existing record and takes no field spec.\n       \
                      fix: run `jails g factory {name}`."
-                ));
+                )
+                .into());
             }
             let domain = subpackage(&base, config.layer(layout::DOMAIN));
             let testkit = place(layout::TESTKIT);
@@ -421,7 +423,7 @@ pub(crate) fn artifacts_for(
         ArtifactKind::Value => {
             let parsed = parse_fields(fields)?;
             if parsed.is_empty() {
-                return Err("a value type needs at least one field, e.g. `generate value Money amount:long`".to_string());
+                return Err(jails_support::Failure::Told("a value type needs at least one field, e.g. `generate value Money amount:long`".to_string()));
             }
             let domain = place(layout::DOMAIN);
             vec![

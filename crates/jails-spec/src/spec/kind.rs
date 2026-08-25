@@ -11,6 +11,7 @@
 //! `add::plan_for`'s, and stays there.
 
 use clap::ValueEnum;
+use jails_support::Result;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, ValueEnum)]
 pub enum Capability {
@@ -177,7 +178,7 @@ impl HttpMethod {
         }
     }
 
-    pub fn parse(text: &str) -> Result<Self, String> {
+    pub fn parse(text: &str) -> Result<Self> {
         match text {
             "get" => Ok(Self::Get),
             "post" => Ok(Self::Post),
@@ -186,7 +187,8 @@ impl HttpMethod {
             "delete" => Ok(Self::Delete),
             other => Err(format!(
                 "unknown HTTP method `{other}`.\n       fix: one of get, post, put, patch, delete"
-            )),
+            )
+            .into()),
         }
     }
 

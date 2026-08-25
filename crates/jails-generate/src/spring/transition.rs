@@ -41,7 +41,7 @@ pub(crate) fn transition_files(
     }) {
         return Err(format!(
             "transition {name} accepts required scalar fields only so match and update semantics stay exact"
-        ));
+        ).into());
     }
     for field in fields {
         let Some(target_field) = target_fields
@@ -51,7 +51,8 @@ pub(crate) fn transition_files(
             return Err(format!(
                 "transition {name} declares `{}`, but {target} has no component with that name",
                 field.name
-            ));
+            )
+            .into());
         };
         if usecase_normalized_type(&field.java_type)
             != usecase_normalized_type(&target_field.java_type)
@@ -59,7 +60,8 @@ pub(crate) fn transition_files(
             return Err(format!(
                 "transition {name} declares `{}` as {}, but {target} stores it as {}",
                 field.name, field.java_type, target_field.java_type
-            ));
+            )
+            .into());
         }
     }
     let id = fields
@@ -74,7 +76,8 @@ pub(crate) fn transition_files(
         return Err(format!(
             "transition {name} needs `version:long` or `version:int`, not version:{}",
             version.java_type
-        ));
+        )
+        .into());
     }
     let update_fields = fields
         .iter()
@@ -85,7 +88,7 @@ pub(crate) fn transition_files(
     if update_fields.is_empty() {
         return Err(format!(
             "transition {name} needs at least one field to update in addition to id, @scope fields, and version"
-        ));
+        ).into());
     }
     let target_columns = crate::sql::columns(&target_fields, slice.project(), domain, "rows");
     let command_columns = crate::sql::columns(fields, slice.project(), domain, "command");
@@ -94,9 +97,7 @@ pub(crate) fn transition_files(
         .chain(command_columns.iter())
         .any(|column| !column.mapped())
     {
-        return Err(format!(
-            "transition {name} contains a field Jails cannot map to JDBC"
-        ));
+        return Err(format!("transition {name} contains a field Jails cannot map to JDBC").into());
     }
     let main_service = crate::generate::main_dir(root, service);
     let main_adapters = crate::generate::main_dir(root, adapters);

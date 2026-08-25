@@ -552,9 +552,9 @@ fn commit(
             Some(outcome) if attempt == 0 => recovery.push(outcome),
             Some(_) => {
                 return Err(
-                    "recovery changed this project twice while one command was running.\n                            fix: run `jails doctor`. Replanning again would be a loop rather than a \
+                    jails_support::Failure::Told("recovery changed this project twice while one command was running.\n                            fix: run `jails doctor`. Replanning again would be a loop rather than a \
                      race, so jails stops and says so instead."
-                        .to_string(),
+                        .to_string()),
                 );
             }
             None => return Ok(outcome.after_recovery(recovery)),

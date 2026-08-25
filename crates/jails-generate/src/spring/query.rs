@@ -34,7 +34,7 @@ pub(crate) fn query_files(
     if fields.is_empty() {
         return Err(format!(
             "query {name} needs at least one typed filter; use the scaffold's list endpoint for an unfiltered read"
-        ));
+        ).into());
     }
     if let Some(field) = fields.iter().find(|field| {
         field.optionality == crate::generate::Optionality::Nullable || field.collection
@@ -42,7 +42,7 @@ pub(crate) fn query_files(
         return Err(format!(
             "query {name} filter `{}` is optional or a collection. This first query contract only accepts required scalar equality filters so null/list semantics are never guessed.",
             field.name
-        ));
+        ).into());
     }
     let target_fields = Target::read(slice, "query", name, target)?.fields;
     for field in fields {
@@ -53,7 +53,8 @@ pub(crate) fn query_files(
             return Err(format!(
                 "query {name} filters `{}`, but {target} has no component with that name",
                 field.name
-            ));
+            )
+            .into());
         };
         if usecase_normalized_type(&field.java_type)
             != usecase_normalized_type(&target_field.java_type)
@@ -61,7 +62,8 @@ pub(crate) fn query_files(
             return Err(format!(
                 "query {name} declares `{}` as {}, but {target} stores it as {}",
                 field.name, field.java_type, target_field.java_type
-            ));
+            )
+            .into());
         }
     }
     let target_columns = crate::sql::columns(&target_fields, slice.project(), domain, "row");
@@ -76,7 +78,7 @@ pub(crate) fn query_files(
         return Err(format!(
             "query {name} cannot map database column(s): {}. Model collections/owned values separately or add an explicit mapping before generating the query.",
             unmapped.join(", ")
-        ));
+        ).into());
     }
     let main_service = crate::generate::main_dir(root, service);
     let main_adapters = crate::generate::main_dir(root, adapters);

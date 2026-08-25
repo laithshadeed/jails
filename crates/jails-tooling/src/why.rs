@@ -616,8 +616,8 @@ fn explain(log: &str) -> Vec<Diagnosis> {
 
 fn read_input(input: Option<&Path>, debug: bool) -> Result<String> {
     if let Some(path) = input {
-        return std::fs::read_to_string(path)
-            .map_err(|e| format!("failed to read {}: {e}", path.display()));
+        return Ok(std::fs::read_to_string(path)
+            .map_err(|e| format!("failed to read {}: {e}", path.display()))?);
     }
     if !std::io::stdin().is_terminal() {
         let mut buffer = String::new();

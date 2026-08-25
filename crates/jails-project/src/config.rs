@@ -50,6 +50,7 @@
 //! rewrites the one `capabilities = [...]` line and leaves every other byte
 //! alone, for the same reason `pom.rs` does. This is a file people edit.
 
+use jails_support::Result;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -160,14 +161,14 @@ pub struct Config {
 
 impl Config {
     /// Read `jails.toml` from a project root. Absent file -> defaults.
-    pub fn load(root: &Path) -> Result<Self, String> {
+    pub fn load(root: &Path) -> Result<Self> {
         let path = root.join(FILE);
         let text = match fs::read_to_string(&path) {
             Ok(text) => text,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
-            Err(e) => return Err(format!("failed to read {}: {e}", path.display())),
+            Err(e) => return Err(format!("failed to read {}: {e}", path.display()).into()),
         };
-        Self::parse(&text).map_err(|e| format!("{FILE}: {e}"))
+        Ok(Self::parse(&text).map_err(|e| format!("{FILE}: {e}"))?)
     }
 
     /// The package a layer's code belongs in, after any override.
@@ -217,7 +218,7 @@ impl Config {
         &self.declarations
     }
 
-    pub fn parse(text: &str) -> Result<Self, String> {
+    pub fn parse(text: &str) -> Result<Self> {
         let mut layout = HashMap::new();
         let mut array: Vec<String> = Vec::new();
         let mut declarations: Vec<(Declaration, usize)> = Vec::new();
@@ -242,7 +243,8 @@ impl Config {
                     return Err(format!(
                         "line {lineno}: unknown repeated table `[[{name}]]`. The only one is \
                          `[[{CAPABILITY_TABLE}]]`."
-                    ));
+                    )
+                    .into());
                 }
                 table = CAPABILITY_TABLE.to_string();
                 pending = Some(PendingCapability::at(lineno));
@@ -268,7 +270,8 @@ impl Config {
                     return Err(format!(
                         "line {lineno}: unknown key `{key}` in [{PROJECT_TABLE}]. \
                          The only key is `{CAPABILITIES_KEY}`."
-                    ));
+                    )
+                    .into());
                 }
                 for label in parse_string_array(value.trim()).ok_or_else(|| {
                     format!(
@@ -300,12 +303,13 @@ impl Config {
                 return Err(format!(
                     "line {lineno}: unknown layer `{key}`. Known layers: {}",
                     layer_names().join(", ")
-                ));
+                )
+                .into());
             }
             if !is_package_path(value) {
-                return Err(format!(
-                    "line {lineno}: `{key} = \"{value}\"` is not a package name"
-                ));
+                return Err(
+                    format!("line {lineno}: `{key} = \"{value}\"` is not a package name").into(),
+                );
             }
             layout.insert(key.to_string(), value.to_string());
         }
@@ -328,7 +332,8 @@ impl Config {
                 return Err(format!(
                     "line {lineno}: `{}` is already declared on line {first}.",
                     declaration.display()
-                ));
+                )
+                .into());
             }
             let label = declaration.kind.label().to_string();
             if !capabilities.contains(&label) {
@@ -367,7 +372,7 @@ impl PendingCapability {
         }
     }
 
-    fn key(&mut self, line: &str, lineno: usize) -> Result<(), String> {
+    fn key(&mut self, line: &str, lineno: usize) -> Result<()> {
         let (key, value) = line
             .split_once('=')
             .ok_or_else(|| format!("line {lineno}: expected `key = \"value\"`, found `{line}`"))?;
@@ -382,13 +387,15 @@ impl PendingCapability {
                 return Err(format!(
                     "line {lineno}: unknown key `{key}` in [[{CAPABILITY_TABLE}]]. Known: {}",
                     CAPABILITY_KEYS.join(", ")
-                ));
+                )
+                .into());
             }
         };
         if slot.is_some() {
             return Err(format!(
                 "line {lineno}: `{key}` is set twice in one [[{CAPABILITY_TABLE}]] table."
-            ));
+            )
+            .into());
         }
         *slot = Some(value.to_string());
         Ok(())
@@ -399,7 +406,7 @@ impl PendingCapability {
 fn finish_capability(
     pending: &mut Option<PendingCapability>,
     into: &mut Vec<(Declaration, usize)>,
-) -> Result<(), String> {
+) -> Result<()> {
     let Some(entry) = pending.take() else {
         return Ok(());
     };
@@ -419,9 +426,9 @@ fn finish_capability(
 }
 
 /// Resolve a label to the capability it names, or say which ones exist.
-fn capability_named(label: &str, lineno: usize) -> Result<Capability, String> {
+fn capability_named(label: &str, lineno: usize) -> Result<Capability> {
     use clap::ValueEnum;
-    Capability::value_variants()
+    Ok(Capability::value_variants()
         .iter()
         .copied()
         .find(|candidate| candidate.label() == label)
@@ -430,7 +437,7 @@ fn capability_named(label: &str, lineno: usize) -> Result<Capability, String> {
                 "line {lineno}: unknown capability `{label}`. Known: {}",
                 known_capabilities().join(", ")
             )
-        })
+        })?)
 }
 
 /// The same edit as text, for a caller holding the bytes rather than a root.
@@ -441,7 +448,7 @@ fn capability_named(label: &str, lineno: usize) -> Result<Capability, String> {
 pub(crate) fn edited_capabilities(
     text: &str,
     change: impl FnOnce(&mut Vec<String>) -> bool,
-) -> Result<Option<String>, String> {
+) -> Result<Option<String>> {
     let mut labels = Config::parse(text)
         .map_err(|e| format!("{FILE}: {e}"))?
         .array;
@@ -461,10 +468,7 @@ pub(crate) fn edited_capabilities(
 /// not the caller's: bare goes in `[project] capabilities`, parameterised gets
 /// a `[[capability]]` table. That is why this takes a [`Declaration`] rather
 /// than a label -- a label cannot say which.
-pub(crate) fn with_capability(
-    text: &str,
-    declaration: &Declaration,
-) -> Result<Option<String>, String> {
+pub(crate) fn with_capability(text: &str, declaration: &Declaration) -> Result<Option<String>> {
     declaration.validate().map_err(|e| format!("{FILE}: {e}"))?;
     let config = Config::parse(text).map_err(|e| format!("{FILE}: {e}"))?;
     if config.declarations.contains(declaration) {
@@ -488,10 +492,7 @@ pub(crate) fn with_capability(
 /// The exact inverse: a bare one leaves the array, a parameterised one takes
 /// its whole table with it. A declaration the file does not make is `None`
 /// rather than an error, because `remove` is allowed to be run twice.
-pub(crate) fn without_capability(
-    text: &str,
-    declaration: &Declaration,
-) -> Result<Option<String>, String> {
+pub(crate) fn without_capability(text: &str, declaration: &Declaration) -> Result<Option<String>> {
     let config = Config::parse(text).map_err(|e| format!("{FILE}: {e}"))?;
     if !config.declarations.contains(declaration) {
         return Ok(None);
@@ -514,7 +515,7 @@ pub(crate) fn without_capability(
 ///
 /// The end excludes trailing blank lines, so removing a block does not take
 /// the separator before the next table with it.
-fn capability_blocks(text: &str) -> Result<Vec<(usize, usize, Declaration)>, String> {
+fn capability_blocks(text: &str) -> Result<Vec<(usize, usize, Declaration)>> {
     let lines: Vec<&str> = text.lines().collect();
     let mut blocks = Vec::new();
     let mut i = 0;
@@ -572,7 +573,7 @@ fn render_capability_table(declaration: &Declaration) -> String {
 /// rest of this module follows: two projects that declared the same set end up
 /// with the same file, and a table somebody wrote by hand keeps its formatting
 /// and its place.
-fn insert_capability_table(text: &str, declaration: &Declaration) -> Result<String, String> {
+fn insert_capability_table(text: &str, declaration: &Declaration) -> Result<String> {
     let blocks = capability_blocks(text)?;
     let rendered = render_capability_table(declaration);
     let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
@@ -603,10 +604,7 @@ fn insert_capability_table(text: &str, declaration: &Declaration) -> Result<Stri
 }
 
 /// Take one whole table out, and the blank line that separated it.
-fn remove_capability_table(
-    text: &str,
-    declaration: &Declaration,
-) -> Result<Option<String>, String> {
+fn remove_capability_table(text: &str, declaration: &Declaration) -> Result<Option<String>> {
     let blocks = capability_blocks(text)?;
     let Some((start, end, _)) = blocks
         .into_iter()
@@ -688,12 +686,13 @@ fn append_project_table(text: &str, rendered: &str) -> String {
 
 /// The same layout edit as text. See [`edited_capabilities`] for why the
 /// splice and the write are separate.
-pub(crate) fn with_layout(text: &str, layer: &str, directory: &str) -> Result<String, String> {
+pub(crate) fn with_layout(text: &str, layer: &str, directory: &str) -> Result<String> {
     if !is_layer(layer) {
         return Err(format!(
             "`{layer}` is not a layer. Known layers: {}",
             layer_names().join(", ")
-        ));
+        )
+        .into());
     }
     let rendered = format!("{layer} = \"{directory}\"");
     Ok(match replace_layout_line(text, layer, &rendered) {
@@ -1225,7 +1224,7 @@ mod tests {
     /// `dead_code` from saying so. The splice they wrapped is still the
     /// shipped one, so the tests keep it -- through the text-in/text-out half,
     /// which is what the projection calls.
-    fn record_capability(root: &std::path::Path, label: &str) -> Result<(), String> {
+    fn record_capability(root: &std::path::Path, label: &str) -> Result<()> {
         edit_manifest(root, |labels| {
             if labels.iter().any(|l| l == label) {
                 return false;
@@ -1235,7 +1234,7 @@ mod tests {
         })
     }
 
-    fn forget_capability(root: &std::path::Path, label: &str) -> Result<(), String> {
+    fn forget_capability(root: &std::path::Path, label: &str) -> Result<()> {
         edit_manifest(root, |labels| {
             let before = labels.len();
             labels.retain(|l| l != label);
@@ -1246,7 +1245,7 @@ mod tests {
     fn edit_manifest(
         root: &std::path::Path,
         change: impl FnOnce(&mut Vec<String>) -> bool,
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         let path = root.join(FILE);
         let text = fs::read_to_string(&path).unwrap_or_default();
         if let Some(updated) = edited_capabilities(&text, change)? {

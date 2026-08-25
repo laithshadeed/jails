@@ -65,7 +65,7 @@ pub fn recover_locked(
             // staging and may be removed. One whose journal does not decode
             // is preserved: it may be the only record of what was meant.
             if directory.join("journal.bin").exists() {
-                return Err(RecoveryError::CorruptMachineState(error));
+                return Err(RecoveryError::CorruptMachineState(error.to_string()));
             }
             std::fs::remove_dir_all(&directory)
                 .map_err(|error| RecoveryError::Io(error.to_string()))?;
@@ -178,20 +178,24 @@ fn finish(
     outcome: &mut RecoveryOutcome,
 ) -> std::result::Result<(), RecoveryError> {
     let complete = journal.advanced(JournalState::Complete);
-    complete.persist(directory).map_err(RecoveryError::Io)?;
+    complete
+        .persist(directory)
+        .map_err(|failure| RecoveryError::Io(failure.to_string()))?;
 
     let receipt = crate::journal::ReceiptV1 {
         transaction: complete.transaction,
         generation: complete.generation,
         prepared: complete.prepared.clone(),
         complete_journal_checksum: crate::journal::ReceiptV1::witness_of(&complete)
-            .map_err(RecoveryError::CorruptMachineState)?,
+            .map_err(|failure| RecoveryError::CorruptMachineState(failure.to_string()))?,
         post_commit: Vec::new(),
     };
-    receipt.persist(directory).map_err(RecoveryError::Io)?;
+    receipt
+        .persist(directory)
+        .map_err(|failure| RecoveryError::Io(failure.to_string()))?;
 
     let _ = std::fs::remove_dir_all(directory.join("live-temp"));
-    store::sync_dir(directory).map_err(RecoveryError::Io)?;
+    store::sync_dir(directory).map_err(|failure| RecoveryError::Io(failure.to_string()))?;
 
     let destination = locked.handle().store().receipt(&journal.transaction);
     if destination.exists() {
@@ -208,7 +212,7 @@ fn finish(
         locked.handle().store().transactions(),
         locked.handle().store().receipts(),
     ] {
-        store::sync_dir(&parent).map_err(RecoveryError::Io)?;
+        store::sync_dir(&parent).map_err(|failure| RecoveryError::Io(failure.to_string()))?;
     }
 
     outcome.changes.push(RecoveryChange::Transaction {

@@ -73,7 +73,8 @@ impl Publication {
                  fix: create the parent directory first, or run the command from one that exists.",
                 parent.display(),
                 name.to_string_lossy()
-            ));
+            )
+            .into());
         }
 
         let lock = Lock::acquire(&parent.join(LOCK_FILE), "jails new").map_err(|contention| {
@@ -88,7 +89,7 @@ impl Publication {
         // authority, because between an unlocked check and the rename another
         // run can have published the same name.
         if destination.symlink_metadata().is_ok() {
-            return Err(already_exists(&destination));
+            return Err(jails_support::Failure::Told(already_exists(&destination)));
         }
 
         let scratch = ScratchDir::reserve(&parent, ".jails-new")?;

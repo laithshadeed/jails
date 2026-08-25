@@ -29,11 +29,11 @@ pub fn find_project_root() -> Result<PathBuf> {
             return Ok(dir);
         }
         if !dir.pop() {
-            return Err(
+            return Err(jails_support::Failure::Told(
                 "no pom.xml (or build.gradle, settings.gradle, build.xml, BUILD.bazel) \
                  in this or any parent directory"
                     .to_string(),
-            );
+            ));
         }
     }
 }
@@ -60,10 +60,7 @@ pub fn base_package(root: &Path) -> Result<String> {
             return Ok(pkg.trim().to_string());
         }
     }
-    Err(format!(
-        "no package declaration found in {}",
-        entry.display()
-    ))
+    Err(format!("no package declaration found in {}", entry.display()).into())
 }
 
 fn find_application_file(dir: &Path) -> Option<PathBuf> {

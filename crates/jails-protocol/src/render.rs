@@ -87,9 +87,7 @@ impl TemplateBindings {
             if existing == &value {
                 return Ok(());
             }
-            return Err(format!(
-                "template key `{key}` already bound to another value"
-            ));
+            return Err(format!("template key `{key}` already bound to another value").into());
         }
         self.0.insert(key, value);
         Ok(())
@@ -198,7 +196,7 @@ impl TemplateValue {
 
 fn deeper(depth: usize) -> Result<usize> {
     if depth >= MAX_CODEC_DEPTH {
-        return Err(format!("value nested deeper than {MAX_CODEC_DEPTH}"));
+        return Err(format!("value nested deeper than {MAX_CODEC_DEPTH}").into());
     }
     Ok(depth + 1)
 }

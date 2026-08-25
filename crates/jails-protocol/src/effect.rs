@@ -74,7 +74,7 @@ impl EffectFailureCode {
             2 => Ok(Self::ExitNonzero),
             3 => Ok(Self::InterruptedTwice),
             4 => Ok(Self::Protocol),
-            other => Err(format!("unknown effect failure code {other}")),
+            other => Err(format!("unknown effect failure code {other}").into()),
         }
     }
 }
@@ -155,7 +155,8 @@ fn nonzero(value: u32, what: &str) -> Result<()> {
         return Err(format!(
             "{what} is zero; attempts are counted from one so `never attempted` and \
              `attempted once` stay distinguishable"
-        ));
+        )
+        .into());
     }
     Ok(())
 }
@@ -243,7 +244,7 @@ impl Codec for PostCommitEffect {
                 desired_services: decoder.map()?,
                 stop_services: decoder.set()?,
             }),
-            other => Err(format!("unknown post-commit effect tag {other}")),
+            other => Err(format!("unknown post-commit effect tag {other}").into()),
         }
     }
 }
@@ -286,7 +287,7 @@ impl Codec for DeferredEffectIntent {
                 prior_managed_services: decoder.map()?,
                 desired_services: decoder.map()?,
             }),
-            other => Err(format!("unknown deferred effect tag {other}")),
+            other => Err(format!("unknown deferred effect tag {other}").into()),
         }
     }
 }

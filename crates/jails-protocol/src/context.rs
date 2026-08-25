@@ -55,13 +55,13 @@ impl RenderedSubjectContext {
     /// Identity and spec must describe the same thing.
     pub fn validate(&self) -> Result<()> {
         match self {
-            Self::Entity { id, spec } if !spec.matches(id) => Err(
+            Self::Entity { id, spec } if !spec.matches(id) => Err(jails_support::Failure::Told(
                 "a renderer context pairs an entity identity and a spec of different kinds"
                     .to_string(),
-            ),
-            Self::OneShot { id, spec } if !spec.matches(id) => Err(
+            )),
+            Self::OneShot { id, spec } if !spec.matches(id) => Err(jails_support::Failure::Told(
                 "a renderer context pairs a one-shot identity and a spec that disagree".to_string(),
-            ),
+            )),
             _ => Ok(()),
         }
     }
@@ -179,15 +179,16 @@ impl RendererContextV1 {
         // A `Format` renderer is an aggregate: it renders a file, not an
         // entity, and a subject would be a claim nothing supports.
         if matches!(self.renderer, RendererId::Format(_)) && self.subject.is_some() {
-            return Err(
+            return Err(jails_support::Failure::Told(
                 "a format renderer has no subject; it renders a file, not an entity".to_string(),
-            );
+            ));
         }
         if !matches!(self.renderer, RendererId::Format(_)) && self.subject.is_none() {
             return Err(format!(
                 "renderer {:?} rendered something and recorded no subject",
                 self.renderer
-            ));
+            )
+            .into());
         }
 
         if self.layers.len() != Layer::ALL.len() {
@@ -195,7 +196,8 @@ impl RendererContextV1 {
                 "a renderer context carries {} layers; there are {}",
                 self.layers.len(),
                 Layer::ALL.len()
-            ));
+            )
+            .into());
         }
         for (recorded, expected) in self.layers.iter().zip(Layer::ALL) {
             if recorded.layer != expected {
@@ -203,7 +205,8 @@ impl RendererContextV1 {
                     "layer {:?} appears where {expected:?} belongs; the order is part of the \
                      encoding",
                     recorded.layer
-                ));
+                )
+                .into());
             }
         }
 
@@ -255,9 +258,7 @@ impl Codec for RendererContextV1 {
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         let schema = decoder.u32()?;
         if schema != CONTEXT_SCHEMA {
-            return Err(format!(
-                "renderer context schema {schema} is not {CONTEXT_SCHEMA}"
-            ));
+            return Err(format!("renderer context schema {schema} is not {CONTEXT_SCHEMA}").into());
         }
         let renderer = RendererId::decode(decoder)?;
         let subject = decoder.option(RenderedSubjectContext::decode)?;

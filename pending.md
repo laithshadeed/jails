@@ -558,37 +558,80 @@ Keep `SCENARIOS` separate. It is a test corpus, and
 `every_kind_and_capability_has_a_golden_scenario` already fails when it falls
 behind, which is the right relationship.
 
-### 6.5 `Result<T, String>` and the empty-string sentinel
+### 6.5 The empty-string sentinel — **closed 2026-08-25**
 
-`src/main.rs:1029`:
+`src/main.rs` read:
 
 ```rust
 if !err.is_empty() { eprintln!("jails: {err}"); }
 ```
 
-An empty error string means *"the command already printed everything; print
+An empty error string meant *"the command already printed everything; print
 nothing more."* A control-flow decision encoded as the absence of characters in
-a message. `doctor` depends on it and nothing names it.
+a message. Seven commands depended on it — `doctor`, `lint`, `run`, `migrate`,
+`testd`, `reports` and `invoke` — and nothing named it. The failure mode is the
+quiet kind: any path that happened to build an empty message became "already
+reported", and the process exited non-zero having printed nothing at all.
 
-The `"fix:"` convention is real and load-bearing — every `FAIL` is supposed to
-carry one — but it is a substring convention over free text, so it can only be
-checked where someone greps for it.
+`jails_support::Failure` is that decision as a type. Two variants, which is
+exactly the number of distinctions in use:
 
 ```rust
 pub enum Failure {
-    Told { what: String, fix: Option<String> },
+    Told(String),
     /// The command has already reported. Set the exit code and say nothing.
     Reported,
 }
 ```
 
-`Display` renders `what` and, when present, `\n\nfix: {fix}`, so every existing
-message keeps its exact shape and the hand-written `fix:` lines migrate
-mechanically. **Do not** replace `String` with an error enum per failure mode —
-the existing doc comment on `Result` gets that trade right, since the only
-consumer is `main`, which prints. This adds the two distinctions actually used
-and nothing else, and makes "every refusal carries a fix" checkable across the
-workspace rather than in `doctor`'s one test.
+`Result<T>` is `Result<T, Failure>`, `main` matches on `message()`, and the
+seven sites say `Failure::Reported`.
+
+**The message stays free text**, and the doc comment this replaced got that
+trade right: the only consumer is `main`, which prints, so an enum per failure
+mode would buy pattern-matching nobody does. What it got wrong was that there
+were two outcomes, not one.
+
+Three notes for whoever touches this next.
+
+**It costs `.into()` at every `return Err(format!(..))`.** ~500 sites, all
+inserted from rustc's own machine suggestions rather than by guessing — guessing
+is how a tail `expr.map_err(..)` becomes `Result::into`, which is a different
+error. Three ratchet rows rose a total of 17 lines because rustfmt wrapped the
+closing paren, and the reasons are recorded beside them.
+
+**`Failure` derefs to `str`.** Deliberate: 131 assertions say
+`error.contains("...")`, and rewriting each to `error.to_string().contains(..)`
+would have made a type migration look like a change to what the tests assert.
+Code that needs to *know* whether anything was said calls `message()`, which is
+the only thing that can reconstruct the distinction.
+
+**`jails-commit`'s `runtime.rs` had its own `Failure`** — a post-commit
+effect's, carrying a closed `EffectFailureCode` rather than free text. It is
+`EffectFailure` now. Two types with one name at different layers is a collision
+that would have been resolved by whichever `use` came last.
+
+The second half of §6.5 landed too: **"every refusal carries a fix" is now
+checkable across the workspace** rather than in `doctor`'s one test. The
+`refusals with no fix: line` ratchet counts every `Err(..)` whose argument
+builds a message and whose message has no `fix:` in it — located on the blanked
+production text so `#[cfg(test)]` bodies and parens inside literals cannot
+confuse it, then read from the raw file at the same offsets, because the message
+is exactly what blanking erases.
+
+**It reads 443.** The target is *withdrawn*, not reached, for the same reason
+§8.0 withdrew `root: &Path`'s: a decoder rejecting a corrupt tag, a length over
+its cap, a duplicate row in a receipt can only say what they found, and a `fix:`
+on one would be an invented instruction. What the row buys is that the number
+cannot rise — a new refusal has to carry a fix or lower something else — and
+separating the two kinds is per-message work that brings it down.
+
+**Not done, and deliberately:** splitting `Told(String)` into
+`Told { what, fix }`. §6.5 proposed it, and the cost is the exact spelling: the
+convention is `\n       fix: ` with that indentation, embedded mid-message, and
+a `Display` that reassembled it as `\n\nfix: ` would change bytes the CLI tests
+assert on. The ratchet above gets the checkability without the churn; the split
+is worth doing when something needs the `fix` as a *value* rather than as text.
 
 ### 6.6 Where the other traits belong
 

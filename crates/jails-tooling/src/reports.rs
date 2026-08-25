@@ -250,7 +250,11 @@ pub(crate) fn report_json(root: &Path, passed: bool) -> Result<()> {
         cases.len(),
         rows.join(",\n")
     );
-    if passed { Ok(()) } else { Err(String::new()) }
+    if passed {
+        Ok(())
+    } else {
+        Err(jails_support::Failure::Reported)
+    }
 }
 /// The slowest tests of the run that just finished.
 ///

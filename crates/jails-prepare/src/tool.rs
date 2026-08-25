@@ -100,7 +100,8 @@ impl ToolIdentityFingerprint {
             return Err(format!(
                 "tool `{}` has a zero timeout; no invocation can satisfy that",
                 self.key.tool
-            ));
+            )
+            .into());
         }
         let mut previous: Option<&ToolInput> = None;
         for input in &self.offline_inputs {
@@ -222,7 +223,8 @@ impl ToolSpec {
             return Err(format!(
                 "{}'s recorded argument hash does not cover its arguments",
                 self.fingerprint.identity.key.tool
-            ));
+            )
+            .into());
         }
         Ok(())
     }
@@ -261,7 +263,8 @@ impl ToolArgTemplate {
         {
             return Err(format!(
                 "an operation label of {hex_chars} hex characters cannot name an operation"
-            ));
+            )
+            .into());
         }
         Ok(())
     }
@@ -413,9 +416,7 @@ impl Codec for PreparationContextFingerprint {
 
 fn expect_schema(schema: u32) -> Result<()> {
     if schema != CONTEXT_SCHEMA {
-        return Err(format!(
-            "context fingerprint schema {schema} is not {CONTEXT_SCHEMA}"
-        ));
+        return Err(format!("context fingerprint schema {schema} is not {CONTEXT_SCHEMA}").into());
     }
     Ok(())
 }

@@ -544,10 +544,7 @@ fn invoke_compose(root: &Path, args: Vec<&str>, debug: bool) -> Result<()> {
     if status.success() {
         Ok(())
     } else {
-        Err(format!(
-            "docker compose {} exited with {status}",
-            args.join(" ")
-        ))
+        Err(format!("docker compose {} exited with {status}", args.join(" ")).into())
     }
 }
 
@@ -582,7 +579,8 @@ pub fn read(root: &Path) -> Result<String> {
     if !path.is_file() {
         return Ok(String::new());
     }
-    std::fs::read_to_string(&path).map_err(|e| format!("failed to read {}: {e}", path.display()))
+    Ok(std::fs::read_to_string(&path)
+        .map_err(|e| format!("failed to read {}: {e}", path.display()))?)
 }
 
 pub fn write(root: &Path, text: &str) -> Result<()> {

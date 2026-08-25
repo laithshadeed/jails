@@ -148,7 +148,8 @@ impl Package {
         if text.starts_with('.') || text.ends_with('.') || text.contains("..") {
             return Err(format!(
                 "package `{text}` has an empty segment; segments are separated by single dots"
-            ));
+            )
+            .into());
         }
         for segment in text.split('.') {
             validate_identifier(segment, "package segment")?;
@@ -314,7 +315,7 @@ const RESERVED: &[&str] = &[
 
 fn validate_identifier(text: &str, what: &str) -> Result<()> {
     if text.is_empty() {
-        return Err(format!("{what} is empty"));
+        return Err(format!("{what} is empty").into());
     }
     let mut chars = text.chars();
     let first = chars.next().expect("checked non-empty above");
@@ -322,17 +323,19 @@ fn validate_identifier(text: &str, what: &str) -> Result<()> {
         return Err(format!(
             "{what} `{text}` starts with `{first}`; a Java identifier starts with a letter, \
              `_` or `$`"
-        ));
+        )
+        .into());
     }
     for character in chars {
         if !(character.is_ascii_alphanumeric() || character == '_' || character == '$') {
             return Err(format!(
                 "{what} `{text}` contains `{character}`, which is not valid in a Java identifier"
-            ));
+            )
+            .into());
         }
     }
     if RESERVED.contains(&text) {
-        return Err(format!("{what} `{text}` is a Java reserved word"));
+        return Err(format!("{what} `{text}` is a Java reserved word").into());
     }
     Ok(())
 }
@@ -369,38 +372,39 @@ pub(crate) const TEMPLATE_OVERRIDES: &str = ".jails/templates";
 impl ProjectPath {
     pub fn parse(text: &str) -> Result<Self> {
         if text.is_empty() {
-            return Err("path is empty".to_string());
+            return Err(jails_support::Failure::Told("path is empty".to_string()));
         }
         if text.len() > codec::MAX_PATH_BYTES {
             return Err(format!(
                 "path is {} bytes, over the {}-byte limit",
                 text.len(),
                 codec::MAX_PATH_BYTES
-            ));
+            )
+            .into());
         }
         if text.starts_with('/') || text.starts_with('\\') {
-            return Err(format!(
-                "path `{text}` is absolute; paths are project-relative"
-            ));
+            return Err(format!("path `{text}` is absolute; paths are project-relative").into());
         }
         if text.contains('\\') {
             return Err(format!(
                 "path `{text}` uses `\\`; the canonical separator is `/` on every platform"
-            ));
+            )
+            .into());
         }
         // `C:` and friends. A drive-relative path is not project-relative.
         if text.len() >= 2 && text.as_bytes()[1] == b':' {
-            return Err(format!("path `{text}` carries a platform prefix"));
+            return Err(format!("path `{text}` carries a platform prefix").into());
         }
         let segments: Vec<&str> = text.split('/').collect();
         for segment in &segments {
             match *segment {
-                "" => return Err(format!("path `{text}` has an empty segment")),
+                "" => return Err(format!("path `{text}` has an empty segment").into()),
                 "." | ".." => {
                     return Err(format!(
                         "path `{text}` contains `{segment}`; a recorded path is replayed by \
                          destroy and by recovery, so it may not be relative to anything"
-                    ));
+                    )
+                    .into());
                 }
                 _ => {}
             }
@@ -409,12 +413,14 @@ impl ProjectPath {
             ".git" => {
                 return Err(format!(
                     "path `{text}` is inside `.git`; jails never owns version-control state"
-                ));
+                )
+                .into());
             }
             "target" => {
                 return Err(format!(
                     "path `{text}` is inside `target`; that is derived output Maven may delete"
-                ));
+                )
+                .into());
             }
             ".jails" => {
                 let allowed = text == APP_MANIFEST
@@ -425,7 +431,8 @@ impl ProjectPath {
                         "path `{text}` is machine state under `.jails`, which has its own typed \
                          representations.\n       fix: only `{APP_MANIFEST}` and \
                          `{TEMPLATE_OVERRIDES}` are human-owned and reachable this way."
-                    ));
+                    )
+                    .into());
                 }
             }
             _ => {}
@@ -553,31 +560,24 @@ logical_id!(ManagedVersion, "pinned version");
 
 fn validate_logical(text: &str, what: &str) -> Result<()> {
     if text.is_empty() {
-        return Err(format!("{what} is empty"));
+        return Err(format!("{what} is empty").into());
     }
     if text.len() > codec::MAX_STRING_BYTES {
-        return Err(format!(
-            "{what} is over the {}-byte limit",
-            codec::MAX_STRING_BYTES
-        ));
+        return Err(format!("{what} is over the {}-byte limit", codec::MAX_STRING_BYTES).into());
     }
     if text.starts_with('/') || text.starts_with('\\') {
-        return Err(format!(
-            "{what} `{text}` is an absolute path; it must be a logical name"
-        ));
+        return Err(
+            format!("{what} `{text}` is an absolute path; it must be a logical name").into(),
+        );
     }
     if text.contains("..") {
-        return Err(format!(
-            "{what} `{text}` contains `..`; it must be a logical name"
-        ));
+        return Err(format!("{what} `{text}` contains `..`; it must be a logical name").into());
     }
     if text.trim() != text {
-        return Err(format!(
-            "{what} `{text}` has leading or trailing whitespace"
-        ));
+        return Err(format!("{what} `{text}` has leading or trailing whitespace").into());
     }
     if text.chars().any(|c| c.is_control()) {
-        return Err(format!("{what} `{text}` contains a control character"));
+        return Err(format!("{what} `{text}` contains a control character").into());
     }
     Ok(())
 }

@@ -149,7 +149,7 @@ pub fn run(invocation: &Invocation) -> Result<Run> {
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) => {}
-            Err(error) => return Err(format!("could not wait for the tool: {error}")),
+            Err(error) => return Err(format!("could not wait for the tool: {error}").into()),
         }
         if Instant::now() >= deadline {
             timed_out = true;
@@ -193,7 +193,7 @@ fn terminate(pid: i32, child: &mut std::process::Child) -> Result<()> {
         match child.try_wait() {
             Ok(Some(_)) => return Ok(()),
             Ok(None) => std::thread::sleep(Duration::from_millis(20)),
-            Err(error) => return Err(format!("could not wait for the tool: {error}")),
+            Err(error) => return Err(format!("could not wait for the tool: {error}").into()),
         }
     }
     signal_group(group, Signal::SIGKILL)
@@ -206,7 +206,8 @@ fn signal_group(group: Pid, signal: Signal) -> Result<()> {
         Err(error) => Err(format!(
             "could not signal the tool's process group: {error}.\n       fix: a tool that \
              cannot be stopped is a refusal, never a detached success."
-        )),
+        )
+        .into()),
     }
 }
 
@@ -235,7 +236,7 @@ fn drain(mut stream: impl Read) -> Result<Captured> {
                 }
             }
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
-            Err(error) => return Err(format!("could not read the tool's output: {error}")),
+            Err(error) => return Err(format!("could not read the tool's output: {error}").into()),
         }
     }
     Ok(captured)

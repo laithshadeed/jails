@@ -161,7 +161,7 @@ impl DesiredChange {
         let mut paths = BTreeSet::new();
         for file in &self.files {
             if !paths.insert(&file.path) {
-                return Err(format!("{} is written twice in one change", file.path));
+                return Err(format!("{} is written twice in one change", file.path).into());
             }
         }
         for absence in &self.absences {
@@ -169,17 +169,17 @@ impl DesiredChange {
                 return Err(format!(
                     "{} is both written and required absent in one change",
                     absence.path
-                ));
+                )
+                .into());
             }
         }
         let mut keys = BTreeSet::new();
         for resource in &self.resources {
             resource.value.agrees_with(&resource.key)?;
             if !keys.insert(&resource.key) {
-                return Err(format!(
-                    "resource {:?} is claimed twice in one change",
-                    resource.key
-                ));
+                return Err(
+                    format!("resource {:?} is claimed twice in one change", resource.key).into(),
+                );
             }
         }
         for key in &self.adopted {
@@ -187,10 +187,11 @@ impl DesiredChange {
                 return Err(format!(
                     "resource {key:?} is both written and adopted in one change; a claim on \
                      something this change also renders is just a claim"
-                ));
+                )
+                .into());
             }
             if !keys.insert(key) {
-                return Err(format!("resource {key:?} is adopted twice in one change"));
+                return Err(format!("resource {key:?} is adopted twice in one change").into());
             }
         }
         for edit in &self.edits {

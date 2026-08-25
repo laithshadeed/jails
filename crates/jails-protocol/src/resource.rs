@@ -47,19 +47,25 @@ pub struct CanonicalYamlMapping(String);
 impl CanonicalYamlMapping {
     pub fn parse(text: &str) -> Result<Self> {
         if text.contains('\r') {
-            return Err("compose mapping contains CR; canonical YAML is LF-only".to_string());
+            return Err(jails_support::Failure::Told(
+                "compose mapping contains CR; canonical YAML is LF-only".to_string(),
+            ));
         }
         if text.contains("# jails:") || text.contains("# /jails:") {
-            return Err(
+            return Err(jails_support::Failure::Told(
                 "compose mapping contains a jails marker; markers belong to the format owner"
                     .to_string(),
-            );
+            ));
         }
         if text.trim().is_empty() {
-            return Err("compose mapping is empty".to_string());
+            return Err(jails_support::Failure::Told(
+                "compose mapping is empty".to_string(),
+            ));
         }
         if text.contains('\t') {
-            return Err("compose mapping contains a tab; YAML indentation is spaces".to_string());
+            return Err(jails_support::Failure::Told(
+                "compose mapping contains a tab; YAML indentation is spaces".to_string(),
+            ));
         }
         // The body's own keys sit at column zero: this value is stored
         // relative to the service, and the format owner indents it. So a
@@ -70,12 +76,14 @@ impl CanonicalYamlMapping {
             .find(|line| !line.trim().is_empty())
             .unwrap_or_default();
         if first.starts_with(' ') {
-            return Err(
+            return Err(jails_support::Failure::Told(
                 "compose mapping is indented; store it relative to the service".to_string(),
-            );
+            ));
         }
         if first.trim_start().starts_with("services:") {
-            return Err("compose mapping includes the `services:` key".to_string());
+            return Err(jails_support::Failure::Told(
+                "compose mapping includes the `services:` key".to_string(),
+            ));
         }
         Ok(Self(text.to_string()))
     }
@@ -281,15 +289,16 @@ impl PropertySetting {
     pub fn new(value: impl Into<String>, comment: Vec<String>) -> Result<Self> {
         for line in &comment {
             if line.contains('\n') || line.contains('\r') {
-                return Err(
+                return Err(jails_support::Failure::Told(
                     "a property comment line contains a newline; one line is one line".to_string(),
-                );
+                ));
             }
             if line.trim_start().starts_with('#') {
                 return Err(format!(
                     "the property comment `{line}` carries its own `#`; the marker belongs to the \
                      format owner, so one comment has one spelling"
-                ));
+                )
+                .into());
             }
         }
         Ok(Self {
@@ -387,7 +396,8 @@ impl ResourceValue {
                 "resource value kind {} does not match key kind {}",
                 self.tag(),
                 key.tag()
-            ));
+            )
+            .into());
         }
         match (key, self) {
             (ResourceKey::MavenDependency(coordinate), Self::MavenDependency(spec))
@@ -396,34 +406,31 @@ impl ResourceValue {
                 Err(format!(
                     "dependency {} recorded under key {coordinate}",
                     spec.coordinate
-                ))
+                )
+                .into())
             }
             (ResourceKey::MavenPlugin(coordinate), Self::MavenPlugin(spec))
                 if spec.coordinate != *coordinate =>
             {
-                Err(format!(
-                    "plugin {} recorded under key {coordinate}",
-                    spec.coordinate
-                ))
+                Err(format!("plugin {} recorded under key {coordinate}", spec.coordinate).into())
             }
             (ResourceKey::ComposeService(name), Self::ComposeService(spec))
                 if spec.name != *name =>
             {
-                Err(format!(
-                    "compose service {} recorded under key {name}",
-                    spec.name
-                ))
+                Err(format!("compose service {} recorded under key {name}", spec.name).into())
             }
             (
                 ResourceKey::CommandRegistration { command: keyed, .. },
                 Self::CommandRegistration { command },
-            ) if command != keyed => Err(format!(
-                "command registration {command} recorded under key {keyed}"
-            )),
+            ) if command != keyed => {
+                Err(format!("command registration {command} recorded under key {keyed}").into())
+            }
             (
                 ResourceKey::SpringTestImport { class: keyed, .. },
                 Self::SpringTestImport { class, .. },
-            ) if class != keyed => Err(format!("test import {class} recorded under key {keyed}")),
+            ) if class != keyed => {
+                Err(format!("test import {class} recorded under key {keyed}").into())
+            }
             _ => Ok(()),
         }
     }
@@ -530,7 +537,8 @@ impl DesiredResource {
             return Err(format!(
                 "desired resource {key:?} has no owner; an unowned claim is an absence, not a \
                  resource"
-            ));
+            )
+            .into());
         }
         Ok(Self { key, owners, value })
     }
@@ -600,7 +608,7 @@ impl Codec for OneShotState {
         match decoder.tag()? {
             0 => Ok(Self::Active),
             1 => Ok(Self::RetiredTargetRemoved),
-            other => Err(format!("unknown one-shot state tag {other}")),
+            other => Err(format!("unknown one-shot state tag {other}").into()),
         }
     }
 }

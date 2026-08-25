@@ -124,10 +124,7 @@ fn run(project: &Project, socket: &Path, wanted: Wanted, debug: bool) -> Result<
     // The same refusal `--fast` makes, for the same reason: a run over classes
     // older than their sources is green about code that is gone.
     if let Some(stale) = launcher::staleness(root) {
-        return Err(format!(
-            "testd not taken: {}\n  fix: jails test",
-            stale.explain()
-        ));
+        return Err(format!("testd not taken: {}\n  fix: jails test", stale.explain()).into());
     }
     // Decided before the daemon is touched: `--affected` can conclude there is
     // nothing to run, and starting a JVM to be told that is pure waste.
@@ -144,7 +141,8 @@ fn run(project: &Project, socket: &Path, wanted: Wanted, debug: bool) -> Result<
                 return Err(format!(
                     "testd not taken: could not resolve `{filter}` to a fully qualified name.\n  \
                      fix: jails test {filter}"
-                ));
+                )
+                .into());
             }
         },
         Wanted::Affected => match affected::select(root, debug) {
@@ -187,7 +185,7 @@ fn run(project: &Project, socket: &Path, wanted: Wanted, debug: bool) -> Result<
     } else {
         // An empty Err: JUnit has already printed the failures, and a second
         // `jails: ` line over them says nothing. Same convention as `doctor`.
-        Err(String::new())
+        Err(jails_support::Failure::Reported)
     }
 }
 
@@ -260,7 +258,8 @@ fn ensure_running(
                 "testd: the daemon exited with {status} before it was ready.\n{}  \
                  fix: jails test --fast",
                 indent(&stderr)
-            ));
+            )
+            .into());
         }
         std::thread::sleep(Duration::from_millis(50));
     }
@@ -347,9 +346,9 @@ fn cache_dir() -> Result<PathBuf> {
     if let Some(dir) = std::env::var_os("XDG_CACHE_HOME") {
         return Ok(PathBuf::from(dir).join("jails/testd"));
     }
-    std::env::var_os("HOME")
+    Ok(std::env::var_os("HOME")
         .map(|home| PathBuf::from(home).join(".cache/jails/testd"))
-        .ok_or_else(|| "testd: no HOME to put the daemon's socket under".to_string())
+        .ok_or_else(|| "testd: no HOME to put the daemon's socket under".to_string())?)
 }
 
 /// One socket per project, named by the project rather than by its path.

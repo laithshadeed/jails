@@ -45,7 +45,8 @@ capabilities = []
         return Err(format!(
             "application manifest already exists: {target}.\n       fix: edit it, or pass \
              --manifest with a new path."
-        ));
+        )
+        .into());
     }
 
     let manifest_target = target.clone();
@@ -212,9 +213,9 @@ pub fn rename(run: &Run, old: &str, new: &str, force: bool) -> Result<Outcome> {
             // planning and committing fails the precondition rather than
             // being quietly overwritten.
             if let jails_protocol::snapshot::Captured::Present(_) = snapshot.read(&destination)? {
-                return Err(format!(
-                    "{destination} already exists -- rename or delete it first"
-                ));
+                return Err(
+                    format!("{destination} already exists -- rename or delete it first").into(),
+                );
             }
             moved += 1;
             change.absences.push(jails_protocol::render::ManagedPath {
@@ -253,7 +254,8 @@ pub fn rename(run: &Run, old: &str, new: &str, force: bool) -> Result<Outcome> {
         return Err(format!(
             "no .java file under src/ mentions `{old}` -- check the spelling, or the type may \
              live outside this module"
-        ));
+        )
+        .into());
     }
     // The rename's known blind spot, said out loud. An unmentioned exception
     // is indistinguishable from a bug.
@@ -323,7 +325,7 @@ pub fn rename(run: &Run, old: &str, new: &str, force: bool) -> Result<Outcome> {
 fn validate(old: &str, new: &str) -> Result<()> {
     for (label, name) in [("old", old), ("new", new)] {
         if name.is_empty() {
-            return Err(format!("the {label} name is empty"));
+            return Err(format!("the {label} name is empty").into());
         }
         if !name
             .chars()
@@ -332,13 +334,15 @@ fn validate(old: &str, new: &str) -> Result<()> {
         {
             return Err(format!(
                 "`{name}` is not a Java identifier -- the {label} name must start with a letter"
-            ));
+            )
+            .into());
         }
         if !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
             return Err(format!(
                 "`{name}` is not a Java identifier. `jails rename` renames one type, not a \
                  package path -- pass the simple name (`Reward`, not `com.example.Reward`)"
-            ));
+            )
+            .into());
         }
     }
     if old == new {
@@ -425,11 +429,11 @@ fn walked_directories(sources: &[ProjectPath]) -> BTreeSet<ProjectPath> {
 pub fn adopt_layout(run: &Run) -> Result<Outcome> {
     let project = run.project();
     if project.base().is_empty() {
-        return Err(
+        return Err(jails_support::Failure::Told(
             "no Java sources found under src/main/java, so there is no package to read.\n       \
              fix: run this from a project with sources, or `jails new <name>` to create one."
                 .to_string(),
-        );
+        ));
     }
     let base = ProjectPath::parse(&format!(
         "src/main/java/{}",
@@ -486,10 +490,10 @@ pub fn adopt_layout(run: &Run) -> Result<Outcome> {
         println!("  ignore  {name:<10} not a layer jails knows -- left alone");
     }
     if resolved.writes.is_empty() {
-        return Err(
+        return Err(jails_support::Failure::Told(
             "nothing to adopt: no package under the base package needs a different name."
                 .to_string(),
-        );
+        ));
     }
     // Said out loud because it is the rule that makes this command safe to
     // run at all, and true in both modes: nothing below can reach that list.
@@ -566,13 +570,13 @@ pub fn format(run: &Run) -> Result<Outcome> {
     // caches and a writable `build/`, which is a different bargain and is
     // recorded in `pending.md` rather than half-taken here.
     if project.build() == jails_spec::build::Build::Gradle {
-        return Err(
+        return Err(jails_support::Failure::Told(
             "`jails fmt` runs the formatter inside a sandbox laid out from this transaction, \
              and it drives that with Maven.\n       fix: `./gradlew spotlessApply` -- `jails \
              add format` has already configured it, and `check` fails on an unformatted \
              file. The command is refused rather than silently doing something else."
                 .to_string(),
-        );
+        ));
     }
     let scope = ProjectPath::parse("src")?;
     let mut reads = capture::capability_reads()?;
@@ -583,11 +587,11 @@ pub fn format(run: &Run) -> Result<Outcome> {
         sources.push(relative);
     }
     if sources.is_empty() {
-        return Err(
+        return Err(jails_support::Failure::Told(
             "no .java file under src/ to format.\n       fix: run this from a project with \
              sources."
                 .to_string(),
-        );
+        ));
     }
     // The pom is read because the formatter is *invoked through it* -- the
     // Spotless plugin's configuration is what decides the result, so a plan
@@ -678,7 +682,8 @@ pub fn format(run: &Run) -> Result<Outcome> {
             "the formatter removed {} file(s), which formatting does not do.\n       fix: this \
              is a formatter or configuration problem; nothing was written.",
             diff.removed.len()
-        ));
+        )
+        .into());
     }
     sandbox.close()?;
 

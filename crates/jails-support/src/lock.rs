@@ -71,31 +71,33 @@ impl Lock {
             .map_err(|error| {
                 Contention::Refused(format!("could not open {}: {error}", path.display()))
             })?;
-        set_private(&file, path).map_err(Contention::Refused)?;
+        set_private(&file, path).map_err(|failure| Contention::Refused(failure.to_string()))?;
 
         contend(&file, path)?;
 
         // The lock is on an inode. If the path now names a different one,
         // somebody replaced the file and a second holder is possible.
-        same_entry(&file, path).map_err(Contention::Refused)?;
+        same_entry(&file, path).map_err(|failure| Contention::Refused(failure.to_string()))?;
 
         let mut held = Self {
             file,
             path: path.to_path_buf(),
         };
-        held.describe(description).map_err(Contention::Refused)?;
+        held.describe(description)
+            .map_err(|failure| Contention::Refused(failure.to_string()))?;
         Ok(held)
     }
 
     /// Replace the diagnostic content. Never authority for anything.
     fn describe(&mut self, description: &str) -> Result<()> {
         let content = format!("pid {}\n{description}\n", std::process::id());
-        self.file
+        Ok(self
+            .file
             .set_len(0)
             .and_then(|()| self.file.rewind())
             .and_then(|()| self.file.write_all(content.as_bytes()))
             .and_then(|()| self.file.sync_all())
-            .map_err(|error| format!("could not describe {}: {error}", self.path.display()))
+            .map_err(|error| format!("could not describe {}: {error}", self.path.display()))?)
     }
 
     pub fn path(&self) -> &Path {
@@ -174,8 +176,9 @@ fn read_best_effort(path: &Path) -> String {
 #[cfg(unix)]
 fn set_private(file: &File, path: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
-    file.set_permissions(std::fs::Permissions::from_mode(0o600))
-        .map_err(|error| format!("could not secure {}: {error}", path.display()))
+    Ok(file
+        .set_permissions(std::fs::Permissions::from_mode(0o600))
+        .map_err(|error| format!("could not secure {}: {error}", path.display()))?)
 }
 
 /// The open handle and the path must still be the same entry, and it must not
@@ -193,14 +196,16 @@ fn same_entry(file: &File, path: &Path) -> Result<()> {
             "{} is a symlink.\n       fix: the lock must be a real file; a symlink lets two \
              runs lock two different inodes and both believe they hold it.",
             path.display()
-        ));
+        )
+        .into());
     }
     if (held.dev(), held.ino()) != (named.dev(), named.ino()) {
         return Err(format!(
             "{} changed while it was being locked.\n       fix: the lock is on an inode, not a \
              name; a replaced file means two holders are possible. Retry.",
             path.display()
-        ));
+        )
+        .into());
     }
     Ok(())
 }

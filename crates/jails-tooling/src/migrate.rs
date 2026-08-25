@@ -27,14 +27,13 @@
 //! Migrations are applied in the same order Flyway would use, one statement
 //! batch per file, stopping at the first failure and naming the file.
 
+use jails_support::Result;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::compose;
 use crate::generate::find_project_root;
 use crate::run;
-
-type Result<T> = std::result::Result<T, String>;
 
 /// Apply the project's migrations to a scratch database, then drop it.
 ///
@@ -121,7 +120,7 @@ pub fn check(no_start: bool, debug: bool) -> Result<()> {
                  forward-only, so fix the file rather than adding one that undoes it -- \
                  nothing has run anywhere yet."
             );
-            Err(String::new())
+            Err(jails_support::Failure::Reported)
         }
     }
 }
@@ -197,7 +196,9 @@ fn psql(conn: &compose::PostgresConnect, database: &str, sql: &str, debug: bool)
     if done.status.success() {
         return Ok(());
     }
-    Err(String::from_utf8_lossy(&done.stderr).trim().to_string())
+    Err(jails_support::Failure::Told(
+        String::from_utf8_lossy(&done.stderr).trim().to_string(),
+    ))
 }
 
 /// Wait for postgres to answer, rather than treating a container that has been
@@ -217,7 +218,7 @@ fn wait_until_ready(conn: &compose::PostgresConnect, debug: bool) -> Result<()> 
     const ATTEMPTS: u32 = 120;
     const PAUSE: Duration = Duration::from_millis(250);
 
-    wait_for(
+    Ok(wait_for(
         // Only the first probe is announced: a poll that prints the same
         // command 120 times buries the run it is part of.
         |attempt| psql(conn, &conn.database, "select 1", debug && attempt == 0),
@@ -231,7 +232,7 @@ fn wait_until_ready(conn: &compose::PostgresConnect, debug: bool) -> Result<()> 
             conn.port,
             u128::from(ATTEMPTS) * PAUSE.as_millis() / 1000,
         )
-    })
+    })?)
 }
 
 /// Retry `probe` until it succeeds or the budget runs out.
@@ -244,7 +245,7 @@ fn wait_for(
     attempts: u32,
     pause: Duration,
 ) -> Result<()> {
-    let mut last = Err("no attempt was made".to_string());
+    let mut last: Result<()> = Err("no attempt was made".into());
     for attempt in 0..attempts {
         last = probe(attempt);
         if last.is_ok() {
@@ -331,7 +332,9 @@ mod tests {
             |_| {
                 probes += 1;
                 if probes < 3 {
-                    Err("server closed the connection unexpectedly".to_string())
+                    Err(jails_support::Failure::Told(
+                        "server closed the connection unexpectedly".to_string(),
+                    ))
                 } else {
                     Ok(())
                 }
@@ -346,11 +349,11 @@ mod tests {
     #[test]
     fn exhausting_the_budget_reports_the_last_failure_not_the_first() {
         let outcome = wait_for(
-            |attempt| Err(format!("attempt {attempt}")),
+            |attempt| Err(format!("attempt {attempt}").into()),
             4,
             Duration::from_millis(0),
         );
-        assert_eq!(outcome, Err("attempt 3".to_string()));
+        assert_eq!(outcome, Err("attempt 3".into()));
     }
 
     #[test]
@@ -360,7 +363,7 @@ mod tests {
         let _ = wait_for(
             |attempt| {
                 announced.push(debug && attempt == 0);
-                Err("not yet".to_string())
+                Err(jails_support::Failure::Told("not yet".to_string()))
             },
             3,
             Duration::from_millis(0),

@@ -66,7 +66,7 @@ pub fn lint() -> Result<()> {
     }
     println!();
     println!("lint: {} finding(s)", findings.len());
-    Err(String::new())
+    Err(jails_support::Failure::Reported)
 }
 
 fn inspect_file(root: &Path, path: &Path, findings: &mut Vec<String>) {

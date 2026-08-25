@@ -46,7 +46,8 @@ pub fn bench(profile: Profile, debug: bool) -> Result<()> {
     if !has_load_test(&root) {
         return Err(format!(
             "no load test at {SCRIPT}.\n       fix: run `jails add loadtest` first."
-        ));
+        )
+        .into());
     }
     require_k6()?;
 
@@ -76,11 +77,11 @@ fn require_k6() -> Result<()> {
     if crate::process::on_path("k6") {
         return Ok(());
     }
-    Err(
+    Err(jails_support::Failure::Told(
         "k6 is not on PATH, and jails does not bundle a load generator.\n       \
          fix: `mise use -g k6`, or see https://grafana.com/docs/k6/latest/set-up/install-k6/"
             .to_string(),
-    )
+    ))
 }
 
 /// Whether this project has a load test to run.

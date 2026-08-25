@@ -142,7 +142,8 @@ pub fn require_maven(build: Build, command: &str) -> Result<()> {
              fix: `routes`, `beans`, `stats`, `notes`, `why`, `explain`, `rename`, `doctor` \
              and most of `generate` work here as they are.",
             build.name()
-        )),
+        )
+        .into()),
     }
 }
 

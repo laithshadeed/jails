@@ -160,7 +160,7 @@ pub(crate) fn require_spring(flavor: Flavor, capability: &str) -> Result<()> {
             "`{capability}` is a Spring Boot capability, and this is a plain Maven project.\n       \
              `jails new <name>` creates a Spring project; `jails add http` is the framework-free \
              HTTP option."
-        )),
+        ).into()),
     }
 }
 
@@ -196,7 +196,8 @@ pub(crate) fn require_mockmvc_tester(project: &crate::model::Project, what: &str
          fix: `jails g controller <Name> --method <verb>` and `jails add cors` write the \
          classic MockMvc form and work here, as do every non-web kind -- `record`, `value`, \
          `enum`, `sealed`, `repo`, `migration`, `service`."
-    ))
+    )
+    .into())
 }
 
 // ---------------------------------------------------------------------------
