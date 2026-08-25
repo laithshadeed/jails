@@ -39,7 +39,7 @@ pub mod synonyms;
 // actually lives in, which is what makes moving one a one-line change.
 pub use jails_java::{java, template};
 pub use jails_spec::{build, spec};
-pub(crate) use jails_support::{apply, json, process};
+pub(crate) use jails_support::{json, process};
 
 // `.jails/` reading lives one layer down now (`pending.md` §7.3). Re-exported
 // so `crate::compat` keeps meaning what it always did.

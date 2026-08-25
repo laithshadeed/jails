@@ -571,7 +571,7 @@ fn print_report(found: &[Diagnosis]) {
 /// plugin return normally -- prints BUILD SUCCESS over the top of a stack
 /// trace. Without this, `jails run` reports success for an app that never
 /// came up.
-pub const FATAL_MARKERS: [&str; 4] = [
+const FATAL_MARKERS: [&str; 4] = [
     // Spring's own log line when the context fails to refresh.
     "Application run failed",
     // The failure-analyzer banner, for the failures it has a report for.

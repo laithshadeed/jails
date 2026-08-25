@@ -922,17 +922,44 @@ is real, it is one-way, and it puts the read-only crate underneath.
 alias for `process::on_path`, and it was `doctor`'s only reason to name `run` at
 all. The `doctor` module-lines ratchet fell 1481 → 1479 as a result.
 
-### 7.7 `jails-generate` still writes
+### 7.7 `jails-generate` still writes — **six left, each a decision**
 
-The largest crate. It holds one job — *decide what Java to write* — and one
-leftover: `generate/write.rs`, `add/database.rs`, `generate/cli.rs`,
-`spring/durable.rs` and `generate/scaffold.rs` call `apply::*` directly, outside
-any transaction. The planning half (`plan_for`, `plan_named`, `artifacts_for`)
-is what the engine calls, is pure, and is the crate's real contribution. Getting
-the write calls out is item 4's work, and once they are gone the crate is
-honestly named for the first time.
+The largest crate holds one job — *decide what Java to write* — and one
+leftover. §7.2 deleted most of it (`generate/write.rs`'s four
+dependency-ensuring functions, `scaffold.rs`'s three, `spring/durable.rs`'s
+install/uninstall pair), and §5's `publish::Tree` took the `jails new` path out
+of the count. §4's row reads **6**, down from the 56 it started at.
 
----
+Each of the six is a real decision rather than a migration nobody got to:
+
+| where | what it writes | the question |
+|---|---|---|
+| `generate/write.rs` ×2 | `apply::create` and the `package-info.java` write | both reached only on the `jails new` path, so they belong behind `publish::Tree` — which is a signature change through `write_new_file`, not a transaction |
+| `add/database.rs` | a delete under `target/` after a source is removed, so incremental `mvn test` stops using a stale class | derived output, excluded from the snapshot. Arguably the same row `SUBPROCESS_CLASSIFICATION` calls *derived build process*, and the honest fix is to say so rather than to journal it |
+| `run.rs` | splices `junit-platform-console` into `pom.xml` for `test --fast` | a **real** project write outside a transaction, and the one on this list that should become one |
+| `console.rs` | a classpath directory for `jshell` | derived |
+| `testd.rs` | the daemon's scratch directory | derived |
+
+Two verbs stopped counting, and that was a measurement fix rather than work:
+`apply::put_outside_project` (`jails setup`'s `~/.testcontainers.properties`,
+`testd`'s daemon source) and `apply::put_in_scratch`. Both say in their own
+names that they are not writing into a project, and there is no transaction to
+put a write outside every project into.
+
+**A limitation of §7.2's pass, recorded so it is not mistaken for coverage.**
+The narrowing reopened items by name, taken from the compiler's error text —
+so an item with a *common* name (`write`, `read`, `path`) could be reopened
+because some unrelated error mentioned the word, and `dead_code` then stopped
+looking at it. `compose::write` was exactly that: zero callers, deleted here.
+`why::FATAL_MARKERS` was the other. To re-derive:
+
+```sh
+# every `pub` item no file but its own mentions, by name
+grep -rn "^pub \(fn\|struct\|enum\|const\|type\|trait\) " crates/*/src src
+```
+
+and check the survivors by hand. The 41 that remain are the documented
+unwired-protocol bodies from §7.2's table, not new findings.
 
 ## 8. Files and tests
 

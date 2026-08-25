@@ -184,7 +184,7 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // `apply_build_change`. `route::support` states the same
                 // dependencies as claims now, so these were the write path that
                 // no route takes.
-                ceiling: 81,
+                ceiling: 80,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;
@@ -497,6 +497,23 @@ fn gates() -> Vec<(Ratchet, usize)> {
                 // `route::Run::committing`, and a `jails new-cli --app` run
                 // leaves a `.jails/` holding a ledger, objects, receipts and
                 // transactions. Re-measured before acting on it.
+                //
+                // 11 -> 6: `apply::put_outside_project` and
+                // `apply::put_in_scratch` stop counting. See
+                // `executor_bypasses` for why -- both say in their own names
+                // that they are not writing into a project, and there is no
+                // transaction to put a write outside every project into.
+                //
+                // What is left is six, and each is a real decision somebody
+                // has to make: `generate/write.rs`'s `create` and its
+                // `package-info` write (both on the `jails new` path, but not
+                // yet through `publish::Tree`), `add/database.rs`'s delete
+                // under `target/` (derived output, excluded from the snapshot,
+                // and arguably the same row `SUBPROCESS_CLASSIFICATION` calls
+                // "derived build process"), `run.rs`'s
+                // `ensure_console_launcher` splicing `pom.xml` for
+                // `test --fast`, `console.rs`'s classpath directory, and
+                // `testd.rs`'s. `pending.md` §7.7.
                 ceiling: MUTATION_CEILING,
                 target: 0,
                 why: "The narrow `fs::write` gate read green while a dozen other calls mutated \
@@ -1942,7 +1959,7 @@ fn write_sites_outside_apply(src: &[Source]) -> usize {
 /// project through other names, so the gate read green over exactly the
 /// surface R6 has to migrate.
 /// Where the count stands today. Lowered by each migrated surface.
-const MUTATION_CEILING: usize = 11;
+const MUTATION_CEILING: usize = 6;
 
 const MUTATION_APIS: &[&str] = &[
     "fs::write",
@@ -1975,7 +1992,24 @@ const MUTATION_APIS: &[&str] = &[
 fn executor_bypasses(src: &[Source]) -> usize {
     src.iter()
         .filter(|file| !owns_writing(&file.path))
-        .map(|file| file.production.matches("apply::").count())
+        .map(|file| {
+            let all = file.production.matches("apply::").count();
+            // Two verbs say in their own names that they are not writing into a
+            // project, which is what this row is about. `put_outside_project`
+            // is deliberately long so `jails setup`'s `~/.testcontainers
+            // .properties` and `testd`'s daemon source cannot be reached by
+            // accident from anything editing a project; `put_in_scratch` writes
+            // a tree jails created empty moments earlier and removes when the
+            // run ends. Counting them made the gate ask for something that
+            // would be wrong to do -- there is no transaction to put a write
+            // outside every project into.
+            let exempt = file
+                .production
+                .matches("apply::put_outside_project")
+                .count()
+                + file.production.matches("apply::put_in_scratch").count();
+            all - exempt
+        })
         .sum()
 }
 

@@ -583,18 +583,6 @@ pub fn read(root: &Path) -> Result<String> {
         .map_err(|e| format!("failed to read {}: {e}", path.display()))?)
 }
 
-pub fn write(root: &Path, text: &str) -> Result<()> {
-    let path = path(root);
-    if text.is_empty() {
-        if path.is_file() {
-            jails_support::apply::remove(&path)
-                .map_err(|e| format!("failed to remove {}: {e}", path.display()))?;
-        }
-        return Ok(());
-    }
-    crate::apply::put(&path, text)
-}
-
 /// Connection parameters for the compose postgres that `jails add db` wrote.
 /// `None` when the file has no postgres service.
 #[derive(Debug, Clone, PartialEq, Eq)]
