@@ -1028,12 +1028,18 @@ fn generators_compose_through_user_owned_field_types() {
 
     // `!` is a text rule; asking for it on a date is a mistake worth naming
     // rather than silently ignoring.
+    //
+    // The wording is the surviving parser's. `pending.md` §6.3 merged the two,
+    // and the one that lives carries a `fix:` line -- which is why this asserts
+    // on the sentence rather than on the older "only applies to text".
     let output = jails_cmd_with_path(&root, &path)
         .args(["generate", "value", "bad", "when:date!"])
         .output()
         .unwrap();
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("only applies to text"));
+    let refusal = String::from_utf8_lossy(&output.stderr);
+    assert!(refusal.contains("is not text"), "{refusal}");
+    assert!(refusal.contains("fix: drop the `!`"), "{refusal}");
 
     // An enum-typed component can be sampled by reading the enum, and a
     // component whose type is a record *this project already has* by reading

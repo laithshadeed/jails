@@ -11,6 +11,11 @@ use std::path::Path;
 pub use crate::spec::kind::ArtifactKind;
 pub use crate::spec::layout;
 pub use crate::spec::{field::*, paths::*};
+// The one parser, which lives with `FieldSpec` a layer up rather than with the
+// `Field` it produces -- `pending.md` §6.3. Re-exported here so every generator
+// keeps saying `parse_fields`, the same job the facade block in `lib.rs` does
+// for the crates below.
+pub use jails_protocol::declaration::parse_fields;
 
 mod migration;
 pub use migration::*;

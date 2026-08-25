@@ -16,7 +16,7 @@
 
 use jails_support::Result;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Field {
     pub name: String,
     pub java_type: String,
@@ -156,10 +156,22 @@ pub(crate) fn resolve_type(token: &str) -> Result<Resolved> {
         });
     }
 
-    // Case is the whole rule: capitalised means a type this project owns.
-    if token.starts_with(|c: char| c.is_uppercase()) {
+    // Case is the whole rule, and it applies to the *simple* name:
+    // capitalised means a type this project owns.
+    //
+    // The qualified spelling arrives from `FieldSpec::projected`, whose
+    // canonical form of an owned type is fully qualified against the project's
+    // base package. Reading only the last segment is deliberate: jails puts an
+    // owned type in the same package as the record that names it, so the
+    // generated component is `Currency`, not `com.example.demo.domain.Currency`
+    // -- and before this, a qualified name fell through to the builtin table
+    // and was refused as `unknown field type
+    // 'com.example.demo.domain.currency'`, which is a message about a type
+    // nobody typed.
+    let simple = token.rsplit('.').next().unwrap_or(token);
+    if simple.starts_with(|c: char| c.is_uppercase()) {
         return Ok(Resolved {
-            java_type: token.to_string(),
+            java_type: simple.to_string(),
             imports: Vec::new(),
             owned: true,
             collection: false,
@@ -308,34 +320,6 @@ pub fn builtin_by_java_name(ty: &str) -> Option<(&'static str, Option<&'static s
     }
 }
 
-pub fn parse_fields(args: &[String]) -> Result<Vec<Field>> {
-    args.iter()
-        .map(|arg| -> Result<Field> {
-            let (name, ty) = arg
-                .split_once(':')
-                .ok_or_else(|| format!("field '{arg}' must be name:type"))?;
-
-            let ty = ty.trim();
-            // Table markers come off first, so `amount:long@pk!` and
-            // `amount:long!@pk` mean the same thing rather than one of them
-            // being a confusing parse error about an empty type.
-            let (ty, constraints) = parse_constraints(ty, arg)?;
-            let ty = ty.trim();
-            let (ty, optionality) = match ty.strip_suffix('!') {
-                Some(rest) => (rest, Optionality::NonBlank),
-                None => match ty.strip_suffix('?') {
-                    Some(rest) => (rest, Optionality::Nullable),
-                    None => (ty, Optionality::Required),
-                },
-            };
-            if ty.is_empty() {
-                return Err(format!("field '{arg}' has a suffix but no type").into());
-            }
-            derive_field(name.trim(), ty, optionality, constraints, arg)
-        })
-        .collect()
-}
-
 /// The Java facts a declared component implies, from parts already parsed.
 ///
 /// **This is the half that is derivation rather than parsing**, and it is
@@ -409,45 +393,6 @@ pub fn derive_field(
         collection: resolved.collection,
         constraints,
     })
-}
-
-/// Strip `@marker` suffixes off a field's type and read their constraints.
-///
-/// Repeatable and order-independent: `amount:long@positive@index` and
-/// `amount:long@index@positive` are the same column. An unknown marker is an
-/// error listing the real ones -- a typo that parsed as "no constraint" would
-/// produce a schema quietly missing the primary key someone thought they had
-/// asked for, which is the failure mode this whole feature exists to prevent.
-pub(crate) fn parse_constraints<'a>(ty: &'a str, arg: &str) -> Result<(&'a str, Constraints)> {
-    const KNOWN: &str = "@pk, @unique, @index, @scope, @positive, @nonnegative";
-    let mut constraints = Constraints::default();
-    let mut rest = ty;
-
-    // Read markers right-to-left so the remaining head is still the type.
-    while let Some(at) = rest.rfind('@') {
-        let marker = rest[at + 1..].trim();
-        match marker {
-            "pk" => constraints.primary_key = true,
-            "unique" => constraints.unique = true,
-            "index" => constraints.indexed = true,
-            "scope" => constraints.scoped = true,
-            "positive" => constraints.check = Some(NumericCheck::Positive),
-            "nonnegative" => constraints.check = Some(NumericCheck::NonNegative),
-            "" => {
-                return Err(format!("'{arg}': trailing '@' with no marker. Known: {KNOWN}").into());
-            }
-            other => {
-                return Err(
-                    format!("'{arg}': unknown column marker '@{other}'. Known: {KNOWN}").into(),
-                );
-            }
-        }
-        rest = &rest[..at];
-    }
-    if rest.trim().is_empty() {
-        return Err(format!("'{arg}': markers but no type").into());
-    }
-    Ok((rest, constraints))
 }
 
 /// Java types a numeric `check` can be emitted against.
@@ -643,173 +588,4 @@ pub fn fields_of_record(source: &str) -> Option<Vec<Field>> {
         })
         .collect();
     Some(fields)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn field_type_maps_known_tokens() {
-        assert_eq!(field_type("string").unwrap().0, "String");
-        assert_eq!(field_type("text").unwrap(), ("String", None));
-        assert_eq!(field_type("int").unwrap().0, "Integer");
-        assert_eq!(field_type("integer").unwrap().0, "Integer");
-        assert_eq!(field_type("long").unwrap().0, "Long");
-        assert_eq!(field_type("boolean").unwrap().0, "Boolean");
-        assert_eq!(field_type("double").unwrap().0, "Double");
-        assert_eq!(
-            field_type("uuid").unwrap(),
-            ("UUID", Some("java.util.UUID"))
-        );
-        assert_eq!(
-            field_type("currency").unwrap(),
-            ("Currency", Some("java.util.Currency"))
-        );
-        assert_eq!(
-            field_type("date").unwrap(),
-            ("LocalDate", Some("java.time.LocalDate"))
-        );
-        assert_eq!(
-            field_type("datetime").unwrap(),
-            ("LocalDateTime", Some("java.time.LocalDateTime"))
-        );
-    }
-
-    #[test]
-    fn field_type_rejects_unknown_tokens() {
-        assert!(field_type("nope").is_err());
-    }
-
-    #[test]
-    fn column_markers_parse_in_any_order_and_combine() {
-        let fields = parse_fields(&[
-            "transactionId:uuid@pk".to_string(),
-            "amount:long@positive@index".to_string(),
-            "email:string!@unique".to_string(),
-            "workspaceId:uuid@scope@index".to_string(),
-        ])
-        .unwrap();
-        assert!(fields[0].constraints.primary_key);
-        assert_eq!(fields[1].constraints.check, Some(NumericCheck::Positive));
-        assert!(fields[1].constraints.indexed);
-        assert!(fields[2].constraints.unique);
-        assert!(fields[3].constraints.scoped);
-        assert!(fields[3].constraints.indexed);
-        // The markers do not disturb the type or the optionality suffix.
-        assert_eq!(fields[0].java_type, "UUID");
-        assert_eq!(fields[2].java_type, "String");
-        assert_eq!(fields[2].optionality, Optionality::NonBlank);
-    }
-
-    /// A marker typo that parsed as "no constraint" would produce a schema
-    /// quietly missing the primary key someone thought they had asked for --
-    /// the exact failure this feature exists to prevent.
-    #[test]
-    fn an_unknown_column_marker_is_an_error_listing_the_real_ones() {
-        let err = parse_fields(&["id:uuid@primary".to_string()]).unwrap_err();
-        assert!(err.contains("@primary"), "{err}");
-        assert!(err.contains("@pk"), "{err}");
-    }
-
-    /// `check (name > 0)` on a text column fails at `flyway migrate`, which is
-    /// a slow and remote way to learn about a typo.
-    #[test]
-    fn a_numeric_check_on_a_non_numeric_column_is_rejected() {
-        let err = parse_fields(&["name:string@positive".to_string()]).unwrap_err();
-        assert!(err.contains("numeric"), "{err}");
-        assert!(parse_fields(&["amount:long@positive".to_string()]).is_ok());
-        assert!(parse_fields(&["price:decimal@nonnegative".to_string()]).is_ok());
-    }
-
-    #[test]
-    fn a_nullable_primary_key_is_rejected() {
-        let err = parse_fields(&["id:uuid?@pk".to_string()]).unwrap_err();
-        assert!(err.contains("nullable"), "{err}");
-    }
-
-    #[test]
-    fn a_field_with_no_markers_has_no_constraints() {
-        let fields = parse_fields(&["title:string".to_string()]).unwrap();
-        assert_eq!(fields[0].constraints, Constraints::default());
-    }
-
-    #[test]
-    fn parse_fields_splits_name_and_type() {
-        let fields = parse_fields(&["title:string".to_string(), "body:Text".to_string()]).unwrap();
-        assert_eq!(fields[0].name, "title");
-        assert_eq!(fields[0].java_type, "String");
-        // Capitalised means "a type this project owns", so `Text` is no longer
-        // the built-in -- that is the whole point of the rule.
-        assert_eq!(fields[1].java_type, "Text");
-        assert!(fields[1].owned);
-        assert_eq!(
-            parse_fields(&["body:text".to_string()]).unwrap()[0].java_type,
-            "String"
-        );
-    }
-
-    /// The Java spellings of the built-in types stay built-in: `id:String`
-    /// must not be read as an unknown project type.
-    #[test]
-    fn parse_fields_treats_java_type_names_as_builtins() {
-        let fields = parse_fields(&["id:String".to_string(), "on:LocalDate".to_string()]).unwrap();
-        assert!(!fields[0].owned);
-        assert_eq!(fields[0].java_type, "String");
-        assert!(!fields[1].owned);
-        assert!(fields[1].imports.contains(&"java.time.LocalDate"));
-    }
-
-    #[test]
-    fn parse_fields_resolves_collection_types() {
-        let fields = parse_fields(&[
-            "matched:list<Match>".to_string(),
-            "ids:list<string>".to_string(),
-            "rates:map<string,double>".to_string(),
-            "at:instant".to_string(),
-        ])
-        .unwrap();
-
-        assert_eq!(fields[0].java_type, "List<Match>");
-        assert!(fields[0].collection);
-        assert_eq!(fields[1].java_type, "List<String>");
-        // Generics cannot hold a primitive, so the element is the wrapper.
-        assert_eq!(fields[2].java_type, "Map<String, Double>");
-        assert!(fields[2].imports.contains(&"java.util.Map"));
-        assert_eq!(fields[3].java_type, "Instant");
-        assert!(fields[3].imports.contains(&"java.time.Instant"));
-    }
-
-    #[test]
-    fn parse_fields_rejects_malformed_collection_types() {
-        // A bare `list` would otherwise become List<Object>, silently.
-        assert!(parse_fields(&["items:list".to_string()]).is_err());
-        assert!(parse_fields(&["items:list<nope>".to_string()]).is_err());
-        assert!(parse_fields(&["items:map<string>".to_string()]).is_err());
-        assert!(parse_fields(&["items:list<list<string>>".to_string()]).is_err());
-        // A collection already models absence; `?` on one is a mistake.
-        assert!(parse_fields(&["items:list<string>?".to_string()]).is_err());
-    }
-
-    #[test]
-    fn parse_fields_reads_the_optionality_suffixes() {
-        let fields = parse_fields(&[
-            "id:string!".to_string(),
-            "note:string?".to_string(),
-            "name:string".to_string(),
-            "source:SourceRef?".to_string(),
-        ])
-        .unwrap();
-        assert_eq!(fields[0].optionality, Optionality::NonBlank);
-        assert_eq!(fields[1].optionality, Optionality::Nullable);
-        assert_eq!(fields[2].optionality, Optionality::Required);
-        assert_eq!(fields[3].optionality, Optionality::Nullable);
-        assert!(fields[3].owned);
-        assert_eq!(fields[3].java_type, "SourceRef");
-    }
-
-    #[test]
-    fn parse_fields_rejects_args_without_a_colon() {
-        assert!(parse_fields(&["title".to_string()]).is_err());
-    }
 }

@@ -515,7 +515,7 @@ is true is that every parse now happens once, before the lock — `app_apply`
 plans every row before any of them commits, so a malformed manifest is still
 refused before a transition writes anything.
 
-### 6.3 One field model — **the round trip is gone; one parser is still two**
+### 6.3 One field model — **done 2026-08-25**
 
 `name:type[!?]@marker` had two parsers and two result types —
 `jails-spec/src/spec/field.rs`'s `parse_fields` → `Field`, and
@@ -540,25 +540,62 @@ were *"`java_type` and `imports` are derived facts computed by a function on
 `FieldSpec`, not a second parse result"*; that function exists and has one
 caller on each side.
 
-**What is not done: there are still two parsers.** Merging them is blocked on
-layering, and the shape of the block is worth writing down because it decides
-how the merge has to go. `Field`, `Optionality` and `Constraints` live in
-`jails-spec`; `FieldSpec`, its own `Optionality` and `FieldConstraints` live in
-`jails-protocol`, which is **above** `jails-spec` — so the lower parser cannot
-delegate to the upper one, and `jails-generate` does not depend on
-`jails-protocol` at all, which is why the bridge was a string in the first
-place. The merge is therefore a *move*, not a rewrite: either `FieldSpec` comes
-down to `jails-spec` (dragging `identity::{JavaType, Name, Package}` with it) or
-`Field` goes up. The second is smaller and is the one to do.
+**Done 2026-08-25: there is one parser.** The merge is smaller than either
+option this item proposed, and nothing moved. `parse_fields` is *parsing*, so it
+came up to the parser — it is four lines in `jails-protocol` now, mapping each
+token through `FieldSpec::parse(..)?.projected()`. `derive_field` is
+*derivation*, so it stayed below in `jails-spec` with the Java facts it
+computes. `jails-generate` re-exports `parse_fields` from `generate.rs`, the
+same job its facade block does for everything else, so every generator still
+says `parse_fields`.
 
-Until then the two are pinned to each other by
-`a_projected_field_spec_equals_the_parsed_one`, which runs 26 tokens through
-both and compares all seven fields of the result, and by
-`a_spec_the_projection_refuses_is_one_the_parser_refuses`, which asserts they
-agree about what to reject. **A failure there means one parser learned something
-the other did not; the fix is to teach the projection, never to relax the
-assertion.** The guard was checked by breaking it — dropping `indexed` from the
-projection fails on `owner:string@index`.
+The base package is `Package::base()`, deliberately: a `Field` records `owned`
+and a simple `java_type` and no package at all, so qualifying an owned type
+against the project's base and then discarding the qualification would be an
+argument every one of the 58 call sites had to supply and none could get wrong.
+That assumption is what
+`the_base_package_does_not_reach_the_derived_field` now asserts — the same
+twenty-six tokens as before, parsed against a real package and against the base
+one, deriving identical fields. It replaces
+`a_projected_field_spec_equals_the_parsed_one`, which became a tautology the
+moment the two parsers were one.
+
+**Merging them found two live divergences, which is the argument for having
+done it.** Neither was visible with two parsers, and the pinning test could not
+see either because its token list had no case that distinguished them:
+
+- **`amount:Currency` meant two different things.** `README.md` documents
+  `jails g enum Currency GBP EUR USD` followed by `currency:Currency`, and
+  `jails-spec`'s `builtin_by_java_name` implements it: capitalised means a type
+  the project owns, and `Currency` is deliberately absent from the Java-name
+  table because an enum of the currencies a project deals in is an ordinary
+  thing to generate. `ScalarFieldType::parse` had `"currency" | "Currency"`, so
+  the protocol read the same token as `java.util.Currency` — which means the
+  `IntentSpec` in the ledger and the Java on disk disagreed about what the
+  field was. Every other Java spelling in that match (`String`, `Instant`,
+  `UUID`) is a name nobody declares themselves, which is the line the arm
+  crossed.
+- **`jails g field <Target> ref:SomeOwnedType` did not work at all.**
+  `FieldSpec::projected` renders the type as `field_type.canonical()`, which for
+  an owned type is fully qualified against the base package; `resolve_type`
+  matched case on the *whole* token, so a qualified name fell through to the
+  builtin table and was refused as `unknown field type
+  'com.example.demo.domain.currency'` — a message about a type nobody typed.
+  Case now applies to the simple name, the way `ScalarFieldType::parse` already
+  did.
+
+**One refusal changed wording**, and the surviving one is the better half: `!`
+on a non-text type now says ``\`date\` is not text, so `!` (non-blank) has no
+meaning for it`` with a `fix:` line, rather than the older "only applies to
+text" with none. Deleting the duplicate parser took four refusals with it, which
+is what moved §4's `fix:` ratchet from 443 to 439 — a duplicate parser is four
+duplicate refusals.
+
+`derive_field`'s three checks stay, and are not redundant: they run against the
+*resolved Java type* rather than the declared one.
+`a_declaration_that_parses_is_one_the_projection_derives` keeps the two halves
+of the one parser in step, because a token accepted at the edge and refused
+mid-transition is the failure that guard exists for.
 
 ### 6.4 One table per kind — **the holes are closed; the tables are still seven**
 
@@ -1350,9 +1387,13 @@ Each PR leaves `cargo build --workspace && cargo test --workspace` green.
    of specified, tested, unwired work.
 3. ~~**The `Codec` trait**~~ — **done 2026-08-25.** 126 types, eight named
    monomorphisations deleted, a ratchet at zero. See §6.1.
-4. **One request, one field model** (§6.2, §6.3) — removes the parse-print-reparse
-   round trip, and drops `too_many_arguments = "allow"`. **Next.**
-5. **One table per kind** (§6.4).
+4. ~~**One request, one field model**~~ (§6.2, §6.3) — **done 2026-08-25.**
+   `ResolvedIntent` deleted, one parse per request, one field-spec parser, and
+   `too_many_arguments` is `deny`. The merge found two live divergences the
+   pinning test could not see: `amount:Currency` meant the built-in to one
+   parser and a project enum to the other, and `g field X ref:SomeOwnedType`
+   did not work at all.
+5. **One table per kind** (§6.4). **Next.**
 6. **One transaction protocol** (§5, §7.7) — `new --app` becomes an ordinary V2
    transition and the remaining `apply::` calls move behind the executor. §4's
    gate reaches its target, honestly this time. It is at **46**, down from the
@@ -1366,8 +1407,7 @@ what makes them affordable, and §2.4 is what decides whether they wait for it.
 **If only four things get done:** §4 (the gate that reads green over unfinished
 work), §7.2 (close the APIs and let the compiler find the dead code), §6.1 (the
 cheapest large reduction in the repo), §6.3 (the deepest remaining seam between
-the two engines). **Three of the four are done**; §6.3 is what is left of that
-list.
+the two engines). **All four are done.**
 
 ---
 

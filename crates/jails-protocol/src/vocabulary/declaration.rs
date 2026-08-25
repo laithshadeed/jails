@@ -33,6 +33,7 @@ mod index;
 
 pub use field::{
     FieldConstraints, FieldSpec, FieldType, NumericConstraint, Optionality, ScalarFieldType,
+    parse_fields,
 };
 pub(crate) use index::{IndexColumn, IndexSpec};
 
@@ -408,19 +409,24 @@ mod tests {
         FieldSpec::parse(token, &base()).unwrap()
     }
 
-    /// The projection and the other parser agree, token for token.
+    /// The base package does not reach the derived field.
     ///
-    /// Two parsers of one user-facing syntax is this repository's most reliable
-    /// drift generator, and `pending.md` §6.3 is the entry about it. The
-    /// parse-print-reparse bridge is gone -- `FieldSpec::projected` derives the
-    /// `Field` from the value instead -- but the two parsers themselves are
-    /// still there, so this is what stops them separating: every token below
-    /// must reach the same `Field` through both.
+    /// This was `a_projected_field_spec_equals_the_parsed_one`, and it ran
+    /// twenty-six tokens through *two* parsers of one user-facing syntax and
+    /// compared all seven fields of the result. `pending.md` §6.3 merged them,
+    /// so that comparison is now a tautology -- but one real assumption came
+    /// out of the merge and this is it.
     ///
-    /// A failure here means one parser learned something the other did not.
-    /// The fix is to teach the projection, never to relax the assertion.
+    /// [`parse_fields`] resolves against [`Package::base`], because a `Field`
+    /// records `owned` and a simple `java_type` and no package at all. That is
+    /// only sound if the base a spec was parsed against cannot change what it
+    /// projects to. So: the same tokens, parsed against a real project package
+    /// and against the base one, must derive identical fields.
+    ///
+    /// A failure here means the projection started reading the package, and
+    /// the fix is to give `parse_fields` a base rather than to relax this.
     #[test]
-    fn a_projected_field_spec_equals_the_parsed_one() {
+    fn the_base_package_does_not_reach_the_derived_field() {
         let tokens = [
             "title:string",
             "title:string!",
@@ -448,58 +454,44 @@ mod tests {
             "id:String",
             "when:Instant",
             "key:uuid@pk@index",
+            // The one that found a live divergence: capitalised means a type
+            // the project owns, and `Currency` was being read as the built-in
+            // by one parser and as a project enum by the other.
+            "paid:Currency",
         ];
         for token in tokens {
-            let projected = field(token)
+            let against_project = field(token)
                 .projected()
                 .unwrap_or_else(|e| panic!("{token} does not project: {e}"));
-            let parsed = jails_spec::spec::parse_fields(&[token.to_string()])
+            let against_base = parse_fields(&[token.to_string()])
                 .unwrap_or_else(|e| panic!("{token} does not parse: {e}"))
                 .pop()
                 .expect("one token, one field");
-            assert_eq!(projected.name, parsed.name, "{token}: name");
-            assert_eq!(projected.java_type, parsed.java_type, "{token}: java type");
-            assert_eq!(projected.imports, parsed.imports, "{token}: imports");
-            assert_eq!(
-                projected.optionality, parsed.optionality,
-                "{token}: optionality"
-            );
-            assert_eq!(projected.owned, parsed.owned, "{token}: owned");
-            assert_eq!(
-                projected.collection, parsed.collection,
-                "{token}: collection"
-            );
-            assert_eq!(
-                projected.constraints, parsed.constraints,
-                "{token}: constraints"
-            );
+            assert_eq!(against_project, against_base, "{token}");
         }
     }
 
-    /// A refusal one parser makes, the other makes too.
+    /// A declaration `FieldSpec::parse` accepts is one `derive_field` accepts.
     ///
-    /// The projection reruns the checks that need a *resolved Java type* --
-    /// `!` on something that is not text, `@positive` on a non-numeric column
-    /// -- because only `resolve_type` knows what the type became. A spec that
-    /// `FieldSpec::parse` lets through and `derive_field` refuses would be a
-    /// request accepted at the edge and rejected mid-transition.
+    /// The two are one parser now, but they are still two *checks*: the
+    /// projection reruns the rules that need a resolved Java type -- `!` on
+    /// something that is not text, `@positive` on a non-numeric column --
+    /// because only `resolve_type` knows what the type became. A token the
+    /// first half lets through and the second refuses would be a request
+    /// accepted at the edge and rejected mid-transition, which is the failure
+    /// this keeps out.
     #[test]
-    fn a_spec_the_projection_refuses_is_one_the_parser_refuses() {
-        for token in [
-            "title:uuid!",
-            "tags:list<string>?",
-            "id:uuid@pk",
-            "at:instant@positive",
-        ] {
-            let projected = FieldSpec::parse(token, &base()).and_then(|spec| spec.projected());
-            let parsed = jails_spec::spec::parse_fields(&[token.to_string()]);
-            assert_eq!(
-                projected.is_err(),
-                parsed.is_err(),
-                "{token}: projection {:?}, parser {:?}",
-                projected.map(|_| ()),
-                parsed.map(|_| ())
+    fn a_declaration_that_parses_is_one_the_projection_derives() {
+        for token in ["title:uuid!", "tags:list<string>?", "at:instant@positive"] {
+            assert!(
+                FieldSpec::parse(token, &base()).is_err(),
+                "{token} should be refused at the edge"
             );
+        }
+        for token in ["id:uuid@pk", "title:string!", "total:long@positive"] {
+            FieldSpec::parse(token, &base())
+                .and_then(|spec| spec.projected())
+                .unwrap_or_else(|e| panic!("{token} parses but does not derive: {e}"));
         }
     }
 

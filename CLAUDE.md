@@ -718,6 +718,18 @@ package). `builtin_by_java_name` is the exception that keeps `id:String`
 working; without it a natural spelling would be read as an unknown project type
 and silently disable the generated test.
 
+**There is one parser, and it lives in `jails-protocol`.** `parse_fields` maps
+each token through `FieldSpec::parse(..)?.projected()`; `derive_field` stays in
+`jails-spec` because it is derivation, not parsing. Two parsers of this syntax
+was the repository's most reliable drift generator and it cost two live
+divergences before they were merged (`pending.md` §6.3): `amount:Currency` meant
+`java.util.Currency` to one and a project enum to the other, and
+`g field X ref:SomeOwnedType` did not work at all, because the projection
+renders an owned type fully qualified and `resolve_type` matched case on the
+whole token. **`builtin_by_java_name` is the authority on which Java spellings
+are builtins** -- `Currency` is deliberately not one, because an enum of the
+currencies a project deals in is an ordinary thing to generate.
+
 The suffix sets `Optionality`: `!` non-blank, `?` unchecked/nullable, bare
 non-null. `needs_null_check`/`needs_blank_check` are the only two places that
 decide, so `record` and `value` cannot drift apart.
