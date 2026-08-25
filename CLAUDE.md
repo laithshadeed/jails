@@ -1004,6 +1004,10 @@ jails knows nothing about.
   one and not the other, `destroy` rebuilds different paths and strands the
   files it claims to have deleted. `scaffold` is exempt: it spans Controller,
   Service and Repository at once, so stripping any one corrupts the others.
+  It lives in `jails-protocol`'s `recipe.rs` with `recorded_name` and the
+  suffix table, because these are **identity** rules — `recorded_name` decides
+  the name a ledger row carries — and `jails-engine` was reaching down into the
+  generators for one. `generate.rs` re-exports all three.
 - **`package-info.java` is written from `write_new_file`, not per-kind**, for
   the same reason import normalisation is — a rule twenty templates must
   remember is a rule that decays. It is conditional on `org.jspecify:jspecify`

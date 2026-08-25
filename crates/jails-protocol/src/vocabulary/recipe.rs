@@ -96,6 +96,13 @@ pub(crate) struct RecipeMetadata {
     /// or required -- and a second vocabulary for one question is how two
     /// spellings of "this parameter does not apply here" come to disagree.
     pub method: RefArity,
+    /// The suffix this recipe appends to the name it is given, if any.
+    ///
+    /// An *identity* fact, which is why it is here and not with the generators
+    /// that render it: `recorded_name` decides the name a ledger row carries,
+    /// and `generate` and `app apply` normalising differently is how one entity
+    /// came to be keyed two ways. `pending.md` §6.4.
+    pub suffix: Option<&'static str>,
 }
 
 /// The single table. Every arm is explicit so a new `ArtifactKind` fails to
@@ -172,6 +179,123 @@ pub(crate) fn metadata(recipe: ArtifactKind) -> RecipeMetadata {
         yields,
         arguments,
         method,
+        suffix: suffix(recipe),
+    }
+}
+
+/// The suffix each kind appends to the name it is given.
+///
+/// `None` for kinds that use the name verbatim (`record`, `enum`, `scaffold`
+/// -- which spans several suffixes and cannot have one of them stripped).
+pub fn kind_suffix(kind: ArtifactKind) -> Option<&'static str> {
+    metadata(kind).suffix
+}
+
+/// The arm list [`kind_suffix`] reads, kept beside the other three so one
+/// table answers everything mechanical about a recipe.
+fn suffix(kind: ArtifactKind) -> Option<&'static str> {
+    match kind {
+        ArtifactKind::Controller => Some("Controller"),
+        ArtifactKind::Service => Some("Service"),
+        ArtifactKind::Repo => Some("Repository"),
+        ArtifactKind::Cli => Some("Cli"),
+        ArtifactKind::Job => Some("Job"),
+        ArtifactKind::DurableJob => Some("Job"),
+        ArtifactKind::HttpWorkflow => Some("Workflow"),
+        ArtifactKind::HttpSink => None,
+        ArtifactKind::Client => Some("Client"),
+        ArtifactKind::Fetcher => Some("Fetcher"),
+        ArtifactKind::Usecase => Some("UseCase"),
+        ArtifactKind::Query => Some("Query"),
+        ArtifactKind::Test => Some("Test"),
+        ArtifactKind::IntegrationTest => Some("IT"),
+
+        // Exhaustive, deliberately. This match ended in `_ => None` for a long
+        // time, and `pending.md` §6.4 is the entry about what that cost: a kind
+        // added to the enum got no suffix and nothing said so, and
+        // `recorded_name` and `strip_redundant_suffix` -- which both read this
+        // -- inherited the silence. A kind whose name is not normalised is a
+        // kind whose `destroy` rebuilds different paths from the ones
+        // `generate` wrote.
+        //
+        // So the kinds that genuinely add nothing are listed. Adding a variant
+        // to `ArtifactKind` now fails to compile until somebody decides which
+        // half it is in, which is the whole point.
+        ArtifactKind::Scaffold
+        | ArtifactKind::Class
+        | ArtifactKind::Interface
+        | ArtifactKind::Record
+        | ArtifactKind::Field
+        | ArtifactKind::Factory
+        | ArtifactKind::Value
+        | ArtifactKind::Enum
+        | ArtifactKind::Sealed
+        | ArtifactKind::Strategy
+        | ArtifactKind::Migration
+        | ArtifactKind::Handler
+        | ArtifactKind::Command
+        | ArtifactKind::Cases
+        | ArtifactKind::Association
+        | ArtifactKind::Idempotency
+        | ArtifactKind::Auth
+        | ArtifactKind::Webhook
+        | ArtifactKind::Search
+        | ArtifactKind::Dto
+        | ArtifactKind::Transition
+        | ArtifactKind::Event => None,
+    }
+}
+
+/// The name a recipe is **recorded** under, which is not always the name the
+/// caller typed.
+///
+/// `generate` normalises before it writes -- capitalised, and with a suffix the
+/// kind already implies removed -- and records the files it wrote under the
+/// result. `app apply` records the manifest's *spec* onto the same row, so it
+/// has to normalise identically or the two writers key one entity two ways.
+///
+/// That is exactly what `fetcher AcquirerFetcher` was: a row named `Acquirer`
+/// holding four files and no spec, beside a row named `AcquirerFetcher` holding
+/// a spec and no files. `doctor` then reported the empty half as an entity with
+/// "0 file(s) ... and no recorded owner" and offered an adopt command for
+/// nothing.
+///
+/// `cases` and `migration` are addressed by a path rather than by a class, so
+/// they pass through untouched -- the exemption `generate` already makes by
+/// returning before it normalises.
+pub fn recorded_name(kind: ArtifactKind, name: &str) -> String {
+    if matches!(kind, ArtifactKind::Cases | ArtifactKind::Migration) {
+        return name.to_string();
+    }
+    strip_redundant_suffix(kind, &jails_spec::spec::field::capitalize(name))
+}
+
+/// Drop the suffix a kind is about to add, when the name already carries it.
+///
+/// `jails g service RewardHistoryService` should write
+/// `RewardHistoryService.java`, not `RewardHistoryServiceService.java`. Naming
+/// the type the way it will appear in the source is the obvious thing to type
+/// -- it is what the file is called, and what every other reference to it says
+/// -- and jails punished it with a rename.
+///
+/// Only a *whole* trailing suffix counts, and never the entire name:
+/// `g service Service` means a type called `Service`, and stripping it would
+/// leave nothing to name the file after. `g repo Rewards` keeps its `s`,
+/// because `Repository` is matched and `y` is not.
+///
+/// **This has to run in `destroy` too.** `destroy` rebuilds the paths that
+/// `generate` wrote, so a normalisation applied to one and not the other
+/// leaves files behind that the tool then claims to have deleted.
+///
+/// (These two doc comments had run together into one: the block above lost its
+/// function when `recorded_name` was inserted between them.)
+pub fn strip_redundant_suffix(kind: ArtifactKind, name: &str) -> String {
+    match kind_suffix(kind) {
+        Some(suffix) => match name.strip_suffix(suffix) {
+            Some(stem) if !stem.is_empty() => stem.to_string(),
+            _ => name.to_string(),
+        },
+        None => name.to_string(),
     }
 }
 

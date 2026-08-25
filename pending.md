@@ -597,7 +597,7 @@ duplicate refusals.
 of the one parser in step, because a token accepted at the edge and refused
 mid-transition is the failure that guard exists for.
 
-### 6.4 One table per kind — **the holes are closed; the tables are still seven**
+### 6.4 One table per kind — **done 2026-08-25**
 
 `ArtifactKind` has seven independently maintained tables keyed on it across five
 crates: the enum and clap aliases; `metadata()`/`argument_shape()`;
@@ -631,15 +631,43 @@ The `unreachable!` arms stay, and deliberately: they are the only thing trusting
 the guard, and turning them into a `_` would let a new kind reach the persistent
 renderer unclassified.
 
-**Still open: the tables themselves.** One `RecipeFacts` value returned by a
-single exhaustive match, carrying label, aliases, suffix, layer, lifecycle,
-argument shape and rationale. `artifacts_for` stays a `match` — its arms are
-*logic*, not data, and `recipes.rs`'s doc comment argues that correctly.
-`Capability` has the same shape across four crates.
+**The tables are one, 2026-08-25 — and the count was wrong.** Re-measured, the
+seven were not seven things of one kind. Four of them are not tables that could
+be merged, and merging them would have *created* second copies:
 
-Keep `SCENARIOS` separate. It is a test corpus, and
-`every_kind_and_capability_has_a_golden_scenario` already fails when it falls
-behind, which is the right relationship.
+| | why it is not a row in `RecipeFacts` |
+|---|---|
+| the enum and clap aliases | clap's `ValueEnum` is the owner. A `label` field would be a hand-written copy of the name clap parses, which is the drift this item is about |
+| `artifacts_for` | logic, not data — `recipes.rs`'s doc comment argues that correctly |
+| `explain()` | prose with nowhere to derive it from, held to `why.rs`'s shape by `every_kind_has_an_explanation` |
+| `SCENARIOS` | a test corpus, and `every_kind_and_capability_has_a_golden_scenario` already fails when it falls behind — the right relationship |
+
+That leaves `metadata()` and `kind_suffix()`, and they are one now.
+`RecipeMetadata` carries `suffix`, so one function in
+`jails-protocol/src/vocabulary/recipe.rs` answers everything mechanical about a
+recipe: lifecycle class, `--on`/`--yields` arity, argument shape, `--method`,
+and the suffix. It keeps its shape of one arm list per *question* — a single
+combined list would be unreadable at exactly the point a new kind is added —
+but there is one place to edit.
+
+`recorded_name` and `strip_redundant_suffix` moved with it, out of
+`jails-generate`. That is a layering fix as much as a table one: they are
+**identity** rules — `recorded_name` decides the name a ledger row carries —
+and `jails-engine` was reaching down into the generators for one. Both are
+re-exported from `generate.rs`, so every generator keeps its spelling.
+
+**`Capability::label()` was a real second copy and is pinned rather than
+deleted.** It returns `&'static str` without leaking, which the `ValueEnum`
+route cannot (`recipe_label` leaks a `String` per call), so the match stays and
+`every_capability_label_is_the_word_clap_parses` fails the build the moment it
+separates from clap — plus the same pin for `HttpMethod`, whose label reaches a
+generated annotation, and a round-trip for every `ArtifactKind`. `jails-spec`'s
+`kind.rs` had no test module at all before this.
+
+`Capability`'s other three appearances are the ones the table above excuses:
+the clap enum, `add::plan_for`'s dispatch (logic), and
+`capability_class`/`prerequisites` (already in `jails-protocol`, beside
+`metadata`).
 
 ### 6.5 The empty-string sentinel — **closed 2026-08-25**
 
@@ -1393,7 +1421,9 @@ Each PR leaves `cargo build --workspace && cargo test --workspace` green.
    pinning test could not see: `amount:Currency` meant the built-in to one
    parser and a project enum to the other, and `g field X ref:SomeOwnedType`
    did not work at all.
-5. **One table per kind** (§6.4). **Next.**
+5. ~~**One table per kind**~~ (§6.4) — **done 2026-08-25.** Four of the seven
+   were never mergeable tables; the two that were are one, and the third real
+   copy (`Capability::label`) is pinned to clap by a test.
 6. **One transaction protocol** (§5, §7.7) — `new --app` becomes an ordinary V2
    transition and the remaining `apply::` calls move behind the executor. §4's
    gate reaches its target, honestly this time. It is at **46**, down from the

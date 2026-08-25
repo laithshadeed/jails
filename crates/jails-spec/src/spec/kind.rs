@@ -357,3 +357,71 @@ pub enum ArtifactKind {
     #[value(name = "integration-test", alias = "it")]
     IntegrationTest,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A hand-written label is a second copy of clap's canonical name, and a
+    /// second copy drifts. `pending.md` §6.4.
+    ///
+    /// The label is what `jails.toml` stores and what a refusal prints, so a
+    /// capability spelled one way by clap and another by `label()` would be
+    /// recorded under a name `jails sync` cannot resolve back. Routing the
+    /// function through `ValueEnum` at run time is what `recipe_label` does,
+    /// but that one leaks a `String` per call; keeping the match and pinning it
+    /// costs nothing and fails the build the moment they separate.
+    #[test]
+    fn every_capability_label_is_the_word_clap_parses() {
+        for capability in Capability::value_variants() {
+            let clap = capability
+                .to_possible_value()
+                .expect("every Capability has a clap value");
+            assert_eq!(
+                capability.label(),
+                clap.get_name(),
+                "{capability:?}: `label()` and clap disagree"
+            );
+            assert_eq!(
+                Capability::from_str(capability.label(), false).as_ref(),
+                Ok(capability),
+                "{capability:?}: its own label does not parse back"
+            );
+        }
+    }
+
+    /// The same pin for the verb, which reaches a generated annotation.
+    #[test]
+    fn every_http_method_label_is_the_word_clap_parses() {
+        for method in HttpMethod::value_variants() {
+            assert_eq!(
+                method.label(),
+                method
+                    .to_possible_value()
+                    .expect("every HttpMethod has a clap value")
+                    .get_name()
+            );
+        }
+    }
+
+    /// Every kind clap accepts is one the recipe table classifies.
+    ///
+    /// `ArtifactKind` has no `label()` of its own -- it goes through clap
+    /// already -- so what is worth pinning here is that the two vocabularies
+    /// have the same members.
+    #[test]
+    fn every_artifact_kind_round_trips_through_its_clap_name() {
+        for kind in ArtifactKind::value_variants() {
+            let name = kind
+                .to_possible_value()
+                .expect("every ArtifactKind has a clap value")
+                .get_name()
+                .to_string();
+            assert_eq!(
+                ArtifactKind::from_str(&name, false).as_ref(),
+                Ok(kind),
+                "`{name}` is printed in refusals, so it has to parse back"
+            );
+        }
+    }
+}
