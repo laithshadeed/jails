@@ -391,13 +391,19 @@ fn every_kind_and_capability_has_a_golden_scenario() {
         );
     }
 
-    let cli_tests =
-        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cli.rs")).unwrap();
+    // Every subject, not one file: `tests/cli.rs` became `tests/cli/` and a
+    // reader of one file would have reported the exemption broken the moment
+    // its test moved next door.
+    let cli = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cli");
+    let cli_tests: String = fs::read_dir(&cli)
+        .unwrap_or_else(|error| panic!("{} is unreadable: {error}", cli.display()))
+        .map(|entry| fs::read_to_string(entry.unwrap().path()).unwrap())
+        .collect();
     for (name, test) in COVERED_ELSEWHERE {
         assert!(
             cli_tests.contains(test),
-            "`{name}` is exempt from the golden suite because `{test}*` in tests/cli.rs covers \
-             it, but no such test exists any more"
+            "`{name}` is exempt from the golden suite because `{test}*` under tests/cli/ \
+             covers it, but no such test exists any more"
         );
     }
 }

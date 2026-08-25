@@ -1003,22 +1003,50 @@ place: a name is not an identity. Four gates now name their file by path
 Still open from this item: the largest module is `projection.rs` at 662, and it
 is the honest answer to the next rise there rather than another ceiling.
 
-### 8.2 Test files
+### 8.2 Test files — **done 2026-08-25**
 
 ```
-  8,142  tests/cli.rs          175 #[test]
-  3,581  tests/engine.rs
+  8,142  tests/cli.rs          175 #[test]      3,581  tests/engine.rs
   1,816  tests/architecture.rs
 ```
 
-Split into submodules of **one binary** — `tests/cli/{new,generate,capabilities,app,tooling}.rs`
-— not into new binaries. Each extra integration-test binary is a full link of
-the workspace and there are already nine.
+Both split into submodules of **one binary**, not into new binaries: each extra
+integration-test target is a full link of the workspace and there are already
+nine.
 
-`tests/architecture.rs` should split the same way for a stronger reason: it
-mixes the ratchet board, the architecture rules, a small Rust blanking parser,
-the crate-layer table, and that parser's own unit tests. Four files under
-`tests/architecture/`, one binary.
+```
+tests/architecture/  main 46  board 777  rules 506  measure 908
+tests/cli/           main 920  generate 2,146  capabilities 1,853
+                     tooling 1,227  app 793  new 650  reports 602
+```
+
+`architecture` split along the seam the item named — the ratchet board, the
+rules, the measurement (with the Rust blanking parser and its own unit tests).
+`cli` split by **subject** rather than by tier, because which tier a test is in
+is already visible in whether it calls `common::skip`, while what a test is
+*about* was visible nowhere. `reports` is a sixth subject the item did not
+predict: the read-only commands (`about`, `routes`, `beans`, `doctor`, `why`,
+`notes`, `stats`, `src`, `lint`, `rename`, `completion`) are a third of the file
+and share a shape — a fixture on disk, one assertion on stdout, nothing started.
+
+Three things a mechanical split had to get right, and the first two cost a
+restart each:
+
+- **A brace-matching splitter must blank strings first.** Ending a test at the
+  next line that is exactly `}` cuts a Java-heavy test mid-literal, which is the
+  same trap §8.3 records for `generate.rs`. The splitter blanks comments and
+  string literals — including `r#"…"#` — to spaces of the same length and counts
+  braces in the blanked copy, then slices the original.
+- **`tests/<name>.rs` is a crate root, so `mod board;` resolves to
+  `tests/board.rs`.** The fix is `git mv` to `tests/<name>/main.rs`, which cargo
+  discovers as the same target. `tests/common/` stays where it is, shared with
+  the other eight binaries, and each new root reaches it through
+  `#[path = "../common/mod.rs"]`.
+- **A reader of one file reports the world ended when that file moves.**
+  `golden.rs`'s `COVERED_ELSEWHERE` check read `tests/cli.rs` to prove the
+  exemption still had a test behind it; it now reads every file under
+  `tests/cli/`. `include_str!` is relative to the file, so every manifest path
+  gained a `../`.
 
 ### 8.3 The colocated-test convention has two exceptions
 

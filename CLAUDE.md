@@ -45,9 +45,9 @@ what is still outstanding, re-measured rather than transcribed.
 
 Thirteen crates, lowest first. A crate may only depend on one below it, and
 Cargo enforces that; `no_module_depends_on_a_layer_above_its_own` in
-`tests/architecture.rs` enforces the same rule for module-level edges the
+`tests/architecture/` enforces the same rule for module-level edges the
 compiler cannot see, and assigns every module its crate. **That table
-(`LAYERS`, `tests/architecture.rs:785`) is the authority on which crate a
+(`LAYERS`, `tests/architecture/rules.rs`) is the authority on which crate a
 module belongs to** — this one is the prose, and prose is what goes stale.
 
 | crate | what belongs in it |
@@ -97,7 +97,7 @@ Four things to know before touching it:
   `tests/`, `tests/golden/` and `tests/fixtures/` where they are, so the 24
   golden trees were not rewritten for a move that changes no bytes.
 - **Every scanner has to walk `crates/*/src`, not `src/`.**
-  `tests/architecture.rs` and `tests/genericity.rs` both do, and both assert a
+  `tests/architecture/` and `tests/genericity.rs` both do, and both assert a
   minimum file count, because a scanner that has lost the code reports exactly
   the same clean result as one that read it all. Path-matching scanners must
   also accept any visibility: the split turned `pub(crate) struct` into `pub
@@ -167,7 +167,7 @@ Four things to know before touching it:
   and is passed in rendered. A template under ~15 lines stays inline, since a
   file for four lines is indirection with nothing to show for it.
 - `crates/jails-support/src/apply/` — **the only module that writes.** `fs::write` appears nowhere
-  else, and `tests/architecture.rs` fails when it does. Four verbs, and the
+  else, and `tests/architecture/` fails when it does. Four verbs, and the
   distinction between them is *what the caller believes is already there*:
   `create` (must not exist — the refusal `g scaffold` and `g record` are built
   on), `replace` (jails owns this file and is rewriting its own output),
@@ -272,7 +272,7 @@ Four things to know before touching it:
   … `# /jails:<marker>`, which is how jails edits a file the reader owns and
   what makes `remove` the exact inverse of `add`. It had five owners
   (`compose.rs`, `add.rs`, `add/database.rs`, `add/test_wiring.rs`,
-  `doctor.rs`) each with its own `format!`; `tests/architecture.rs` now fails
+  `doctor.rs`) each with its own `format!`; `tests/architecture/` now fails
   on a `# jails:` literal outside this module, so a sixth cannot appear
   quietly. It no longer wraps a capability's `application.properties` settings
   — see the per-key rule in the gotchas below. `Marked::indented` exists because a marker at column zero inside a
@@ -413,7 +413,7 @@ Four things to know before touching it:
   `format!` strings with doubled braces were extracted to
   `templates/spring/*.java` in one mechanical pass, verified byte-for-byte by
   the golden suite: the file went 6,624 → 5,517 lines and 4,596 lines became
-  real Java an editor can check. `tests/architecture.rs` holds that at zero.
+  real Java an editor can check. `tests/architecture/` holds that at zero.
 
   **It is no longer the biggest file here.** `plan.md` §6.5's split landed:
   `crates/jails-generate/src/spring/workflow.rs` (usecase + its outbox half, transition, query),
@@ -432,7 +432,7 @@ Four things to know before touching it:
 
   The largest module is now `crates/jails-generate/src/generate.rs`, which `abstract.md` §3.2 calls
   Ousterhout's named anti-pattern verbatim — parse → dispatch → write → side
-  effects. `tests/architecture.rs` has a gate on the largest module precisely
+  effects. `tests/architecture/` has a gate on the largest module precisely
   so a split cannot be satisfied by *moving* a monolith.
 
   **Placement is a value, not six strings: `spring::Slice`.** Every generator
@@ -443,7 +443,7 @@ Four things to know before touching it:
   be restated at every call site as `place(layout::WEB)` versus
   `subpackage(&base, config.layer(layout::DOMAIN))`. Sixteen functions took
   eight to twelve positional parameters because of it; **no function in this
-  file now takes more than five**, and `tests/architecture.rs` fails if one
+  file now takes more than five**, and `tests/architecture/` fails if one
   does. `Target`, `Defaults`, `Emission`, `Update` and `Projection` are the
   other parameter objects that fell out — each one a group of values that is
   computed together and consumed together.
@@ -528,9 +528,17 @@ Four things to know before touching it:
 - `crates/jails-drive/src/rename.rs` — `rename`. Textual by design (see its module docs for
   when to prefer jdt.ls `grn`): whole identifiers only, string literals left
   alone and the skipped count reported.
-- `tests/common/mod.rs` + `tests/cli.rs` — integration tests against the
-  real compiled binary (`CARGO_BIN_EXE_jails`).
-- `tests/architecture.rs` — **the `abstract.md` §7 ladder, as ratchets.**
+- `tests/common/mod.rs` + `tests/cli/` — integration tests against the
+  real compiled binary (`CARGO_BIN_EXE_jails`). **One binary, six subjects**:
+  `main.rs` holds the shared fixtures and `new`, `generate`, `capabilities`,
+  `app`, `tooling` and `reports` are ordinary submodules of it, each reaching
+  the fixtures through `use super::*`. It was one 8,142-line file; the split is
+  by *subject* rather than by tier, because which tier a test is in is already
+  visible in whether it calls `common::skip`. A `tests/<name>.rs` is a crate
+  root, so a split has to move it to `tests/<name>/main.rs` (cargo finds the
+  same target) and reach the shared helpers through
+  `#[path = "../common/mod.rs"] mod common;`.
+- `tests/architecture/` — **the `abstract.md` §7 ladder, as ratchets.**
   Eleven gates, each a number measured over *production* Rust (comments,
   string literals and `#[cfg(test)]` modules are blanked first, the same trick
   `java.rs` uses). It fails when a number **rises above** its recorded ceiling
@@ -541,6 +549,13 @@ Four things to know before touching it:
   once per rise and only with the reason recorded beside it in the file.
   This exists because `abstract.md` §8.1 measured `root: &Path` rising 21%
   across four commits with nothing to say so; prose did not move it.
+  Four modules, one binary: `board.rs` is the ceilings, `rules.rs` the
+  architecture properties and the `LAYERS` table, `measure.rs` the Rust
+  blanking parser and every counting function (with its own unit tests
+  colocated), `main.rs` only the crate docs. Gates name their file by **path**
+  (`SPRING_RS`, `CODEMOD_RS`, `DOCTOR_RS`, `SCRATCH_RS`), not by basename —
+  creating `src/new/spring.rs` once dragged two of `jails-generate/src/spring.rs`'s
+  rows red for a file neither is about.
 - **`g idempotency` is the retained-result primitive**, and the distinction it
   turns on is easy to lose: a `@unique` column already gives one row per key.
   What it withholds is the *result*, so a retry finds the row, fails the insert
@@ -875,7 +890,7 @@ jails knows nothing about.
   for as long as nothing ran Maven against it; the moment
   `ledger_cli_manifest_builds_without_spring` did, every goal failed with
   `'modelVersion' is missing`. There was also a *second*
-  `write_plain_fixture` in `tests/cli.rs` shadowing the shared one, whose
+  `write_plain_fixture` in `tests/cli/` shadowing the shared one, whose
   doc comment said "Still never handed to Maven" — deleted.
 - **`sql::table_name` is the only pluraliser, and `web::resource_path`
   delegates to it.** A second one does not stay in step: the framework-free
@@ -1011,7 +1026,7 @@ jails knows nothing about.
   static completion list.
 - **This machine's `mvnd` daemon is flaky under JDK 26** (native-library
   extraction bug, unrelated to jails). `run.rs` still prefers `mvnd` for
-  real usage (per spec), but the two real-compile tests in `tests/cli.rs`
+  real usage (per spec), but the two real-compile tests under `tests/cli/`
   pin to plain `mvn` — see `real_path_without_mvnd()` in
   `tests/common/mod.rs`. Don't "fix" those tests back to the default PATH;
   they'll flake.
@@ -1174,7 +1189,7 @@ HTTP and calling it are separate concerns.
 
 `jails_support::scratch::ScratchDir` is the only thing that creates one, and
 `production_scratch_directories_are_exclusively_created` in
-`tests/architecture.rs` fails on an `env::temp_dir()` anywhere in production.
+`tests/architecture/` fails on an `env::temp_dir()` anywhere in production.
 
 The pattern it replaces was `env::temp_dir().join(pid + timestamp)` followed by
 `create_dir_all`, which is not exclusive in **either** half: two callers can

@@ -297,7 +297,7 @@ pub const SCENARIOS: &[Scenario] = &[
     // as a best-effort last step, and whether that succeeds depends on the
     // JDK this machine has. A golden target has to be hermetic, and a
     // scenario whose output depends on the toolchain is not a snapshot of
-    // jails. `add_format_*` in tests/cli.rs covers it instead.
+    // jails. `add_format_*` under tests/cli/ covers it instead.
     // ---- capabilities that need Spring ----
     Scenario {
         name: "cap-db",
