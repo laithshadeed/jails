@@ -695,6 +695,82 @@ fn generate_field_updates_unchanged_derivatives_preserves_edits_and_adds_a_migra
 }
 
 #[test]
+fn resource_field_commands_use_the_risk_specific_cli_contracts() {
+    let root = temp_dir("resource-field-commands");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    let generated = jails_cmd(&root, None)
+        .args([
+            "g",
+            "record",
+            "Task",
+            "title:string!",
+            "priority:int",
+            "description:string",
+            "legacyCode:string?",
+        ])
+        .output()
+        .unwrap();
+    assert!(generated.status.success(), "{generated:?}");
+
+    for args in [
+        vec![
+            "resource",
+            "field",
+            "rename",
+            "Task",
+            "title",
+            "headline",
+            "--column",
+            "single-cutover",
+        ],
+        vec![
+            "resource",
+            "field",
+            "type",
+            "Task",
+            "priority",
+            "--to",
+            "long",
+            "--strategy",
+            "safe",
+        ],
+        vec![
+            "resource",
+            "field",
+            "nullability",
+            "Task",
+            "description",
+            "--nullable",
+        ],
+        vec![
+            "resource",
+            "field",
+            "drop",
+            "Task",
+            "legacyCode",
+            "--confirm-column",
+            "legacy_code",
+        ],
+    ] {
+        let output = jails_cmd(&root, None).args(args).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let record =
+        fs::read_to_string(root.join("src/main/java/com/example/demo/domain/Task.java")).unwrap();
+    assert!(record.contains("String headline"), "{record}");
+    assert!(record.contains("long priority"), "{record}");
+    assert!(record.contains("Optional<String> description"), "{record}");
+    assert!(!record.contains("legacyCode"), "{record}");
+}
+
+#[test]
 fn scaffold_refuses_to_silently_flatten_a_project_record_component() {
     let root = temp_dir("scaffold-project-record");
     write_spring_fixture(&root);

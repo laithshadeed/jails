@@ -46,6 +46,10 @@ resource status	jails-report	read-only	lifecycle_status::status
 resource revive	jails-engine	project-mutation	route::revive
 resource field	jails	dispatch-only	main command dispatch
 resource field add	jails-engine	project-mutation	route::add_field
+resource field rename	jails-engine	project-mutation	route::rename_field
+resource field type	jails-engine	project-mutation	route::change_field_type
+resource field nullability	jails-engine	project-mutation	route::set_field_nullability
+resource field drop	jails-engine	project-mutation	route::drop_field
 test	jails-drive	external-process+conditional-project-mutation	run::test
 testd	jails-drive	machine-daemon+external-process	testd::testd
 build	jails-drive	external-process	run::build

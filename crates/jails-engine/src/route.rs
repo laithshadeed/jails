@@ -90,7 +90,9 @@ pub use artifact::{RequestedStorageRetirement, destroy, generate, recipe};
 pub use capability::{install, remove, sync};
 pub use declare::{add_dependency, set_property, undeclare};
 pub use feature::{install_fast_test, remove_fast_test};
-pub use field::{add_field, field};
+pub use field::{
+    add_field, change_field_type, drop_field, field, rename_field, set_field_nullability,
+};
 pub use lifecycle::revive;
 pub use maintenance::{adopt_layout, app_init, format, rename};
 pub use oneshot::{cases, migration};

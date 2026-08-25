@@ -119,6 +119,87 @@ pub(crate) enum ResourceFieldCommand {
         #[arg(long)]
         package: Option<String>,
     },
+    /// Rename a field with an explicit physical-column policy
+    Rename {
+        entity: String,
+        field: String,
+        new_name: String,
+        #[arg(long, value_enum)]
+        column: ColumnRenamePolicy,
+        #[arg(long)]
+        package: Option<String>,
+    },
+    /// Change a field's type through a checked strategy
+    Type {
+        entity: String,
+        field: String,
+        #[arg(long)]
+        to: String,
+        #[arg(long, value_enum)]
+        strategy: TypeChangeStrategy,
+        #[arg(long)]
+        package: Option<String>,
+    },
+    /// Change whether a field accepts null values
+    Nullability {
+        entity: String,
+        field: String,
+        #[arg(
+            long,
+            conflicts_with = "required",
+            required_unless_present = "required"
+        )]
+        nullable: bool,
+        #[arg(
+            long,
+            conflicts_with = "nullable",
+            required_unless_present = "nullable"
+        )]
+        required: bool,
+        #[arg(long)]
+        package: Option<String>,
+    },
+    /// Drop a field after confirming the exact physical column
+    Drop {
+        entity: String,
+        field: String,
+        #[arg(long)]
+        confirm_column: String,
+        #[arg(long)]
+        package: Option<String>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
+pub(crate) enum ColumnRenamePolicy {
+    Preserve,
+    SingleCutover,
+    Rolling,
+}
+
+impl From<ColumnRenamePolicy> for jails_protocol::request::ColumnRenamePolicy {
+    fn from(value: ColumnRenamePolicy) -> Self {
+        match value {
+            ColumnRenamePolicy::Preserve => Self::Preserve,
+            ColumnRenamePolicy::SingleCutover => Self::SingleCutover,
+            ColumnRenamePolicy::Rolling => Self::Rolling,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
+pub(crate) enum TypeChangeStrategy {
+    Safe,
+    ExpandContract,
+}
+
+impl From<TypeChangeStrategy> for jails_protocol::request::TypeChangeStrategy {
+    fn from(value: TypeChangeStrategy) -> Self {
+        match value {
+            TypeChangeStrategy::Safe => Self::Safe,
+            TypeChangeStrategy::ExpandContract => Self::ExpandContract,
+        }
+    }
 }
 
 /// Everything a mutation needs that is not the mutation.

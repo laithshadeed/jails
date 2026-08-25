@@ -1349,6 +1349,160 @@ fn a_field_evolves_the_record_and_migrates_the_table_for_it() {
     );
 }
 
+#[test]
+fn field_evolution_appends_rename_type_nullability_and_drop_migrations() {
+    let root = common::temp_dir("engine-field-evolution");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_spring_fixture(&root);
+    std::fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+
+    jails_engine::route::generate(
+        &committing(&Project::load(&root).unwrap()),
+        &jails_generate::generate::Recipe {
+            kind: jails_spec::spec::kind::ArtifactKind::Record,
+            name: "Task",
+            fields: &[
+                "id:uuid@pk".to_string(),
+                "title:string!".to_string(),
+                "priority:int".to_string(),
+                "description:string".to_string(),
+                "legacyCode:string?".to_string(),
+            ],
+            indexes: &[],
+            strategy_on: None,
+            strategy_yields: None,
+            method: None,
+        },
+        None,
+    )
+    .unwrap();
+
+    jails_engine::route::rename_field(
+        &committing(&Project::load(&root).unwrap()),
+        "Task",
+        "title",
+        "headline",
+        jails_protocol::request::ColumnRenamePolicy::SingleCutover,
+        None,
+    )
+    .unwrap();
+    jails_engine::route::change_field_type(
+        &committing(&Project::load(&root).unwrap()),
+        "Task",
+        "priority",
+        "long",
+        jails_protocol::request::TypeChangeStrategy::Safe,
+        None,
+    )
+    .unwrap();
+    jails_engine::route::set_field_nullability(
+        &committing(&Project::load(&root).unwrap()),
+        "Task",
+        "description",
+        true,
+        None,
+    )
+    .unwrap();
+    jails_engine::route::drop_field(
+        &committing(&Project::load(&root).unwrap()),
+        "Task",
+        "legacyCode",
+        "legacy_code",
+        None,
+    )
+    .unwrap();
+
+    let expected = [
+        (
+            "V001__rename_title_to_headline.sql",
+            "rename column title to headline",
+        ),
+        (
+            "V002__widen_priority_type.sql",
+            "alter column priority type bigint",
+        ),
+        (
+            "V003__make_description_nullable.sql",
+            "alter column description drop not null",
+        ),
+        ("V004__drop_legacy_code.sql", "drop column legacy_code"),
+    ];
+    for (file, ddl) in expected {
+        let migration =
+            std::fs::read_to_string(root.join("src/main/resources/db/migration").join(file))
+                .unwrap();
+        assert!(migration.contains(ddl), "{file}:\n{migration}");
+    }
+    let record =
+        std::fs::read_to_string(root.join("src/main/java/com/example/demo/domain/Task.java"))
+            .unwrap();
+    assert!(record.contains("String headline"), "{record}");
+    assert!(record.contains("long priority"), "{record}");
+    assert!(record.contains("Optional<String> description"), "{record}");
+    assert!(!record.contains("legacyCode"), "{record}");
+
+    let ledger = jails_commit::store::Store::at(&root)
+        .observe()
+        .unwrap()
+        .ledger
+        .unwrap();
+    let lifecycle = ledger
+        .lifecycles
+        .iter()
+        .find(|row| matches!(&row.entity, jails_protocol::entity::EntityId::Intent(id) if id.name.as_str() == "Task"))
+        .unwrap();
+    assert_eq!(
+        lifecycle
+            .migrations
+            .iter()
+            .map(|seal| seal.version.get())
+            .collect::<Vec<_>>(),
+        vec![1, 2, 3, 4]
+    );
+}
+
+#[test]
+fn unsafe_field_evolution_refuses_before_writing() {
+    let root = common::temp_dir("engine-field-evolution-refusal");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_spring_fixture(&root);
+    std::fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    jails_engine::route::generate(
+        &committing(&Project::load(&root).unwrap()),
+        &jails_generate::generate::Recipe {
+            kind: jails_spec::spec::kind::ArtifactKind::Record,
+            name: "Task",
+            fields: &["id:uuid@pk".to_string(), "priority:long".to_string()],
+            indexes: &[],
+            strategy_on: None,
+            strategy_yields: None,
+            method: None,
+        },
+        None,
+    )
+    .unwrap();
+    let record = root.join("src/main/java/com/example/demo/domain/Task.java");
+    let before = std::fs::read(&record).unwrap();
+
+    let error = jails_engine::route::change_field_type(
+        &committing(&Project::load(&root).unwrap()),
+        "Task",
+        "priority",
+        "int",
+        jails_protocol::request::TypeChangeStrategy::Safe,
+        None,
+    )
+    .unwrap_err();
+    assert!(error.contains("not a proven safe widening"), "{error}");
+    assert_eq!(std::fs::read(record).unwrap(), before);
+    assert_eq!(
+        std::fs::read_dir(root.join("src/main/resources/db/migration"))
+            .unwrap()
+            .count(),
+        0
+    );
+}
+
 /// A derivative the reader edited and the generator also changed is merged.
 ///
 /// §R5.3's fifth answer, and the one that needs to look at the text rather

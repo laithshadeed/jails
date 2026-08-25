@@ -284,6 +284,67 @@ fn main() -> std::process::ExitCode {
                 } => dispatch::mutate(invocation, false, |run| {
                     jails_engine::route::add_field(run, &entity, &field_spec, package.as_deref())
                 }),
+                ResourceFieldCommand::Rename {
+                    entity,
+                    field,
+                    new_name,
+                    column,
+                    package,
+                } => dispatch::mutate(invocation, false, |run| {
+                    jails_engine::route::rename_field(
+                        run,
+                        &entity,
+                        &field,
+                        &new_name,
+                        column.into(),
+                        package.as_deref(),
+                    )
+                }),
+                ResourceFieldCommand::Type {
+                    entity,
+                    field,
+                    to,
+                    strategy,
+                    package,
+                } => dispatch::mutate(invocation, false, |run| {
+                    jails_engine::route::change_field_type(
+                        run,
+                        &entity,
+                        &field,
+                        &to,
+                        strategy.into(),
+                        package.as_deref(),
+                    )
+                }),
+                ResourceFieldCommand::Nullability {
+                    entity,
+                    field,
+                    nullable,
+                    required: _,
+                    package,
+                } => dispatch::mutate(invocation, false, |run| {
+                    jails_engine::route::set_field_nullability(
+                        run,
+                        &entity,
+                        &field,
+                        nullable,
+                        package.as_deref(),
+                    )
+                }),
+                ResourceFieldCommand::Drop {
+                    entity,
+                    field,
+                    confirm_column,
+                    package,
+                } => dispatch::mutate(invocation, false, |run| {
+                    jails_engine::route::drop_field(
+                        run,
+                        &entity,
+                        &field,
+                        &confirm_column,
+                        package.as_deref(),
+                    )
+                }),
             },
         },
         Command::Start { services } => compose::start(&services, debug),
