@@ -180,6 +180,10 @@ pub fn commit(
     if change.is_no_op() {
         return Ok(CommitResult::NoOp);
     }
+    let operation_digest = jails_prepare::prepared_after::operations(change)
+        .map_err(|failure| CommitError::InvalidPrepared(failure.to_string()))?;
+    let prepared_after = jails_prepare::prepared_after::digest(&bundle.root, change)
+        .map_err(|failure| CommitError::InvalidPrepared(failure.to_string()))?;
 
     // Step 5. Stage everything, still with nothing live touched.
     let directory = locked.handle.store.transaction(&change.transaction_id);
@@ -265,7 +269,14 @@ pub fn commit(
     }
 
     // Step 11. From here nothing may return `CommitError`.
-    Ok(publish(locked, change, &directory, &active))
+    Ok(publish(
+        locked,
+        change,
+        operation_digest,
+        prepared_after,
+        &directory,
+        &active,
+    ))
 }
 
 /// Which side of the commit point a ledger failure fell on.
@@ -359,6 +370,8 @@ pub(crate) fn write_ledger(
 fn publish(
     locked: &LockedProject,
     change: &PreparedChange,
+    operation_digest: ObjectId,
+    prepared_after: ObjectId,
     directory: &Path,
     active: &JournalV1,
 ) -> CommitResult {
@@ -454,7 +467,7 @@ fn publish(
     }
 
     CommitResult::Committed(Box::new(CommittedResult {
-        receipt: applied_receipt(change),
+        receipt: applied_receipt(change, operation_digest, prepared_after),
         // Whether an effect ran is decided after the lock is released; a
         // commit that claimed an outcome here would be claiming one for an
         // attempt that has not happened.
@@ -482,10 +495,16 @@ fn effect_receipts(change: &PreparedChange) -> Result<Vec<EffectReceipt>> {
 ///
 /// Derived from the prepared operations and the kind, never a second durable
 /// authority — §R4.2 is explicit that `AppliedReceipt` is a report shape.
-fn applied_receipt(change: &PreparedChange) -> AppliedReceipt {
+fn applied_receipt(
+    change: &PreparedChange,
+    operation_digest: ObjectId,
+    prepared_after: ObjectId,
+) -> AppliedReceipt {
     AppliedReceipt {
         operation_id: change.operation_id,
         transaction_id: change.transaction_id,
+        operation_digest,
+        prepared_after,
         files: change
             .operations
             .iter()
@@ -887,6 +906,50 @@ mod tests {
         assert!(published.join("receipt.bin").exists());
         assert!(!locked.handle.store.transaction(&transaction).exists());
         ReceiptV1::read(&published).unwrap();
+        scratch.close().unwrap();
+    }
+
+    /// JDX-INV-001/JDX-OUT-003: preview and apply project one prepared value,
+    /// including the filtered directory sequence and both public digests.
+    #[test]
+    fn preview_and_receipt_agree_on_operations_and_prepared_after() {
+        let (scratch, locked) = project();
+        let bundle = bundle(
+            &locked,
+            change_of(
+                vec![create_op("src/main/java/App.java", b"class App {}\n")],
+                vec![b"class App {}\n"],
+                vec!["src", "src/main", "src/main/java"],
+            ),
+        );
+        let preview = jails_prepare::report::Report::of_bundle(&bundle).unwrap();
+        let operation_digest = jails_prepare::prepared_after::operations(&bundle.change).unwrap();
+        let prepared_after =
+            jails_prepare::prepared_after::digest(&bundle.root, &bundle.change).unwrap();
+        let receipt = applied_receipt(&bundle.change, operation_digest, prepared_after);
+
+        assert_eq!(preview.operation_digest, receipt.operation_digest);
+        assert_eq!(preview.prepared_after, Some(receipt.prepared_after));
+        let preview_operations: Vec<_> = preview
+            .operations
+            .iter()
+            .map(|operation| (operation.kind.label(), operation.path.as_str()))
+            .collect();
+        let receipt_operations: Vec<_> = receipt
+            .directories
+            .iter()
+            .map(|directory| ("create-directory", directory.path.as_str()))
+            .chain(receipt.files.iter().map(|file| {
+                let kind = match (file.before, file.after) {
+                    (FileImage::Absent, FileImage::Present { .. }) => "create",
+                    (FileImage::Present { .. }, FileImage::Present { .. }) => "replace",
+                    (FileImage::Present { .. }, FileImage::Absent) => "delete",
+                    (FileImage::Absent, FileImage::Absent) => unreachable!(),
+                };
+                (kind, file.path.as_str())
+            }))
+            .collect();
+        assert_eq!(preview_operations, receipt_operations);
         scratch.close().unwrap();
     }
 

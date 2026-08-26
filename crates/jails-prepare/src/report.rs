@@ -141,6 +141,11 @@ pub struct Warning {
 pub struct Report {
     pub operation: OperationId,
     pub transaction: TransactionId,
+    /// Digest of the ordered directory and file operation projection.
+    pub operation_digest: ObjectId,
+    /// Bound after-state identity. Direct unit projections without a canonical
+    /// root leave this null; engine-produced reports always carry it.
+    pub prepared_after: Option<ObjectId>,
     pub kind: PreparedKind,
     pub operations: Vec<ReportedOp>,
     pub ledger: ReportedLedger,
@@ -157,6 +162,8 @@ impl Report {
         Ok(Self {
             operation: change.operation_id,
             transaction: change.transaction_id,
+            operation_digest: crate::prepared_after::operations(change)?,
+            prepared_after: None,
             kind: change.kind.clone(),
             operations,
             ledger: ledger_of(change.ledger_before, change.ledger_after),
@@ -170,6 +177,14 @@ impl Report {
                 .collect(),
             warnings: Vec::new(),
         })
+    }
+
+    /// Project a runtime bundle, including the canonical-root-bound
+    /// prepared-after identity used by verification and portable plans.
+    pub fn of_bundle(bundle: &crate::pipeline::PreparedBundle) -> Result<Self> {
+        let mut report = Self::of(&bundle.change)?;
+        report.prepared_after = Some(crate::prepared_after::digest(&bundle.root, &bundle.change)?);
+        Ok(report)
     }
 
     /// Add a warning, keeping the canonical order §R3.4 specifies.

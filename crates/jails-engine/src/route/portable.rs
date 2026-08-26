@@ -28,8 +28,7 @@ struct PreparedPlanWire {
 pub(super) fn encode(bundle: &pipeline::PreparedBundle) -> Result<Vec<u8>> {
     let payload = bundle.change.portable_bytes()?;
     let root = root_digest(&bundle.root);
-    let prepared_after =
-        ObjectId::from_bytes(codec::domain_hash("JAILS-PREPARED-AFTER-1", &payload));
+    let prepared_after = jails_prepare::prepared_after::digest(&bundle.root, &bundle.change)?;
     let observed_generation = bundle
         .change
         .operation_identity
@@ -126,14 +125,6 @@ fn decode(bytes: &[u8], current_root: CanonicalRoot) -> Result<pipeline::Prepare
     }
     let payload = codec::unhex_bytes(&wire.prepared_change)?;
     let expected_after = ObjectId::parse_hex(&wire.prepared_after)?;
-    let actual_after = ObjectId::from_bytes(codec::domain_hash("JAILS-PREPARED-AFTER-1", &payload));
-    if expected_after != actual_after {
-        return Err(concat!(
-            "prepared plan payload digest does not match its bytes.\n       ",
-            "fix: discard the altered plan and export it again."
-        )
-        .into());
-    }
     let expected_plan = ObjectId::parse_hex(&wire.plan_digest)?;
     let actual_plan = plan_digest(
         expected_root,
@@ -151,6 +142,14 @@ fn decode(bytes: &[u8], current_root: CanonicalRoot) -> Result<pipeline::Prepare
         .into());
     }
     let change = jails_prepare::prepare::PreparedChange::from_portable_bytes(&payload)?;
+    let actual_after = jails_prepare::prepared_after::digest(&current_root, &change)?;
+    if expected_after != actual_after {
+        return Err(concat!(
+            "prepared plan after-state digest does not match its transaction.\n       ",
+            "fix: discard the altered plan and export it again."
+        )
+        .into());
+    }
     if change
         .operation_identity
         .proposed_generation

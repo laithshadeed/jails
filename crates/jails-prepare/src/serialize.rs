@@ -115,12 +115,12 @@ fn report(value: &CommandReport) -> String {
 fn prepared(value: &Report) -> String {
     let mut out = String::from("{");
     field(&mut out, "schema", &quoted(REPORT_SCHEMA), true);
-    prepared_fields(&mut out, value, false);
+    prepared_fields(&mut out, value, false, false);
     out.push('}');
     out
 }
 
-fn prepared_fields(out: &mut String, value: &Report, first: bool) {
+fn prepared_fields(out: &mut String, value: &Report, first: bool, v2_identities: bool) {
     field(out, "operation", &quoted(&value.operation.to_hex()), first);
     field(
         out,
@@ -128,6 +128,22 @@ fn prepared_fields(out: &mut String, value: &Report, first: bool) {
         &quoted(&value.transaction.to_hex()),
         false,
     );
+    if v2_identities {
+        field(
+            out,
+            "operation_digest",
+            &quoted(&format!("sha256:{}", value.operation_digest.to_hex())),
+            false,
+        );
+        field(
+            out,
+            "prepared_after",
+            &option(value.prepared_after.as_ref(), |id| {
+                quoted(&format!("sha256:{}", id.to_hex()))
+            }),
+            false,
+        );
+    }
     field(out, "kind", &kind(&value.kind), false);
     field(
         out,
@@ -463,20 +479,40 @@ fn recoverable_effect(value: &crate::recovery::RecoverableEffect) -> String {
 
 fn receipt(value: &AppliedReceipt) -> String {
     let mut out = String::from("{");
+    receipt_fields(&mut out, value, true, false);
+    out.push('}');
+    out
+}
+
+fn receipt_fields(out: &mut String, value: &AppliedReceipt, first: bool, v2_identities: bool) {
     field(
-        &mut out,
+        out,
         "operation_id",
         &quoted(&value.operation_id.to_hex()),
-        true,
+        first,
     );
     field(
-        &mut out,
+        out,
         "transaction_id",
         &quoted(&value.transaction_id.to_hex()),
         false,
     );
+    if v2_identities {
+        field(
+            out,
+            "operation_digest",
+            &quoted(&format!("sha256:{}", value.operation_digest.to_hex())),
+            false,
+        );
+        field(
+            out,
+            "prepared_after",
+            &quoted(&format!("sha256:{}", value.prepared_after.to_hex())),
+            false,
+        );
+    }
     field(
-        &mut out,
+        out,
         "files",
         &array(&value.files, |file| {
             let mut out = String::from("{");
@@ -495,23 +531,18 @@ fn receipt(value: &AppliedReceipt) -> String {
         false,
     );
     field(
-        &mut out,
+        out,
         "directories",
         &array(&value.directories, |directory| {
             format!("{{\"path\":{}}}", quoted(directory.path.as_str()))
         }),
         false,
     );
+    field(out, "ledger_before", &image(&value.ledger_before), false);
+    field(out, "ledger_after", &image(&value.ledger_after), false);
+    field(out, "outcome", &quoted(value.outcome.label()), false);
     field(
-        &mut out,
-        "ledger_before",
-        &image(&value.ledger_before),
-        false,
-    );
-    field(&mut out, "ledger_after", &image(&value.ledger_after), false);
-    field(&mut out, "outcome", &quoted(value.outcome.label()), false);
-    field(
-        &mut out,
+        out,
         "post_commit",
         &array(&value.post_commit, |effect| {
             let mut out = String::from("{");
@@ -523,8 +554,6 @@ fn receipt(value: &AppliedReceipt) -> String {
         }),
         false,
     );
-    out.push('}');
-    out
 }
 
 fn error(value: &ErrorReport) -> String {

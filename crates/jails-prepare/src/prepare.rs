@@ -509,9 +509,10 @@ impl PreparedChange {
             ));
         }
 
-        // One operation per target. Two would make the order decide the
-        // result, and the order is not part of the identity.
+        // One canonical operation per target. Strict path order makes the
+        // transaction codec independent of map iteration at its producers.
         let mut targets = BTreeSet::new();
+        let mut prior_target: Option<&ProjectPath> = None;
         for operation in &self.operations {
             if !targets.insert(operation.target().clone()) {
                 return Err(format!(
@@ -520,6 +521,40 @@ impl PreparedChange {
                 )
                 .into());
             }
+            if prior_target.is_some_and(|prior| prior >= operation.target()) {
+                return Err(concat!(
+                    "file operations are not in strict project-path order.\n       ",
+                    "fix: sort prepared file operations by project path before sealing the plan."
+                )
+                .into());
+            }
+            prior_target = Some(operation.target());
+        }
+
+        let mut directory_targets = BTreeSet::new();
+        let mut prior_directory: Option<&ProjectPath> = None;
+        for directory in &self.directories {
+            let path = directory.path();
+            if !directory_targets.insert(path.clone()) {
+                return Err(format!(
+                    "{path} carries two directory operations.\n       fix: emit each absent parent exactly once."
+                )
+                .into());
+            }
+            if prior_directory.is_some_and(|prior| prior >= path) {
+                return Err(concat!(
+                    "directory operations are not in strict project-path order.\n       ",
+                    "fix: sort prepared directory operations by project path before sealing the plan."
+                )
+                .into());
+            }
+            if targets.contains(path) {
+                return Err(format!(
+                    "{path} is both a directory and file operation.\n       fix: refuse the path-kind collision before preparing either operation."
+                )
+                .into());
+            }
+            prior_directory = Some(path);
         }
 
         // Every byte that will be written is present. §R3.1: no lazy body.

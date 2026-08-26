@@ -14,6 +14,7 @@ pub(crate) mod merge;
 pub mod operation;
 pub mod pipeline;
 pub mod prepare;
+pub mod prepared_after;
 pub mod receipt;
 pub mod reconcile;
 pub mod recovery;

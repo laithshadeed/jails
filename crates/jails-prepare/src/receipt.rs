@@ -14,7 +14,7 @@
 use crate::Result;
 use jails_protocol::conflict::FileImage;
 use jails_protocol::effect::{EffectId, EffectState, PostCommitEffect};
-use jails_protocol::identity::{OperationId, ProjectPath, TransactionId};
+use jails_protocol::identity::{ObjectId, OperationId, ProjectPath, TransactionId};
 use jails_protocol::resource::ResourceOwner;
 use std::collections::BTreeSet;
 
@@ -66,6 +66,8 @@ pub struct EffectReceipt {
 pub struct AppliedReceipt {
     pub operation_id: OperationId,
     pub transaction_id: TransactionId,
+    pub operation_digest: ObjectId,
+    pub prepared_after: ObjectId,
     pub files: Vec<FileReceipt>,
     pub directories: Vec<DirectoryReceipt>,
     pub ledger_before: FileImage,
@@ -89,6 +91,23 @@ impl AppliedReceipt {
                     "{} records the same image before and after; a receipt records what \
                      changed",
                     file.path
+                )
+                .into());
+            }
+        }
+        let mut directories = BTreeSet::new();
+        for directory in &self.directories {
+            if !directories.insert(&directory.path) {
+                return Err(format!(
+                    "{} appears twice in one directory receipt.\n       fix: publish each created directory exactly once.",
+                    directory.path
+                )
+                .into());
+            }
+            if seen.contains(&directory.path) {
+                return Err(format!(
+                    "{} is both a directory and file receipt.\n       fix: refuse the path-kind collision before commit.",
+                    directory.path
                 )
                 .into());
             }
@@ -127,6 +146,8 @@ mod tests {
         AppliedReceipt {
             operation_id: OperationId::from_bytes(sha256(b"op")),
             transaction_id: TransactionId::from_bytes(sha256(b"tx")),
+            operation_digest: ObjectId::from_bytes(sha256(b"ops")),
+            prepared_after: ObjectId::from_bytes(sha256(b"after")),
             files,
             directories: Vec::new(),
             ledger_before: FileImage::Absent,
@@ -158,6 +179,17 @@ mod tests {
         };
         let error = receipt(vec![row.clone(), row]).validate().unwrap_err();
         assert!(error.contains("appears twice"), "{error}");
+    }
+
+    #[test]
+    fn one_directory_twice_in_a_receipt_is_refused() {
+        let mut receipt = receipt(Vec::new());
+        let directory = DirectoryReceipt {
+            path: path("src/main/java"),
+        };
+        receipt.directories = vec![directory.clone(), directory];
+        let error = receipt.validate().unwrap_err();
+        assert!(error.contains("directory receipt"), "{error}");
     }
 
     /// A receipt records what changed. A row whose two images are equal is a

@@ -309,6 +309,18 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(value["schema"], "jails.command-result.v2", "{json}");
     assert_eq!(value["command"]["path"], serde_json::json!(["generate"]));
+    assert!(
+        value["report"]["data"]["operation_digest"]
+            .as_str()
+            .is_some_and(|digest| digest.starts_with("sha256:") && digest.len() == 71),
+        "{json}"
+    );
+    assert!(
+        value["report"]["data"]["prepared_after"]
+            .as_str()
+            .is_some_and(|digest| digest.starts_with("sha256:") && digest.len() == 71),
+        "{json}"
+    );
     assert!(value["report"]["data"]["diffs"].is_array(), "{json}");
     assert!(value["report"]["data"]["ast"].is_array(), "{json}");
     let timings = value["timings"].as_array().unwrap();
@@ -425,6 +437,14 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
     assert!(committed.status.success(), "{committed:?}");
     let committed = String::from_utf8(committed.stdout).unwrap();
     let committed_value: serde_json::Value = serde_json::from_str(&committed).unwrap();
+    for field in ["operation_digest", "prepared_after"] {
+        assert!(
+            committed_value["receipt"][field]
+                .as_str()
+                .is_some_and(|digest| digest.starts_with("sha256:") && digest.len() == 71),
+            "committed JSON omitted {field}: {committed}"
+        );
+    }
     assert!(
         committed_value["timings"]
             .as_array()

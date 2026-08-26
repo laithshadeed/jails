@@ -52,7 +52,7 @@ pub fn envelope_v2_with_review(
     field(
         &mut out,
         "receipt",
-        &option(envelope.receipt.as_ref(), receipt),
+        &option(envelope.receipt.as_ref(), receipt_v2),
         false,
     );
     field(
@@ -153,10 +153,17 @@ fn prepared_data(
     )>,
 ) -> String {
     let mut out = String::from("{");
-    prepared_fields(&mut out, value, true);
+    prepared_fields(&mut out, value, true, true);
     if let Some((review, selection)) = review {
         review_fields(&mut out, review, selection);
     }
+    out.push('}');
+    out
+}
+
+fn receipt_v2(value: &crate::receipt::AppliedReceipt) -> String {
+    let mut out = String::from("{");
+    receipt_fields(&mut out, value, true, true);
     out.push('}');
     out
 }

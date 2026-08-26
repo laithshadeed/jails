@@ -97,7 +97,7 @@ pub(super) fn commit_set(
     let request_fingerprint = asked.syntax_fingerprint()?;
     let bundle = prepare_set(run, set, declaration, Some(asked))?;
     if !run.write {
-        let report = jails_prepare::report::Report::of(&bundle.change)?;
+        let report = jails_prepare::report::Report::of_bundle(&bundle)?;
         return Ok(Outcome::Planned(Box::new(PreparedOutcome {
             report,
             bundle,

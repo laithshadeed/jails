@@ -324,6 +324,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-prepare", "operation", 6),
     ("jails-prepare", "pipeline", 6),
     ("jails-prepare", "prepare", 6),
+    ("jails-prepare", "prepared_after", 6),
     ("jails-prepare", "receipt", 6),
     ("jails-prepare", "merge", 6),
     ("jails-prepare", "reconcile", 6),
