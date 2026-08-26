@@ -305,6 +305,7 @@ fn describe(id: &EntityId) -> String {
         EntityId::Declared(crate::entity::DeclaredId::Property { path, key }) => {
             format!("`{key}` in {path}")
         }
+        EntityId::Application(id) => format!("application entity `sha256:{id}`"),
     }
 }
 

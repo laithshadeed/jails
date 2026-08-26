@@ -17,6 +17,7 @@
 //! its client from the same route list, and a command layer above the
 //! generators could not be reached from there.
 
+pub mod application_manifest;
 pub mod capability;
 pub mod capture;
 pub mod codemod;

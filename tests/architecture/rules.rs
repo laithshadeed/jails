@@ -285,6 +285,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-state", "compat", 4),
     ("jails-state", "listing", 4),
     // jails-project: the resolved project and everything jails records about it.
+    ("jails-project", "application_manifest", 5),
     ("jails-project", "gradle", 5),
     ("jails-project", "pom", 5),
     ("jails-project", "maven", 5),

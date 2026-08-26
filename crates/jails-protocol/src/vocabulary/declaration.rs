@@ -35,7 +35,7 @@ pub use field::{
     FieldConstraints, FieldSpec, FieldType, NumericConstraint, Optionality, ScalarFieldType,
     parse_fields,
 };
-pub(crate) use index::{IndexColumn, IndexSpec};
+pub use index::{IndexColumn, IndexSpec};
 
 use crate::Result;
 use crate::entity::Recipe;

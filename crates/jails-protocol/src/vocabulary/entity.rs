@@ -278,6 +278,8 @@ pub enum EntityId {
     Intent(IntentId),
     ToolFeature(ToolFeature),
     Declared(DeclaredId),
+    /// Stable logical identity declared by an application manifest.
+    Application(ObjectId),
 }
 
 impl Codec for EntityId {
@@ -300,6 +302,10 @@ impl Codec for EntityId {
                 encoder.tag(3);
                 id.encode(encoder)
             }
+            Self::Application(id) => {
+                encoder.tag(4);
+                id.encode(encoder)
+            }
         }
     }
 
@@ -312,6 +318,7 @@ impl Codec for EntityId {
                 other => Err(format!("unknown tool feature tag {other}").into()),
             },
             3 => DeclaredId::decode(decoder).map(Self::Declared),
+            4 => ObjectId::decode(decoder).map(Self::Application),
             other => Err(format!("unknown entity tag {other}").into()),
         }
     }
@@ -956,6 +963,9 @@ mod tests {
                 CapabilityId::resolve(Capability::Csv, Some(&name("Dataset")), None).unwrap(),
             ),
             EntityId::ToolFeature(ToolFeature::FastTest),
+            EntityId::Application(ObjectId::from_bytes(
+                [7; jails_support::codec::DIGEST_BYTES],
+            )),
         ];
         for entity in &entities {
             let mut encoder = Encoder::new();
