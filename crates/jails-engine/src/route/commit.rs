@@ -133,8 +133,9 @@ pub(super) fn reconciled(run: &Run, result: CommitResult) -> Result<CommitResult
     let CommitResult::Committed(committed) = result else {
         return Ok(result);
     };
+    let mut committed = *committed;
     if committed.receipt.post_commit.is_empty() {
-        return Ok(CommitResult::Committed(committed));
+        return Ok(CommitResult::Committed(Box::new(committed)));
     }
     let store = jails_commit::store::Store::at(run.project().root());
     let effect = run.measure(jails_prepare::timing::TimingPhase::Container, || {
@@ -155,10 +156,13 @@ pub(super) fn reconciled(run: &Run, result: CommitResult) -> Result<CommitResult
         )
         .map_err(describe)
     })?;
+    if let Ok(published) = store.read_receipt(&committed.receipt.transaction_id) {
+        committed.receipt.post_commit = published.post_commit;
+    }
     Ok(CommitResult::Committed(Box::new(
         jails_commit::outcome::CommittedResult {
             effect,
-            ..*committed
+            ..committed
         },
     )))
 }

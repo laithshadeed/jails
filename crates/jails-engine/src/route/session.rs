@@ -300,10 +300,25 @@ impl Outcome {
         };
         let envelope = match result {
             CommitResult::NoOp => CommandEnvelope::no_op(),
-            CommitResult::Committed(committed) => CommandEnvelope::applied(
-                committed.receipt.clone(),
-                ProjectCommitDisposition::Existing,
-            ),
+            CommitResult::Committed(committed) => {
+                let envelope = CommandEnvelope::applied(
+                    committed.receipt.clone(),
+                    ProjectCommitDisposition::Existing,
+                );
+                match &committed.effect {
+                    jails_commit::outcome::CommitEffectOutcome::Failed { effect } => {
+                        envelope.effect_failed(format!(
+                            "post-commit effect {effect} failed after the project commit became durable.\n       fix: repair the datasource or frozen migration inputs, then retry this recorded effect."
+                        ))
+                    }
+                    jails_commit::outcome::CommitEffectOutcome::DeferredError { effect, .. } => {
+                        envelope.effect_failed(format!(
+                            "post-commit effect {effect} has no trustworthy terminal state after the project commit became durable.\n       fix: inspect the receipt and retry this recorded effect only after its inputs are known-good."
+                        ))
+                    }
+                    _ => envelope,
+                }
+            }
             CommitResult::RecoveredPriorTransaction(_)
             | CommitResult::CommittedRecoveryRequired(_) => return None,
         };

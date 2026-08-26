@@ -1361,6 +1361,8 @@ fn task_drop_can_explicitly_apply_the_frozen_history_after_commit() {
         String::from_utf8_lossy(&committed.stdout),
         String::from_utf8_lossy(&committed.stderr)
     );
+    let committed_stdout = String::from_utf8_lossy(&committed.stdout);
+    assert!(committed_stdout.contains("(done)"), "{committed_stdout}");
     let invoked = read_log(&log);
     assert!(invoked.contains("flyway migrate"), "{invoked}");
     assert!(!invoked.contains("secret"), "credential leaked: {invoked}");
@@ -1368,6 +1370,81 @@ fn task_drop_can_explicitly_apply_the_frozen_history_after_commit() {
         root.join("src/main/resources/db/migration/V002__drop_tasks.sql")
             .is_file(),
         "effect ran without the migration commit"
+    );
+}
+
+#[test]
+fn failed_migration_effect_keeps_the_committed_drop_and_retryable_receipt() {
+    let root = temp_dir("task-drop-failed-migration-effect");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    assert!(
+        jails_cmd(&root, None)
+            .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let fake = temp_dir("task-drop-failing-flyway-bin");
+    let ignored_log = fake.join("ignored.log");
+    write_fake_maven(&fake, &["flyway"], &ignored_log);
+    fs::write(fake.join("flyway"), "#!/bin/sh\nexit 9\n").unwrap();
+    let output = jails_cmd(&root, Some(&fake))
+        .env(
+            "DATABASE_URL",
+            "postgresql://app:secret@127.0.0.1:5432/demo",
+        )
+        .args([
+            "destroy",
+            "scaffold",
+            "Task",
+            "--storage",
+            "drop",
+            "--confirm-table",
+            "tasks",
+            "--force",
+            "--migrate",
+            "--datasource",
+            "DATABASE_URL",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    let rendered = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !rendered.contains("secret"),
+        "credential leaked: {rendered}"
+    );
+    assert!(
+        root.join("src/main/resources/db/migration/V002__drop_tasks.sql")
+            .is_file(),
+        "failed effect rolled back the committed migration"
+    );
+    assert!(
+        !root
+            .join("src/main/java/com/example/demo/web/TaskController.java")
+            .exists(),
+        "failed effect rolled back retired projections"
+    );
+    let receipts = jails_commit::store::Store::at(&root)
+        .read_receipts()
+        .unwrap();
+    let effect = receipts
+        .first()
+        .and_then(|receipt| receipt.post_commit.first())
+        .expect("the newest receipt keeps its migration effect");
+    assert!(
+        matches!(
+            effect.state,
+            jails_protocol::effect::EffectState::Failed { attempt: 1, .. }
+        ),
+        "{:?}",
+        effect.state
     );
 }
 

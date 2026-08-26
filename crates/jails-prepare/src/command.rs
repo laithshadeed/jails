@@ -586,6 +586,14 @@ impl CommandEnvelope {
         }
     }
 
+    /// The project commit succeeded but its external effect did not. The
+    /// receipt remains present because it is the retry authority.
+    pub fn effect_failed(mut self, message: impl Into<String>) -> Self {
+        self.status = CommandStatus::EffectFailed;
+        self.error = Some(ErrorReport::new(ErrorCode::EffectFailed, message));
+        self
+    }
+
     /// Nothing to do, decided under the lock.
     ///
     /// §R4.2: a no-op has no receipt. Projecting an empty one would make
