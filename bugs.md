@@ -9,13 +9,18 @@ subject.
 
 ---
 
-**Recheck: 2026-08-26 #4 (HEAD `e9ca5ca`).** Rebuilt and reinstalled `jails
-0.1.0` from current HEAD (previous pass was `3a023c0`; 17 commits since, all in
-the lifecycle / field-evolution / Flyway-evidence area). Direct reproductions in
-disposable projects under this session's scratch directory, with real `mvn -o
-test-compile` wherever a claim needed a compiler.
+**Recheck: 2026-08-26 #4 (HEAD `e9ca5ca`, extended to `e3c7041`).** Rebuilt and
+reinstalled `jails 0.1.0` from current HEAD (previous pass was `3a023c0`; 17
+commits since, all in the lifecycle / field-evolution / Flyway-evidence area).
+Direct reproductions in disposable projects under this session's scratch
+directory, with real `mvn -o test-compile` wherever a claim needed a compiler.
 
-**Proved fixed and removed this pass — thirteen reports.** Each was reproduced
+Two further commits (`767b609`, `e3c7041`) landed from a concurrent session
+while this pass was being written; the binary was rebuilt and **every surviving
+report below was re-reproduced against `e3c7041`.** Two more closed as a result
+and are noted in the list.
+
+**Proved fixed and removed this pass — fifteen reports.** Each was reproduced
 verbatim from the text that was deleted, in a fresh project, and now behaves
 correctly:
 
@@ -46,8 +51,16 @@ correctly:
 - **B44** `jails explain --help` describes `explain`, and `completion` has a
   description.
 
-**Still broken, reproduced verbatim this pass:** B2 (new face), B5, B14, B18,
-B20, B22, B37, B41 (new face), B43. **Downgraded:** B39. **Not retested:** B10.
+Closed by `e3c7041`, mid-pass:
+
+- **B39** `g field` no longer refuses when generated companions exist — it
+  regenerates them in the same transaction, and the project still compiles
+  (`mvn -o test-compile`, 0 errors).
+- **B43** `jails add format` re-records the bytes `spotless:apply` rewrites, so
+  `doctor` goes from eight unexplained drift warnings to `26 checks, all clear`.
+
+**Still broken, re-reproduced verbatim at `e3c7041`:** B2, B5, B14, B18, B20,
+B22, B37, B41. **Not retested:** B10.
 
 **New:** **B45** (high) `jails new --app` silently discards the entire project
 when a post-commit effect fails.
@@ -356,64 +369,6 @@ commit.
 
 ---
 
-## B43 — `jails add format` invalidates jails' own recorded output, and `doctor` reports it as the developer's edits
-
-**Severity: medium.** Documented commands, all exit 0, and the project ends up
-accusing the reader of edits they did not make.
-
-```
-jails new b2 --offline --no-git && cd b2 && jails add db
-jails g scaffold Loan id:uuid@pk borower:string!
-jails add format
-jails doctor
-```
-```
-warn  managed Loan   recorded output `…/adapters/JdbcLoanRepository.java` changed since the last jails commit
-                     fix: jails resource repair Loan --strategy roll-forward
-warn  managed Loan   recorded output `…/web/LoanController.java` changed since the last jails commit
-… 8 warnings total
-```
-
-`add format` runs `spotless:apply` over the whole project (deliberate and
-documented — formatter wrapping cannot be predicted from a template), reformats
-files jails itself wrote and recorded, and does not re-record the new bytes.
-
-The offered fix is now actively wrong: `resource repair --strategy roll-forward`
-restores the *unformatted* recorded bytes, undoing the formatting the reader just
-asked for. `jails sync` is what repairs it, and no warning names `sync`.
-
-This feeds **B18**: the state that ought to be re-recorded and the state that
-ought to be rejected are indistinguishable to the repair verb.
-
-**Expected:** `add format` re-records the bytes it rewrites in the same
-transaction — it knows which files it touched and it already owns them.
-
----
-
-## B39 — `g field` refuses when companions exist, and the refusal does not name the way through
-
-**Severity: low.** *Downgraded from critical: the silent corruption is fixed.*
-
-```
-jails g scaffold Order id:uuid@pk total:decimal version:long
-jails g query OrdersByTotal total:decimal --on Order
-jails g usecase PlaceOrder total:decimal --on Order
-```
-```
-$ jails g field Order note:string?
-jails: evolving fields on `Order` would leave generated companions stale:
-       query OrdersByTotal, usecase PlaceOrder
-       fix: keep the current field list, or regenerate those companions after the
-       resource shape is stable.
-```
-
-The refusal is correct and the project is safe. But the fix is circular as
-written — the companions cannot be regenerated *before* the field exists. The
-working path is `destroy query OrdersByTotal` / `destroy usecase PlaceOrder`,
-then `g field`, then regenerate; all four steps work. Nothing says so.
-
----
-
 ## B10 — `jails run` starts Spring Boot before PostgreSQL is ready for TCP connections
 
 **Severity: medium (intermittent on cold start).** **Not retested** on any recent
@@ -457,7 +412,7 @@ agree") are answerable from the migrations and the ledger alone.
 
 ## What worked well
 
-Worth recording so the fixes don't regress it. **Re-confirmed on `e9ca5ca`**
+Worth recording so the fixes don't regress it. **Re-confirmed on `e3c7041`**
 unless noted.
 
 - **Entity naming is now as carefully validated as field naming.** `class`,
@@ -501,7 +456,7 @@ unless noted.
 
 ## The shape of it
 
-*Rewritten at `e9ca5ca`. Thirteen reports were deleted this pass — the previous
+*Rewritten at `e3c7041`. Fifteen reports were deleted this pass — the previous
 version's first theme is gone entirely.*
 
 **The migration seal has its escape hatch now.** B1, B3, B12 and B33 were one
@@ -525,8 +480,7 @@ of them. It is also the check that would make the repair verb safe, because
 case: `doctor` names `resource repair`, `repair` says the resource is retired and
 names `revive`, `revive` answers with an internal planning term, and the entity in
 question is fully present on disk. **B37** is the same shape with two commands
-each naming the other. **B43** has `doctor` offering a fix that undoes what the
-reader just asked for. Every one of these is a pair of commands reading the same
+each naming the other. Every one of these is a pair of commands reading the same
 store and answering differently — cheap to detect, and corrosive out of
 proportion to the code behind it, because the reader cannot tell which answer to
 believe.
@@ -542,7 +496,7 @@ is not a side path.
 
 What was exercised, so the gaps are visible.
 
-**This pass (`e9ca5ca`):** `new --offline`, `new --app`, `new-cli`; `add db`,
+**This pass (`e9ca5ca` → `e3c7041`):** `new --offline`, `new --app`, `new-cli`; `add db`,
 `add format`, `sync`, `remove`; `g scaffold`, `record`, `field`, `query`,
 `usecase`, `association`, `enum`; `destroy` for scaffold / query / usecase /
 association, with `--storage preserve|drop` and `--confirm-table`;

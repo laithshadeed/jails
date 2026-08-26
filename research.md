@@ -1,6 +1,6 @@
 # Research Report: 1000x Developer Experience for `jails`
 
-Date: 2026-08-25. **Pruned to what is still open: 2026-08-26 at HEAD `e9ca5ca`.**
+Date: 2026-08-25. **Pruned to what is still open: 2026-08-26 at HEAD `e3c7041`.**
 Status: engineering proposal grounded in the current `jails` worktree and upstream implementations.
 
 ## What this file is now, and how to read the parts that are gone
@@ -74,8 +74,8 @@ Everything below is what remains.
 
 ### 0.1 One missing check accounts for most of the remaining harm
 
-The dogfooding ledger (`bugs.md`, rechecked at this same HEAD) closed thirteen
-reports and left nine. Three of the survivors — B18, B2, B22 — are different
+The dogfooding ledger (`bugs.md`, rechecked at this same HEAD) closed fifteen
+reports and left eight. Three of the survivors — B18, B2, B22 — are different
 roads to one destination: a project where `doctor` is green, `mvn verify` is
 green, and every insert fails at runtime because the Java names a column no
 migration creates.
@@ -96,10 +96,16 @@ smaller than anything else on this list.
 
 ### 0.2 The second theme is oracles that disagree
 
-`bugs.md` B41, B37 and B43 are one shape: two or three commands read the same
-store and answer differently, and a `fix:` line names a command that then
-refuses. The cheapest control is a conformance test that extracts every `fix:`
-command the scenario suite produces and asserts it does not immediately refuse.
+`bugs.md` B41 and B37 are one shape: two or three commands read the same store
+and answer differently, and a `fix:` line names a command that then refuses. The
+cheapest control is a conformance test that extracts every `fix:` command the
+scenario suite produces and asserts it does not immediately refuse.
+
+B43 was the third case and closed in `e3c7041`: `jails add format` now re-records
+the bytes `spotless:apply` rewrites, instead of leaving `doctor` to report them as
+the developer's edits. That is the pattern to copy — **the command that changes
+the bytes is the command that re-records them** — and the same reasoning applies
+to anything else that rewrites owned output as a side effect.
 
 ### 0.3 The declarative path is a tier behind the imperative one
 
