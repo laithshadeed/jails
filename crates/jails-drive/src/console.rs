@@ -152,10 +152,16 @@ pub fn spring_console(
     let startup = temp.path().join("startup.jsh");
     write_private(&startup, spring_startup(&main, profiles, web).as_bytes())?;
     let mut cmd = Command::new(&jshell);
-    cmd.args(["--class-path", &classpath, "--startup"])
-        .arg(startup)
-        .args(args)
-        .current_dir(root);
+    cmd.args([
+        "--execution",
+        "local",
+        "--class-path",
+        &classpath,
+        "--startup",
+    ])
+    .arg(startup)
+    .args(args)
+    .current_dir(root);
     run::run_inherited(cmd, debug)
 }
 
@@ -208,18 +214,57 @@ pub fn runner(
         {
             return Err("runner files must be project-relative.\n       fix: pass a `.jsh` path below the project root or `--file -`.".into());
         }
-        body = fs::read(root.join(file))
-            .map_err(|error| format!("could not read runner file {}: {error}", file.display()))?;
+        body.extend_from_slice(
+            &fs::read(root.join(file)).map_err(|error| {
+                format!("could not read runner file {}: {error}", file.display())
+            })?,
+        );
     }
-    body.extend_from_slice(b"\nctx.close();\n/exit\n");
+    body.extend_from_slice(b"\njailsClose();\n/exit\n");
     write_private(&script, &body)?;
     let mut command = Command::new(jshell);
     command
-        .args(["--class-path", &classpath, "--startup"])
+        .args([
+            "--execution",
+            "local",
+            "--class-path",
+            &classpath,
+            "--startup",
+        ])
         .arg(startup)
         .arg(script)
         .current_dir(root);
-    run::run_inherited(command, debug)
+    run_runner(command, debug)
+}
+
+fn run_runner(command: Command, debug: bool) -> Result<()> {
+    let program = command.get_program().to_string_lossy().into_owned();
+    let done = run::run_observed(command, debug)?;
+    if jshell_failed(&done.stdout) || jshell_failed(&done.stderr) {
+        return Err(
+            "runner snippet or Spring context cleanup failed; see the JShell diagnostics above.\n       fix: correct the first reported snippet error, or fix the application's shutdown lifecycle, then rerun the script."
+                .into(),
+        );
+    }
+    if done.status.success() {
+        return Ok(());
+    }
+    Err(format!(
+        "{program} exited with {}.\n       fix: inspect the JShell diagnostics above, correct the boot or process failure, then rerun the script.",
+        done.status
+    )
+    .into())
+}
+
+fn jshell_failed(output: &[u8]) -> bool {
+    String::from_utf8_lossy(output).lines().any(|line| {
+        let line = line.trim_end_matches('\r');
+        line == "Error:"
+            || line
+                .strip_prefix("Exception ")
+                .and_then(|rest| rest.split_whitespace().next())
+                .is_some_and(|exception| exception.contains('.'))
+    })
 }
 
 fn spring_startup(main: &str, profiles: &[String], web: WebMode) -> String {
@@ -241,7 +286,7 @@ fn spring_startup(main: &str, profiles: &[String], web: WebMode) -> String {
         WebMode::None | WebMode::Configured => "",
     };
     format!(
-        "import java.util.function.Supplier;\nimport java.util.stream.Stream;\nimport org.springframework.boot.WebApplicationType;\nimport org.springframework.boot.builder.SpringApplicationBuilder;\nimport org.springframework.context.ConfigurableApplicationContext;\nimport org.springframework.core.env.Environment;\nimport org.springframework.transaction.PlatformTransactionManager;\nimport org.springframework.transaction.support.TransactionTemplate;\nvar builder = new SpringApplicationBuilder(Class.forName(\"{}\")).profiles({}).web(WebApplicationType.{});\n{}var ctx = builder.run();\nRuntime.getRuntime().addShutdownHook(new Thread(ctx::close));\n<T> T bean(Class<T> type) {{ return ctx.getBean(type); }}\nObject bean(String name) {{ return ctx.getBean(name); }}\nStream<String> beans() {{ return java.util.Arrays.stream(ctx.getBeanDefinitionNames()).sorted(); }}\nEnvironment env() {{ return ctx.getEnvironment(); }}\n<T> T tx(Supplier<T> work) {{ return new TransactionTemplate(ctx.getBean(PlatformTransactionManager.class)).execute(status -> work.get()); }}\n",
+        "import java.util.concurrent.TimeUnit;\nimport java.util.concurrent.atomic.AtomicBoolean;\nimport java.util.concurrent.locks.LockSupport;\nimport java.util.function.Supplier;\nimport java.util.stream.Stream;\nimport org.springframework.beans.factory.DisposableBean;\nimport org.springframework.beans.factory.support.BeanDefinitionRegistry;\nimport org.springframework.beans.factory.support.RootBeanDefinition;\nimport org.springframework.boot.WebApplicationType;\nimport org.springframework.boot.builder.SpringApplicationBuilder;\nimport org.springframework.context.ConfigurableApplicationContext;\nimport org.springframework.core.env.Environment;\nimport org.springframework.transaction.PlatformTransactionManager;\nimport org.springframework.transaction.support.TransactionTemplate;\nclass JailsShutdownProbe implements DisposableBean {{ static final AtomicBoolean clean = new AtomicBoolean(); public void destroy() {{ clean.set(true); }} }}\nConfigurableApplicationContext jailsBoot(SpringApplicationBuilder prepared) {{ try {{ return prepared.run(); }} catch (Throwable failure) {{ failure.printStackTrace(System.err); Runtime.getRuntime().halt(1); return null; }} }}\nvar builder = new SpringApplicationBuilder(Class.forName(\"{}\")).profiles({}).web(WebApplicationType.{});\nbuilder.initializers(applicationContext -> ((BeanDefinitionRegistry) applicationContext.getBeanFactory()).registerBeanDefinition(\"jailsShutdownProbe\", new RootBeanDefinition(JailsShutdownProbe.class)));\n{}var ctx = jailsBoot(builder);\nvoid jailsClose() {{ ctx.close(); if (!JailsShutdownProbe.clean.get()) throw new IllegalStateException(\"Spring context cleanup was not observed\"); }}\nRuntime.getRuntime().addShutdownHook(new Thread(() -> {{ long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10); while (!JailsShutdownProbe.clean.get() && System.nanoTime() < deadline) LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(10)); if (!JailsShutdownProbe.clean.get()) {{ System.err.println(\"jails: Spring context cleanup was not observed\"); Runtime.getRuntime().halt(1); }} }}, \"jails-clean-shutdown\"));\n<T> T bean(Class<T> type) {{ return ctx.getBean(type); }}\nObject bean(String name) {{ return ctx.getBean(name); }}\nStream<String> beans() {{ return java.util.Arrays.stream(ctx.getBeanDefinitionNames()).sorted(); }}\nEnvironment env() {{ return ctx.getEnvironment(); }}\n<T> T tx(Supplier<T> work) {{ return new TransactionTemplate(ctx.getBean(PlatformTransactionManager.class)).execute(status -> work.get()); }}\n",
         java_string(main),
         profile_list,
         web_application_type,
@@ -421,7 +466,7 @@ mod tests {
             WebMode::Random,
         );
         for helper in [
-            "var ctx = builder.run()",
+            "var ctx = jailsBoot(builder)",
             "bean(Class<T> type)",
             "bean(String name)",
             "Stream<String> beans()",
@@ -434,6 +479,8 @@ mod tests {
         assert!(startup.contains("WebApplicationType.SERVLET"));
         assert!(startup.contains("server.port=0"));
         assert!(startup.contains("addShutdownHook"));
+        assert!(startup.contains("registerBeanDefinition"));
+        assert!(startup.contains("jailsClose()"));
     }
 
     #[test]
@@ -442,5 +489,16 @@ mod tests {
         assert!(startup.contains("profiles(\"dev\")"));
         assert!(startup.contains("WebApplicationType.NONE"));
         assert!(!startup.contains("server.port=0"));
+    }
+
+    #[test]
+    fn batch_jshell_diagnostics_distinguish_failures_from_application_output() {
+        assert!(jshell_failed(b"Error:\nillegal start of expression\n"));
+        assert!(jshell_failed(
+            b"Exception java.lang.IllegalStateException: failed\n"
+        ));
+        assert!(!jshell_failed(
+            b"application Error: recovered\nException count: 0\n"
+        ));
     }
 }

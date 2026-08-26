@@ -66,21 +66,14 @@ pub(crate) fn run_inherited(mut cmd: Command, debug: bool) -> Result<()> {
     if is_maven {
         forced_color(&mut cmd);
     }
-    let mut spec = crate::process::CommandSpec::new(cmd.get_program())
-        .args(cmd.get_args())
-        .output(if is_maven {
+    let spec = command_spec(
+        &cmd,
+        if is_maven {
             crate::process::OutputMode::Tee
         } else {
             crate::process::OutputMode::Inherit
-        });
-    if let Some(dir) = cmd.get_current_dir() {
-        spec = spec.current_dir(dir);
-    }
-    for (key, value) in cmd.get_envs() {
-        if let Some(value) = value {
-            spec = spec.env(key, value);
-        }
-    }
+        },
+    );
     let done = crate::process::run(&spec, crate::process::Diagnostics::from_flag(debug))?;
     if done.status.success() {
         return Ok(());
@@ -96,6 +89,29 @@ pub(crate) fn run_inherited(mut cmd: Command, debug: bool) -> Result<()> {
         done.status
     )
     .into())
+}
+
+/// Run a child while echoing and retaining only the executor's bounded output
+/// tail. Runner uses this to distinguish JShell's successful process exit from
+/// a rejected or throwing snippet; the captured transcript is never persisted.
+pub(crate) fn run_observed(cmd: Command, debug: bool) -> Result<crate::process::Done> {
+    let spec = command_spec(&cmd, crate::process::OutputMode::Tee);
+    crate::process::run(&spec, crate::process::Diagnostics::from_flag(debug))
+}
+
+fn command_spec(cmd: &Command, output: crate::process::OutputMode) -> crate::process::CommandSpec {
+    let mut spec = crate::process::CommandSpec::new(cmd.get_program())
+        .args(cmd.get_args())
+        .output(output);
+    if let Some(dir) = cmd.get_current_dir() {
+        spec = spec.current_dir(dir);
+    }
+    for (key, value) in cmd.get_envs() {
+        if let Some(value) = value {
+            spec = spec.env(key, value);
+        }
+    }
+    spec
 }
 
 fn is_maven_program(program: &std::ffi::OsStr) -> bool {

@@ -797,6 +797,7 @@ fn console_launches_jshell_with_the_project_classpath() {
     );
     assert!(
         invocation.contains("jshell")
+            && invocation.contains("--execution local")
             && invocation.contains("--class-path")
             && invocation.contains("--startup"),
         "{invocation}"
@@ -863,7 +864,11 @@ fn gradle_console_uses_the_shared_existing_runtime_classpath() {
         invocation.contains("gradle -q jailsRuntimeClasspath"),
         "{invocation}"
     );
-    assert!(invocation.contains("jshell --class-path"), "{invocation}");
+    assert!(
+        invocation.contains("jshell --execution local"),
+        "{invocation}"
+    );
+    assert!(invocation.contains("--class-path"), "{invocation}");
     assert!(
         !invocation.contains(" classes"),
         "existing-output console must not compile: {invocation}"
