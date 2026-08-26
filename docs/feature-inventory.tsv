@@ -70,3 +70,4 @@ commands	jails-report	read-only	commands::commands
 completion	jails	read-only	clap_complete::generate
 sql	jails	dispatch-only	main command dispatch
 sql check	jails-project	read-only	query_workspace::check_offline
+sql generate	jails-engine	project-mutation	route::sql_generate

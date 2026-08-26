@@ -373,9 +373,8 @@ fn validate_identifier(text: &str, what: &str) -> Result<()> {
 ///   operation rewrite the ledger, which is precisely what the transaction
 ///   design exists to prevent.
 ///
-/// The exception allowlist is exactly two entries and is closed: the human app
-/// manifest at `.jails/app.toml`, and the project template override layer
-/// under `.jails/templates`. Both exist because a *person* owns them.
+/// The exception allowlist is closed: the human app manifest, the project
+/// template override layer, and checked-in generated SQL contracts.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
 pub struct ProjectPath(String);
 
@@ -383,6 +382,8 @@ pub struct ProjectPath(String);
 pub(crate) const APP_MANIFEST: &str = ".jails/app.toml";
 /// `.jails/templates` — the human-owned template override layer.
 pub(crate) const TEMPLATE_OVERRIDES: &str = ".jails/templates";
+/// `.jails/sql-contracts` — checked-in generated SQL evidence.
+pub(crate) const SQL_CONTRACTS: &str = ".jails/sql-contracts";
 
 impl ProjectPath {
     pub fn parse(text: &str) -> Result<Self> {
@@ -440,12 +441,14 @@ impl ProjectPath {
             ".jails" => {
                 let allowed = text == APP_MANIFEST
                     || text == TEMPLATE_OVERRIDES
-                    || text.starts_with(&format!("{TEMPLATE_OVERRIDES}/"));
+                    || text.starts_with(&format!("{TEMPLATE_OVERRIDES}/"))
+                    || text == SQL_CONTRACTS
+                    || text.starts_with(&format!("{SQL_CONTRACTS}/"));
                 if !allowed {
                     return Err(format!(
                         "path `{text}` is machine state under `.jails`, which has its own typed \
                          representations.\n       fix: only `{APP_MANIFEST}` and \
-                         `{TEMPLATE_OVERRIDES}` are human-owned and reachable this way."
+                         `{TEMPLATE_OVERRIDES}` and `{SQL_CONTRACTS}` are reachable this way."
                     )
                     .into());
                 }
@@ -459,9 +462,13 @@ impl ProjectPath {
         &self.0
     }
 
-    /// Whether this is one of the two human-owned exceptions under `.jails`.
+    /// Whether this is one of the explicitly reachable paths under `.jails`.
     pub fn is_machine_adjacent(&self) -> bool {
         self.0.starts_with(".jails/")
+    }
+
+    pub fn is_sql_contract(&self) -> bool {
+        self.0 == SQL_CONTRACTS || self.0.starts_with(&format!("{SQL_CONTRACTS}/"))
     }
 }
 impl Codec for ProjectPath {
@@ -741,11 +748,13 @@ mod tests {
     /// Machine state has typed representations. A plain path into `.jails`
     /// would let an ordinary file operation rewrite the ledger.
     #[test]
-    fn dot_jails_is_reserved_except_for_the_two_human_owned_entries() {
+    fn dot_jails_is_reserved_except_for_explicit_reachable_namespaces() {
         for allowed in [
             ".jails/app.toml",
             ".jails/templates",
             ".jails/templates/generate/command_test.java",
+            ".jails/sql-contracts/sample/find-entries.json",
+            ".jails/sql-contracts",
         ] {
             assert!(ProjectPath::parse(allowed).is_ok(), "{allowed}");
         }

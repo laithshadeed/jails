@@ -309,6 +309,9 @@ pub enum CanonicalMutationRequest {
         request: DestroyResourceRequestV2,
         force: bool,
     },
+    SqlGenerate {
+        queries: BTreeSet<crate::database::QueryId>,
+    },
 }
 
 impl CanonicalMutationRequest {
@@ -488,6 +491,7 @@ impl CanonicalMutationRequest {
             Self::ReviveResource(_) => 17,
             Self::RepairResource(_) => 18,
             Self::DestroyResourceV2 { .. } => 19,
+            Self::SqlGenerate { .. } => 20,
         }
     }
 }
@@ -556,6 +560,7 @@ impl Codec for CanonicalMutationRequest {
                 request.encode(encoder)?;
                 encoder.bool(*force);
             }
+            Self::SqlGenerate { queries } => encoder.set(queries)?,
         }
         Ok(())
     }
@@ -626,6 +631,9 @@ impl Codec for CanonicalMutationRequest {
             19 => Self::DestroyResourceV2 {
                 request: DestroyResourceRequestV2::decode(decoder)?,
                 force: decoder.bool()?,
+            },
+            20 => Self::SqlGenerate {
+                queries: decoder.set()?,
             },
             other => Err(format!("unknown mutation request tag {other}"))?,
         })
@@ -947,6 +955,7 @@ mod tests {
     // The closed admissibility matrix
     // -----------------------------------------------------------------------
 
+    use crate::database::{QueryId, QueryName, SliceName};
     use crate::declaration::{FieldSpec, FieldType, IntentSpec};
     use crate::entity::{CasesReceiptId, Recipe, SourceInputId, TypeTargetId};
     use crate::identity::{Name, Package};
@@ -1091,6 +1100,12 @@ mod tests {
             CanonicalMutationRequest::DestroyResourceV2 {
                 request: destroy,
                 force: true,
+            },
+            CanonicalMutationRequest::SqlGenerate {
+                queries: BTreeSet::from([QueryId::new(
+                    SliceName::parse("Billing").unwrap(),
+                    QueryName::parse("FindPayableOrders").unwrap(),
+                )]),
             },
         ] {
             assert_request_round_trip(request);

@@ -110,7 +110,7 @@ fn main() -> std::process::ExitCode {
             jar_version: None,
         }),
         Command::App { command } => app::run(command, invocation),
-        Command::Sql { command } => sql_command::run(command),
+        Command::Sql { command } => sql_command::run(command, invocation),
         Command::Generate {
             kind,
             name,

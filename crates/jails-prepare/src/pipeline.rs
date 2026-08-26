@@ -595,7 +595,10 @@ fn parents(base: &ProjectSnapshot, operations: &[FileOp]) -> Result<Vec<Director
             // `.jails` is executor-owned machine structure. It is created by
             // the bootstrap, not by a plan, so a `DirectoryOp` for it would
             // be two owners for one directory.
-            if candidate == ".jails" || candidate.starts_with(".jails/") {
+            if candidate == ".jails" {
+                continue;
+            }
+            if candidate.starts_with(".jails/") && !candidate.starts_with(".jails/sql-contracts") {
                 break;
             }
             let parent = ProjectPath::parse(&candidate)?;
@@ -876,7 +879,10 @@ mod tests {
             components.pop();
             let mut parents = Vec::new();
             while !components.is_empty() {
-                parents.push(path(&components.join("/")));
+                let candidate = components.join("/");
+                if candidate != ".jails" {
+                    parents.push(path(&candidate));
+                }
                 components.pop();
             }
             parents
@@ -1222,6 +1228,23 @@ mod tests {
                 "src/main/java/com/example/demo",
                 "src/main/java/com/example/demo/domain",
             ]
+        );
+    }
+
+    #[test]
+    fn checked_in_sql_contract_parents_are_derived_below_the_machine_root() {
+        let target = ".jails/sql-contracts/sample/find-entries.json";
+        let base = snapshot(&[], &[target]);
+        let bundle = run(base, write_one(target, b"{}\n"), 3).unwrap();
+        let made: Vec<String> = bundle
+            .change
+            .directories
+            .iter()
+            .map(|directory| directory.path().to_string())
+            .collect();
+        assert_eq!(
+            made,
+            vec![".jails/sql-contracts", ".jails/sql-contracts/sample"]
         );
     }
 

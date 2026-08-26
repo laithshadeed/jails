@@ -67,7 +67,10 @@ impl ReadDeclaration {
         while !components.is_empty() {
             let candidate = components.join("/");
             // Machine structure has its own bootstrap/precondition protocol.
-            if candidate == ".jails" || candidate.starts_with(".jails/") {
+            if candidate == ".jails" {
+                break;
+            }
+            if candidate.starts_with(".jails/") && !candidate.starts_with(".jails/sql-contracts") {
                 break;
             }
             self.directories.insert(

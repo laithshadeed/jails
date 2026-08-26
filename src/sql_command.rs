@@ -7,7 +7,7 @@ use jails_protocol::identity::Package;
 use jails_support::Result;
 use std::fs;
 
-pub(crate) fn run(command: SqlCommand) -> Result<()> {
+pub(crate) fn run(command: SqlCommand, invocation: crate::Invocation) -> Result<()> {
     match command {
         SqlCommand::Check {
             target,
@@ -44,6 +44,18 @@ pub(crate) fn run(command: SqlCommand) -> Result<()> {
             }
             Ok(())
         }
+        SqlCommand::Generate {
+            target,
+            into_slice,
+            manifest,
+        } => crate::dispatch::mutate(invocation, false, |run| {
+            jails_engine::route::sql_generate(
+                run,
+                target.as_deref(),
+                manifest.as_deref(),
+                into_slice.as_deref(),
+            )
+        }),
     }
 }
 

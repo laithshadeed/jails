@@ -384,6 +384,17 @@ pub(crate) enum SqlCommand {
         #[arg(long, value_name = "MANIFEST")]
         manifest: Option<std::path::PathBuf>,
     },
+    /// Generate Java and checked-in contracts from verified offline evidence
+    Generate {
+        /// Project-relative query file or manifest query name
+        target: Option<String>,
+        /// Assert which manifest slice owns the selected query
+        #[arg(long, value_name = "SLICE")]
+        into_slice: Option<String>,
+        /// Canonical application manifest; defaults to .jails/app.toml
+        #[arg(long, value_name = "MANIFEST")]
+        manifest: Option<std::path::PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]

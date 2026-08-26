@@ -7,6 +7,7 @@ use jails_protocol::application::ApplicationSpecV1;
 use jails_protocol::database::{QueryContractV1, QuerySource};
 use jails_protocol::identity::{Package, ProjectPath};
 use jails_support::Result;
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -15,6 +16,7 @@ pub struct CheckedQuery {
     pub source: QuerySource,
     pub contract: QueryContractV1,
     pub slice_package: Package,
+    pub inputs: BTreeSet<ProjectPath>,
 }
 
 pub fn check_offline(
@@ -22,8 +24,13 @@ pub fn check_offline(
     manifest_path: Option<&Path>,
     selector: Option<&str>,
 ) -> Result<Vec<CheckedQuery>> {
-    let (manifest, _) = read_manifest(project, manifest_path)?;
+    let (manifest, manifest_source) = read_manifest(project, manifest_path)?;
     let migrations = migrations(project)?;
+    let mut common_inputs = migrations
+        .iter()
+        .map(|(path, _)| path.clone())
+        .collect::<BTreeSet<_>>();
+    common_inputs.insert(project_relative(project, &manifest_source)?);
     let catalog = compile_catalog(manifest.dialect, &migrations)?;
     let mut checked = Vec::new();
     for (slice_name, slice) in &manifest.slices {
@@ -53,10 +60,13 @@ pub fn check_offline(
                 .into());
             }
             let contract = compile_query(&source, &catalog)?;
+            let mut inputs = common_inputs.clone();
+            inputs.insert(query.source.clone());
             checked.push(CheckedQuery {
                 source,
                 contract,
                 slice_package: package.clone(),
+                inputs,
             });
         }
     }
@@ -72,6 +82,16 @@ pub fn check_offline(
     }
     checked.sort_by(|left, right| left.source.id.cmp(&right.source.id));
     Ok(checked)
+}
+
+fn project_relative(project: &Project, path: &Path) -> Result<ProjectPath> {
+    let relative = path.strip_prefix(project.root()).map_err(|_| {
+        format!(
+            "application manifest {} is outside the project and cannot be guarded by a transaction.\n       fix: copy it beneath the project before generating SQL contracts.",
+            path.display()
+        )
+    })?;
+    ProjectPath::parse(&relative.to_string_lossy())
 }
 
 pub fn read_manifest(

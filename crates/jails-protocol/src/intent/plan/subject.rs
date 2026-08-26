@@ -3,6 +3,7 @@
 use super::DesiredAppliedEntity;
 use crate::Result;
 use crate::change::MaintenanceAttribution;
+use crate::database::QueryId;
 use crate::entity::{EntityId, OneShotId, OneShotSpec};
 use crate::identity::{JavaType, ProjectPath};
 use crate::ownership::{DesiredEntity, DesiredState, ReconcileScope};
@@ -41,6 +42,9 @@ pub enum PlannedSubject {
     DestroyResourceV2(Box<DestroyResourceRequestV2>),
     ReviveResource(Box<ReviveResourceRequestV1>),
     RepairResource(Box<RepairResourceRequestV1>),
+    GenerateQueries {
+        queries: BTreeSet<QueryId>,
+    },
 }
 
 impl PlannedSubject {
@@ -59,6 +63,7 @@ impl PlannedSubject {
             | Self::DestroyResourceV2(_)
             | Self::ReviveResource(_)
             | Self::RepairResource(_) => return None,
+            Self::GenerateQueries { .. } => return None,
         })
     }
 
@@ -75,6 +80,7 @@ impl PlannedSubject {
             Self::DestroyResourceV2(_) => 9,
             Self::ReviveResource(_) => 10,
             Self::RepairResource(_) => 11,
+            Self::GenerateQueries { .. } => 12,
         }
     }
 }
@@ -109,6 +115,7 @@ impl Codec for PlannedSubject {
             Self::DestroyResourceV2(request) => request.encode(encoder),
             Self::ReviveResource(request) => request.encode(encoder),
             Self::RepairResource(request) => request.encode(encoder),
+            Self::GenerateQueries { queries } => encoder.set(queries),
         }
     }
 
@@ -139,6 +146,9 @@ impl Codec for PlannedSubject {
             9 => Self::DestroyResourceV2(Box::new(DestroyResourceRequestV2::decode(decoder)?)),
             10 => Self::ReviveResource(Box::new(ReviveResourceRequestV1::decode(decoder)?)),
             11 => Self::RepairResource(Box::new(RepairResourceRequestV1::decode(decoder)?)),
+            12 => Self::GenerateQueries {
+                queries: decoder.set()?,
+            },
             other => Err(format!(
                 "unknown planned subject tag {other}.\n       fix: upgrade jails or restore \
                  compatible `.jails` state"
@@ -203,6 +213,7 @@ fn decode_desired_state(decoder: &mut Decoder<'_>) -> Result<DesiredState> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::database::{QueryName, SliceName};
     use crate::declaration::FieldSpec;
     use crate::entity::{IntentId, Recipe};
     use crate::identity::{Name, Package, SqlName};
@@ -265,5 +276,11 @@ mod tests {
                 datasource: None,
             },
         )));
+        round_trip(PlannedSubject::GenerateQueries {
+            queries: BTreeSet::from([QueryId::new(
+                SliceName::parse("Billing").unwrap(),
+                QueryName::parse("FindPayableOrders").unwrap(),
+            )]),
+        });
     }
 }

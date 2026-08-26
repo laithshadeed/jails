@@ -81,6 +81,7 @@ mod lifecycle;
 mod maintenance;
 mod oneshot;
 mod provenance;
+mod query;
 mod request;
 mod session;
 mod support;
@@ -97,6 +98,7 @@ pub use field::{
 pub use lifecycle::{repair, revive};
 pub use maintenance::{adopt_layout, app_init, format, rename};
 pub use oneshot::{cases, migration};
+pub use query::sql_generate;
 pub(crate) use session::PreparedOutcome;
 pub use session::{Outcome, Run};
 
@@ -120,6 +122,30 @@ fn label(kind: ArtifactKind) -> String {
         .expect("every ArtifactKind has a clap value")
         .get_name()
         .to_string()
+}
+
+/// Assemble a change set whose durable effect is entirely resource ownership.
+///
+/// Query projection is the first route with this shape, but keeping the store
+/// representation here prevents feature routes from depending on how an
+/// otherwise empty durable transition is encoded.
+fn resource_change_set(
+    generation_before: u64,
+    ordered: Vec<DesiredChange>,
+    resources_after: Vec<DesiredResource>,
+    subject: PlannedSubject,
+) -> DesiredChangeSet {
+    DesiredChangeSet {
+        ledger_intent: LedgerIntent {
+            generation_before,
+            entities_after: Vec::new(),
+            one_shots_after: Vec::new(),
+            resources_after,
+            entities_removed: Vec::new(),
+        },
+        ordered,
+        subject,
+    }
 }
 
 /// A planned artifact's path, as the project-relative name a resource has.

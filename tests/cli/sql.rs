@@ -66,3 +66,62 @@ fn frozen_offline_check_refuses_a_missing_contract_without_writing() {
     assert!(stderr.contains("fix:"), "{stderr}");
     assert_eq!(snapshot_tree(&root), before);
 }
+
+#[test]
+fn sql_generate_preview_and_apply_share_one_transaction_then_frozen_passes() {
+    let root = sql_fixture("sql-generate");
+    let paths = [
+        "src/main/java/org/example/sample/sample/application/query/FindEntries.java",
+        "src/main/java/org/example/sample/sample/adapter/jdbc/JdbcFindEntries.java",
+        "src/test/java/org/example/sample/sample/adapter/query/FakeFindEntries.java",
+        "src/test/java/org/example/sample/sample/adapter/query/FindEntriesContractTest.java",
+        ".jails/sql-contracts/sample/find-entries.json",
+    ];
+    let before = snapshot_tree(&root);
+    let preview = jails_cmd(&root, None)
+        .args(["--pretend", "sql", "generate", "FindEntries"])
+        .output()
+        .unwrap();
+    assert!(
+        preview.status.success(),
+        "{}",
+        String::from_utf8_lossy(&preview.stderr)
+    );
+    assert_eq!(snapshot_tree(&root), before);
+    let preview_text = String::from_utf8_lossy(&preview.stdout);
+    for path in paths {
+        assert!(
+            preview_text.contains(path),
+            "{path} missing from {preview_text}"
+        );
+    }
+
+    let applied = jails_cmd(&root, None)
+        .args(["sql", "generate", "FindEntries"])
+        .output()
+        .unwrap();
+    assert!(
+        applied.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&applied.stdout),
+        String::from_utf8_lossy(&applied.stderr)
+    );
+    let applied_text = String::from_utf8_lossy(&applied.stdout);
+    for path in paths {
+        assert!(
+            applied_text.contains(path),
+            "{path} missing from {applied_text}"
+        );
+        assert!(root.join(path).is_file(), "{path} was not committed");
+    }
+
+    let frozen = jails_cmd(&root, None)
+        .args(["sql", "check", "--offline", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(
+        frozen.status.success(),
+        "{}",
+        String::from_utf8_lossy(&frozen.stderr)
+    );
+}
