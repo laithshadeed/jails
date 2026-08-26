@@ -31,6 +31,59 @@ pub(crate) fn finish(result: Result<()>) -> std::process::ExitCode {
     std::process::ExitCode::SUCCESS
 }
 
+/// Finish a parsed invocation, preserving the selected machine encoding even
+/// when planning stopped before it could produce an [`Outcome`].
+pub(crate) fn finish_invocation(
+    result: Result<()>,
+    output: Output,
+    command_path: &[String],
+) -> std::process::ExitCode {
+    let Err(failure) = result else {
+        return std::process::ExitCode::SUCCESS;
+    };
+    let Some(message) = failure.message() else {
+        return std::process::ExitCode::FAILURE;
+    };
+    if output == Output::Human {
+        eprintln!("jails: {message}");
+        return std::process::ExitCode::FAILURE;
+    }
+
+    let syntax = jails_protocol::request::CanonicalRequestSyntaxV1 {
+        command_path: command_path.to_vec(),
+        ..Default::default()
+    };
+    let fingerprint = match syntax.fingerprint() {
+        Ok(fingerprint) => fingerprint,
+        Err(_) => {
+            eprintln!("jails: {message}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+    let envelope =
+        jails_prepare::command::CommandEnvelope::refused(jails_prepare::command::ErrorReport::new(
+            jails_prepare::command::ErrorCode::InvalidRequest,
+            message,
+        ));
+    let rendered = match output {
+        Output::Human => unreachable!("handled above"),
+        Output::JsonV1 => jails_prepare::serialize::envelope(&envelope),
+        Output::Json => {
+            let envelope = jails_prepare::command::CommandEnvelopeV2::from_v1(
+                jails_prepare::command::CommandIdentity {
+                    path: command_path.to_vec(),
+                    fingerprint,
+                    read_only: false,
+                },
+                &envelope,
+            );
+            jails_prepare::serialize::envelope_v2(&envelope)
+        }
+    };
+    print!("{rendered}");
+    std::process::ExitCode::FAILURE
+}
+
 /// Run one mutation through the transaction protocol, and report it once.
 ///
 /// **Every mutating command goes through here.** That is the point of the

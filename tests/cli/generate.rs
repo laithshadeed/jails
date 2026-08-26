@@ -59,6 +59,73 @@ fn scaffold_refuses_invalid_or_reserved_derived_names_before_projection() {
 }
 
 #[test]
+fn machine_output_carries_failures_that_stop_before_an_outcome() {
+    let root = temp_dir("machine-readable-refusals");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    let generated = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Task", "id:uuid@pk", "value:int"])
+        .output()
+        .unwrap();
+    assert!(generated.status.success(), "{generated:?}");
+
+    for args in [
+        vec![
+            "destroy",
+            "scaffold",
+            "Task",
+            "--force",
+            "--pretend",
+            "--output",
+            "json",
+        ],
+        vec![
+            "g",
+            "record",
+            "Broken",
+            "value:nosuchtype",
+            "--pretend",
+            "--output",
+            "json",
+        ],
+    ] {
+        let output = jails_cmd(&root, None).args(&args).output().unwrap();
+        assert_eq!(output.status.code(), Some(1), "{args:?}: {output:?}");
+        assert!(output.stderr.is_empty(), "{args:?}: {output:?}");
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(value["schema"], "jails.command-result.v2", "{value}");
+        assert_eq!(value["status"], "refused", "{value}");
+        assert_eq!(value["exit_code"], 1, "{value}");
+        assert!(
+            value["error"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("fix:")),
+            "{value}"
+        );
+    }
+
+    let v1 = jails_cmd(&root, None)
+        .args([
+            "destroy",
+            "scaffold",
+            "Task",
+            "--force",
+            "--pretend",
+            "--output",
+            "json-v1",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(v1.status.code(), Some(1), "{v1:?}");
+    assert!(v1.stderr.is_empty(), "{v1:?}");
+    let value: serde_json::Value = serde_json::from_slice(&v1.stdout).unwrap();
+    assert_eq!(value["schema"], "jails.command-result.v1", "{value}");
+    assert_eq!(value["exit_code"], 1, "{value}");
+    assert_eq!(value["status"], "refused", "{value}");
+    assert!(value["error"]["message"].is_string(), "{value}");
+}
+
+#[test]
 fn generate_scaffold_writes_a_raw_jdbc_slice() {
     let root = temp_dir("scaffold-files");
     write_spring_fixture(&root);

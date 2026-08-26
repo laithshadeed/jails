@@ -43,6 +43,8 @@ fn main() -> std::process::ExitCode {
         plan_in: cli.plan_in,
         command_path: cli::command_path_from_env(),
     };
+    let failure_output = invocation.output;
+    let failure_path = invocation.command_path.clone();
     let result = match cli.command {
         Command::About { json } => project::about(json),
         Command::New {
@@ -696,7 +698,7 @@ fn main() -> std::process::ExitCode {
         }
     };
 
-    dispatch::finish(result)
+    dispatch::finish_invocation(result, failure_output, &failure_path)
 }
 
 /// These two assert against jails' *real* CLI, so they live with it.
