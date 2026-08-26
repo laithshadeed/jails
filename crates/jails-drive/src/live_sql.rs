@@ -27,6 +27,13 @@ pub struct LiveDescription {
     pub columns: Vec<(String, String)>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RowEvidence {
+    pub schema: String,
+    pub table: String,
+    pub rows: u64,
+}
+
 pub fn check(
     project: &Project,
     datasource: &str,
@@ -121,6 +128,87 @@ pub fn observe(
             .collect::<Result<BTreeSet<_>>>()?,
         ignores_extension_owned_objects: true,
     })
+}
+
+/// Count rows only for explicitly named, canonically validated tables. The
+/// statements run in one read-only transaction and return no row contents.
+pub fn row_counts(
+    project: &Project,
+    datasource: &str,
+    services: LiveServices,
+    tables: &BTreeSet<(SqlName, SqlName)>,
+    debug: bool,
+) -> Result<Vec<RowEvidence>> {
+    if tables.is_empty() {
+        return Ok(Vec::new());
+    }
+    let database = connect(project, datasource, services, debug)?;
+    let mut sql = String::from("BEGIN READ ONLY;\n");
+    for (schema, table) in tables {
+        sql.push_str(&format!(
+            "SELECT '{}' || E'\\t' || '{}' || E'\\t' || count(*)::text FROM \"{}\".\"{}\";\n",
+            schema.as_str(),
+            table.as_str(),
+            schema.as_str(),
+            table.as_str()
+        ));
+    }
+    sql.push_str("ROLLBACK;\n");
+    psql(&database.conn, &sql, debug)?
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let mut fields = line.split('\t');
+            let schema = fields.next().unwrap_or_default();
+            let table = fields.next().unwrap_or_default();
+            let rows = fields.next().unwrap_or_default();
+            if fields.next().is_some() || schema.is_empty() || table.is_empty() {
+                return Err(format!(
+                    "postgres returned invalid row evidence `{line}`.\n       fix: verify the selected psql client and retry."
+                )
+                .into());
+            }
+            Ok(RowEvidence {
+                schema: schema.to_string(),
+                table: table.to_string(),
+                rows: rows.parse().map_err(|_| {
+                    format!(
+                        "postgres returned invalid row count `{rows}`.\n       fix: verify SELECT permission on `{schema}.{table}`."
+                    )
+                })?,
+            })
+        })
+        .collect()
+}
+
+/// Derive the expected server major from the explicitly declared PostgreSQL
+/// image. This is stable checked project evidence, not container discovery.
+pub fn declared_server_major(project: &Project, datasource: &str) -> Result<u32> {
+    if datasource != "postgres" {
+        return Err(format!(
+            "unknown live datasource `{datasource}`.\n       fix: select the declared PostgreSQL datasource with `--datasource postgres`."
+        )
+        .into());
+    }
+    let yaml = compose::read(project.root())?;
+    let image = yaml
+        .lines()
+        .map(str::trim)
+        .find_map(|line| line.strip_prefix("image: postgres:"))
+        .ok_or_else(|| {
+            "the declared PostgreSQL image has no literal major version.\n       fix: pin it as `postgres:<major>` before using `--frozen --live`."
+                .to_string()
+        })?;
+    image
+        .split(|ch: char| !ch.is_ascii_digit())
+        .next()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            "the declared PostgreSQL image major is invalid.\n       fix: pin it as `postgres:<major>`."
+                .to_string()
+        })?
+        .parse()
+        .map_err(|_| "the declared PostgreSQL image major is invalid.".into())
 }
 
 fn parse_observed(output: &str) -> Result<BTreeMap<SchemaObjectId, SchemaObject>> {
@@ -516,7 +604,12 @@ WITH observed(kind, schema_name, object_name, parent_name, d1, d2, d3, d4, d5, d
   SELECT 'domain', n.nspname, t.typname, '',
          pg_catalog.format_type(t.typbasetype, t.typtypmod)
            || CASE WHEN t.typnotnull THEN ' NOT NULL' ELSE '' END
-           || CASE WHEN t.typdefault IS NULL THEN '' ELSE ' DEFAULT ' || t.typdefault END,
+           || CASE WHEN t.typdefault IS NULL THEN '' ELSE ' DEFAULT ' || t.typdefault END
+           || COALESCE((
+             SELECT ' ' || string_agg(pg_catalog.pg_get_constraintdef(con.oid, false), ' ' ORDER BY con.conname)
+             FROM pg_catalog.pg_constraint con
+             WHERE con.contypid = t.oid
+           ), ''),
          '', '', '', '', '', ''
   FROM pg_catalog.pg_type t
   JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace

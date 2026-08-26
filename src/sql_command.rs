@@ -47,6 +47,15 @@ pub(crate) fn run(command: SqlCommand, invocation: crate::Invocation) -> Result<
                     &checked,
                     invocation.debug,
                 )?;
+                if frozen {
+                    check_frozen_live(
+                        &project,
+                        datasource,
+                        services,
+                        manifest.as_deref(),
+                        invocation.debug,
+                    )?;
+                }
                 for (query, description) in checked.iter().zip(descriptions) {
                     if frozen {
                         check_frozen(&project, query)?;
@@ -91,6 +100,49 @@ pub(crate) fn run(command: SqlCommand, invocation: crate::Invocation) -> Result<
             )
         }),
     }
+}
+
+fn check_frozen_live(
+    project: &Project,
+    datasource: &str,
+    services: crate::cli::RunServicesArg,
+    manifest: Option<&std::path::Path>,
+    debug: bool,
+) -> Result<()> {
+    let expected_major = jails_drive::live_sql::declared_server_major(project, datasource)?;
+    let live = jails_drive::live_sql::observe(
+        project,
+        datasource,
+        match services {
+            crate::cli::RunServicesArg::Existing => jails_drive::live_sql::LiveServices::Existing,
+            crate::cli::RunServicesArg::Start => jails_drive::live_sql::LiveServices::Start,
+            crate::cli::RunServicesArg::None => jails_drive::live_sql::LiveServices::None,
+        },
+        "public",
+        debug,
+    )?;
+    let actual_major = match &live.provenance {
+        jails_protocol::database::SchemaProvenance::Live { server_major, .. } => {
+            u32::from(*server_major)
+        }
+        _ => unreachable!("live observer always records live provenance"),
+    };
+    if actual_major != expected_major {
+        return Err(format!(
+            "frozen live SQL evidence uses PostgreSQL {actual_major}, but the declared image is PostgreSQL {expected_major}.\n       fix: run the clean migrated database at the pinned major or review and update the declaration."
+        )
+        .into());
+    }
+    let migrations = jails_project::query_workspace::migration_schema(project, manifest)?;
+    let drift = jails_project::schema::diff(&migrations, &live)?;
+    if !drift.is_empty() {
+        return Err(format!(
+            "frozen live SQL catalog differs from the checked migration authority ({} schema operation(s)).\n       fix: migrate a clean database from the committed files or review the live drift with `jails schema diff`.",
+            drift.len()
+        )
+        .into());
+    }
+    Ok(())
 }
 
 fn check_frozen(

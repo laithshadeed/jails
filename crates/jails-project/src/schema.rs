@@ -33,7 +33,7 @@ pub fn diff(from: &SchemaSnapshot, to: &SchemaSnapshot) -> Result<Vec<PlannedSch
     if operations.is_empty() {
         return Ok(Vec::new());
     }
-    refuse_opaque_dependencies(from, to)?;
+    refuse_opaque_dependencies(&operations, from, to)?;
     topological(operations)
 }
 
@@ -144,7 +144,11 @@ fn dependencies(id: &SchemaObjectId, object: &SchemaObject) -> BTreeSet<SchemaOb
     dependencies
 }
 
-fn refuse_opaque_dependencies(from: &SchemaSnapshot, to: &SchemaSnapshot) -> Result<()> {
+fn refuse_opaque_dependencies(
+    operations: &BTreeMap<SchemaObjectId, PlannedSchemaOp>,
+    from: &SchemaSnapshot,
+    to: &SchemaSnapshot,
+) -> Result<()> {
     let opaque = from
         .catalog
         .objects
@@ -171,6 +175,31 @@ fn refuse_opaque_dependencies(from: &SchemaSnapshot, to: &SchemaSnapshot) -> Res
             statement.path
         )
         .into());
+    }
+    let may_invalidate_dependencies = operations.values().any(|operation| {
+        matches!(
+            operation.operation,
+            SchemaOp::Alter { .. } | SchemaOp::Drop { .. } | SchemaOp::Rename { .. }
+        )
+    });
+    if may_invalidate_dependencies {
+        // Only a pre-existing dependant can be invalidated. A dependant
+        // introduced by the target authority is created after its storage.
+        let unresolved = from.catalog.objects.iter().find(|(id, _)| {
+            matches!(
+                id.kind,
+                SchemaObjectKind::View | SchemaObjectKind::Routine | SchemaObjectKind::Policy
+            )
+        });
+        if let Some((id, _)) = unresolved {
+            return Err(format!(
+                "schema reconciliation may invalidate unresolved {:?} dependency `{}` in `{}`.\n       fix: provide dependency facts or attest this object outside the operation scope before altering storage.",
+                id.kind,
+                id.name.as_str(),
+                id.namespace.as_str()
+            )
+            .into());
+        }
     }
     Ok(())
 }
@@ -341,5 +370,22 @@ mod tests {
         )]));
         let error = diff(&source, &snapshot(BTreeMap::new())).unwrap_err();
         assert!(error.to_string().contains("opaque"));
+    }
+
+    #[test]
+    fn unresolved_supported_dependencies_block_destructive_changes() {
+        let table = id(SchemaObjectKind::Table, "orders", None);
+        let view = id(SchemaObjectKind::View, "payable_orders", None);
+        let source = snapshot(BTreeMap::from([
+            (table, SchemaObject::Table),
+            (
+                view,
+                SchemaObject::View {
+                    definition: "SELECT * FROM orders".into(),
+                },
+            ),
+        ]));
+        let error = diff(&source, &snapshot(BTreeMap::new())).unwrap_err();
+        assert!(error.to_string().contains("unresolved View dependency"));
     }
 }

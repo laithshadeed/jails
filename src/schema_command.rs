@@ -10,6 +10,7 @@ use jails_protocol::database::{
     SchemaSnapshot,
 };
 use jails_support::Result;
+use std::collections::BTreeSet;
 use std::path::Path;
 
 pub(crate) fn introspect(command: IntrospectCommand, invocation: crate::Invocation) -> Result<()> {
@@ -104,10 +105,36 @@ pub(crate) fn schema(command: SchemaCommand, invocation: crate::Invocation) -> R
                 invocation.debug,
             )?;
             let operations = jails_project::schema::diff(&from_snapshot, &to_snapshot)?;
-            if invocation.output == Output::Json {
-                print_diff_json(from, to, &operations);
+            let row_evidence = if (from == SchemaAuthorityArg::Live
+                || to == SchemaAuthorityArg::Live)
+                && datasource.is_some()
+            {
+                collect_row_evidence(
+                    &project,
+                    datasource.as_deref().expect("checked above"),
+                    services,
+                    &operations,
+                    invocation.debug,
+                )
             } else {
-                print_diff_human(from, to, &operations);
+                (Vec::new(), None)
+            };
+            if invocation.output == Output::Json {
+                print_diff_json(
+                    from,
+                    to,
+                    &operations,
+                    &row_evidence.0,
+                    row_evidence.1.as_deref(),
+                );
+            } else {
+                print_diff_human(
+                    from,
+                    to,
+                    &operations,
+                    &row_evidence.0,
+                    row_evidence.1.as_deref(),
+                );
             }
             Ok(())
         }
@@ -327,6 +354,8 @@ fn print_diff_human(
     from: SchemaAuthorityArg,
     to: SchemaAuthorityArg,
     operations: &[PlannedSchemaOp],
+    row_evidence: &[jails_drive::live_sql::RowEvidence],
+    evidence_error: Option<&str>,
 ) {
     println!(
         "schema diff {from:?} -> {to:?}: {} operation(s)",
@@ -344,12 +373,23 @@ fn print_diff_human(
                 .join(", ")
         );
     }
+    for evidence in row_evidence {
+        println!(
+            "evidence  {}.{} rows={} [live, read-only]",
+            evidence.schema, evidence.table, evidence.rows
+        );
+    }
+    if let Some(error) = evidence_error {
+        println!("evidence  unavailable [live, read-only]: {error}");
+    }
 }
 
 fn print_diff_json(
     from: SchemaAuthorityArg,
     to: SchemaAuthorityArg,
     operations: &[PlannedSchemaOp],
+    row_evidence: &[jails_drive::live_sql::RowEvidence],
+    evidence_error: Option<&str>,
 ) {
     let rows = operations
         .iter()
@@ -367,12 +407,79 @@ fn print_diff_json(
         })
         .collect::<Vec<_>>()
         .join(",");
+    let evidence = row_evidence
+        .iter()
+        .map(|row| {
+            format!(
+                "{{\"schema\":{},\"table\":{},\"rows\":{},\"evidence\":\"live\"}}",
+                jails_support::json::string(&row.schema),
+                jails_support::json::string(&row.table),
+                row.rows
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
     println!(
-        "{{\"schema\":\"jails.schema-diff.v1\",\"from\":{},\"to\":{},\"operations\":[{}]}}",
+        "{{\"schema\":\"jails.schema-diff.v1\",\"from\":{},\"to\":{},\"operations\":[{}],\"row_evidence\":[{}],\"evidence_error\":{}}}",
         jails_support::json::string(&format!("{from:?}").to_ascii_lowercase()),
         jails_support::json::string(&format!("{to:?}").to_ascii_lowercase()),
-        rows
+        rows,
+        evidence,
+        evidence_error
+            .map(jails_support::json::string)
+            .unwrap_or_else(|| "null".into())
     );
+}
+
+fn collect_row_evidence(
+    project: &Project,
+    datasource: &str,
+    services: RunServicesArg,
+    operations: &[PlannedSchemaOp],
+    debug: bool,
+) -> (Vec<jails_drive::live_sql::RowEvidence>, Option<String>) {
+    let tables = operations
+        .iter()
+        .filter(|operation| {
+            operation.risks.contains(&MigrationRisk::Destructive)
+                || operation.risks.contains(&MigrationRisk::DataDependent)
+        })
+        .filter_map(|operation| affected_table(&operation.operation))
+        .collect::<BTreeSet<_>>();
+    match jails_drive::live_sql::row_counts(
+        project,
+        datasource,
+        live_services(services),
+        &tables,
+        debug,
+    ) {
+        Ok(evidence) => (evidence, None),
+        Err(error) => (Vec::new(), Some(error.to_string())),
+    }
+}
+
+fn affected_table(
+    operation: &SchemaOp,
+) -> Option<(
+    jails_protocol::identity::SqlName,
+    jails_protocol::identity::SqlName,
+)> {
+    let id = match operation {
+        SchemaOp::Create { id, .. } | SchemaOp::Alter { id, .. } | SchemaOp::Drop { id, .. } => id,
+        SchemaOp::Rename { before, .. } => before,
+    };
+    if id.kind == jails_protocol::database::SchemaObjectKind::Table {
+        return Some((id.namespace.clone(), id.name.clone()));
+    }
+    id.parent.as_ref().map(|parent| {
+        (
+            parent
+                .namespace
+                .clone()
+                .unwrap_or_else(|| id.namespace.clone()),
+            parent.name.clone(),
+        )
+    })
 }
 
 fn operation_summary(operation: &SchemaOp) -> String {
