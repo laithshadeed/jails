@@ -264,9 +264,8 @@ pub(super) fn complete_storage_rename(
         }
         let key = ResourceKey::WholeFile(source.clone());
         let owners = store
-            .ledger
+            .resources()
             .iter()
-            .flat_map(|ledger| ledger.resources.iter())
             .find(|row| row.key == key)
             .map(|row| row.owners.clone())
             .ok_or_else(|| {
@@ -315,10 +314,10 @@ pub(super) fn complete_storage_rename(
         renderer: None,
     });
     let applied = store
-        .ledger
-        .as_ref()
-        .and_then(|ledger| ledger.applied.iter().find(|row| row.id == lifecycle.entity))
-        .ok_or("rolling campaign entity is missing from the durable ledger.\n       fix: repair the lifecycle before completing storage")?;
+        .entities()
+        .iter()
+        .find(|row| row.id == lifecycle.entity)
+        .ok_or("rolling campaign entity is missing from durable state.\n       fix: repair the lifecycle before completing storage")?;
     let request = jails_protocol::request::CompleteStorageRenameRequestV1 {
         entity: lifecycle.entity.clone(),
         campaign,
@@ -329,22 +328,7 @@ pub(super) fn complete_storage_rename(
         old_version_retired,
     };
     request.validate()?;
-    let set = DesiredChangeSet {
-        ledger_intent: LedgerIntent {
-            generation_before: store.generation(),
-            entities_after: vec![jails_protocol::plan::DesiredAppliedEntity {
-                id: applied.id.clone(),
-                spec: applied.version.spec.clone(),
-                owners: applied.owners.clone(),
-            }],
-            one_shots_after: Vec::new(),
-            resources_after: change.resources.clone(),
-            entities_removed: Vec::new(),
-        },
-        ordered: vec![change],
-        subject: PlannedSubject::CompleteStorageRename(Box::new(request.clone())),
-    };
-    set.validate()?;
+    let set = complete_storage_set(&store, applied, change, request.clone())?;
     let asked = Asked::new(
         CanonicalMutationRequest::CompleteStorageRename(request),
         &["rename", "storage"],

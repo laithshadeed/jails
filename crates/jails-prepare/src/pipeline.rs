@@ -84,6 +84,20 @@ impl ObservedStore {
             .map_or(&[], |state| state.lifecycles.as_slice())
     }
 
+    /// Durable resource claims captured with the observed machine state.
+    pub fn resources(&self) -> &[jails_protocol::resource::ResourceRecord] {
+        self.ledger
+            .as_ref()
+            .map_or(&[], |state| state.resources.as_slice())
+    }
+
+    /// Applied entity rows captured with the observed machine state.
+    pub fn entities(&self) -> &[jails_protocol::record::AppliedEntity] {
+        self.ledger
+            .as_ref()
+            .map_or(&[], |state| state.applied.as_slice())
+    }
+
     fn validate(&self) -> Result<()> {
         match (&self.image, &self.ledger) {
             (FileImage::Absent, None) | (FileImage::Present { .. }, Some(_)) => Ok(()),

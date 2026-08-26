@@ -607,6 +607,31 @@ pub fn rename_storage(
     cutover::complete_storage_rename(run, selector, campaign, old_version_retired, force)
 }
 
+fn complete_storage_set(
+    store: &ObservedStore,
+    applied: &jails_protocol::record::AppliedEntity,
+    change: DesiredChange,
+    request: jails_protocol::request::CompleteStorageRenameRequestV1,
+) -> Result<DesiredChangeSet> {
+    let set = DesiredChangeSet {
+        ledger_intent: LedgerIntent {
+            generation_before: store.generation(),
+            entities_after: vec![jails_protocol::plan::DesiredAppliedEntity {
+                id: applied.id.clone(),
+                spec: applied.version.spec.clone(),
+                owners: applied.owners.clone(),
+            }],
+            one_shots_after: Vec::new(),
+            resources_after: change.resources.clone(),
+            entities_removed: Vec::new(),
+        },
+        ordered: vec![change],
+        subject: PlannedSubject::CompleteStorageRename(Box::new(request)),
+    };
+    set.validate()?;
+    Ok(set)
+}
+
 fn rename_strategy_name(strategy: jails_protocol::request::RenameStrategy) -> &'static str {
     match strategy {
         jails_protocol::request::RenameStrategy::PreserveTable => "preserve-table",
