@@ -91,17 +91,24 @@ const TEST_URL: &str = "jdbc:h2:mem:test;DB_CLOSE_DELAY=-1";
 
 pub(crate) fn h2_slice(slice: &Slice) -> Change {
     let root: &Path = slice.project().root();
-    let pkg: &str = &slice.root_package();
     let boot_major = slice.project().boot_major();
     let mut deps = vec![crate::add::SPRING_JDBC, H2];
     if boot_major >= 4 {
         deps.push(H2_CONSOLE);
     }
+    // In `adapters`, not beside the application, because the test opens a
+    // `java.sql.Connection` -- and `g scaffold` writes an ArchUnit rule saying
+    // raw JDBC stays in `adapters`. Two first-party generators cannot
+    // disagree about that: `jails add h2` on a project with a scaffold was a
+    // red build, and the rule is right. A capability's *configuration* still
+    // belongs beside the app; a test about the driver belongs where the
+    // driver is allowed.
+    let adapters = slice.placed(Layer::Adapters);
     Change {
         deps,
         files: vec![artifact(
-            crate::generate::test_dir(root, pkg).join("H2DatabaseTest.java"),
-            h2_database_test_java(pkg),
+            crate::generate::test_dir(root, &adapters).join("H2DatabaseTest.java"),
+            h2_database_test_java(&adapters),
         )],
         properties: [
             vec![

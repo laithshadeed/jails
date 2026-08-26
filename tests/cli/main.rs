@@ -320,7 +320,22 @@ fn verified_spring_toolboxes(path: &str) -> &'static SpringToolboxes {
 
         if core_fresh {
             write_spring_fixture(&core);
-            for capability in ["api", "cache", "actuator", "observability", "json", "sse"] {
+            // `cors` and `h2` are here because their templates are chosen by
+            // the project's Boot version and only the *legacy* branch was ever
+            // compiled: `add cors` is run through real `mvn test` against a
+            // Boot 2 fixture, and `add h2`'s Boot 4 branch adds a console
+            // module that had no test at all. A tier-3 test pinned to the old
+            // branch reports green for the branch every real project gets.
+            for capability in [
+                "api",
+                "cache",
+                "actuator",
+                "observability",
+                "json",
+                "sse",
+                "cors",
+                "h2",
+            ] {
                 let status = jails_cmd_with_path(&core, path)
                     .args(["add", capability, "--no-start"])
                     .status()

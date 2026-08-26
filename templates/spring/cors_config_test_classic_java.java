@@ -5,7 +5,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import org.junit.jupiter.api.Test;
+import java.util.List;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
 import {{mockmvc_import}};
 import org.springframework.test.web.servlet.MockMvc;
@@ -36,15 +38,26 @@ class CorsConfigTest {
      */
     private static final String ANY_PATH = "/any-path";
 
+    /**
+     * Read, not restated. The generated value is {@code https://example.invalid}
+     * -- reserved by RFC 2606, so it can never resolve and is unmistakably a
+     * setting somebody has to replace. A test that hardcoded it would go red on
+     * the day it was replaced, which is a capability shipping a failing build
+     * for being configured. The first origin is the one asserted; the list is
+     * what the application actually allows.
+     */
+    @Value("${app.cors.allowed-origins}")
+    private List<String> origins;
+
     @Autowired private MockMvc mvc;
 
     @Test
     void aPreflightFromADeclaredOriginIsAnswered() throws Exception {
         mvc.perform(options(ANY_PATH)
-                        .header("Origin", "{{origin}}")
+                        .header("Origin", origins.getFirst())
                         .header("Access-Control-Request-Method", "POST"))
                 .andExpect(status().is2xxSuccessful())
-                .andExpect(header().string("Access-Control-Allow-Origin", "{{origin}}"));
+                .andExpect(header().string("Access-Control-Allow-Origin", origins.getFirst()));
     }
 
     /**

@@ -117,13 +117,20 @@ to go **red on landing**; P1.5 records what they name.
       exactly the pair M1 needs. It also had a second hole: the toolbox cache
       is keyed on the product binary, so adding a step to that list reused the
       previous tree and never ran it. Salted with the harness text now.
-- [ ] **P1.2** The default-variant execution gate (modern §11.6's
+- [x] **P1.2** The default-variant execution gate (modern §11.6's
       generalisation). `add cors` *is* run through real `mvn test` — against
       `write_spring2_fixture`, a Boot 2 project, so the Boot 4 branch every
       real project gets has never been compiled. Assert that **whichever
       variant a version-sniffing template renders for the current default is
       the one executed**. Same failure mode as `JAILS_REQUIRE_TOOLCHAIN`, one
-      level up.
+      level up. Landed as
+      `every_version_sniffed_rendering_names_where_its_default_branch_runs` in
+      `tests/architecture/rules.rs`: a scanner finds every production file that
+      branches on the framework version, and each must name the test that runs
+      the branch it takes on the current default — checked to exist. It found
+      `add cors` and `add h2` uncompiled on Boot 4, and `add h2` writing a
+      `java.sql` test outside `adapters`, which is a red build against the
+      ArchUnit rule `g scaffold` installs.
 - [ ] **P1.3** The `@Disabled` honesty gate (modern §13.8). A generated
       `@Disabled` test reports green exactly as a skipped tier-3 test does.
       Either the command's summary names what it could not assert, or no test
@@ -138,10 +145,14 @@ to go **red on landing**; P1.5 records what they name.
 
 ## P2 — fix what P1 surfaced (cause D)
 
-- [ ] **P2.1** `add cors` — one command, red build. It writes
+- [x] **P2.1** `add cors` — one command, red build. It writes
       `app.cors.allowed-origins=http://127.0.0.1:8008,…` and a test asserting
-      `https://example.invalid` is allowed. The test must assert the origins
-      the capability configured.
+      `https://example.invalid` is allowed. The reproduction is narrower than
+      the report: a *fresh* `add cors` is self-consistent, and goes red the
+      moment the origin is replaced — which `.invalid` exists to demand. So
+      the test reads `app.cors.allowed-origins` out of the context instead of
+      restating the value baked in at generation time. One source was the
+      right instinct and the wrong source.
 - [x] **P2.2** `g strategy` vs jails' own ArchUnit rule (missing M1 / modern
       §13.2). `g scaffold` writes `DOMAIN_HAS_NO_FRAMEWORK_DEPENDENCIES`;
       `g strategy` writes `@Component` implementations into `domain..`, and the

@@ -46,8 +46,6 @@ These were run, not inferred.
 
 | Claim | How it was checked | Result |
 |---|---|---|
-| The project does not build green | `mvn -o test` | **FAILS.** `CorsConfigTest.aPreflightFromADeclaredOriginIsAnswered` — expected 2xx, got 4xx. 44 tests, 1 failure. |
-| That failure is jails', not a hand edit | `git show 58285d5` (`add cors`) | The one commit writes `app.cors.allowed-origins=http://127.0.0.1:8008,…` **and** a test asserting `https://example.invalid` is allowed. One command, red build. |
 | `users` has no primary key | `grep "primary key" db/migration/` | Only `send_message_outbox` has one. `users` and `messages` have **none**. |
 | `messages` has no primary key | same | Correct — and `V003` works around it by adding `create unique index users_id_association_key on users (id)` purely so a foreign key has something to point at. |
 | `ApiException` is dead | `grep -rn "new ApiException"` | **Nothing throws it.** The sealed hierarchy, the exhaustive `switch`, and the Javadoc explaining why the switch has no `default` are all unreachable. |
@@ -463,7 +461,8 @@ semantics instead of a bespoke field.
   test, the controller test and both integration tests. No test in the suite
   ever exercises a real direction, so `direction:String!` costs nothing to get
   wrong.
-- `CorsConfigTest` **fails on a clean checkout** (§2).
+- `CorsConfigTest` used to fail the moment the origin was configured (§2,
+  closed): it asserted the placeholder rather than reading the property.
 
 What is missing entirely: a concurrency test for the mark-as-read CAS — the one
 behaviour the `version` column exists for, and the one thing the example
@@ -700,26 +699,7 @@ These are notes for jails, not changes.
    ones — the `@ServiceConnection` explanation, the Failsafe note, the
    `DeadLetterPublishingRecoverer` default — are excellent and should stay.
 
-6. **A capability must not ship a failing test.** `add cors` writes an origin
-   list and a test asserting a different origin. One command, red build.
-
-   The reason jails' own suite does not catch it is worth recording, because it
-   generalises. `add cors` *is* run through real `mvn test` —
-   `what_jails_generates_for_boot_2_compiles_and_what_cannot_refuses_by_name`
-   in `tests/cli/generate.rs` does exactly that. But it runs against
-   `write_spring2_fixture`, a **Boot 2** project, so `add cors` renders its
-   *classic* `MockMvc` variant, and the test asserts
-   `!source.contains("servlet.assertj.MockMvcTester")` to prove it. The Boot 4
-   variant — the one every real project gets — is only ever snapshotted as
-   bytes by the golden suite. It has never been compiled, let alone run.
-
-   So the rule is not "add a real-mvn test", it is: **whichever variant a
-   version-sniffing template renders for the current default is the one that
-   has to be executed.** A tier-3 test pinned to the legacy branch reports
-   green for a branch it never touched — the same failure mode as
-   `JAILS_REQUIRE_TOOLCHAIN`, one level up.
-
-7. **Capabilities install machinery nothing uses.** `add api` installs a sealed
+6. **Capabilities install machinery nothing uses.** `add api` installs a sealed
    `ApiException` and an exhaustive handler that nothing throws, while the
    operation with real failure modes hand-rolls `ResponseStatusException`. A
    capability should wire the code that already exists into itself, or say it
@@ -770,7 +750,7 @@ Every one of them was built and run.
 | 2026-01-09 | db, api, cors | 31 / 17 | green |
 | 2026-02-05 | db, api, json, cors, sse | 65 / 37 | green |
 | 2026-06-01 | db, api, cors | 34 / 20 | green |
-| *`my-minicom`* | +kafka, actuator, o11y | 53 / 30 | **FAILS** — `CorsConfigTest` (§2) |
+| *`my-minicom`* | +kafka, actuator, o11y | 53 / 30 | **FAILED** — `CorsConfigTest`, now closed |
 
 ### 13.1 First: better input really does produce much better output
 
@@ -1053,7 +1033,6 @@ input:
 | **dead `ApiException`** | | ❌ §13.10 — 0 of 7 projects |
 | **`g client` has no timeout** | | ❌ §13.6 |
 | **`@Disabled` tests reported green** | | ❌ §13.8 |
-| **`add cors` ships a red test** | | ❌ §2 |
 
 The second column is the list worth working from. None of it is a taste
 argument, all of it is reproducible from a clean `jails new`, and the top three

@@ -855,6 +855,55 @@ fn every_capability_together_produces_a_project_that_compiles_and_passes_tests()
     }
 }
 
+/// `add cors` renders one test for Boot 2 and another for the current
+/// default, and only the Boot 2 branch had ever been compiled.
+///
+/// modern.md §11.6. `a_boot_2_project_gets_the_classic_mockmvc_for_every_generated_web_test`
+/// runs real Maven over `add cors` -- against a Boot 2 project, where the
+/// capability renders its *classic* `MockMvc` variant, and the assertion there
+/// proves the modern one was **not** chosen. The `MockMvcTester` branch, which
+/// is what every project `jails new` produces gets, was only ever snapshotted
+/// as bytes. A tier-3 test pinned to the legacy branch reports green for a
+/// branch it never touched.
+///
+/// The origin is the other half. `.invalid` is reserved by RFC 2606 so the
+/// placeholder is unmistakably a value somebody has to replace -- and the test
+/// must still pass once they replace it, or the capability ships a red build
+/// the moment it is configured. So the test reads the configured origin rather
+/// than restating the placeholder.
+#[test]
+fn add_cors_on_the_default_boot_version_compiles_and_runs_its_own_test() {
+    if !real_mvn_available() {
+        skip("mvn not found on PATH");
+        return;
+    }
+    if !real_java_supports_target_release() {
+        skip(&format!(
+            "javac on PATH does not support --release {TARGET_RELEASE}"
+        ));
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let root = verified_spring_toolbox(&path);
+    let test = fs::read_to_string(root.join("src/test/java/com/example/demo/CorsConfigTest.java"))
+        .expect("add cors did not write its test into the Boot 4 toolbox");
+    assert!(
+        test.contains("servlet.assertj.MockMvcTester"),
+        "the toolbox rendered the legacy variant, so the default branch is still unexecuted"
+    );
+    assert!(
+        root.join("target/test-classes/com/example/demo/CorsConfigTest.class")
+            .is_file(),
+        "the Boot 4 CORS test was never compiled"
+    );
+    // Configured, not restated: the reader has to replace `.invalid`, and the
+    // test has to survive it.
+    assert!(
+        !test.contains("\"https://example.invalid\""),
+        "the test hardcodes the placeholder origin, so editing the property makes it red"
+    );
+}
+
 /// The Spring flavor branch: `add json` must *omit* the version so Spring
 /// Boot's parent supplies its curated Jackson, and the result must still
 /// compile. The shared Spring fixture stays pinned at an older release (it

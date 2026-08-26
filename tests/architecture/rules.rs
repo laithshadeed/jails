@@ -599,3 +599,141 @@ fn a_gate_that_reached_its_target_is_never_reopened() {
         }
     }
 }
+
+/// Every file that renders one Java shape for an old framework version and a
+/// different one for the current default names the tier-3 test that executes
+/// the branch it takes **on the default**, and that test exists.
+///
+/// modern.md §11.6, generalised. `add cors` *is* run through real `mvn test`
+/// -- against a Boot 2 fixture, so it renders its *classic* `MockMvc` variant
+/// and the assertion proves the modern one was not chosen. The Boot 4 branch,
+/// which is what every real project gets, had never been compiled, let alone
+/// run. A tier-3 test pinned to the legacy branch reports green for a branch
+/// it never touched: the same failure mode as a skipped tier-3 test, one level
+/// up, and neither is visible in the count.
+///
+/// The table is small on purpose and the scanner is what keeps it honest: a
+/// new sniff site fails this until somebody names where its default branch is
+/// executed. Naming a test that does not exist fails too, so the entry cannot
+/// decay into a comment.
+const DEFAULT_BRANCH_IS_EXECUTED: &[(&str, &str)] = &[
+    (
+        "crates/jails-generate/src/generate/recipes.rs",
+        "generate_scaffold_produces_a_project_that_compiles_and_passes_tests",
+    ),
+    (
+        "crates/jails-generate/src/generate/web.rs",
+        "generate_scaffold_produces_a_project_that_compiles_and_passes_tests",
+    ),
+    (
+        "crates/jails-generate/src/spring.rs",
+        "standalone_generators_companion_tests_compile_and_pass",
+    ),
+    // Both capabilities are installed into the same Boot 4 toolbox that test
+    // asserts against, and `add h2`'s default branch is a console module that
+    // exists only on Boot 4.
+    (
+        "crates/jails-generate/src/spring/h2.rs",
+        "add_cors_on_the_default_boot_version_compiles_and_runs_its_own_test",
+    ),
+    (
+        "crates/jails-generate/src/spring/security.rs",
+        "add_cors_on_the_default_boot_version_compiles_and_runs_its_own_test",
+    ),
+    (
+        "crates/jails-project/src/gradle.rs",
+        "the_boot_version_is_read_from_the_modern_plugins_block",
+    ),
+    (
+        "crates/jails-project/src/model/mod.rs",
+        "generate_scaffold_produces_a_project_that_compiles_and_passes_tests",
+    ),
+    (
+        "crates/jails-project/src/pom.rs",
+        "generate_scaffold_produces_a_project_that_compiles_and_passes_tests",
+    ),
+    (
+        "crates/jails-project/src/project.rs",
+        "the_boot_version_is_read_from_the_modern_plugins_block",
+    ),
+    (
+        "src/new/gradle_project.rs",
+        "new_gradle_at_a_current_boot_uses_the_plugins_block_and_a_readable_dependency_list",
+    ),
+    (
+        "src/new/spring.rs",
+        "a_freshly_generated_project_passes_check_with_no_manual_formatting",
+    ),
+];
+
+#[test]
+fn every_version_sniffed_rendering_names_where_its_default_branch_runs() {
+    let found: std::collections::BTreeSet<String> = sources()
+        .iter()
+        .filter(|file| file.production.contains("boot_major"))
+        .map(|file| {
+            file.path
+                .strip_prefix(std::path::Path::new(env!("CARGO_MANIFEST_DIR")))
+                .unwrap_or(&file.path)
+                .display()
+                .to_string()
+        })
+        .collect();
+    let declared: std::collections::BTreeSet<String> = DEFAULT_BRANCH_IS_EXECUTED
+        .iter()
+        .map(|(path, _)| (*path).to_string())
+        .collect();
+    assert_eq!(
+        found, declared,
+        "\n\nA file renders a different Java shape per framework version. Name the \
+         real-toolchain test that runs the branch it takes on the current default in \
+         DEFAULT_BRANCH_IS_EXECUTED, or -- if the sniff is gone -- take the entry out."
+    );
+
+    let harness = harness_text();
+    for (path, test) in DEFAULT_BRANCH_IS_EXECUTED {
+        assert!(
+            harness.contains(&format!("fn {test}(")),
+            "{path} names `{test}`, and no test by that name exists. An entry that \
+             points at nothing is worse than none: it reads as coverage."
+        );
+    }
+}
+
+/// Every Rust file under `tests/` and every workspace source, concatenated.
+///
+/// Both, because a covering test is not always an integration test: the two
+/// files that only *read* a version are pinned by colocated unit tests, and a
+/// gate that could not see those would push their entries towards naming an
+/// integration test that does not exercise them.
+fn harness_text() -> String {
+    fn walk(dir: &std::path::Path, out: &mut String) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        let mut paths: Vec<std::path::PathBuf> =
+            entries.flatten().map(|entry| entry.path()).collect();
+        paths.sort();
+        for path in paths {
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path.extension().is_some_and(|extension| extension == "rs")
+                && let Ok(text) = std::fs::read_to_string(&path)
+            {
+                out.push_str(&text);
+            }
+        }
+    }
+    let mut out = String::new();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    walk(&root.join("tests"), &mut out);
+    walk(&root.join("src"), &mut out);
+    walk(&root.join("crates"), &mut out);
+    assert!(
+        out.len() > 100_000,
+        "the harness scanner read only {} bytes -- it has lost track of where the \
+         tests live",
+        out.len()
+    );
+    out
+}

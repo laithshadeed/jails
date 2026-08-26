@@ -109,14 +109,13 @@ fn cors_config_test_java(pkg: &str, mockmvc_import: &str, boot_major: u32) -> St
     };
     crate::template::render(
         template,
-        &[
-            ("pkg", pkg),
-            ("mockmvc_import", mockmvc_import),
-            // One source for the origin: a test asserting a different value
-            // from the one the properties declare would fail on a fresh
-            // project, which is the first thing anybody runs.
-            ("origin", PLACEHOLDER_ORIGIN),
-        ],
+        // The origin is no longer substituted: the test reads
+        // `app.cors.allowed-origins` out of the context. One source was the
+        // right instinct and the wrong source -- a value baked in at
+        // generation time is only equal to the property until somebody edits
+        // it, and `.invalid` exists to be edited. Baking it in meant the
+        // capability shipped a red build the moment it was configured.
+        &[("pkg", pkg), ("mockmvc_import", mockmvc_import)],
     )
 }
 
