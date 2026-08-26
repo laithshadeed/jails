@@ -28,6 +28,7 @@ fn owns_terminal_output(path: &Path) -> bool {
     relative == "src/main.rs"
         || relative == "src/dispatch.rs"
         || relative == "src/new.rs"
+        || relative == "src/sql_command.rs"
         || relative.starts_with("src/new/")
         || relative == "crates/jails-support/src/lib.rs"
         || relative == "crates/jails-support/src/process.rs"
@@ -286,6 +287,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-state", "listing", 4),
     // jails-project: the resolved project and everything jails records about it.
     ("jails-project", "application_manifest", 5),
+    ("jails-project", "query_workspace", 5),
     ("jails-project", "gradle", 5),
     ("jails-project", "pom", 5),
     ("jails-project", "maven", 5),
@@ -360,6 +362,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     // jails-cli: the binary and the whole-project lifecycle commands.
     ("jails", "new", 9),
     ("jails", "app", 9),
+    ("jails", "sql_command", 9),
     ("jails", "cli", 9),
     ("jails", "dispatch", 9),
     ("jails", "arguments", 9),

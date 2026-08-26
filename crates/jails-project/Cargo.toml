@@ -26,3 +26,4 @@ workspace = true
 # `CWD_LOCK`: this crate's tests change the process-global working
 # directory, and they share one process.
 jails-testkit.workspace = true
+tempfile.workspace = true

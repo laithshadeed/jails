@@ -363,6 +363,30 @@ impl Invocation {
 }
 
 #[derive(Subcommand)]
+pub(crate) enum SqlCommand {
+    /// Verify managed queries against the catalog derived from ordered migrations
+    Check {
+        /// Project-relative query file or manifest query name
+        target: Option<String>,
+        /// Use migration-derived catalog evidence without opening a connection
+        #[arg(long, conflicts_with = "live")]
+        offline: bool,
+        /// Use an explicitly selected live datasource
+        #[arg(long, conflicts_with = "offline")]
+        live: bool,
+        /// Refuse when checked-in contracts differ; never update them
+        #[arg(long)]
+        frozen: bool,
+        /// Recompute instead of consulting a local evidence cache
+        #[arg(long)]
+        no_cache: bool,
+        /// Canonical application manifest; defaults to .jails/app.toml
+        #[arg(long, value_name = "MANIFEST")]
+        manifest: Option<std::path::PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
 pub(crate) enum Command {
     /// Describe the current Maven reactor and active module
     #[command(visible_alias = "info")]
@@ -468,6 +492,11 @@ pub(crate) enum Command {
     App {
         #[command(subcommand)]
         command: app::AppCommand,
+    },
+    /// Check and generate typed named-SQL contracts
+    Sql {
+        #[command(subcommand)]
+        command: SqlCommand,
     },
     /// Generate a scaffold or one small Java/SQL artifact
     ///

@@ -12,11 +12,13 @@ mod arguments;
 mod cli;
 mod dispatch;
 mod new;
+mod sql_command;
 
 // What the CLI accepts lives in `cli`; what it does is the match below.
 pub(crate) use add::Capability;
 pub(crate) use cli::{
-    Cli, Command, Declare, Invocation, Output, ResourceCommand, ResourceFieldCommand, Undeclare,
+    Cli, Command, Declare, Invocation, Output, ResourceCommand, ResourceFieldCommand, SqlCommand,
+    Undeclare,
 };
 
 use clap::{CommandFactory, Parser};
@@ -108,6 +110,7 @@ fn main() -> std::process::ExitCode {
             jar_version: None,
         }),
         Command::App { command } => app::run(command, invocation),
+        Command::Sql { command } => sql_command::run(command),
         Command::Generate {
             kind,
             name,

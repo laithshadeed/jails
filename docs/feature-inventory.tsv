@@ -68,3 +68,5 @@ setup	jails-report	machine-mutation	doctor::setup
 explain	jails-report	read-only	explain::explain
 commands	jails-report	read-only	commands::commands
 completion	jails	read-only	clap_complete::generate
+sql	jails	dispatch-only	main command dispatch
+sql check	jails-project	read-only	query_workspace::check_offline

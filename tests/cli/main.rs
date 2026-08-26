@@ -25,6 +25,7 @@ mod examples;
 mod generate;
 mod new;
 mod reports;
+mod sql;
 mod tooling;
 
 use common::*;
