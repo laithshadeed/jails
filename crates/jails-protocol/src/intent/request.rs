@@ -272,6 +272,7 @@ pub enum CanonicalMutationRequest {
         to: JavaType,
         force: bool,
     },
+    RenameResource(RenameResourceRequestV1),
     AdoptLayout,
     FastTest,
     Format {
@@ -497,6 +498,7 @@ impl CanonicalMutationRequest {
             Self::DestroyResourceV2 { .. } => 19,
             Self::SqlGenerate { .. } => 20,
             Self::ContractEmit { .. } => 21,
+            Self::RenameResource(_) => 22,
         }
     }
 }
@@ -533,6 +535,7 @@ impl Codec for CanonicalMutationRequest {
                 to.encode(encoder)?;
                 encoder.bool(*force);
             }
+            Self::RenameResource(request) => request.encode(encoder)?,
             Self::AdoptLayout | Self::FastTest => {}
             Self::Format { scopes } => {
                 encoder.set(scopes)?;
@@ -651,6 +654,7 @@ impl Codec for CanonicalMutationRequest {
                 target: ProjectPath::decode(decoder)?,
                 json_schema: decoder.bool()?,
             },
+            22 => Self::RenameResource(RenameResourceRequestV1::decode(decoder)?),
             other => Err(format!("unknown mutation request tag {other}"))?,
         })
     }
@@ -1108,6 +1112,15 @@ mod tests {
             },
             migration_effect: Some(DatasourceRef::parse("primary").unwrap()),
         };
+        let rename = RenameResourceRequestV1 {
+            entity: intent_id(),
+            expected_path: expected_path(),
+            new_name: crate::identity::Name::parse("Entry").unwrap(),
+            strategy: RenameStrategy::SingleCutover,
+            target_table: Some(SqlName::parse("entries").unwrap()),
+            api: ExternalRenamePolicy::Rename,
+            target_route: Some(crate::application::RoutePath::parse("/entries").unwrap()),
+        };
 
         for request in [
             CanonicalMutationRequest::EvolveField(evolve),
@@ -1117,6 +1130,7 @@ mod tests {
                 request: destroy,
                 force: true,
             },
+            CanonicalMutationRequest::RenameResource(rename),
             CanonicalMutationRequest::SqlGenerate {
                 queries: BTreeSet::from([QueryId::new(
                     SliceName::parse("Billing").unwrap(),
@@ -1309,7 +1323,7 @@ mod tests {
     #[test]
     fn request_tags_match_the_specified_numbers() {
         let path = || ProjectPath::parse("x.txt").unwrap();
-        let cases: [(CanonicalMutationRequest, u8); 12] = [
+        let cases: [(CanonicalMutationRequest, u8); 13] = [
             (CanonicalMutationRequest::Sync { no_start: false }, 2),
             (CanonicalMutationRequest::AppInit { target: path() }, 5),
             (CanonicalMutationRequest::AppApply { no_start: false }, 6),
@@ -1377,6 +1391,18 @@ mod tests {
                     force: false,
                 },
                 19,
+            ),
+            (
+                CanonicalMutationRequest::RenameResource(RenameResourceRequestV1 {
+                    entity: intent_id(),
+                    expected_path: JavaType::parse("Note").unwrap(),
+                    new_name: crate::identity::Name::parse("Entry").unwrap(),
+                    strategy: RenameStrategy::PreserveTable,
+                    target_table: None,
+                    api: ExternalRenamePolicy::Preserve,
+                    target_route: None,
+                }),
+                22,
             ),
         ];
         for (request, tag) in cases {

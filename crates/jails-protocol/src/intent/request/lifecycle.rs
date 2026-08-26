@@ -1,4 +1,5 @@
 use crate::Result;
+use crate::application::RoutePath;
 use crate::declaration::{FieldSpec, FieldType};
 use crate::entity::EntityId;
 use crate::identity::{JavaType, Name, ProjectPath};
@@ -51,6 +52,115 @@ pub type EntityPath = JavaType;
 pub type FieldId = Name;
 /// Validated name assigned by a rename action.
 pub type FieldName = Name;
+
+/// The explicit storage transition selected for a logical resource rename.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RenameStrategy {
+    PreserveTable,
+    SingleCutover,
+    Rolling,
+}
+
+impl Codec for RenameStrategy {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        encoder.tag(match self {
+            Self::PreserveTable => 0,
+            Self::SingleCutover => 1,
+            Self::Rolling => 2,
+        });
+        Ok(())
+    }
+
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(match decoder.tag()? {
+            0 => Self::PreserveTable,
+            1 => Self::SingleCutover,
+            2 => Self::Rolling,
+            other => Err(format!(
+                "unknown resource rename strategy tag {other}.\n       fix: upgrade jails or restore compatible `.jails` state"
+            ))?,
+        })
+    }
+}
+
+/// Whether externally visible names participate in a logical rename.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExternalRenamePolicy {
+    Preserve,
+    Rename,
+}
+
+impl Codec for ExternalRenamePolicy {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        encoder.tag(match self {
+            Self::Preserve => 0,
+            Self::Rename => 1,
+        });
+        Ok(())
+    }
+
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(match decoder.tag()? {
+            0 => Self::Preserve,
+            1 => Self::Rename,
+            other => Err(format!(
+                "unknown external rename policy tag {other}.\n       fix: upgrade jails or restore compatible `.jails` state"
+            ))?,
+        })
+    }
+}
+
+/// A resource rename after its selector has resolved to one durable entity.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RenameResourceRequestV1 {
+    pub entity: EntityId,
+    pub expected_path: EntityPath,
+    pub new_name: Name,
+    pub strategy: RenameStrategy,
+    pub target_table: Option<SqlName>,
+    pub api: ExternalRenamePolicy,
+    pub target_route: Option<RoutePath>,
+}
+
+impl RenameResourceRequestV1 {
+    pub fn validate(&self) -> Result<()> {
+        if self.target_route.is_some() && self.api != ExternalRenamePolicy::Rename {
+            return Err("a target route requires `api=rename`.\n       fix: pass `--api rename --route <path>`, or omit `--route` to preserve external names".into());
+        }
+        Ok(())
+    }
+}
+
+impl Codec for RenameResourceRequestV1 {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        self.validate()?;
+        self.entity.encode(encoder)?;
+        self.expected_path.encode(encoder)?;
+        self.new_name.encode(encoder)?;
+        self.strategy.encode(encoder)?;
+        encoder.option(self.target_table.as_ref(), |encoder, table| {
+            table.encode(encoder)
+        })?;
+        self.api.encode(encoder)?;
+        encoder.option(self.target_route.as_ref(), |encoder, route| {
+            route.encode(encoder)
+        })
+    }
+
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        let request = Self {
+            entity: EntityId::decode(decoder)?,
+            expected_path: JavaType::decode(decoder)?,
+            new_name: Name::decode(decoder)?,
+            strategy: RenameStrategy::decode(decoder)?,
+            target_table: decoder.option(SqlName::decode)?,
+            api: ExternalRenamePolicy::decode(decoder)?,
+            target_route: decoder.option(RoutePath::decode)?,
+        };
+        request.validate()?;
+        Ok(request)
+    }
+}
 
 /// A typed constant written lexically at the CLI boundary.
 ///

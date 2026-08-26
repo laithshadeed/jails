@@ -8,8 +8,8 @@ use crate::entity::{EntityId, OneShotId, OneShotSpec};
 use crate::identity::{JavaType, ProjectPath};
 use crate::ownership::{DesiredEntity, DesiredState, ReconcileScope};
 use crate::request::{
-    DestroyResourceRequestV2, EvolveFieldRequestV1, RepairResourceRequestV1,
-    ReviveResourceRequestV1,
+    DestroyResourceRequestV2, EvolveFieldRequestV1, RenameResourceRequestV1,
+    RepairResourceRequestV1, ReviveResourceRequestV1,
 };
 use jails_support::codec::{Codec, Decoder, Encoder, ordered};
 use std::collections::{BTreeMap, BTreeSet};
@@ -34,6 +34,7 @@ pub enum PlannedSubject {
         to: JavaType,
         force: bool,
     },
+    RenameResource(Box<RenameResourceRequestV1>),
     AdoptLayout,
     Format {
         scopes: BTreeSet<ProjectPath>,
@@ -58,6 +59,7 @@ impl PlannedSubject {
         Some(match self {
             Self::AppInit { .. } => MaintenanceAttribution::AppInit,
             Self::Rename { .. } => MaintenanceAttribution::Rename,
+            Self::RenameResource(_) => MaintenanceAttribution::Rename,
             Self::AdoptLayout => MaintenanceAttribution::AdoptLayout,
             Self::Format { .. } => MaintenanceAttribution::Format,
             Self::ContractProjection { .. } => MaintenanceAttribution::ContractProjection,
@@ -87,6 +89,7 @@ impl PlannedSubject {
             Self::RepairResource(_) => 11,
             Self::GenerateQueries { .. } => 12,
             Self::ContractProjection { .. } => 13,
+            Self::RenameResource(_) => 14,
         }
     }
 }
@@ -112,6 +115,7 @@ impl Codec for PlannedSubject {
                 encoder.bool(*force);
                 Ok(())
             }
+            Self::RenameResource(request) => request.encode(encoder),
             Self::AdoptLayout => Ok(()),
             Self::Format { scopes } => {
                 encoder.set(scopes)?;
@@ -167,6 +171,7 @@ impl Codec for PlannedSubject {
                 target: ProjectPath::decode(decoder)?,
                 json_schema: decoder.bool()?,
             },
+            14 => Self::RenameResource(Box::new(RenameResourceRequestV1::decode(decoder)?)),
             other => Err(format!(
                 "unknown planned subject tag {other}.\n       fix: upgrade jails or restore \
                  compatible `.jails` state"
