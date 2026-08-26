@@ -494,8 +494,21 @@ fn runtime_names(services: &[Runtime]) -> Vec<&str> {
     services.iter().map(|s| s.compose_name()).collect()
 }
 
+/// `up -d --wait`, and the `--wait` is the whole point.
+///
+/// `docker compose up -d` returns when the container is *running*, which for
+/// PostgreSQL is several seconds before it accepts a TCP connection. `jails
+/// run` starts the services and then starts Spring Boot, so on a cold start
+/// the application raced the database it had just asked for and died on
+/// "Connection refused" -- intermittently, which is the worst way to fail.
+///
+/// Every service jails writes declares a `healthcheck`, so `--wait` waits for
+/// *healthy* rather than merely started: `pg_isready` for PostgreSQL,
+/// `redis-cli ping` for Redis, `kafka-topics.sh --list` for the broker. The
+/// timeout is bounded so a service that never becomes healthy is a failure
+/// with a message rather than a command that hangs.
 fn up_args<'a>(names: &'a [&str]) -> Vec<&'a str> {
-    let mut args = vec!["up", "-d"];
+    let mut args = vec!["up", "-d", "--wait", "--wait-timeout", "120"];
     args.extend(names.iter().copied());
     args
 }

@@ -60,10 +60,19 @@ Closed by `e3c7041`, mid-pass:
   `doctor` goes from eight unexplained drift warnings to `26 checks, all clear`.
 
 **Still broken, re-reproduced verbatim at `e3c7041`:** B2, B5, B14, B18, B20,
-B22, B37, B41. **Not retested:** B10.
+B22, B37, B41.
 
-**New:** **B45** (high) `jails new --app` silently discards the entire project
-when a post-commit effect fails.
+Closed after that pass, in the same session:
+
+- **B45** `jails new --app` publishes the project and *then* reports a failed
+  post-commit effect: exit 1, the effect named, and the project on disk. It
+  used to throw the failure out of the publish-by-rename, discarding the whole
+  scratch tree -- so a compose service that would not start left `ledger
+  create` in the report and no directory at all.
+- **B10** every generated compose service already declared a `healthcheck`;
+  what was missing was `--wait`. `up -d --wait --wait-timeout 120` returns when
+  PostgreSQL is *healthy* (`pg_isready`) rather than merely running, which is
+  what `jails run` was racing.
 
 **No jails source, test, build or doc file was modified while reproducing.**
 
@@ -334,51 +343,6 @@ and "create a new migration instead" is not an escape from a dependency check.
 **Expected:** either `destroy association` supports a forward retirement (drop the
 constraint in a new migration, retire the row), or the dependant check names that
 path instead of one that cannot run.
-
----
-
-## B45 — `jails new --app` discards the entire project when a post-commit effect fails
-
-**Severity: high.** *New this pass.* The flagship one-command path — CLAUDE.md
-calls it "one command from an empty directory to a project that passes `mvn clean
-verify`" — leaves nothing on disk when a compose service cannot start.
-
-```
-$ jails new b5app --offline --no-git --app b5/app.toml
-  … 28 `create` lines …
-  ledger  create
-  effect  compose reconcile (1 up, 0 stopped) (failed)
-$ echo $?
-1
-$ ls -d b5app
-ls: cannot access 'b5app': No such file or directory
-```
-
-The report says the transaction committed (`ledger create`). There is no `jails:`
-line, no message saying the project was not created, and no directory. The same
-manifest with no `db` capability creates and keeps the project (exit 0), and
-`jails add db` in an *existing* project survives the identical compose failure and
-keeps its files — so the discard is specific to the `new --app` publish path.
-
-The trigger here was an unrelated container already holding `:5432`, which is an
-ordinary state on a developer machine.
-
-**Expected:** a failed post-commit effect is reported against a project that
-exists. The effect is explicitly post-*commit*; it must not be able to unmake the
-commit.
-
----
-
-## B10 — `jails run` starts Spring Boot before PostgreSQL is ready for TCP connections
-
-**Severity: medium (intermittent on cold start).** **Not retested** on any recent
-pass — `:5432` is held by an unrelated project's container and restarting it
-would disrupt that work.
-
-The cause is unchanged and visible in the source: `compose.rs` builds
-`["up", "-d"]` with no `--wait`, and there is no healthcheck or semantic
-readiness probe anywhere on the start path. `docker compose up -d` returns when
-the container is *running*, which is before PostgreSQL accepts connections.
 
 ---
 

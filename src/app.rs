@@ -203,7 +203,21 @@ fn declared(
 /// apply` and wrong for `jails new --app`: the project it should apply to is
 /// the one that command just created, not whatever encloses the directory the
 /// user is standing in.
-pub(crate) fn apply_in(root: &Path, no_start: bool, debug: bool) -> Result<()> {
+/// What applying a manifest left behind.
+///
+/// Two outcomes rather than one `Result`, because `jails new --app` has to
+/// treat them differently: a manifest that could not be applied leaves no
+/// project, and a manifest that *was* applied leaves one whether or not a
+/// post-commit effect succeeded.
+pub(crate) enum Applied {
+    /// The transaction committed and everything after it succeeded.
+    Clean,
+    /// The transaction committed; something after it failed, and the reason
+    /// has already been printed.
+    CommittedThenReported,
+}
+
+pub(crate) fn apply_in(root: &Path, no_start: bool, debug: bool) -> Result<Applied> {
     let discovering = std::time::Instant::now();
     let project = crate::model::Project::load(root)?;
     let mut run = jails_engine::route::Run::committing(&project).with_timing(
@@ -217,13 +231,24 @@ pub(crate) fn apply_in(root: &Path, no_start: bool, debug: bool) -> Result<()> {
         run = run.with_debug();
     }
     let outcome = declared(&run, None)?;
-    crate::dispatch::report(
+    let committed = outcome.is_committed();
+    match crate::dispatch::report(
         &outcome,
         &["app".to_string(), "apply".to_string()],
         crate::Output::Human,
         jails_prepare::review::ReviewSelection::default(),
         debug,
-    )
+    ) {
+        Ok(()) => Ok(Applied::Clean),
+        Err(error) if committed => {
+            // Printed already. Returning it as a value rather than an error
+            // is what lets the caller finish publishing the project the
+            // commit is in before it reports the failure.
+            let _ = error;
+            Ok(Applied::CommittedThenReported)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 #[cfg(test)]

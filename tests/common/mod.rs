@@ -195,7 +195,7 @@ pub fn write_fake_maven(dir: &Path, names: &[&str], log: &Path) {
 }
 
 #[cfg(unix)]
-fn set_executable(path: &Path) {
+pub fn set_executable(path: &Path) {
     use std::os::unix::fs::PermissionsExt;
     let mut perms = fs::metadata(path).unwrap().permissions();
     perms.set_mode(0o755);

@@ -79,11 +79,11 @@ pub fn new(request: Request<'_>) -> Result<()> {
     if git {
         git_init(&tree, debug);
     }
-    seed(&publication, app, request.no_start, debug)?;
+    let applied = seed(&publication, app, request.no_start, debug)?;
 
     publication.publish()?;
     println!("Created ./{name} (deps: {deps}, Java {java})");
-    Ok(())
+    reported(applied)
 }
 
 /// Fetch and unpack start.spring.io's answer into the reserved scratch tree.
@@ -260,11 +260,11 @@ fn new_offline(request: &Request<'_>, deps: &str) -> Result<()> {
         tree.put(".gitignore", GITIGNORE)?;
         git_init(&tree, debug);
     }
-    seed(&publication, app, request.no_start, debug)?;
+    let applied = seed(&publication, app, request.no_start, debug)?;
 
     publication.publish()?;
     println!("Created ./{name} offline (deps: {deps}, Java {java})");
-    Ok(())
+    reported(applied)
 }
 
 pub(super) fn offline_dependencies(deps: &str) -> Result<String> {

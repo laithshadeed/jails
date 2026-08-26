@@ -99,6 +99,74 @@ fn example_manifest_policy_covers_every_checked_in_manifest() {
     }
 }
 
+/// A post-commit effect that fails must not unmake the project.
+///
+/// `jails new --app` publishes by rename, so an error thrown out of the
+/// manifest apply discarded the whole scratch tree. A compose service that
+/// would not start -- an ordinary state on a machine where something else
+/// already holds `:5432` -- therefore printed `ledger create`, exited 1, and
+/// left no directory: no `jails:` line, no project, and no way to tell which
+/// of the two had happened.
+///
+/// The effect is explicitly post-*commit*. It must be reported against a
+/// project that exists.
+#[test]
+fn a_failed_post_commit_effect_reports_against_a_project_that_exists() {
+    let parent = temp_dir("new-app-effect-failure");
+    fs::create_dir_all(&parent).unwrap();
+    // A compose engine that refuses everything, so the effect fails for a
+    // reason that has nothing to do with what was generated.
+    let tools = parent.join("tools");
+    fs::create_dir_all(&tools).unwrap();
+    let docker = tools.join("docker");
+    fs::write(
+        &docker,
+        "#!/bin/sh\necho 'compose is unavailable' >&2\nexit 1\n",
+    )
+    .unwrap();
+    set_executable(&docker);
+    let manifest = parent.join("app.toml");
+    fs::write(
+        &manifest,
+        "schema = 1\ncapabilities = [\"db\"]\n\n[[generate]]\nkind = \"scaffold\"\nname = \"Deal\"\nfields = [\"id:uuid@pk\", \"amount:decimal\"]\n",
+    )
+    .unwrap();
+
+    let path = format!(
+        "{}:{}",
+        tools.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let output = jails_cmd(&parent, None)
+        .env("PATH", path)
+        .args([
+            "new",
+            "effectapp",
+            "--offline",
+            "--no-git",
+            "--app",
+            manifest.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    let rendered = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.status.code(), Some(1), "{rendered}");
+    assert!(rendered.contains("effect"), "{rendered}");
+    let project = parent.join("effectapp");
+    assert!(project.is_dir(), "the project was discarded:\n{rendered}");
+    assert!(
+        project
+            .join("src/main/java/com/example/effectapp/domain/Deal.java")
+            .is_file(),
+        "the manifest's own output is missing:\n{rendered}"
+    );
+}
+
 fn generated_unheld_maven_example() -> &'static PathBuf {
     static GENERATED: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     GENERATED.get_or_init(|| {

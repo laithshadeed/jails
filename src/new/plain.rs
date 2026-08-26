@@ -125,11 +125,11 @@ pub fn new_cli(request: &Request<'_>) -> Result<()> {
         tree.put(".gitignore", GITIGNORE)?;
         git_init(&tree, debug);
     }
-    seed(&publication, app, request.no_start, debug)?;
+    let applied = seed(&publication, app, request.no_start, debug)?;
 
     publication.publish()?;
     println!("Created ./{name} (package: {package}, Java {java})");
-    Ok(())
+    reported(applied)
 }
 
 pub(super) fn ensure_enforcer(tree: &publish::Tree<'_>, java: &str) -> Result<()> {

@@ -578,7 +578,7 @@ fn run_starts_compose_services_only_when_explicitly_requested() {
     assert!(status.success());
     let invocation = read_log(&log);
     assert!(
-        invocation.contains("compose up -d"),
+        invocation.contains("compose up -d --wait --wait-timeout 120"),
         "expected docker compose up before spring-boot:run: {invocation}"
     );
     assert!(invocation.contains("spring-boot:run"));
@@ -663,7 +663,9 @@ fn start_and_stop_drive_docker_compose() {
     let invocation = read_log(&log);
     let lines: Vec<&str> = invocation.lines().collect();
     assert!(
-        lines.iter().any(|l| l.ends_with("compose up -d postgres")),
+        lines
+            .iter()
+            .any(|l| l.ends_with("compose up -d --wait --wait-timeout 120 postgres")),
         "start db: {invocation}"
     );
     assert!(
@@ -671,8 +673,10 @@ fn start_and_stop_drive_docker_compose() {
         "stop kafka: {invocation}"
     );
     assert!(
-        lines.iter().any(|l| l.ends_with("compose up -d")),
-        "bare start should be `up -d` with no service filter: {invocation}"
+        lines
+            .iter()
+            .any(|l| l.ends_with("compose up -d --wait --wait-timeout 120")),
+        "bare start should be `up -d --wait` with no service filter: {invocation}"
     );
     assert!(
         lines.iter().any(|l| l.ends_with("compose stop")),
@@ -732,7 +736,7 @@ fn db_opens_psql_against_compose_postgres() {
     );
     let invocation = read_log(&log);
     assert!(
-        invocation.contains("compose up -d postgres"),
+        invocation.contains("compose up -d --wait --wait-timeout 120 postgres"),
         "db should start postgres first: {invocation}"
     );
     assert!(

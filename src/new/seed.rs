@@ -26,7 +26,7 @@ pub fn seed_manifest(
     manifest: &Path,
     no_start: bool,
     debug: bool,
-) -> Result<()> {
+) -> Result<crate::app::Applied> {
     let source = std::fs::read_to_string(manifest).map_err(|error| {
         format!(
             "failed to read the application manifest {}: {error}\n       \
@@ -37,6 +37,23 @@ pub fn seed_manifest(
     tree.put(".jails/app.toml", &source)?;
     println!("  manifest {}", manifest.display());
     crate::app::apply_in(tree.root(), no_start, debug)
+}
+
+/// Whether the manifest run left a failure the caller still has to report.
+///
+/// `jails new --app` publishes by rename, so an error thrown out of the apply
+/// discards the whole scratch tree -- which is right for a manifest that could
+/// not be applied and wrong for one that *was*. A compose service that will
+/// not start, on a machine where an unrelated container already holds `:5432`,
+/// used to leave the report saying `ledger create` and the destination
+/// directory absent: no `jails:` line, no project, and no way to tell which of
+/// the two had happened. The effect is explicitly post-*commit*; it must not
+/// be able to unmake the commit, still less the project the commit is in.
+pub(super) fn reported(applied: crate::app::Applied) -> Result<()> {
+    match applied {
+        crate::app::Applied::Clean => Ok(()),
+        crate::app::Applied::CommittedThenReported => Err(jails_support::Failure::Reported),
+    }
 }
 
 /// Apply `--app <manifest>` to the project being created, before it is
@@ -52,10 +69,10 @@ pub(super) fn seed(
     app: Option<&Path>,
     no_start: bool,
     debug: bool,
-) -> Result<()> {
+) -> Result<crate::app::Applied> {
     match app {
         Some(manifest) => seed_manifest(&publication.tree(), manifest, no_start, debug),
-        None => Ok(()),
+        None => Ok(crate::app::Applied::Clean),
     }
 }
 

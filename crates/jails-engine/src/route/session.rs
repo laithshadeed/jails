@@ -203,6 +203,18 @@ pub struct EffectRetryOutcome {
 }
 
 impl Outcome {
+    /// Whether a durable project transaction was written.
+    ///
+    /// The question `jails new --app` has to ask before it decides what a
+    /// non-zero exit means. A refusal never reaches an `Outcome` at all, so
+    /// the only way to be here with a failing report is that the commit
+    /// happened and something *after* it did not -- and a post-commit effect
+    /// must not be able to unmake the commit, still less the project the
+    /// commit is in.
+    pub fn is_committed(&self) -> bool {
+        matches!(self, Self::Committed(..) | Self::CommittedAfterRecovery(..))
+    }
+
     /// The commit, when the caller knows it asked for one.
     pub fn committed(self) -> Result<CommitResult> {
         match self {
