@@ -1526,6 +1526,26 @@ fn task_drop_keeps_v001_and_appends_an_exact_forward_migration() {
         String::from_utf8_lossy(&revive.stderr)
     );
     assert_eq!(snapshot_tree(&root), before_revive, "refusal wrote files");
+
+    let recreated = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(recreated.status.success(), "{recreated:?}");
+    let recreated_migration = root.join("src/main/resources/db/migration/V003__create_tasks.sql");
+    assert!(recreated_migration.is_file(), "{recreated:?}");
+    assert_eq!(fs::read_to_string(&create).unwrap(), sealed);
+    assert!(
+        fs::read_to_string(&recreated_migration)
+            .unwrap()
+            .contains("create table tasks"),
+        "{}",
+        recreated_migration.display()
+    );
+    assert!(
+        root.join("src/main/java/com/example/demo/web/TaskController.java")
+            .is_file()
+    );
 }
 
 #[test]

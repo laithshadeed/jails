@@ -24,16 +24,26 @@ pub(crate) fn migration_file(project: &Project, description: &str) -> Result<std
     const DIR: &str = "src/main/resources/db/migration";
     let names = project.projected_names_in(DIR);
     let suffix = format!("__{description}.sql");
-    if let Some(existing) = names.iter().find(|name| name.ends_with(&suffix)) {
+    let existing = names
+        .iter()
+        .filter(|name| name.ends_with(&suffix))
+        .filter_map(|name| migration_version(name).map(|version| (version, name)))
+        .max_by_key(|(version, _)| *version);
+    let dropped_after = description.strip_prefix("create_").is_some_and(|table| {
+        let drop_suffix = format!("__drop_{table}.sql");
+        let last_drop = names
+            .iter()
+            .filter(|name| name.ends_with(&drop_suffix))
+            .filter_map(|name| migration_version(name))
+            .max();
+        last_drop.is_some_and(|drop| existing.is_some_and(|(create, _)| drop >= create))
+    });
+    if let Some((_, existing)) = existing.filter(|_| !dropped_after) {
         return Ok(project.root().join(DIR).join(existing));
     }
     let mut highest = 0;
     for name in &names {
-        let digits = name
-            .strip_prefix('V')
-            .and_then(|rest| rest.split_once("__").map(|(version, _)| version))
-            .or_else(|| name.split_once('_').map(|(version, _)| version));
-        if let Some(version) = digits.and_then(|value| value.parse::<u32>().ok()) {
+        if let Some(version) = migration_version(name) {
             highest = highest.max(version);
         }
     }
@@ -44,6 +54,13 @@ pub(crate) fn migration_file(project: &Project, description: &str) -> Result<std
         .root()
         .join(DIR)
         .join(format!("V{version:03}__{description}.sql")))
+}
+
+fn migration_version(name: &str) -> Option<u32> {
+    name.strip_prefix('V')
+        .and_then(|rest| rest.split_once("__").map(|(version, _)| version))
+        .or_else(|| name.split_once('_').map(|(version, _)| version))
+        .and_then(|value| value.parse::<u32>().ok())
 }
 
 /// Plan the forward-only migration that retires one generated table.
@@ -129,11 +146,7 @@ pub fn next_migration_version(dir: &Path) -> Result<u32> {
     for entry in entries.flatten() {
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        let digits = name
-            .strip_prefix('V')
-            .and_then(|rest| rest.split_once("__").map(|(version, _)| version))
-            .or_else(|| name.split_once('_').map(|(version, _)| version));
-        if let Some(version) = digits.and_then(|value| value.parse::<u32>().ok()) {
+        if let Some(version) = migration_version(&name) {
             highest = highest.max(version);
         }
     }
