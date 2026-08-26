@@ -13,3 +13,12 @@ Content-Type: application/json
 ### List Owner
 GET {{baseUrl}}/owners
 Accept: application/json
+
+@id = 00000000-0000-0000-0000-000000000001
+
+### Get Owner
+GET {{baseUrl}}/owners/{{id}}
+Accept: application/json
+
+### Delete Owner
+DELETE {{baseUrl}}/owners/{{id}}

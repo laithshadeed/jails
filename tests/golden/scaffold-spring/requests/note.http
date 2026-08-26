@@ -13,3 +13,12 @@ Content-Type: application/json
 ### List Note
 GET {{baseUrl}}/notes
 Accept: application/json
+
+@id = 00000000-0000-0000-0000-000000000001
+
+### Get Note
+GET {{baseUrl}}/notes/{{id}}
+Accept: application/json
+
+### Delete Note
+DELETE {{baseUrl}}/notes/{{id}}

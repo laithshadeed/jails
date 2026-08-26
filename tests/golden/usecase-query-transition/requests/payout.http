@@ -15,3 +15,12 @@ Content-Type: application/json
 ### List Payout
 GET {{baseUrl}}/payouts
 Accept: application/json
+
+@id = 00000000-0000-0000-0000-000000000001
+
+### Get Payout
+GET {{baseUrl}}/payouts/{{id}}
+Accept: application/json
+
+### Delete Payout
+DELETE {{baseUrl}}/payouts/{{id}}

@@ -14,3 +14,12 @@ Content-Type: application/json
 ### List Item
 GET {{baseUrl}}/items
 Accept: application/json
+
+@id = 00000000-0000-0000-0000-000000000001
+
+### Get Item
+GET {{baseUrl}}/items/{{id}}
+Accept: application/json
+
+### Delete Item
+DELETE {{baseUrl}}/items/{{id}}
