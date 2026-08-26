@@ -48,7 +48,7 @@ pub(super) fn run(options: RunOptions, args: &[String], debug: bool) -> Result<(
 
     if options.watch {
         if options.launcher == RunLauncher::BuildTool {
-            return super::build_tool_watch(debug);
+            return super::build_tool_watch(&application_args, debug);
         }
         return watch(&project, options.compile, &application_args, debug);
     }
@@ -268,11 +268,7 @@ fn java_major(version: &str) -> Option<u32> {
 }
 
 fn build_tool_run(args: &[OsString], debug: bool) -> Result<()> {
-    let strings = args
-        .iter()
-        .map(|arg| arg.to_string_lossy().into_owned())
-        .collect::<Vec<_>>();
-    super::build_tool_run(false, &strings, debug)
+    super::build_tool_run(false, args, debug)
 }
 
 fn run_jar(project: &Project, compile: RunCompile, args: &[OsString], debug: bool) -> Result<()> {

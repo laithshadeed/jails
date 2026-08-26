@@ -500,7 +500,7 @@ pub fn gradle(args: &[String], debug: bool) -> Result<()> {
 /// running JVM -- jails never kills/restarts the app process, just keeps
 /// target/classes fresh. Without devtools this recompiles for nothing, so
 /// that's checked upfront.
-pub(super) fn build_tool_watch(debug: bool) -> Result<()> {
+pub(super) fn build_tool_watch(args: &[std::ffi::OsString], debug: bool) -> Result<()> {
     let (root, build) = either_root("watch")?;
     if build == crate::build::Build::Gradle {
         // Gradle's own continuous mode rather than devtools: `--continuous`
@@ -508,7 +508,12 @@ pub(super) fn build_tool_watch(debug: bool) -> Result<()> {
         // the reader's side and needs nothing added to the build. devtools is
         // still honoured if the project has it -- the two compose, because one
         // rebuilds and the other restarts.
-        return gradlew::tasks(&root, &["--continuous", "bootRun"], debug);
+        let mut tasks = vec!["--continuous".to_string(), "bootRun".to_string()];
+        if let Some(arguments) = plugin_argument_line(args)? {
+            tasks.push(format!("--args={arguments}"));
+        }
+        let borrowed = tasks.iter().map(String::as_str).collect::<Vec<_>>();
+        return gradlew::tasks(&root, &borrowed, debug);
     }
     let root = maven_root("watch")?;
     let pom = fs::read_to_string(root.join("pom.xml"))
@@ -526,6 +531,9 @@ pub(super) fn build_tool_watch(debug: bool) -> Result<()> {
 
     let mut run_cmd = Command::new(crate::maven::binary(&root));
     run_cmd.arg("spring-boot:run").current_dir(&root);
+    if let Some(arguments) = plugin_argument_line(args)? {
+        run_cmd.arg(format!("-Dspring-boot.run.arguments={arguments}"));
+    }
     // The same treatment `jails run` gets, and for the same reason:
     // `mvn spring-boot:run` exits 0 over an application that never started,
     // because devtools runs `main` on its own thread and catches the
@@ -587,16 +595,16 @@ pub fn run(options: RunOptions, args: &[String], debug: bool) -> Result<()> {
     application::run(options, args, debug)
 }
 
-pub(super) fn build_tool_run(no_build: bool, args: &[String], debug: bool) -> Result<()> {
+pub(super) fn build_tool_run(
+    no_build: bool,
+    args: &[std::ffi::OsString],
+    debug: bool,
+) -> Result<()> {
     let (root, build) = either_root("run")?;
     if build == crate::build::Build::Gradle {
         let mut tasks = vec!["bootRun".to_string()];
-        if !args.is_empty() {
-            // The Boot Gradle plugin forks a JVM, so argv reaches the
-            // application through a property rather than as arguments to
-            // Gradle -- the same shape `spring-boot:run` needs and for the
-            // same reason.
-            tasks.push(format!("--args={}", args.join(" ")));
+        if let Some(arguments) = plugin_argument_line(args)? {
+            tasks.push(format!("--args={arguments}"));
         }
         let borrowed: Vec<&str> = tasks.iter().map(String::as_str).collect();
         return gradlew::tasks(&root, &borrowed, debug);
@@ -616,8 +624,8 @@ pub(super) fn build_tool_run(no_build: bool, args: &[String], debug: bool) -> Re
         cmd.arg("spring-boot:run").current_dir(&root);
         // spring-boot:run forks a JVM, so argv cannot simply be appended: the
         // plugin takes them as one space-joined property instead.
-        if !args.is_empty() {
-            cmd.arg(format!("-Dspring-boot.run.arguments={}", args.join(" ")));
+        if let Some(arguments) = plugin_argument_line(args)? {
+            cmd.arg(format!("-Dspring-boot.run.arguments={arguments}"));
         }
         forced_color(&mut cmd);
         return run_watched(cmd, debug);
@@ -664,6 +672,33 @@ pub(super) fn build_tool_run(no_build: bool, args: &[String], debug: bool) -> Re
         .args(args)
         .current_dir(&root);
     run_inherited(run, debug)
+}
+
+/// Encode one already-tokenized argv for the Spring Boot build plugins.
+///
+/// Both plugins expose their application vector as one command-line string.
+/// Quoting every token and escaping apostrophes as adjacent quote segments
+/// makes their command-line decoders reconstruct the original UTF-8 vector.
+/// Values the plugin properties cannot represent are refused instead of being
+/// silently replaced or dropped; the direct launcher has no such conversion.
+fn plugin_argument_line(args: &[std::ffi::OsString]) -> Result<Option<String>> {
+    if args.is_empty() {
+        return Ok(None);
+    }
+    let mut encoded = Vec::with_capacity(args.len());
+    for argument in args {
+        let text = argument.to_str().ok_or({
+            "build-tool launch cannot represent a non-UTF-8 application argument\n       fix: use `--launcher classpath` to preserve the exact operating-system bytes"
+        })?;
+        if text.is_empty() || text.chars().any(char::is_control) {
+            return Err(
+                "build-tool launch cannot represent an empty or control-character application argument\n       fix: use `--launcher classpath` to preserve the exact argument vector"
+                    .into(),
+            );
+        }
+        encoded.push(format!("'{}'", text.replace('\'', "'\"'\"'")));
+    }
+    Ok(Some(encoded.join(" ")))
 }
 
 /// Picks a jar out of target/ for --no-build's Spring Boot path. Excludes
@@ -823,6 +858,26 @@ mod tests {
         assert!(spring_started(
             "2026-08-26 INFO  app.Main : Started Main in 0.742 seconds (process running for 1.0)\n"
         ));
+    }
+
+    #[test]
+    fn build_plugins_receive_a_reconstructable_argument_vector() {
+        let args = [
+            std::ffi::OsString::from("--spring.profiles.active=dev,test"),
+            std::ffi::OsString::from("two words"),
+            std::ffi::OsString::from("quote's"),
+            std::ffi::OsString::from(r"back\slash"),
+        ];
+        assert_eq!(
+            plugin_argument_line(&args).unwrap().as_deref(),
+            Some(r#"'--spring.profiles.active=dev,test' 'two words' 'quote'"'"'s' 'back\slash'"#)
+        );
+    }
+
+    #[test]
+    fn build_plugin_argument_conversion_refuses_unrepresentable_tokens() {
+        assert!(plugin_argument_line(&[std::ffi::OsString::new()]).is_err());
+        assert!(plugin_argument_line(&[std::ffi::OsString::from("line\nbreak")]).is_err());
     }
 }
 

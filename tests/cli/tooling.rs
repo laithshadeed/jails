@@ -482,11 +482,69 @@ fn build_tool_launcher_uses_spring_boot_run_for_spring_projects() {
     write_fake_maven(&fake_dir, &["mvn"], &log);
 
     let status = jails_cmd(&root, Some(&fake_dir))
-        .args(["run", "--launcher", "build-tool"])
+        .args([
+            "run",
+            "--launcher",
+            "build-tool",
+            "--profile",
+            "dev,test",
+            "--",
+            "two words",
+            "quote's",
+            r"back\slash",
+        ])
         .status()
         .unwrap();
     assert!(status.success());
-    assert!(read_log(&log).contains("spring-boot:run"));
+    let invocation = read_log(&log);
+    assert!(invocation.contains("spring-boot:run"), "{invocation}");
+    assert!(
+        invocation.contains(
+            r#"-Dspring-boot.run.arguments='--spring.profiles.active=dev,test' 'two words' 'quote'"'"'s' 'back\slash'"#
+        ),
+        "build-tool launch changed the tokenized application argv: {invocation}"
+    );
+}
+
+#[test]
+fn gradle_build_tool_launcher_preserves_the_same_application_vector() {
+    let root = temp_dir("mock-run-gradle-spring");
+    fs::write(root.join("settings.gradle"), "rootProject.name = 'demo'\n").unwrap();
+    fs::write(root.join("build.gradle"), "plugins { id 'java' }\n").unwrap();
+    let pkg_dir = root.join("src/main/java/com/example/demo");
+    fs::create_dir_all(&pkg_dir).unwrap();
+    fs::write(
+        pkg_dir.join("App.java"),
+        "package com.example.demo;\npublic class App { public static void main(String[] args) {} }\n",
+    )
+    .unwrap();
+    let fake_dir = temp_dir("mock-run-gradle-spring-bin");
+    let log = fake_dir.join("log.txt");
+    write_fake_maven(&fake_dir, &["gradle"], &log);
+
+    let status = jails_cmd(&root, Some(&fake_dir))
+        .args([
+            "run",
+            "--launcher",
+            "build-tool",
+            "--profile",
+            "dev,test",
+            "--",
+            "two words",
+            "quote's",
+            r"back\slash",
+        ])
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let invocation = read_log(&log);
+    assert!(invocation.contains("bootRun"), "{invocation}");
+    assert!(
+        invocation.contains(
+            r#"--args='--spring.profiles.active=dev,test' 'two words' 'quote'"'"'s' 'back\slash'"#
+        ),
+        "Gradle launch changed the tokenized application argv: {invocation}"
+    );
 }
 
 #[test]
