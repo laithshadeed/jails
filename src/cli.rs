@@ -775,9 +775,16 @@ pub(crate) enum Command {
     },
     /// Explain a failure: pass a log file, pipe one in, or run it bare to start the app
     Why {
-        /// A file holding the failure output. Omit to read stdin, or to
-        /// start the app and read what it prints.
+        /// A failure log path, or `bean`, `migration`, or `query`.
         log: Option<PathBuf>,
+        /// The bean type, migration version, or managed query name.
+        name: Option<String>,
+        /// Read `.jails/last-run.log` without starting the application.
+        #[arg(long)]
+        last: bool,
+        /// Include bounded evidence and limitations (always present in JSON).
+        #[arg(long)]
+        evidence: bool,
         /// Emit machine-readable diagnoses
         #[arg(long)]
         json: bool,

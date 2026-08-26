@@ -391,6 +391,100 @@ fn why_reads_a_log_file_and_says_so_when_it_does_not_recognise_one() {
 }
 
 #[test]
+fn why_bean_emits_a_source_bounded_cause_graph() {
+    let root = temp_dir("why-bean");
+    write_inspectable_project(&root);
+    let before = snapshot_tree(&root);
+
+    let output = jails_cmd(&root, None)
+        .args(["why", "bean", "OrderService", "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.starts_with(r#"{"schema_version":3,"subject":"bean:OrderService""#),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(r#""subject":"bean:OrderService""#),
+        "{stdout}"
+    );
+    assert!(stdout.contains(r#""kind":"static-inference""#), "{stdout}");
+    assert!(stdout.contains(r#""cause_graph":{"nodes":["#), "{stdout}");
+    assert!(stdout.contains("no source-visible provider"), "{stdout}");
+    assert_eq!(snapshot_tree(&root), before, "why bean wrote project state");
+}
+
+#[test]
+fn why_migration_and_query_report_offline_evidence_without_writes() {
+    let root = temp_dir("why-sql-subjects");
+    write_why_sql_project(&root);
+    let before = snapshot_tree(&root);
+
+    let migration = jails_cmd(&root, None)
+        .args(["why", "migration", "V001", "--json"])
+        .output()
+        .unwrap();
+    assert!(migration.status.success(), "{:?}", migration);
+    let stdout = String::from_utf8_lossy(&migration.stdout);
+    assert!(stdout.contains(r#""subject":"migration:V001""#), "{stdout}");
+    assert!(stdout.contains("normalized schema object"), "{stdout}");
+
+    let query = jails_cmd(&root, None)
+        .args(["why", "query", "FindOrder", "--json"])
+        .output()
+        .unwrap();
+    assert!(query.status.success(), "{:?}", query);
+    let stdout = String::from_utf8_lossy(&query.stdout);
+    assert!(
+        stdout.contains(r#""subject":"query:FindOrder""#),
+        "{stdout}"
+    );
+    assert!(stdout.contains("verified-offline"), "{stdout}");
+    assert_eq!(
+        snapshot_tree(&root),
+        before,
+        "why SQL subjects wrote project state"
+    );
+}
+
+fn write_why_sql_project(root: &Path) {
+    write_project_skeleton(root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    fs::create_dir_all(root.join("src/main/resources/db/queries")).unwrap();
+    fs::write(
+        root.join(".jails/app.toml"),
+        r#"schema = "jails.app.v1"
+[application]
+name = "Example"
+base_package = "com.example.demo"
+java_release = 26
+dialect = "postgresql"
+[slices.Orders]
+[slices.Orders.queries.FindOrder]
+source = "src/main/resources/db/queries/FindOrder.sql"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/main/resources/db/migration/V001__orders.sql"),
+        "CREATE TABLE orders (id uuid PRIMARY KEY, title text NOT NULL);\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/main/resources/db/queries/FindOrder.sql"),
+        "-- jails:name FindOrder\n-- jails:cardinality optional\n-- jails:param id uuid\nSELECT id, title FROM orders WHERE id = :id;\n",
+    )
+    .unwrap();
+}
+
+#[test]
 fn rename_moves_the_type_its_companion_and_every_reference() {
     let root = temp_dir("rename");
     write_inspectable_project(&root);

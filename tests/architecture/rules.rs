@@ -350,6 +350,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     // and below `jails-drive` so the contract is structural.
     ("jails-report", "doctor", 7),
     ("jails-report", "why", 7),
+    ("jails-report", "why_subject", 7),
     ("jails-report", "explain", 7),
     ("jails-report", "commands", 7),
     ("jails-report", "source", 7),

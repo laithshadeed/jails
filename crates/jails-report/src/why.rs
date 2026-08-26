@@ -48,6 +48,36 @@ struct Rule {
     explain: fn(&str) -> Diagnosis,
 }
 
+pub fn command(
+    input: Option<&Path>,
+    name: Option<&str>,
+    last: bool,
+    _evidence: bool,
+    debug: bool,
+    json: bool,
+) -> Result<()> {
+    if last {
+        if input.is_some() || name.is_some() {
+            return Err("`--last` cannot be combined with a log path or subject.\n       fix: run `jails why --last` by itself.".into());
+        }
+        let root = crate::generate::find_project_root()?;
+        return why(Some(&root.join(".jails/last-run.log")), debug, json);
+    }
+    if let Some(name) = name {
+        let kind = input
+            .and_then(Path::to_str)
+            .ok_or("a why subject must be valid UTF-8")?;
+        return crate::why_subject::report(kind, name, json);
+    }
+    if input
+        .and_then(Path::to_str)
+        .is_some_and(|kind| matches!(kind, "bean" | "migration" | "query"))
+    {
+        return Err("a why subject needs a name.\n       fix: use `jails why bean <type>`, `jails why migration <version>`, or `jails why query <name>`.".into());
+    }
+    why(input, debug, json)
+}
+
 const RULES: &[Rule] = &[
     Rule {
         // Testcontainers caches a failed environment probe for the life of

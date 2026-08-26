@@ -22,6 +22,7 @@ pub mod explain;
 pub mod lifecycle_status;
 pub mod source;
 pub mod why;
+pub mod why_subject;
 
 // The lower crates, re-exported so every module in this one keeps saying
 // `crate::…` wherever it ships.
