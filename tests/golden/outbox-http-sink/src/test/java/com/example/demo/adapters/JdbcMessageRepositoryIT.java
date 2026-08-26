@@ -27,11 +27,10 @@ class JdbcMessageRepositoryIT {
 
     @Test
     void roundTripsThroughTheRealDatabase() {
-        var message = new Message(
+        var message = repository.save(new Message(
                 UUID.fromString("00000000-0000-0000-0000-000000000001"),
                 "sample",
-                Instant.parse("2024-01-01T00:00:00Z"));
-        repository.save(message);
+                Instant.parse("2024-01-01T00:00:00Z")));
 
         UUID key = message.id();
         assertThat(repository.findById(key)).contains(message);

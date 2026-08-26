@@ -39,8 +39,9 @@ public class InMemoryArticleRepository implements ArticleRepository {
     }
 
     @Override
-    public void save(Article article) {
+    public Article save(Article article) {
         items.put(article.id(), article);
+        return article;
     }
 
     @Override

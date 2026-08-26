@@ -26,11 +26,10 @@ class JdbcArticleRepositoryIT {
 
     @Test
     void roundTripsThroughTheRealDatabase() {
-        var article = new Article(
+        var article = repository.save(new Article(
                 UUID.fromString("00000000-0000-0000-0000-000000000001"),
                 "sample",
-                "sample");
-        repository.save(article);
+                "sample"));
 
         UUID key = article.id();
         assertThat(repository.findById(key)).contains(article);

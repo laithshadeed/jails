@@ -27,12 +27,11 @@ class JdbcItemRepositoryIT {
 
     @Test
     void roundTripsThroughTheRealDatabase() {
-        var item = new Item(
+        var item = repository.save(new Item(
                 UUID.fromString("00000000-0000-0000-0000-000000000001"),
                 UUID.fromString("00000000-0000-0000-0000-000000000001"),
                 "sample",
-                Instant.parse("2024-01-01T00:00:00Z"));
-        repository.save(item);
+                Instant.parse("2024-01-01T00:00:00Z")));
 
         UUID key = item.id();
         assertThat(repository.findById(key)).contains(item);

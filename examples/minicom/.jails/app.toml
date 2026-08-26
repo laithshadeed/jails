@@ -40,10 +40,14 @@ on = "Message"
 yields = "User"
 
 # POST /api/send
+#
+# No `id`: `Message.id` is `long@pk`, so PostgreSQL assigns it and the create
+# returns the row it wrote. Naming it here used to be accepted and then
+# silently dropped by the insert.
 [[generate]]
 kind = "usecase"
 name = "SendMessage"
-fields = ["id:long", "userId:long", "body:string!", "direction:MessageDirection"]
+fields = ["userId:long", "body:string!", "direction:MessageDirection"]
 on = "Message"
 
 # POST /api/read  ->  Message.mark_read()

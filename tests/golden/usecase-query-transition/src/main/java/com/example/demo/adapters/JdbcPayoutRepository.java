@@ -95,11 +95,12 @@ public final class JdbcPayoutRepository implements PayoutRepository {
     }
 
     @Override
-    public void save(Payout payout) {
+    public Payout save(Payout payout) {
         Objects.requireNonNull(payout, "payout is required");
         try (var insert = connection.prepareStatement(INSERT)) {
             bind(insert, payout);
             insert.executeUpdate();
+            return payout;
         } catch (SQLException error) {
             throw new IllegalStateException("could not save to payouts", error);
         }

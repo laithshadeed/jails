@@ -312,12 +312,18 @@ pub(crate) fn in_memory_repository_java(
     pkg: &str,
     name: &str,
     extra: &str,
-    key: Option<&crate::generate::Field>,
-    key_type: &crate::generate::KeyType,
+    key: &crate::generate::StoredKey<'_>,
     is_bean: bool,
 ) -> String {
+    let crate::generate::StoredKey {
+        component,
+        key_type,
+        assigned: generated,
+        rebuilt,
+    } = key;
+    let generated = *generated;
     let var = crate::generate::lower_first(name);
-    let (find_by_id, delete_by_id, save_body, note) = match key {
+    let (find_by_id, delete_by_id, save_body, note) = match component {
         Some(field) => {
             let accessor = &field.name;
             // Keyed on the *repository's* key component, and stored as the
@@ -330,14 +336,43 @@ pub(crate) fn in_memory_repository_java(
             } else {
                 format!("{var}.{accessor}()")
             };
+            // The fake has to assign what the database would, or it is not a
+            // fake of this port: with a `generated always as identity` key
+            // every caller hands in the same placeholder, so keying on it
+            // would store one row forever. plan.md P4.2.
+            let (save_body, note) = if generated {
+                (
+                    format!(
+                        "        {key} assigned = next.incrementAndGet();\n\
+                         \x20       {name} stored = {rebuilt};\n\
+                         \x20       items.put(assigned, stored);\n\
+                         \x20       return stored;",
+                        key = key_type.java,
+                        name = name,
+                        rebuilt = rebuilt
+                            .as_deref()
+                            .expect("a generated key rebuilds the record"),
+                    ),
+                    format!(
+                        " * <p>Keyed on the {{@code {accessor}}} component, which the database \
+                         assigns.\n * This fake assigns it too -- from a counter -- because a \
+                         caller hands in\n * a placeholder and expects the stored value back.\n"
+                    ),
+                )
+            } else {
+                (
+                    format!("        items.put({stored}, {var});\n        return {var};"),
+                    format!(
+                        " * <p>Keyed on the {{@code {accessor}}} component -- the same one the \
+                         JDBC\n * adapter's {{@code where}} clause uses.\n"
+                    ),
+                )
+            };
             (
                 "        return Optional.ofNullable(items.get(id));".to_string(),
                 "        return items.remove(id) != null;".to_string(),
-                format!("        items.put({stored}, {var});"),
-                format!(
-                    " * <p>Keyed on the {{@code {accessor}}} component -- the same one the JDBC\n \
-                     * adapter's {{@code where}} clause uses.\n"
-                ),
+                save_body,
+                note,
             )
         }
         None => (
@@ -347,7 +382,9 @@ pub(crate) fn in_memory_repository_java(
              \x20       return Optional.empty();"
                 .to_string(),
             "        return items.remove(id) != null;".to_string(),
-            format!("        items.put(String.valueOf(items.size()), {var});"),
+            format!(
+                "        items.put(String.valueOf(items.size()), {var});\n        return {var};"
+            ),
             " * <p>This type declares no key jails can see, so lookups by id are\n\
              \x20* left unimplemented -- see the TODO in {@code findById}.\n"
                 .to_string(),
@@ -356,6 +393,14 @@ pub(crate) fn in_memory_repository_java(
     // Exactly one adapter is the bean. When the JDBC one is, this is a fake
     // for tests and says so rather than pretending to be a stand-in for a
     // database that now exists.
+    let (counter_field, counter_import) = if generated {
+        (
+            "    private final AtomicLong next = new AtomicLong();\n",
+            "import java.util.concurrent.atomic.AtomicLong;\n",
+        )
+    } else {
+        ("", "")
+    };
     let repository_annotation = if is_bean { "@Component\n" } else { "" };
     let repository_import = if is_bean {
         "import org.springframework.stereotype.Component;\n"
@@ -382,6 +427,8 @@ pub(crate) fn in_memory_repository_java(
             ("note", &*note),
             ("key", &key_type.java),
             ("key_import", &key_type.import),
+            ("counter_field", counter_field),
+            ("counter_import", counter_import),
             ("role_note", &*role_note),
             ("repository_annotation", repository_annotation),
             ("find_by_id", &*find_by_id),

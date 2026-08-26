@@ -90,11 +90,12 @@ public final class JdbcNoteRepository implements NoteRepository {
     }
 
     @Override
-    public void save(Note note) {
+    public Note save(Note note) {
         Objects.requireNonNull(note, "note is required");
         try (var insert = connection.prepareStatement(INSERT)) {
             bind(insert, note);
             insert.executeUpdate();
+            return note;
         } catch (SQLException error) {
             throw new IllegalStateException("could not save to notes", error);
         }

@@ -16,7 +16,7 @@ class Jdbc{{name}}TransitionIT {
 
     @Test
     void updatesOnceAndRejectsTheStaleVersionWithoutAnotherMutation() {
-        repository.save(new {{target}}(
+        var stored = repository.save(new {{target}}(
                 {{target_args}}));
         var command = new {{name}}Command(
                 {{command_args}});

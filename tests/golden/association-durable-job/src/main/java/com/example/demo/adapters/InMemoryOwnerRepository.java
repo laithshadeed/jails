@@ -39,8 +39,9 @@ public class InMemoryOwnerRepository implements OwnerRepository {
     }
 
     @Override
-    public void save(Owner owner) {
+    public Owner save(Owner owner) {
         items.put(owner.id(), owner);
+        return owner;
     }
 
     @Override

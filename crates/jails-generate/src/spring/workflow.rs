@@ -182,6 +182,31 @@ pub(crate) fn usecase_files(
         }
     }
 
+    // **The database assigns this key, so the command may not.** Without the
+    // refusal the component is accepted, rendered into the record, and then
+    // dropped by an insert that omits the identity column -- a create that
+    // reads as honouring the caller's id and silently does not.
+    // plan.md P4.2.
+    let target_columns = crate::sql::columns(
+        target_fields,
+        slice.project(),
+        &slice.owned(Layer::Domain),
+        "value",
+    );
+    if let Some(generated) = crate::sql::generated_key(&target_columns)
+        && let Some(named) = fields
+            .iter()
+            .find(|field| field.name == generated.component)
+    {
+        return Err(format!(
+            "usecase {name} accepts `{}`, and {target}'s key is assigned by the database.\n       \
+             fix: drop `{}` from the usecase fields; the created {target} carries the key the \
+             insert returned.",
+            named.name, named.name
+        )
+        .into());
+    }
+
     let mut expressions = Vec::with_capacity(target_fields.len());
     let mut default_imports = Vec::new();
     for field in target_fields {
@@ -447,16 +472,51 @@ fn usecase_test_java(
             missing.join(", ")
         )
     };
-    let id_assertion = if id.java_type == "String" {
-        "        assertThat(created.id()).isNotBlank();"
-    } else {
-        "        assertThat(created.id()).isNotNull();"
+    // What "the key was assigned" looks like depends on who assigned it. A
+    // primitive `long` is never null, so `isNotNull` on one asserts nothing;
+    // an identity column starts at one, so a positive value is the honest
+    // claim. plan.md P4.2 / missing.md M3.
+    let id_assertion = match id.java_type.as_str() {
+        "String" => "        assertThat(created.id()).isNotBlank();",
+        "int" | "Integer" | "long" | "Long" => "        assertThat(created.id()).isPositive();",
+        _ => "        assertThat(created.id()).isNotNull();",
     };
     // The scaffolded target's port is typed on its own key. plan.md P3.3.
     let key_argument = crate::generate::key_argument(
         "created.id()",
         &crate::generate::key_type_of(target_fields, project, domain),
     );
+    // **The case missing.md M3 says would have caught it.** Every generated
+    // test inserted exactly one row, so a create that hands the same key to
+    // the store every time looked identical to one that assigns a fresh one:
+    // two creates, one row, the first silently gone.
+    //
+    // Only where the *use case* assigns the key. A command that carries it is
+    // `Assignment::ClientSupplied`, and there two identical commands are one
+    // row on purpose -- asserting two would turn a correct idempotent create
+    // into a red build.
+    let two_creates_test = if fields.iter().any(|field| field.name == id.name) {
+        String::new()
+    } else {
+        format!(
+            "\n    /**\n\
+         \x20    * missing.md M3: two creates are two rows. When the key was\n\
+         \x20    * constructed rather than assigned, this was two creates and\n\
+         \x20    * *one* row, with no exception and no log line.\n\
+         \x20    */\n\
+         \x20   @Test\n\
+         \x20   void twoCreatesAreTwoRows() {{\n\
+         \x20       {name}Command command = new {name}Command(\n\
+         \x20               {args});\n\
+         \n\
+         \x20       {target} first = useCase.execute(command);\n\
+         \x20       {target} second = useCase.execute(command);\n\
+         \n\
+         \x20       assertThat(second.id()).isNotEqualTo(first.id());\n\
+         \x20       assertThat(repository.findAll()).hasSize(2);\n\
+         \x20   }}\n"
+        )
+    };
     crate::template::render(
         crate::template_here!("spring/usecase_test_java.java"),
         &[
@@ -471,6 +531,7 @@ fn usecase_test_java(
             ("args", &*args),
             ("id_assertion", id_assertion),
             ("key_argument", &*key_argument),
+            ("two_creates_test", &*two_creates_test),
             ("copied", &*copied),
         ],
     )
@@ -881,8 +942,8 @@ mod query_tests {
         assert!(adapter.contains("limit :max_results"), "{adapter}");
         assert!(adapter.contains("MAX_RESULTS = 100"), "{adapter}");
         assert!(
-            integration_test.contains("repository.save(stored)"),
-            "{integration_test}"
+            integration_test.contains("stored = repository.save(new Message("),
+            "the query test filters on the stored row, not the argument: {integration_test}"
         );
         assert!(
             integration_test.contains("contains(stored)"),

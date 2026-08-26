@@ -32,7 +32,6 @@ public class StoringReceiveMessageUseCase implements ReceiveMessageUseCase {
                 command.id(),
                 command.body(),
                 Instant.now());
-        repository.save(message);
-        return message;
+        return repository.save(message);
     }
 }

@@ -1,4 +1,4 @@
-# missing.md — what six real minicom projects needed and jails could not give
+# missing.md — what eight real minicom projects needed and jails could not give
 
 Written 2026-08-26. `CLAUDE.md` says an earlier `missing.md` was folded into
 `pending.md`; `pending.md` is itself gone now (deleted in `2f8003b`), so the
@@ -22,6 +22,8 @@ no hand-written Java, no hand-edited pom. Sources are at
 | `mc-13-12-2025` | Django 5 / Node / Rails / Spring skeleton | `minicom-2025-12-13` | **green**, 9 tests |
 | `mc-21-11-2025` | Django + Channels, read receipts | `minicom-2025-11-21` | **green**, 32 tests |
 | `mc-16-11-2025` | Django + Channels + HF bot | `minicom-2025-11-16` | **RED** — M1, now closed |
+| `minicom-05-02-2026`, second deeper pass | Django + Channels + OpenAI | `mc2-full` | **green**, 70 tests |
+| `minicom-15-01-2026` (4 backends) | Django / Rails / Node / Spring | `mc-15-01` | **green**, 70 tests, **0 of 10 endpoints match** |
 
 A seventh check ran `jails` inside the *unmodified* `mc-01-06-2026/spring`
 tree — Gradle 8.5, Spring Boot 2.7.18, Java 21 — to test the foreign-project
@@ -51,86 +53,111 @@ remainder.
 
 ---
 
-## M3 — no identity column for integer primary keys, and the loss is silent
+## Case study A — Minicom 2.0, feature by feature
 
-`id:uuid@pk` is complete: the create use case emits `UUID.randomUUID()`.
-`id:long@pk` and `id:int@pk` are not.
+`minicom-05-02-2026/django/minicom/`: 13 Python files, 671 lines, doing
+customer↔admin chat over WebSockets with admin presence, an OpenAI assistant
+that takes over when no admin is online, and escalation into an issue queue.
+The jails rebuild is `minicom-jails/mc2-full` — 106 Java files, 4,646 lines,
+`BUILD SUCCESS`, 70 tests, nothing hand-written.
 
-### Reproduce — two commands
+Taken feature by feature rather than stopping at the schema:
+
+| what the Django app does | jails | how |
+|---|---|---|
+| `User`, `Message`, `Issue` + their enums | yes | `g scaffold`, `g enum` |
+| FKs `message.to_user`, `issue.user` | yes | `g association` |
+| `Meta.ordering = ['timestamp']` / `['-created_at']` | **no** | **M17** — every list is `order by id` |
+| `User.get_or_create_from_email` | **no** | **M6** — used by 4 of the 5 endpoints |
+| `unread_messages()` / `unread_count()` | partial | list yes; `count()` no — **M5** |
+| `Message.mark_read()` | partial | `g transition`, after adding `version` — **M11** |
+| `POST /customer_api/ping {email}` | **no** | get-or-create **and** a join on email — M5, M6, M8 |
+| `POST /customer_api/read {email, message_id}` | partial | keyed by id, not email |
+| `POST /admin_api/messages {email, content}` | partial | keyed by `toUserId`, not email |
+| `GET /admin_api/users` | yes | the scaffold's own `GET /users` |
+| `GET /admin_api/issues` with `user_email` joined | **no** | `select_related('user')` — **M5** |
+| 400/404 error bodies | yes | `add api` |
+| Django admin at `/admin/` | **no** | **M18** — no back-office surface |
+| CORS | yes | `add cors` |
+| `ws/chat/<email>/?role=`, groups, `history`, broadcast | **no** | **M4** |
+| admin presence + `admin_status` broadcast | **no** | **M4** |
+| bot greeting / "no admin → let the AI answer" | **no** | domain logic |
+| `POST /v1/chat/completions` to OpenAI | **no** | **M7** |
+| `SYSTEM_PROMPT`, history mapping, `parse_escalation` | **no** | domain logic (fair) |
+| create the `Issue` on escalation | yes | `g usecase … --on Issue` |
+| `OPENAI_API_KEY` from the environment | partial | `jails set`; no secret-shaped setting |
+
+**10 covered, 6 partial, 14 not.** By weight the split is cleaner than the
+count: **jails built the entire persistence and CRUD half and none of the
+transport or conversation half.** The WebSocket rows are one absence (M4) and
+the two email-keyed endpoints are another (M5/M6), and between them they are
+what makes this a chat product rather than a table with a REST face.
+
+Prompt text and response parsing are honest non-goals. An outbound `POST` with
+a typed body is not — see M7.
+
+---
+
+## Case study B — `minicom-15-01-2026`, and what "100% feature complete" costs
+
+This checkout is the pristine old-generation skeleton with **four backends
+implementing one contract** — Django, Rails, Node and Spring — plus two static
+websites on `:8010` and `:8011` that call it on `:3001`. jails only emits Java,
+so the question it can be asked is: *can one jails-built Spring service satisfy
+the contract all four implement?*
+
+The contract, as the two shipped websites call it:
+
+```
+POST   /customer_api/ping                          form {email}
+POST   /customer_api/read                          form {message_id}
+POST   /customer_api/messages                      form {email, content, category?, priority?}
+GET    /admin_api/users?status=&category=&priority=
+POST   /admin_api/messages                         form {email, content}
+GET    /admin_api/messages/:user_id
+GET    /admin_api/conversations?status=&category=
+PATCH  /admin_api/conversations/:user_id/status    json {status}
+PATCH  /admin_api/conversations/:user_id/category  json {category}
+PATCH  /admin_api/conversations/:user_id/priority  json {priority}
+```
+
+`mc-15-01` models the whole domain — `User`, `Message`, `Conversation`, four
+enums, two associations, four transitions, four queries, two use cases —
+and builds green with 70 tests. Then:
 
 ```sh
-jails new m3 --package com.x --offline --no-git && cd m3
-jails g scaffold Message id:long@pk sender:string! content:string!
-jails g usecase PostMessage sender:string! content:string! --on Message
-sed -n '/public Message execute/,/^    }/p' src/main/java/com/x/service/DefaultPostMessageUseCase.java
-```
-
-```java
-public Message execute(PostMessageCommand command) {
-    Objects.requireNonNull(command, "command is required");
-    Message message = new Message(
-            0L,                      // ← every insert, every time
-            command.sender(),
-            command.content());
-    repository.save(message);
-    return message;
-}
-```
-
-```sh
-head -4 src/main/resources/db/migration/V001__create_messages.sql
-```
-
-```sql
-create table messages (
-  id       bigint not null,          -- no identity, no sequence, no default
-```
-
-Swap `id:long@pk` for `id:uuid@pk` and the same command emits
-`UUID.randomUUID()` and `id uuid not null`. So the machinery for
-"server assigns the key" exists and is reachable for exactly one type.
-
-### The failure is worse on the default adapter than in the database
-
-`InMemoryMessageRepository.save` is `items.put(String.valueOf(message.id()), message)`
-— and `message.id()` is always `0`. Run it:
-
-```sh
-jails build
-cat > /tmp/probe.jsh <<'EOF'
-import com.x.adapters.InMemoryMessageRepository;
-import com.x.service.*;
-var repo = new InMemoryMessageRepository();
-var uc = new DefaultPostMessageUseCase(repo);
-uc.execute(new PostMessageCommand("alice", "first"));
-uc.execute(new PostMessageCommand("alice", "second"));
-System.out.println("rows after two creates: " + repo.findAll().size() + " -> " + repo.findAll());
-/exit
-EOF
-jshell --class-path target/classes -q /tmp/probe.jsh
+jails routes
 ```
 
 ```
-rows after two creates: 1 -> [Message[id=0, sender=alice, content=second]]
+PUT   /actions/mark-read              POST  /queries/conversations-by-status
+POST  /actions/post-message           POST  /queries/messages-for-user
+PUT   /actions/set-status             GET   /users
+PUT   /actions/set-category           GET   /messages
+PUT   /actions/set-priority           GET   /conversations
+…22 routes
 ```
 
-Two creates, one row, the first message **silently gone** — no exception, no
-log line. Against the JDBC adapter the same pair is a primary-key violation
-instead, so the app fails one way in dev and another in production.
+**Zero of the ten match.** Not one path, and the ones that are close are the
+wrong verb. The two websites cannot talk to it at all, and they are not files
+you are allowed to rewrite — they are the fixed side of the contract.
 
-No generated test catches it because every generated test inserts exactly one
-row. A `saves_two` case on the scaffold's own service test would have.
+Four separate causes, three of them new:
 
-### What is missing
+- **the paths are derived** — M8
+- **the requests are form-encoded**, and jails only binds `@RequestBody` JSON — **M15**
+- **three of the four enums have wire values jails cannot spell**: `open`,
+  `in_progress` (lowercase), `Product`, `Billing` (TitleCase), and `-`, `!`,
+  `!!` (not identifiers at all) — **M14**
+- **the admin filters are optional** — any subset of status/category/priority —
+  and `g query` takes required scalars only — **M16**
 
-A constraint marker in the field spec — `@identity`, or `@pk` on an integer
-type implying it — that emits `generated always as identity` and makes the
-generated create read the key back rather than construct it. All six originals
-use one: Django's implicit `AutoField`, Sequelize's `autoIncrement: true`.
+This is the clearest answer available to "can jails do 100%": for a service
+with an existing client, **the domain half is free and the contract half is
+unreachable**, and that is a property of four missing knobs rather than of any
+deep design commitment.
 
-This is adjacent to the "client must invent the id" note in `bugs.md`, but it
-is a different failure: there the *request* carries a value the caller chose;
-here the generated *server* hardcodes `0` and drops rows.
+---
 
 ## M4 — no WebSocket anything
 
@@ -298,9 +325,28 @@ own unique key — `jails g ensure User email:string!@unique --on User`, or a
 `--on-conflict <field>` on `g usecase`. This is the single most repeated
 hand-written line across the six projects.
 
-## M7 — `g client` has one fixed shape, and it is a REST collection
+## M7 — `g client` ignores `--method`, `--on` and `--returns` without saying so
 
-### Reproduce
+Two problems. The shape is fixed to a REST collection, and — the worse half —
+the flags that would change it are **accepted and silently discarded**:
+
+```sh
+jails g record Rq a:string!
+jails g client Gamma --method post --on Rq        # exit 0, reports success
+grep -c PostExchange src/main/java/com/x/clients/GammaClient.java
+```
+
+```
+0
+```
+
+No refusal, no warning, no `PostExchange`, and `Rq` is referenced nowhere. That
+is the failure class jails is otherwise scrupulous about — "an unknown marker
+is an error, not a no-op" — and `g controller` honours the very same three
+flags. Refusing them here would at least be honest; today the command reports
+success for work it did not do.
+
+### Reproduce the fixed shape
 
 ```sh
 jails g client OpenAiChatClient
@@ -334,8 +380,9 @@ proxies without it, and the first call dies on `URI with undefined scheme`).
 jails g controller Verify --method post --on ChatRequest --returns ChatResponse
 ```
 
-`g client` taking `--method` / `--on` / `--returns` (and a path, see M8) would
-make it generate the call the project makes rather than a shape to delete.
+`g client` already *takes* those three flags. Honouring them — plus a path, see
+M8 — would make it generate the call the project makes rather than a shape to
+delete. See also **M13**: a second `g client` breaks the first.
 
 ## M8 — no way to name a route path
 
@@ -511,6 +558,222 @@ being *ported* grows a column to satisfy the tool. Worth either an
 in `explain transition` naming `g usecase` plus a manual update as the escape
 hatch. Recording it as friction, not as a defect.
 
+## M12 — a fully applied transaction exits 1 because an external effect failed
+
+`add db` writes every file, records the ledger, and then returns a failure
+status because it could not start the compose service.
+
+```sh
+jails new p --package com.x --offline --no-git && cd p
+jails add db ; echo "EXIT=$?"
+```
+
+```
+  create  compose.yaml
+  create  jails.toml
+  replace pom.xml
+  …
+  ledger  create
+  effect  compose reconcile (1 up, 0 stopped) (failed)
+EXIT=1
+```
+
+The project is correct — `compose.yaml`, `jails.toml` and the migration
+directory are all there, and a second run says `nothing to do` and exits 0.
+Only the side effect failed.
+
+Two things follow. In a script — `for c in db api cors json sse; do jails add
+$c || fail; done`, which is how I installed capabilities on six projects —
+this reads as a failed install of the one capability that actually succeeded.
+And the natural response is to re-run it, which is a no-op that reports
+success, so the operator learns to ignore the status.
+
+**`--no-start` exists and fixes it** (`jails add db --no-start` → `EXIT=0`),
+but the failure line names neither the cause nor the flag. Everywhere else
+jails puts a `fix:` on a refusal; this line has none.
+
+The narrow fix is a distinct exit status for "applied, effect failed" — or, at
+minimum, `fix: jails add db --no-start` on that line.
+
+---
+
+## M13 — `g client` is not additive: a second client silently breaks the first
+
+`@ImportHttpServices` carries **one group name**, jails regenerates the single
+shared `HttpClientsConfig` with the newest client's name, and `basePackages`
+scans every client into that one group. So every previously generated client
+loses its configuration, with no error at generate time.
+
+```sh
+jails g client Alpha
+grep -o 'group = "[a-z-]*"' src/main/java/com/x/clients/HttpClientsConfig.java   # "alpha"
+jails g client Beta
+grep -o 'group = "[a-z-]*"' src/main/java/com/x/clients/HttpClientsConfig.java   # "beta"
+jails build
+```
+
+```
+AlphaClientTest.findAllReadsTheCollection <<< ERROR!
+org.springframework.web.client.ResourceAccessException:
+  I/O error on GET request for "https://example.invalid/alphas"
+BetaClientTest — Tests run: 2, Failures: 0, Errors: 0
+```
+
+Alpha's own test sets `spring.http.serviceclient.alpha.base-url` through
+`@DynamicPropertySource`, but Alpha is now registered under group `beta`, so
+the dynamic override never reaches it and the `https://example.invalid`
+placeholder from `application.properties` wins. Beta passes. **The newest
+client always works and every older one is broken.**
+
+Three clients is three broken tests and one passing one. `destroy client Beta`
+does not restore `alpha` either — the only jails-only repair is to destroy and
+regenerate the client you want last.
+
+The fix is one group per client (a config class per client, or
+`@ImportHttpServices` listed by type rather than by package scan).
+
+---
+
+## M14 — enum constants are silently uppercased, and there is no wire value
+
+`explain enum` says "a closed set of named constants, **stored by name**".
+There is no way to give a constant a different serialized form, and jails
+rewrites what you pass without saying so.
+
+```sh
+jails g enum Status open in_progress resolved closed
+grep -A4 'enum Status' src/main/java/com/x/domain/Status.java
+```
+
+```java
+public enum Status {
+    OPEN,
+    IN_PROGRESS,
+    RESOLVED,
+    CLOSED
+```
+
+I asked for `open` and got `OPEN`, with no warning. The generated API then
+emits `"OPEN"` where the shipped admin website sends and expects `"open"`.
+Same for `Product`/`Billing` → `PRODUCT`/`BILLING`.
+
+And the third enum cannot be expressed at all:
+
+```sh
+jails g enum Priority - '!' '!!'
+```
+
+```
+jails: name `-` starts with `-`; a Java identifier starts with a letter, `_` or `$`
+```
+
+That refusal is correct — those are not Java identifiers — but there is no
+`@value("-")` to attach the wire form to a legal constant name either.
+
+All three of `minicom-15-01-2026`'s enums are unrepresentable on the wire, and
+enum-valued columns are exactly where a ported service meets an existing
+client. The silent uppercasing is the worse half: an unknown field marker is an
+error in jails, but an unspellable enum constant is quietly rewritten.
+
+---
+
+## M15 — every generated endpoint binds JSON, and the clients post forms
+
+Each of the eight websites across these checkouts calls the backend with
+jQuery's `$.post(url, {email})`, which sends
+`application/x-www-form-urlencoded`. Every jails controller binds
+`@RequestBody`:
+
+```java
+@PostMapping
+public ResponseEntity<MessageResponse> execute(@Valid @RequestBody PostMessageCommand command)
+```
+
+```java
+@PostMapping
+public ResponseEntity<UserResponse> create(@Valid @RequestBody UserRequest request)
+```
+
+There is no flag on `g controller`, `g usecase` or `g query` to bind
+`@ModelAttribute` / `@RequestParam` instead, so a jails endpoint answers a form
+post with 415. The Spring backend that ships in `minicom-15-01-2026` binds
+`@RequestParam Map<String, String>`, which is what the frontends need.
+
+JSON is the right default. What is missing is the ability to say otherwise for
+a service whose callers already exist.
+
+---
+
+## M16 — query filters are all-or-nothing, so no filtered list view works
+
+```sh
+jails g query UsersFiltered 'status:Status?' 'category:Category?' --on Conversation
+```
+
+```
+jails: query UsersFiltered filter `status` is optional or a collection. This first
+       query contract only accepts required scalar equality filters so null/list
+       semantics are never guessed.
+```
+
+The refusal names itself "this first query contract", so the limit is known.
+But an inbox filter bar is the ordinary case: `minicom-15-01-2026`'s admin
+website sends any subset of `?status=&category=&priority=`, which is eight
+combinations. jails can express exactly one of them per generated query, and
+the unfiltered list is a different endpoint again.
+
+`sql::Column` already knows each filter's column and nullability, which is what
+"absent means no predicate" needs. The semantics that must not be guessed are
+`IS NULL` versus "no filter" — naming that explicitly (`--optional-filter`, or
+`?` meaning "omit the predicate when absent") is the whole feature.
+
+---
+
+## M17 — list ordering is fixed at `order by id`
+
+Every generated read orders by the primary key, in both the repository and the
+query adapter:
+
+```java
+// Ordered explicitly: SQL does not otherwise promise row order.
+select … from messages order by id
+```
+
+The comment is right that an order is needed. The problem is that it is the
+only one available, and `jails g --help` has no `--order-by`.
+
+`minicom-05-02-2026` needs `ordering = ['timestamp']` on messages and
+`['-created_at']` on issues. The second is not merely unsupported, it comes out
+**backwards** — the escalated-issues panel is meant to show newest first and
+`order by id` ascending shows oldest first, which looks like working software.
+
+---
+
+## M18 — no back-office surface
+
+Every Django checkout registers its models with the Django admin — list
+columns, filters, search fields, read-only keys — in about twenty lines:
+
+```python
+@admin.register(Issue)
+class IssueAdmin(admin.ModelAdmin):
+    list_display = ('id', 'user', 'issue_summary', 'status', 'created_at')
+    list_filter = ('status',)
+    search_fields = ('user__email', 'issue_summary')
+```
+
+```sh
+jails commands | grep -icE 'admin|crud|backoffice'    # 0
+```
+
+jails generates the REST surface and no operator surface. This is a defensible
+scope line — an admin UI is a product, not scaffolding — but it is worth
+recording that it is the one thing every Django port gets for free and every
+jails port does not, and that `jails.toml` plus the ledger already know the
+field model such a view would need.
+
+---
+
 ## Two smaller things, with their one-line checks
 
 **`g strategy` generates no evaluator, and has no ordering.**
@@ -544,8 +807,8 @@ the default of every generated create, and no test would notice.
 
 ## What this exercise says about the tool
 
-The scoreboard is 5 of 6 green with **zero** hand-written Java, on six real
-apps written by six different people in four languages. The layering, the
+The scoreboard is 7 of 8 green with **zero** hand-written Java, on eight real
+apps written by as many people in four languages. The layering, the
 field spec, `association`, `query`, `transition` and the write-path rules
 (import normalisation, `ensure_failsafe`, `ensure_assertj`,
 `ensure_webmvc_test`) all did their job without being thought about, which is
@@ -560,21 +823,35 @@ and should stay that way. It is the observation that *get-or-create by natural
 key*, *read across an association*, and *bidirectional push* are three generic
 primitives, and that all six of these projects needed all three.
 
-M1 and M2 were different: defects rather than absences, and both invisible to
-the suite for the same reason — the golden scenarios exercise one kind on one
-flavour, and each bug needs a second thing present. Both are closed, along with
-the blind spot behind them.
+The second cluster is smaller and cheaper: **M8, M14, M15 and M16 are four
+missing knobs** — a route path, an enum's wire value, a form binding, an
+optional filter. None of them asks jails to understand anything new. Together
+they are the whole reason `mc-15-01` matches zero of ten endpoints while
+modelling the domain perfectly, and they are what separates "scaffolds a new
+service" from "can be pointed at an existing client".
+
+M1 and M2 were different again: defects rather than absences, and both
+invisible to the suite for the same reason — the golden scenarios exercise one
+kind on one flavour, and each bug needs a second thing present. Both are
+closed, along with the blind spot behind them. **M7, M12 and M13 are the same
+species and still open**, and all three share one symptom worth naming: a
+command that reports success for something it did not do.
 
 ---
 
 ## Where the evidence lives
 
-The six builds are at `/home/laith/code/minicom-jails/`, each a plain Maven
+The eight builds are at `/home/laith/code/minicom-jails/`, each a plain Maven
 project — `cd` into one and `jails build`. The command log per project is its
 `.jails/ledger.toml`; `jails history` prints it.
 
-Every transcript above was produced by running the commands as written, on
-`jails 0.1.0` built from `9aac1b0`, JDK 26.0.2, Maven via `./mvnw`. The M2
+Every transcript above was produced by running the commands as written, JDK
+26.0.2, Maven via `./mvnw`. **M3–M11 were recorded against `9aac1b0`; M12–M18
+were recorded and every earlier entry re-checked against `d1e2185`** — the tree
+moved under this document while it was being written, which is why the versions
+are stated. One thing found on the way is deliberately not filed: between
+`3b58d17` and `d1e2185`, `g query` emitted a port whose declared type did not
+match its filename, so every query broke the build. `d1e2185` closed it. The M2
 Gradle run used `JAVA_HOME=…/openjdk-21.0.2` because Gradle 8.5 cannot run on
 JDK 26 (`Unsupported class file major version 70`) — that part is the
 checkout's age, not a jails problem.

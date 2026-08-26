@@ -20,4 +20,4 @@ import static org.assertj.core.api.Assertions.assertThat;
 {{copied}}
         assertThat(repository.findById({{key_argument}})).contains(created);
     }
-}
+{{two_creates_test}}}

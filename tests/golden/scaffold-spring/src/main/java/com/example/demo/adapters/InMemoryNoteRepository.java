@@ -42,8 +42,9 @@ public class InMemoryNoteRepository implements NoteRepository {
     }
 
     @Override
-    public void save(Note note) {
+    public Note save(Note note) {
         items.put(note.id(), note);
+        return note;
     }
 
     @Override

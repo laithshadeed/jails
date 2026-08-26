@@ -69,7 +69,7 @@ public final class JdbcArticleRepository implements ArticleRepository {
     }
 
     @Override
-    public void save(Article article) {
+    public Article save(Article article) {
         Objects.requireNonNull(article, "article is required");
         db.sql("""
                         insert into articles (id, title, body)
@@ -79,6 +79,7 @@ public final class JdbcArticleRepository implements ArticleRepository {
                 .param("title", article.title())
                 .param("body", article.body())
                 .update();
+        return article;
     }
 
     @Override

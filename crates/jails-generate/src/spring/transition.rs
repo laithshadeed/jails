@@ -381,6 +381,20 @@ fn failure_mapping(slice: &Slice, web: &str, name: &str) -> (String, String) {
     )
 }
 
+/// The component a target's database-assigned key lives in, if it has one.
+///
+/// `None` covers both "no generated key" and "no key jails can see", which
+/// are the same answer to the only question the caller asks: may a generated
+/// test write this component down as a literal?
+fn generated_key_component(
+    fields: &[crate::generate::Field],
+    project: &crate::model::Project,
+    domain: &str,
+) -> Option<String> {
+    let columns = crate::sql::columns(fields, project, domain, "value");
+    crate::sql::generated_key(&columns).map(|column| column.component.clone())
+}
+
 fn jdbc_transition_it_java(
     slice: &Slice,
     name: &str,
@@ -408,7 +422,16 @@ fn jdbc_transition_it_java(
         .map(|field| crate::generate::sample_value(field, project, domain))
         .collect::<Option<Vec<_>>>();
     let disabled = command_samples.is_none() || target_samples.is_none();
-    let command_values = command_samples.unwrap_or_default();
+    let mut command_values = command_samples.unwrap_or_default();
+    // A database-assigned key is not a literal this test can predict: the
+    // sequence does not roll back with the transaction, so the second run of
+    // the suite selects a row that is not there. The saved row knows its own
+    // key, so the command is built from that. plan.md P4.2.
+    if let Some(component) = generated_key_component(target_fields, project, domain)
+        && let Some(index) = fields.iter().position(|field| field.name == component)
+    {
+        command_values[index] = format!("stored.{component}()");
+    }
     let command_args = command_values.join(",\n                ");
     let target_args = target_samples
         .unwrap_or_default()
@@ -440,9 +463,8 @@ fn jdbc_transition_it_java(
                 r#"
     @Test
     void aDifferentPersistedScopeIsNotFoundAndCannotMutateTheRow() {{
-        var stored = new {target}(
-                {target_args});
-        repository.save(stored);
+        var stored = repository.save(new {target}(
+                {target_args}));
         var wrongScope = new {name}Command(
                 {args});
 

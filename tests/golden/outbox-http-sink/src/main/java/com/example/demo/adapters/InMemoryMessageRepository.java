@@ -39,8 +39,9 @@ public class InMemoryMessageRepository implements MessageRepository {
     }
 
     @Override
-    public void save(Message message) {
+    public Message save(Message message) {
         items.put(message.id(), message);
+        return message;
     }
 
     @Override

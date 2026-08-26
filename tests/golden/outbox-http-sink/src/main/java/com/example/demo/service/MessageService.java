@@ -32,8 +32,7 @@ public class MessageService {
     }
 
     public Message create(Message message) {
-        repository.save(message);
-        return message;
+        return repository.save(message);
     }
 
     /** @return true when a row was actually removed. */

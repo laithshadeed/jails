@@ -24,6 +24,13 @@ use jails_support::Result;
 pub struct Column {
     /// The column name: the component name in snake_case.
     pub name: String,
+    /// The Java component this column binds to, as the record declares it.
+    ///
+    /// Carried because [`Self::write`] bakes the receiver in -- it is
+    /// `Timestamp.from(x.at())`, not an accessor -- so a caller that needs to
+    /// name the component itself (rebuilding a record around a
+    /// database-assigned key, say) had nothing to read. plan.md P4.2.
+    pub component: String,
     /// The column type for a `create table`, in the project's dialect.
     ///
     /// Postgres unless the project's driver says otherwise -- see
@@ -52,6 +59,69 @@ impl Column {
     pub fn mapped(&self) -> bool {
         self.read.is_some() && self.write.is_some()
     }
+}
+
+/// Who decides a new row's primary key.
+///
+/// plan.md P4.2. There was no policy, so every generated create named the key
+/// itself: `usecase_default` handed `0L` to every create over an integer key,
+/// in every project, which means the primary create path works exactly once
+/// and then violates the primary key. Naming the three answers is what lets
+/// `create_table`, the adapters, the in-memory fake and the use case agree on
+/// one of them.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Assignment {
+    /// The caller supplies it -- the key is a component of the create command.
+    ClientSupplied,
+    /// The application writes it before the insert: `UUID.randomUUID()`.
+    ServerGenerated,
+    /// The database assigns it. The column is `generated always as identity`,
+    /// the insert omits it, and `returning` carries the row back.
+    DatabaseGenerated,
+}
+
+/// The policy this table's own key follows, read off its declared columns.
+///
+/// **Derived from the key's type, not configured**, because the two answers
+/// are not preferences: an application can write a UUID and cannot write a
+/// unique integer without asking the database, and a database can assign an
+/// integer and has no business inventing a UUID the application already knows
+/// how to make. [`Assignment::ClientSupplied`] is the one a *use case* adds,
+/// since only a command can say the caller supplied it.
+pub fn key_assignment(columns: &[Column]) -> Assignment {
+    let declared: Vec<&Column> = columns
+        .iter()
+        .filter(|column| column.constraints.primary_key)
+        .collect();
+    let key = match declared.as_slice() {
+        [key] => Some(*key),
+        // A composite key has no single generated component, and an
+        // undeclared one is not a key jails will assign.
+        [_, _, ..] => None,
+        [] => columns.iter().find(|column| column.name == "id"),
+    };
+    match key {
+        Some(key) if is_integer_key(&key.java_type) => Assignment::DatabaseGenerated,
+        _ => Assignment::ServerGenerated,
+    }
+}
+
+/// The Java types a database identity column can carry. `smallint` is
+/// deliberately absent: a table whose key runs out at 32,767 is a bug waiting
+/// rather than a design.
+fn is_integer_key(java_type: &str) -> bool {
+    matches!(java_type, "int" | "Integer" | "long" | "Long")
+}
+
+/// The column this table's key is, when the database assigns it.
+pub(crate) fn generated_key(columns: &[Column]) -> Option<&Column> {
+    if key_assignment(columns) != Assignment::DatabaseGenerated {
+        return None;
+    }
+    columns
+        .iter()
+        .find(|column| column.constraints.primary_key)
+        .or_else(|| columns.iter().find(|column| column.name == "id"))
 }
 
 /// Derive a column for every component. The project and `pkg` are needed to recognise
@@ -92,6 +162,7 @@ fn column(field: &Field, project: &crate::model::Project, pkg: &str, receiver: &
     // the two halves no longer agree, and snake-casing the Java name here
     // would quietly contradict the binding the ledger records.
     let name = field.column.clone();
+    let component = field.name.clone();
     let accessor = format!("{receiver}.{}()", field.name);
     // `?` means the component is an Optional<T>; the column is nullable and
     // the value has to be unwrapped on the way out and re-wrapped on the way
@@ -105,6 +176,7 @@ fn column(field: &Field, project: &crate::model::Project, pkg: &str, receiver: &
         // a schema decision jails has no business making silently.
         return Column {
             name,
+            component,
             sql_type: "jsonb".into(),
             not_null,
             read: None,
@@ -122,6 +194,7 @@ fn column(field: &Field, project: &crate::model::Project, pkg: &str, receiver: &
         return finish(
             Column {
                 name,
+                component,
                 sql_type,
                 not_null,
                 read: Some(read),
@@ -144,6 +217,7 @@ fn column(field: &Field, project: &crate::model::Project, pkg: &str, receiver: &
         return finish(
             Column {
                 name,
+                component,
                 sql_type: "text".into(),
                 not_null,
                 read: Some(read),
@@ -157,6 +231,7 @@ fn column(field: &Field, project: &crate::model::Project, pkg: &str, receiver: &
 
     Column {
         name,
+        component,
         sql_type: "text".into(),
         not_null,
         read: None,
@@ -179,6 +254,7 @@ fn finish(column: Column, optional: bool) -> Column {
     }
     let Column {
         name,
+        component,
         sql_type,
         read,
         write,
@@ -208,6 +284,7 @@ fn finish(column: Column, optional: bool) -> Column {
     };
     Column {
         name,
+        component,
         sql_type,
         not_null: false,
         read: Some(read),
@@ -421,9 +498,18 @@ pub(crate) fn create_table(
         .unwrap_or(0)
         .max(4);
 
+    let generated = generated_key(columns).map(|column| column.name.as_str());
     let mut body = String::new();
     for column in columns {
         let null = if column.not_null { " not null" } else { "" };
+        // `always`, not `by default`: the insert this schema is generated
+        // beside omits the column entirely, so an explicit value reaching it
+        // is a caller working around the policy rather than exercising it.
+        let identity = if generated == Some(column.name.as_str()) {
+            " generated always as identity"
+        } else {
+            ""
+        };
         let check = match column.constraints.check {
             Some(check) => format!(" check ({})", check.predicate(&column.name)),
             None => String::new(),
@@ -435,7 +521,10 @@ pub(crate) fn create_table(
         };
         // Trimmed before the comma: a nullable column would otherwise carry
         // the padding that only exists to line `not null` up.
-        let declaration = format!("{:type_width$}{null}{unique}{check}", column.sql_type);
+        let declaration = format!(
+            "{:type_width$}{identity}{null}{unique}{check}",
+            column.sql_type
+        );
         body.push_str(&format!(
             "  {:width$}  {},\n",
             column.name,

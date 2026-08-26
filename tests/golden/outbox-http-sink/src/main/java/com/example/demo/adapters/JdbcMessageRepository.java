@@ -72,7 +72,7 @@ public final class JdbcMessageRepository implements MessageRepository {
     }
 
     @Override
-    public void save(Message message) {
+    public Message save(Message message) {
         Objects.requireNonNull(message, "message is required");
         db.sql("""
                         insert into messages (id, body, created_at)
@@ -82,6 +82,7 @@ public final class JdbcMessageRepository implements MessageRepository {
                 .param("body", message.body())
                 .param("created_at", Timestamp.from(message.createdAt()))
                 .update();
+        return message;
     }
 
     @Override

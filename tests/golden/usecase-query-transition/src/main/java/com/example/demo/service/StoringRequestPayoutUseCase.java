@@ -33,7 +33,6 @@ public class StoringRequestPayoutUseCase implements RequestPayoutUseCase {
                 PayoutStatus.values()[0],
                 0L,
                 Instant.now());
-        repository.save(payout);
-        return payout;
+        return repository.save(payout);
     }
 }

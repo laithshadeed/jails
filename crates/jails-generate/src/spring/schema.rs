@@ -135,14 +135,23 @@ pub(crate) fn association_files(
     );
 
     let child_columns = crate::sql::columns(&child_fields, slice.project(), domain, "value");
-    let insert_columns = child_columns
+    // The probe row omits a `generated always as identity` key, for the same
+    // reason the adapter's insert does: PostgreSQL refuses a non-DEFAULT
+    // value outright, so naming the column turns this test's own setup into
+    // the failure it is meant to detect. plan.md P4.2.
+    let generated = crate::sql::generated_key(&child_columns).map(|column| column.name.clone());
+    let probed: Vec<&crate::sql::Column> = child_columns
+        .iter()
+        .filter(|column| Some(&column.name) != generated.as_ref())
+        .collect();
+    let insert_columns = probed
         .iter()
         .map(|column| column.name.as_str())
         .collect::<Vec<_>>()
         .join(", ");
-    let insert_values = child_columns
+    let insert_values = probed
         .iter()
-        .map(association_sql_literal)
+        .map(|column| association_sql_literal(column))
         .collect::<Vec<_>>()
         .join(", ");
     let expected_mapping = local_columns

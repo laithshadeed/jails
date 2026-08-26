@@ -18,9 +18,10 @@ class Jdbc{{name}}QueryIT {
 
     @Test
     void filtersInTheRealDatabase() {
-        {{target}} stored = new {{target}}(
-                {{target_args}});
-        repository.save(stored);
+        // The stored row, not the argument: with a database-assigned key the
+        // two differ by exactly the component the query filters on.
+        {{target}} stored = repository.save(new {{target}}(
+                {{target_args}}));
 
         var found = query.execute(new {{name}}Criteria(
                 {{query_args}}));

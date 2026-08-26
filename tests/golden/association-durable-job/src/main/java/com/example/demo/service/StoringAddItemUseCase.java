@@ -33,7 +33,6 @@ public class StoringAddItemUseCase implements AddItemUseCase {
                 command.ownerId(),
                 command.name(),
                 Instant.now());
-        repository.save(item);
-        return item;
+        return repository.save(item);
     }
 }

@@ -216,6 +216,7 @@ pub(crate) fn scaffold_artifacts_from_fields(
                 name,
                 &domain_in(&repository),
                 &super::repository::key_type(&columns),
+                crate::sql::key_assignment(&columns),
             ),
         },
         Artifact {
@@ -262,8 +263,7 @@ pub(crate) fn scaffold_artifacts_from_fields(
                     domain_in(&adapters),
                     import_of(&adapters, &repository, &format!("{name}Repository"))
                 ),
-                super::repository::key_component(parsed, &columns),
-                &super::repository::key_type(&columns),
+                &super::repository::StoredKey::of(parsed, &columns, name),
                 repository_wiring(slice.project()) != RepositoryWiring::JdbcClientBean,
             ),
         },

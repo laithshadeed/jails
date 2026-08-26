@@ -23,7 +23,7 @@ class JdbcChangePayoutStatusTransitionIT {
 
     @Test
     void updatesOnceAndRejectsTheStaleVersionWithoutAnotherMutation() {
-        repository.save(new Payout(
+        var stored = repository.save(new Payout(
                 UUID.fromString("00000000-0000-0000-0000-000000000001"),
                 1L,
                 PayoutStatus.values()[0],

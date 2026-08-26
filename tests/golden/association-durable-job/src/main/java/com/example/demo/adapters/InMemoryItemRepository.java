@@ -39,8 +39,9 @@ public class InMemoryItemRepository implements ItemRepository {
     }
 
     @Override
-    public void save(Item item) {
+    public Item save(Item item) {
         items.put(item.id(), item);
+        return item;
     }
 
     @Override

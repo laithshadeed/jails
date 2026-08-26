@@ -324,7 +324,7 @@ commit as the change that causes it.
       `migrations_declare_unique_key` finds the primary key and stops adding
       `create unique index … on users (id)` just to give a foreign key a
       target. Only the documents needed changing.
-- [ ] **P4.2** An assignment policy on the pk field —
+- [x] **P4.2** An assignment policy on the pk field —
       `ClientSupplied | ServerGenerated | DatabaseGenerated` — consumed by
       `create_table`, the use case, the request DTO and the in-memory fake.
       `long@pk`/`int@pk` get `generated always as identity` and
@@ -334,6 +334,40 @@ commit as the change that causes it.
       works exactly once and the generated test asserts
       `assertThat(created.id()).isNotNull()` on a primitive `long`
       (missing M3, modern §13.3).
+
+      Landed as `sql::Assignment` plus `sql::generated_key`, derived from the
+      key's *type* rather than configured: an application can write a UUID and
+      cannot write a unique integer without asking the database, and a
+      database can assign an integer and has no business inventing a UUID.
+      Four consequences worth recording.
+
+      **The port's `save` returns the stored row.** `void save` cannot carry a
+      key the database assigned, and two shapes of one port would be worse
+      than one — so it returns for every key type, and the Javadoc says which
+      of the two facts applies.
+
+      **`getGeneratedKeys`, not `returning`.** `insert … returning` is one
+      round trip and PostgreSQL-only; H2's parser has no such clause and
+      `Project::sql_dialect` treats H2 as a supported target. Both adapters
+      use JDBC's generated-key retrieval and rebuild the record around it,
+      which costs nothing because every other component is already in hand.
+
+      **`g usecase` refuses to name a database-assigned key.** Without that
+      the component is accepted, rendered into the record, and dropped by an
+      insert that omits the identity column — a create that reads as
+      honouring the caller's id and silently does not.
+      `examples/minicom/.jails/app.toml` declared exactly that and now does
+      not.
+
+      **Every generated test that wrote a key down had to stop.** The
+      repository round trip, the query IT, the transition IT and the
+      association probe all inserted a literal key; a `generated always as
+      identity` column refuses one outright, and the sequence does not roll
+      back with the transaction, so a literal that passes once fails on the
+      next run. They all read the saved row now. The one M3 asked for is
+      new: `twoCreatesAreTwoRows`, emitted only where the use case assigns
+      the key, because a command that carries it is `ClientSupplied` and two
+      identical commands are then one row on purpose.
 - [ ] **P4.3** The request DTO stops asking the client for server state
       (modern §7). `POST /messages` currently requires the primary key, the
       timestamp, the read flag *and* the optimistic-lock version — the exact

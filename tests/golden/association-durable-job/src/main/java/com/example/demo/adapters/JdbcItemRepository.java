@@ -73,7 +73,7 @@ public final class JdbcItemRepository implements ItemRepository {
     }
 
     @Override
-    public void save(Item item) {
+    public Item save(Item item) {
         Objects.requireNonNull(item, "item is required");
         db.sql("""
                         insert into items (id, owner_id, name, created_at)
@@ -84,6 +84,7 @@ public final class JdbcItemRepository implements ItemRepository {
                 .param("name", item.name())
                 .param("created_at", Timestamp.from(item.createdAt()))
                 .update();
+        return item;
     }
 
     @Override

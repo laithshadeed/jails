@@ -25,13 +25,14 @@ class JdbcPayoutsByStatusQueryIT {
 
     @Test
     void filtersInTheRealDatabase() {
-        Payout stored = new Payout(
+        // The stored row, not the argument: with a database-assigned key the
+        // two differ by exactly the component the query filters on.
+        Payout stored = repository.save(new Payout(
                 UUID.fromString("00000000-0000-0000-0000-000000000001"),
                 1L,
                 PayoutStatus.values()[0],
                 1L,
-                Instant.parse("2024-01-01T00:00:00Z"));
-        repository.save(stored);
+                Instant.parse("2024-01-01T00:00:00Z")));
 
         var found = query.execute(new PayoutsByStatusCriteria(
                 PayoutStatus.values()[0]));

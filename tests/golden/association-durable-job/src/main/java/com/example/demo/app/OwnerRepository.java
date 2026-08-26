@@ -21,8 +21,15 @@ public interface OwnerRepository {
 
     List<Owner> findAll();
 
-    /** Inserts a row. Define conflict behavior explicitly in the SQL adapter. */
-    void save(Owner owner);
+    /**
+     * Inserts a row and returns it as stored. Define conflict behavior
+     * explicitly in the SQL adapter.
+     *
+     * <p>The return value is not the argument. The application assigns this table's key, so the two are equal 
+     * today; returning the stored row is what keeps a caller correct if 
+     * that ever stops being true.
+     */
+    Owner save(Owner owner);
 
     /** @return true when a row was actually removed. */
     boolean deleteById(UUID id);

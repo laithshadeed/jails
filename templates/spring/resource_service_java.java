@@ -29,8 +29,7 @@ public class {{name}}Service {
     }
 
     public {{name}} create({{name}} {{var}}) {
-        repository.save({{var}});
-        return {{var}};
+        return repository.save({{var}});
     }
 
     /** @return true when a row was actually removed. */

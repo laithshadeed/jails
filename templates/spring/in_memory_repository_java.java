@@ -4,7 +4,7 @@ package {{pkg}};
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
-{{key_import}}{{repository_import}}
+{{key_import}}{{counter_import}}{{repository_import}}
 /**
  * {@link {{name}}Repository} in memory, so the application runs before it has
  * a database.
@@ -19,6 +19,7 @@ import java.util.concurrent.ConcurrentHashMap;
 {{repository_annotation}}public class InMemory{{name}}Repository implements {{name}}Repository {
 
     private final Map<{{key}}, {{name}}> items = new ConcurrentHashMap<>();
+{{counter_field}}
 
     @Override
     public Optional<{{name}}> findById({{key}} id) {
@@ -31,7 +32,7 @@ import java.util.concurrent.ConcurrentHashMap;
     }
 
     @Override
-    public void save({{name}} {{var}}) {
+    public {{name}} save({{name}} {{var}}) {
 {{save_body}}
     }
 

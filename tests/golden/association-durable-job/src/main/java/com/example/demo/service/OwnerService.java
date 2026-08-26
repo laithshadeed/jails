@@ -32,8 +32,7 @@ public class OwnerService {
     }
 
     public Owner create(Owner owner) {
-        repository.save(owner);
-        return owner;
+        return repository.save(owner);
     }
 
     /** @return true when a row was actually removed. */

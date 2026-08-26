@@ -498,6 +498,7 @@ pub(crate) fn artifacts_for(
                     name,
                     &import_of(&app, &domain, name),
                     &repository::key_type(&columns),
+                    crate::sql::key_assignment(&columns),
                 ),
             });
             artifacts.push(Artifact {

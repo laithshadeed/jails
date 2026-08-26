@@ -32,8 +32,7 @@ public class ArticleService {
     }
 
     public Article create(Article article) {
-        repository.save(article);
-        return article;
+        return repository.save(article);
     }
 
     /** @return true when a row was actually removed. */

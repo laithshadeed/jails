@@ -72,7 +72,7 @@ public final class JdbcOwnerRepository implements OwnerRepository {
     }
 
     @Override
-    public void save(Owner owner) {
+    public Owner save(Owner owner) {
         Objects.requireNonNull(owner, "owner is required");
         db.sql("""
                         insert into owners (id, name, created_at)
@@ -82,6 +82,7 @@ public final class JdbcOwnerRepository implements OwnerRepository {
                 .param("name", owner.name())
                 .param("created_at", Timestamp.from(owner.createdAt()))
                 .update();
+        return owner;
     }
 
     @Override

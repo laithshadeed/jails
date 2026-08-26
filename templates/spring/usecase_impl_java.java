@@ -25,7 +25,6 @@ public class Storing{{name}}UseCase implements {{name}}UseCase {
         Objects.requireNonNull(command, "command is required");
         {{target}} {{var}} = new {{target}}(
 {{args}});
-        repository.save({{var}});
-        return {{var}};
+        return repository.save({{var}});
     }
 }

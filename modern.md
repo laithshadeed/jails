@@ -688,65 +688,6 @@ possible argument for §11.2: the input that produces a table with no primary
 key should be refused, because the same tool given one more character produces
 this.
 
-### 13.3 `g usecase` hard-codes the primary key to `0L` — in every project
-
-```java
-// DefaultPostMessageUseCase, 2026-06-01
-Message message = new Message(
-        0L,                       // <- the primary key
-        command.userId(),
-        command.customerId(),
-        command.content(),
-        false,
-        Instant.now(),
-        Instant.now());
-repository.save(message);
-```
-
-Every generated use case over a `long@pk` target does this. All five, across
-four projects:
-
-| project | use case | id passed |
-|---|---|---|
-| 2025-11-16 | `DefaultPostMessageUseCase` | `0L` |
-| 2026-01-09 | `DefaultCreateMessageUseCase` | `0L` |
-| 2026-02-05 | `DefaultSendMessageUseCase` | `0L` |
-| 2026-02-05 | `DefaultEscalateIssueUseCase` | `0L` |
-| 2026-06-01 | `DefaultPostMessageUseCase` | `0L` |
-
-And the table is:
-
-```sql
-id bigint not null,
-constraint messages_pk primary key (id)
-```
-
-**No `generated always as identity`. No `default nextval(...)`. No sequence
-anywhere in any migration.** So nothing assigns an id, the use case supplies
-`0`, and the *second* call to any of these endpoints is a duplicate-key
-violation surfaced as a 500. The primary create path of every one of these
-projects works exactly once.
-
-`my-minicom` escaped this only because its id was a `uuid`, where jails emits
-`UUID.randomUUID()`. The `long@pk` form — the one jails' own
-`examples/minicom/.jails/app.toml` recommends — is the broken one.
-
-The generated test cannot see it:
-
-```java
-Message created = useCase.execute(command);
-assertThat(created.id()).isNotNull();       // a primitive long. Never null.
-```
-
-`id()` returns `long`; autoboxing makes `isNotNull()` a tautology, and it holds
-for `0L`. The test also inserts exactly one row, so the collision never occurs.
-**The single test of the create path asserts something that cannot fail, about
-the one value that is wrong.**
-
-Fixing this is a schema question, not a Java one: `id bigint generated always as
-identity primary key`, and the use case stops naming the id at all — which is
-what the hand-built slice does with `insert … returning` (§10).
-
 ### 13.4 The closed set is still never enforced in the schema — 0 checks in 20 migrations
 
 `grep -c "check (" */src/main/resources/db/migration/*.sql` → **zero**, across

@@ -42,8 +42,9 @@ public class InMemoryPayoutRepository implements PayoutRepository {
     }
 
     @Override
-    public void save(Payout payout) {
+    public Payout save(Payout payout) {
         items.put(payout.id(), payout);
+        return payout;
     }
 
     @Override

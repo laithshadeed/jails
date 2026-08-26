@@ -32,8 +32,7 @@ public class PayoutService {
     }
 
     public Payout create(Payout payout) {
-        repository.save(payout);
-        return payout;
+        return repository.save(payout);
     }
 
     /** @return true when a row was actually removed. */

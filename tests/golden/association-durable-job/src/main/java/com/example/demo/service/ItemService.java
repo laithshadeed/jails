@@ -32,8 +32,7 @@ public class ItemService {
     }
 
     public Item create(Item item) {
-        repository.save(item);
-        return item;
+        return repository.save(item);
     }
 
     /** @return true when a row was actually removed. */

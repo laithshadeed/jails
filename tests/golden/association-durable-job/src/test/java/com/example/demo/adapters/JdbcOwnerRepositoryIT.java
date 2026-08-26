@@ -27,11 +27,10 @@ class JdbcOwnerRepositoryIT {
 
     @Test
     void roundTripsThroughTheRealDatabase() {
-        var owner = new Owner(
+        var owner = repository.save(new Owner(
                 UUID.fromString("00000000-0000-0000-0000-000000000001"),
                 "sample",
-                Instant.parse("2024-01-01T00:00:00Z"));
-        repository.save(owner);
+                Instant.parse("2024-01-01T00:00:00Z")));
 
         UUID key = owner.id();
         assertThat(repository.findById(key)).contains(owner);

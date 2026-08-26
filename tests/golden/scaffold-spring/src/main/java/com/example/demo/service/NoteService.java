@@ -32,8 +32,7 @@ public class NoteService {
     }
 
     public Note create(Note note) {
-        repository.save(note);
-        return note;
+        return repository.save(note);
     }
 
     /** @return true when a row was actually removed. */
