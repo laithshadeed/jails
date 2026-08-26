@@ -68,6 +68,7 @@ edition.workspace = true
 jails-drive.workspace = true
 jails-report.workspace = true
 jails-engine.workspace = true
+jails-commit.workspace = true
 jails-prepare.workspace = true
 jails-generate.workspace = true
 jails-project.workspace = true

@@ -33,6 +33,7 @@ fn owns_terminal_output(path: &Path) -> bool {
         || relative == "src/editor_command.rs"
         || relative == "src/contract_command.rs"
         || relative == "src/tool_command.rs"
+        || relative == "src/history_command.rs"
         || relative.starts_with("src/new/")
         || relative == "crates/jails-support/src/lib.rs"
         || relative == "crates/jails-support/src/process.rs"
@@ -376,6 +377,8 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails", "editor_command", 9),
     ("jails", "contract_command", 9),
     ("jails", "tool_command", 9),
+    ("jails", "history_command", 9),
+    ("jails", "template_macro", 9),
     ("jails", "cli", 9),
     ("jails", "dispatch", 9),
     ("jails", "arguments", 9),

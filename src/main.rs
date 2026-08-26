@@ -1,7 +1,4 @@
-// The lower crates, re-exported so `adopt`, `app` and `new` keep saying
-// `crate::ledger` and `crate::template`. A facade at the root rather than an
-// import line in every file: the paths a reader already knows stay correct,
-// and Cargo enforces the boundary either way.
+// Lower crates are re-exported so existing facade paths stay stable.
 pub(crate) use jails_drive::{bench, console, doctor, kafka, lint, migrate, run, testd};
 pub(crate) use jails_generate::{add, generate};
 pub(crate) use jails_java::template;
@@ -13,9 +10,11 @@ mod cli;
 mod contract_command;
 mod dispatch;
 mod editor_command;
+mod history_command;
 mod new;
 mod schema_command;
 mod sql_command;
+mod template_macro;
 mod tool_command;
 
 // What the CLI accepts lives in `cli`; what it does is the match below.
@@ -27,14 +26,7 @@ pub(crate) use cli::{
 
 use clap::{CommandFactory, Parser};
 
-/// This package's templates live at the repository root. See
-/// [`jails_java::template_at`] for why the root cannot be implicit.
-macro_rules! template_here {
-    ($name:literal) => {
-        jails_java::template_at!(concat!(env!("CARGO_MANIFEST_DIR"), "/templates/"), $name)
-    };
-}
-pub(crate) use template_here;
+pub(crate) use template_macro::template_here;
 
 fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
@@ -133,6 +125,10 @@ fn main() -> std::process::ExitCode {
         Command::Schema { command } => schema_command::schema(command, invocation),
         Command::Editor { command } => editor_command::run(command, invocation),
         Command::Contract { command } => contract_command::run(command, invocation),
+        Command::History(history) => history_command::history(history.limit, invocation.output),
+        Command::Show(show) => {
+            history_command::show(&show.transaction, invocation.diff, show.why, invocation.output)
+        }
         Command::Request { request } => tool_command::request(
             tool_command::HttpRequest {
                 method: request.method,

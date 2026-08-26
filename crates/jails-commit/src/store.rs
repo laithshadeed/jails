@@ -139,6 +139,81 @@ impl Store {
         self.receipts().join(id.to_hex())
     }
 
+    /// Read and authenticate one published receipt.
+    pub fn read_receipt(&self, id: &TransactionId) -> Result<crate::journal::ReceiptV1> {
+        let path = self.receipt(id);
+        let receipt = crate::journal::ReceiptV1::read(&path)?;
+        if receipt.transaction != *id {
+            return Err(format!(
+                "receipt {} names transaction {}.\n       fix: restore the receipt from a known-good backup",
+                path.display(),
+                receipt.transaction
+            )
+            .into());
+        }
+        Ok(receipt)
+    }
+
+    /// Enumerate every immutable published receipt, newest generation first.
+    pub fn read_receipts(&self) -> Result<Vec<crate::journal::ReceiptV1>> {
+        let directory = self.receipts();
+        let entries = match std::fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => {
+                return Err(format!(
+                    "failed to read receipt directory {}: {error}.\n       fix: check the project permissions and retry",
+                    directory.display()
+                )
+                .into());
+            }
+        };
+        let mut receipts = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|error| {
+                format!(
+                    "failed to read an entry in receipt directory {}: {error}",
+                    directory.display()
+                )
+            })?;
+            if !entry
+                .file_type()
+                .map_err(|error| format!("failed to inspect {}: {error}", entry.path().display()))?
+                .is_dir()
+            {
+                continue;
+            }
+            let name = entry.file_name();
+            let name = name.to_str().ok_or_else(|| {
+                format!(
+                    "receipt filename {} is not UTF-8.\n       fix: move the unknown file out of `.jails/receipts`",
+                    entry.path().display()
+                )
+            })?;
+            let id = TransactionId::parse_hex(name).map_err(|_| {
+                format!(
+                    "receipt filename `{name}` is not a transaction id.\n       fix: move the unknown file out of `.jails/receipts`"
+                )
+            })?;
+            receipts.push(self.read_receipt(&id)?);
+        }
+        receipts.sort_by(|left, right| {
+            right
+                .generation
+                .cmp(&left.generation)
+                .then_with(|| right.transaction.cmp(&left.transaction))
+        });
+        Ok(receipts)
+    }
+
+    /// Read a content-addressed object and verify both its length and digest.
+    pub fn read_object(&self, object: &jails_protocol::identity::ObjectRef) -> Result<Vec<u8>> {
+        let path = object_path(&self.objects(), &object.id);
+        verify(&path, &object.id, object.len)?;
+        std::fs::read(&path)
+            .map_err(|error| format!("failed to read object {}: {error}", path.display()).into())
+    }
+
     /// Create the fixed subdirectories. Called only under the lock.
     pub fn create_subdirectories(&self) -> Result<()> {
         for directory in [self.transactions(), self.receipts(), self.objects()] {

@@ -33,6 +33,8 @@ mod sql;
 pub(crate) use sql::*;
 mod rename;
 pub(crate) use rename::*;
+mod history;
+pub(crate) use history::*;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub(crate) enum TestScopeArg {
@@ -376,6 +378,10 @@ pub(crate) enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// List committed project transactions from authenticated receipts
+    History(HistoryArgs),
+    /// Inspect one committed transaction and its exact before/after images
+    Show(ShowArgs),
     /// Create a new Spring Boot project via start.spring.io
     New {
         name: String,

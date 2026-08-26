@@ -25,6 +25,7 @@ mod developer_tools;
 mod editor_protocol;
 mod examples;
 mod generate;
+mod history;
 mod new;
 mod reports;
 mod sql;
