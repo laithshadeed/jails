@@ -22,7 +22,7 @@ mod containers;
 mod dto;
 mod durable;
 mod h2;
-mod http;
+pub(crate) mod http;
 mod mail;
 mod messaging;
 mod outbox;

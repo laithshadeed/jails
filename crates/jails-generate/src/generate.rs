@@ -185,7 +185,14 @@ pub fn plan_recipe(
             *crate::spring::validation_dependency(project.flavor()),
             crate::architecture::ARCHUNIT_JUNIT5,
         ]),
-        ArtifactKind::Client => change.deps.push(crate::spring::RESTCLIENT_STARTER),
+        ArtifactKind::Client => {
+            change.deps.push(crate::spring::RESTCLIENT_STARTER);
+            change
+                .properties
+                .extend(crate::spring::http::client_properties(
+                    &crate::spring::http::client_group(recipe.name),
+                ));
+        }
         ArtifactKind::Fetcher => change.deps.extend([
             crate::spring::APACHE_HTTPCLIENT,
             crate::spring::ACTUATOR_STARTER,

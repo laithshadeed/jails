@@ -3822,6 +3822,46 @@ fn generate_help_documents_the_field_syntax_at_the_point_of_typing() {
 ///
 /// Both modes are covered in one project because they generate different
 /// signatures: `--yields` returns `Optional<T>`, a bare strategy `boolean`.
+/// A generator whose whole subject is an outbound HTTP call must not leave the
+/// call unbounded.
+///
+/// modern.md §13.6. A real generated client had no base URL, no connect
+/// timeout, no read timeout, no retry and no auth --
+/// `grep timeout application.properties` found only Hikari's. `backend.md` §1
+/// makes this the fourth of five reflexes and admits no exceptions, and this
+/// is the one place it cannot be left to the reader. The prefix and both
+/// timeout keys are `HttpClientProperties extends HttpClientSettingsProperties`
+/// in `spring-boot-http-client`, checked in `deps/spring-boot` at v4.0.0.
+#[test]
+fn generate_client_bounds_the_call_it_generates() {
+    let root = temp_dir("client-timeouts");
+    write_spring_fixture(&root);
+    assert!(
+        jails_cmd(&root, None)
+            .args(["g", "client", "OpenAiChat"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let properties =
+        fs::read_to_string(root.join("src/main/resources/application.properties")).unwrap();
+    for key in [
+        "spring.http.serviceclient.open-ai-chat.base-url=",
+        "spring.http.serviceclient.open-ai-chat.connect-timeout=",
+        "spring.http.serviceclient.open-ai-chat.read-timeout=",
+    ] {
+        assert!(properties.contains(key), "{properties}");
+    }
+    // The same placeholder convention `add cors` uses: reserved by RFC 2606,
+    // so it can never resolve and is unmistakably a value to replace. The
+    // alternative failure is a first call dying on `URI with undefined
+    // scheme`, which says nothing about a missing setting.
+    assert!(
+        properties.contains("https://example.invalid"),
+        "{properties}"
+    );
+}
+
 #[test]
 fn generate_strategy_produces_a_project_that_compiles_and_passes_tests() {
     if !real_mvn_available() {

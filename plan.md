@@ -197,11 +197,17 @@ to go **red on landing**; P1.5 records what they name.
       `flyway-database-postgresql` managed at 3.3, `spring-boot-flyway` only at
       4.0. Below 3.1 it refuses by name. Needed a Boot `(major, minor)` reader;
       the major alone chooses an import and cannot choose a module set.
-- [ ] **P2.5** `g client` writes a remote call with no timeout, no base URL and
+- [x] **P2.5** `g client` writes a remote call with no timeout, no base URL and
       no defined failure mode (modern §13.6). `backend.md` §1 admits no
       exceptions here. Write `spring.http.client.connect-timeout` /
-      `read-timeout` and a commented `…base-url` alongside, the way
+      `read-timeout` and a `…base-url` alongside, from the plan, the way
       `ensure_failsafe` and `ensure_assertj` are written from the write path.
+      Prefix and both keys checked in `deps/spring-boot` v4.0.0
+      (`HttpClientProperties extends HttpClientSettingsProperties`). The base
+      URL is `https://example.invalid` on `add cors`'s reasoning: RFC 2606
+      reserves it, and the alternative failure is a first call dying on
+      `URI with undefined scheme`, which says nothing about a missing setting.
+      The *shape* half of §13.6 stays open as missing.md M7.
 - [x] **P2.6** `g migration` writes a file whose whole content is
       `-- Forward-only migration. Write explicit SQL below.`; Flyway applies it
       and records the checksum, so the history asserts an index that does not

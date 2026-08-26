@@ -889,38 +889,18 @@ about how identity is typed.** Everything downstream inherits it:
 `repository.findById(String.valueOf(created.id()))` appears in every generated
 test, and the JDBC adapter has to `cast(:id as uuid)` to undo it.
 
-### 13.6 `g client` produces a remote call with no timeout, no URL and no auth
+### 13.6 `g client` generates a plausible shape nobody asked for
 
-`minicom-2026-02-05` has `g client OpenAiChat`:
+*The unbounded-call half is closed: the generator writes a base URL and both
+timeouts beside the client now, from the plan, the way `ensure_failsafe` is
+written from the write path.*
 
-```java
-@Configuration(proxyBeanMethods = false)
-@ImportHttpServices(group = "open-ai-chat", basePackages = "…clients")
-public class HttpClientsConfig {}
-
-public interface OpenAiChatClient {
-    @GetExchange("/open-ai-chats")            List<OpenAiChatPayload> findAll();
-    @GetExchange("/open-ai-chats/{id}")       OpenAiChatPayload findById(@PathVariable String id);
-    record OpenAiChatPayload(String id, String name) {}
-}
-```
-
-`grep -E "timeout|api-key" application.properties` finds only the Hikari and
-shutdown timeouts. There is **no base URL, no connect timeout, no read timeout,
-no retry, no auth and no defined failure mode.**
-
-`backend.md` §1 makes this the fourth of five reflexes and admits no exceptions:
-*"Every remote call has a timeout, a bounded retry, and a defined failure mode."*
-A generator whose entire subject is an outbound HTTP call is the one place that
-rule must be baked in, not left to the reader. At minimum
-`spring.http.client.connect-timeout` / `read-timeout` and a commented
-`…base-url` should be written alongside, the way `ensure_failsafe` and
-`ensure_assertj` are.
-
-(The generic CRUD shape applied to a name like `OpenAiChat` — yielding
+The generic CRUD shape applied to a name like `OpenAiChat` — yielding
 `GET /open-ai-chats` returning `{id, name}` — is separately worth flagging.
 It is plausible-looking fiction, and it is the kind of output that gets
-committed because it compiles.)
+committed because it compiles. `missing.md` M7 is the same finding from the
+other end and carries the fix: `--method` / `--on` / `--returns`, which
+`g controller` already takes.
 
 ### 13.9 Two generators, two answers, one of them arguing against the other
 
@@ -976,7 +956,6 @@ input:
 | **`g usecase` id = `0L`** | | ❌ §13.3 — every project, create path broken |
 | **`findById(String)`** | | ❌ §13.5 — 11 of 12 ports |
 | **dead `ApiException`** | | ❌ §13.10 — 0 of 7 projects |
-| **`g client` has no timeout** | | ❌ §13.6 |
 
 The second column is the list worth working from. None of it is a taste
 argument, all of it is reproducible from a clean `jails new`, and the top three

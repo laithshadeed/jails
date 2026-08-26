@@ -30,7 +30,7 @@ pub(crate) fn client_files(slice: &Slice, name: &str) -> Vec<Artifact> {
     let pkg: &str = &slice.placed(Layer::Clients);
     let main = crate::generate::main_dir(root, pkg);
     let test = crate::generate::test_dir(root, pkg);
-    let group = crate::sql::snake_case(name).replace('_', "-");
+    let group = client_group(name);
     vec![
         Artifact {
             kind: "http client",
@@ -48,6 +48,48 @@ pub(crate) fn client_files(slice: &Slice, name: &str) -> Vec<Artifact> {
             contents: client_test_java(pkg, name, &group),
         },
     ]
+}
+
+/// The three settings every remote call needs, and none of which had a value.
+///
+/// `backend.md` §1 makes this the fourth of five reflexes and admits no
+/// exceptions: *every remote call has a timeout, a bounded retry, and a
+/// defined failure mode*. A generator whose entire subject is an outbound HTTP
+/// call is the one place that cannot be left to the reader -- and it was: a
+/// real generated client had no base URL, no connect timeout, no read timeout,
+/// no retry and no auth, and `grep timeout application.properties` found only
+/// Hikari's.
+///
+/// Written from the plan, beside the dependency splice, for the reason
+/// `ensure_failsafe` and `ensure_assertj` are: a rule the reader has to
+/// remember is a rule that decays, and the failure is silent until production.
+///
+/// The prefix and both timeout keys are `HttpClientProperties extends
+/// HttpClientSettingsProperties` in `spring-boot-http-client`, checked in
+/// `deps/spring-boot` at v4.0.0 rather than recalled. The base URL is
+/// `.invalid` for the same reason `add cors`'s origin is: RFC 2606 reserves
+/// it, so it can never resolve and is unmistakably a value somebody has to
+/// replace -- which is better than the alternative failure, a first call that
+/// dies on `URI with undefined scheme`, a message saying nothing about a
+/// missing setting.
+pub(crate) fn client_properties(group: &str) -> Vec<String> {
+    vec![
+        format!("# Where `{group}` points. Replace it: `.invalid` can never resolve, and an"),
+        "# unset base URL fails the first call with `URI with undefined scheme`.".to_string(),
+        format!("spring.http.serviceclient.{group}.base-url=https://example.invalid"),
+        "# A stalled dependency holds a request thread until the client gives up, and with"
+            .to_string(),
+        "# no timeout that is never. Both halves are needed: connect covers a host that"
+            .to_string(),
+        "# does not answer, read covers one that answers and then stops.".to_string(),
+        format!("spring.http.serviceclient.{group}.connect-timeout=2s"),
+        format!("spring.http.serviceclient.{group}.read-timeout=5s"),
+    ]
+}
+
+/// The configuration group a client's settings hang off.
+pub(crate) fn client_group(name: &str) -> String {
+    crate::sql::snake_case(name).replace('_', "-")
 }
 
 fn client_interface_java(pkg: &str, name: &str) -> String {
