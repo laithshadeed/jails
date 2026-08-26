@@ -127,20 +127,22 @@ pub fn spring_console(
     args: &[String],
     debug: bool,
 ) -> Result<()> {
-    let root = find_project_root()?;
-    crate::build::require_maven_at(&root, "console")?;
-    let jshell = find_jshell().ok_or_else(|| {
-        "jshell not on PATH -- it ships with the JDK (`JAVA_HOME/bin/jshell`)".to_string()
-    })?;
-    if compile {
-        let mut compile = Command::new(crate::maven::binary(&root));
-        compile.arg("compile").current_dir(&root);
-        run::run_inherited(compile, debug)?;
-    }
-    let classpath = project_classpath(&root, debug)?;
+    let project = crate::model::Project::discover()?;
+    let root = project.root();
+    let jshell = selected_jshell(&project, debug)?;
     let main = main
         .map(str::to_owned)
-        .map_or_else(|| spring_main(&root), Ok)?;
+        .map_or_else(|| spring_main(root), Ok)?;
+    let resolved = run::runtime_classpath(
+        &project,
+        if compile {
+            run::RunCompile::Build
+        } else {
+            run::RunCompile::None
+        },
+        debug,
+    )?;
+    let classpath = joined_classpath(&resolved)?;
     let temp = tempfile::Builder::new()
         .prefix("jails-console-")
         .tempdir()
@@ -151,7 +153,7 @@ pub fn spring_console(
     cmd.args(["--class-path", &classpath, "--startup"])
         .arg(startup)
         .args(args)
-        .current_dir(&root);
+        .current_dir(root);
     run::run_inherited(cmd, debug)
 }
 
@@ -165,22 +167,22 @@ pub fn runner(
     compile: bool,
     debug: bool,
 ) -> Result<()> {
-    let root = find_project_root()?;
-    crate::build::require_maven_at(&root, "runner")?;
-    let jshell = find_jshell().ok_or_else(|| {
-        "jshell not on PATH.\n       fix: install the selected JDK and ensure `JAVA_HOME/bin` is on PATH."
-            .to_string()
-    })?;
-    if compile {
-        let mut build = Command::new(crate::maven::binary(&root));
-        build.arg("compile").current_dir(&root);
-        run::run_inherited(build, debug)?;
-    }
-    let classpath = project_classpath(&root, debug)?;
-    let main = match main {
-        Some(main) => main.to_string(),
-        None => spring_main(&root)?,
-    };
+    let project = crate::model::Project::discover()?;
+    let root = project.root();
+    let jshell = selected_jshell(&project, debug)?;
+    let main = main
+        .map(str::to_owned)
+        .map_or_else(|| spring_main(root), Ok)?;
+    let resolved = run::runtime_classpath(
+        &project,
+        if compile {
+            run::RunCompile::Build
+        } else {
+            run::RunCompile::None
+        },
+        debug,
+    )?;
+    let classpath = joined_classpath(&resolved)?;
     let temp = tempfile::Builder::new()
         .prefix("jails-runner-")
         .tempdir()
@@ -243,6 +245,10 @@ fn spring_startup(main: &str, profiles: &[String], web: WebMode) -> String {
     )
 }
 
+fn java_string(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
 fn spring_main(project_root: &Path) -> Result<String> {
     let candidates = crate::java::source_files(&project_root.join("src/main/java"))
         .into_iter()
@@ -266,47 +272,38 @@ fn spring_main(project_root: &Path) -> Result<String> {
     }
 }
 
-fn java_string(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"")
-}
-
 fn write_private(path: &Path, body: &[u8]) -> Result<()> {
     jails_support::apply::put_in_scratch(path, body)
 }
 
-fn find_jshell() -> Option<PathBuf> {
-    if crate::process::on_path("jshell") {
-        return Some(PathBuf::from("jshell"));
+fn selected_jshell(project: &crate::model::Project, debug: bool) -> Result<PathBuf> {
+    let java = run::selected_java(project, debug)?;
+    let jshell = java.with_file_name(if cfg!(windows) {
+        "jshell.exe"
+    } else {
+        "jshell"
+    });
+    let output = Command::new(&jshell)
+        .arg("--version")
+        .output()
+        .map_err(|error| {
+            format!(
+                "selected JShell executable `{}` is unavailable: {error}\n       fix: set JAVA_HOME to a full JDK that supports this project",
+                jshell.display()
+            )
+        })?;
+    if !output.status.success() {
+        return Err(format!(
+            "selected JShell executable `{}` rejected `--version`\n       fix: set JAVA_HOME to a working full JDK",
+            jshell.display()
+        )
+        .into());
     }
-    let home = std::env::var_os("JAVA_HOME")?;
-    let bin = PathBuf::from(home).join("bin").join("jshell");
-    bin.is_file().then_some(bin)
+    Ok(jshell)
 }
 
-fn project_classpath(root: &Path, debug: bool) -> Result<String> {
-    let out = root.join("target/jails-classpath");
-    if let Some(parent) = out.parent() {
-        jails_support::apply::ensure_derived_directory(parent)
-            .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
-    }
-    let mut mvn = Command::new(crate::maven::binary(root));
-    mvn.args([
-        "-q",
-        "dependency:build-classpath",
-        &format!("-Dmdep.outputFile={}", out.display()),
-        "-DincludeScope=runtime",
-    ])
-    .current_dir(root);
-    run::run_inherited(mvn, debug)?;
-
-    let mut entries = vec![root.join("target/classes")];
-    if let Ok(deps) = fs::read_to_string(&out) {
-        let deps = deps.trim();
-        if !deps.is_empty() {
-            entries.extend(std::env::split_paths(deps));
-        }
-    }
-    Ok(std::env::join_paths(entries)
+fn joined_classpath(resolved: &run::RuntimeClasspath) -> Result<String> {
+    Ok(std::env::join_paths(&resolved.entries)
         .map(|p| p.to_string_lossy().into_owned())
         .map_err(|e| format!("failed to join classpath: {e}"))?)
 }

@@ -191,9 +191,18 @@ fn runner_boots_one_spring_main_with_private_startup_and_project_script() {
     fs::write(root.join("scripts/check.jsh"), "beans().count();\n").unwrap();
     let fake = temp_dir("spring-runner-bin");
     let log = fake.join("tool.log");
-    write_fake_maven(&fake, &["mvn", "jshell"], &log);
+    write_fake_maven(&fake, &["mvn", "java", "jshell"], &log);
+    fs::write(
+        fake.join("java"),
+        format!(
+            "#!/bin/sh\necho 'openjdk version \"26\"' >&2\necho \"$0 $*\" >> \"{}\"\nexit 0\n",
+            log.display()
+        ),
+    )
+    .unwrap();
 
     let output = jails_cmd(&root, Some(&fake))
+        .env_remove("JAVA_HOME")
         .args([
             "runner",
             "--file",
@@ -202,6 +211,7 @@ fn runner_boots_one_spring_main_with_private_startup_and_project_script() {
             "test",
             "--web",
             "random",
+            "--compile",
         ])
         .output()
         .unwrap();
@@ -211,7 +221,7 @@ fn runner_boots_one_spring_main_with_private_startup_and_project_script() {
         String::from_utf8_lossy(&output.stderr)
     );
     let invoked = read_log(&log);
-    assert!(invoked.contains("dependency:build-classpath"), "{invoked}");
+    assert!(invoked.contains("mvn compile"), "{invoked}");
     assert!(invoked.contains("jshell --class-path"), "{invoked}");
     assert!(invoked.contains("--startup"), "{invoked}");
     assert!(invoked.contains("script.jsh"), "{invoked}");

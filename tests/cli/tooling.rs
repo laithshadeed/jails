@@ -764,11 +764,27 @@ fn db_with_a_file_uses_sqlite3() {
 fn console_launches_jshell_with_the_project_classpath() {
     let root = temp_dir("console-jshell");
     write_plain_fixture(&root);
+    fs::create_dir_all(root.join("target/classes/com/example/demo")).unwrap();
+    fs::write(
+        root.join("target/classes/com/example/demo/DemoApplication.class"),
+        "compiled",
+    )
+    .unwrap();
+    fs::write(root.join("target/jails-runtime-classpath"), "").unwrap();
     let fake = temp_dir("console-jshell-bin");
     let log = fake.join("log.txt");
-    write_fake_maven(&fake, &["mvn", "jshell"], &log);
+    write_fake_maven(&fake, &["mvn", "java", "jshell"], &log);
+    fs::write(
+        fake.join("java"),
+        format!(
+            "#!/bin/sh\necho 'openjdk version \"26\"' >&2\necho \"$0 $*\" >> \"{}\"\nexit 0\n",
+            log.display()
+        ),
+    )
+    .unwrap();
     assert!(
         jails_cmd(&root, Some(&fake))
+            .env_remove("JAVA_HOME")
             .args(["console", "--no-build", "--main", "com.example.demo.App",])
             .status()
             .unwrap()
@@ -788,6 +804,69 @@ fn console_launches_jshell_with_the_project_classpath() {
     assert!(
         !invocation.contains(" compile") && !invocation.contains("/mvn compile"),
         "--no-build should skip compile: {invocation}"
+    );
+}
+
+#[test]
+fn gradle_console_uses_the_shared_existing_runtime_classpath() {
+    let root = temp_dir("console-gradle-jshell");
+    fs::write(root.join("settings.gradle"), "rootProject.name = 'demo'\n").unwrap();
+    fs::write(
+        root.join("build.gradle"),
+        "plugins { id 'java' }\nsourceCompatibility = 26\n",
+    )
+    .unwrap();
+    let source = root.join("src/main/java/com/example/demo/DemoApplication.java");
+    fs::create_dir_all(source.parent().unwrap()).unwrap();
+    fs::write(
+        &source,
+        "package com.example.demo;\npublic class DemoApplication {}\n",
+    )
+    .unwrap();
+    let classes = root.join("build/classes/java/main/com/example/demo");
+    fs::create_dir_all(&classes).unwrap();
+    fs::write(classes.join("DemoApplication.class"), "compiled").unwrap();
+    fs::create_dir_all(root.join("build/resources/main")).unwrap();
+
+    let fake = temp_dir("console-gradle-jshell-bin");
+    let log = fake.join("log.txt");
+    write_fake_maven(&fake, &["gradle", "java", "jshell"], &log);
+    fs::write(
+        fake.join("java"),
+        format!(
+            "#!/bin/sh\necho 'openjdk version \"26\"' >&2\necho \"$0 $*\" >> \"{}\"\nexit 0\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+    fs::write(
+        fake.join("gradle"),
+        format!(
+            "#!/bin/sh\necho \"$0 $*\" >> \"{}\"\necho JAILS_RUNTIME_CLASSPATH=\nexit 0\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+
+    let output = jails_cmd(&root, Some(&fake))
+        .env_remove("JAVA_HOME")
+        .args(["console", "--main", "com.example.demo.DemoApplication"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let invocation = read_log(&log);
+    assert!(
+        invocation.contains("gradle -q jailsRuntimeClasspath"),
+        "{invocation}"
+    );
+    assert!(invocation.contains("jshell --class-path"), "{invocation}");
+    assert!(
+        !invocation.contains(" classes"),
+        "existing-output console must not compile: {invocation}"
     );
 }
 

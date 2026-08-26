@@ -39,6 +39,17 @@ pub(super) fn output_id(project: &Project) -> String {
 }
 
 pub(super) fn resolve(project: &Project, compile: RunCompile, debug: bool) -> Result<Resolved> {
+    Ok(Resolved {
+        entries: resolve_entries(project, compile, debug)?,
+        main_class: main_class(project)?,
+    })
+}
+
+pub(super) fn resolve_entries(
+    project: &Project,
+    compile: RunCompile,
+    debug: bool,
+) -> Result<Vec<PathBuf>> {
     let outputs = outputs(project)?;
     let prior_cache = read_cache(project);
     let cache_mismatch = prior_cache
@@ -83,10 +94,7 @@ pub(super) fn resolve(project: &Project, compile: RunCompile, debug: bool) -> Re
     };
     let entries = canonical_classpath(outputs, dependencies)?;
     write_cache(project, &entries)?;
-    Ok(Resolved {
-        entries,
-        main_class: main_class(project)?,
-    })
+    Ok(entries)
 }
 
 fn compile_outputs(project: &Project, debug: bool) -> Result<()> {

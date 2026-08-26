@@ -50,6 +50,7 @@ mod test_execution;
 mod test_plan;
 mod watch;
 pub use application::{RunCompile, RunLauncher, RunOptions, RunServices};
+pub(crate) use application::{RuntimeClasspath, runtime_classpath, selected_java};
 use filter::*;
 
 /// Run a command with our stdio, failing on a non-zero exit.

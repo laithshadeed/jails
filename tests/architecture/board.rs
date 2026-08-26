@@ -167,7 +167,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // followed the same cure as the thirteen above: they take the
                 // `apply::Tree` they are writing into rather than the root of a
                 // project that does not exist yet. `pending.md` §7.7.
-                ceiling: 73,
+                ceiling: 72,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;

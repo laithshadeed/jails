@@ -41,6 +41,24 @@ pub struct RunOptions {
     pub watch: bool,
 }
 
+pub(crate) struct RuntimeClasspath {
+    pub entries: Vec<std::path::PathBuf>,
+}
+
+pub(crate) fn runtime_classpath(
+    project: &Project,
+    compile: RunCompile,
+    debug: bool,
+) -> Result<RuntimeClasspath> {
+    Ok(RuntimeClasspath {
+        entries: classpath::resolve_entries(project, compile, debug)?,
+    })
+}
+
+pub(crate) fn selected_java(project: &Project, debug: bool) -> Result<std::path::PathBuf> {
+    java_executable(project, debug)
+}
+
 pub(super) fn run(options: RunOptions, args: &[String], debug: bool) -> Result<()> {
     let project = Project::discover()?;
     services(&project, options.services, debug)?;
