@@ -275,8 +275,13 @@ impl Request {
                     .collect()
             })
             .unwrap_or_default();
-        let reconciled =
-            jails_protocol::ownership::reconcile(&self.scope, &self.declared, &applied, &[])?;
+        let references = reference_edges(&applied);
+        let reconciled = jails_protocol::ownership::reconcile(
+            &self.scope,
+            &self.declared,
+            &applied,
+            &references,
+        )?;
 
         let entities_after = reconciled
             .entities
@@ -371,6 +376,68 @@ impl Request {
         set.validate()?;
         Ok(set)
     }
+}
+
+/// Typed references already recorded in entity specs.
+///
+/// This deliberately derives from the durable declaration rather than Java
+/// text. Project field types and `--on`/`--yields` are the facts that make one
+/// generated entity stop compiling when another disappears; passing an empty
+/// graph to ownership reconciliation made its last-owner guard unreachable.
+fn reference_edges(applied: &BTreeMap<EntityId, ObservedEntity>) -> Vec<(EntityId, EntityId)> {
+    let intents = applied
+        .iter()
+        .filter_map(|(entity, observed)| match (entity, &observed.spec) {
+            (EntityId::Intent(id), EntitySpec::Intent(spec)) => Some((entity, id, spec)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let mut edges = Vec::new();
+    for (source, source_id, spec) in &intents {
+        let mut targets = Vec::new();
+        if let Some(target) = &spec.on {
+            targets.push(target);
+        }
+        if let Some(target) = &spec.yields {
+            targets.push(target);
+        }
+        for field in spec.fields() {
+            use jails_protocol::declaration::{FieldType, ScalarFieldType};
+            let scalars: Vec<&ScalarFieldType> = match &field.field_type {
+                FieldType::Scalar(scalar) | FieldType::List(scalar) => vec![scalar],
+                FieldType::Map { key, value } => vec![key, value],
+            };
+            for scalar in scalars {
+                if let ScalarFieldType::Project(target) = scalar {
+                    targets.push(target);
+                }
+            }
+        }
+        for target_type in targets {
+            for (target, target_id, _) in &intents {
+                if *source != *target && target_id.name == *target_type.name() {
+                    edges.push(((*source).clone(), (*target).clone()));
+                }
+            }
+        }
+        // A scaffold installs a JDBC adapter and its database integration
+        // test. If `db` is separately declared, removing that capability must
+        // not retire the dependencies those generated sources still import.
+        if source_id.recipe == jails_protocol::entity::Recipe::Scaffold {
+            for target in applied.keys() {
+                if matches!(
+                    target,
+                    EntityId::Capability(id)
+                        if id.kind == jails_spec::spec::kind::Capability::Db
+                ) {
+                    edges.push(((*source).clone(), target.clone()));
+                }
+            }
+        }
+    }
+    edges.sort();
+    edges.dedup();
+    edges
 }
 
 /// What this request is allowed to read: the format owners, plus every file it

@@ -406,6 +406,44 @@ fn add_db_on_spring_wires_docker_compose_support() {
     );
 }
 
+#[test]
+fn remove_db_refuses_while_a_scaffold_still_needs_it() {
+    let root = temp_dir("remove-db-with-scaffold");
+    write_spring_fixture(&root);
+
+    assert!(
+        jails_cmd(&root, None)
+            .args(["add", "db", "--no-start"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        jails_cmd(&root, None)
+            .args(["g", "scaffold", "Article", "id:uuid@pk", "title:string!"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let before = snapshot_tree(&root);
+    let refused = jails_cmd(&root, None)
+        .args(["remove", "db", "--force"])
+        .output()
+        .unwrap();
+
+    assert!(!refused.status.success(), "{refused:?}");
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(stderr.contains("pointing at nothing"), "{stderr}");
+    assert!(stderr.contains("scaffold Article"), "{stderr}");
+    assert_eq!(snapshot_tree(&root), before, "refusal mutated the project");
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(pom.contains("spring-boot-starter-jdbc"), "{pom}");
+    assert!(
+        root.join("src/main/java/com/example/demo/adapters/JdbcArticleRepository.java")
+            .is_file()
+    );
+}
+
 /// `add db` over a project whose container config is already there rewrites it
 /// as an importable `@TestConfiguration` and splices the `@Import` into every
 /// `@SpringBootTest` -- including one in a different package, which needs the

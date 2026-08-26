@@ -1130,6 +1130,41 @@ fn scaffold_reuses_an_existing_record_and_destroy_preserves_it() {
 }
 
 #[test]
+fn destroy_refuses_to_remove_a_type_used_by_a_retained_entity() {
+    let root = temp_dir("destroy-referenced-type");
+    write_spring_fixture(&root);
+
+    assert!(
+        jails_cmd(&root, None)
+            .args(["g", "enum", "Status", "Draft", "Published"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        jails_cmd(&root, None)
+            .args(["g", "scaffold", "Post", "id:uuid@pk", "status:Status",])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let status = root.join("src/main/java/com/example/demo/domain/Status.java");
+    let before = snapshot_tree(&root);
+
+    let refused = jails_cmd(&root, None)
+        .args(["destroy", "enum", "Status", "--force"])
+        .output()
+        .unwrap();
+
+    assert!(!refused.status.success(), "{refused:?}");
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(stderr.contains("pointing at nothing"), "{stderr}");
+    assert!(stderr.contains("scaffold Post"), "{stderr}");
+    assert!(status.is_file());
+    assert_eq!(snapshot_tree(&root), before, "refusal mutated the project");
+}
+
+#[test]
 fn field_driven_generators_refuse_an_absent_model_with_a_fix() {
     let root = temp_dir("missing-model-fix");
     write_spring_fixture(&root);
