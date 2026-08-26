@@ -27,6 +27,10 @@ mod schema;
 pub(crate) use schema::*;
 mod editor;
 pub(crate) use editor::*;
+mod tools;
+pub(crate) use tools::*;
+mod sql;
+pub(crate) use sql::*;
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub(crate) enum StoragePolicy {
@@ -368,47 +372,6 @@ impl Invocation {
 }
 
 #[derive(Subcommand)]
-pub(crate) enum SqlCommand {
-    /// Verify managed queries against the catalog derived from ordered migrations
-    Check {
-        /// Project-relative query file or manifest query name
-        target: Option<String>,
-        /// Use migration-derived catalog evidence without opening a connection
-        #[arg(long, conflicts_with = "live")]
-        offline: bool,
-        /// Use an explicitly selected live datasource
-        #[arg(long, conflicts_with = "offline")]
-        live: bool,
-        /// Declared datasource name; required with --live
-        #[arg(long, requires = "live", value_name = "NAME")]
-        datasource: Option<String>,
-        /// Whether live checking may start declared services
-        #[arg(long, value_enum, default_value = "existing", requires = "live")]
-        services: RunServicesArg,
-        /// Refuse when checked-in contracts differ; never update them
-        #[arg(long)]
-        frozen: bool,
-        /// Recompute instead of consulting a local evidence cache
-        #[arg(long)]
-        no_cache: bool,
-        /// Canonical application manifest; defaults to .jails/app.toml
-        #[arg(long, value_name = "MANIFEST")]
-        manifest: Option<std::path::PathBuf>,
-    },
-    /// Generate Java and checked-in contracts from verified offline evidence
-    Generate {
-        /// Project-relative query file or manifest query name
-        target: Option<String>,
-        /// Assert which manifest slice owns the selected query
-        #[arg(long, value_name = "SLICE")]
-        into_slice: Option<String>,
-        /// Canonical application manifest; defaults to .jails/app.toml
-        #[arg(long, value_name = "MANIFEST")]
-        manifest: Option<std::path::PathBuf>,
-    },
-}
-
-#[derive(Subcommand)]
 pub(crate) enum Command {
     /// Describe the current Maven reactor and active module
     #[command(visible_alias = "info")]
@@ -547,6 +510,26 @@ pub(crate) enum Command {
     Editor {
         #[command(subcommand)]
         command: EditorCommand,
+    },
+    /// Emit and check portable HTTP contracts
+    Contract {
+        #[command(subcommand)]
+        command: ContractCommand,
+    },
+    /// Resolve a route and delegate an HTTP request to curl
+    Request {
+        #[command(flatten)]
+        request: HttpRequestArgs,
+    },
+    /// Run a trusted project-relative JShell script noninteractively
+    Runner {
+        #[command(flatten)]
+        runner: RunnerArgs,
+    },
+    /// Read bounded logs from declared Compose services
+    Logs {
+        #[command(flatten)]
+        logs: LogsArgs,
     },
     /// Generate a scaffold or one small Java/SQL artifact
     ///
@@ -859,6 +842,8 @@ pub(crate) enum Command {
     /// Open a database client (`psql` against compose postgres, or sqlite3)
     #[command(visible_alias = "dbconsole")]
     Db {
+        #[command(subcommand)]
+        command: Option<DbCommand>,
         /// A SQLite file; omit this to use the compose postgres from `add db`
         file: Option<PathBuf>,
         /// Do not `docker compose up` postgres first

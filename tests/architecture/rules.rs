@@ -31,6 +31,8 @@ fn owns_terminal_output(path: &Path) -> bool {
         || relative == "src/sql_command.rs"
         || relative == "src/schema_command.rs"
         || relative == "src/editor_command.rs"
+        || relative == "src/contract_command.rs"
+        || relative == "src/tool_command.rs"
         || relative.starts_with("src/new/")
         || relative == "crates/jails-support/src/lib.rs"
         || relative == "crates/jails-support/src/process.rs"
@@ -369,6 +371,8 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails", "sql_command", 9),
     ("jails", "schema_command", 9),
     ("jails", "editor_command", 9),
+    ("jails", "contract_command", 9),
+    ("jails", "tool_command", 9),
     ("jails", "cli", 9),
     ("jails", "dispatch", 9),
     ("jails", "arguments", 9),
@@ -403,6 +407,8 @@ const SUBPROCESS_CLASSIFICATION: &[(&str, &str)] = &[
     // Read-only clients and probes. Outside both locks, and they claim no
     // filesystem rollback.
     ("console", "read-only client"),
+    ("contract_command", "read-only client"),
+    ("tool_command", "read-only client"),
     ("live_sql", "read-only probe"),
     ("doctor", "read-only probe"),
     // Bootstrap, outside any project transaction: these run before a project

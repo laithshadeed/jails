@@ -12,6 +12,7 @@ jails-protocol.workspace = true
 jails-report.workspace = true
 jails-spec.workspace = true
 jails-support.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true

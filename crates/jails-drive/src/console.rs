@@ -11,6 +11,7 @@ use crate::generate::find_project_root;
 use crate::run;
 use jails_support::Result;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -52,6 +53,42 @@ fn psql(root: &Path, no_start: bool, args: &[String], debug: bool) -> Result<()>
     run::run_inherited(cmd, debug)
 }
 
+/// Open the explicitly selected libpq client without starting a service.
+pub fn postgres_console(client: &str, single_connection: bool, debug: bool) -> Result<()> {
+    let root = find_project_root()?;
+    let yaml = compose::read(&root)?;
+    let conn = compose::postgres_connect(&yaml).ok_or_else(|| {
+        "no declared PostgreSQL datasource exists.\n       fix: run `jails add db`, then start it explicitly with `jails start db`."
+            .to_string()
+    })?;
+    let bin = db_client(client)?;
+    let mut command = Command::new(bin);
+    command
+        .env("PGHOST", &conn.host)
+        .env("PGPORT", conn.port.to_string())
+        .env("PGUSER", &conn.user)
+        .env("PGDATABASE", &conn.database)
+        .env("PGPASSWORD", &conn.password)
+        .current_dir(root);
+    match client {
+        "pgcli" => {
+            command.arg("--warn");
+            if single_connection {
+                command.arg("--single-connection");
+            }
+        }
+        "psql" if single_connection => {
+            return Err(
+                "`--single-connection` is supported only by pgcli.\n       fix: omit it or select `--client pgcli`."
+                    .into(),
+            );
+        }
+        "psql" => {}
+        _ => unreachable!("CLI has a closed client vocabulary"),
+    }
+    run::run_inherited(command, debug)
+}
+
 fn sqlite3(root: &Path, file: &Path, args: &[String], debug: bool) -> Result<()> {
     let bin = db_client("sqlite3")?;
     let path = if file.is_absolute() {
@@ -91,6 +128,110 @@ pub fn console(no_build: bool, args: &[String], debug: bool) -> Result<()> {
         .args(args)
         .current_dir(&root);
     run::run_inherited(cmd, debug)
+}
+
+/// Boot Spring through JShell, evaluate one trusted script, close the
+/// application context, and propagate JShell failure.
+pub fn runner(
+    file: &Path,
+    profiles: &[String],
+    main: Option<&str>,
+    compile: bool,
+    debug: bool,
+) -> Result<()> {
+    let root = find_project_root()?;
+    crate::build::require_maven_at(&root, "runner")?;
+    let jshell = find_jshell().ok_or_else(|| {
+        "jshell not on PATH.\n       fix: install the selected JDK and ensure `JAVA_HOME/bin` is on PATH."
+            .to_string()
+    })?;
+    if compile {
+        let mut build = Command::new(crate::maven::binary(&root));
+        build.arg("compile").current_dir(&root);
+        run::run_inherited(build, debug)?;
+    }
+    let classpath = project_classpath(&root, debug)?;
+    let main = match main {
+        Some(main) => main.to_string(),
+        None => spring_main(&root)?,
+    };
+    let profile_list = if profiles.is_empty() {
+        "\"dev\"".to_string()
+    } else {
+        profiles
+            .iter()
+            .map(|profile| format!("\"{}\"", java_string(profile)))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let temp = tempfile::Builder::new()
+        .prefix("jails-runner-")
+        .tempdir()
+        .map_err(|error| format!("could not reserve runner scratch space: {error}"))?;
+    let startup = temp.path().join("startup.jsh");
+    let script = temp.path().join("script.jsh");
+    let startup_body = format!(
+        "import java.util.function.Supplier;\nimport java.util.stream.Stream;\nimport org.springframework.boot.WebApplicationType;\nimport org.springframework.boot.builder.SpringApplicationBuilder;\nimport org.springframework.context.ConfigurableApplicationContext;\nimport org.springframework.core.env.Environment;\nimport org.springframework.transaction.PlatformTransactionManager;\nimport org.springframework.transaction.support.TransactionTemplate;\nvar ctx = new SpringApplicationBuilder(Class.forName(\"{}\")).profiles({}).web(WebApplicationType.NONE).run();\nRuntime.getRuntime().addShutdownHook(new Thread(ctx::close));\n<T> T bean(Class<T> type) {{ return ctx.getBean(type); }}\nObject bean(String name) {{ return ctx.getBean(name); }}\nStream<String> beans() {{ return java.util.Arrays.stream(ctx.getBeanDefinitionNames()).sorted(); }}\nEnvironment env() {{ return ctx.getEnvironment(); }}\n<T> T tx(Supplier<T> work) {{ return new TransactionTemplate(ctx.getBean(PlatformTransactionManager.class)).execute(status -> work.get()); }}\n",
+        java_string(&main),
+        profile_list
+    );
+    write_private(&startup, startup_body.as_bytes())?;
+    let mut body = Vec::new();
+    if file == Path::new("-") {
+        std::io::stdin()
+            .read_to_end(&mut body)
+            .map_err(|error| format!("could not read runner stdin: {error}"))?;
+    } else {
+        if file.is_absolute()
+            || file
+                .components()
+                .any(|part| matches!(part, std::path::Component::ParentDir))
+        {
+            return Err("runner files must be project-relative.\n       fix: pass a `.jsh` path below the project root or `--file -`.".into());
+        }
+        body = fs::read(root.join(file))
+            .map_err(|error| format!("could not read runner file {}: {error}", file.display()))?;
+    }
+    body.extend_from_slice(b"\nctx.close();\n/exit\n");
+    write_private(&script, &body)?;
+    let mut command = Command::new(jshell);
+    command
+        .args(["--class-path", &classpath, "--startup"])
+        .arg(startup)
+        .arg(script)
+        .current_dir(root);
+    run::run_inherited(command, debug)
+}
+
+fn spring_main(project_root: &Path) -> Result<String> {
+    let candidates = crate::java::source_files(&project_root.join("src/main/java"))
+        .into_iter()
+        .filter_map(|path| {
+            let source = fs::read_to_string(path).ok()?;
+            if !source.contains("@SpringBootApplication") {
+                return None;
+            }
+            let info = crate::java::type_info(&source)?;
+            Some(if info.package.is_empty() {
+                info.name
+            } else {
+                format!("{}.{}", info.package, info.name)
+            })
+        })
+        .collect::<Vec<_>>();
+    match candidates.as_slice() {
+        [main] => Ok(main.clone()),
+        [] => Err("no @SpringBootApplication type was found.\n       fix: pass `--main <qualified-type>`.".into()),
+        _ => Err("more than one @SpringBootApplication type was found.\n       fix: select one with `--main <qualified-type>`.".into()),
+    }
+}
+
+fn java_string(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+fn write_private(path: &Path, body: &[u8]) -> Result<()> {
+    jails_support::apply::put_in_scratch(path, body)
 }
 
 fn find_jshell() -> Option<PathBuf> {

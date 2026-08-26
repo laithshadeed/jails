@@ -77,6 +77,8 @@ clap.workspace = true
 clap_complete = "4.6.7"
 jails-protocol.workspace = true
 jails-support.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
 
 [dev-dependencies]
 # `CWD_LOCK`: `src/new.rs`'s tests change the process-global working directory.

@@ -220,6 +220,7 @@ dependencies = [
  "jails-spec",
  "jails-support",
  "jails-testkit",
+ "serde_json",
  "tempfile",
 ]
 
@@ -246,6 +247,7 @@ dependencies = [
  "jails-report",
  "jails-spec",
  "jails-support",
+ "tempfile",
 ]
 
 [[package]]

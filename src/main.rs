@@ -10,11 +10,13 @@ pub(crate) use jails_report::{commands, doctor, explain, lifecycle_status, sourc
 mod app;
 mod arguments;
 mod cli;
+mod contract_command;
 mod dispatch;
 mod editor_command;
 mod new;
 mod schema_command;
 mod sql_command;
+mod tool_command;
 
 // What the CLI accepts lives in `cli`; what it does is the match below.
 pub(crate) use add::Capability;
@@ -130,6 +132,39 @@ fn main() -> std::process::ExitCode {
         ),
         Command::Schema { command } => schema_command::schema(command, invocation),
         Command::Editor { command } => editor_command::run(command, invocation),
+        Command::Contract { command } => contract_command::run(command, invocation),
+        Command::Request { request } => tool_command::request(
+            tool_command::HttpRequest {
+                method: request.method,
+                target: request.target,
+                profile: request.profile,
+                base_url: request.base_url,
+                params: request.params,
+                query: request.query,
+                headers: request.headers,
+                header_env: request.header_env,
+                json: request.json,
+                data: request.data,
+                timeout: request.timeout,
+                follow: request.follow,
+                print: request.print,
+            },
+            invocation,
+        ),
+        Command::Runner { runner } => tool_command::runner(
+            &runner.file,
+            &runner.profiles,
+            runner.main.as_deref(),
+            runner.compile,
+            invocation,
+        ),
+        Command::Logs { logs } => tool_command::logs(
+            &logs.services,
+            logs.follow,
+            logs.since.as_deref(),
+            logs.tail,
+            invocation,
+        ),
         Command::Generate {
             kind,
             name,
@@ -435,10 +470,25 @@ fn main() -> std::process::ExitCode {
         Command::Kafka { command, no_start } => kafka::kafka(command, no_start, debug),
         Command::Lint => lint::lint(),
         Command::Db {
+            command,
             file,
             no_start,
             args,
-        } => console::db(file.as_deref(), no_start, &args, debug),
+        } => match command {
+            Some(cli::DbCommand::Console {
+                database,
+                profile,
+                client,
+                single_connection,
+            }) => tool_command::db_console(
+                database.as_deref(),
+                profile.as_deref(),
+                client,
+                single_connection,
+                invocation,
+            ),
+            None => console::db(file.as_deref(), no_start, &args, debug),
+        },
         Command::Console { no_build, args } => console::console(no_build, &args, debug),
         Command::Test {
             requested,
