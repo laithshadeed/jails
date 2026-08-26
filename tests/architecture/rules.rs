@@ -305,6 +305,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     // jails-generate: everything that decides what Java to write.
     ("jails-generate", "sql", 6),
     ("jails-generate", "generate", 6),
+    ("jails-generate", "named_query", 6),
     ("jails-generate", "spring", 6),
     ("jails-generate", "add", 6),
     // jails-prepare: turning desire into an exact executable transition.

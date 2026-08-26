@@ -15,6 +15,7 @@
 
 pub mod add;
 pub mod generate;
+pub mod named_query;
 pub mod spring;
 pub mod sql;
 

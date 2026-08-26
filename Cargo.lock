@@ -246,6 +246,7 @@ dependencies = [
  "jails-spec",
  "jails-support",
  "jails-testkit",
+ "tempfile",
 ]
 
 [[package]]
