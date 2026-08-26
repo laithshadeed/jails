@@ -9,7 +9,7 @@ use crate::generate::find_project_root;
 use crate::run;
 use jails_support::Result;
 use std::fs;
-use std::io::Read;
+use std::io::{IsTerminal as _, Read, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -115,7 +115,7 @@ pub enum WebMode {
 
 /// Compatibility entry point for the former console API.
 pub fn console(no_build: bool, args: &[String], debug: bool) -> Result<()> {
-    spring_console(&[], None, WebMode::None, !no_build, args, debug)
+    spring_console(&[], None, WebMode::None, !no_build, false, args, debug)
 }
 
 /// Boot the selected Spring application and enter an interactive JShell.
@@ -124,6 +124,7 @@ pub fn spring_console(
     main: Option<&str>,
     web: WebMode,
     compile: bool,
+    yes: bool,
     args: &[String],
     debug: bool,
 ) -> Result<()> {
@@ -133,6 +134,7 @@ pub fn spring_console(
     let main = main
         .map(str::to_owned)
         .map_or_else(|| spring_main(root), Ok)?;
+    confirm_boot(&project, &main, profiles, web, yes)?;
     let resolved = run::runtime_classpath(
         &project,
         if compile {
@@ -165,6 +167,7 @@ pub fn runner(
     main: Option<&str>,
     web: WebMode,
     compile: bool,
+    yes: bool,
     debug: bool,
 ) -> Result<()> {
     let project = crate::model::Project::discover()?;
@@ -173,6 +176,7 @@ pub fn runner(
     let main = main
         .map(str::to_owned)
         .map_or_else(|| spring_main(root), Ok)?;
+    confirm_boot(&project, &main, profiles, web, yes)?;
     let resolved = run::runtime_classpath(
         &project,
         if compile {
@@ -243,6 +247,103 @@ fn spring_startup(main: &str, profiles: &[String], web: WebMode) -> String {
         web_application_type,
         random_port
     )
+}
+
+fn confirm_boot(
+    project: &crate::model::Project,
+    main: &str,
+    profiles: &[String],
+    web: WebMode,
+    yes: bool,
+) -> Result<()> {
+    let profiles = if profiles.is_empty() {
+        vec!["dev"]
+    } else {
+        profiles.iter().map(String::as_str).collect()
+    };
+    if profiles
+        .iter()
+        .all(|profile| matches!(*profile, "dev" | "test"))
+        && web != WebMode::Configured
+    {
+        return Ok(());
+    }
+    let release = project
+        .java_release()
+        .map_or_else(|| "unknown".to_string(), |release| release.to_string());
+    let web = match web {
+        WebMode::None => "none",
+        WebMode::Random => "random",
+        WebMode::Configured => "configured",
+    };
+    eprintln!(
+        "Spring application preflight:\n  main: {main}\n  release: {release}\n  profiles: {}\n  web: {web}\n  datasource sources: {} (values redacted)",
+        profiles.join(", "),
+        datasource_sources(project)
+    );
+    if yes {
+        return Ok(());
+    }
+    if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
+        return Err(
+            "Spring boot confirmation requires a terminal.\n       fix: review the preflight above, then pass `--yes` to authorize that exact boot in automation."
+                .into(),
+        );
+    }
+    eprint!("Continue? [y/N] ");
+    std::io::stderr()
+        .flush()
+        .map_err(|error| format!("could not display Spring boot confirmation: {error}"))?;
+    let mut answer = String::new();
+    std::io::stdin()
+        .read_line(&mut answer)
+        .map_err(|error| format!("could not read Spring boot confirmation: {error}"))?;
+    if matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+        return Ok(());
+    }
+    Err(
+        "Spring application boot cancelled.\n       fix: rerun the command and confirm, or pass `--yes` after reviewing the preflight."
+            .into(),
+    )
+}
+
+fn datasource_sources(project: &crate::model::Project) -> String {
+    let root = project.root();
+    let resources = root.join("src/main/resources");
+    let mut sources = fs::read_dir(&resources)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            name.starts_with("application")
+                && matches!(
+                    entry.path().extension().and_then(|ext| ext.to_str()),
+                    Some("properties" | "yaml" | "yml")
+                )
+        })
+        .filter_map(|entry| {
+            let body = fs::read_to_string(entry.path()).ok()?;
+            (body.contains("spring.datasource")
+                || body.contains("jdbc:")
+                || body.contains("r2dbc:"))
+            .then(|| format!("src/main/resources/{}", entry.file_name().to_string_lossy()))
+        })
+        .collect::<Vec<_>>();
+    for name in ["compose.yaml", "compose.yml"] {
+        let path = root.join(name);
+        if fs::read_to_string(path).is_ok_and(|body| body.contains("postgres")) {
+            sources.push(name.to_string());
+        }
+    }
+    sources.sort();
+    sources.dedup();
+    if sources.is_empty() {
+        "none declared in project files".to_string()
+    } else {
+        sources.join(", ")
+    }
 }
 
 fn java_string(value: &str) -> String {

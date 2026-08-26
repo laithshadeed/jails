@@ -157,6 +157,7 @@ fn main() -> std::process::ExitCode {
             runner.main.as_deref(),
             runner.web,
             runner.compile,
+            runner.yes,
             invocation,
         ),
         Command::Logs { logs } => tool_command::logs(
@@ -501,6 +502,7 @@ fn main() -> std::process::ExitCode {
             console.main.as_deref(),
             console.web,
             console.compile,
+            console.yes,
             &console.args,
             invocation,
         ),

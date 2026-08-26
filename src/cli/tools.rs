@@ -102,6 +102,9 @@ pub(crate) struct RunnerArgs {
     pub(crate) web: WebModeArg,
     #[arg(long)]
     pub(crate) compile: bool,
+    /// Authorize the printed non-dev/configured-web preflight in automation.
+    #[arg(long)]
+    pub(crate) yes: bool,
 }
 
 #[derive(Args)]
@@ -114,6 +117,9 @@ pub(crate) struct ConsoleArgs {
     pub(crate) web: WebModeArg,
     #[arg(long)]
     pub(crate) compile: bool,
+    /// Authorize the printed non-dev/configured-web preflight in automation.
+    #[arg(long)]
+    pub(crate) yes: bool,
     /// Compatibility spelling for the default existing-output mode.
     #[arg(long, hide = true, conflicts_with = "compile")]
     pub(crate) no_build: bool,

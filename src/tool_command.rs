@@ -226,6 +226,7 @@ pub(crate) fn runner(
     main: Option<&str>,
     web: WebModeArg,
     compile: bool,
+    yes: bool,
     invocation: crate::Invocation,
 ) -> Result<()> {
     transparent_output(invocation.output, "runner")?;
@@ -235,6 +236,7 @@ pub(crate) fn runner(
         main,
         web_mode(web),
         compile,
+        yes,
         invocation.debug,
     )
 }
@@ -244,6 +246,7 @@ pub(crate) fn console(
     main: Option<&str>,
     web: WebModeArg,
     compile: bool,
+    yes: bool,
     args: &[String],
     invocation: crate::Invocation,
 ) -> Result<()> {
@@ -253,6 +256,7 @@ pub(crate) fn console(
         main,
         web_mode(web),
         compile,
+        yes,
         args,
         invocation.debug,
     )

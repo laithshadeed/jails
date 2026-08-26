@@ -226,3 +226,99 @@ fn runner_boots_one_spring_main_with_private_startup_and_project_script() {
     assert!(invoked.contains("--startup"), "{invoked}");
     assert!(invoked.contains("script.jsh"), "{invoked}");
 }
+
+#[test]
+fn unsafe_spring_boots_print_preflight_and_require_yes_without_a_terminal() {
+    let root = web_fixture("spring-preflight");
+    fs::write(
+        root.join("pom.xml"),
+        "<project><properties><maven.compiler.release>26</maven.compiler.release></properties></project>",
+    )
+    .unwrap();
+    fs::create_dir_all(root.join("src/main/resources")).unwrap();
+    fs::write(
+        root.join("src/main/resources/application-prod.properties"),
+        "spring.datasource.url=jdbc:postgresql://prod.example/app\nspring.datasource.password=never-print-me\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/main/java/com/example/demo/DemoApplication.java"),
+        "package com.example.demo;\nimport org.springframework.boot.autoconfigure.SpringBootApplication;\n@SpringBootApplication public class DemoApplication {}\n",
+    )
+    .unwrap();
+    fs::create_dir_all(root.join("scripts")).unwrap();
+    fs::write(root.join("scripts/check.jsh"), "beans().count();\n").unwrap();
+    let fake = temp_dir("spring-preflight-bin");
+    let log = fake.join("tool.log");
+    write_fake_maven(&fake, &["mvn", "java", "jshell"], &log);
+    fs::write(
+        fake.join("java"),
+        format!(
+            "#!/bin/sh\necho 'openjdk version \"26\"' >&2\necho \"$0 $*\" >> \"{}\"\nexit 0\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+
+    let refused = jails_cmd(&root, Some(&fake))
+        .env_remove("JAVA_HOME")
+        .args(["console", "--profile", "prod", "--compile"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    let diagnostics = String::from_utf8_lossy(&refused.stderr);
+    for evidence in [
+        "main: com.example.demo.DemoApplication",
+        "release: 26",
+        "profiles: prod",
+        "web: none",
+        "datasource sources: src/main/resources/application-prod.properties (values redacted)",
+        "pass `--yes`",
+    ] {
+        assert!(
+            diagnostics.contains(evidence),
+            "missing `{evidence}`:\n{diagnostics}"
+        );
+    }
+    assert!(!diagnostics.contains("never-print-me"), "{diagnostics}");
+    assert!(
+        !read_log(&log).contains("mvn compile"),
+        "refused preflight compiled the application"
+    );
+
+    let console = jails_cmd(&root, Some(&fake))
+        .env_remove("JAVA_HOME")
+        .args(["console", "--profile", "prod", "--compile", "--yes"])
+        .output()
+        .unwrap();
+    assert!(
+        console.status.success(),
+        "{}",
+        String::from_utf8_lossy(&console.stderr)
+    );
+    assert!(read_log(&log).contains("mvn compile"));
+
+    let runner = jails_cmd(&root, Some(&fake))
+        .env_remove("JAVA_HOME")
+        .args([
+            "runner",
+            "--file",
+            "scripts/check.jsh",
+            "--profile",
+            "test",
+            "--web",
+            "configured",
+            "--compile",
+            "--yes",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        runner.status.success(),
+        "{}",
+        String::from_utf8_lossy(&runner.stderr)
+    );
+    let diagnostics = String::from_utf8_lossy(&runner.stderr);
+    assert!(diagnostics.contains("profiles: test"), "{diagnostics}");
+    assert!(diagnostics.contains("web: configured"), "{diagnostics}");
+}
