@@ -107,8 +107,17 @@ pub(super) fn test_report(
         selectors.push(pattern.replace('#', "."));
     }
     let borrowed: Vec<&str> = selectors.iter().map(String::as_str).collect();
-    let outcome = match options.timeout.as_deref() {
-        Some(timeout) => {
+    let outcome = match (options.timeout.as_deref(), options.json) {
+        (Some(timeout), true) => {
+            let mut command = Command::new(binary(root));
+            command.args(&borrowed).current_dir(root);
+            test_execution::run_silent_timeout(
+                command,
+                debug,
+                std::time::Duration::from_secs(test_plan::parse_duration(timeout)?),
+            )
+        }
+        (Some(timeout), false) => {
             let mut command = Command::new(binary(root));
             command.args(&borrowed).current_dir(root);
             test_execution::run_inherited_timeout(
@@ -117,7 +126,22 @@ pub(super) fn test_report(
                 std::time::Duration::from_secs(test_plan::parse_duration(timeout)?),
             )
         }
-        None => tasks(root, &borrowed, debug),
+        (None, true) => {
+            let mut command = Command::new(binary(root));
+            command.args(&borrowed).current_dir(root);
+            if debug {
+                jails_support::debug_cmd(&command);
+            }
+            let output = command.output().map_err(|error| {
+                jails_support::Failure::from(format!("failed to run Gradle: {error}"))
+            })?;
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(jails_support::Failure::Reported)
+            }
+        }
+        (None, false) => tasks(root, &borrowed, debug),
     };
 
     // After the run, over the reports it just wrote. `--json` owns the exit

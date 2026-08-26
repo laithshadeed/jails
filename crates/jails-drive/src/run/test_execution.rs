@@ -68,16 +68,16 @@ pub(super) fn warm_report(
     options: &TestOptions,
     debug: bool,
 ) -> Result<TestReportV1> {
+    let timeout = options
+        .timeout
+        .as_deref()
+        .map(test_plan::parse_duration)
+        .transpose()?
+        .map(std::time::Duration::from_secs);
     if options.affected {
-        return crate::testd::affected_report(debug);
+        return crate::testd::affected_report_timeout(debug, timeout);
     }
-    if options.timeout.is_some() {
-        return Err(
-            "testd v2 cancellation is not active for timed requests\n       fix: omit `--timeout` or choose `--engine build`"
-                .into(),
-        );
-    }
-    crate::testd::run_report(requested, 0, debug)
+    crate::testd::run_report_timeout(requested, 0, debug, timeout)
 }
 
 pub(super) fn test_watch(requested: &[String], options: TestOptions, debug: bool) -> Result<()> {
@@ -285,10 +285,11 @@ fn run_maven_command(context: &MavenTestContext<'_>, mut cmd: Command) -> Result
     }
     cmd.current_dir(context.project);
     if context.options.json {
-        if context.options.timeout.is_some() {
-            return Err(
-                "`--timeout --json` needs the bounded captured-result executor\n       fix: omit one option until that executor is active"
-                    .into(),
+        if let Some(timeout) = context.options.timeout.as_deref() {
+            return run_silent_timeout(
+                cmd,
+                context.debug,
+                std::time::Duration::from_secs(test_plan::parse_duration(timeout)?),
             );
         }
         let output = cmd
@@ -307,6 +308,46 @@ fn run_maven_command(context: &MavenTestContext<'_>, mut cmd: Command) -> Result
             std::time::Duration::from_secs(test_plan::parse_duration(timeout)?),
         ),
         None => run_inherited(cmd, context.debug),
+    }
+}
+
+pub(super) fn run_silent_timeout(
+    mut command: Command,
+    debug: bool,
+    timeout: std::time::Duration,
+) -> Result<()> {
+    if debug {
+        jails_support::debug_cmd(&command);
+    }
+    command
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let program = command.get_program().to_string_lossy().into_owned();
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("failed to run {program}: {error}"))?;
+    let started = std::time::Instant::now();
+    loop {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| format!("failed to wait for {program}: {error}"))?
+        {
+            return if status.success() {
+                Ok(())
+            } else {
+                Err(jails_support::Failure::Reported)
+            };
+        }
+        if started.elapsed() >= timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!(
+                "test run exceeded {} second(s)\n       fix: raise `--timeout`, narrow the selection, or remove the limit",
+                timeout.as_secs()
+            )
+            .into());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
     }
 }
 

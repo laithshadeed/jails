@@ -1016,6 +1016,146 @@ fn a_gradle_project_gets_the_commands_that_do_not_need_maven() {
     );
 }
 
+#[test]
+fn gradle_json_is_one_report_and_timeout_is_bounded_without_tool_noise() {
+    let root = temp_dir("gradle-json-test");
+    fs::write(root.join("settings.gradle"), "rootProject.name = 'demo'\n").unwrap();
+    fs::write(root.join("build.gradle"), "plugins { id 'java' }\n").unwrap();
+    let tools = temp_dir("gradle-json-tools");
+    let log = tools.join("log.txt");
+    write_fake_maven(&tools, &["gradle"], &log);
+    fs::write(
+        tools.join("gradle"),
+        format!(
+            "#!/bin/sh\necho GRADLE-TOOL-NOISE\necho \"$0 $*\" >> \"{}\"\nexit 0\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+
+    let output = jails_cmd(&root, Some(&tools))
+        .args(["test", "--engine", "build", "--output", "json"])
+        .output()
+        .unwrap();
+    let json = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "{json}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        json.lines().count(),
+        1,
+        "JSON stdout must be one report: {json}"
+    );
+    assert!(
+        !json.contains("GRADLE-TOOL-NOISE"),
+        "Gradle leaked into JSON: {json}"
+    );
+
+    fs::write(tools.join("gradle"), "#!/bin/sh\n/bin/sleep 30\n").unwrap();
+    let started = std::time::Instant::now();
+    let timed = jails_cmd(&root, Some(&tools))
+        .args([
+            "test",
+            "--engine",
+            "build",
+            "--timeout",
+            "1s",
+            "--output",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    let elapsed = started.elapsed();
+    let json = String::from_utf8_lossy(&timed.stdout);
+    assert!(
+        !timed.status.success(),
+        "the timed build unexpectedly passed: {json}"
+    );
+    assert_eq!(
+        json.lines().count(),
+        1,
+        "timed JSON must be one report: {json}"
+    );
+    assert!(
+        json.contains("\"passed\":false"),
+        "timeout verdict was lost: {json}"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(10),
+        "the 1s Gradle timeout took {elapsed:?}"
+    );
+}
+
+#[test]
+fn maven_json_is_one_report_and_timeout_is_bounded_without_tool_noise() {
+    let root = temp_dir("maven-json-test");
+    write_plain_fixture(&root);
+    let tools = temp_dir("maven-json-tools");
+    let log = tools.join("log.txt");
+    write_fake_maven(&tools, &["mvn"], &log);
+    fs::write(
+        tools.join("mvn"),
+        "#!/bin/sh\necho MAVEN-TOOL-NOISE\nexit 0\n",
+    )
+    .unwrap();
+
+    let output = jails_cmd(&root, Some(&tools))
+        .args(["test", "--engine", "build", "--output", "json"])
+        .output()
+        .unwrap();
+    let json = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "{json}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        json.lines().count(),
+        1,
+        "JSON stdout must be one report: {json}"
+    );
+    assert!(
+        !json.contains("MAVEN-TOOL-NOISE"),
+        "Maven leaked into JSON: {json}"
+    );
+
+    fs::write(tools.join("mvn"), "#!/bin/sh\n/bin/sleep 30\n").unwrap();
+    let started = std::time::Instant::now();
+    let timed = jails_cmd(&root, Some(&tools))
+        .args([
+            "test",
+            "--engine",
+            "build",
+            "--timeout",
+            "1s",
+            "--output",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    let elapsed = started.elapsed();
+    let json = String::from_utf8_lossy(&timed.stdout);
+    assert!(
+        !timed.status.success(),
+        "the timed build unexpectedly passed: {json}"
+    );
+    assert_eq!(
+        json.lines().count(),
+        1,
+        "timed JSON must be one report: {json}"
+    );
+    assert!(
+        json.contains("\"passed\":false"),
+        "timeout verdict was lost: {json}"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(10),
+        "the 1s Maven timeout took {elapsed:?}"
+    );
+}
+
 /// `plan.md` §12: `jails adopt` writes a `[layout]` table, not new machinery.
 /// The proof is that a *reporting* command's answer changes with no code path
 /// of its own — `stats` counted a renamed web package as "Other".
@@ -1152,6 +1292,77 @@ fn auto_engine_merges_warm_and_build_partitions_without_losing_a_selector() {
             && json.contains("\"selector\":\"com.example.demo.PlainTest#plain\"")
             && json.contains("\"engine\":\"testd-v2\""),
         "the merged report must contain both disjoint partitions: {json}"
+    );
+}
+
+#[test]
+fn a_timed_warm_run_cancels_the_request_and_recycles_the_daemon() {
+    if !real_mvn_available() || !real_java_supports_target_release() {
+        skip("mvn or a new enough JDK not found on PATH");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let root = temp_dir("timed-warm-test");
+    write_plain_fixture(&root);
+    let tests = root.join("src/test/java/com/example/demo");
+    fs::create_dir_all(&tests).unwrap();
+    fs::write(
+        tests.join("SlowTest.java"),
+        "package com.example.demo;\nimport org.junit.jupiter.api.Test;\nclass SlowTest { @Test void slow() throws Exception { Thread.sleep(30_000); } }\n",
+    )
+    .unwrap();
+
+    let prepared = jails_cmd_with_path(&root, &path)
+        .args(["test", "--fast"])
+        .output()
+        .unwrap();
+    if !prepared.status.success() {
+        skip("could not prepare the timed warm-test fixture");
+        return;
+    }
+
+    let started = std::time::Instant::now();
+    let output = jails_cmd_with_path(&root, &path)
+        .args([
+            "test",
+            "SlowTest",
+            "--engine",
+            "warm",
+            "--compile",
+            "none",
+            "--timeout",
+            "1s",
+        ])
+        .output()
+        .unwrap();
+    let elapsed = started.elapsed();
+    let report = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !output.status.success(),
+        "the timed test unexpectedly passed: {report}"
+    );
+    assert!(
+        report.contains("active request was cancelled") && report.contains("testd was recycled"),
+        "the timeout must explain both cancellation and isolation cleanup: {report}"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(10),
+        "the 1s timeout took {elapsed:?}"
+    );
+
+    let status = jails_cmd_with_path(&root, &path)
+        .args(["testd", "--status"])
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&status.stdout).contains("not running"),
+        "the cancelled daemon must not retain a test thread: {}{}",
+        String::from_utf8_lossy(&status.stdout),
+        String::from_utf8_lossy(&status.stderr)
     );
 }
 

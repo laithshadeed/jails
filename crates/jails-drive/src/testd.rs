@@ -37,16 +37,21 @@ pub fn testd(action: Action, debug: bool) -> Result<()> {
         }
         Action::Run(filter) => {
             let requested = filter.into_iter().collect::<Vec<_>>();
-            render(run_report_in(&project, &requested, 0, debug)?)
+            render(run_report_in(&project, &requested, 0, debug, None)?)
         }
-        Action::Affected => render(affected_report_in(&project, debug)?),
+        Action::Affected => render(affected_report_in(&project, debug, None)?),
     }
 }
 
-pub(crate) fn run_report(requested: &[String], epoch: u64, debug: bool) -> Result<TestReportV1> {
+pub(crate) fn run_report_timeout(
+    requested: &[String],
+    epoch: u64,
+    debug: bool,
+    timeout: Option<std::time::Duration>,
+) -> Result<TestReportV1> {
     let project = Project::discover()?;
     build::require_maven(project.build(), "test --engine warm")?;
-    run_report_in(&project, requested, epoch, debug)
+    run_report_in(&project, requested, epoch, debug, timeout)
 }
 
 fn run_report_in(
@@ -54,6 +59,7 @@ fn run_report_in(
     requested: &[String],
     epoch: u64,
     debug: bool,
+    timeout: Option<std::time::Duration>,
 ) -> Result<TestReportV1> {
     if let Some(stale) = launcher::staleness(project.root()) {
         return Err(format!(
@@ -77,16 +83,23 @@ fn run_report_in(
     let classpath = launcher::test_classpath(project.root(), debug)?;
     let client = v2::Client::for_project(project)?;
     client.ensure_running(project, &classpath, debug)?;
-    client.run(&classpath, &selectors, epoch)
+    client.run(&classpath, &selectors, epoch, timeout)
 }
 
-pub(crate) fn affected_report(debug: bool) -> Result<TestReportV1> {
+pub(crate) fn affected_report_timeout(
+    debug: bool,
+    timeout: Option<std::time::Duration>,
+) -> Result<TestReportV1> {
     let project = Project::discover()?;
     build::require_maven(project.build(), "test --affected")?;
-    affected_report_in(&project, debug)
+    affected_report_in(&project, debug, timeout)
 }
 
-fn affected_report_in(project: &Project, debug: bool) -> Result<TestReportV1> {
+fn affected_report_in(
+    project: &Project,
+    debug: bool,
+    timeout: Option<std::time::Duration>,
+) -> Result<TestReportV1> {
     match affected::select(project.root(), debug) {
         affected::Selection::Nothing { epoch } => {
             println!("testd: no affected tests in epoch {epoch}");
@@ -101,7 +114,7 @@ fn affected_report_in(project: &Project, debug: bool) -> Result<TestReportV1> {
         }
         affected::Selection::Everything { epoch, reasons } => {
             println!("testd: running everything -- {}", reasons.join("; "));
-            let mut report = run_report_in(project, &[], epoch, debug)?;
+            let mut report = run_report_in(project, &[], epoch, debug, timeout)?;
             report.fallback_reasons.extend(reasons);
             Ok(report)
         }
@@ -115,7 +128,7 @@ fn affected_report_in(project: &Project, debug: bool) -> Result<TestReportV1> {
                 "testd: {} test class(es) reachable from the working tree's changes",
                 tests.len()
             );
-            run_report_in(project, &tests, epoch, debug)
+            run_report_in(project, &tests, epoch, debug, timeout)
         }
     }
 }

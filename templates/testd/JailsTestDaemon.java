@@ -16,6 +16,8 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /** Authenticated, project-local warm engine for {@code jails test}. */
 final class JailsTestDaemon {
@@ -30,6 +32,8 @@ final class JailsTestDaemon {
     private final byte[] cookie;
     private final String outputs;
     private final long baselineMetaspace;
+    private final AtomicBoolean stopping = new AtomicBoolean();
+    private final AtomicReference<Thread> activeRun = new AtomicReference<>();
     private final Map<String, Cached> completed = new LinkedHashMap<>() {
         @Override
         protected boolean removeEldestEntry(Map.Entry<String, Cached> eldest) {
@@ -77,17 +81,21 @@ final class JailsTestDaemon {
     }
 
     private void serve(ServerSocketChannel server, long idleMillis) throws Exception {
-        while (true) {
+        while (!stopping.get()) {
             SocketChannel channel = acceptWithin(server, idleMillis);
             if (channel == null) return;
-            boolean stop;
-            try (SocketChannel client = channel) {
-                stop = handle(client);
-            } catch (Exception failure) {
-                System.err.println("jails testd: " + failure);
-                stop = false;
-            }
-            if (stop) return;
+            Thread.ofVirtual().name("jails-testd-client").start(() -> {
+                boolean stop = false;
+                try (SocketChannel client = channel) {
+                    stop = handle(client);
+                } catch (Exception failure) {
+                    System.err.println("jails testd: " + failure);
+                }
+                if (stop) {
+                    stopping.set(true);
+                    System.exit(0);
+                }
+            });
         }
     }
 
@@ -101,7 +109,10 @@ final class JailsTestDaemon {
             return false;
         }
         String id = toHex(request.id);
-        Cached cached = completed.get(id);
+        Cached cached;
+        synchronized (completed) {
+            cached = completed.get(id);
+        }
         if (cached != null) {
             if (MessageDigest.isEqual(cached.request, payload)) {
                 writeAll(client, cached.response);
@@ -112,7 +123,9 @@ final class JailsTestDaemon {
             return false;
         }
         byte[] response = execute(request);
-        completed.put(id, new Cached(payload, response));
+        synchronized (completed) {
+            completed.put(id, new Cached(payload, response));
+        }
         writeAll(client, response);
         if (request.tag == 4) return true;
         if (request.tag == 1) {
@@ -135,8 +148,7 @@ final class JailsTestDaemon {
             case 0 -> hello(request);
             case 1 -> run(request);
             case 2 -> event(request.id, 0, request.epoch, true, null);
-            case 3 -> refused(request.id, "nothing-to-cancel",
-                    "the daemon has no active request", "retry the test command if work is still needed");
+            case 3 -> cancel(request);
             case 4 -> event(request.id, 3, 0, false, "stop requested");
             default -> refused(request.id, "unknown-request", "unknown request tag " + request.tag,
                     "upgrade both testd protocol peers");
@@ -157,6 +169,29 @@ final class JailsTestDaemon {
     }
 
     private byte[] run(Request request) throws Exception {
+        Thread thread = Thread.currentThread();
+        if (!activeRun.compareAndSet(null, thread)) {
+            return refused(request.id, "daemon-busy", "the daemon already has an active test request",
+                    "wait for that request or retry through --engine build");
+        }
+        try {
+            return runActive(request);
+        } finally {
+            activeRun.compareAndSet(thread, null);
+        }
+    }
+
+    private byte[] cancel(Request request) throws Exception {
+        Thread thread = activeRun.get();
+        if (thread == null) {
+            return refused(request.id, "nothing-to-cancel",
+                    "the daemon has no active request", "retry the test command if work is still needed");
+        }
+        thread.interrupt();
+        return event(request.id, 3, 0, false, "active request cancelled; daemon recycle required");
+    }
+
+    private byte[] runActive(Request request) throws Exception {
         if (request.isolation != 0) {
             return refused(request.id, "isolation-ineligible",
                     "fork-sensitive tests cannot run in the warm daemon",
@@ -458,7 +493,9 @@ final class JailsTestDaemon {
     private static boolean leakedThread() {
         return Thread.getAllStackTraces().keySet().stream()
                 .anyMatch(thread -> thread.isAlive() && !thread.isDaemon()
-                        && thread != Thread.currentThread() && !thread.getName().equals("DestroyJavaVM"));
+                        && thread != Thread.currentThread()
+                        && !thread.getName().equals("main")
+                        && !thread.getName().equals("DestroyJavaVM"));
     }
 
     private static byte[] fromHex(String text) {

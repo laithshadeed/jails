@@ -12,7 +12,7 @@ use jails_protocol::testing::testd::{
 };
 use jails_support::Result;
 use jails_support::codec::{DIGEST_BYTES, domain_hash, hex, sha256, unhex};
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -129,14 +129,16 @@ impl Client {
         classpath: &launcher::TestClasspath,
         selectors: &[String],
         epoch: u64,
+        timeout: Option<Duration>,
     ) -> Result<TestReportV1> {
         let meta = self.metadata()?;
         let requested = selectors
             .iter()
             .map(|selector| jails_protocol::testing::TestSelector::parse(selector))
             .collect::<Result<Vec<_>>>()?;
+        let run_id = request_id()?;
         let request = TestdRequestV2::Run {
-            request_id: request_id()?,
+            request_id: run_id,
             project: self.project,
             cookie: meta.cookie,
             epoch,
@@ -145,7 +147,11 @@ impl Client {
             outputs: output_snapshot(&self.root, classpath)?,
             isolation: TestIsolation::Isolated,
         };
-        for response in self.exchange(&meta, request)? {
+        let responses = match timeout {
+            Some(timeout) => self.exchange_timed_run(&meta, request, run_id, timeout)?,
+            None => self.exchange(&meta, request)?,
+        };
+        for response in responses {
             match response {
                 TestdResponseV2::Completed { result, .. } if result.epoch == epoch => {
                     return Ok(result);
@@ -301,6 +307,70 @@ impl Client {
         }
     }
 
+    fn exchange_timed_run(
+        &self,
+        meta: &Metadata,
+        request: TestdRequestV2,
+        expected_id: RequestId,
+        timeout: Duration,
+    ) -> Result<Vec<TestdResponseV2>> {
+        let mut stream = UnixStream::connect(&self.socket)
+            .map_err(|error| format!("testd: not running ({error})"))?;
+        stream
+            .write_all(&encode_frame(&request)?)
+            .map_err(|error| format!("testd could not send a v2 frame: {error}"))?;
+        let deadline = Instant::now() + timeout;
+        let mut responses = Vec::new();
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                self.cancel_and_recycle(meta, timeout)?;
+            }
+            stream.set_read_timeout(Some(remaining)).ok();
+            let response: TestdResponseV2 = match read_frame_timed(&mut stream) {
+                Ok(response) => response,
+                Err(TimedFrameError::Timeout) => self.cancel_and_recycle(meta, timeout)?,
+                Err(TimedFrameError::Failed(error)) => return Err(error.into()),
+            };
+            let returned_id = match &response {
+                TestdResponseV2::Hello { request_id, .. }
+                | TestdResponseV2::Accepted { request_id, .. }
+                | TestdResponseV2::Event { request_id, .. }
+                | TestdResponseV2::Completed { request_id, .. }
+                | TestdResponseV2::Refused { request_id, .. } => *request_id,
+            };
+            if returned_id != expected_id {
+                return Err(
+                    "testd returned a response for a different request\n       fix: restart the daemon before retrying"
+                        .into(),
+                );
+            }
+            let terminal = matches!(
+                response,
+                TestdResponseV2::Completed { .. } | TestdResponseV2::Refused { .. }
+            );
+            responses.push(response);
+            if terminal {
+                return Ok(responses);
+            }
+        }
+    }
+
+    fn cancel_and_recycle<T>(&self, meta: &Metadata, timeout: Duration) -> Result<T> {
+        let cancel = TestdRequestV2::Cancel {
+            request_id: request_id()?,
+            project: self.project,
+            cookie: meta.cookie,
+        };
+        let _ = self.exchange(meta, cancel);
+        self.stop_quietly();
+        Err(format!(
+            "warm test run exceeded {} second(s); the active request was cancelled and testd was recycled\n       fix: raise `--timeout`, narrow the selection, or remove the limit",
+            timeout.as_secs()
+        )
+        .into())
+    }
+
     fn ensure_run_directory(&self) -> Result<()> {
         jails_support::apply::ensure_runtime_directory(&self.root)?;
         Ok(())
@@ -404,6 +474,37 @@ fn read_frame<T: jails_support::codec::Codec>(stream: &mut UnixStream) -> Result
         .read_exact(&mut frame[4..])
         .map_err(|error| format!("testd reply payload is truncated: {error}"))?;
     decode_frame(&frame)
+}
+
+enum TimedFrameError {
+    Timeout,
+    Failed(String),
+}
+
+fn read_frame_timed<T: jails_support::codec::Codec>(
+    stream: &mut UnixStream,
+) -> std::result::Result<T, TimedFrameError> {
+    let mut header = [0u8; 4];
+    stream.read_exact(&mut header).map_err(timed_io_error)?;
+    let length = u32::from_be_bytes(header) as usize;
+    if length > TESTD_V2_MAX_PAYLOAD {
+        return Err(TimedFrameError::Failed(format!(
+            "testd reply exceeds the {TESTD_V2_MAX_PAYLOAD}-byte limit\n       fix: restart the daemon with a matching jails version"
+        )));
+    }
+    let mut frame = Vec::with_capacity(4 + length);
+    frame.extend_from_slice(&header);
+    frame.resize(4 + length, 0);
+    stream.read_exact(&mut frame[4..]).map_err(timed_io_error)?;
+    decode_frame(&frame).map_err(|error| TimedFrameError::Failed(error.to_string()))
+}
+
+fn timed_io_error(error: std::io::Error) -> TimedFrameError {
+    if matches!(error.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) {
+        TimedFrameError::Timeout
+    } else {
+        TimedFrameError::Failed(format!("testd reply is truncated: {error}"))
+    }
 }
 
 fn classpath_id(classpath: &launcher::TestClasspath) -> ObjectId {
