@@ -93,7 +93,7 @@ pub(super) fn diff(
             (Captured::Absent, Some((body, mode))) => {
                 let object = intern(&mut objects, body);
                 require_exact_restore(path, object.id, context.exact_restores)?;
-                if !contributors.is_empty() {
+                if records_output(&contributors, path, context.prior) {
                     record_output(&mut outputs, path, object, mode);
                 }
                 operations.push(FileOp::Create {
@@ -124,7 +124,7 @@ pub(super) fn diff(
                 if object.id == file.sha256 && mode == file.mode {
                     // The row still moves: a base that has caught up with what
                     // is on disk is what makes the *next* edit measurable.
-                    if !contributors.is_empty() {
+                    if records_output(&contributors, path, context.prior) {
                         record_output(&mut outputs, path, object, mode);
                     }
                     continue;
@@ -135,7 +135,7 @@ pub(super) fn diff(
                 // lifecycle supply the exact path and digest, so arbitrary
                 // generated source still follows the normal three-way rule.
                 if context.exact_restores.contains_key(path) {
-                    if !contributors.is_empty() {
+                    if records_output(&contributors, path, context.prior) {
                         record_output(&mut outputs, path, object, mode);
                     }
                     operations.push(FileOp::Replace {
@@ -279,6 +279,8 @@ pub(super) fn diff(
                         | crate::reconcile::Decision::Delete { .. } => {}
                     }
                     record_output(&mut outputs, path, object, mode);
+                } else if records_output(&contributors, path, context.prior) {
+                    record_output(&mut outputs, path, object, mode);
                 }
                 operations.push(FileOp::Replace {
                     path: path.clone(),
@@ -320,6 +322,32 @@ fn require_exact_restore(
         .into());
     }
     Ok(())
+}
+
+/// Whether this write should advance the file's recorded image.
+///
+/// Two cases, and the second is the one that was missing. A file some entity
+/// *claims* is recorded because that is what ownership means. A file nothing
+/// claims is recorded when jails has **already** recorded it -- because the
+/// recorded image is what the drift check measures against, and leaving it
+/// behind means the next `doctor` reports jails' own newer bytes as the
+/// developer's edits.
+///
+/// That is exactly what `jails add format` did: the formatter's transition
+/// claims no ownership (reformatting changes bytes without changing what any
+/// of them mean), so three files jails had written were rewritten by jails and
+/// then reported as changed by the reader, with no `fix:` line and no mention
+/// of `jails sync`.
+///
+/// Recording still needs a renderer stamp -- `record_outputs` skips a path
+/// without one -- so a rewrite that cannot say which renderer still owns the
+/// file records nothing, as before.
+fn records_output(
+    contributors: &BTreeSet<jails_protocol::resource::ResourceOwner>,
+    path: &ProjectPath,
+    prior: &BTreeMap<ProjectPath, crate::reconcile::PriorOutput>,
+) -> bool {
+    !contributors.is_empty() || prior.contains_key(path)
 }
 
 /// The ordinary row: jails wrote these bytes, so they are both the base it

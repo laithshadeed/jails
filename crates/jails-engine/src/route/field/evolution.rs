@@ -165,7 +165,18 @@ pub(super) fn evolve_existing(
             spec: EntitySpec::Intent(after.clone()),
         }),
     )?;
-    let companions = companion_updates(project, store, &id, after.fields(), package)?;
+    // The primary's own declaration is what the dependants must plan against,
+    // so it is computed before them and handed over as the projection base.
+    let primary_reads = declaration(project, &change, &desired)?;
+    let companions = companion_updates(
+        project,
+        store,
+        &id,
+        after.fields(),
+        package,
+        &desired,
+        &primary_reads,
+    )?;
 
     // The storage half, and it exists only when there is storage. A
     // source-only resource -- a `record`, a `value` -- has no column to alter,
@@ -204,7 +215,7 @@ pub(super) fn evolve_existing(
         spec: EntitySpec::Intent(after),
         owners: BTreeSet::from([OwnerId::DirectCli]),
     };
-    let mut reads = declaration(project, &change, &desired)?.merge(companions.reads);
+    let mut reads = primary_reads.merge(companions.reads);
     if let Some((directory, path, _)) = &migration {
         reads = reads.directory(directory.clone()).file(path.clone());
         for recorded in recorded_migrations(store, &id) {

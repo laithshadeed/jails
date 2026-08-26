@@ -1,6 +1,7 @@
 //! `jails fmt` — the formatter's output, committed as a reviewed diff.
 
 use super::*;
+use jails_protocol::render::DesiredProvenance;
 
 /// Reformat the project's sources, without letting the formatter near them.
 ///
@@ -126,6 +127,7 @@ pub fn format(run: &Run) -> Result<Outcome> {
             })
             .collect(),
     )?;
+    let observed = observed(project)?;
     let mut change = DesiredChange::maintenance(MaintenanceAttribution::Format);
     let mut scopes = BTreeSet::new();
     for (path, file) in &diff.changed {
@@ -135,7 +137,7 @@ pub fn format(run: &Run) -> Result<Outcome> {
             body: DesiredBody::Bytes(file.bytes.clone().into()),
             mode: Some(file.mode),
             resource: None,
-            renderer: None,
+            renderer: recorded_provenance(project, &observed, path)?,
         });
     }
     // A formatter that deletes a source is not formatting. Refusing here
@@ -158,7 +160,6 @@ pub fn format(run: &Run) -> Result<Outcome> {
         println!("{} file(s) reformatted.", change.files.len());
     }
 
-    let observed = observed(project)?;
     let set = DesiredChangeSet {
         ledger_intent: LedgerIntent {
             generation_before: observed.generation(),
@@ -179,4 +180,44 @@ pub fn format(run: &Run) -> Result<Outcome> {
         &reads,
         &Asked::plain(CanonicalMutationRequest::Format { scopes }, &["fmt"], &[]),
     )
+}
+
+/// The provenance already recorded for a file this run reformats.
+///
+/// `None` for anything jails does not have an output row for -- a
+/// hand-written source stays the reader's, and formatting it claims nothing.
+/// For a file jails *did* write, the stamp is carried forward unchanged so
+/// the recorded image advances with the bytes.
+///
+/// Without this, `jails add db; jails add api; jails add format` -- three
+/// documented commands, all exiting 0 -- left `doctor` reporting three
+/// generated files as `changed since the last jails commit`. The developer
+/// had not opened any of them: `spotless:apply` reformats the whole project
+/// by design, and the recorded bytes were the ones from before it ran. The
+/// warnings named no fix and never mentioned `jails sync`, which was the only
+/// way out.
+///
+/// It is not a new ownership claim. Reformatting rewrites bytes without
+/// changing what any of them mean, so the renderer that produced the file is
+/// still the renderer that produced it; what changes is only the image the
+/// next drift check measures against.
+fn recorded_provenance(
+    project: &Project,
+    observed: &ObservedStore,
+    path: &ProjectPath,
+) -> Result<Option<DesiredProvenance>> {
+    let Some(row) = observed
+        .ledger
+        .iter()
+        .flat_map(|ledger| ledger.outputs.iter())
+        .find(|row| &row.path == path)
+    else {
+        return Ok(None);
+    };
+    let objects = jails_commit::store::Store::at(project.root()).objects();
+    let context = jails_commit::store::read_object(&objects, &row.renderer.context_object)?;
+    Ok(Some(DesiredProvenance {
+        stamp: row.renderer.clone(),
+        context: context.into(),
+    }))
 }

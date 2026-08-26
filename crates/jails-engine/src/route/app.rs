@@ -103,7 +103,7 @@ fn declare(
     let mut reads = capture::capability_reads()?;
 
     for &capability in capabilities {
-        let planned = projected(project, &reads, &changes)?;
+        let planned = super::projected_after(project, &reads, &changes)?;
         // The same resolution `add` performs, so a manifest row and a command
         // line naming one capability reach one identity. `app.toml` cannot yet
         // carry `--name`/`--package`; when it can, this is where they arrive.
@@ -140,7 +140,7 @@ fn declare(
     }
 
     for intent in intents {
-        let planned = projected(project, &reads, &changes)?;
+        let planned = super::projected_after(project, &reads, &changes)?;
         let expanded;
         let fields = match intent.timestamps {
             true => {
@@ -226,25 +226,6 @@ fn declare(
         changes,
     };
     Ok((request, reads))
-}
-
-/// The project as every step so far leaves it.
-fn projected(
-    project: &Project,
-    reads: &ReadDeclaration,
-    changes: &[DesiredChange],
-) -> Result<Project> {
-    let (_, mut projection) = capture::projected(project, reads)?;
-    for change in changes {
-        projection.advance(change)?;
-    }
-    let mut overlay = BTreeMap::new();
-    for (path, entry) in projection.overlay() {
-        if let jails_project::projection::ProjectedEntry::File(file) = entry {
-            overlay.insert(path.clone(), file.bytes.to_vec());
-        }
-    }
-    Project::projected(project, overlay)
 }
 
 /// Everything the next step is allowed to look at, once this one has planned.

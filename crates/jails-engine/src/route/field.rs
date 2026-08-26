@@ -509,7 +509,16 @@ fn add_field_with_syntax(
             spec: EntitySpec::Intent(after.clone()),
         }),
     )?;
-    let companions = companion_updates(project, &store, &id, after.fields(), package)?;
+    let primary_reads = declaration(project, &change, &desired)?;
+    let companions = companion_updates(
+        project,
+        &store,
+        &id,
+        after.fields(),
+        package,
+        &desired,
+        &primary_reads,
+    )?;
 
     // The append-only half, and the reason this is a one-shot at all. It is
     // owned by the field rather than by the target, so removing the target
@@ -611,9 +620,7 @@ fn add_field_with_syntax(
         spec: EntitySpec::Intent(after),
         owners: BTreeSet::from([OwnerId::DirectCli]),
     };
-    let mut reads = declaration(project, &change, &desired)?
-        .merge(companions.reads)
-        .directory(directory);
+    let mut reads = primary_reads.merge(companions.reads).directory(directory);
     if let Some(path) = data_input {
         reads = reads.file(path);
     }

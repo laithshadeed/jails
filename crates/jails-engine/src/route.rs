@@ -162,6 +162,34 @@ fn resource_change_set(
 /// A recipe plans in absolute paths because it writes files; a resource is
 /// named by where it sits in the project, so that the same record means the
 /// same thing on another machine.
+/// The project as the changes planned so far leave it.
+///
+/// Generators read the project back: a query that constructs `Order` asks the
+/// projection for `Order.java`'s components rather than being told them. So a
+/// transition that rewrites `Order.java` and then plans something which reads
+/// it has to plan the second half against the bytes the first half will
+/// write, not against the ones still on disk. Reading disk instead is how
+/// `g field` came to leave every companion constructing the old component
+/// list -- a project that does not compile, over which every jails oracle
+/// reported health, because each file was byte-identical to what jails wrote.
+pub(super) fn projected_after(
+    project: &Project,
+    reads: &ReadDeclaration,
+    changes: &[DesiredChange],
+) -> Result<Project> {
+    let (_, mut projection) = capture::projected(project, reads)?;
+    for change in changes {
+        projection.advance(change)?;
+    }
+    let mut overlay = BTreeMap::new();
+    for (path, entry) in projection.overlay() {
+        if let jails_project::projection::ProjectedEntry::File(file) = entry {
+            overlay.insert(path.clone(), file.bytes.to_vec());
+        }
+    }
+    Project::projected(project, overlay)
+}
+
 fn relative_path(project: &Project, path: &std::path::Path) -> Result<ProjectPath> {
     let relative = path.strip_prefix(project.root()).map_err(|_| {
         format!(
