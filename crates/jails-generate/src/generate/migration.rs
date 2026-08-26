@@ -65,16 +65,55 @@ pub fn drop_table_change(project: &Project, table: &str) -> Result<Change> {
 /// table cutover. Both identifiers have already crossed the protocol's
 /// `SqlName` boundary, so quoting them here is deterministic and cannot turn
 /// caller input into an SQL fragment.
-pub fn rename_table_change(project: &Project, current: &str, target: &str) -> Result<Change> {
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum StorageObjectKind {
+    Constraint,
+    Index,
+    Sequence,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct StorageObjectRename {
+    pub kind: StorageObjectKind,
+    pub current: jails_protocol::identity::SqlName,
+    pub target: jails_protocol::identity::SqlName,
+}
+
+pub fn rename_table_change(
+    project: &Project,
+    current: &str,
+    target: &str,
+    objects: &[StorageObjectRename],
+) -> Result<Change> {
     if current == target {
         return Err("a table rename needs distinct current and target names.\n       fix: preserve the current table or choose a different target".into());
     }
     let path = migration_file(project, &format!("rename_{current}_to_{target}"))?;
+    let mut contents = format!("alter table public.\"{current}\" rename to \"{target}\";\n");
+    for object in objects {
+        match object.kind {
+            StorageObjectKind::Constraint => contents.push_str(&format!(
+                "alter table public.\"{target}\" rename constraint \"{}\" to \"{}\";\n",
+                object.current.as_str(),
+                object.target.as_str()
+            )),
+            StorageObjectKind::Index => contents.push_str(&format!(
+                "alter index public.\"{}\" rename to \"{}\";\n",
+                object.current.as_str(),
+                object.target.as_str()
+            )),
+            StorageObjectKind::Sequence => contents.push_str(&format!(
+                "alter sequence public.\"{}\" rename to \"{}\";\n",
+                object.current.as_str(),
+                object.target.as_str()
+            )),
+        }
+    }
     Ok(Change {
         files: vec![Artifact {
             kind: "migration",
             path,
-            contents: format!("alter table public.\"{current}\" rename to \"{target}\";\n"),
+            contents,
         }],
         ..Change::default()
     })

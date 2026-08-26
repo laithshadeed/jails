@@ -51,8 +51,12 @@ pub(super) fn prepare_cutover(
     if !directory.is_dir() {
         return Err("single-cutover requires `src/main/resources/db/migration`.\n       fix: add Flyway before renaming physical storage".into());
     }
-    let generated =
-        jails_generate::generate::rename_table_change(project, current.as_str(), target.as_str())?;
+    let generated = jails_generate::generate::rename_table_change(
+        project,
+        current.as_str(),
+        target.as_str(),
+        &[],
+    )?;
     let [artifact] = generated.files.as_slice() else {
         return Err("table cutover generator did not produce exactly one migration.\n       fix: restore the built-in migration renderer and retry".into());
     };
@@ -65,6 +69,182 @@ pub(super) fn prepare_cutover(
         artifact: artifact.clone(),
         sql_sources,
     }))
+}
+
+pub(super) fn prepare_owned_object_renames(
+    project: &Project,
+    snapshot: &jails_protocol::snapshot::ProjectSnapshot,
+    store: &ObservedStore,
+    entity: &EntityId,
+    cutover: &mut CutoverPlan,
+) -> Result<()> {
+    use jails_generate::generate::StorageObjectRename;
+
+    let mut declarations = Vec::new();
+    for path in &cutover.sql_sources {
+        if !ResourceKey::WholeFile(path.clone()).is_migration_history() {
+            continue;
+        }
+        let jails_protocol::snapshot::Captured::Present(file) = snapshot.read(path)? else {
+            continue;
+        };
+        let text = std::str::from_utf8(&file.bytes).map_err(|_| {
+            format!(
+                "opaque-dependency: migration `{path}` is not UTF-8.\n       \
+                 fix: inspect that migration and prove its storage dependencies before retrying."
+            )
+        })?;
+        let generator_owned = owned_by(store, path, entity);
+        declarations.extend(
+            storage_object_declarations(text)
+                .into_iter()
+                .map(|(kind, name)| (path.clone(), generator_owned, kind, name)),
+        );
+    }
+
+    let current_prefix = format!("{}_", cutover.current.as_str());
+    let target_prefix = format!("{}_", cutover.target.as_str());
+    let declared_names = declarations
+        .iter()
+        .map(|(_, _, _, name)| name.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut manual = Vec::new();
+    let mut renames = BTreeSet::new();
+    for (path, generator_owned, kind, name) in &declarations {
+        let Some(suffix) = name.strip_prefix(&current_prefix) else {
+            continue;
+        };
+        let target_name = format!("{target_prefix}{suffix}");
+        if declared_names.contains(target_name.as_str()) {
+            return Err(format!(
+                "target-object-collision: `{target_name}` already exists in migration history.\n       \
+                 fix: choose another table name or explicitly reconcile the colliding object."
+            )
+            .into());
+        }
+        if !generator_owned {
+            manual.push(format!("{path}: {name}"));
+            continue;
+        }
+        renames.insert(StorageObjectRename {
+            kind: *kind,
+            current: jails_protocol::identity::SqlName::parse(name)?,
+            target: jails_protocol::identity::SqlName::parse(&target_name)?,
+        });
+    }
+    if !manual.is_empty() {
+        return Err(format!(
+            "manual-edit-required: reader-owned storage object names require an explicit accepted operation:\n         {}\n       \
+             fix: rename those objects in a reviewed forward migration, then retry the table cutover.",
+            manual.join("\n         ")
+        )
+        .into());
+    }
+
+    let generated = jails_generate::generate::rename_table_change(
+        project,
+        cutover.current.as_str(),
+        cutover.target.as_str(),
+        &renames.into_iter().collect::<Vec<_>>(),
+    )?;
+    let [artifact] = generated.files.as_slice() else {
+        return Err(concat!(
+            "storage cutover generator did not produce exactly one migration.\n       ",
+            "fix: restore the built-in migration renderer and retry."
+        )
+        .into());
+    };
+    if crate::route::relative_path(project, &artifact.path)? != cutover.migration {
+        return Err(concat!(
+            "storage object discovery changed the cutover migration path.\n       ",
+            "fix: report this as a jails planning bug."
+        )
+        .into());
+    }
+    cutover.artifact = artifact.clone();
+    Ok(())
+}
+
+fn storage_object_declarations(
+    sql: &str,
+) -> Vec<(jails_generate::generate::StorageObjectKind, String)> {
+    use jails_generate::generate::StorageObjectKind;
+
+    let tokens = sql_tokens(sql);
+    let mut declarations = Vec::new();
+    for (index, token) in tokens.iter().enumerate() {
+        if token == "constraint" {
+            if let Some(name) = tokens.get(index + 1) {
+                declarations.push((StorageObjectKind::Constraint, name.clone()));
+            }
+            continue;
+        }
+        if token != "create" {
+            continue;
+        }
+        let mut cursor = index + 1;
+        if tokens.get(cursor).is_some_and(|token| token == "unique") {
+            cursor += 1;
+        }
+        let kind = match tokens.get(cursor).map(String::as_str) {
+            Some("index") => StorageObjectKind::Index,
+            Some("sequence") => StorageObjectKind::Sequence,
+            _ => continue,
+        };
+        cursor += 1;
+        if tokens.get(cursor).is_some_and(|token| token == "if")
+            && tokens.get(cursor + 1).is_some_and(|token| token == "not")
+            && tokens
+                .get(cursor + 2)
+                .is_some_and(|token| token == "exists")
+        {
+            cursor += 3;
+        }
+        if let Some(name) = tokens.get(cursor) {
+            declarations.push((kind, name.clone()));
+        }
+    }
+    declarations
+}
+
+fn sql_tokens(sql: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut chars = sql.chars().peekable();
+    let mut quoted = false;
+    while let Some(character) = chars.next() {
+        if quoted {
+            if character == '\'' {
+                if chars.peek() == Some(&'\'') {
+                    chars.next();
+                } else {
+                    quoted = false;
+                }
+            }
+            continue;
+        }
+        if character == '\'' {
+            if !current.is_empty() {
+                tokens.push(std::mem::take(&mut current));
+            }
+            quoted = true;
+        } else if character == '-' && chars.peek() == Some(&'-') {
+            chars.next();
+            for rest in chars.by_ref() {
+                if rest == '\n' {
+                    break;
+                }
+            }
+        } else if character.is_ascii_alphanumeric() || character == '_' {
+            current.push(character.to_ascii_lowercase());
+        } else if !current.is_empty() {
+            tokens.push(std::mem::take(&mut current));
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
 }
 
 fn sql_sources(project: &Project) -> Result<Vec<ProjectPath>> {
@@ -239,13 +419,14 @@ pub(super) fn complete_storage_rename(
         project,
         current_table.as_str(),
         target_table.as_str(),
+        &[],
     )?;
     let [artifact] = generated.files.as_slice() else {
         return Err("table cutover generator did not produce exactly one migration.\n       fix: restore the built-in migration renderer and retry".into());
     };
     let migration = crate::route::relative_path(project, &artifact.path)?;
     let sql_sources = sql_sources(project)?;
-    let cutover = CutoverPlan {
+    let mut cutover = CutoverPlan {
         current: current_table.clone(),
         target: target_table.clone(),
         migration: migration.clone(),
@@ -273,6 +454,7 @@ pub(super) fn complete_storage_rename(
     }
     let (snapshot, _) = capture::projected(project, &reads)?;
     validate_cutover_sql(&snapshot, &cutover)?;
+    prepare_owned_object_renames(project, &snapshot, &store, &lifecycle.entity, &mut cutover)?;
 
     let mut change = DesiredChange::maintenance(MaintenanceAttribution::Rename);
     let mut manual_java = Vec::new();

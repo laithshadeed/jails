@@ -285,7 +285,14 @@ fn task_scaffold_cannot_rewrite_or_delete_its_published_v001() {
     fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
 
     let generated = jails_cmd(&root, None)
-        .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
+        .args([
+            "g",
+            "scaffold",
+            "Task",
+            "id:uuid@pk",
+            "title:string!",
+            "createdAt:instant@index",
+        ])
         .output()
         .unwrap();
     assert!(generated.status.success(), "{generated:?}");
@@ -523,7 +530,14 @@ fn coordinated_single_cutover_appends_one_migration_and_switches_the_binding() {
     fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
 
     let generated = jails_cmd(&root, None)
-        .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
+        .args([
+            "g",
+            "scaffold",
+            "Task",
+            "id:uuid@pk",
+            "title:string!",
+            "createdAt:instant@index",
+        ])
         .output()
         .unwrap();
     assert!(generated.status.success(), "{generated:?}");
@@ -552,7 +566,11 @@ fn coordinated_single_cutover_appends_one_migration_and_switches_the_binding() {
     let cutover = root.join("src/main/resources/db/migration/V002__rename_tasks_to_work_items.sql");
     assert_eq!(
         fs::read_to_string(&cutover).unwrap(),
-        "alter table public.\"tasks\" rename to \"work_items\";\n"
+        concat!(
+            "alter table public.\"tasks\" rename to \"work_items\";\n",
+            "alter table public.\"work_items\" rename constraint \"tasks_pk\" to \"work_items_pk\";\n",
+            "alter index public.\"tasks_created_at_idx\" rename to \"work_items_created_at_idx\";\n",
+        )
     );
     let adapter = fs::read_to_string(
         root.join("src/main/java/com/example/demo/adapters/JdbcWorkItemRepository.java"),
@@ -587,6 +605,42 @@ fn coordinated_single_cutover_appends_one_migration_and_switches_the_binding() {
             .collect::<Vec<_>>(),
         vec![1, 2]
     );
+}
+
+#[test]
+fn single_cutover_reports_reader_owned_storage_object_names_without_writing() {
+    let root = temp_dir("resource-rename-reader-owned-object");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    let generated = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(generated.status.success(), "{generated:?}");
+    fs::write(
+        root.join("src/main/resources/db/migration/V002__manual_task_index.sql"),
+        "create index tasks_manual_idx on tasks (title);\n",
+    )
+    .unwrap();
+    let before = snapshot_tree(&root);
+
+    let refused = jails_cmd(&root, None)
+        .args([
+            "rename",
+            "resource",
+            "Billing.Task",
+            "WorkItem",
+            "--strategy",
+            "single-cutover",
+            "--force",
+        ])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success(), "{refused:?}");
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(stderr.contains("manual-edit-required"), "{stderr}");
+    assert!(stderr.contains("tasks_manual_idx"), "{stderr}");
+    assert_eq!(snapshot_tree(&root), before, "refusal wrote project files");
 }
 
 #[test]

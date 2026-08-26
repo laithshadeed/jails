@@ -4,7 +4,9 @@
 use super::*;
 
 mod cutover;
-use cutover::{prepare_cutover, validate_cutover_sql};
+mod source;
+use cutover::{prepare_cutover, prepare_owned_object_renames, validate_cutover_sql};
+use source::{rename_destination, validate, walked_directories};
 
 /// Rename a Java type across the project, as one transition.
 ///
@@ -61,7 +63,7 @@ fn rename_with(
     let from = jails_protocol::identity::JavaType::parse(old)?;
     let to = jails_protocol::identity::JavaType::parse(new)?;
     let store = observed(project)?;
-    let cutover = prepare_cutover(project, &store, resource_request.as_ref())?;
+    let mut cutover = prepare_cutover(project, &store, resource_request.as_ref())?;
 
     // The walk that finds the sources is not itself a read the snapshot can
     // guard -- something has to look first. What it finds is then declared,
@@ -104,8 +106,14 @@ fn rename_with(
         reads = reads.directory(directory);
     }
     let (snapshot, _) = capture::projected(project, &reads)?;
-    if let Some(cutover) = &cutover {
+    if let Some(cutover) = &mut cutover {
         validate_cutover_sql(&snapshot, cutover)?;
+        let entity = &resource_request
+            .as_ref()
+            .expect("a cutover has a coordinated resource request")
+            .1
+            .entity;
+        prepare_owned_object_renames(project, &snapshot, &store, entity, cutover)?;
     }
 
     // Which entities this rename is an identity transition *for*. An entity
@@ -289,6 +297,13 @@ fn rename_with(
         )
         .into());
     }
+
+    // Identity moves do not relinquish unchanged resources. The generated
+    // create migration is the important case: it stays byte-identical, but
+    // its ownership must move from the old entity id to the renamed one so a
+    // later rolling completion can still prove its constraint/index names
+    // are generator-owned.
+    carry_renamed_resources(&store, &renamed_entities, &mut change)?;
 
     if change.files.is_empty() {
         return Err(format!(
@@ -647,40 +662,6 @@ fn external_policy_name(policy: jails_protocol::request::ExternalRenamePolicy) -
     }
 }
 
-/// One simple Java type name, in and out.
-fn validate(old: &str, new: &str) -> Result<()> {
-    for (label, name) in [("old", old), ("new", new)] {
-        if name.is_empty() {
-            return Err(format!("the {label} name is empty").into());
-        }
-        if !name
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_alphabetic() || c == '_')
-        {
-            return Err(format!(
-                "`{name}` is not a Java identifier -- the {label} name must start with a letter"
-            )
-            .into());
-        }
-        if !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
-            return Err(format!(
-                "`{name}` is not a Java identifier. `jails rename` renames one type, not a \
-                 package path -- pass the simple name (`Reward`, not `com.example.Reward`)"
-            )
-            .into());
-        }
-    }
-    if old == new {
-        return Err("the old and new names are the same".into());
-    }
-    Ok(())
-}
-
-/// The claim a moved file carries forward, if the store had one.
-///
-/// Keyed at the *destination*, owned by the *renamed* entity: the row moves
-/// with the file, which is what keeps `destroy` able to find it.
 fn owner_of(
     store: &ObservedStore,
     source: &ProjectPath,
@@ -692,7 +673,7 @@ fn owner_of(
         .iter()
         .flat_map(|ledger| ledger.resources.iter())
         .find(|row| row.key == ResourceKey::WholeFile(source.clone()))?;
-    let owners: BTreeSet<ResourceOwner> = row
+    let owners = row
         .owners
         .iter()
         .map(|owner| match owner {
@@ -706,48 +687,6 @@ fn owner_of(
     Some((ResourceKey::WholeFile(destination.clone()), owners))
 }
 
-/// Where a source ends up, as a project path.
-fn destination_of(source: &ProjectPath, old: &str, new: &str) -> Result<ProjectPath> {
-    let renamed =
-        jails_java::identifier::renamed_path(std::path::Path::new(&source.to_string()), old, new);
-    ProjectPath::parse(
-        renamed
-            .to_str()
-            .ok_or_else(|| format!("`{}` is not valid UTF-8", renamed.display()))?,
-    )
-}
-
-fn rename_destination(
-    store: &ObservedStore,
-    source: &ProjectPath,
-    old: &str,
-    new: &str,
-    resource: Option<&EntityId>,
-) -> Result<ProjectPath> {
-    let Some(entity) = resource else {
-        return destination_of(source, old, new);
-    };
-    let owned = owned_by(store, source, entity);
-    if !owned {
-        return Ok(source.clone());
-    }
-    let path = std::path::Path::new(source.as_str());
-    let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
-        return Ok(source.clone());
-    };
-    let Some(position) = stem.find(old) else {
-        return Ok(source.clone());
-    };
-    let mut renamed = stem.to_string();
-    renamed.replace_range(position..position + old.len(), new);
-    let destination = path.with_file_name(format!("{renamed}.java"));
-    ProjectPath::parse(
-        destination
-            .to_str()
-            .ok_or_else(|| format!("`{}` is not valid UTF-8", destination.display()))?,
-    )
-}
-
 fn owned_by(store: &ObservedStore, source: &ProjectPath, entity: &EntityId) -> bool {
     store
         .ledger
@@ -757,20 +696,52 @@ fn owned_by(store: &ObservedStore, source: &ProjectPath, entity: &EntityId) -> b
         .is_some_and(|row| row.owners.contains(&ResourceOwner::Entity(entity.clone())))
 }
 
-/// Every directory the walk passed through, so its membership is guarded too.
-///
-/// Derived from the files rather than collected during the walk: a directory
-/// with no `.java` file in it contributes nothing this rename could have
-/// missed, and declaring it would guard a listing no decision depended on.
-fn walked_directories(sources: &[ProjectPath]) -> BTreeSet<ProjectPath> {
-    let mut out = BTreeSet::new();
-    for source in sources {
-        let text = source.to_string();
-        if let Some((directory, _)) = text.rsplit_once('/')
-            && let Ok(path) = ProjectPath::parse(directory)
-        {
-            out.insert(path);
+fn carry_renamed_resources(
+    store: &ObservedStore,
+    renamed: &BTreeMap<EntityId, (EntityId, EntitySpec, BTreeSet<OwnerId>)>,
+    change: &mut DesiredChange,
+) -> Result<()> {
+    let replaced = change
+        .resources
+        .iter()
+        .map(|resource| resource.key.clone())
+        .chain(
+            change
+                .absences
+                .iter()
+                .map(|absence| absence.resource.clone()),
+        )
+        .collect::<BTreeSet<_>>();
+    for row in store
+        .ledger
+        .iter()
+        .flat_map(|ledger| ledger.resources.iter())
+    {
+        if replaced.contains(&row.key) {
+            continue;
+        }
+        let mut changed = false;
+        let owners = row
+            .owners
+            .iter()
+            .map(|owner| match owner {
+                ResourceOwner::Entity(entity) => match renamed.get(entity) {
+                    Some((renamed, _, _)) => {
+                        changed = true;
+                        ResourceOwner::Entity(renamed.clone())
+                    }
+                    None => owner.clone(),
+                },
+                _ => owner.clone(),
+            })
+            .collect::<BTreeSet<_>>();
+        if changed {
+            change.resources.push(DesiredResource::new(
+                row.key.clone(),
+                owners,
+                row.value.clone(),
+            )?);
         }
     }
-    out
+    Ok(())
 }

@@ -666,7 +666,9 @@ pub(crate) const SCRATCH_RS: &str = "jails-support/src/scratch.rs";
 /// 436 → 432 when every compatibility-version refusal gained an explicit
 /// upgrade path instead of only describing the unsupported bytes.
 /// 432 → 430 when planned-subject decoding gained the same recovery advice.
-pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 430;
+/// 430 → 426 when the extracted rename-source boundary made each invalid-name
+/// refusal carry the exact valid spelling to retry.
+pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 426;
 
 /// A refusal that builds a message and does not say what to do next.
 ///
