@@ -77,3 +77,8 @@ introspect db	jails-drive	read-only+external-process	live_sql::observe
 pull	jails-drive	read-only+external-process	schema_command::pull
 schema	jails	dispatch-only	schema_command::schema
 schema diff	jails-project/jails-drive	read-only	schema::diff / live_sql::observe
+editor	jails	dispatch-only	editor_command::run
+editor handshake	jails	read-only	editor_command::handshake
+editor complete	jails	read-only	editor_command::complete
+editor symbols	jails	read-only	editor_command::symbols
+editor diagnostics	jails	read-only+optional-external-process	editor_command::diagnostics

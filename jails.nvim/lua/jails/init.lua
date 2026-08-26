@@ -131,34 +131,19 @@ local function absolute_path(root, path)
   if path:sub(1, 1) == '/' or path:match('^%a:[/\\]') then return path end
   return vim.fs.joinpath(root, path)
 end
-
-local function created_files(output, root)
+local function open_receipt_files(receipt, root)
   local files = {}
   local seen = {}
-
-  for _, line in ipairs(vim.split(output, '\n', { plain = true })) do
-    local path
-    local root_at = line:find(root, 1, true)
-    if root_at then
-      path = line:sub(root_at)
-    else
-      path = line:match('^%s*create%s+(.+)$')
-    end
-
-    if path then
+  for _, operation in ipairs((receipt or {}).operations or {}) do
+    local path = operation.path
+    if path and operation.kind ~= 'delete' then
       path = vim.fs.normalize(absolute_path(root, path))
-      if not path:match('/%.gitkeep$') and vim.fn.filereadable(path) == 1 and not seen[path] then
+      if vim.fn.filereadable(path) == 1 and not seen[path] then
         seen[path] = true
         table.insert(files, path)
       end
     end
   end
-
-  return files
-end
-
-local function open_created_files(output, root)
-  local files = created_files(output, root)
   if #files == 0 then return end
 
   local items = {}
@@ -208,11 +193,181 @@ function M.run(args, opts)
       if stdout ~= '' and opts.notify ~= false then
         vim.notify(stdout, vim.log.levels.INFO)
       end
-      if config.open_created and opts.open_created ~= false then
-        open_created_files(stdout, root)
-      end
     end)
   end)
+end
+
+local function decode_result(result, expected_schema)
+  if result.code ~= 0 then return nil, trim(result.stderr) end
+  local ok, decoded = pcall(vim.json.decode, result.stdout or '')
+  if not ok or type(decoded) ~= 'table' then return nil, 'malformed JSON response' end
+  if expected_schema and decoded.schema ~= expected_schema then
+    return nil, ('protocol-mismatch: expected %s, received %s'):format(
+      expected_schema,
+      tostring(decoded.schema)
+    )
+  end
+  return decoded, nil
+end
+
+local handshake_cache = {}
+
+--- Negotiate editor capabilities asynchronously. Failed handshakes are never cached.
+function M.handshake(callback)
+  local bin = jails_bin()
+  if not bin then return end
+  local root = M.project_root()
+  local cached = handshake_cache[root]
+  if cached then callback(cached); return end
+  vim.system(
+    { bin, '--output', 'json', 'editor', 'handshake', '--path', root },
+    { cwd = root, text = true },
+    function(result)
+      local decoded, error = decode_result(result, 'jails.editor-handshake.v1')
+      vim.schedule(function()
+        if error then
+          vim.notify(('jails.nvim: handshake failed: %s'):format(error), vim.log.levels.WARN)
+          return
+        end
+        handshake_cache[root] = decoded
+        callback(decoded)
+      end)
+    end
+  )
+end
+
+local function editor_tokens(cmd_line)
+  local words = vim.split(cmd_line, '%s+', { trimempty = true })
+  table.remove(words, 1)
+  return words
+end
+
+local function editor_completion(arg_lead, cmd_line)
+  local root = M.project_root()
+  local words = editor_tokens(cmd_line)
+  local position = math.max(#words - 1, 0)
+  local offset = #arg_lead
+  local cmd = {
+    config.command, '--output', 'json', 'editor', 'complete',
+    '--arg-index', tostring(position), '--byte-offset', tostring(offset), '--',
+  }
+  vim.list_extend(cmd, words)
+  local out = vim.fn.system(cmd)
+  if vim.v.shell_error ~= 0 then return nil end
+  local ok, decoded = pcall(vim.json.decode, out)
+  if not ok or decoded.schema ~= 'jails.editor-completion.v1' then return nil end
+  local values = {}
+  for _, candidate in ipairs(decoded.candidates or {}) do table.insert(values, candidate.value) end
+  return values
+end
+
+local diagnostics_namespace = vim.api.nvim_create_namespace('jails')
+local latest_epoch = {}
+
+local function diagnostic_severity(value)
+  if value == 'error' then return vim.diagnostic.severity.ERROR end
+  if value == 'warning' then return vim.diagnostic.severity.WARN end
+  return vim.diagnostic.severity.INFO
+end
+
+local function publish_diagnostics(root, report)
+  local previous = latest_epoch[root] or 0
+  if report.epoch < previous then return end
+  latest_epoch[root] = report.epoch
+  local grouped = {}
+  for _, item in ipairs(report.diagnostics or {}) do
+    local primary = item.primary
+    if primary and primary.path then
+      local path = vim.fs.normalize(absolute_path(root, primary.path))
+      grouped[path] = grouped[path] or {}
+      local range = primary.range or {}
+      local start = range.start or {}
+      local finish = range['end'] or start
+      table.insert(grouped[path], {
+        lnum = start.line or 0,
+        col = start.byte_column or 0,
+        end_lnum = finish.line or start.line or 0,
+        end_col = finish.byte_column or start.byte_column or 0,
+        severity = diagnostic_severity(item.severity),
+        source = 'jails',
+        code = item.code,
+        message = item.message,
+        user_data = { evidence = item.evidence, fixes = item.fixes },
+      })
+    end
+  end
+  for path, items in pairs(grouped) do
+    local buffer = vim.fn.bufnr(path, false)
+    if buffer >= 0 and vim.api.nvim_buf_is_loaded(buffer) then
+      vim.diagnostic.set(diagnostics_namespace, buffer, items, {})
+    end
+  end
+end
+
+function M.diagnostics(scope)
+  local bin = jails_bin()
+  if not bin then return end
+  local root = M.project_root()
+  local args = { bin, '--output', 'json', 'editor', 'diagnostics', '--scope', scope or 'project' }
+  if scope == 'buffer' then
+    local file = vim.api.nvim_buf_get_name(0)
+    table.insert(args, '--file')
+    table.insert(args, vim.fs.relpath(root, file))
+  end
+  vim.system(args, { cwd = root, text = true }, function(result)
+    local report, error = decode_result(result, 'jails.editor-diagnostics.v1')
+    vim.schedule(function()
+      if error then vim.notify(('jails.nvim: diagnostics failed: %s'):format(error), vim.log.levels.ERROR)
+      else publish_diagnostics(root, report) end
+    end)
+  end)
+end
+
+local watch_job = nil
+
+--- Decode jails.event.v1 incrementally; stdout is protocol-only.
+function M.watch_start()
+  if watch_job then return watch_job end
+  local root = M.project_root()
+  local buffer, trusted, session, sequence = '', true, nil, -1
+  watch_job = vim.fn.jobstart(
+    { config.command, 'test', '--watch', '--output', 'json' },
+    {
+      cwd = root,
+      stdout_buffered = false,
+      on_stdout = function(_, chunks)
+        if not trusted then return end
+        buffer = buffer .. table.concat(chunks or {}, '\n')
+        if #buffer > 8 * 1024 * 1024 then trusted = false; return end
+        while true do
+          local newline = buffer:find('\n', 1, true)
+          if not newline then break end
+          local frame = buffer:sub(1, newline - 1)
+          buffer = buffer:sub(newline + 1)
+          if frame ~= '' then
+            local ok, event = pcall(vim.json.decode, frame)
+            if not ok or event.schema ~= 'jails.event.v1'
+              or (session and event.session ~= session)
+              or event.sequence ~= sequence + 1 then
+              trusted = false
+              vim.schedule(function() vim.notify('jails.nvim: protocol-mismatch in test watch', vim.log.levels.ERROR) end)
+              break
+            end
+            session, sequence = event.session, event.sequence
+            if event.epoch >= (latest_epoch[root] or 0) then latest_epoch[root] = event.epoch end
+          end
+        end
+      end,
+      on_exit = function() watch_job = nil end,
+    }
+  )
+  return watch_job
+end
+
+function M.watch_stop()
+  if not watch_job then return end
+  vim.fn.jobstop(watch_job)
+  watch_job = nil
 end
 
 local term_win
@@ -422,6 +577,11 @@ end
 
 --- Complete subcommands, generator kinds, capabilities, options and test names.
 function M.complete(arg_lead, cmd_line)
+  -- Primary path: the CLI walks the same Clap graph that parses dispatch.
+  -- The cached vocabulary below is a one-release fallback for older binaries.
+  local derived = editor_completion(arg_lead, cmd_line)
+  if derived then return matching(derived, arg_lead) end
+
   local words = vim.split(cmd_line, '%s+', { trimempty = true })
   table.remove(words, 1) -- :Jails
   local position = #words + (cmd_line:match('%s$') and 1 or 0)

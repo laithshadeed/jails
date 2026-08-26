@@ -25,6 +25,8 @@ use std::path::PathBuf;
 
 mod schema;
 pub(crate) use schema::*;
+mod editor;
+pub(crate) use editor::*;
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub(crate) enum StoragePolicy {
@@ -540,6 +542,11 @@ pub(crate) enum Command {
     Schema {
         #[command(subcommand)]
         command: SchemaCommand,
+    },
+    /// Versioned, read-only protocol for editor adapters
+    Editor {
+        #[command(subcommand)]
+        command: EditorCommand,
     },
     /// Generate a scaffold or one small Java/SQL artifact
     ///

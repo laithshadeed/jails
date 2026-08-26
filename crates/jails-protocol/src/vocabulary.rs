@@ -12,6 +12,7 @@ pub mod application;
 pub mod coordinate;
 pub mod database;
 pub mod declaration;
+pub mod editor;
 pub mod entity;
 pub mod feature;
 pub mod identity;

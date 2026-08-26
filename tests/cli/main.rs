@@ -21,6 +21,7 @@ mod common;
 mod app;
 mod behavior_matrix;
 mod capabilities;
+mod editor_protocol;
 mod examples;
 mod generate;
 mod new;

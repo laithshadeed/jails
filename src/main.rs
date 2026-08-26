@@ -11,6 +11,7 @@ mod app;
 mod arguments;
 mod cli;
 mod dispatch;
+mod editor_command;
 mod new;
 mod schema_command;
 mod sql_command;
@@ -128,6 +129,7 @@ fn main() -> std::process::ExitCode {
             invocation,
         ),
         Command::Schema { command } => schema_command::schema(command, invocation),
+        Command::Editor { command } => editor_command::run(command, invocation),
         Command::Generate {
             kind,
             name,
