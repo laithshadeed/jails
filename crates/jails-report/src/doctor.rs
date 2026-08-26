@@ -13,6 +13,7 @@
 //! failing check carries the command that fixes it, because a diagnosis the
 //! reader has to translate into an action has only moved the work.
 
+pub use crate::diagnostic::{Check, Status};
 use crate::model::Project;
 use std::fmt::Write as _;
 use std::path::Path;
@@ -21,69 +22,8 @@ mod wiring;
 use environment::*;
 use wiring::*;
 
-use crate::compose;
-use crate::inspect;
-use crate::pom;
+use crate::{compose, inspect, pom};
 use jails_support::Result;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Status {
-    /// Checked, and fine.
-    Ok,
-    /// Checked, and broken in a way that will stop the app from working.
-    Fail,
-    /// Worth knowing, but not on its own a reason the app will not start.
-    Warn,
-    /// Could not be checked from here (a tool is missing, or the check would
-    /// need the app running). Never counted as a failure.
-    Skip,
-}
-
-impl Status {
-    /// The machine-readable spelling, which is deliberately *not* the display
-    /// mark: `--` reads as "skipped" to a person and as nothing to a parser.
-    fn name(self) -> &'static str {
-        match self {
-            Status::Ok => "ok",
-            Status::Fail => "fail",
-            Status::Warn => "warn",
-            Status::Skip => "skip",
-        }
-    }
-
-    fn mark(self) -> &'static str {
-        match self {
-            Status::Ok => "ok  ",
-            Status::Fail => "FAIL",
-            Status::Warn => "warn",
-            Status::Skip => "--  ",
-        }
-    }
-}
-
-pub struct Check {
-    status: Status,
-    title: String,
-    detail: String,
-    /// The command that fixes it. Empty when there is nothing to run.
-    fix: String,
-}
-
-impl Check {
-    pub fn new(status: Status, title: impl Into<String>, detail: impl Into<String>) -> Self {
-        Self {
-            status,
-            title: title.into(),
-            detail: detail.into(),
-            fix: String::new(),
-        }
-    }
-
-    pub fn fix(mut self, command: impl Into<String>) -> Self {
-        self.fix = command.into();
-        self
-    }
-}
 
 pub fn doctor(project: &Project, json: bool, mut additional: Vec<Check>) -> Result<()> {
     let mut checks = run_checks(project);
@@ -172,9 +112,7 @@ fn run_checks(project: &Project) -> Vec<Check> {
     let mut checks = Vec::new();
 
     checks.push(project_check(project));
-    // Nothing below reads a pom that is not there, and the first check has
-    // already said why. Fifteen greens over a build jails cannot see is the
-    // failure `plan.md` §8.9 names, in a new disguise.
+    // Nothing below reads a pom that is not there; the first check said why.
     if matches!(project.build(), crate::build::Build::Foreign(_)) {
         checks.extend(template_override_checks());
         return checks;
@@ -197,6 +135,7 @@ fn run_checks(project: &Project) -> Vec<Check> {
     checks.extend(hot_reload_checks(project));
     checks.extend(port_checks(root));
     checks.extend(capability_drift_checks(project));
+    checks.extend(crate::managed_drift::managed_output_checks(project));
     checks.extend(template_override_checks());
     checks.push(beans_check(root));
     checks

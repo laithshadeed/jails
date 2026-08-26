@@ -628,7 +628,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // and the repair is `jails sync` rather than a rule against the
                 // order. A check whose reason is not written down is one the
                 // next reader deletes as noise.
-                ceiling: 1522,
+                ceiling: 1477,
                 // Withdrawn, not reached. abstract.md §8.0.1 audits all ten
                 // checks: none is a re-encoded dependency fact, so the 700
                 // measured a saving that is not there. Ratchet against growth.

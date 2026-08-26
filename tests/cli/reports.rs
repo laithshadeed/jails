@@ -323,6 +323,44 @@ fn doctor_reports_a_jdk_older_than_the_target_release() {
 }
 
 #[test]
+fn doctor_reports_missing_and_changed_managed_outputs_with_repair_guidance() {
+    let root = temp_dir("doctor-managed-drift");
+    write_spring_fixture(&root);
+    assert!(
+        jails_cmd(&root, None)
+            .args(["g", "scaffold", "Note", "id:uuid@pk", "title:string!"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let controller = root.join("src/main/java/com/example/demo/web/NoteController.java");
+    let service = root.join("src/main/java/com/example/demo/service/NoteService.java");
+    fs::remove_file(&controller).unwrap();
+    fs::write(
+        &service,
+        format!(
+            "{}\n// changed after generation\n",
+            fs::read_to_string(&service).unwrap()
+        ),
+    )
+    .unwrap();
+
+    let output = jails_cmd(&root, None).arg("doctor").output().unwrap();
+    assert!(!output.status.success());
+    let report = String::from_utf8_lossy(&output.stdout);
+    assert!(report.contains("recorded output"), "{report}");
+    assert!(
+        report.contains("NoteController.java` is missing"),
+        "{report}"
+    );
+    assert!(report.contains("NoteService.java` changed"), "{report}");
+    assert!(
+        report.contains("jails resource repair Note --strategy roll-forward"),
+        "{report}"
+    );
+}
+
+#[test]
 fn doctor_reports_resolved_developer_tool_paths_and_versions() {
     let root = temp_dir("doctor-tools");
     write_project_skeleton(&root);

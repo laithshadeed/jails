@@ -350,12 +350,14 @@ const LAYERS: &[(&str, &str, usize)] = &[
     // jails-report: commands that answer a question. Read-only by contract,
     // and below `jails-drive` so the contract is structural.
     ("jails-report", "doctor", 7),
+    ("jails-report", "diagnostic", 7),
     ("jails-report", "why", 7),
     ("jails-report", "why_subject", 7),
     ("jails-report", "explain", 7),
     ("jails-report", "commands", 7),
     ("jails-report", "source", 7),
     ("jails-report", "lifecycle_status", 7),
+    ("jails-report", "managed_drift", 7),
     // jails-drive: commands that start something.
     ("jails-drive", "run", 8),
     ("jails-drive", "launcher", 8),

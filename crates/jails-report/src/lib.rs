@@ -17,9 +17,11 @@
 //! `process::on_path`, and it was `doctor`'s only reason to name `run` at all.
 
 pub mod commands;
+mod diagnostic;
 pub mod doctor;
 pub mod explain;
 pub mod lifecycle_status;
+mod managed_drift;
 pub mod source;
 pub mod why;
 pub mod why_subject;
