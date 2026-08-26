@@ -735,8 +735,9 @@ impl Codec for OneShotLifecycle {
 mod tests {
     use super::*;
     use crate::database::{QueryId, QueryName, SliceName};
-    use crate::entity::{IntentId, Recipe};
+    use crate::entity::{CapabilityId, IntentId, Recipe};
     use crate::identity::{Name, Package};
+    use jails_spec::spec::kind::Capability;
 
     fn coordinate(group: &str, artifact: &str) -> MavenCoordinate {
         MavenCoordinate::parse(group, artifact).unwrap()
@@ -808,6 +809,49 @@ mod tests {
         .unwrap();
         assert_eq!(resource.key.tag(), 10);
         assert_eq!(round_trip(&resource), resource);
+
+        let mut encoder = Encoder::new();
+        resource.key.encode(&mut encoder).unwrap();
+        assert_eq!(
+            jails_support::codec::hex_bytes(&encoder.finish().unwrap()),
+            "0a0000000742696c6c696e670000001146696e6450617961626c654f7264657273"
+        );
+    }
+
+    #[test]
+    fn query_append_does_not_move_the_frozen_resource_key_tags() {
+        let path = ProjectPath::parse("pom.xml").unwrap();
+        let class = JavaType::parse("com.example.App").unwrap();
+        let keys = vec![
+            ResourceKey::WholeFile(path.clone()),
+            ResourceKey::MavenDependency(coordinate("g", "a")),
+            ResourceKey::BuildFeature(BuildFeature::Coverage),
+            ResourceKey::ComposeService(ServiceName::parse("db").unwrap()),
+            ResourceKey::Property {
+                path: path.clone(),
+                key: PropertyKey::parse("spring.application.name").unwrap(),
+            },
+            ResourceKey::MarkedBlock {
+                path: path.clone(),
+                marker: MarkerId::parse("app").unwrap(),
+            },
+            ResourceKey::CommandRegistration {
+                dispatcher: class.clone(),
+                command: JavaType::parse("com.example.Run").unwrap(),
+            },
+            ResourceKey::HumanConfigCapability(
+                CapabilityId::resolve(Capability::Db, None, None).unwrap(),
+            ),
+            ResourceKey::SpringTestImport {
+                path: path.clone(),
+                class,
+            },
+            ResourceKey::MavenMainClass(path),
+        ];
+        assert_eq!(
+            keys.iter().map(ResourceKey::tag).collect::<Vec<_>>(),
+            (0_u8..=9).collect::<Vec<_>>()
+        );
     }
 
     #[test]

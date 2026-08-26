@@ -698,6 +698,23 @@ mod tests {
     }
 
     #[test]
+    fn schema_object_identity_has_a_frozen_canonical_codec() {
+        let table = SchemaObjectId {
+            dialect: SqlDialect::PostgreSql,
+            namespace: SqlName::parse("public").unwrap(),
+            kind: SchemaObjectKind::Table,
+            name: SqlName::parse("orders").unwrap(),
+            parent: None,
+        };
+        let mut encoder = Encoder::new();
+        table.encode(&mut encoder).unwrap();
+        assert_eq!(
+            jails_support::codec::hex_bytes(&encoder.finish().unwrap()),
+            "0000000a706f737467726573716c000000067075626c696301000000066f726465727300"
+        );
+    }
+
+    #[test]
     fn evidence_identity_contains_no_runtime_location_or_clock() {
         let id = QueryId::new(
             SliceName::parse("Billing").unwrap(),
