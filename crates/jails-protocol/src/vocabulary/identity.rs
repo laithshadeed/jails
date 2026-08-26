@@ -374,7 +374,7 @@ fn validate_identifier(text: &str, what: &str) -> Result<()> {
 ///   design exists to prevent.
 ///
 /// The exception allowlist is closed: the human app manifest, the project
-/// template override layer, and checked-in generated SQL contracts.
+/// template override layer, and checked-in generated SQL/HTTP contracts.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
 pub struct ProjectPath(String);
 
@@ -384,6 +384,8 @@ pub(crate) const APP_MANIFEST: &str = ".jails/app.toml";
 pub(crate) const TEMPLATE_OVERRIDES: &str = ".jails/templates";
 /// `.jails/sql-contracts` — checked-in generated SQL evidence.
 pub(crate) const SQL_CONTRACTS: &str = ".jails/sql-contracts";
+/// `.jails/contracts` — checked-in generated HTTP contracts.
+pub(crate) const HTTP_CONTRACTS: &str = ".jails/contracts";
 
 impl ProjectPath {
     pub fn parse(text: &str) -> Result<Self> {
@@ -443,12 +445,15 @@ impl ProjectPath {
                     || text == TEMPLATE_OVERRIDES
                     || text.starts_with(&format!("{TEMPLATE_OVERRIDES}/"))
                     || text == SQL_CONTRACTS
-                    || text.starts_with(&format!("{SQL_CONTRACTS}/"));
+                    || text.starts_with(&format!("{SQL_CONTRACTS}/"))
+                    || text == HTTP_CONTRACTS
+                    || text.starts_with(&format!("{HTTP_CONTRACTS}/"));
                 if !allowed {
                     return Err(format!(
                         "path `{text}` is machine state under `.jails`, which has its own typed \
                          representations.\n       fix: only `{APP_MANIFEST}` and \
-                         `{TEMPLATE_OVERRIDES}` and `{SQL_CONTRACTS}` are reachable this way."
+                         `{TEMPLATE_OVERRIDES}`, `{SQL_CONTRACTS}`, and `{HTTP_CONTRACTS}` are \
+                         reachable this way."
                     )
                     .into());
                 }

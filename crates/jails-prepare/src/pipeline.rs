@@ -598,7 +598,10 @@ fn parents(base: &ProjectSnapshot, operations: &[FileOp]) -> Result<Vec<Director
             if candidate == ".jails" {
                 continue;
             }
-            if candidate.starts_with(".jails/") && !candidate.starts_with(".jails/sql-contracts") {
+            if candidate.starts_with(".jails/")
+                && !candidate.starts_with(".jails/sql-contracts")
+                && !candidate.starts_with(".jails/contracts")
+            {
                 break;
             }
             let parent = ProjectPath::parse(&candidate)?;

@@ -72,6 +72,7 @@ pub enum MaintenanceAttribution {
     Rename,
     AdoptLayout,
     Format,
+    ContractProjection,
 }
 
 impl MaintenanceAttribution {
@@ -81,6 +82,7 @@ impl MaintenanceAttribution {
             Self::Rename => 1,
             Self::AdoptLayout => 2,
             Self::Format => 4,
+            Self::ContractProjection => 5,
         }
     }
 
@@ -93,6 +95,7 @@ impl MaintenanceAttribution {
             1 => Self::Rename,
             2 => Self::AdoptLayout,
             4 => Self::Format,
+            5 => Self::ContractProjection,
             other => Err(format!("unknown maintenance attribution tag {other}"))?,
         })
     }

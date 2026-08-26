@@ -45,6 +45,10 @@ pub enum PlannedSubject {
     GenerateQueries {
         queries: BTreeSet<QueryId>,
     },
+    ContractProjection {
+        target: ProjectPath,
+        json_schema: bool,
+    },
 }
 
 impl PlannedSubject {
@@ -56,6 +60,7 @@ impl PlannedSubject {
             Self::Rename { .. } => MaintenanceAttribution::Rename,
             Self::AdoptLayout => MaintenanceAttribution::AdoptLayout,
             Self::Format { .. } => MaintenanceAttribution::Format,
+            Self::ContractProjection { .. } => MaintenanceAttribution::ContractProjection,
             Self::Reconcile(_)
             | Self::ApplyOneShot { .. }
             | Self::DestroyCases { .. }
@@ -81,6 +86,7 @@ impl PlannedSubject {
             Self::ReviveResource(_) => 10,
             Self::RepairResource(_) => 11,
             Self::GenerateQueries { .. } => 12,
+            Self::ContractProjection { .. } => 13,
         }
     }
 }
@@ -116,6 +122,14 @@ impl Codec for PlannedSubject {
             Self::ReviveResource(request) => request.encode(encoder),
             Self::RepairResource(request) => request.encode(encoder),
             Self::GenerateQueries { queries } => encoder.set(queries),
+            Self::ContractProjection {
+                target,
+                json_schema,
+            } => {
+                target.encode(encoder)?;
+                encoder.bool(*json_schema);
+                Ok(())
+            }
         }
     }
 
@@ -148,6 +162,10 @@ impl Codec for PlannedSubject {
             11 => Self::RepairResource(Box::new(RepairResourceRequestV1::decode(decoder)?)),
             12 => Self::GenerateQueries {
                 queries: decoder.set()?,
+            },
+            13 => Self::ContractProjection {
+                target: ProjectPath::decode(decoder)?,
+                json_schema: decoder.bool()?,
             },
             other => Err(format!(
                 "unknown planned subject tag {other}.\n       fix: upgrade jails or restore \

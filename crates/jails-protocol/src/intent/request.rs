@@ -312,6 +312,10 @@ pub enum CanonicalMutationRequest {
     SqlGenerate {
         queries: BTreeSet<crate::database::QueryId>,
     },
+    ContractEmit {
+        target: ProjectPath,
+        json_schema: bool,
+    },
 }
 
 impl CanonicalMutationRequest {
@@ -492,6 +496,7 @@ impl CanonicalMutationRequest {
             Self::RepairResource(_) => 18,
             Self::DestroyResourceV2 { .. } => 19,
             Self::SqlGenerate { .. } => 20,
+            Self::ContractEmit { .. } => 21,
         }
     }
 }
@@ -561,6 +566,13 @@ impl Codec for CanonicalMutationRequest {
                 encoder.bool(*force);
             }
             Self::SqlGenerate { queries } => encoder.set(queries)?,
+            Self::ContractEmit {
+                target,
+                json_schema,
+            } => {
+                target.encode(encoder)?;
+                encoder.bool(*json_schema);
+            }
         }
         Ok(())
     }
@@ -634,6 +646,10 @@ impl Codec for CanonicalMutationRequest {
             },
             20 => Self::SqlGenerate {
                 queries: decoder.set()?,
+            },
+            21 => Self::ContractEmit {
+                target: ProjectPath::decode(decoder)?,
+                json_schema: decoder.bool()?,
             },
             other => Err(format!("unknown mutation request tag {other}"))?,
         })

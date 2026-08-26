@@ -44,6 +44,42 @@ fn contract_emit_and_check_catch_a_removed_operation() {
 }
 
 #[test]
+fn contract_out_uses_preview_and_transaction_commit() {
+    let root = web_fixture("contract-out");
+    let target = root.join(".jails/contracts/openapi.json");
+    let preview = jails_cmd(&root, None)
+        .args([
+            "--pretend",
+            "contract",
+            "emit",
+            "--out",
+            ".jails/contracts/openapi.json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        preview.status.success(),
+        "{}",
+        String::from_utf8_lossy(&preview.stderr)
+    );
+    assert!(!target.exists(), "contract preview wrote its output");
+    assert!(String::from_utf8_lossy(&preview.stdout).contains("openapi.json"));
+
+    let applied = jails_cmd(&root, None)
+        .args(["contract", "emit", "--out", ".jails/contracts/openapi.json"])
+        .output()
+        .unwrap();
+    assert!(
+        applied.status.success(),
+        "{}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+    let document = fs::read_to_string(target).unwrap();
+    assert!(document.contains("\"openapi\": \"3.1.0\""));
+    assert!(root.join(".jails/receipts").is_dir());
+}
+
+#[test]
 fn request_print_is_exact_redacted_and_does_not_launch_curl() {
     let root = web_fixture("request-print");
     let fake = temp_dir("request-print-bin");
