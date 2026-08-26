@@ -922,21 +922,6 @@ rule must be baked in, not left to the reader. At minimum
 It is plausible-looking fiction, and it is the kind of output that gets
 committed because it compiles.)
 
-### 13.7 An empty migration named for an index that does not exist
-
-`minicom-2026-06-01/src/main/resources/db/migration/V003__add_customer_id_index.sql`,
-in full:
-
-```sql
--- Forward-only migration. Write explicit SQL below.
-```
-
-Flyway applies it, records the checksum, and never mentions it again.
-`messages.customer_id` is a nullable foreign key with **no index**, and the
-migration history asserts otherwise. A blank migration is an unusual thing to
-want; the safer default is to refuse to write one, or to write it as a file
-Flyway will not apply until it has content.
-
 ### 13.9 Two generators, two answers, one of them arguing against the other
 
 `minicom-2026-06-01`, same record, same two audit columns:

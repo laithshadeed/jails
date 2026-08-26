@@ -139,22 +139,17 @@ line in `explain scaffold` either way.
 
 ---
 
-## Not a bug, but it makes two commands unusable where they are most wanted
+## Not a bug, but it makes one command unusable where it is most wanted
 
-`jails migrate lint` and `jails schema diff` both require `.jails/app.toml`:
+*`jails migrate lint` is closed.* It asked for `.jails/app.toml` to learn one
+thing — the dialect — and so refused on every project `jails new` produces,
+which is the shape every reproduction in this file uses. It reads the driver
+the project declares now, the same authority `Project::sql_dialect` uses
+everywhere else; a manifest still wins where there is one.
 
-```
-$ jails migrate lint
-jails: failed to read application manifest …/.jails/app.toml: No such file or
-       directory (os error 2)
-```
-
-An imperative project — the shape every reproduction in this file uses, and the
-shape `jails new` produces — has no manifest, so neither command runs there. Both
-questions ("is this migration destructive", "do my three schema authorities
-agree") are answerable from the migrations and the ledger alone.
-
----
+`jails schema diff` still requires a manifest, and that half is real work
+rather than an oversight: its *declared* authority is the manifest's entity
+list, and the equivalent from the ledger's recorded specs does not exist yet.
 
 ## What worked well
 

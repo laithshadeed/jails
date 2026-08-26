@@ -572,6 +572,89 @@ fn a_generated_disabled_test_is_named_when_it_is_written_and_afterwards() {
     assert!(output.status.success(), "{report}");
 }
 
+/// A migration jails wrote and nobody filled in is applied, checksummed, and
+/// never mentioned again -- so the history asserts a change that did not
+/// happen.
+///
+/// modern.md §13.7: `V003__add_customer_id_index.sql` was one comment line,
+/// and `messages.customer_id` had no index. Writing the file is right; jails
+/// cannot know the SQL and the value of the command is a correctly numbered
+/// file at the right path. Leaving it silent is the defect.
+#[test]
+fn doctor_names_a_migration_that_was_written_and_never_filled_in() {
+    let root = temp_dir("doctor-empty-migration");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    assert!(
+        jails_cmd(&root, None)
+            .args(["g", "migration", "add_customer_id_index"])
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let output = jails_cmd(&root, None).arg("doctor").output().unwrap();
+    let report = String::from_utf8_lossy(&output.stdout);
+    assert!(report.contains("contain no SQL"), "{report}");
+    assert!(report.contains("add_customer_id_index.sql"), "{report}");
+    // The reader's file to fill in, so a warning and not a failure.
+    assert!(output.status.success(), "{report}");
+
+    let written = root.join("src/main/resources/db/migration");
+    let file = fs::read_dir(&written)
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| path.extension().is_some_and(|e| e == "sql"))
+        .unwrap();
+    let text = fs::read_to_string(&file).unwrap();
+    fs::write(
+        &file,
+        format!("{text}create index messages_customer_id_idx on messages (customer_id);\n"),
+    )
+    .unwrap();
+    let output = jails_cmd(&root, None).arg("doctor").output().unwrap();
+    let report = String::from_utf8_lossy(&output.stdout);
+    assert!(!report.contains("contain no SQL"), "{report}");
+}
+
+/// `migrate lint` asked for a manifest to learn one thing -- the dialect --
+/// and so refused on every project `jails new` produces.
+///
+/// The question is answerable from the migrations and the driver the project
+/// declares, which is the authority `Project::sql_dialect` already uses.
+#[test]
+fn migrate_lint_reads_the_migrations_and_the_driver_without_a_manifest() {
+    let root = temp_dir("migrate-lint-no-manifest");
+    write_spring_fixture(&root);
+    let migrations = root.join("src/main/resources/db/migration");
+    fs::create_dir_all(&migrations).unwrap();
+    assert!(!root.join(".jails/app.toml").exists());
+
+    let clean = jails_cmd(&root, None)
+        .args(["migrate", "lint"])
+        .output()
+        .unwrap();
+    assert!(clean.status.success(), "{clean:?}");
+    assert!(
+        String::from_utf8_lossy(&clean.stdout).contains("no destructive"),
+        "{clean:?}"
+    );
+
+    fs::write(
+        migrations.join("V001__drop_orders.sql"),
+        "drop table orders;\n",
+    )
+    .unwrap();
+    let output = jails_cmd(&root, None)
+        .args(["migrate", "lint"])
+        .output()
+        .unwrap();
+    let report = String::from_utf8_lossy(&output.stdout);
+    assert!(report.contains("destructive"), "{report}");
+    assert!(report.contains("V001__drop_orders.sql"), "{report}");
+}
+
 #[test]
 fn doctor_reports_resolved_developer_tool_paths_and_versions() {
     let root = temp_dir("doctor-tools");

@@ -263,3 +263,62 @@ pub(crate) fn disabled_generated_tests(project: &Project) -> Vec<Check> {
         ),
     ]
 }
+
+/// Migrations jails wrote and nobody filled in.
+///
+/// modern.md §13.7. `jails g migration add_customer_id_index` writes one line
+/// -- `-- Forward-only migration. Write explicit SQL below.` -- and that is a
+/// correct thing to write: jails cannot know the SQL, and the value of the
+/// command is a correctly numbered file at the right path. What is not correct
+/// is what happens next. Flyway applies the file, records its checksum, and
+/// never mentions it again, so the migration history asserts that
+/// `messages.customer_id` was indexed and the column has no index. A blank
+/// migration is an unusual thing to *want*; leaving it silent is the defect.
+///
+/// A `warn`, because the file is the reader's to fill in, and named
+/// individually because the whole point is that the history claims something
+/// each one does not do.
+pub(crate) fn empty_migration_checks(project: &Project) -> Vec<Check> {
+    let MachineState::Current(store) = jails_state::compat::read(project.root()) else {
+        return Vec::new();
+    };
+    let mut blank: Vec<&str> = Vec::new();
+    for output in &store.outputs {
+        let path = output.path.as_str();
+        if !path.starts_with("src/main/resources/db/migration/") || !path.ends_with(".sql") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(project.root().join(path)) else {
+            continue;
+        };
+        let statements = text
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("--"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if statements.trim().is_empty() {
+            blank.push(path);
+        }
+    }
+    if blank.is_empty() {
+        return Vec::new();
+    }
+    blank.sort_unstable();
+    vec![
+        Check::new(
+            Status::Warn,
+            "migrations",
+            format!(
+                "{} migration(s) contain no SQL, so the schema history records a change \
+                 that did not happen: `{}`",
+                blank.len(),
+                blank.join("`, `")
+            ),
+        )
+        .fix(
+            "write the statement each one is named for. A migration that is applied empty \
+             is sealed empty -- the history says it ran and the database does not have it, \
+             and the correction has to be a later migration",
+        ),
+    ]
+}

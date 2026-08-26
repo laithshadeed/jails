@@ -202,7 +202,7 @@ to go **red on landing**; P1.5 records what they name.
       exceptions here. Write `spring.http.client.connect-timeout` /
       `read-timeout` and a commented `…base-url` alongside, the way
       `ensure_failsafe` and `ensure_assertj` are written from the write path.
-- [ ] **P2.6** `g migration` writes a file whose whole content is
+- [x] **P2.6** `g migration` writes a file whose whole content is
       `-- Forward-only migration. Write explicit SQL below.`; Flyway applies it
       and records the checksum, so the history asserts an index that does not
       exist (modern §13.7). Refuse to write an empty one, or write it in a form
@@ -212,10 +212,14 @@ to go **red on landing**; P1.5 records what they name.
       projects** (modern §6.1, §11.7, §13.10) — while the one operation with
       real failure modes hand-rolls `ResponseStatusException`. Wire the
       generated code into it, or say it did not.
-- [ ] **P2.8** `jails migrate lint` and `jails schema diff` require
+- [x] **P2.8** `jails migrate lint` and `jails schema diff` require
       `.jails/app.toml`, so neither runs on the shape `jails new` produces.
-      Both questions are answerable from the migrations and the ledger alone
-      (bugs.md, "not a bug" section).
+      `migrate lint` is closed: it wanted the manifest for the dialect alone,
+      and the driver the project declares is the same authority
+      `Project::sql_dialect` uses everywhere else. `schema diff` still needs
+      one, and that half is real work — its *declared* authority is the
+      manifest's entity list, and the equivalent over the ledger's recorded
+      specs does not exist yet. Carried into P9.
 
 ## P3 — the naming and binding spine (cause A)
 

@@ -138,6 +138,7 @@ fn run_checks(project: &Project) -> Vec<Check> {
     checks.extend(crate::managed_drift::managed_output_checks(project));
     checks.extend(crate::managed_drift::migration_seal_checks(project));
     checks.extend(crate::managed_drift::disabled_generated_tests(project));
+    checks.extend(crate::managed_drift::empty_migration_checks(project));
     checks.extend(crate::schema_lineage::schema_lineage_checks(project));
     checks.extend(template_override_checks());
     checks.push(beans_check(root));

@@ -111,12 +111,35 @@ pub fn migration_schema(project: &Project, manifest_path: Option<&Path>) -> Resu
     })
 }
 
+/// Whether any migration statement is destructive or deployment-sensitive.
+///
+/// The manifest is consulted for one thing -- the dialect -- and demanding it
+/// made this command unusable on the shape `jails new` produces, which has no
+/// manifest at all and is the shape every reproduction in `bugs.md` uses. The
+/// question *is* answerable without one: the migrations are on disk and the
+/// dialect is a fact about the driver the project declares, which is the same
+/// authority `Project::sql_dialect` uses everywhere else. A manifest, when
+/// there is one, still wins -- it is the declaration, and the driver is the
+/// inference.
 pub fn migration_lint(
     project: &Project,
     manifest_path: Option<&Path>,
 ) -> Result<Vec<crate::query_compiler::MigrationFinding>> {
-    let (manifest, _) = read_manifest(project, manifest_path)?;
-    crate::query_compiler::lint_migration_sources(manifest.dialect, &migrations(project)?)
+    let dialect = match read_manifest(project, manifest_path) {
+        Ok((manifest, _)) => manifest.dialect,
+        // An explicitly named manifest that cannot be read is an error: the
+        // caller asked for that file. An absent default one is not.
+        Err(error) if manifest_path.is_some() => return Err(error),
+        // The driver the project declares. `sqlite-jdbc` is read first
+        // because `add sqlite` is the one capability whose statements this
+        // lint judges differently; H2 and PostgreSQL share the vocabulary for
+        // everything jails emits, and the lint has no H2 of its own.
+        Err(_) if project.has_dependency("org.xerial", "sqlite-jdbc") => {
+            jails_protocol::database::SqlDialect::Sqlite
+        }
+        Err(_) => jails_protocol::database::SqlDialect::PostgreSql,
+    };
+    crate::query_compiler::lint_migration_sources(dialect, &migrations(project)?)
 }
 
 pub fn declared_schema(project: &Project, manifest_path: Option<&Path>) -> Result<SchemaSnapshot> {
