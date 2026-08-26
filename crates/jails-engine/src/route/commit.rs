@@ -96,9 +96,10 @@ pub(super) fn commit_set(
     let project = run.project();
     let bundle = prepare_set(run, set, declaration, Some(asked))?;
     if !run.write {
+        let report = jails_prepare::report::Report::of(&bundle.change)?;
         return Ok(Outcome::Planned(Box::new(PreparedOutcome {
-            report: jails_prepare::report::Report::of(&bundle.change)?,
-            review: bundle.review,
+            report,
+            bundle,
             timings: run.timing_trace(),
         })));
     }

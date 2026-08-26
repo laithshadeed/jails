@@ -13,6 +13,8 @@ jails-project.workspace = true
 jails-protocol.workspace = true
 jails-spec.workspace = true
 jails-support.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

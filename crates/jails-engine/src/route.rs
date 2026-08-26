@@ -82,6 +82,7 @@ mod history;
 mod lifecycle;
 mod maintenance;
 mod oneshot;
+mod portable;
 mod provenance;
 mod query;
 mod request;
@@ -105,6 +106,7 @@ pub use maintenance::{
     rename_storage,
 };
 pub use oneshot::{cases, migration};
+pub use portable::apply_plan;
 pub use query::sql_generate;
 pub(crate) use session::PreparedOutcome;
 pub use session::{Outcome, Run};

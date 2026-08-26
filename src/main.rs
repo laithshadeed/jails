@@ -8,6 +8,7 @@ mod editor_command;
 mod facade;
 mod history_command;
 mod new;
+mod plan_command;
 mod schema_command;
 mod sql_command;
 mod template_macro;
@@ -25,6 +26,9 @@ use clap::{CommandFactory, Parser};
 pub(crate) use template_macro::template_here;
 
 fn main() -> std::process::ExitCode {
+    if let Some(result) = plan_command::requested() {
+        return dispatch::finish(result);
+    }
     let cli = Cli::parse();
     let debug = cli.debug;
     let pretend = cli.pretend;
@@ -35,6 +39,8 @@ fn main() -> std::process::ExitCode {
         output: cli.output,
         diff: cli.diff,
         ast: cli.ast,
+        plan_out: cli.plan_out,
+        plan_in: cli.plan_in,
     };
     let result = match cli.command {
         Command::About { json } => project::about(json),
@@ -695,20 +701,7 @@ fn main() -> std::process::ExitCode {
         }
     };
 
-    if let Err(failure) = result {
-        // `Failure::Reported` means the command has already printed everything
-        // the reader needs -- `doctor` prints a full report and then fails only
-        // to make the shell see it -- so a bare `jails: ` under it would be
-        // noise. This used to read `if !err.is_empty()`, which said the same
-        // thing by testing for the absence of characters in a message, and let
-        // any path that happened to build an empty string exit non-zero having
-        // printed nothing at all. `pending.md` §6.5.
-        if let Some(message) = failure.message() {
-            eprintln!("jails: {message}");
-        }
-        return std::process::ExitCode::FAILURE;
-    }
-    std::process::ExitCode::SUCCESS
+    dispatch::finish(result)
 }
 
 /// These two assert against jails' *real* CLI, so they live with it.

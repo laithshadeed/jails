@@ -471,6 +471,27 @@ pub struct PreparedChange {
 }
 
 impl PreparedChange {
+    /// Encode the complete prepared transaction for a portable plan.
+    ///
+    /// Journals deliberately persist the identity and object bodies
+    /// separately. A portable plan has no object store to fall back to, so it
+    /// carries both in one closed record and validates every content address
+    /// again when decoded.
+    pub fn portable_bytes(&self) -> Result<Vec<u8>> {
+        let mut encoder = Encoder::new();
+        self.encode(&mut encoder)?;
+        encoder.finish()
+    }
+
+    /// Decode a complete portable transaction and reject trailing or corrupt
+    /// data before the executor sees it.
+    pub fn from_portable_bytes(bytes: &[u8]) -> Result<Self> {
+        let mut decoder = Decoder::new(bytes)?;
+        let change = Self::decode(&mut decoder)?;
+        decoder.finish()?;
+        Ok(change)
+    }
+
     /// Everything that must hold before this value may be executed.
     ///
     /// Each check is here rather than at a construction site because a plan
@@ -596,6 +617,68 @@ impl PreparedChange {
             && self.directories.is_empty()
             && self.post_commit.is_empty()
             && self.ledger_before == self.ledger_after
+    }
+}
+
+impl Codec for PreparedChange {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        self.validate()?;
+        encoder.u32(FORMAT);
+        self.identity()?.encode(encoder)?;
+        self.transaction_id.encode(encoder)?;
+        encoder.count(self.objects.len())?;
+        let mut previous: Option<&ObjectId> = None;
+        for (id, bytes) in &self.objects {
+            ordered(previous, id)?;
+            previous = Some(id);
+            id.encode(encoder)?;
+            encoder.object(bytes, codec::DEFAULT_MAX_OBJECT_BYTES)?;
+        }
+        Ok(())
+    }
+
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        let format = decoder.u32()?;
+        if format != FORMAT {
+            return Err(format!(
+                "portable prepared change format {format} is not {FORMAT}.\n       \
+                 fix: re-export the plan with this jails version."
+            )
+            .into());
+        }
+        let identity = PreparedIdentityV1::decode(decoder)?;
+        let transaction_id = TransactionId::decode(decoder)?;
+        let count = decoder.count()?;
+        let mut objects = BTreeMap::new();
+        for _ in 0..count {
+            let id = ObjectId::decode(decoder)?;
+            ordered(objects.last_key_value().map(|(last, _)| last), &id)?;
+            let bytes: Arc<[u8]> = Arc::from(decoder.object(codec::DEFAULT_MAX_OBJECT_BYTES)?);
+            objects.insert(id, bytes);
+        }
+        let change = Self {
+            operation_identity: identity.operation_identity,
+            operation_id: identity.operation_id,
+            transaction_id,
+            preparation: identity.preparation,
+            input_preconditions: identity.input_preconditions,
+            operations: identity.operations,
+            directories: identity.directories,
+            ledger_before: identity.ledger_before,
+            ledger_after: identity.ledger_after,
+            objects,
+            post_commit: identity.post_commit,
+            kind: identity.kind,
+        };
+        change.validate()?;
+        if change.identity()?.object_manifest != identity.object_manifest {
+            return Err(concat!(
+                "portable prepared change object manifest does not match its bodies.\n       ",
+                "fix: discard the corrupt plan and export it again."
+            )
+            .into());
+        }
+        Ok(change)
     }
 }
 

@@ -166,6 +166,14 @@ pub(crate) struct Cli {
     /// Show the typed semantic edits and reconciliation operations in the plan
     #[arg(long, global = true)]
     pub(crate) ast: bool,
+
+    /// Write the exact authenticated prepared transaction to this file
+    #[arg(long, global = true, conflicts_with = "plan_in")]
+    pub(crate) plan_out: Option<std::path::PathBuf>,
+
+    /// Apply only this authenticated prepared transaction, without replanning
+    #[arg(long, global = true, conflicts_with_all = ["plan_out", "pretend"])]
+    pub(crate) plan_in: Option<std::path::PathBuf>,
 }
 
 /// How a mutation's [`CommandEnvelope`] is encoded.
@@ -323,13 +331,15 @@ impl From<TypeChangeStrategy> for jails_protocol::request::TypeChangeStrategy {
 /// A parameter object rather than global presentation and execution flags
 /// threaded through every arm: they arrive together, are consumed together by
 /// [`mutate`], and are easy to swap at a call site.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) struct Invocation {
     pub(crate) pretend: bool,
     pub(crate) debug: bool,
     pub(crate) output: Output,
     pub(crate) diff: bool,
     pub(crate) ast: bool,
+    pub(crate) plan_out: Option<std::path::PathBuf>,
+    pub(crate) plan_in: Option<std::path::PathBuf>,
 }
 
 impl Invocation {
@@ -344,7 +354,7 @@ impl Invocation {
         }
     }
 
-    pub(crate) fn review(self) -> jails_prepare::review::ReviewSelection {
+    pub(crate) fn review(&self) -> jails_prepare::review::ReviewSelection {
         jails_prepare::review::ReviewSelection {
             diff: self.diff,
             ast: self.ast,

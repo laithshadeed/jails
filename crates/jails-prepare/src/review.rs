@@ -122,6 +122,57 @@ impl PreparedReview {
             edits: seed.edits,
         })
     }
+
+    /// Rebuild byte-review material for a decoded portable plan.
+    ///
+    /// The prepared transaction already authenticates every expected
+    /// preimage and carried postimage. Reading the current preimage here is
+    /// presentation-only; the executor independently rechecks it under the
+    /// project lock before writing.
+    pub fn for_portable_plan(
+        root: impl AsRef<std::path::Path>,
+        change: &PreparedChange,
+    ) -> Result<Self> {
+        let root = root.as_ref();
+        let mut files = Vec::new();
+        for operation in &change.operations {
+            let (path, kind, before, after) = match operation {
+                FileOp::Create { path, after, .. } => (
+                    path,
+                    ReviewFileKind::Create,
+                    None,
+                    Some(object(change, path, after.id)?),
+                ),
+                FileOp::Replace { path, after, .. } => (
+                    path,
+                    ReviewFileKind::Replace,
+                    Some(Arc::from(std::fs::read(root.join(path.as_str())).map_err(
+                        |error| format!("failed to read `{path}` for plan review: {error}"),
+                    )?)),
+                    Some(object(change, path, after.id)?),
+                ),
+                FileOp::Delete { path, .. } => (
+                    path,
+                    ReviewFileKind::Delete,
+                    Some(Arc::from(std::fs::read(root.join(path.as_str())).map_err(
+                        |error| format!("failed to read `{path}` for plan review: {error}"),
+                    )?)),
+                    None,
+                ),
+            };
+            files.push(FileReview {
+                path: path.clone(),
+                kind,
+                reconciliation: Reconciliation::Direct,
+                before,
+                after,
+            });
+        }
+        Ok(Self {
+            files,
+            edits: Vec::new(),
+        })
+    }
 }
 
 fn current(base: &ProjectSnapshot, path: &ProjectPath) -> Result<Option<Arc<[u8]>>> {

@@ -185,7 +185,7 @@ pub enum Outcome {
 #[derive(Debug)]
 pub struct PreparedOutcome {
     pub report: Report,
-    pub review: jails_prepare::review::PreparedReview,
+    pub bundle: pipeline::PreparedBundle,
     pub timings: jails_prepare::timing::TimingTrace,
 }
 
@@ -215,7 +215,19 @@ impl Outcome {
     pub fn review(&self) -> &jails_prepare::review::PreparedReview {
         match self {
             Self::Committed(_, review, _) | Self::CommittedAfterRecovery(_, _, review, _) => review,
-            Self::Planned(prepared) => &prepared.review,
+            Self::Planned(prepared) => &prepared.bundle.review,
+        }
+    }
+
+    /// Serialize the exact bundle behind a preview as an authenticated plan.
+    pub fn portable_plan(&self) -> Result<Vec<u8>> {
+        match self {
+            Self::Planned(prepared) => super::portable::encode(&prepared.bundle),
+            _ => Err(concat!(
+                "only a prepared preview can be exported as a plan.\n       ",
+                "fix: run the mutation with --pretend --plan-out."
+            )
+            .into()),
         }
     }
 

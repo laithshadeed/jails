@@ -27,6 +27,7 @@ mod examples;
 mod generate;
 mod history;
 mod new;
+mod portable_plan;
 mod reports;
 mod sql;
 mod tooling;

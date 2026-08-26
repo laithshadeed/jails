@@ -18,6 +18,19 @@
 use crate::{Capability, Invocation, Output, add, model};
 use jails_support::Result;
 
+/// Convert the command result to the process protocol once.
+pub(crate) fn finish(result: Result<()>) -> std::process::ExitCode {
+    if let Err(failure) = result {
+        // A reported failure already printed its structured result. Printing
+        // a second empty `jails:` line would obscure rather than explain it.
+        if let Some(message) = failure.message() {
+            eprintln!("jails: {message}");
+        }
+        return std::process::ExitCode::FAILURE;
+    }
+    std::process::ExitCode::SUCCESS
+}
+
 /// Run one mutation through the transaction protocol, and report it once.
 ///
 /// **Every mutating command goes through here.** That is the point of the
@@ -33,6 +46,13 @@ pub(crate) fn mutate(
     route: impl Fn(&jails_engine::route::Run) -> Result<jails_engine::route::Outcome>,
 ) -> Result<()> {
     mutate_confirmed(invocation, no_start, true, route)
+}
+
+/// Apply a plan when argv intentionally contains no semantic command input.
+pub(crate) fn apply_plan(invocation: Invocation) -> Result<()> {
+    mutate(invocation, false, |_| {
+        unreachable!("plan-in is handled before a semantic route is called")
+    })
 }
 
 /// The same, with the confirmation a destructive command asks for first.
@@ -68,28 +88,87 @@ pub(crate) fn mutate_confirmed(
         }
         run
     }
-    if !assumed && !invocation.pretend {
-        let planned = route(&configure(
+    if let Some(path) = &invocation.plan_in {
+        let bytes = std::fs::read(path).map_err(|error| {
+            format!("failed to read prepared plan `{}`: {error}", path.display())
+        })?;
+        let outcome = jails_engine::route::apply_plan(
+            &configure(
+                jails_engine::route::Run::committing(&project)
+                    .with_timing(jails_prepare::timing::TimingPhase::Discover, discover_time),
+                no_start,
+                invocation.debug,
+            ),
+            &bytes,
+        )?;
+        drop_compiled_shadows(&project, &outcome);
+        return report(
+            &outcome,
+            invocation.output,
+            invocation.review(),
+            invocation.debug,
+        );
+    }
+
+    let must_prepare = invocation.plan_out.is_some() || (!assumed && !invocation.pretend);
+    let prepared = if must_prepare {
+        Some(route(&configure(
             jails_engine::route::Run::pretending(&project)
                 .with_timing(jails_prepare::timing::TimingPhase::Discover, discover_time),
             no_start,
             invocation.debug,
-        ))?;
-        if !accepted(&planned, invocation.review(), invocation.debug)? {
-            println!("aborted");
-            return Ok(());
-        }
+        ))?)
+    } else {
+        None
+    };
+    if !assumed
+        && !invocation.pretend
+        && !accepted(
+            prepared.as_ref().expect("confirmation prepared above"),
+            invocation.review(),
+            invocation.debug,
+        )?
+    {
+        println!("aborted");
+        return Ok(());
     }
-    let run = configure(
-        match invocation.pretend {
-            true => jails_engine::route::Run::pretending(&project),
-            false => jails_engine::route::Run::committing(&project),
+
+    let portable = match (&invocation.plan_out, prepared.as_ref()) {
+        (Some(path), Some(planned)) => {
+            let bytes = planned.portable_plan()?;
+            jails_support::apply::put_outside_project_private_atomic(path, &bytes)?;
+            Some(bytes)
         }
-        .with_timing(jails_prepare::timing::TimingPhase::Discover, discover_time),
+        _ => None,
+    };
+    if invocation.pretend {
+        let outcome = match prepared {
+            Some(outcome) => outcome,
+            None => route(&configure(
+                jails_engine::route::Run::pretending(&project)
+                    .with_timing(jails_prepare::timing::TimingPhase::Discover, discover_time),
+                no_start,
+                invocation.debug,
+            ))?,
+        };
+        return report(
+            &outcome,
+            invocation.output,
+            invocation.review(),
+            invocation.debug,
+        );
+    }
+
+    let run = configure(
+        jails_engine::route::Run::committing(&project)
+            .with_timing(jails_prepare::timing::TimingPhase::Discover, discover_time),
         no_start,
         invocation.debug,
     );
-    let outcome = route(&run)?;
+    let outcome = match portable {
+        Some(bytes) => jails_engine::route::apply_plan(&run, &bytes)?,
+        None => route(&run)?,
+    };
     drop_compiled_shadows(&project, &outcome);
     report(
         &outcome,

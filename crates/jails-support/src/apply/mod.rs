@@ -180,6 +180,111 @@ pub fn put_outside_project(path: impl AsRef<Path>, contents: impl AsRef<str>) ->
         .map_err(|error| format!("failed to write {}: {error}", path.display()))?)
 }
 
+/// Atomically publish a private binary artifact outside project authority.
+///
+/// Prepared plans are the first caller: writing one is explicitly requested,
+/// but it is not a project operation and must never appear in the transaction
+/// it describes. The temporary file is user-only from creation, synced before
+/// rename, and the parent is synced after publication.
+pub fn put_outside_project_private_atomic(
+    path: impl AsRef<Path>,
+    contents: impl AsRef<[u8]>,
+) -> Result<()> {
+    use std::io::Write as _;
+
+    let (path, contents) = (path.as_ref(), contents.as_ref());
+    let parent = path
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent).map_err(|error| {
+        format!(
+            "failed to create private artifact directory `{}`: {error}.\n       \
+             fix: choose a writable destination directory.",
+            parent.display()
+        )
+    })?;
+    let file_name = path.file_name().ok_or_else(|| {
+        format!(
+            "private artifact path `{}` has no file name.\n       \
+             fix: choose a path ending in a file name.",
+            path.display()
+        )
+    })?;
+    let mut suffix = 0u32;
+    let mut temporary;
+    let mut file = loop {
+        temporary = parent.join(format!(
+            ".{}.{}.{}.tmp",
+            file_name.to_string_lossy(),
+            std::process::id(),
+            suffix
+        ));
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        match options.open(&temporary) {
+            Ok(file) => break file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                suffix = suffix.checked_add(1).ok_or(concat!(
+                    "too many private artifact temporary files.\n       ",
+                    "fix: remove stale temporary files beside the destination."
+                ))?;
+            }
+            Err(error) => {
+                return Err(format!(
+                    "failed to create private artifact temporary file `{}`: {error}.\n       \
+                     fix: choose a writable destination and retry.",
+                    temporary.display()
+                )
+                .into());
+            }
+        }
+    };
+    let result = (|| -> Result<()> {
+        file.write_all(contents).map_err(|error| {
+            format!(
+                "failed to write private artifact `{}`: {error}.\n       \
+                 fix: free disk space or choose another destination.",
+                path.display()
+            )
+        })?;
+        file.sync_all().map_err(|error| {
+            format!(
+                "failed to sync private artifact `{}`: {error}.\n       \
+                 fix: choose a destination on a writable local filesystem.",
+                path.display()
+            )
+        })?;
+        fs::rename(&temporary, path).map_err(|error| {
+            format!(
+                "failed to publish private artifact `{}`: {error}.\n       \
+                 fix: choose a destination on the same writable filesystem.",
+                path.display()
+            )
+        })?;
+        #[cfg(unix)]
+        fs::File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| {
+                format!(
+                    "failed to sync private artifact directory `{}`: {error}.\n       \
+                     fix: choose a destination on a writable local filesystem.",
+                    parent.display()
+                )
+            })?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
 /// Write a file into a scratch tree jails owns for the duration of one run.
 ///
 /// A verb of its own rather than a general byte-write, for the same reason

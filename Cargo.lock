@@ -263,6 +263,8 @@ dependencies = [
  "jails-protocol",
  "jails-spec",
  "jails-support",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
