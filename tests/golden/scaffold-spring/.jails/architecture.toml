@@ -1,0 +1,10 @@
+# Reviewed cross-slice exceptions. Every allowance must be bounded, used,
+# justified, and removed or renewed before its ISO-8601 expiry date.
+# Blanket package patterns (the base package, `..`, or every slice) are refused.
+#
+# [[architecture.allow]]
+# from = "billing"
+# to = "shared"
+# packages = ["com.example.shared.money.."]
+# reason = "Money is the reviewed shared-kernel value"
+# expires = "2027-01-31"

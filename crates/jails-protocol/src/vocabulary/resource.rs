@@ -538,6 +538,8 @@ pub enum ResourceOwner {
     OneShot(OneShotId),
     SchemaHistory,
     Query(QueryId),
+    /// Shared project-level architecture tests and their reviewed policy.
+    ProjectArchitecture,
 }
 
 impl Codec for ResourceOwner {
@@ -559,6 +561,10 @@ impl Codec for ResourceOwner {
                 encoder.tag(3);
                 id.encode(encoder)
             }
+            Self::ProjectArchitecture => {
+                encoder.tag(4);
+                Ok(())
+            }
         }
     }
 
@@ -568,6 +574,7 @@ impl Codec for ResourceOwner {
             1 => Self::OneShot(OneShotId::decode(decoder)?),
             2 => Self::SchemaHistory,
             3 => Self::Query(QueryId::decode(decoder)?),
+            4 => Self::ProjectArchitecture,
             other => Err(format!("unknown resource owner tag {other}"))?,
         })
     }

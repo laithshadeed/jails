@@ -487,6 +487,7 @@ fn app_manifest_builds_the_crawler_skeleton_and_is_resumable() {
         bookkeeping,
         [
             "app.toml",
+            "architecture.toml",
             "ledger.toml",
             "lock",
             "objects",

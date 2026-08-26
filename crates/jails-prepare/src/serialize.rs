@@ -222,6 +222,7 @@ fn owner_of(owner: &&ResourceOwner) -> String {
         ResourceOwner::OneShot(id) => variant("one-shot", &quoted(&format!("{id:?}"))),
         ResourceOwner::SchemaHistory => variant("schema-history", "null"),
         ResourceOwner::Query(id) => variant("query", &quoted(&format!("{id:?}"))),
+        ResourceOwner::ProjectArchitecture => variant("project-architecture", "null"),
     }
 }
 

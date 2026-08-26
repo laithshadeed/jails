@@ -42,6 +42,21 @@ use std::process::Command;
 /// definition of "what kind X produces" drifted in the first place.
 const ALLOWED_LEFTOVER: &[(&str, &str, &str)] = &[
     (
+        "scaffold",
+        ".jails/architecture.toml",
+        "project-level architecture policy has its own durable owner; destroying one entity must not remove shared fitness configuration",
+    ),
+    (
+        "scaffold",
+        "ArchitectureTest.java",
+        "one project-level architecture suite is shared by every scaffold and outlives any one entity",
+    ),
+    (
+        "scaffold",
+        "src/test/resources/archunit.properties",
+        "project-level baseline configuration belongs to the shared architecture suite, not one scaffold",
+    ),
+    (
         "",
         "src/main/resources/db/migration/",
         "migrations are forward-only: destroying the Java does not un-apply a \

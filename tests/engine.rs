@@ -809,6 +809,15 @@ fn every_persistent_kind_destroys_back_to_its_projection_baseline() {
             })
             .cloned()
             .collect();
+        let shared_project_files: std::collections::BTreeSet<String> = generated_files
+            .difference(&before)
+            .filter(|path| {
+                path.as_str() == ".jails/architecture.toml"
+                    || path.ends_with("/ArchitectureTest.java")
+                    || path.as_str() == "src/test/resources/archunit.properties"
+            })
+            .cloned()
+            .collect();
 
         jails_engine::route::destroy(
             &committing(&Project::load(&root).unwrap()),
@@ -822,16 +831,22 @@ fn every_persistent_kind_destroys_back_to_its_projection_baseline() {
 
         let after: std::collections::BTreeSet<String> = common::scenarios::file_set(&root)
             .into_iter()
-            // `.jails/` is the transaction's own bookkeeping, which exists
-            // from the first commit onward and is not something `destroy` is
-            // asked to take back.
-            .filter(|path| !path.starts_with(".jails"))
+            // Internal `.jails/` state is the transaction's own bookkeeping.
+            // The architecture policy is project-owned source and therefore
+            // remains part of the projection comparison.
+            .filter(|path| {
+                !path.starts_with(".jails") || path.as_str() == ".jails/architecture.toml"
+            })
             .collect();
-        let expected_after: std::collections::BTreeSet<String> =
-            before.iter().cloned().chain(published_migrations).collect();
+        let expected_after: std::collections::BTreeSet<String> = before
+            .iter()
+            .cloned()
+            .chain(published_migrations)
+            .chain(shared_project_files)
+            .collect();
         assert_eq!(
             after, expected_after,
-            "{}: destroy left something other than append-only migration history",
+            "{}: destroy left something other than append-only migration history or shared project architecture",
             scenario.name
         );
         assert_eq!(

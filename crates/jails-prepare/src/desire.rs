@@ -196,7 +196,21 @@ pub fn contribution(
     for artifact in &change.files {
         let path = project_path(&artifact.path, project)?;
         let key = ResourceKey::WholeFile(path.clone());
-        claim(&mut desired, owner, key.clone(), ResourceValue::WholeFile)?;
+        // Architecture fitness is project infrastructure shared by every
+        // scaffold. Charging it to whichever entity happened to be generated
+        // first made destroying that entity delete the suite from underneath
+        // every other slice.
+        let file_owner = if is_project_architecture(&path) {
+            ResourceOwner::ProjectArchitecture
+        } else {
+            owner.clone()
+        };
+        claim(
+            &mut desired,
+            &file_owner,
+            key.clone(),
+            ResourceValue::WholeFile,
+        )?;
         desired.files.push(DesiredFile {
             path,
             body: DesiredBody::Bytes(artifact.contents.as_bytes().into()),
@@ -218,6 +232,12 @@ pub fn contribution(
         }
     }
     Ok(desired)
+}
+
+fn is_project_architecture(path: &ProjectPath) -> bool {
+    path.as_str() == ".jails/architecture.toml"
+        || path.as_str() == "src/test/resources/archunit.properties"
+        || path.as_str().ends_with("/ArchitectureTest.java")
 }
 
 /// Claim the `@Import` this capability needs on every `@SpringBootTest` there

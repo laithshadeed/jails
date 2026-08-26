@@ -51,13 +51,14 @@ fn snapshot(dir: &Path) -> BTreeMap<String, String> {
     found
 }
 
-/// The two `.jails/` files a golden snapshot holds.
+/// The project-owned `.jails/` files a golden snapshot holds.
 ///
 /// `ledger.toml` is jails' registry and `app.toml` is the reader's manifest.
+/// `architecture.toml` is the reviewable project architecture policy.
 /// Everything else under `.jails/` is the executor's, and is listed in
 /// [`EXECUTOR_STATE`] rather than excluded by a wildcard, so a new one is a
 /// deliberate entry rather than a silent omission.
-const REGISTRY_FILES: [&str; 2] = ["ledger.toml", "app.toml"];
+const SNAPSHOTTED_PROJECT_FILES: [&str; 3] = ["ledger.toml", "app.toml", "architecture.toml"];
 
 /// The executor's own state, which is never snapshotted.
 ///
@@ -256,8 +257,8 @@ fn the_goldens_still_hold_the_properties_that_matter() {
     for (scenario, entries) in &bookkeeping {
         for entry in entries {
             assert!(
-                REGISTRY_FILES.contains(&entry.as_str()),
-                "{scenario}: `.jails/{entry}` is neither the registry nor \
+                SNAPSHOTTED_PROJECT_FILES.contains(&entry.as_str()),
+                "{scenario}: `.jails/{entry}` is neither project-owned source nor \
                  the executor's bookkeeping. A second registry growing back \
                  is exactly what rung 8 closed; a new executor path belongs \
                  in EXECUTOR_STATE with the reason it is not snapshotted."

@@ -34,7 +34,10 @@ pub(crate) fn scaffold_artifacts(
     // `scaffold_artifacts_from_fields`, which reads the referenced record's
     // stored `@pk` and names the two commands that do the job. A generic
     // refusal here would shadow that one and teach nothing.
-    scaffold_artifacts_from_fields(slice, name, &parsed, indexes, !reusing_record)
+    let mut artifacts =
+        scaffold_artifacts_from_fields(slice, name, &parsed, indexes, !reusing_record)?;
+    artifacts.extend(crate::architecture::artifacts(slice.project()));
+    Ok(artifacts)
 }
 
 pub(crate) fn scaffold_artifacts_from_fields(

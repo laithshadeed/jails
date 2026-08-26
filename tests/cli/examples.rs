@@ -233,8 +233,8 @@ fn unheld_maven_example_manifest_passes_real_verification() {
     assert_eq!(
         maven_report_summary(root, "surefire-reports"),
         MavenReportSummary {
-            reports: 16,
-            tests: 44,
+            reports: 17,
+            tests: 50,
             failures: 0,
             errors: 0,
             skipped: 0,

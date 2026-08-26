@@ -178,9 +178,13 @@ pub fn plan_recipe(
         change.deps.push(crate::pom::assertj(project.flavor()));
     }
     match kind {
-        ArtifactKind::Dto | ArtifactKind::Scaffold => change
+        ArtifactKind::Dto => change
             .deps
             .push(*crate::spring::validation_dependency(project.flavor())),
+        ArtifactKind::Scaffold => change.deps.extend([
+            *crate::spring::validation_dependency(project.flavor()),
+            crate::architecture::ARCHUNIT_JUNIT5,
+        ]),
         ArtifactKind::Client => change.deps.push(crate::spring::RESTCLIENT_STARTER),
         ArtifactKind::Fetcher => change.deps.extend([
             crate::spring::APACHE_HTTPCLIENT,
