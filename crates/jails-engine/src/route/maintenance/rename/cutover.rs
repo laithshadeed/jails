@@ -548,7 +548,7 @@ pub(super) fn complete_storage_rename(
         old_version_retired,
     };
     request.validate()?;
-    let set = complete_storage_set(&store, applied, change, request.clone())?;
+    let set = super::resource::complete_storage_set(&store, applied, change, request.clone())?;
     let asked = Asked::new(
         CanonicalMutationRequest::CompleteStorageRename(request),
         &["rename", "storage"],

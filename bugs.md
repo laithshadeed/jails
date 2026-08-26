@@ -59,7 +59,7 @@ Closed by `e3c7041`, mid-pass:
 - **B43** `jails add format` re-records the bytes `spotless:apply` rewrites, so
   `doctor` goes from eight unexplained drift warnings to `26 checks, all clear`.
 
-**Still broken, re-reproduced verbatim at `e3c7041`:** B2, B5, B14, B18, B20,
+**Still broken, re-reproduced verbatim at `e3c7041`:** B5, B14, B18, B20,
 B22, B41.
 
 Closed after that pass, in the same session:
@@ -69,6 +69,13 @@ Closed after that pass, in the same session:
   used to throw the failure out of the publish-by-rename, discarding the whole
   scratch tree -- so a compose service that would not start left `ledger
   create` in the report and no directory at all.
+- **B2** `rename resource <Name> <New> --strategy preserve-table` takes a bare
+  name -- demanding `<slice>.<current-name>` made the one path that carries the
+  storage unreachable from every imperative project -- and keeps the resource's
+  package, so `resource status` reports `consistent` and the next `g field`
+  migrates `members` rather than a `readers` that was never created. The
+  textual `jails rename` refuses a storage-backed resource by name and points
+  at the strategy that fits.
 - **B37** `destroy association` retires the row and appends `drop constraint`,
   which is the *next* migration rather than the un-running of one -- so the
   deadlock is gone in both directions and the whole lineage still applies
@@ -132,51 +139,6 @@ blocked-recovery state, so the machinery exists. A publish that cannot complete
 must roll back or roll forward, never stop half-applied. And `resource repair`
 must distinguish *bytes jails wrote and lost track of* from *bytes jails wrote
 and should never have written*; today both are "adopt what is on disk".
-
----
-
-## B2 — a rename leaves the schema lineage pointing at the old table, and both oracles stay green
-
-**Severity: critical.** *The rename now commits, which is new; what it does not
-do is carry the storage with it.*
-
-```
-jails new b1 --offline --no-git && cd b1 && jails add db
-jails g scaffold Member id:uuid@pk name:string! email:string@unique
-jails rename Member Reader --force        # exit 0, files and companions renamed
-jails g field Reader nickname:string?     # exit 0
-```
-
-Afterwards:
-
-```
-migrations : V001__create_members.sql           <- creates table `members`
-             V002__add_nickname_to_readers.sql  <- alters table `readers`
-adapter    : select … from readers / insert into readers
-status     : resource status Reader -> state: consistent
-doctor     : 25 checks, all clear.
-```
-
-There is no `alter table members rename to readers`, and no create migration for
-`readers`. Flyway will stop on V002 with `relation "readers" does not exist`. The
-project cannot start, and the two commands whose job is to say so both report
-health.
-
-The ledger half of the old report survives in a new form: immediately after the
-rename, `jails resource status Member` reports the *old* identity as
-`state: source-diverged, declaration: absent` while `resource status Reader`
-reports `consistent`. Two identities, one entity.
-
-`jails rename resource <from> <to> --strategy preserve-table` — the command
-built for this — is unreachable from an ordinary project: it wants a
-`<slice>.<current-name>` selector (`fix: use <slice>.<current-name>, for example
-Billing.Task`) and no imperative project has slices, so every spelling tried
-returns `no managed resource matches`.
-
-**Expected:** either the legacy rename refuses on a storage-backed entity, or it
-plans the storage move. Committing the Java half alone produces exactly the
-DB/code divergence this file exists to chase, and it is the only path that
-produces it with no error at all.
 
 ---
 

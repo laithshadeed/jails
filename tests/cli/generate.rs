@@ -931,8 +931,16 @@ fn task_scaffold_cannot_rewrite_or_delete_its_published_v001() {
     );
 }
 
+/// Renaming a resource carries the storage, or refuses.
+///
+/// The textual rename carries the Java and nothing else. On a storage-backed
+/// entity that is not a partial success but a divergence: the adapter is
+/// rewritten to `select ... from readers`, the schema history still creates
+/// `members`, and both oracles report health because every file is
+/// byte-identical to what jails wrote and every migration applies. Flyway then
+/// stops the application on the first query.
 #[test]
-fn legacy_rename_captures_storage_and_records_the_renamed_output_base() {
+fn renaming_a_storage_backed_resource_keeps_its_table_or_refuses() {
     let root = temp_dir("legacy-rename-recorded-bases");
     write_spring_fixture(&root);
     fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
@@ -944,23 +952,79 @@ fn legacy_rename_captures_storage_and_records_the_renamed_output_base() {
     assert!(scaffold.status.success(), "{scaffold:?}");
     let create = root.join("src/main/resources/db/migration/V001__create_members.sql");
     let sealed = fs::read(&create).unwrap();
-    let renamed = jails_cmd(&root, None)
+
+    // The textual rename refuses, and names the command that plans both
+    // halves rather than leaving the reader to discover a second verb.
+    let refused = jails_cmd(&root, None)
         .args(["rename", "Member", "Reader", "--force"])
         .output()
         .unwrap();
-    assert!(renamed.status.success(), "{renamed:?}");
-    assert_eq!(fs::read(&create).unwrap(), sealed);
+    assert_eq!(refused.status.code(), Some(1), "{refused:?}");
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(stderr.contains("backed by table `members`"), "{stderr}");
+    assert!(
+        stderr.contains("jails rename resource Member Reader --strategy preserve-table"),
+        "{stderr}"
+    );
+
+    // The coordinated rename takes a bare name. Demanding `<slice>.<name>`
+    // made it unreachable from every imperative project, so the one path that
+    // carries the storage could not be run at all.
+    let renamed = jails_cmd(&root, None)
+        .args([
+            "rename",
+            "resource",
+            "Member",
+            "Reader",
+            "--strategy",
+            "preserve-table",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        renamed.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&renamed.stdout),
+        String::from_utf8_lossy(&renamed.stderr)
+    );
+    assert_eq!(fs::read(&create).unwrap(), sealed, "V001 is append-only");
+
+    // Coherent afterwards: the adapter still queries the table the migration
+    // history creates, and the recorded identity says so.
+    let adapter = fs::read_to_string(
+        root.join("src/main/java/com/example/demo/adapters/JdbcReaderRepository.java"),
+    )
+    .unwrap();
+    assert!(adapter.contains("from members"), "{adapter}");
+    assert!(!adapter.contains("readers"), "{adapter}");
+    let status = jails_cmd(&root, None)
+        .args(["resource", "status", "Reader"])
+        .output()
+        .unwrap();
+    let status = String::from_utf8_lossy(&status.stdout);
+    assert!(status.contains("state: consistent"), "{status}");
+    assert!(status.contains("table: members"), "{status}");
+
+    // And the next field evolution migrates the table that is actually there.
     let evolved = jails_cmd(&root, None)
         .args(["g", "field", "Reader", "nickname:string?"])
         .output()
         .unwrap();
     assert!(evolved.status.success(), "{evolved:?}");
     assert!(
+        root.join("src/main/resources/db/migration/V002__add_nickname_to_members.sql")
+            .is_file(),
+        "{}",
+        String::from_utf8_lossy(&evolved.stdout)
+    );
+    assert!(
         fs::read_to_string(root.join("src/main/java/com/example/demo/domain/Reader.java"))
             .unwrap()
             .contains("nickname")
     );
 
+    // A source-only resource has no storage to carry, so the textual rename
+    // is still exactly right for it.
     let record = jails_cmd(&root, None)
         .args(["g", "record", "Note", "body:string!"])
         .output()

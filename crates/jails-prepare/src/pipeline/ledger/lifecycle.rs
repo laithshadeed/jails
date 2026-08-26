@@ -317,7 +317,13 @@ fn record_resource_rename(
     let EntitySpec::Intent(spec) = &renamed.spec else {
         return Err("direct resource rename produced a non-intent specification.\n       fix: reconcile the resource declaration before retrying".into());
     };
-    let renamed_path = JavaType::new(id.package.clone(), id.name.clone());
+    // The *package the resource is in*, with only the name swapped. A rename
+    // moves a type's name, not its layer -- and `IntentId::package` is the
+    // project's base package rather than the one the generator placed the file
+    // in, so building the path from it dropped `.domain` and left
+    // `resource status` reporting the renamed resource's own source as
+    // missing, at a path nothing had ever written.
+    let renamed_path = JavaType::new(lifecycle.expected_path.package().clone(), id.name.clone());
 
     match request.strategy {
         RenameStrategy::PreserveTable => {

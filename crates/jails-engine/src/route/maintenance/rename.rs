@@ -4,8 +4,10 @@
 use super::*;
 
 mod cutover;
+mod resource;
 mod source;
 use cutover::{prepare_cutover, prepare_owned_object_renames, validate_cutover_sql};
+pub use resource::{RenameResourceInvocation, rename_resource, rename_storage};
 use source::{
     carried_resource_reads, rename_destination, renamed_entities, validate, walked_directories,
 };
@@ -45,7 +47,40 @@ use source::{
 /// A file added under `src/` between planning and committing changes a
 /// captured listing, and a rename that would silently skip it fails instead.
 pub fn rename(run: &Run, old: &str, new: &str, force: bool) -> Result<Outcome> {
+    refuse_storage_backed(run, old, new)?;
     rename_with(run, old, new, force, None)
+}
+
+/// Refuse the textual rename for a resource that owns a table.
+///
+/// The textual rename carries the Java and nothing else. On a storage-backed
+/// entity that is not a partial success, it is a divergence: the adapter is
+/// rewritten to `select ... from readers`, the schema history still creates
+/// `members`, no migration renames anything -- and both oracles report health,
+/// because every file is byte-identical to what jails wrote and every
+/// migration applies. Flyway then stops the application on the first query.
+///
+/// `rename resource` is the command that plans both halves, so this names it
+/// with the strategy spelled out rather than leaving the reader to discover
+/// that a whole second verb exists.
+fn refuse_storage_backed(run: &Run, old: &str, new: &str) -> Result<()> {
+    let store = observed(run.project())?;
+    let Some(lifecycle) = store.lifecycles().iter().find(|lifecycle| {
+        lifecycle.expected_path.name().as_str() == old && lifecycle.table.is_some()
+    }) else {
+        return Ok(());
+    };
+    let table = lifecycle
+        .table
+        .as_ref()
+        .map(|binding| binding.table.as_str().to_string())
+        .unwrap_or_default();
+    Err(format!(
+        "`{old}` is backed by table `{table}`, and this rename carries only the Java.\n       \
+         fix: keep the table with `jails rename resource {old} {new} --strategy preserve-table`, \
+         or move it with `--strategy single-cutover --table <new-table>`."
+    )
+    .into())
 }
 
 fn rename_with(
@@ -404,249 +439,6 @@ fn rename_with(
         ),
     };
     commit_set(run, set, &reads, &asked)
-}
-
-/// Resource-oriented spelling of rename.
-///
-/// The selector is deliberately parsed before the legacy identifier planner
-/// runs, so `Billing.Task` cannot be mistaken for a Java package-qualified
-/// textual rename. The storage-specific plan is added by the coordinated
-/// planner; until then only the already-complete preserve-table transition is
-/// accepted here.
-pub struct RenameResourceInvocation<'a> {
-    pub selector: &'a str,
-    pub new: &'a str,
-    pub strategy: jails_protocol::request::RenameStrategy,
-    pub target_table: Option<&'a str>,
-    pub api: jails_protocol::request::ExternalRenamePolicy,
-    pub target_route: Option<&'a str>,
-    pub force: bool,
-}
-
-pub fn rename_resource(run: &Run, invocation: RenameResourceInvocation<'_>) -> Result<Outcome> {
-    let RenameResourceInvocation {
-        selector,
-        new,
-        strategy,
-        target_table,
-        api,
-        target_route,
-        force,
-    } = invocation;
-    let (slice, current) = selector.split_once('.').ok_or_else(|| {
-        format!(
-            "`{selector}` is not a resource selector.\n       fix: use `<slice>.<current-name>`, for example `Billing.Task`"
-        )
-    })?;
-    if slice.is_empty() || current.is_empty() || current.contains('.') {
-        return Err(format!(
-            "`{selector}` is not a resource selector.\n       fix: use exactly `<slice>.<current-name>`, for example `Billing.Task`"
-        )
-        .into());
-    }
-    validate(current, new)?;
-    let target_table = target_table
-        .map(jails_protocol::identity::SqlName::parse)
-        .transpose()?;
-    let route = target_route
-        .map(jails_protocol::application::RoutePath::parse)
-        .transpose()?;
-    let project = run.project();
-    let store = observed(project)?;
-    let mut candidates = store
-        .ledger
-        .iter()
-        .flat_map(|ledger| ledger.applied.iter())
-        .filter_map(|applied| match (&applied.id, &applied.version.spec) {
-            (EntityId::Intent(id), EntitySpec::Intent(_)) if id.name.as_str() == current => {
-                let path = store
-                    .lifecycles()
-                    .iter()
-                    .find(|lifecycle| lifecycle.entity == applied.id)
-                    .map(|lifecycle| lifecycle.expected_path.clone())
-                    .unwrap_or_else(|| JavaType::new(id.package.clone(), id.name.clone()));
-                Some((applied.id.clone(), path))
-            }
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    if candidates.len() > 1 {
-        let wanted = slice.to_ascii_lowercase();
-        candidates.retain(|(_, path)| {
-            path.package()
-                .as_str()
-                .rsplit('.')
-                .any(|part| part.eq_ignore_ascii_case(&wanted))
-        });
-    }
-    let [(entity, expected_path)] = candidates.as_slice() else {
-        return Err(match candidates.len() {
-            0 => format!(
-                "no managed resource matches `{selector}`.\n       fix: inspect `jails resource status`, then use its exact slice and current name"
-            ),
-            count => format!(
-                "`{selector}` matches {count} managed resources.\n       fix: use the slice that uniquely identifies the resource"
-            ),
-        }
-        .into());
-    };
-    let lifecycle = store
-        .lifecycles()
-        .iter()
-        .find(|lifecycle| lifecycle.entity == *entity)
-        .ok_or_else(|| {
-            format!(
-                "`{selector}` has no adopted resource lifecycle.\n       fix: run `jails resource status {current}` to adopt and inspect its storage binding"
-            )
-        })?;
-    let current_table = lifecycle.table.as_ref().ok_or_else(|| {
-        format!(
-            "`{selector}` has no explicit table binding.\n       fix: adopt its storage binding before a coordinated rename"
-        )
-    })?;
-    if lifecycle.expected_path != *expected_path {
-        return Err(format!(
-            "`{selector}` is stale: the lifecycle path is `{}`.\n       fix: rerun the rename with the current resource path",
-            lifecycle.expected_path.qualified()
-        )
-        .into());
-    }
-    let request = jails_protocol::request::RenameResourceRequestV1 {
-        entity: entity.clone(),
-        expected_path: expected_path.clone(),
-        new_name: Name::parse(new)?,
-        strategy,
-        target_table: target_table.clone(),
-        api,
-        target_route: route,
-    };
-    request.validate()?;
-    if api == jails_protocol::request::ExternalRenamePolicy::Rename {
-        return Err("`--api rename` requires the contract compatibility planner.\n       fix: omit it to preserve routes, JSON names, operation IDs, events, and error codes".into());
-    }
-    match strategy {
-        jails_protocol::request::RenameStrategy::PreserveTable => {
-            if target_table.is_some() {
-                return Err("`--table` is not used by `preserve-table`.\n       fix: omit `--table`; the current physical binding will be retained".into());
-            }
-            println!("physical-table-preserved: {}", current_table.table.as_str());
-            rename_with(
-                run,
-                current,
-                new,
-                force,
-                Some((selector.to_string(), request)),
-            )
-        }
-        jails_protocol::request::RenameStrategy::SingleCutover => {
-            let conventional_current =
-                jails_protocol::identity::SqlName::conventional_table(&Name::parse(current)?);
-            let target = match target_table {
-                Some(target) => target,
-                None if current_table.table == conventional_current => {
-                    jails_protocol::identity::SqlName::conventional_table(&Name::parse(new)?)
-                }
-                None => {
-                    return Err(format!(
-                        "`{selector}` has explicit table binding `{}`.\n       fix: pass `--table <target-table>` or use `--strategy preserve-table`",
-                        current_table.table.as_str()
-                    )
-                    .into());
-                }
-            };
-            if target == current_table.table {
-                return Err(format!(
-                    "target table `{}` is already the current binding.\n       fix: choose a distinct target table or use `--strategy preserve-table`",
-                    target.as_str()
-                )
-                .into());
-            }
-            let mut request = request;
-            request.target_table = Some(target);
-            rename_with(
-                run,
-                current,
-                new,
-                force,
-                Some((selector.to_string(), request)),
-            )
-        }
-        jails_protocol::request::RenameStrategy::Rolling => {
-            let conventional_current =
-                jails_protocol::identity::SqlName::conventional_table(&Name::parse(current)?);
-            let target = match target_table {
-                Some(target) => target,
-                None if current_table.table == conventional_current => {
-                    jails_protocol::identity::SqlName::conventional_table(&Name::parse(new)?)
-                }
-                None => {
-                    return Err(format!(
-                        "`{selector}` has explicit table binding `{}`.\n       fix: pass `--table <target-table>` or use `--strategy preserve-table`",
-                        current_table.table.as_str()
-                    )
-                    .into());
-                }
-            };
-            if target == current_table.table {
-                return Err(format!(
-                    "target table `{}` is already the current binding.\n       fix: choose a distinct target table or use `--strategy preserve-table`",
-                    target.as_str()
-                )
-                .into());
-            }
-            let mut request = request;
-            request.target_table = Some(target);
-            let campaign = request.campaign_id()?;
-            let outcome = rename_with(
-                run,
-                current,
-                new,
-                force,
-                Some((selector.to_string(), request)),
-            )?;
-            println!("rename-campaign: {}", campaign.to_hex());
-            println!(
-                "next: jails rename storage {slice}.{new} --complete {} --old-version-retired",
-                campaign.to_hex()
-            );
-            Ok(outcome)
-        }
-    }
-}
-
-pub fn rename_storage(
-    run: &Run,
-    selector: &str,
-    campaign: &str,
-    old_version_retired: bool,
-    force: bool,
-) -> Result<Outcome> {
-    cutover::complete_storage_rename(run, selector, campaign, old_version_retired, force)
-}
-
-fn complete_storage_set(
-    store: &ObservedStore,
-    applied: &jails_protocol::record::AppliedEntity,
-    change: DesiredChange,
-    request: jails_protocol::request::CompleteStorageRenameRequestV1,
-) -> Result<DesiredChangeSet> {
-    let set = DesiredChangeSet {
-        ledger_intent: LedgerIntent {
-            generation_before: store.generation(),
-            entities_after: vec![jails_protocol::plan::DesiredAppliedEntity {
-                id: applied.id.clone(),
-                spec: applied.version.spec.clone(),
-                owners: applied.owners.clone(),
-            }],
-            one_shots_after: Vec::new(),
-            resources_after: change.resources.clone(),
-            entities_removed: Vec::new(),
-        },
-        ordered: vec![change],
-        subject: PlannedSubject::CompleteStorageRename(Box::new(request)),
-    };
-    set.validate()?;
-    Ok(set)
 }
 
 fn rename_strategy_name(strategy: jails_protocol::request::RenameStrategy) -> &'static str {

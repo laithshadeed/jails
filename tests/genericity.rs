@@ -107,6 +107,9 @@ const ALLOWED: &[AllowedConcept] = &[
             // A rename's identity transition is read out of the ledger's
             // applied rows, which is what names the entities being renamed.
             "crates/jails-engine/src/route/maintenance/rename/source.rs",
+            // The coordinated verbs resolve their subject against the ledger
+            // and guard the generation the campaign was planned from.
+            "crates/jails-engine/src/route/maintenance/rename/resource.rs",
             "crates/jails-engine/src/route/oneshot.rs",
             // Reading the store *is* reading `ledger.toml`, and the reader
             // cannot name the file it opens without naming it.
