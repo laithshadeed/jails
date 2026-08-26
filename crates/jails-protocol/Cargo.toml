@@ -8,6 +8,9 @@ edition.workspace = true
 # recorded spelling -- routed through clap's own table rather than a second
 # match, so the two cannot disagree about what a ledger row names.
 clap.workspace = true
+# `SqlName`'s two conventional spellings go through the one `snake_case`, which
+# lives at the layer that owns identifier spelling. plan.md P3.2.
+jails-java.workspace = true
 jails-spec.workspace = true
 jails-support.workspace = true
 

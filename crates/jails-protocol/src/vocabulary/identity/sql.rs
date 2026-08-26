@@ -1,5 +1,6 @@
 use super::Name;
 use crate::Result;
+use jails_java::identifier::snake_case;
 use jails_support::codec::{Codec, Decoder, Encoder};
 
 /// A validated unquoted SQL identifier used at destructive lifecycle
@@ -162,26 +163,6 @@ fn plural_snake_case(value: &str) -> String {
     } else {
         format!("{base}s")
     }
-}
-
-fn snake_case(value: &str) -> String {
-    let chars: Vec<char> = value.chars().collect();
-    let mut out = String::with_capacity(value.len() + 4);
-    for (index, &character) in chars.iter().enumerate() {
-        if character.is_uppercase() {
-            let starts_run = index > 0 && !chars[index - 1].is_uppercase();
-            let ends_run = index > 0
-                && chars[index - 1].is_uppercase()
-                && chars.get(index + 1).is_some_and(|next| next.is_lowercase());
-            if starts_run || ends_run {
-                out.push('_');
-            }
-            out.extend(character.to_lowercase());
-        } else {
-            out.push(character);
-        }
-    }
-    out
 }
 
 fn irregular_plural(word: &str) -> Option<&'static str> {

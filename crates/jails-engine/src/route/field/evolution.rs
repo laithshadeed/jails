@@ -183,8 +183,14 @@ pub(super) fn evolve_existing(
     // so appending `alter table <plural>` for it would publish a migration
     // naming a table the project has never created, which is unappliable
     // everywhere and reported nowhere.
+    //
+    // An *empty* body is the second case with no migration, and it is a
+    // different fact: `--column preserve` moves the Java name and leaves the
+    // column, so there is storage and nothing for it to run. Writing the file
+    // anyway would put a checksum in Flyway's history asserting a change that
+    // never happened. plan.md P3.2.
     let mut migration = None;
-    if expected_table.is_some() {
+    if expected_table.is_some() && !migration_body.is_empty() {
         let directory = ProjectPath::parse("src/main/resources/db/migration")?;
         if !project.root().join(directory.as_str()).is_dir() {
             return Err("field evolution requires `src/main/resources/db/migration`.\n       fix: add Flyway or scaffold the resource before evolving it.".into());
@@ -218,9 +224,14 @@ pub(super) fn evolve_existing(
     let mut reads = primary_reads.merge(companions.reads);
     if let Some((directory, path, _)) = &migration {
         reads = reads.directory(directory.clone()).file(path.clone());
-        for recorded in recorded_migrations(store, &id) {
-            reads = reads.file(recorded);
-        }
+    }
+    // Observed whether or not this command appends one. A sealed migration is
+    // read by the coherence check on every field evolution, and a
+    // `--column preserve` rename writes none -- so gating this on `migration`
+    // made the one path with no new migration plan against files it had not
+    // observed. plan.md P3.2.
+    for recorded in recorded_migrations(store, &id) {
+        reads = reads.file(recorded);
     }
     if let DataEvolution::ReaderOwnedSql(path) = &data {
         reads = reads.file(path.clone());

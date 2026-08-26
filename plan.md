@@ -253,13 +253,25 @@ commit as the change that causes it.
       column-collision refusal and the duplicate-name refusal collapsed into
       one branch, since two distinct `FieldName`s can no longer share a
       column.
-- [ ] **P3.2** Recorded `ColumnBinding` — a `(EntityId, field name) → column
+- [x] **P3.2** Recorded `ColumnBinding` — a `(EntityId, field name) → column
       name` pair per managed entity, written at create time and consulted by
       every SQL projection instead of re-deriving. `TableBinding` already does
       this at the entity level. Unblocks research §3.10 `--column preserve` (a
       ledger edit with no migration; `single-cutover` becomes that edit plus a
       forward `alter table … rename column`) and gives P0's coherence check a
       binding to compare *through*. Delete research.md §3.10 and roadmap item 5.
+      Landed as the pair inside `FieldName` rather than a table beside it: the
+      binding is per `(EntityId, field)` because it rides in that entity's
+      recorded `FieldSpec`, which is one place rather than two.
+      `@column(<sql_name>)` is the canonical spelling, emitted **only** when
+      convention can no longer produce the column — without it every re-plan
+      through `evolve_existing`'s canonical field tokens would derive the
+      column straight back. `Field` carries the column now and `sql::column`
+      reads it, and the one `snake_case` moved down to `jails-java` so
+      `jails-spec` and `jails-protocol` share it rather than owning a copy
+      each. The ledger payload codec is `-3`; `-1` and `-2` are refused by
+      name, since a payload carrying only the Java half has no second value
+      to promote.
 - [ ] **P3.3** `findById` is typed on the primary key, not on `String` (modern
       §13.5 — 11 of 12 generated ports, and in `my-minicom` two ports over two
       tables in one app disagree). Thread the `@pk` field's Java type through

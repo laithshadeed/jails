@@ -113,7 +113,17 @@ pub fn add_field_with_data(
     )
 }
 
-/// Rename a logical field and its physical column in one explicit cutover.
+/// Rename a logical field, either cutting the column over with it or leaving
+/// the column where a live database already has it.
+///
+/// **`--column preserve` is the reason a field name is a recorded pair.** A
+/// rename is a source edit; renaming the column under it is a migration a
+/// table under load may not be able to afford, and forcing the two to happen
+/// together is what deriving the column from the name costs. Preserving is
+/// therefore a ledger edit with no migration at all -- the recorded binding
+/// carries `accountId -> user_id` from then on, and `@column(user_id)` is how
+/// it survives every re-plan that round-trips a canonical field token.
+/// plan.md P3.2.
 pub fn rename_field(
     run: &Run,
     target: &str,
@@ -122,14 +132,8 @@ pub fn rename_field(
     column: ColumnRenamePolicy,
     package: Option<&str>,
 ) -> Result<Outcome> {
-    match column {
-        ColumnRenamePolicy::SingleCutover => {}
-        ColumnRenamePolicy::Preserve => {
-            return Err("`--column preserve` needs a recorded logical-to-physical column binding.\n       fix: use `--column single-cutover`, or wait until the binding model is available.".into());
-        }
-        ColumnRenamePolicy::Rolling => {
-            return Err("`--column rolling` needs an expand/contract campaign and cannot be reduced to one migration.\n       fix: use `--column single-cutover`, or run the rolling campaign manually.".into());
-        }
+    if column == ColumnRenamePolicy::Rolling {
+        return Err("`--column rolling` needs an expand/contract campaign and cannot be reduced to one migration.\n       fix: use `--column single-cutover` to move the column now, `--column preserve` to leave it, or run the rolling campaign manually.".into());
     }
 
     let project = run.project();
@@ -154,6 +158,13 @@ pub fn rename_field(
         .find(|candidate| candidate.name == field)
         .ok_or_else(|| unknown_field(&id, &field, spec.fields()))?;
     let from = changed.name.column().as_str().to_string();
+    // Preserve rebinds the *existing* column under the new Java name;
+    // single-cutover takes the name's own conventional column and moves the
+    // database to it.
+    let renamed = match column {
+        ColumnRenamePolicy::Preserve => changed.name.rebound(&new_name)?,
+        _ => renamed,
+    };
     changed.name = renamed.clone();
     let mut after = spec.clone();
     after.arguments = IntentArguments::Fields(fields);
@@ -165,7 +176,18 @@ pub fn rename_field(
         }
     }
     let to = renamed.column().as_str();
-    let body = jails_generate::sql::rename_column(id.name.as_str(), &from, to);
+    // Preserve writes no migration: the column has not moved, so there is
+    // nothing for a database to run. An empty body is what `evolve_existing`
+    // reads as "no one-shot", and writing a no-op `alter table` instead would
+    // put a checksum in Flyway's history asserting a change that never
+    // happened -- the same defect plan.md P2.6 closed for `g migration`.
+    let (body, slug) = match column {
+        ColumnRenamePolicy::Preserve => (String::new(), format!("rebind_{from}_to_{new_name}")),
+        _ => (
+            jails_generate::sql::rename_column(id.name.as_str(), &from, to),
+            format!("rename_{from}_to_{to}"),
+        ),
+    };
     evolve_existing(
         run,
         &store,
@@ -180,9 +202,18 @@ pub fn rename_field(
         },
         DataEvolution::None,
         body,
-        &format!("rename_{from}_to_{to}"),
+        &slug,
         vec![target.to_string(), field.to_string(), new_name.to_string()],
-        BTreeMap::from([("column".to_string(), vec!["single-cutover".to_string()])]),
+        BTreeMap::from([(
+            "column".to_string(),
+            vec![
+                match column {
+                    ColumnRenamePolicy::Preserve => "preserve",
+                    _ => "single-cutover",
+                }
+                .to_string(),
+            ],
+        )]),
     )
 }
 

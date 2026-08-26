@@ -88,7 +88,10 @@ pub fn columns(
 }
 
 fn column(field: &Field, project: &crate::model::Project, pkg: &str, receiver: &str) -> Column {
-    let name = snake_case(&field.name);
+    // Read, not re-derived. plan.md P3.2: after a `--column preserve` rename
+    // the two halves no longer agree, and snake-casing the Java name here
+    // would quietly contradict the binding the ledger records.
+    let name = field.column.clone();
     let accessor = format!("{receiver}.{}()", field.name);
     // `?` means the component is an Optional<T>; the column is nullable and
     // the value has to be unwrapped on the way out and re-wrapped on the way

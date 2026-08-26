@@ -5,8 +5,9 @@ test_daemon	jails.testd.v1	compatibility	jails-drive + JailsTestDaemon.java	refu
 test_daemon_v2	jails.testd.v2	current	jails-protocol + jails-drive + JailsTestDaemon.java	length prefix, canonical codec, authenticated project binding
 sql_contract	jails.sql-contract.v1	reserved	jails-protocol	no reader or writer exists yet
 ledger_envelope	schema=2	current	jails-protocol	refuse before payload decode; instruct upgrade
-ledger_payload_v1	jails-ledger-payload-1	read-only	jails-protocol	decode with an empty lifecycle registry; rewrite as v2 on commit
-ledger_payload_v2	jails-ledger-payload-2	current	jails-protocol	refuse before payload decode; instruct upgrade
+ledger_payload_v1	jails-ledger-payload-1	superseded	jails-protocol	refuse by name before payload decode; no translation exists
+ledger_payload_v2	jails-ledger-payload-2	superseded	jails-protocol	refuse by name before payload decode; no translation exists
+ledger_payload_v3	jails-ledger-payload-3	current	jails-protocol	refuse before payload decode; instruct upgrade
 transaction_journal	JAILS-JOURNAL-1\0	current	jails-commit	refuse before recovery; instruct upgrade
 transaction_receipt	JAILS-RECEIPT-1\0	current	jails-commit	refuse before acceptance; instruct upgrade
 prepared_plan	jails.prepared-plan.v1	current	jails-engine	refuse unknown schema/protocol/tool version before lock or project write

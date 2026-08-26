@@ -42,7 +42,7 @@
 use crate::Result;
 use crate::compatibility::{
     DURABLE_ENVELOPE_SCHEMA as SCHEMA, DURABLE_PAYLOAD_CODEC as PAYLOAD_CODEC,
-    DURABLE_PAYLOAD_CODEC_V1 as LEGACY_PAYLOAD_CODEC,
+    DURABLE_PAYLOAD_CODEC_SUPERSEDED as SUPERSEDED_CODECS,
 };
 use jails_support::codec;
 
@@ -130,9 +130,19 @@ pub fn parse(source: &str) -> Result<Vec<u8>> {
         .into());
     }
     let declared_codec = quoted(value_of(lines[1], "codec")?)?;
-    if declared_codec != PAYLOAD_CODEC && declared_codec != LEGACY_PAYLOAD_CODEC {
+    if declared_codec != PAYLOAD_CODEC {
+        // A codec jails once wrote is named as such. "not mine" and "mine,
+        // one format ago" are different facts, and only the second one tells
+        // the reader that the file in front of them is a jails ledger.
+        let superseded = SUPERSEDED_CODECS.contains(&declared_codec);
+        let note = if superseded {
+            " That codec was written by an older jails and there is no translation to this one."
+        } else {
+            ""
+        };
         return Err(format!(
-            "ledger declares codec `{declared_codec}`, and this jails reads `{PAYLOAD_CODEC}`.\n       \
+            "ledger declares codec `{declared_codec}`, and this jails reads \
+             `{PAYLOAD_CODEC}`.{note}\n       \
              fix: upgrade jails to a version that supports that codec; this version will not \
              guess."
         )
@@ -548,7 +558,7 @@ mod tests {
         assert_eq!(
             source,
             "schema = 2\n\
-             codec = \"jails-ledger-payload-2\"\n\
+             codec = \"jails-ledger-payload-3\"\n\
              payload_len = 4\n\
              payload_sha256 = \
              \"5f78c33274e43fa9de5659265c1d917e25c03722dcb0b8d27db8d5feaa813953\"\n\
@@ -565,7 +575,7 @@ mod tests {
         assert_eq!(
             render(&[]).unwrap(),
             "schema = 2\n\
-             codec = \"jails-ledger-payload-2\"\n\
+             codec = \"jails-ledger-payload-3\"\n\
              payload_len = 0\n\
              payload_sha256 = \
              \"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"\n\
@@ -601,7 +611,22 @@ mod tests {
         let source = render(b"x")
             .unwrap()
             .replace(PAYLOAD_CODEC, "some-other-codec-1");
-        assert!(parse(&source).unwrap_err().contains("declares codec"));
+        let error = parse(&source).unwrap_err();
+        assert!(error.contains("declares codec"), "{error}");
+        assert!(!error.contains("older jails"), "{error}");
+    }
+
+    /// plan.md P3.2. A ledger this jails wrote one format ago is refused as
+    /// what it is, not as a stranger.
+    #[test]
+    fn a_superseded_codec_refuses_by_name() {
+        for superseded in SUPERSEDED_CODECS {
+            let source = render(b"x").unwrap().replace(PAYLOAD_CODEC, superseded);
+            let error = parse(&source).unwrap_err();
+            assert!(error.contains(superseded), "{error}");
+            assert!(error.contains("older jails"), "{error}");
+            assert!(error.contains("no translation"), "{error}");
+        }
     }
 
     /// Corruption is named, with something the reader can act on.
@@ -750,7 +775,7 @@ mod tests {
             pending_conflict: None,
         };
         let actual = ledger.render().unwrap();
-        let expected = include_str!("../../../../tests/protocol-golden/ledger-v2.toml");
+        let expected = include_str!("../../../../tests/protocol-golden/ledger-v3.toml");
         assert_eq!(actual, expected);
         assert_eq!(LedgerV2::parse_file(expected).unwrap(), ledger);
     }

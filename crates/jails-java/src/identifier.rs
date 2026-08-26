@@ -17,6 +17,38 @@
 
 use std::path::{Path, PathBuf};
 
+/// `transactionId` -> `transaction_id`. Runs of capitals stay together
+/// (`customerURL` -> `customer_url`) so an acronym does not explode into one
+/// underscore per letter.
+///
+/// **Here rather than beside the SQL names it produces**, because two layers
+/// need it and only one of them may depend on the other: `jails_spec` reads a
+/// record off disk and has to say which column each component is,
+/// `jails_protocol::identity::SqlName` validates the result, and `SqlName`
+/// sits above `jails_spec`. A second copy at the lower layer is the shape of
+/// every drift bug in this repository -- and this function is the one step
+/// that decides whether two spellings of a field are one field, so a copy
+/// that disagreed by a character would split them.
+pub fn snake_case(value: &str) -> String {
+    let chars: Vec<char> = value.chars().collect();
+    let mut out = String::with_capacity(value.len() + 4);
+    for (index, &character) in chars.iter().enumerate() {
+        if character.is_uppercase() {
+            let starts_run = index > 0 && !chars[index - 1].is_uppercase();
+            let ends_run = index > 0
+                && chars[index - 1].is_uppercase()
+                && chars.get(index + 1).is_some_and(|next| next.is_lowercase());
+            if starts_run || ends_run {
+                out.push('_');
+            }
+            out.extend(character.to_lowercase());
+        } else {
+            out.push(character);
+        }
+    }
+    out
+}
+
 /// Replace `old` with `new` wherever it appears as a whole identifier
 /// outside a string or character literal. Returns the new text and how many
 /// replacements were made.

@@ -286,31 +286,6 @@ for that named operation and after its exact diff is confirmed. New conflicts us
 a narrowly named `--accept-generated <operation-id>` only after the resulting
 diff is shown and becomes part of a new prepared bundle.
 
-### 3.10 The logical-to-physical column binding
-
-**Not built, and it is one refusal away from being reachable.**
-`jails-engine::route::field` refuses today with:
-
-```text
-jails: `--column preserve` needs a recorded logical-to-physical column binding.
-       fix: use `--column single-cutover`, or wait until the binding model is available.
-```
-
-So a field can be renamed in Java only by also renaming its column. That is the
-wrong default for a column with a live consumer — a view, a routine, a
-hand-written query, an external reader — and it is exactly the case
-`preserve-table` covers at the entity level.
-
-`TableBinding` exists for entities. The field-level equivalent is a recorded
-`(EntityId, field name) → column name` pair per managed entity, written at
-create time and consulted by every SQL projection instead of re-deriving the
-column from the field name. Once it exists, `--column preserve` is a ledger edit
-with no migration, and `single-cutover` is that edit plus a forward
-`alter table … rename column`.
-
-The same record is what makes §0.1's coherence check cheap: comparing a
-declaration to a schema needs a binding to compare *through*.
-
 ---
 
 ## Section 4: Remaining authoring work
@@ -547,17 +522,14 @@ contract test should land together or the layout changes twice.
 Six phases shipped. What is left is small enough to sequence in one list, ordered
 by leverage rather than by phase number.
 
-1. **The column binding** (§3.10). Unblocks `--column preserve`, and gives the
-   entity coherence check a recorded binding to compare *through* instead of
-   re-deriving the column from the field name.
-2. **The repository contract test** (§4.6). One interface, two adapters, one
+1. **The repository contract test** (§4.6). One interface, two adapters, one
    failing test when they drift.
-3. **Frozen conflict `continue`/`abort`** (§3.3). The durable state machine.
-4. **Slices** (§4.2), then the extended field grammar (§4.1), then policy
+2. **Frozen conflict `continue`/`abort`** (§3.3). The durable state machine.
+3. **Slices** (§4.2), then the extended field grammar (§4.1), then policy
    matrices (§4.7). In that order: the grammar and the policy form both name
    slices.
-5. **Gradle warm-engine parity** (§5.1), gated on installing a `gradle` binary.
-6. **Semantic readiness** (§2.4c), **service identity labels** (§2.4b),
+4. **Gradle warm-engine parity** (§5.1), gated on installing a `gradle` binary.
+5. **Semantic readiness** (§2.4c), **service identity labels** (§2.4b),
     **test-dependency hints** (§2.4a), **the shared source index** (§2.3) — each
     behind a dated measurement, not an assumption.
 

@@ -481,14 +481,38 @@ impl FieldSpec {
         let (name, rest) = token
             .split_once(':')
             .ok_or_else(|| format!("field `{token}` needs a `name:type`"))?;
-        // `FieldName` owns both renderings and every check that reads one
-        // of them -- the reserved words on the Java side, the PostgreSQL
-        // keywords on the SQL side. plan.md P3.1.
-        let name = FieldName::parse(name)?;
-
         let mut parts = rest.split('@');
         let head = parts.next().unwrap_or_default();
-        let markers: Vec<&str> = parts.collect();
+        let mut markers: Vec<&str> = parts.collect();
+        // `@column(user_id)` is the recorded binding, not a constraint: it
+        // changes which column this component reads and writes and nothing
+        // about the Java type or the DDL's shape. It is taken off the marker
+        // list here because `FieldConstraints` is a closed set of *table*
+        // facts and this is an identity fact. plan.md P3.2.
+        let mut bound: Option<&str> = None;
+        for marker in std::mem::take(&mut markers) {
+            match marker
+                .strip_prefix("column(")
+                .and_then(|rest| rest.strip_suffix(')'))
+            {
+                Some(column) if bound.is_some() => {
+                    return Err(format!(
+                        "`@column({column})` is the second physical column named on one \
+                         field.\n       fix: name it once."
+                    )
+                    .into());
+                }
+                Some(column) => bound = Some(column),
+                None => markers.push(marker),
+            }
+        }
+        // `FieldName` owns both renderings and every check that reads one of
+        // them -- the reserved words on the Java side, the PostgreSQL
+        // keywords on the SQL side. plan.md P3.1.
+        let name = match bound {
+            None => FieldName::parse(name)?,
+            Some(column) => FieldName::bound(name, column)?,
+        };
         let constraints = FieldConstraints::parse(&markers)?;
 
         // Suffix before or after the markers: `id:uuid@pk` and `id:uuid!@pk`
@@ -583,6 +607,7 @@ impl FieldSpec {
         };
         jails_spec::spec::derive_field(
             self.name.java(),
+            self.name.column().as_str(),
             &self.field_type.canonical(),
             optionality,
             constraints,
@@ -616,18 +641,29 @@ impl FieldSpec {
                 NumericConstraint::NonNegative => "nonnegative",
             });
         }
+        // Emitted only when convention can no longer produce it. A canonical
+        // form that always spelled the column would put a derivable fact in
+        // the record, and every existing recorded spec would change bytes for
+        // nothing; one that never spelled it would lose the binding the
+        // moment a re-plan round-tripped through this string, which is what
+        // `evolve_existing` does on every `resource field` command.
+        if !self.name.is_conventional() {
+            out.push_str("@column(");
+            out.push_str(self.name.column().as_str());
+            out.push(')');
+        }
         out
     }
 }
 
 /// Rules that only become visible after every component has been parsed.
 ///
-/// **One check, not two.** This used to compare the declared names and then
-/// compare their snake_case columns, because `userId` and `user_id` were two
-/// fields that shared one column. Under [`FieldName`] they are one field --
-/// the column is the normal form and the Java name is derived from it -- so
-/// the collision arrives here already collapsed, and the second check was a
-/// branch nothing could reach. plan.md P3.1.
+/// **Two checks, and the second is only reachable through `@column`.** Under
+/// [`FieldName`] a declared name and a snake_case column are one value -- the
+/// column is the normal form and the Java name is derived from it -- so
+/// `userId` and `user_id` arrive here already collapsed into one field. What
+/// can still put two fields on one column is an explicit binding, which is
+/// exactly the case convention cannot see. plan.md P3.1, P3.2.
 pub(super) fn validate_field_names(fields: &[FieldSpec]) -> Result<()> {
     for (index, field) in fields.iter().enumerate() {
         for previous in &fields[..index] {
@@ -635,6 +671,16 @@ pub(super) fn validate_field_names(fields: &[FieldSpec]) -> Result<()> {
                 return Err(format!(
                     "field `{}` is declared twice; it is one field with one Java name and one \
                      SQL column `{}`, however it is spelled.\n       fix: declare it once.",
+                    field.name,
+                    field.name.column().as_str()
+                )
+                .into());
+            }
+            if previous.name.column() == field.name.column() {
+                return Err(format!(
+                    "fields `{}` and `{}` are both bound to SQL column `{}`.\n       \
+                     fix: drop one `@column(...)`, or point it at a different column.",
+                    previous.name,
                     field.name,
                     field.name.column().as_str()
                 )

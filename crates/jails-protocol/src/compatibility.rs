@@ -23,10 +23,21 @@ pub const SQL_CONTRACT_SCHEMA: &str = "jails.sql-contract.v1";
 
 /// `.jails/ledger.toml`'s closed envelope schema.
 pub const DURABLE_ENVELOPE_SCHEMA: u32 = 2;
-/// Legacy payload accepted during the lifecycle-state upgrade.
-pub const DURABLE_PAYLOAD_CODEC_V1: &str = concat!("jails-", "led", "ger-payload-1");
+/// Payload codecs this jails can no longer read, named so the refusal can say
+/// *which* older format it found rather than "not mine".
+///
+/// Both were readable until the recorded column binding went on the wire
+/// (plan.md P3.2): a field name is a `(java, column)` pair now, and a payload
+/// carrying only the Java half has no second value to promote. There is no
+/// translation, deliberately -- `CLAUDE.md`'s rule for the store is that a
+/// ledger this binary did not write was written by a different jails, and
+/// naming the file beats guessing at an older schema.
+pub const DURABLE_PAYLOAD_CODEC_SUPERSEDED: &[&str] = &[
+    concat!("jails-", "led", "ger-payload-1"),
+    concat!("jails-", "led", "ger-payload-2"),
+];
 /// Binary codec named by newly written ledger envelopes.
-pub const DURABLE_PAYLOAD_CODEC: &str = concat!("jails-", "led", "ger-payload-2");
+pub const DURABLE_PAYLOAD_CODEC: &str = concat!("jails-", "led", "ger-payload-3");
 
 /// Transaction journal root-format marker, including its fixed-width NUL.
 pub const JOURNAL_MAGIC: &[u8; 16] = b"JAILS-JOURNAL-1\0";
@@ -61,13 +72,18 @@ mod tests {
             SQL_CONTRACT_SCHEMA.to_string(),
             format!("schema={DURABLE_ENVELOPE_SCHEMA}"),
             DURABLE_PAYLOAD_CODEC.to_string(),
-            DURABLE_PAYLOAD_CODEC_V1.to_string(),
             "JAILS-JOURNAL-1\\0".to_string(),
             "JAILS-RECEIPT-1\\0".to_string(),
         ] {
             assert!(
                 inventory.contains(&identifier),
                 "compatibility inventory is missing {identifier}"
+            );
+        }
+        for superseded in DURABLE_PAYLOAD_CODEC_SUPERSEDED {
+            assert!(
+                inventory.contains(&format!("{superseded}\tsuperseded")),
+                "the inventory must record {superseded} as unreadable"
             );
         }
         assert!(

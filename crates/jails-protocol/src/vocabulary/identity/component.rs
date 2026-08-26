@@ -70,20 +70,84 @@ impl FieldName {
     }
 
     /// The one canonical spelling of this name. Deliberately the Java one:
-    /// the field spec is a Java-facing vocabulary, and `column()` is reachable
-    /// from it by a total function.
+    /// the field spec is a Java-facing vocabulary, and for a name that has
+    /// never been rebound `column()` is reachable from it by a total function.
     pub fn as_str(&self) -> &str {
         self.java.as_str()
     }
+
+    /// Whether the column is still the one convention derives from the Java
+    /// name. False only after [`Self::rebound`]: the pair has been recorded
+    /// because it can no longer be recomputed.
+    pub fn is_conventional(&self) -> bool {
+        Self::parse(self.java.as_str()).is_ok_and(|derived| derived.column == self.column)
+    }
+
+    /// A Java name bound to a column convention would not produce -- the
+    /// `@column(...)` spelling of [`Self::rebound`], and the form a recorded
+    /// binding takes when it round-trips through a canonical field token.
+    pub fn bound(text: &str, column: &str) -> Result<Self> {
+        let derived = Self::parse(text)?;
+        let column = SqlName::parse(column)?;
+        reject_sql_keyword(column.as_str())?;
+        // Refused rather than accepted as a no-op: a reader who spells out
+        // the column convention already produces is stating a binding jails
+        // would then have to record forever, and a canonical form carrying a
+        // derivable fact is the drift this type exists to remove.
+        if derived.column == column {
+            return Err(format!(
+                "`@column({column})` is the column `{text}` already binds to by \
+                 convention.\n       fix: drop the `@column(...)`; it is only for a column \
+                 convention cannot produce.",
+                column = column.as_str()
+            )
+            .into());
+        }
+        Ok(Self {
+            java: derived.java,
+            column,
+        })
+    }
+
+    /// The same column under a new Java name -- the recorded binding
+    /// `--column preserve` is built on. plan.md P3.2.
+    ///
+    /// **This is why the pair is recorded rather than derived.** Renaming a
+    /// field is a source edit; renaming the column under it is a migration a
+    /// live database has to run. Deriving the column from the name forces the
+    /// two to happen together, which is what `--column single-cutover` does
+    /// and what a table under load cannot afford. Once they are allowed to
+    /// differ, nothing can recompute the pair, so the ledger carries it.
+    pub fn rebound(&self, java: &Name) -> Result<Self> {
+        // The new Java half is held to every rule a declared one is, so a
+        // rename cannot install a name `parse` would have refused.
+        let derived = Self::parse(java.as_str())?;
+        Ok(Self {
+            java: derived.java,
+            column: self.column.clone(),
+        })
+    }
 }
 
+/// **Both halves are on the wire, and that is the point of the type.**
+///
+/// A decoder that stored the Java name and re-derived the column would be a
+/// second derivation of the pair, and the one thing this value exists to
+/// record is a pair convention can no longer produce. Each half is validated
+/// on the way in by the constructor that owns it, so a rebound name arriving
+/// through a recovered journal is held to exactly what the CLI holds it to.
 impl Codec for FieldName {
     fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.string(self.java.as_str())
+        encoder.string(self.java.as_str())?;
+        self.column.encode(encoder)
     }
 
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Self::parse(&decoder.string()?)
+        let java = Name::decode(decoder)?;
+        let column = SqlName::decode(decoder)?;
+        reject_record_component_name(java.as_str())?;
+        reject_sql_keyword(column.as_str())?;
+        Ok(Self { java, column })
     }
 }
 
@@ -225,6 +289,51 @@ mod tests {
         // `desc` is reserved by PostgreSQL, and so is the column `user_id`
         // is not -- the check reads the derived column, not the spec string.
         assert!(FieldName::parse("desc").is_err());
+    }
+
+    #[test]
+    fn a_rebound_name_keeps_its_column_and_says_so() {
+        let before = FieldName::parse("userId").expect("userId");
+        assert!(before.is_conventional());
+        let after = before
+            .rebound(&Name::parse("accountId").expect("accountId"))
+            .expect("rebound");
+        assert_eq!(after.java(), "accountId");
+        assert_eq!(after.column().as_str(), "user_id");
+        assert!(!after.is_conventional());
+    }
+
+    #[test]
+    fn a_declared_binding_that_convention_already_produces_is_refused() {
+        let error = FieldName::bound("userId", "user_id").expect_err("redundant");
+        assert!(error.to_string().contains("already binds"), "{error}");
+        assert!(FieldName::bound("accountId", "user_id").is_ok());
+    }
+
+    #[test]
+    fn a_rebound_name_is_held_to_every_rule_a_declared_one_is() {
+        let before = FieldName::parse("userId").expect("userId");
+        for refused in ["class", "get_class", "_id"] {
+            let Ok(name) = Name::parse(refused) else {
+                continue;
+            };
+            assert!(before.rebound(&name).is_err(), "`{refused}` was accepted");
+        }
+    }
+
+    #[test]
+    fn both_halves_survive_the_codec() {
+        let rebound = FieldName::parse("userId")
+            .expect("userId")
+            .rebound(&Name::parse("accountId").expect("accountId"))
+            .expect("rebound");
+        let mut encoder = Encoder::new();
+        rebound.encode(&mut encoder).expect("encode");
+        let bytes = encoder.finish().expect("finish");
+        let mut decoder = Decoder::new(&bytes).expect("decoder");
+        let read = FieldName::decode(&mut decoder).expect("decode");
+        assert_eq!(read, rebound);
+        assert_eq!(read.column().as_str(), "user_id");
     }
 
     #[test]

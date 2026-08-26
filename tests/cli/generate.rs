@@ -125,6 +125,94 @@ fn machine_output_carries_failures_that_stop_before_an_outcome() {
     assert!(value["error"]["message"].is_string(), "{value}");
 }
 
+/// plan.md P3.2. `--column preserve` is the whole reason a field name is a
+/// recorded pair rather than a derivation: the Java name moves, the column
+/// stays where a live database already has it, and no migration is written
+/// because there is nothing for one to run.
+#[test]
+fn preserving_a_column_renames_the_component_and_writes_no_migration() {
+    let root = temp_dir("resource-field-column-preserve");
+    write_spring_fixture(&root);
+    let migrations = root.join("src/main/resources/db/migration");
+    fs::create_dir_all(&migrations).unwrap();
+    let scaffold = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Account", "id:uuid@pk", "userId:uuid"])
+        .output()
+        .unwrap();
+    assert!(scaffold.status.success(), "{scaffold:?}");
+    let before = fs::read_dir(&migrations).unwrap().count();
+
+    let renamed = jails_cmd(&root, None)
+        .args([
+            "resource", "field", "rename", "Account", "userId", "ownerId", "--column", "preserve",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        renamed.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&renamed.stdout),
+        String::from_utf8_lossy(&renamed.stderr)
+    );
+    assert_eq!(
+        fs::read_dir(&migrations).unwrap().count(),
+        before,
+        "preserve wrote a migration"
+    );
+
+    let record =
+        fs::read_to_string(root.join("src/main/java/com/example/demo/domain/Account.java"))
+            .unwrap();
+    assert!(record.contains("UUID ownerId"), "{record}");
+    assert!(!record.contains("userId"), "{record}");
+
+    // The SQL half did not move, and that is the point: the adapter still
+    // reads and writes `user_id` while the Java component is `ownerId`.
+    let adapter = fs::read_to_string(
+        root.join("src/main/java/com/example/demo/adapters/JdbcAccountRepository.java"),
+    )
+    .unwrap();
+    assert!(adapter.contains("user_id"), "{adapter}");
+    assert!(!adapter.contains("owner_id"), "{adapter}");
+
+    // And the binding is recorded, so the next command derives nothing.
+    let store = jails_commit::store::Store::at(&root)
+        .observe()
+        .unwrap()
+        .ledger
+        .unwrap();
+    let recorded = store
+        .models()
+        .into_iter()
+        .flat_map(|(_, fields)| fields)
+        .collect::<Vec<_>>();
+    assert!(
+        recorded
+            .iter()
+            .any(|field| field == "ownerId:uuid@column(user_id)"),
+        "{recorded:?}"
+    );
+
+    // A second command re-plans from that recorded token, so a binding that
+    // did not survive the round trip would show up as a moved column here.
+    let added = jails_cmd(&root, None)
+        .args(["resource", "field", "add", "Account", "note:string?"])
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&added.stdout),
+        String::from_utf8_lossy(&added.stderr)
+    );
+    let adapter = fs::read_to_string(
+        root.join("src/main/java/com/example/demo/adapters/JdbcAccountRepository.java"),
+    )
+    .unwrap();
+    assert!(adapter.contains("user_id"), "{adapter}");
+    assert!(!adapter.contains("owner_id"), "{adapter}");
+}
+
 #[test]
 fn resource_field_uses_scaffold_storage_identity_and_leaves_plain_records_source_only() {
     let root = temp_dir("resource-field-storage-identity");

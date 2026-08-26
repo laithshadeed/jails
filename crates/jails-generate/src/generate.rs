@@ -351,6 +351,7 @@ mod tests {
             // resolved Java type -- so the field is built directly.
             let field = Field {
                 name: "sample".to_string(),
+                column: "sample".to_string(),
                 java_type: java_type.to_string(),
                 imports: Vec::new(),
                 optionality: Optionality::Required,

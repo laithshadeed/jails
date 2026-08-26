@@ -19,6 +19,16 @@ use jails_support::Result;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Field {
     pub name: String,
+    /// The physical column this component binds to.
+    ///
+    /// **Carried, not recomputed.** plan.md P3.2: a rename with
+    /// `--column preserve` moves the Java name and leaves the column where a
+    /// live database already has it, so the pair stops being derivable and
+    /// the ledger is what remembers it. Every SQL projection reads this;
+    /// `sql::column` used to snake-case `name` again at the point of use,
+    /// which is a second derivation that a preserved binding would silently
+    /// contradict.
+    pub column: String,
     pub java_type: String,
     pub imports: Vec<&'static str>,
     pub optionality: Optionality,
@@ -342,6 +352,7 @@ pub fn builtin_by_java_name(ty: &str) -> Option<(&'static str, Option<&'static s
 /// typed rather than a normalisation of it.
 pub fn derive_field(
     name: &str,
+    column: &str,
     type_token: &str,
     optionality: Optionality,
     constraints: Constraints,
@@ -387,6 +398,7 @@ pub fn derive_field(
 
     Ok(Field {
         name: name.to_string(),
+        column: column.to_string(),
         java_type: resolved.java_type,
         imports: resolved.imports,
         optionality,
@@ -569,6 +581,10 @@ pub fn fields_of_record(source: &str) -> Option<Vec<Field>> {
             let builtin = builtin_by_java_name(&java_type);
             Field {
                 name: param.name.clone(),
+                // A record read off disk has no recorded binding to consult
+                // -- there is no ledger row behind it -- so the convention is
+                // all there is, applied through the one function that owns it.
+                column: jails_java::identifier::snake_case(&param.name),
                 // The *inner* type, exactly as `parse_fields` records it:
                 // optionality lives in `optionality`, and `component_type`
                 // is the one place that wraps it back into an `Optional`.
