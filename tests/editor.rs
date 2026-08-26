@@ -100,8 +100,50 @@ fn the_editor_plugin_derives_its_vocabulary_instead_of_copying_it() {
         "decoding must be guarded -- a completion callback runs on every keystroke"
     );
     assert!(
-        source.contains("vim.v.shell_error ~= 0"),
-        "a non-zero exit from `jails commands` must degrade, not raise"
+        source.contains("vim.system({ config.command, 'commands', '--json' }"),
+        "completion vocabulary must be loaded asynchronously"
+    );
+    assert!(
+        !source.contains("vim.fn.system(") && !source.contains(":wait()"),
+        "completion, diagnostics, and health must never wait on the UI thread"
+    );
+}
+
+#[test]
+fn editor_protocol_supports_structured_plans_receipts_and_watch_state() {
+    let source = plugin_source();
+    let plugin = editor_file("jails.nvim/plugin/jails.lua");
+    for required in [
+        "function M.preview(",
+        "function M.apply_plan(",
+        "function M.watch_toggle(",
+        "function M.watch_status(",
+        "function M.test_at_cursor(",
+        "function M.pick(",
+        "function M.health(",
+        "'--plan-out'",
+        "'--plan-in'",
+        "jails.command-result.v2",
+        "jails.prepared-report.v1",
+        "open_receipt_files(envelope.receipt",
+        "JailsWatchStarted",
+        "JailsWatchReady",
+        "JailsWatchStopped",
+    ] {
+        assert!(
+            source.contains(required),
+            "editor protocol lost `{required}`"
+        );
+    }
+    for required in ["'JailsPreview'", "'JailsWatch'", "'JailsHealth'"] {
+        assert!(
+            plugin.contains(required),
+            "editor command lost `{required}`"
+        );
+    }
+    assert!(
+        !source.contains("stdout:match('create") && !source.contains("gmatch('create"),
+        "created files must come from structured receipt operations"
     );
 }
 

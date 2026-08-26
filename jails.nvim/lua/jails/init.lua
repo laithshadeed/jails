@@ -4,9 +4,15 @@ local M = {}
 
 local config = {
   command = 'jails',
-  terminal_height = 15,
+  terminal = { height = 12 },
+  output_schema = 'v2',
+  diagnostics = { enabled = true, on_save = 'offline' },
+  watch = { auto_start = false, statusline = true, compile = false },
   open_created = true,
-  root_markers = { 'pom.xml' },
+  root_markers = {
+    '.jails/app.toml', 'pom.xml', 'mvnw', 'build.gradle',
+    'build.gradle.kts', 'gradlew', '.git',
+  },
   keymaps = true,
   java_bundles = {},
 }
@@ -52,6 +58,7 @@ local STREAMING = {
 -- edit and this menu follows. Read once per session and cached, because a
 -- completion callback runs on every keystroke.
 local vocabulary_cache = nil
+local vocabulary_loading = false
 
 local function vocabulary()
   if vocabulary_cache then return vocabulary_cache end
@@ -61,15 +68,8 @@ local function vocabulary()
   -- binary without `commands`, a `jails` that is not on PATH, a malformed
   -- payload. `:Jails doctor` is where a broken install should be reported.
   local empty = { subcommands = {}, kinds = {}, capabilities = {}, options = {} }
-  if vim.fn.executable(config.command) == 0 then return empty end
-
-  local out = vim.fn.system({ config.command, 'commands', '--json' })
-  if vim.v.shell_error ~= 0 then return empty end
-
-  local ok, decoded = pcall(vim.json.decode, out)
-  if not ok or type(decoded) ~= 'table' or type(decoded.subcommands) ~= 'table' then
-    return empty
-  end
+  if vim.fn.executable(config.command) == 0 or vocabulary_loading then return empty end
+  vocabulary_loading = true
 
   local names = function(entries)
     local flat = {}
@@ -82,24 +82,45 @@ local function vocabulary()
     return flat
   end
 
-  local options = {}
-  for _, entry in ipairs(decoded.subcommands) do
-    options[entry.name] = entry.options or {}
-    for _, alias in ipairs(entry.aliases or {}) do
-      options[alias] = entry.options or {}
+  vim.system({ config.command, 'commands', '--json' }, { text = true }, function(result)
+    vocabulary_loading = false
+    if result.code ~= 0 then return end
+    local ok, decoded = pcall(vim.json.decode, result.stdout or '')
+    if not ok or type(decoded) ~= 'table' or type(decoded.subcommands) ~= 'table' then return end
+    local options = {}
+    for _, entry in ipairs(decoded.subcommands) do
+      options[entry.name] = entry.options or {}
+      for _, alias in ipairs(entry.aliases or {}) do
+        options[alias] = entry.options or {}
+      end
     end
-  end
-
-  vocabulary_cache = {
-    subcommands = names(decoded.subcommands),
-    kinds = names(decoded.kinds),
-    capabilities = names(decoded.capabilities),
-    options = options,
-  }
-  return vocabulary_cache
+    vocabulary_cache = {
+      subcommands = names(decoded.subcommands),
+      kinds = names(decoded.kinds),
+      capabilities = names(decoded.capabilities),
+      options = options,
+    }
+  end)
+  return empty
 end
 
 function M.setup(opts)
+  opts = opts or {}
+  if opts.terminal_height ~= nil then
+    if opts.terminal ~= nil and opts.terminal.height ~= nil then
+      error('jails.nvim: terminal_height conflicts with terminal.height')
+    end
+    opts.terminal = { height = opts.terminal_height }
+    opts.terminal_height = nil
+  end
+  local allowed = {
+    command = true, terminal = true, output_schema = true, diagnostics = true,
+    watch = true, open_created = true, root_markers = true, keymaps = true,
+    java_bundles = true,
+  }
+  for key, _ in pairs(opts) do
+    if not allowed[key] then error(('jails.nvim: unknown setup key `%s`'):format(key)) end
+  end
   config = vim.tbl_deep_extend('force', config, opts or {})
 end
 
@@ -187,14 +208,26 @@ function M.run(args, opts)
           ),
           vim.log.levels.ERROR
         )
+        if opts.callback then opts.callback(nil, detail ~= '' and detail or ('exit ' .. result.code)) end
         return
       end
 
       if stdout ~= '' and opts.notify ~= false then
         vim.notify(stdout, vim.log.levels.INFO)
       end
+      if opts.callback then opts.callback(result, nil) end
     end)
   end)
+end
+
+function M.health(callback)
+  local result = {
+    executable = config.command,
+    available = vim.fn.executable(config.command) == 1,
+    output_schema = config.output_schema,
+  }
+  if callback then callback(result, result.available and nil or 'tool-unavailable') end
+  return result
 end
 
 local function decode_result(result, expected_schema)
@@ -236,29 +269,173 @@ function M.handshake(callback)
   )
 end
 
+local active_plans = {}
+
+local function remove_plan(plan)
+  if not plan then return end
+  active_plans[plan.id] = nil
+  if plan.directory then vim.fs.rm(plan.directory, { recursive = true, force = true }) end
+end
+
+local function prepared_data(envelope)
+  if envelope.schema ~= 'jails.command-result.v2' then
+    return nil, ('protocol-mismatch: expected jails.command-result.v2, received %s'):format(
+      tostring(envelope.schema)
+    )
+  end
+  local report = envelope.report
+  if envelope.status ~= 'preview' or not report or report.kind ~= 'prepared'
+    or report.schema ~= 'jails.prepared-report.v1' then
+    return nil, 'protocol-mismatch: preview did not return a prepared report'
+  end
+  return report.data, nil
+end
+
+local function render_plan(plan)
+  local lines = {
+    ('Jails prepared plan %s'):format(plan.id),
+    ('risk: %s'):format(tostring(plan.data.risk or 'unknown')),
+    ('digest: %s'):format(tostring(plan.data.digest or plan.id)),
+    '',
+  }
+  for _, operation in ipairs(plan.data.operations or {}) do
+    table.insert(lines, ('%-8s %s'):format(
+      tostring(operation.kind or operation.operation or 'change'):upper(),
+      tostring(operation.path or operation.subject or '')
+    ))
+    for _, reason in ipairs(operation.reasons or {}) do
+      table.insert(lines, ('  because %s'):format(reason))
+    end
+    if operation.diff then
+      for line in tostring(operation.diff):gmatch('[^\n]+') do table.insert(lines, line) end
+    end
+  end
+  local buffer = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_name(buffer, 'jails://plan/' .. plan.id)
+  vim.bo[buffer].buftype = 'nofile'
+  vim.bo[buffer].bufhidden = 'wipe'
+  vim.bo[buffer].swapfile = false
+  vim.bo[buffer].modifiable = true
+  vim.api.nvim_buf_set_lines(buffer, 0, -1, false, lines)
+  vim.bo[buffer].modifiable = false
+  vim.api.nvim_set_current_buf(buffer)
+  plan.buffer = buffer
+end
+
+function M.preview(args, callback)
+  local bin = jails_bin()
+  if not bin then return end
+  local root = M.project_root()
+  local directory = vim.fn.tempname()
+  local ok, error = vim.uv.fs_mkdir(directory, 448)
+  if not ok then
+    if callback then callback(nil, error) end
+    return
+  end
+  local file = vim.fs.joinpath(directory, 'prepared-plan.json')
+  local command = { bin, '--pretend', '--output', 'json', '--plan-out', file }
+  vim.list_extend(command, args)
+  return vim.system(command, { cwd = root, text = true }, function(result)
+    local envelope, decode_error = decode_result(result, 'jails.command-result.v2')
+    if not envelope then
+      vim.fs.rm(directory, { recursive = true, force = true })
+      vim.schedule(function()
+        if callback then callback(nil, decode_error) end
+        vim.notify(('jails.nvim: preview failed: %s'):format(decode_error), vim.log.levels.ERROR)
+      end)
+      return
+    end
+    local data, protocol_error = prepared_data(envelope)
+    if not data then
+      vim.fs.rm(directory, { recursive = true, force = true })
+      vim.schedule(function()
+        if callback then callback(nil, protocol_error) end
+        vim.notify(('jails.nvim: preview failed: %s'):format(protocol_error), vim.log.levels.ERROR)
+      end)
+      return
+    end
+    local id = tostring(data.operation_id or data.digest)
+    local plan = {
+      id = id,
+      root = root,
+      directory = directory,
+      file = file,
+      data = data,
+      command_path = envelope.command and envelope.command.path or nil,
+    }
+    active_plans[id] = plan
+    vim.schedule(function()
+      render_plan(plan)
+      if callback then callback(plan, nil) end
+    end)
+  end)
+end
+
+function M.apply_plan(plan_or_id, callback)
+  local plan = type(plan_or_id) == 'table' and plan_or_id or active_plans[plan_or_id]
+  if not plan then
+    if callback then callback(nil, 'stale plan') end
+    return
+  end
+  local summary = ('Apply plan %s (%s risk)?'):format(
+    tostring(plan.data.digest or plan.id), tostring(plan.data.risk or 'unknown')
+  )
+  vim.ui.select({ 'Apply', 'Cancel' }, { prompt = summary }, function(choice)
+    if choice ~= 'Apply' then
+      remove_plan(plan)
+      if callback then callback(nil, 'cancelled') end
+      return
+    end
+    local command = { config.command, '--output', 'json', '--yes', '--plan-in', plan.file }
+    vim.list_extend(command, plan.command_path or {})
+    vim.system(command, { cwd = plan.root, text = true }, function(result)
+      local envelope, error = decode_result(result, 'jails.command-result.v2')
+      vim.schedule(function()
+        if envelope and envelope.receipt then
+          if config.open_created then open_receipt_files(envelope.receipt, plan.root) end
+          if callback then callback(envelope, nil) end
+        else
+          if callback then callback(nil, error) end
+          vim.notify(('jails.nvim: apply failed: %s'):format(error), vim.log.levels.ERROR)
+        end
+        remove_plan(plan)
+      end)
+    end)
+  end)
+end
+
 local function editor_tokens(cmd_line)
   local words = vim.split(cmd_line, '%s+', { trimempty = true })
   table.remove(words, 1)
   return words
 end
 
+local completion_cache = {}
+local completion_jobs = {}
+
 local function editor_completion(arg_lead, cmd_line)
   local root = M.project_root()
   local words = editor_tokens(cmd_line)
   local position = math.max(#words - 1, 0)
   local offset = #arg_lead
+  local key = table.concat({ root, tostring(position), tostring(offset), table.concat(words, '\0') }, '\1')
+  if completion_cache[key] then return completion_cache[key] end
+  if completion_jobs[key] then return nil end
   local cmd = {
     config.command, '--output', 'json', 'editor', 'complete',
     '--arg-index', tostring(position), '--byte-offset', tostring(offset), '--',
   }
   vim.list_extend(cmd, words)
-  local out = vim.fn.system(cmd)
-  if vim.v.shell_error ~= 0 then return nil end
-  local ok, decoded = pcall(vim.json.decode, out)
-  if not ok or decoded.schema ~= 'jails.editor-completion.v1' then return nil end
-  local values = {}
-  for _, candidate in ipairs(decoded.candidates or {}) do table.insert(values, candidate.value) end
-  return values
+  completion_jobs[key] = vim.system(cmd, { cwd = root, text = true }, function(result)
+    completion_jobs[key] = nil
+    if result.code ~= 0 then return end
+    local ok, decoded = pcall(vim.json.decode, result.stdout or '')
+    if not ok or decoded.schema ~= 'jails.editor-completion.v1' then return end
+    local values = {}
+    for _, candidate in ipairs(decoded.candidates or {}) do table.insert(values, candidate.value) end
+    completion_cache[key] = values
+  end)
+  return nil
 end
 
 local diagnostics_namespace = vim.api.nvim_create_namespace('jails')
@@ -323,14 +500,32 @@ function M.diagnostics(scope)
   end)
 end
 
-local watch_job = nil
+local watches = {}
+
+local function watch_event(name, root, watch, extra)
+  local data = {
+    root_digest = watch.root_digest,
+    session = watch.session,
+    epoch = watch.epoch or 0,
+  }
+  for key, value in pairs(extra or {}) do data[key] = value end
+  vim.api.nvim_exec_autocmds('User', { pattern = name, data = data })
+end
+
+function M.watch_status(root)
+  local watch = watches[root or M.project_root()]
+  return watch and watch.status or 'cold'
+end
 
 --- Decode jails.event.v1 incrementally; stdout is protocol-only.
-function M.watch_start()
-  if watch_job then return watch_job end
-  local root = M.project_root()
+function M.watch_start(root, callback)
+  if type(root) == 'function' then callback, root = root, nil end
+  root = root or M.project_root()
+  if watches[root] then return watches[root].job end
   local buffer, trusted, session, sequence = '', true, nil, -1
-  watch_job = vim.fn.jobstart(
+  local watch = { status = 'starting', epoch = 0 }
+  watches[root] = watch
+  watch.job = vim.fn.jobstart(
     { config.command, 'test', '--watch', '--output', 'json' },
     {
       cwd = root,
@@ -354,20 +549,67 @@ function M.watch_start()
               break
             end
             session, sequence = event.session, event.sequence
+            watch.session, watch.epoch = event.session, event.epoch
+            if event.kind == 'ready' then
+              watch.status = 'ready'
+              watch_event('JailsWatchReady', root, watch, { current = true })
+            elseif event.kind == 'tested' or event.kind == 'testing' then
+              watch.status = 'testing'
+            elseif event.kind == 'stale' then
+              watch.status = 'stale'
+              watch_event('JailsWatchReady', root, watch, { current = false })
+            elseif event.kind == 'failed' then
+              watch.status = 'failed'
+            end
             if event.epoch >= (latest_epoch[root] or 0) then latest_epoch[root] = event.epoch end
           end
         end
       end,
-      on_exit = function() watch_job = nil end,
+      on_exit = function(_, code)
+        local owned = watches[root]
+        if owned ~= watch then return end
+        watches[root] = nil
+        watch.status = 'stopped'
+        vim.schedule(function()
+          watch_event('JailsWatchStopped', root, watch, { reason = code == 0 and 'stopped' or 'failed' })
+          if callback then callback(nil, code == 0 and nil or ('exit ' .. code)) end
+        end)
+      end,
     }
   )
-  return watch_job
+  if watch.job <= 0 then
+    watches[root] = nil
+    if callback then callback(nil, 'could not start test watch') end
+    return nil
+  end
+  vim.schedule(function()
+    watch_event('JailsWatchStarted', root, watch)
+    if callback then callback(watch, nil) end
+  end)
+  return watch.job
 end
 
-function M.watch_stop()
-  if not watch_job then return end
-  vim.fn.jobstop(watch_job)
-  watch_job = nil
+function M.watch_stop(root, callback)
+  if type(root) == 'function' then callback, root = root, nil end
+  root = root or M.project_root()
+  local watch = watches[root]
+  if not watch then
+    if callback then callback(nil, nil) end
+    return
+  end
+  local job = watch.job
+  vim.fn.jobstop(job)
+  vim.defer_fn(function()
+    if watches[root] == watch and vim.fn.jobwait({ job }, 0)[1] == -1 then vim.fn.jobstop(job) end
+  end, 2000)
+  if callback then callback(watch, nil) end
+end
+
+function M.watch_toggle(root, callback)
+  if type(root) == 'function' then callback, root = root, nil end
+  root = root or M.project_root()
+  if watches[root] then return M.watch_stop(root, callback) end
+  return M.watch_start(root, callback)
 end
 
 local term_win
@@ -387,7 +629,7 @@ function M.run_terminal(args)
     vim.cmd('botright split')
     term_win = vim.api.nvim_get_current_win()
   end
-  vim.api.nvim_win_set_height(term_win, config.terminal_height)
+  vim.api.nvim_win_set_height(term_win, config.terminal.height)
 
   local buffer = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_win_set_buf(term_win, buffer)
@@ -438,6 +680,43 @@ local function current_test_selector()
   local file = vim.api.nvim_buf_get_name(0)
   if file == '' then return nil end
   return ('%s:%d'):format(file, vim.api.nvim_win_get_cursor(0)[1])
+end
+
+function M.test_at_cursor(callback)
+  local selector = current_test_selector()
+  if not selector then
+    if callback then callback(nil, 'no test selector at cursor') end
+    return
+  end
+  return M.run({ 'test', selector, '--output', 'json' }, { callback = callback, notify = false })
+end
+
+function M.pick(kind, query, callback)
+  local root = M.project_root()
+  local command = { config.command, '--output', 'json', 'editor', 'symbols', kind }
+  if query and query ~= '' then vim.list_extend(command, { '--query', query }) end
+  return vim.system(command, { cwd = root, text = true }, function(result)
+    local report, error = decode_result(result, 'jails.editor-symbols.v1')
+    vim.schedule(function()
+      if not report then
+        if callback then callback(nil, error) end
+        return
+      end
+      vim.ui.select(report.symbols or {}, {
+        prompt = ('Jails %s'):format(kind),
+        format_item = function(item)
+          return item.detail and (item.label .. ' — ' .. item.detail) or item.label
+        end,
+      }, function(item)
+        if item and item.location then
+          vim.cmd.edit(vim.fn.fnameescape(absolute_path(root, item.location.path)))
+          local start = item.location.range and item.location.range.start or {}
+          vim.api.nvim_win_set_cursor(0, { (start.line or 0) + 1, start.byte_column or 0 })
+        end
+        if callback then callback(item, item and nil or 'cancelled') end
+      end)
+    end)
+  end)
 end
 
 function M.configure_java_buffer()

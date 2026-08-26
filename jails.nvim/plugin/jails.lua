@@ -14,6 +14,30 @@ end, {
   end,
 })
 
+vim.api.nvim_create_user_command('JailsPreview', function(cmd_opts)
+  require('jails').preview(cmd_opts.fargs)
+end, {
+  nargs = '+',
+  desc = 'Preview a structured jails mutation plan',
+  complete = function(arg_lead, line)
+    return require('jails').complete(arg_lead, line:gsub('^JailsPreview', 'Jails', 1))
+  end,
+})
+
+vim.api.nvim_create_user_command('JailsWatch', function(cmd_opts)
+  local jails = require('jails')
+  if cmd_opts.bang then
+    jails.watch_stop(function() jails.watch_start() end)
+  else
+    jails.watch_toggle()
+  end
+end, { bang = true, desc = 'Toggle the owned jails test watch' })
+
+vim.api.nvim_create_user_command('JailsHealth', function()
+  local health = require('jails').health()
+  vim.notify(vim.inspect(health), health.available and vim.log.levels.INFO or vim.log.levels.ERROR)
+end, { desc = 'Inspect jails.nvim configuration and executable availability' })
+
 -- Hot-reload on save: source lives in the jails repo, edited directly, and
 -- Lua caches `require`d modules -- without this, a change to init.lua
 -- wouldn't take effect until Neovim restarts.
