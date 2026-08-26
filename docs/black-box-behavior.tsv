@@ -2,7 +2,7 @@
 # build	command	outcome	evidence
 maven	test	success	tool:mvn test
 gradle	test	success	tool:gradle test
-maven	test --fast	success	stdout:--fast not taken|tool:mvn test
+maven	test --fast	success	stdout:normalized to auto|tool:mvn test
 gradle	test --fast	refused	stderr:failed to read|stderr:pom.xml
 maven	testd --status	success	stdout:testd: not running
 gradle	testd --status	success	stdout:testd: not running
