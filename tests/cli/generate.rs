@@ -221,6 +221,65 @@ fn package_overrides_normalize_the_base_and_unique_names_resolve_without_the_fla
 }
 
 #[test]
+fn field_evolution_refuses_before_staling_strategy_companions() {
+    let root = temp_dir("field-stale-strategy-companions");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    for command in [
+        vec![
+            "g",
+            "scaffold",
+            "Order",
+            "id:uuid@pk",
+            "total:decimal",
+            "status:string",
+            "version:long@nonnegative",
+        ],
+        vec!["g", "query", "FindOrders", "total:decimal", "--on", "Order"],
+        vec![
+            "g",
+            "transition",
+            "ShipOrder",
+            "id:uuid",
+            "status:string",
+            "version:long@nonnegative",
+            "--on",
+            "Order",
+        ],
+        vec![
+            "g",
+            "usecase",
+            "PlaceOrder",
+            "total:decimal",
+            "status:string",
+            "--on",
+            "Order",
+        ],
+    ] {
+        let output = jails_cmd(&root, None).args(&command).output().unwrap();
+        assert!(output.status.success(), "{command:?}: {output:?}");
+    }
+    let before = snapshot_tree(&root);
+
+    let refused = jails_cmd(&root, None)
+        .args(["g", "field", "Order", "memo:string?"])
+        .output()
+        .unwrap();
+
+    assert_eq!(refused.status.code(), Some(1), "{refused:?}");
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    for dependent in [
+        "query FindOrders",
+        "transition ShipOrder",
+        "usecase PlaceOrder",
+    ] {
+        assert!(stderr.contains(dependent), "{stderr}");
+    }
+    assert!(stderr.contains("fix:"), "{stderr}");
+    assert_eq!(snapshot_tree(&root), before, "refusal wrote project files");
+}
+
+#[test]
 fn generate_scaffold_writes_a_raw_jdbc_slice() {
     let root = temp_dir("scaffold-files");
     write_spring_fixture(&root);

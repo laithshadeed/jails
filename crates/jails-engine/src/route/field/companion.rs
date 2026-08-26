@@ -20,6 +20,7 @@ pub(super) fn companion_updates(
     fields: &[FieldSpec],
     package: Option<&str>,
 ) -> Result<CompanionUpdates> {
+    refuse_stale_strategy_companions(store, primary)?;
     let mut changes = Vec::new();
     let mut entities = BTreeMap::new();
     let mut reads = ReadDeclaration::new();
@@ -102,4 +103,38 @@ pub(super) fn companion_updates(
         entities,
         reads,
     })
+}
+
+fn refuse_stale_strategy_companions(store: &ObservedStore, primary: &IntentId) -> Result<()> {
+    let mut dependents = store
+        .entities()
+        .iter()
+        .filter_map(|row| {
+            let (EntityId::Intent(id), EntitySpec::Intent(spec)) = (&row.id, &row.version.spec)
+            else {
+                return None;
+            };
+            let targets_primary = spec.on.as_ref().is_some_and(|on| {
+                on.name() == &primary.name
+                    && (on.package().is_base() || on.package() == &primary.package)
+            });
+            (targets_primary
+                && matches!(
+                    id.recipe,
+                    ArtifactKind::Query | ArtifactKind::Transition | ArtifactKind::Usecase
+                ))
+            .then(|| format!("{} {}", label(id.recipe), id.name))
+        })
+        .collect::<Vec<_>>();
+    dependents.sort();
+    dependents.dedup();
+    if dependents.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "evolving fields on `{}` would leave generated companions stale: {}\n       fix: keep the current field list, or regenerate those companions after the resource shape is stable.",
+        primary.name,
+        dependents.join(", ")
+    )
+    .into())
 }
