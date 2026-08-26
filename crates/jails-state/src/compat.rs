@@ -91,17 +91,30 @@ pub fn read(root: &Path) -> MachineState {
     };
     match LedgerV2::parse_file(&source) {
         Ok(ledger) => MachineState::Current(Box::new(ledger)),
-        // One format, so one message. A store this binary cannot read is a
-        // store a *different* jails wrote, and the honest instruction is to
-        // say which file and let the reader decide -- not to guess at an older
-        // schema and translate what it thinks it found.
-        Err(why) => MachineState::Unreadable(format!(
-            "{} cannot be read by this jails: {why}\n       fix: it was written by a different \
-             version. Upgrade to, or use, the jails version that wrote it; this version will not \
-             treat unknown state as empty.",
-            path.display()
-        )),
+        Err(why) => MachineState::Unreadable(unreadable_message(&path, &source, &why)),
     }
+}
+
+fn unreadable_message(path: &Path, source: &str, why: &str) -> String {
+    let fix = if ["<<<<<<<", "=======", ">>>>>>>"]
+        .iter()
+        .any(|marker| source.lines().any(|line| line.starts_with(marker)))
+    {
+        "the ledger contains version-control conflict markers. Restore `.jails/ledger.toml` \
+         from a known-good side of the merge, then re-run the command"
+    } else if source.lines().next().is_some_and(|line| {
+        line.trim_start().starts_with("schema = ") && line.trim() != "schema = 2"
+    }) {
+        "the ledger uses a different schema. Upgrade to, or use, the jails version that wrote it; \
+         this version will not treat unknown state as empty"
+    } else {
+        "restore `.jails/ledger.toml` from version control or another known-good copy; jails will \
+         not treat damaged state as empty"
+    };
+    format!(
+        "{} cannot be read by this jails: {why}\n       fix: {fix}.",
+        path.display()
+    )
 }
 
 #[cfg(test)]
@@ -130,6 +143,35 @@ mod tests {
         let state = read(scratch.path());
         assert!(matches!(state, MachineState::Unreadable(_)), "{state:?}");
         assert!(state.ledger().is_err());
+        scratch.close().unwrap();
+    }
+
+    #[test]
+    fn a_conflicted_store_names_the_conflict_and_the_safe_recovery() {
+        let scratch = project();
+        apply::put(
+            scratch.path().join(".jails/ledger.toml"),
+            "<<<<<<< HEAD\nschema = 2\n=======\nschema = 2\n>>>>>>> branch\n",
+        )
+        .unwrap();
+        let MachineState::Unreadable(why) = read(scratch.path()) else {
+            panic!("conflicted state was not unreadable")
+        };
+        assert!(why.contains("conflict markers"), "{why}");
+        assert!(why.contains("known-good side of the merge"), "{why}");
+        assert!(!why.contains("different schema"), "{why}");
+        scratch.close().unwrap();
+    }
+
+    #[test]
+    fn a_truncated_store_asks_for_a_known_good_copy_not_an_upgrade() {
+        let scratch = project();
+        apply::put(scratch.path().join(".jails/ledger.toml"), "schema = 2").unwrap();
+        let MachineState::Unreadable(why) = read(scratch.path()) else {
+            panic!("truncated state was not unreadable")
+        };
+        assert!(why.contains("known-good copy"), "{why}");
+        assert!(!why.contains("Upgrade"), "{why}");
         scratch.close().unwrap();
     }
 
