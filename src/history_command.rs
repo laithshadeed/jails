@@ -40,7 +40,7 @@ pub(crate) fn history(limit: usize, output: Output) -> Result<()> {
                 );
             }
         }
-        Output::Json => {
+        Output::Json | Output::JsonV1 => {
             let rows = receipts
                 .iter()
                 .map(receipt_json)
@@ -130,7 +130,7 @@ pub(crate) fn show(transaction: &str, diff: bool, why: bool, output: Output) -> 
                 );
             }
         }
-        Output::Json => {
+        Output::Json | Output::JsonV1 => {
             let why_json = if why {
                 format!(
                     "{{\"snapshot\":{},\"proposed_generation\":{},\"preconditions\":{},\"toolchain_records\":{},\"kind\":{},\"semantics\":{}}}",

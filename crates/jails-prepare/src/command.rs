@@ -24,10 +24,14 @@ use crate::report::Report;
 use jails_protocol::effect::{EffectId, EffectState, PostCommitEffect};
 use jails_protocol::identity::ProjectPath;
 use jails_protocol::identity::{OperationId, TransactionId};
+use jails_protocol::request::RequestSyntaxFingerprint;
 use jails_protocol::transition::EffectResumeReason;
 
 /// The schema string a machine reader keys on.
 pub(crate) const SCHEMA: &str = "jails.command-result.v1";
+
+/// The current command-result schema.
+pub const SCHEMA_V2: &str = "jails.command-result.v2";
 
 /// How a command ended.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -165,6 +169,133 @@ impl ErrorCode {
     }
 }
 
+/// Stable machine-readable diagnostic codes introduced with command-result
+/// v2. The v1 [`ErrorCode`] registry is deliberately left unchanged.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum DiagnosticCode {
+    InvalidRequest,
+    InputUnreadable,
+    InputInvalid,
+    UnsupportedProject,
+    PlanRefused,
+    PrepareRefused,
+    ToolFailed,
+    StaleInput,
+    MutationBusy,
+    EffectBusy,
+    RecoveryBlocked,
+    CorruptMachineState,
+    EffectFailed,
+    InternalInvariant,
+    SqlParse,
+    SqlUnverified,
+    SchemaDrift,
+    MigrationRisk,
+    MigrationSealed,
+    MigrationEditedAfterSeal,
+    StoragePolicyRequired,
+    ResourceInconsistent,
+    ResourceNotRevivable,
+    DataPlanRequired,
+    StorageDependencyBlocked,
+    ContractBreaking,
+    VerificationFailed,
+    ServiceUnavailable,
+    ProtocolMismatch,
+    WatchOverflow,
+}
+
+impl DiagnosticCode {
+    pub const ALL: [Self; 30] = [
+        Self::InvalidRequest,
+        Self::InputUnreadable,
+        Self::InputInvalid,
+        Self::UnsupportedProject,
+        Self::PlanRefused,
+        Self::PrepareRefused,
+        Self::ToolFailed,
+        Self::StaleInput,
+        Self::MutationBusy,
+        Self::EffectBusy,
+        Self::RecoveryBlocked,
+        Self::CorruptMachineState,
+        Self::EffectFailed,
+        Self::InternalInvariant,
+        Self::SqlParse,
+        Self::SqlUnverified,
+        Self::SchemaDrift,
+        Self::MigrationRisk,
+        Self::MigrationSealed,
+        Self::MigrationEditedAfterSeal,
+        Self::StoragePolicyRequired,
+        Self::ResourceInconsistent,
+        Self::ResourceNotRevivable,
+        Self::DataPlanRequired,
+        Self::StorageDependencyBlocked,
+        Self::ContractBreaking,
+        Self::VerificationFailed,
+        Self::ServiceUnavailable,
+        Self::ProtocolMismatch,
+        Self::WatchOverflow,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::InvalidRequest => "invalid-request",
+            Self::InputUnreadable => "input-unreadable",
+            Self::InputInvalid => "input-invalid",
+            Self::UnsupportedProject => "unsupported-project",
+            Self::PlanRefused => "plan-refused",
+            Self::PrepareRefused => "prepare-refused",
+            Self::ToolFailed => "tool-failed",
+            Self::StaleInput => "stale-input",
+            Self::MutationBusy => "mutation-busy",
+            Self::EffectBusy => "effect-busy",
+            Self::RecoveryBlocked => "recovery-blocked",
+            Self::CorruptMachineState => "corrupt-machine-state",
+            Self::EffectFailed => "effect-failed",
+            Self::InternalInvariant => "internal-invariant",
+            Self::SqlParse => "sql-parse",
+            Self::SqlUnverified => "sql-unverified",
+            Self::SchemaDrift => "schema-drift",
+            Self::MigrationRisk => "migration-risk",
+            Self::MigrationSealed => "migration-sealed",
+            Self::MigrationEditedAfterSeal => "migration-edited-after-seal",
+            Self::StoragePolicyRequired => "storage-policy-required",
+            Self::ResourceInconsistent => "resource-inconsistent",
+            Self::ResourceNotRevivable => "resource-not-revivable",
+            Self::DataPlanRequired => "data-plan-required",
+            Self::StorageDependencyBlocked => "storage-dependency-blocked",
+            Self::ContractBreaking => "contract-breaking",
+            Self::VerificationFailed => "verification-failed",
+            Self::ServiceUnavailable => "service-unavailable",
+            Self::ProtocolMismatch => "protocol-mismatch",
+            Self::WatchOverflow => "watch-overflow",
+        }
+    }
+}
+
+impl From<ErrorCode> for DiagnosticCode {
+    fn from(value: ErrorCode) -> Self {
+        match value {
+            ErrorCode::InvalidRequest => Self::InvalidRequest,
+            ErrorCode::InputUnreadable => Self::InputUnreadable,
+            ErrorCode::InputInvalid => Self::InputInvalid,
+            ErrorCode::UnsupportedProject => Self::UnsupportedProject,
+            ErrorCode::PlanRefused => Self::PlanRefused,
+            ErrorCode::PrepareRefused => Self::PrepareRefused,
+            ErrorCode::ToolFailed => Self::ToolFailed,
+            ErrorCode::StaleInput => Self::StaleInput,
+            ErrorCode::MutationBusy => Self::MutationBusy,
+            ErrorCode::EffectBusy => Self::EffectBusy,
+            ErrorCode::RecoveryBlocked => Self::RecoveryBlocked,
+            ErrorCode::CorruptMachineState => Self::CorruptMachineState,
+            ErrorCode::EffectFailed => Self::EffectFailed,
+            ErrorCode::InternalInvariant => Self::InternalInvariant,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ErrorReport {
     pub code: ErrorCode,
@@ -243,6 +374,152 @@ impl EffectRetryReport {
 pub enum CommandReport {
     Prepared(Box<Report>),
     EffectRetry(Box<EffectRetryReport>),
+}
+
+/// The command whose semantic result this envelope contains.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CommandIdentity {
+    pub path: Vec<String>,
+    pub fingerprint: RequestSyntaxFingerprint,
+    pub read_only: bool,
+}
+
+/// V2 keeps every v1 status and adds the successful read-only result.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CommandStatusV2 {
+    Succeeded,
+    Preview,
+    NoOp,
+    Applied,
+    Conflicted,
+    Finalised,
+    Aborted,
+    EffectRetried,
+    EffectSuperseded,
+    Refused,
+    Stale,
+    RecoveryBlocked,
+    EffectFailed,
+}
+
+impl CommandStatusV2 {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Succeeded => "succeeded",
+            Self::Preview => "preview",
+            Self::NoOp => "no-op",
+            Self::Applied => "applied",
+            Self::Conflicted => "conflicted",
+            Self::Finalised => "finalised",
+            Self::Aborted => "aborted",
+            Self::EffectRetried => "effect-retried",
+            Self::EffectSuperseded => "effect-superseded",
+            Self::Refused => "refused",
+            Self::Stale => "stale",
+            Self::RecoveryBlocked => "recovery-blocked",
+            Self::EffectFailed => "effect-failed",
+        }
+    }
+
+    pub fn exit_code(self) -> u8 {
+        match self {
+            Self::Succeeded
+            | Self::Preview
+            | Self::NoOp
+            | Self::Applied
+            | Self::Finalised
+            | Self::Aborted
+            | Self::EffectRetried
+            | Self::EffectSuperseded => 0,
+            Self::Refused | Self::Stale | Self::RecoveryBlocked | Self::EffectFailed => 1,
+            Self::Conflicted => 2,
+        }
+    }
+}
+
+impl From<CommandStatus> for CommandStatusV2 {
+    fn from(value: CommandStatus) -> Self {
+        match value {
+            CommandStatus::Preview => Self::Preview,
+            CommandStatus::NoOp => Self::NoOp,
+            CommandStatus::Applied => Self::Applied,
+            CommandStatus::Conflicted => Self::Conflicted,
+            CommandStatus::Finalised => Self::Finalised,
+            CommandStatus::Aborted => Self::Aborted,
+            CommandStatus::EffectRetried => Self::EffectRetried,
+            CommandStatus::EffectSuperseded => Self::EffectSuperseded,
+            CommandStatus::Refused => Self::Refused,
+            CommandStatus::Stale => Self::Stale,
+            CommandStatus::RecoveryBlocked => Self::RecoveryBlocked,
+            CommandStatus::EffectFailed => Self::EffectFailed,
+        }
+    }
+}
+
+/// Report kinds supported during the first v2 work package. Later v2-only
+/// report packages extend this closed registry before v2 is released.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CommandReportV2 {
+    Prepared(Box<Report>),
+    EffectRetry(Box<EffectRetryReport>),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ErrorReportV2 {
+    pub code: DiagnosticCode,
+    pub message: String,
+    /// Typed diagnostics are introduced by their owning vertical packages.
+    /// Existing v1 errors map without inventing source evidence.
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+/// A diagnostic value is deliberately uninhabited in DX-001. This reserves
+/// the exact array field without fabricating source ranges or typed fixes;
+/// the packages that produce such evidence introduce the complete value.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Diagnostic {}
+
+/// The current machine-readable command result.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CommandEnvelopeV2 {
+    pub command: CommandIdentity,
+    pub status: CommandStatusV2,
+    pub project_commit: ProjectCommitDisposition,
+    pub recovery: Vec<RecoveryOutcome>,
+    pub report: Option<CommandReportV2>,
+    pub receipt: Option<AppliedReceipt>,
+    pub error: Option<ErrorReportV2>,
+    pub timings: Vec<crate::timing::TimingSpan>,
+}
+
+impl CommandEnvelopeV2 {
+    /// Project a frozen v1 mutation result into the current envelope without
+    /// changing the v1 model or serializer.
+    pub fn from_v1(command: CommandIdentity, value: &CommandEnvelope) -> Self {
+        let report = value.report.as_ref().map(|report| match report {
+            CommandReport::Prepared(report) => CommandReportV2::Prepared(report.clone()),
+            CommandReport::EffectRetry(report) => CommandReportV2::EffectRetry(report.clone()),
+        });
+        let error = value.error.as_ref().map(|error| ErrorReportV2 {
+            code: error.code.into(),
+            message: error.message.clone(),
+            diagnostics: Vec::new(),
+        });
+        Self {
+            command,
+            status: value.status.into(),
+            project_commit: value.project_commit,
+            recovery: value.recovery.clone(),
+            report,
+            receipt: value.receipt.clone(),
+            error,
+            timings: value.timings.clone(),
+        }
+    }
+
+    pub fn exit_code(&self) -> u8 {
+        self.status.exit_code()
+    }
 }
 
 /// The one value a mutation command returns.
@@ -405,6 +682,23 @@ mod tests {
                 "`{spelling}` is not lowercase kebab case"
             );
         }
+    }
+
+    #[test]
+    fn v2_diagnostic_registry_is_complete_distinct_and_kebab_case() {
+        let spellings: BTreeSet<&str> = DiagnosticCode::ALL
+            .iter()
+            .map(|code| code.label())
+            .collect();
+        assert_eq!(spellings.len(), DiagnosticCode::ALL.len());
+        for spelling in spellings {
+            assert!(
+                spelling.chars().all(|c| c.is_ascii_lowercase() || c == '-'),
+                "`{spelling}` is not lowercase kebab case"
+            );
+        }
+        assert!(DiagnosticCode::ALL.contains(&DiagnosticCode::ProtocolMismatch));
+        assert!(DiagnosticCode::ALL.contains(&DiagnosticCode::WatchOverflow));
     }
 
     #[test]

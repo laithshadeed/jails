@@ -565,6 +565,12 @@ impl Asked {
         out
     }
 
+    pub(super) fn syntax_fingerprint(
+        &self,
+    ) -> Result<jails_protocol::request::RequestSyntaxFingerprint> {
+        self.syntax.fingerprint()
+    }
+
     /// Whether this request is one that may reconcile runtime services.
     ///
     /// §R3.3: only the variants carrying a `no_start` field are eligible, and

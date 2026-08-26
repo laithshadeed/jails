@@ -56,8 +56,8 @@ pub(crate) fn invocation() -> Result<Option<Invocation>> {
             }
             "--output" => {
                 let value = args.next().ok_or(concat!(
-                    "--output requires human or json.\n       ",
-                    "fix: pass `--output human` or `--output json`."
+                    "--output requires human, json, or json-v1.\n       ",
+                    "fix: pass `--output human`, `--output json`, or `--output json-v1`."
                 ))?;
                 output = parse_output(&value.to_string_lossy())?;
             }
@@ -107,6 +107,7 @@ pub(crate) fn invocation() -> Result<Option<Invocation>> {
         ast,
         plan_out: None,
         plan_in: Some(path),
+        command_path: crate::cli::command_path_from_env(),
     }))
 }
 
@@ -114,9 +115,10 @@ fn parse_output(value: &str) -> Result<Output> {
     match value {
         "human" => Ok(Output::Human),
         "json" => Ok(Output::Json),
+        "json-v1" => Ok(Output::JsonV1),
         other => Err(format!(
-            "unsupported --output `{other}`; expected human or json.\n       \
-             fix: pass `--output human` or `--output json`."
+            "unsupported --output `{other}`; expected human, json, or json-v1.\n       \
+             fix: pass `--output human`, `--output json`, or `--output json-v1`."
         )
         .into()),
     }

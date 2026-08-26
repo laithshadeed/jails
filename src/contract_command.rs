@@ -1,6 +1,6 @@
 //! Read-only portable HTTP contract projection and compatibility checks.
 
-use crate::cli::{ContractCommand, ContractFormatArg, ContractScopeArg, Output};
+use crate::cli::{ContractCommand, ContractFormatArg, ContractScopeArg};
 use crate::{inspect, model};
 use jails_support::Result;
 use serde_json::{Map, Value, json};
@@ -40,7 +40,7 @@ pub(crate) fn run(command: ContractCommand, invocation: crate::Invocation) -> Re
             let current = emit(&project, ContractFormatArg::Openapi, scope);
             let baseline = baseline(&project, &against)?;
             let breaking = compatibility_breaks(&baseline, &current)?;
-            if invocation.output == Output::Json {
+            if invocation.output.is_json() {
                 println!(
                     "{}",
                     json!({

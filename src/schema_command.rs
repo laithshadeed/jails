@@ -1,8 +1,7 @@
 //! Read-only CLI projections for schema authorities and reconciliation plans.
 
 use crate::cli::{
-    IntrospectCommand, IntrospectFormatArg, Output, RunServicesArg, SchemaAuthorityArg,
-    SchemaCommand,
+    IntrospectCommand, IntrospectFormatArg, RunServicesArg, SchemaAuthorityArg, SchemaCommand,
 };
 use jails_project::model::Project;
 use jails_protocol::database::{
@@ -33,7 +32,7 @@ pub(crate) fn introspect(command: IntrospectCommand, invocation: crate::Invocati
                 )?,
                 table.as_deref(),
             )?;
-            let format = if invocation.output == Output::Json {
+            let format = if invocation.output.is_json() {
                 IntrospectFormatArg::Json
             } else {
                 format
@@ -65,7 +64,7 @@ pub(crate) fn pull(
     )?;
     print_snapshot(
         &snapshot,
-        if invocation.output == Output::Json {
+        if invocation.output.is_json() {
             IntrospectFormatArg::Json
         } else {
             IntrospectFormatArg::Manifest
@@ -119,7 +118,7 @@ pub(crate) fn schema(command: SchemaCommand, invocation: crate::Invocation) -> R
             } else {
                 (Vec::new(), None)
             };
-            if invocation.output == Output::Json {
+            if invocation.output.is_json() {
                 print_diff_json(
                     from,
                     to,
@@ -144,7 +143,7 @@ pub(crate) fn schema(command: SchemaCommand, invocation: crate::Invocation) -> R
 pub(crate) fn migrate_lint(manifest: Option<&Path>, invocation: crate::Invocation) -> Result<()> {
     let project = Project::discover()?;
     let findings = jails_project::query_workspace::migration_lint(&project, manifest)?;
-    if invocation.output == Output::Json {
+    if invocation.output.is_json() {
         let rows = findings
             .iter()
             .map(|finding| {

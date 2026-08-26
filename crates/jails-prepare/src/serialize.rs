@@ -24,7 +24,8 @@
 //! one-key object.
 
 use crate::command::{
-    CommandEnvelope, CommandReport, EffectRetryReport, ErrorReport, SCHEMA as COMMAND_SCHEMA,
+    CommandEnvelope, CommandEnvelopeV2, CommandReport, CommandReportV2, Diagnostic,
+    EffectRetryReport, ErrorReport, ErrorReportV2, SCHEMA as COMMAND_SCHEMA, SCHEMA_V2,
 };
 use crate::prepare::PreparedKind;
 use crate::receipt::AppliedReceipt;
@@ -34,6 +35,9 @@ use jails_protocol::effect::{EffectState, PostCommitEffect};
 use jails_protocol::identity::ProjectPath;
 use jails_protocol::identity::{ObjectId, ObjectRef};
 use jails_protocol::resource::ResourceOwner;
+
+mod v2;
+pub use v2::{envelope_v2, envelope_v2_with_review};
 
 /// One compact UTF-8 object followed by a newline.
 pub fn envelope(envelope: &CommandEnvelope) -> String {
@@ -111,28 +115,29 @@ fn report(value: &CommandReport) -> String {
 fn prepared(value: &Report) -> String {
     let mut out = String::from("{");
     field(&mut out, "schema", &quoted(REPORT_SCHEMA), true);
+    prepared_fields(&mut out, value, false);
+    out.push('}');
+    out
+}
+
+fn prepared_fields(out: &mut String, value: &Report, first: bool) {
+    field(out, "operation", &quoted(&value.operation.to_hex()), first);
     field(
-        &mut out,
-        "operation",
-        &quoted(&value.operation.to_hex()),
-        false,
-    );
-    field(
-        &mut out,
+        out,
         "transaction",
         &quoted(&value.transaction.to_hex()),
         false,
     );
-    field(&mut out, "kind", &kind(&value.kind), false);
+    field(out, "kind", &kind(&value.kind), false);
     field(
-        &mut out,
+        out,
         "operations",
         &array(&value.operations, operation),
         false,
     );
-    field(&mut out, "ledger", &ledger(&value.ledger), false);
+    field(out, "ledger", &ledger(&value.ledger), false);
     field(
-        &mut out,
+        out,
         "post_commit",
         &array(&value.post_commit, |effect| {
             let mut out = String::from("{");
@@ -143,14 +148,7 @@ fn prepared(value: &Report) -> String {
         }),
         false,
     );
-    field(
-        &mut out,
-        "warnings",
-        &array(&value.warnings, warning),
-        false,
-    );
-    out.push('}');
-    out
+    field(out, "warnings", &array(&value.warnings, warning), false);
 }
 
 fn kind(value: &PreparedKind) -> String {
@@ -598,13 +596,31 @@ fn quoted(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::command::{CommandEnvelope, ErrorCode, ErrorReport};
+    use crate::command::{
+        CommandEnvelope, CommandEnvelopeV2, CommandIdentity, ErrorCode, ErrorReport,
+    };
     use crate::prepare::tests::{change_with, create};
     use crate::report::Report;
+    use jails_protocol::request::CanonicalRequestSyntaxV1;
 
     fn preview(bodies: Vec<(crate::prepare::FileOp, Vec<u8>)>) -> String {
         envelope(&CommandEnvelope::preview(
             Report::of(&change_with(bodies)).unwrap(),
+        ))
+    }
+
+    fn current(value: &CommandEnvelope, path: &[&str]) -> String {
+        let syntax = CanonicalRequestSyntaxV1 {
+            command_path: path.iter().map(|part| part.to_string()).collect(),
+            ..CanonicalRequestSyntaxV1::default()
+        };
+        envelope_v2(&CommandEnvelopeV2::from_v1(
+            CommandIdentity {
+                path: syntax.command_path.clone(),
+                fingerprint: syntax.fingerprint().unwrap(),
+                read_only: false,
+            },
+            value,
         ))
     }
 
@@ -614,6 +630,78 @@ mod tests {
         assert!(json.starts_with('{'), "{json}");
         assert!(json.ends_with("}\n"), "{json}");
         assert_eq!(json.matches('\n').count(), 1);
+    }
+
+    #[test]
+    fn v1_refusal_is_a_frozen_golden_object() {
+        let json = envelope(&CommandEnvelope::refused(ErrorReport::new(
+            ErrorCode::InvalidRequest,
+            "name a resource",
+        )));
+        assert_eq!(
+            json,
+            concat!(
+                "{\"schema\":\"jails.command-result.v1\",",
+                "\"status\":\"refused\",\"exit_code\":1,",
+                "\"project_commit\":\"none\",\"recovery\":[],",
+                "\"report\":null,\"receipt\":null,",
+                "\"error\":{\"code\":\"invalid-request\",",
+                "\"message\":\"name a resource\",\"paths\":[]},",
+                "\"timings\":[]}\n"
+            )
+        );
+    }
+
+    #[test]
+    fn v2_emits_the_exact_top_level_order_nulls_and_newline() {
+        let json = current(
+            &CommandEnvelope::refused(ErrorReport::new(
+                ErrorCode::InvalidRequest,
+                "name a resource",
+            )),
+            &["resource", "status"],
+        );
+        let ordered = [
+            "\"schema\":",
+            "\"command\":",
+            "\"status\":",
+            "\"exit_code\":",
+            "\"project_commit\":",
+            "\"recovery\":",
+            "\"report\":",
+            "\"receipt\":",
+            "\"error\":",
+            "\"timings\":",
+        ];
+        let mut previous = 0;
+        for key in ordered {
+            let at = json
+                .find(key)
+                .unwrap_or_else(|| panic!("{key} missing from {json}"));
+            assert!(at >= previous, "{key} was out of order in {json}");
+            previous = at;
+        }
+        assert!(json.starts_with("{\"schema\":\"jails.command-result.v2\""));
+        assert!(json.contains("\"path\":[\"resource\",\"status\"]"));
+        assert!(json.contains("\"fingerprint\":\"sha256:"));
+        assert!(json.contains("\"report\":null,\"receipt\":null"));
+        assert!(json.contains("\"diagnostics\":[]"));
+        assert_eq!(json.matches('\n').count(), 1);
+        assert!(json.ends_with('\n'));
+        assert!(!json.contains("\u{1b}["));
+    }
+
+    #[test]
+    fn human_and_v2_json_project_the_same_result_fixture() {
+        let envelope = CommandEnvelope::preview(
+            Report::of(&change_with(vec![create("pom.xml", b"<project/>")])).unwrap(),
+        );
+        let human = crate::report::render_envelope(&envelope);
+        let json = current(&envelope, &["generate"]);
+        assert!(human.starts_with("plan "), "{human}");
+        assert!(json.contains("\"status\":\"preview\""), "{json}");
+        assert!(human.contains("pom.xml"), "{human}");
+        assert!(json.contains("pom.xml"), "{json}");
     }
 
     /// A `u64` as a JSON number loses precision above 2^53 in every

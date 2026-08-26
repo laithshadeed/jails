@@ -306,20 +306,34 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
         .unwrap();
     assert!(json.status.success(), "{json:?}");
     let json = String::from_utf8(json.stdout).unwrap();
-    assert!(json.starts_with('{') && json.ends_with('}'), "{json}");
-    assert!(json.contains("\"diffs\": ["), "{json}");
-    assert!(json.contains("\"ast\": ["), "{json}");
-    assert!(json.contains("\"timings\": ["), "{json}");
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(value["schema"], "jails.command-result.v2", "{json}");
+    assert_eq!(value["command"]["path"], serde_json::json!(["generate"]));
+    assert!(value["report"]["data"]["diffs"].is_array(), "{json}");
+    assert!(value["report"]["data"]["ast"].is_array(), "{json}");
+    let timings = value["timings"].as_array().unwrap();
     for phase in [
         "discover", "observe", "parse", "project", "prepare", "verify",
     ] {
         assert!(
-            json.contains(&format!("\"phase\": \"{phase}\"")),
+            timings.iter().any(|timing| timing["phase"] == phase),
             "missing {phase} timing in {json}"
         );
     }
-    assert!(!json.contains("\"phase\": \"commit\""), "{json}");
-    assert!(json.contains("\"patch\": \"diff --jails create"), "{json}");
+    assert!(
+        !timings.iter().any(|timing| timing["phase"] == "commit"),
+        "{json}"
+    );
+    assert!(
+        value["report"]["data"]["diffs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|diff| diff["patch"]
+                .as_str()
+                .is_some_and(|patch| patch.starts_with("diff --jails create"))),
+        "{json}"
+    );
     assert!(
         json.contains("src/main/java/com/example/demo/domain/Fresh.java"),
         "{json}"
@@ -330,6 +344,31 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
         before,
         "JSON review preview wrote files"
     );
+
+    let compatibility = jails_cmd(&root, None)
+        .args([
+            "g",
+            "record",
+            "Compatibility",
+            "id:uuid",
+            "--pretend",
+            "--output",
+            "json-v1",
+        ])
+        .output()
+        .unwrap();
+    assert!(compatibility.status.success(), "{compatibility:?}");
+    let compatibility = String::from_utf8(compatibility.stdout).unwrap();
+    let compatibility_value: serde_json::Value = serde_json::from_str(&compatibility).unwrap();
+    assert_eq!(
+        compatibility_value["schema"], "jails.command-result.v1",
+        "{compatibility}"
+    );
+    assert!(
+        compatibility_value.get("command").is_none(),
+        "{compatibility}"
+    );
+    assert_eq!(compatibility.matches('\n').count(), 1, "{compatibility}");
 
     let merged_json = jails_cmd(&root, None)
         .args([
@@ -347,8 +386,13 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
         .unwrap();
     assert!(merged_json.status.success(), "{merged_json:?}");
     let merged_json = String::from_utf8(merged_json.stdout).unwrap();
+    let merged_value: serde_json::Value = serde_json::from_str(&merged_json).unwrap();
     assert!(
-        merged_json.contains("\"phase\": \"process\""),
+        merged_value["timings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|timing| timing["phase"] == "process"),
         "three-way merge process was not timed: {merged_json}"
     );
     assert_eq!(
@@ -380,8 +424,13 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
         .unwrap();
     assert!(committed.status.success(), "{committed:?}");
     let committed = String::from_utf8(committed.stdout).unwrap();
+    let committed_value: serde_json::Value = serde_json::from_str(&committed).unwrap();
     assert!(
-        committed.contains("\"phase\": \"commit\""),
+        committed_value["timings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|timing| timing["phase"] == "commit"),
         "committed JSON omitted commit timing: {committed}"
     );
 }

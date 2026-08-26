@@ -155,6 +155,7 @@ pub enum Outcome {
         CommitResult,
         Box<jails_prepare::review::PreparedReview>,
         jails_prepare::timing::TimingTrace,
+        jails_protocol::request::RequestSyntaxFingerprint,
     ),
     /// The same, plus what recovery finished on the way here.
     ///
@@ -167,6 +168,7 @@ pub enum Outcome {
         Vec<RecoveryOutcome>,
         Box<jails_prepare::review::PreparedReview>,
         jails_prepare::timing::TimingTrace,
+        jails_protocol::request::RequestSyntaxFingerprint,
     ),
     /// Nothing was written. This is the prepared transition, projected.
     ///
@@ -193,7 +195,7 @@ impl Outcome {
     /// The commit, when the caller knows it asked for one.
     pub fn committed(self) -> Result<CommitResult> {
         match self {
-            Self::Committed(result, _, _) | Self::CommittedAfterRecovery(result, _, _, _) => {
+            Self::Committed(result, _, _, _) | Self::CommittedAfterRecovery(result, _, _, _, _) => {
                 Ok(result)
             }
             Self::Planned(_) => Err(jails_support::Failure::Told(
@@ -214,7 +216,9 @@ impl Outcome {
     /// view. It comes from the same bundle on both preview and commit paths.
     pub fn review(&self) -> &jails_prepare::review::PreparedReview {
         match self {
-            Self::Committed(_, review, _) | Self::CommittedAfterRecovery(_, _, review, _) => review,
+            Self::Committed(_, review, _, _) | Self::CommittedAfterRecovery(_, _, review, _, _) => {
+                review
+            }
             Self::Planned(prepared) => &prepared.bundle.review,
         }
     }
@@ -234,9 +238,8 @@ impl Outcome {
     /// Completed runtime spans in the order each phase finished.
     pub fn timings(&self) -> Vec<jails_prepare::timing::TimingSpan> {
         match self {
-            Self::Committed(_, _, timings) | Self::CommittedAfterRecovery(_, _, _, timings) => {
-                timings.spans()
-            }
+            Self::Committed(_, _, timings, _)
+            | Self::CommittedAfterRecovery(_, _, _, timings, _) => timings.spans(),
             Self::Planned(prepared) => prepared.timings.spans(),
         }
     }
@@ -249,7 +252,7 @@ impl Outcome {
     /// like one.
     pub(super) fn replanned(&self) -> Option<RecoveryOutcome> {
         match self {
-            Self::Committed(CommitResult::RecoveredPriorTransaction(outcome), _, _) => {
+            Self::Committed(CommitResult::RecoveredPriorTransaction(outcome), _, _, _) => {
                 Some((**outcome).clone())
             }
             _ => None,
@@ -260,12 +263,15 @@ impl Outcome {
     pub(super) fn after_recovery(self, recovery: Vec<RecoveryOutcome>) -> Self {
         match (self, recovery.is_empty()) {
             (outcome, true) => outcome,
-            (Self::Committed(result, review, timings), false) => {
-                Self::CommittedAfterRecovery(result, recovery, review, timings)
+            (Self::Committed(result, review, timings, fingerprint), false) => {
+                Self::CommittedAfterRecovery(result, recovery, review, timings, fingerprint)
             }
-            (Self::CommittedAfterRecovery(result, mut had, review, timings), false) => {
+            (
+                Self::CommittedAfterRecovery(result, mut had, review, timings, fingerprint),
+                false,
+            ) => {
                 had.extend(recovery);
-                Self::CommittedAfterRecovery(result, had, review, timings)
+                Self::CommittedAfterRecovery(result, had, review, timings, fingerprint)
             }
             (planned, false) => planned,
         }
@@ -289,8 +295,8 @@ impl Outcome {
                         .with_timings(prepared.timings.spans()),
                 );
             }
-            Self::Committed(result, _, _) => (result, Vec::new()),
-            Self::CommittedAfterRecovery(result, recovery, _, _) => (result, recovery.clone()),
+            Self::Committed(result, _, _, _) => (result, Vec::new()),
+            Self::CommittedAfterRecovery(result, recovery, _, _, _) => (result, recovery.clone()),
         };
         let envelope = match result {
             CommitResult::NoOp => CommandEnvelope::no_op(),
@@ -315,8 +321,8 @@ impl Outcome {
     /// `target/` would be writing on a run that promised not to.
     pub fn deleted_files(&self) -> Vec<String> {
         let receipt = match self {
-            Self::Committed(CommitResult::Committed(committed), _, _)
-            | Self::CommittedAfterRecovery(CommitResult::Committed(committed), _, _, _) => {
+            Self::Committed(CommitResult::Committed(committed), _, _, _)
+            | Self::CommittedAfterRecovery(CommitResult::Committed(committed), _, _, _, _) => {
                 &committed.receipt
             }
             _ => return Vec::new(),
@@ -334,6 +340,22 @@ impl Outcome {
         match self {
             Self::Planned(prepared) => prepared.report.operations.clone(),
             _ => Vec::new(),
+        }
+    }
+
+    /// The canonical command-line fingerprint carried by every mutation
+    /// plan, preserved across both preview and commit projections.
+    pub fn request_fingerprint(&self) -> Option<jails_protocol::request::RequestSyntaxFingerprint> {
+        match self {
+            Self::Planned(prepared) => prepared
+                .bundle
+                .change
+                .operation_identity
+                .invocation
+                .as_ref()
+                .map(|invocation| invocation.request_syntax),
+            Self::Committed(_, _, _, fingerprint)
+            | Self::CommittedAfterRecovery(_, _, _, _, fingerprint) => Some(*fingerprint),
         }
     }
 }

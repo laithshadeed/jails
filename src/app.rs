@@ -219,6 +219,7 @@ pub(crate) fn apply_in(root: &Path, no_start: bool, debug: bool) -> Result<()> {
     let outcome = declared(&run, None)?;
     crate::dispatch::report(
         &outcome,
+        &["app".to_string(), "apply".to_string()],
         crate::Output::Human,
         jails_prepare::review::ReviewSelection::default(),
         debug,

@@ -279,7 +279,7 @@ fn json_array(rows: &str) -> String {
     }
 }
 
-fn semantic_kind(edit: &SemanticEdit) -> &'static str {
+pub(crate) fn semantic_kind(edit: &SemanticEdit) -> &'static str {
     match edit {
         SemanticEdit::MavenDependency { .. } => "MavenDependency",
         SemanticEdit::BuildPlugin { .. } => "BuildPlugin",
@@ -295,7 +295,7 @@ fn semantic_kind(edit: &SemanticEdit) -> &'static str {
     }
 }
 
-fn render_patch(file: &FileReview) -> String {
+pub(crate) fn render_patch(file: &FileReview) -> String {
     let old_name = match file.kind {
         ReviewFileKind::Create => "/dev/null".to_string(),
         _ => format!("a/{}", file.path),

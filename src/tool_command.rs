@@ -25,7 +25,7 @@ pub(crate) struct HttpRequest {
 }
 
 pub(crate) fn request(request: HttpRequest, invocation: crate::Invocation) -> Result<()> {
-    if invocation.output == Output::Json && !request.print {
+    if invocation.output.is_json() && !request.print {
         return Err(
             "transparent curl execution cannot use JSON output.\n       fix: omit `--output json`, or combine it with `--print` for structured preflight only."
                 .into(),
@@ -169,7 +169,7 @@ pub(crate) fn request(request: HttpRequest, invocation: crate::Invocation) -> Re
     }
     let rendered = render_argv("curl", &public_args);
     if request.print {
-        if invocation.output == Output::Json {
+        if invocation.output.is_json() {
             println!(
                 "{{\"schema\":\"jails.tool-invocation.v1\",\"tool\":\"curl\",\"argv\":{}}}",
                 jails_support::json::string(&rendered)
@@ -452,7 +452,7 @@ fn render_argv(program: &str, args: &[String]) -> String {
 }
 
 fn transparent_output(output: Output, command: &str) -> Result<()> {
-    if output == Output::Json {
+    if output.is_json() {
         return Err(format!("{command} is a transparent terminal session and cannot use JSON output.\n       fix: omit `--output json`.").into());
     }
     Ok(())

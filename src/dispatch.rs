@@ -102,6 +102,7 @@ pub(crate) fn mutate_confirmed(
         drop_compiled_shadows(&project, &outcome);
         return report(
             &outcome,
+            &invocation.command_path,
             invocation.output,
             invocation.review(),
             invocation.debug,
@@ -151,6 +152,7 @@ pub(crate) fn mutate_confirmed(
         };
         return report(
             &outcome,
+            &invocation.command_path,
             invocation.output,
             invocation.review(),
             invocation.debug,
@@ -170,6 +172,7 @@ pub(crate) fn mutate_confirmed(
     drop_compiled_shadows(&project, &outcome);
     report(
         &outcome,
+        &invocation.command_path,
         invocation.output,
         invocation.review(),
         invocation.debug,
@@ -233,6 +236,7 @@ pub(crate) fn precondition(
         true => Ok(()),
         false => report(
             &outcome,
+            &invocation.command_path,
             invocation.output,
             invocation.review(),
             invocation.debug,
@@ -369,6 +373,7 @@ pub(crate) fn one_transition_each(
 /// it would say nothing.
 pub(crate) fn report(
     outcome: &jails_engine::route::Outcome,
+    command_path: &[String],
     output: Output,
     review: jails_prepare::review::ReviewSelection,
     debug: bool,
@@ -401,10 +406,24 @@ pub(crate) fn report(
             }
             rendered
         }
-        Output::Json => jails_prepare::report::render_envelope_json_with_review(
-            &envelope,
-            review.any().then(|| (outcome.review(), review)),
-        ),
+        Output::Json => {
+            let fingerprint = outcome.request_fingerprint().ok_or_else(|| {
+                "mutation result omitted its canonical request fingerprint".to_string()
+            })?;
+            let envelope = jails_prepare::command::CommandEnvelopeV2::from_v1(
+                jails_prepare::command::CommandIdentity {
+                    path: command_path.to_vec(),
+                    fingerprint,
+                    read_only: false,
+                },
+                &envelope,
+            );
+            jails_prepare::serialize::envelope_v2_with_review(
+                &envelope,
+                review.any().then(|| (outcome.review(), review)),
+            )
+        }
+        Output::JsonV1 => jails_prepare::serialize::envelope(&envelope),
     };
     print!("{rendered}");
     // A preview reads exactly like a commit -- one line per operation, in the

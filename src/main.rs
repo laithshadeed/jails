@@ -41,6 +41,7 @@ fn main() -> std::process::ExitCode {
         ast: cli.ast,
         plan_out: cli.plan_out,
         plan_in: cli.plan_in,
+        command_path: cli::command_path_from_env(),
     };
     let result = match cli.command {
         Command::About { json } => project::about(json),
@@ -382,7 +383,7 @@ fn main() -> std::process::ExitCode {
             } => lifecycle_status::status(
                 &selector,
                 datasource.as_deref(),
-                matches!(invocation.output, Output::Json),
+                invocation.output.is_json(),
             ),
             ResourceCommand::Revive { selector, table } => {
                 dispatch::mutate(invocation, false, |run| {
@@ -602,7 +603,7 @@ fn main() -> std::process::ExitCode {
                 tags,
                 fail_fast,
                 slowest,
-                json: json || invocation.output == Output::Json,
+                json: json || invocation.output.is_json(),
                 fast,
                 until_fail,
                 repeat,

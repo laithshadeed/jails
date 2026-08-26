@@ -94,6 +94,7 @@ pub(super) fn commit_set(
     asked: &Asked,
 ) -> Result<Outcome> {
     let project = run.project();
+    let request_fingerprint = asked.syntax_fingerprint()?;
     let bundle = prepare_set(run, set, declaration, Some(asked))?;
     if !run.write {
         let report = jails_prepare::report::Report::of(&bundle.change)?;
@@ -118,6 +119,7 @@ pub(super) fn commit_set(
         reconciled(run, result)?,
         Box::new(bundle.review),
         run.timing_trace(),
+        request_fingerprint,
     ))
 }
 

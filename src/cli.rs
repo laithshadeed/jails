@@ -37,6 +37,10 @@ mod history;
 pub(crate) use history::*;
 mod testing;
 pub(crate) use testing::*;
+mod command_path;
+pub(crate) use command_path::command_path_from_env;
+mod output;
+pub(crate) use output::Output;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub(crate) enum TestScopeArg {
@@ -150,7 +154,7 @@ pub(crate) struct Cli {
     #[arg(long, short = 'p', global = true, visible_alias = "dry-run")]
     pub(crate) pretend: bool,
 
-    /// How a mutation reports what it did: readable, or one JSON object
+    /// How a command reports: readable, current JSON, or frozen v1 JSON
     ///
     /// One projection, two encodings. §R3.4 makes a command's result a
     /// *value* -- the same status, operation list, ledger line and effects
@@ -174,13 +178,6 @@ pub(crate) struct Cli {
     /// Apply only this authenticated prepared transaction, without replanning
     #[arg(long, global = true, conflicts_with_all = ["plan_out", "pretend"])]
     pub(crate) plan_in: Option<std::path::PathBuf>,
-}
-
-/// How a mutation's [`CommandEnvelope`] is encoded.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
-pub(crate) enum Output {
-    Human,
-    Json,
 }
 
 #[derive(Subcommand)]
@@ -340,6 +337,7 @@ pub(crate) struct Invocation {
     pub(crate) ast: bool,
     pub(crate) plan_out: Option<std::path::PathBuf>,
     pub(crate) plan_in: Option<std::path::PathBuf>,
+    pub(crate) command_path: Vec<String>,
 }
 
 impl Invocation {

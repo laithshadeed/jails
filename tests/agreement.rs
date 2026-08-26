@@ -180,14 +180,16 @@ fn would_remove(
     if !output.status.success() {
         return Err(format!("{stdout}{stderr}"));
     }
-    Ok(stdout
-        .lines()
-        .filter(|line| line.contains("\"kind\": \"delete\""))
-        .filter_map(|line| {
-            let (_, rest) = line.split_once("\"path\": \"")?;
-            let (path, _) = rest.split_once('"')?;
-            Some(path.replace('\\', "/"))
-        })
+    let value: serde_json::Value =
+        serde_json::from_str(&stdout).map_err(|error| format!("{error}: {stdout}"))?;
+    Ok(value
+        .pointer("/report/data/operations")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|operation| operation["kind"] == "delete")
+        .filter_map(|operation| operation["path"]["project"].as_str())
+        .map(|path| path.replace('\\', "/"))
         .collect())
 }
 

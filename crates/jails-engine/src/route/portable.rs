@@ -220,6 +220,13 @@ pub fn apply_plan(run: &Run<'_>, bytes: &[u8]) -> Result<Outcome> {
     }
     let root = capture::canonical_root(run.project().root())?;
     let bundle = decode(bytes, root)?;
+    let request_fingerprint = bundle
+        .change
+        .operation_identity
+        .invocation
+        .as_ref()
+        .ok_or("prepared plan omitted its canonical invocation fingerprint")?
+        .request_syntax;
     let review = bundle.review.clone();
     let project = run.project();
     let (locked, result) = run.measure(jails_prepare::timing::TimingPhase::Commit, || {
@@ -234,5 +241,6 @@ pub fn apply_plan(run: &Run<'_>, bytes: &[u8]) -> Result<Outcome> {
         commit::reconciled(run, result)?,
         Box::new(review),
         run.timing_trace(),
+        request_fingerprint,
     ))
 }
