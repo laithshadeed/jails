@@ -16,6 +16,7 @@
 pub(crate) mod affected;
 pub mod bench;
 pub mod console;
+pub mod doctor;
 pub mod kafka;
 pub(crate) mod launcher;
 pub mod lint;

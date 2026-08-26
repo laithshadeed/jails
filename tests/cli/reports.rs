@@ -323,6 +323,121 @@ fn doctor_reports_a_jdk_older_than_the_target_release() {
 }
 
 #[test]
+fn doctor_reports_resolved_developer_tool_paths_and_versions() {
+    let root = temp_dir("doctor-tools");
+    write_project_skeleton(&root);
+    fs::write(
+        root.join("pom.xml"),
+        "<project><properties><maven.compiler.release>26</maven.compiler.release></properties></project>\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/main/java/com/example/demo/DemoApplication.java"),
+        "package com.example.demo;\nimport org.springframework.boot.autoconfigure.SpringBootApplication;\n@SpringBootApplication public class DemoApplication {}\n",
+    )
+    .unwrap();
+    let controller = root.join("src/main/java/com/example/demo/NoteController.java");
+    fs::write(
+        controller,
+        "package com.example.demo;\nclass NoteController { @GetMapping(\"/notes\") String get() { return \"ok\"; } }\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("compose.yaml"),
+        "services:\n  postgres:\n    image: postgres:17\n",
+    )
+    .unwrap();
+
+    let tools = temp_dir("doctor-tools-bin");
+    let log = tools.join("log.txt");
+    write_fake_maven(
+        &tools,
+        &["curl", "pgcli", "psql", "docker", "java", "jshell", "mvn"],
+        &log,
+    );
+    for (name, output, stderr) in [
+        ("curl", "curl 8.17.0", false),
+        ("pgcli", "pgcli 4.3.0", false),
+        ("psql", "psql (PostgreSQL) 17.6", false),
+        ("docker", "Docker Compose version v5.0.0", false),
+        ("java", "openjdk version \"26.0.2\"", true),
+        ("jshell", "jshell 26.0.2", false),
+        ("mvn", "Apache Maven 3.9.11", false),
+    ] {
+        fs::write(
+            tools.join(name),
+            format!(
+                "#!/bin/sh\necho \"$0 $*\" >> \"{}\"\necho '{}' {}\nexit 0\n",
+                log.display(),
+                output,
+                if stderr { ">&2" } else { "" }
+            ),
+        )
+        .unwrap();
+    }
+
+    let output = jails_cmd(&root, Some(&tools))
+        .env_remove("JAVA_HOME")
+        .arg("doctor")
+        .output()
+        .unwrap();
+    let report = String::from_utf8_lossy(&output.stdout);
+    let canonical = tools.canonicalize().unwrap();
+    for (name, version) in [
+        ("curl", "8.17.0"),
+        ("pgcli", "4.3.0"),
+        ("psql", "17.6"),
+        ("docker", "v5.0.0"),
+        ("java", "26.0.2"),
+        ("jshell", "26.0.2"),
+        ("mvn", "3.9.11"),
+    ] {
+        let path = canonical.join(name).display().to_string();
+        assert!(report.contains(&path), "missing path `{path}`:\n{report}");
+        assert!(
+            report.contains(version),
+            "missing version `{version}`:\n{report}"
+        );
+    }
+    assert!(read_log(&log).contains("docker compose version"));
+}
+
+#[test]
+fn doctor_reports_the_system_gradle_path_and_version_when_no_wrapper_exists() {
+    let root = temp_dir("doctor-gradle-tool");
+    write_project_skeleton(&root);
+    fs::remove_file(root.join("pom.xml")).unwrap();
+    fs::write(
+        root.join("build.gradle"),
+        "plugins { id 'java' }\nsourceCompatibility = 26\n",
+    )
+    .unwrap();
+    let tools = temp_dir("doctor-gradle-tool-bin");
+    let log = tools.join("log.txt");
+    write_fake_maven(&tools, &["java", "gradle"], &log);
+    fs::write(
+        tools.join("java"),
+        "#!/bin/sh\necho 'openjdk version \"26.0.2\"' >&2\nexit 0\n",
+    )
+    .unwrap();
+    fs::write(
+        tools.join("gradle"),
+        "#!/bin/sh\necho 'Gradle 9.1.0'\nexit 0\n",
+    )
+    .unwrap();
+
+    let output = jails_cmd(&root, Some(&tools))
+        .env_remove("JAVA_HOME")
+        .arg("doctor")
+        .output()
+        .unwrap();
+    let report = String::from_utf8_lossy(&output.stdout);
+    let gradle = tools.canonicalize().unwrap().join("gradle");
+    assert!(report.contains(&gradle.display().to_string()), "{report}");
+    assert!(report.contains("Gradle 9.1.0"), "{report}");
+}
+
+#[test]
 fn doctor_exits_non_zero_when_a_check_fails() {
     let root = temp_dir("doctor-exit");
     // No pom.xml at all below this directory is not the case under test --

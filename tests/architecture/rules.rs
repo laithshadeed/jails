@@ -363,6 +363,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-drive", "kafka", 8),
     ("jails-drive", "migrate", 8),
     ("jails-drive", "console", 8),
+    ("jails-drive", "doctor", 8),
     ("jails-drive", "bench", 8),
     ("jails-drive", "reports", 8),
     ("jails-drive", "lint", 8),

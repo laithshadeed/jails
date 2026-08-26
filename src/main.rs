@@ -2,11 +2,11 @@
 // `crate::ledger` and `crate::template`. A facade at the root rather than an
 // import line in every file: the paths a reader already knows stay correct,
 // and Cargo enforces the boundary either way.
-pub(crate) use jails_drive::{bench, console, kafka, lint, migrate, run, testd};
+pub(crate) use jails_drive::{bench, console, doctor, kafka, lint, migrate, run, testd};
 pub(crate) use jails_generate::{add, generate};
 pub(crate) use jails_java::template;
 pub(crate) use jails_project::{compose, inspect, model, pom, project};
-pub(crate) use jails_report::{commands, doctor, explain, lifecycle_status, source, why};
+pub(crate) use jails_report::{commands, explain, lifecycle_status, source, why};
 mod app;
 mod arguments;
 mod cli;

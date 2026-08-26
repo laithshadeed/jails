@@ -22,13 +22,12 @@ use environment::*;
 use wiring::*;
 
 use crate::compose;
-use crate::generate::find_project_root;
 use crate::inspect;
 use crate::pom;
 use jails_support::Result;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Status {
+pub enum Status {
     /// Checked, and fine.
     Ok,
     /// Checked, and broken in a way that will stop the app from working.
@@ -62,7 +61,7 @@ impl Status {
     }
 }
 
-struct Check {
+pub struct Check {
     status: Status,
     title: String,
     detail: String,
@@ -71,7 +70,7 @@ struct Check {
 }
 
 impl Check {
-    fn new(status: Status, title: impl Into<String>, detail: impl Into<String>) -> Self {
+    pub fn new(status: Status, title: impl Into<String>, detail: impl Into<String>) -> Self {
         Self {
             status,
             title: title.into(),
@@ -80,19 +79,15 @@ impl Check {
         }
     }
 
-    fn fix(mut self, command: impl Into<String>) -> Self {
+    pub fn fix(mut self, command: impl Into<String>) -> Self {
         self.fix = command.into();
         self
     }
 }
 
-pub fn doctor(json: bool) -> Result<()> {
-    let root = find_project_root()?;
-    // `inspect` rather than `load`: doctor's whole value is that it works on a
-    // project that does not build, so an unresolvable base package is one more
-    // fact about the project rather than a reason to refuse to report.
-    let project = crate::model::Project::inspect(&root)?;
-    let checks = run_checks(&project);
+pub fn doctor(project: &Project, json: bool, mut additional: Vec<Check>) -> Result<()> {
+    let mut checks = run_checks(project);
+    checks.append(&mut additional);
 
     if json {
         return report_json(&checks);
