@@ -34,6 +34,31 @@ fn generate_standalone_and_destroy_roundtrip() {
 }
 
 #[test]
+fn scaffold_refuses_invalid_or_reserved_derived_names_before_projection() {
+    let root = temp_dir("scaffold-name-validation");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    let before = snapshot_tree(&root);
+
+    for (name, expected) in [
+        ("class", "Java variable `class`"),
+        ("Bad!Name", "not valid in a Java identifier"),
+        ("A", "PostgreSQL table `as`"),
+        ("I", "PostgreSQL table `is`"),
+    ] {
+        let output = jails_cmd(&root, None)
+            .args(["g", "scaffold", name, "id:uuid@pk", "value:int"])
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(1), "{name}: {output:?}");
+        assert!(stderr.contains(expected), "{name}: {stderr}");
+        assert!(stderr.contains("fix:"), "{name}: {stderr}");
+        assert_eq!(snapshot_tree(&root), before, "{name} wrote project files");
+    }
+}
+
+#[test]
 fn generate_scaffold_writes_a_raw_jdbc_slice() {
     let root = temp_dir("scaffold-files");
     write_spring_fixture(&root);

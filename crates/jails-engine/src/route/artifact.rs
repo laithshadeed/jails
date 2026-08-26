@@ -30,6 +30,10 @@ pub fn generate(run: &Run, recipe: &Recipe<'_>, package: Option<&str>) -> Result
         kind, name, fields, ..
     } = *recipe;
     let project = run.project();
+    // Resolve and validate the durable identity before a generator projects
+    // it into Java or SQL. Projection helpers may assume typed names, while a
+    // CLI typo still needs to be an ordinary refusal rather than a panic.
+    let Declared { id, spec } = declared(project, recipe, package)?;
     let change = with_test_support(
         project,
         jails_generate::generate::plan_recipe(project, recipe, package)?,
@@ -39,7 +43,6 @@ pub fn generate(run: &Run, recipe: &Recipe<'_>, package: Option<&str>) -> Result
     // because there is no pom to splice it into. Said out loud, because the
     // alternative is a reader discovering it by reading the generated code.
     jails_generate::generate::report_degraded_shape(project, &change);
-    let Declared { id, spec } = declared(project, recipe, package)?;
     let owner = ResourceOwner::Entity(EntityId::Intent(id.clone()));
     let mut desired = desire::contribution(&owner, &change, project)?;
     let entity = DesiredEntity {

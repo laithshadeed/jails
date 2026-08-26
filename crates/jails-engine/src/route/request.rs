@@ -24,12 +24,40 @@ pub(super) fn identity(
     name: &str,
     package: Option<&str>,
 ) -> Result<IntentId> {
+    let canonical = jails_generate::generate::strip_redundant_suffix(
+        kind,
+        &jails_spec::spec::field::capitalize(name),
+    );
+    let canonical = Name::parse(&canonical).map_err(|error| {
+        format!(
+            "{error}.\n       fix: choose an entity name that is a valid Java identifier, such as `Order`."
+        )
+    })?;
+    let mut characters = canonical.as_str().chars();
+    let instance = characters
+        .next()
+        .map(|first| first.to_lowercase().collect::<String>() + characters.as_str())
+        .unwrap_or_default();
+    Name::parse(&instance).map_err(|_| {
+        format!(
+            "entity name `{name}` derives Java variable `{instance}`, which is reserved.\n       \
+             fix: choose a domain-specific entity name whose lower-camel spelling is not a Java keyword."
+        )
+    })?;
+    if kind == ArtifactKind::Scaffold {
+        let table = jails_protocol::identity::SqlName::conventional_table(&canonical);
+        if jails_protocol::identity::SqlName::is_postgres_reserved(table.as_str()) {
+            return Err(format!(
+                "entity name `{name}` derives PostgreSQL table `{}`, which is reserved.\n       \
+                 fix: choose a domain-specific entity name whose plural table is not a PostgreSQL keyword.",
+                table.as_str()
+            )
+            .into());
+        }
+    }
     Ok(IntentId {
         recipe: kind,
-        name: Name::parse(&jails_generate::generate::strip_redundant_suffix(
-            kind,
-            &jails_spec::spec::field::capitalize(name),
-        ))?,
+        name: canonical,
         package: Package::parse(&project.package_named("", package))?,
     })
 }
