@@ -2722,6 +2722,9 @@ fn generate_help_documents_the_field_syntax_at_the_point_of_typing() {
     assert!(help.contains("name:string?"), "{help}");
     assert!(help.contains("Case is the rule"), "{help}");
     assert!(help.contains("list<string>"), "{help}");
+    assert!(help.contains("decimal, duration"), "{help}");
+    assert!(help.contains("The aliases timestamp"), "{help}");
+    assert!(help.contains("bigdecimal, and zoneid"), "{help}");
     // Line breaks survived: the table is indented lines, not one paragraph.
     assert!(help.contains("\n  name:string      required"), "{help}");
     assert!(help.contains("\n  jails g sealed Outcome"), "{help}");

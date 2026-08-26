@@ -16,6 +16,7 @@ use super::*;
 
 pub fn new(request: Request<'_>) -> Result<()> {
     let (name, java, debug, pretend) = (request.name, request.java, request.debug, request.pretend);
+    validate_project_name(name)?;
     if Path::new(name).exists() {
         return Err(jails_support::Failure::Told(publish::already_exists(
             Path::new(name),

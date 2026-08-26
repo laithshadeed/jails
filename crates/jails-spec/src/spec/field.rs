@@ -247,6 +247,7 @@ pub const BUILTIN_FIELD_TYPES: &[(&str, &str, Option<&str>)] = &[
     ("date", "LocalDate", Some("java.time.LocalDate")),
     ("datetime", "LocalDateTime", Some("java.time.LocalDateTime")),
     ("instant", "Instant", Some("java.time.Instant")),
+    ("timestamp", "Instant", Some("java.time.Instant")),
     ("uuid", "UUID", Some("java.util.UUID")),
     ("currency", "Currency", Some("java.util.Currency")),
     ("bigdecimal", "BigDecimal", Some("java.math.BigDecimal")),

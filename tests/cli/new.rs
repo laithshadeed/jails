@@ -129,6 +129,22 @@ fn new_cli_fails_if_the_directory_already_exists() {
 }
 
 #[test]
+fn new_refuses_a_project_name_that_maven_cannot_use() {
+    let workdir = temp_dir("new-invalid-artifact-id");
+    for args in [
+        vec!["new", "my app with spaces", "--offline"],
+        vec!["new-cli", "my app with spaces"],
+    ] {
+        let output = jails_cmd(&workdir, None).args(&args).output().unwrap();
+        assert!(!output.status.success(), "{args:?} unexpectedly succeeded");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("valid Maven artifact id"), "{stderr}");
+        assert!(stderr.contains("my-app"), "{stderr}");
+    }
+    assert!(!workdir.join("my app with spaces").exists());
+}
+
+#[test]
 fn new_cli_with_an_app_manifest_is_one_command_from_an_empty_directory() {
     // plan.md §18 closes by asking which two commands should have been one,
     // and answers itself: `new` + `mkdir .jails` + `cp app.toml` + `app apply`

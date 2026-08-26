@@ -102,7 +102,7 @@ impl ScalarFieldType {
             "boolean" | "Boolean" => Some(Self::Boolean),
             "date" | "LocalDate" => Some(Self::LocalDate),
             "datetime" | "LocalDateTime" => Some(Self::LocalDateTime),
-            "instant" | "Instant" => Some(Self::Instant),
+            "instant" | "timestamp" | "Instant" => Some(Self::Instant),
             "uuid" | "UUID" => Some(Self::Uuid),
             // Lowercase only, and this is the one arm where that matters.
             // `Currency` capitalised is a type the project owns -- an enum of
@@ -480,6 +480,7 @@ impl FieldSpec {
             .split_once(':')
             .ok_or_else(|| format!("field `{token}` needs a `name:type`"))?;
         let name = Name::parse(name)?;
+        reject_sql_keyword(name.as_str())?;
 
         let mut parts = rest.split('@');
         let head = parts.next().unwrap_or_default();
@@ -614,6 +615,76 @@ impl FieldSpec {
         out
     }
 }
+
+fn reject_sql_keyword(name: &str) -> Result<()> {
+    if matches!(
+        name.to_ascii_lowercase().as_str(),
+        "all"
+            | "any"
+            | "array"
+            | "asc"
+            | "cast"
+            | "check"
+            | "collate"
+            | "column"
+            | "constraint"
+            | "cross"
+            | "current_date"
+            | "current_time"
+            | "current_user"
+            | "desc"
+            | "distinct"
+            | "end"
+            | "except"
+            | "foreign"
+            | "from"
+            | "full"
+            | "grant"
+            | "group"
+            | "having"
+            | "ilike"
+            | "in"
+            | "inner"
+            | "into"
+            | "is"
+            | "join"
+            | "leading"
+            | "left"
+            | "like"
+            | "limit"
+            | "natural"
+            | "offset"
+            | "on"
+            | "only"
+            | "or"
+            | "order"
+            | "outer"
+            | "primary"
+            | "references"
+            | "right"
+            | "select"
+            | "similar"
+            | "some"
+            | "table"
+            | "then"
+            | "to"
+            | "union"
+            | "unique"
+            | "user"
+            | "using"
+            | "when"
+            | "where"
+            | "window"
+            | "with"
+    ) {
+        return Err(format!(
+            "field name `{name}` is reserved by PostgreSQL and would make generated SQL invalid.\n       \
+             fix: choose a domain-specific name such as `source`, `target`, or `sortOrder`."
+        )
+        .into());
+    }
+    Ok(())
+}
 impl Codec for FieldSpec {
     fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.name.encode(encoder)?;
@@ -674,6 +745,23 @@ mod tests {
             field_type("datetime").unwrap(),
             ("LocalDateTime", Some("java.time.LocalDateTime"))
         );
+        assert_eq!(
+            field_type("timestamp").unwrap(),
+            ("Instant", Some("java.time.Instant"))
+        );
+    }
+
+    #[test]
+    fn postgresql_keywords_are_refused_before_they_reach_ddl_or_dml() {
+        for name in ["from", "to", "order", "user", "current_date"] {
+            let error = FieldSpec::parse(
+                &format!("{name}:string"),
+                &Package::parse("com.example.demo").unwrap(),
+            )
+            .unwrap_err();
+            assert!(error.contains("reserved by PostgreSQL"), "{name}: {error}");
+            assert!(error.contains("fix:"), "{name}: {error}");
+        }
     }
 
     #[test]
@@ -753,7 +841,7 @@ mod tests {
     /// must not be read as an unknown project type.
     #[test]
     fn parse_fields_treats_java_type_names_as_builtins() {
-        let fields = parse_fields(&["id:String".to_string(), "on:LocalDate".to_string()]).unwrap();
+        let fields = parse_fields(&["id:String".to_string(), "day:LocalDate".to_string()]).unwrap();
         assert!(!fields[0].owned);
         assert_eq!(fields[0].java_type, "String");
         assert!(!fields[1].owned);

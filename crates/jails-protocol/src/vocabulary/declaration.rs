@@ -439,7 +439,7 @@ mod tests {
             "owner:string@index",
             "tenant:string@scope",
             "at:instant",
-            "on:date",
+            "day:date",
             "seen:datetime",
             "ok:boolean",
             "ratio:double",
@@ -448,11 +448,11 @@ mod tests {
             "took:duration",
             "zone:zone-id",
             "href:uri",
-            "where:path",
+            "file:path",
             "tags:list<string>",
             "counts:map<string,int>",
             "id:String",
-            "when:Instant",
+            "observedAt:Instant",
             "key:uuid@pk@index",
             // The one that found a live divergence: capitalised means a type
             // the project owns, and `Currency` was being read as the built-in

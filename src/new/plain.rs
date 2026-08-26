@@ -25,6 +25,7 @@ pub fn new_cli(request: &Request<'_>) -> Result<()> {
         pretend,
         ..
     } = *request;
+    validate_project_name(name)?;
     if Path::new(name).exists() {
         return Err(jails_support::Failure::Told(publish::already_exists(
             Path::new(name),

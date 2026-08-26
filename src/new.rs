@@ -119,6 +119,21 @@ fn package_segment(name: &str) -> String {
         .to_lowercase()
 }
 
+fn validate_project_name(name: &str) -> Result<()> {
+    if name.is_empty()
+        || name.chars().any(|character| {
+            !character.is_ascii_alphanumeric() && !matches!(character, '-' | '_' | '.')
+        })
+    {
+        return Err(format!(
+            "project name `{name}` is not a valid Maven artifact id.\n       \
+             fix: use only ASCII letters, digits, `.`, `-`, or `_`; for example `my-app`."
+        )
+        .into());
+    }
+    Ok(())
+}
+
 /// The group a project's own artifact is published under.
 ///
 /// Derived from the package when it is not stated, because the two disagreeing

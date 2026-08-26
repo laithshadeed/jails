@@ -538,7 +538,8 @@ pub(crate) enum Command {
     ///
     /// Case is the rule. A lowercase type is one jails knows and can build a
     /// sample of: string, int, long, double, boolean, uuid, instant, date,
-    /// datetime, bigdecimal, duration, uri, path, zoneid. A capitalised one
+    /// datetime, decimal, duration, uri, path, zone-id. The aliases timestamp,
+    /// bigdecimal, and zoneid are also accepted. A capitalised one
     /// is a type your project owns -- passed through verbatim, no import,
     /// same package. `id:String` still works; jails recognises the Java
     /// spelling of its own built-ins.
@@ -546,7 +547,7 @@ pub(crate) enum Command {
     /// Collections are `list<string>` and `map<string,long>`.
     ///
     /// Examples:
-    ///   jails g scaffold Payout id:uuid amount:bigdecimal paidAt:instant
+    ///   jails g scaffold Payout id:uuid@pk amount:decimal paidAt:instant
     ///   jails g record Money amount:long currency:Currency
     ///   jails g scaffold Note title:string! body:string?    # ! non-blank, ? optional
     ///   jails g sealed Outcome Accepted Rejected
