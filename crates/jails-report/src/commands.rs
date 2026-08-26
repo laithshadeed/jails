@@ -74,16 +74,42 @@ fn global_flags(root: &Command) -> Vec<String> {
         .collect()
 }
 
+/// Every subcommand, at every depth, named by the whole path you type.
+///
+/// It stopped at depth one, which made this output claim a surface it did not
+/// describe: `resource field add`, `remove fast-test`, `app apply` and
+/// `db console` are all real commands and none of them was listed. That is
+/// the same defect the tables in `jails.nvim` had before they were deleted in
+/// favour of reading this -- a completer offering half the verbs -- and it
+/// also means a message telling a reader to run `jails remove fast-test`
+/// cannot be checked against the parser that would accept it.
+///
+/// A nested entry's name is the path (`remove fast-test`); its aliases are the
+/// path with the leaf's alias substituted, so an alias is still a thing you
+/// can type rather than a fragment.
 pub fn subcommands(command: &Command) -> Vec<Name> {
-    command
-        .get_subcommands()
-        .filter(|sub| !sub.is_hide_set())
-        .map(|sub| Name {
-            name: sub.get_name().to_string(),
+    let mut out = Vec::new();
+    collect_subcommands(command, command, "", &mut out);
+    out
+}
+
+fn collect_subcommands(root: &Command, parent: &Command, prefix: &str, out: &mut Vec<Name>) {
+    for sub in parent.get_subcommands().filter(|sub| !sub.is_hide_set()) {
+        // `help` is clap's, not jails': it is on every command at every depth
+        // and listing it would treble this output with one word.
+        if sub.get_name() == "help" {
+            continue;
+        }
+        let path = format!("{prefix}{}", sub.get_name());
+        out.push(Name {
+            name: path.clone(),
             // Only *visible* aliases: `clap_complete`'s bash generator cannot
             // see a hidden one either, which is why `visible_alias` is the rule
             // for anything meant to be typed interactively.
-            aliases: sub.get_visible_aliases().map(str::to_string).collect(),
+            aliases: sub
+                .get_visible_aliases()
+                .map(|alias| format!("{prefix}{alias}"))
+                .collect(),
             about: sub
                 .get_about()
                 .map(|about| about.to_string())
@@ -92,12 +118,13 @@ pub fn subcommands(command: &Command) -> Vec<Name> {
             // is the set a completer should offer after typing it.
             options: long_flags(sub)
                 .into_iter()
-                .chain(global_flags(command))
+                .chain(global_flags(root))
                 .collect::<std::collections::BTreeSet<_>>()
                 .into_iter()
                 .collect(),
-        })
-        .collect()
+        });
+        collect_subcommands(root, sub, &format!("{path} "), out);
+    }
 }
 
 /// Long flags, including the global ones, which is what a completer needs.

@@ -601,11 +601,24 @@ Four things to know before touching it:
   `why.rs`'s shape: a value in a table, one edit per kind, with
   `every_kind_has_an_explanation` failing the build when a kind is added
   without one. That is what stops it becoming the editor lists.
-- `crates/jails-drive/src/commands.rs` — `jails commands [--json]`: every subcommand, generator
+- `crates/jails-report/src/commands.rs` — `jails commands [--json]`: every subcommand, generator
   kind, capability and flag, walked out of the same `clap::Command` that parses
   the arguments and the same `ValueEnum`s that validate them. **There is no
   second list**, which is the point — adding a kind is one edit and this output
-  follows.
+  follows. **It walks to every depth**, naming a nested command by the path you
+  type (`remove fast-test`, `resource field add`, `app apply`, `db console`);
+  stopping at depth one made it claim a surface it did not describe, which is
+  the same defect `jails.nvim`'s deleted tables had. `help` is skipped: it is
+  clap's, on every command at every depth.
+
+  It is also the oracle for
+  `every_command_a_message_tells_the_reader_to_run_is_one_that_exists`
+  (`tests/cli/developer_tools.rs`), which scans every backticked `jails …` in a
+  production message and checks the subcommand, the kind and the capability
+  against it. research.md §0.2's theme is *oracles that disagree*, and the
+  commonest form is a `fix:` line naming something renamed elsewhere — the
+  frozen-conflict message was telling readers to run `jails continue`, which
+  has never existed.
 - `jails.nvim/` — tracked in this repo, but Lua, not Rust: a thin `:Jails`
   wrapper that shells out to the binary on PATH. **It no longer keeps its own
   completion tables**: 160 lines of `SUBCOMMANDS`/`KINDS`/`CAPABILITIES`/

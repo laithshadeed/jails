@@ -142,12 +142,25 @@ to go **red on landing**; P1.5 records what they name.
       recorded test output, which keeps answering after the summary scrolls
       away. A warning and never a failure — the file is exactly what jails
       meant to write, and the work it names is the reader's.
-- [ ] **P1.4** The `fix:`-command conformance test (research §0.2). Extract
+- [x] **P1.4** The `fix:`-command conformance test (research §0.2). Extract
       every `fix:` command the scenario suite emits and assert it does not
-      immediately refuse. This is the control for the whole "oracles disagree"
-      theme.
-- [ ] **P1.5** Record the surfaced list at the top of P2 and delete research.md
-      §0.2. Commit, push.
+      immediately refuse. Landed statically, which is stronger than running
+      them: every backticked `jails …` in a production message is checked
+      against `jails commands --json` — the parser's own walk, not a second
+      list. It found the frozen-conflict message telling readers to run
+      `jails continue`, a verb that has never existed, and it found
+      `jails commands` itself stopping at depth one, so `remove fast-test`,
+      `resource field add`, `app apply` and `db console` were absent from the
+      surface it claims to describe (and from `jails.nvim`'s completion).
+- [x] **P1.5** research.md §0.2 deleted. The controls surfaced, and this
+      session closed: `g strategy` vs the ArchUnit rule (M1); `--package`
+      emitting an unimportable signature (M1a); `destroy` reporting a
+      `--package`-placed resource as never generated (M1b); `add cors` and
+      `add h2` never compiled on the default Boot version; `add h2` writing a
+      `java.sql` test outside `adapters`; `add cors` going red the moment its
+      origin is configured; generated `@Disabled` tests reported as green;
+      `jails continue` named and never built; `jails commands` describing one
+      level of a nested surface.
 
 ## P2 — fix what P1 surfaced (cause D)
 

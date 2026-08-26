@@ -484,3 +484,181 @@ fn unsafe_spring_boots_print_preflight_and_require_yes_without_a_terminal() {
     assert!(diagnostics.contains("profiles: test"), "{diagnostics}");
     assert!(diagnostics.contains("web: configured"), "{diagnostics}");
 }
+
+/// Every `jails …` command jails tells a reader to run is one the CLI knows.
+///
+/// research.md §0.2. The theme these messages belong to is *oracles that
+/// disagree*: a `fix:` line names a command, the reader runs it, and it
+/// refuses. `bugs.md` B41 was a whole chain of it -- `doctor` named `resource
+/// repair`, `repair` named `revive`, and `revive` answered with an internal
+/// planning term over an entity that was fully present on disk. The cheapest
+/// control is the one that catches the commonest form: a command, a kind, a
+/// capability or a flag that simply does not exist, because it was renamed
+/// somewhere else and the prose was not.
+///
+/// The oracle is `jails commands --json`, which is walked out of the same
+/// `clap::Command` that parses arguments and the same `ValueEnum`s that
+/// validate them -- so this compares the prose against the parser rather than
+/// against a second list.
+#[test]
+fn every_command_a_message_tells_the_reader_to_run_is_one_that_exists() {
+    let surface = jails_cmd(&temp_dir("fix-conformance"), None)
+        .args(["commands", "--json"])
+        .output()
+        .unwrap();
+    assert!(surface.status.success());
+    let surface = String::from_utf8_lossy(&surface.stdout);
+
+    let known = |section: &str| -> std::collections::BTreeSet<String> {
+        let mut names = std::collections::BTreeSet::new();
+        let Some(start) = surface.find(&format!("\"{section}\": [")) else {
+            return names;
+        };
+        let body = &surface[start..];
+        let end = body.find("\n  ]").unwrap_or(body.len());
+        for line in body[..end].lines() {
+            for key in ["\"name\": \"", "\"aliases\": ["] {
+                let Some(at) = line.find(key) else { continue };
+                let rest = &line[at + key.len()..];
+                if key.ends_with('[') {
+                    for alias in rest.split(']').next().unwrap_or("").split(',') {
+                        let alias = alias.trim().trim_matches('"');
+                        if !alias.is_empty() {
+                            names.insert(alias.to_string());
+                        }
+                    }
+                } else if let Some(name) = rest.split('"').next() {
+                    names.insert(name.to_string());
+                }
+            }
+        }
+        names
+    };
+    let subcommands = known("subcommands");
+    let kinds = known("kinds");
+    let capabilities = known("capabilities");
+    assert!(subcommands.len() > 40 && kinds.len() > 30 && capabilities.len() > 20);
+
+    let mut unknown: Vec<String> = Vec::new();
+    for (path, quoted) in quoted_jails_commands() {
+        let tokens: Vec<&str> = quoted.split_whitespace().skip(1).collect();
+        let Some(first) = tokens.first() else {
+            continue;
+        };
+        if first.starts_with('-') {
+            continue;
+        }
+        // Longest path first: `remove fast-test` is a command in its own
+        // right, and matching only the head would check it as a capability.
+        let matched = (1..=tokens.len().min(3))
+            .rev()
+            .map(|depth| tokens[..depth].join(" "))
+            .find(|path| subcommands.contains(path));
+        let Some(matched) = matched else {
+            unknown.push(format!("{path}: `{quoted}` -- no subcommand `{first}`"));
+            continue;
+        };
+        if matched.contains(' ') {
+            continue;
+        }
+        // The two closed vocabularies a message names most often, and the two
+        // that have been renamed under prose that stayed put.
+        let vocabulary = match *first {
+            "generate" | "g" => Some((&kinds, "kind")),
+            "add" | "remove" => Some((&capabilities, "capability")),
+            _ => None,
+        };
+        if let Some((allowed, what)) = vocabulary
+            && let Some(second) = tokens.get(1)
+            && !second.starts_with('-')
+            && !second.starts_with('<')
+            && second.chars().all(|c| c.is_ascii_lowercase() || c == '-')
+            && !allowed.contains(*second)
+        {
+            unknown.push(format!("{path}: `{quoted}` -- no {what} `{second}`"));
+        }
+    }
+    assert!(
+        unknown.is_empty(),
+        "these messages tell the reader to run something the CLI does not have:\n  {}\n\n\
+         A `fix:` line that refuses is worse than none: the reader cannot tell which \
+         answer to believe.",
+        unknown.join("\n  ")
+    );
+}
+
+/// Every backticked `jails …` in a production message, with the file it is in.
+///
+/// Read from the *blanked* copy's own raw source: a message is a string
+/// literal, so the ordinary production scan -- which blanks literals -- is
+/// exactly the wrong lens here. Comments are excluded by requiring the
+/// backtick to be inside a literal in the raw text, which is approximated by
+/// skipping lines whose first non-space characters are `//`.
+fn quoted_jails_commands() -> Vec<(String, String)> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<(String, String)>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        let mut paths: Vec<std::path::PathBuf> =
+            entries.flatten().map(|entry| entry.path()).collect();
+        paths.sort();
+        for path in paths {
+            if path.is_dir() {
+                walk(&path, out);
+                continue;
+            }
+            if path.extension().is_none_or(|extension| extension != "rs") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let name = path.display().to_string();
+            // Rejoin `\`-continued string literals first. A message long
+            // enough to need one is exactly the kind that names a command,
+            // and reading the halves separately finds `jails \` and calls it
+            // a subcommand.
+            let joined = text
+                .split("\\\n")
+                .map(|part| part.trim_start_matches([' ', '\t']))
+                .collect::<Vec<_>>()
+                .join("")
+                // And the `concat!` pieces, whose adjacency is the other way
+                // a long message is written and the other way a command comes
+                // to be read as two.
+                .split("\",\n")
+                .map(|part| part.trim_start_matches([' ', '\t']))
+                .collect::<Vec<_>>()
+                .join("\u{1}")
+                .replace("\u{1}\"", "");
+            for line in joined.lines() {
+                if line.trim_start().starts_with("//") {
+                    continue;
+                }
+                for segment in line.split("`jails ").skip(1) {
+                    let Some(command) = segment.split('`').next() else {
+                        continue;
+                    };
+                    // A quote inside the backticks means the backtick was
+                    // not closing a command: this is a test asserting on the
+                    // text of one, not a message telling anybody to run it.
+                    if command.contains(['{', '"', '\u{1}']) || command.trim().is_empty() {
+                        continue;
+                    }
+                    out.push((name.clone(), format!("jails {command}")));
+                }
+            }
+        }
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut out = Vec::new();
+    walk(&root.join("src"), &mut out);
+    walk(&root.join("crates"), &mut out);
+    assert!(
+        out.len() > 50,
+        "the message scanner found only {} commands -- it has lost track of where the \
+         code lives",
+        out.len()
+    );
+    out
+}

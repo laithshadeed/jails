@@ -72,20 +72,7 @@ Everything below is what remains.
 
 ## Section 0: Where the work actually is now
 
-### 0.2 The second theme is oracles that disagree
-
-`bugs.md` B41 and B37 are one shape: two or three commands read the same store
-and answer differently, and a `fix:` line names a command that then refuses. The
-cheapest control is a conformance test that extracts every `fix:` command the
-scenario suite produces and asserts it does not immediately refuse.
-
-B43 was the third case and closed in `e3c7041`: `jails add format` now re-records
-the bytes `spotless:apply` rewrites, instead of leaving `doctor` to report them as
-the developer's edits. That is the pattern to copy — **the command that changes
-the bytes is the command that re-records them** — and the same reasoning applies
-to anything else that rewrites owned output as a side effect.
-
-### 0.3 Constraints that still hold
+### 0.2 Constraints that still hold
 
 - Generated migrations are forward-only; file recovery is roll-forward. This RFC
   does not add generated down migrations or database undo.
@@ -560,19 +547,17 @@ contract test should land together or the layout changes twice.
 Six phases shipped. What is left is small enough to sequence in one list, ordered
 by leverage rather than by phase number.
 
-1. **Oracle agreement** (§0.2). A conformance test over every `fix:` command the
-   scenario suite emits.
-2. **The column binding** (§3.10). Unblocks `--column preserve`, and gives the
+1. **The column binding** (§3.10). Unblocks `--column preserve`, and gives the
    entity coherence check a recorded binding to compare *through* instead of
    re-deriving the column from the field name.
-3. **The repository contract test** (§4.6). One interface, two adapters, one
+2. **The repository contract test** (§4.6). One interface, two adapters, one
    failing test when they drift.
-4. **Frozen conflict `continue`/`abort`** (§3.3). The durable state machine.
-5. **Slices** (§4.2), then the extended field grammar (§4.1), then policy
+3. **Frozen conflict `continue`/`abort`** (§3.3). The durable state machine.
+4. **Slices** (§4.2), then the extended field grammar (§4.1), then policy
    matrices (§4.7). In that order: the grammar and the policy form both name
    slices.
-6. **Gradle warm-engine parity** (§5.1), gated on installing a `gradle` binary.
-7. **Semantic readiness** (§2.4c), **service identity labels** (§2.4b),
+5. **Gradle warm-engine parity** (§5.1), gated on installing a `gradle` binary.
+6. **Semantic readiness** (§2.4c), **service identity labels** (§2.4b),
     **test-dependency hints** (§2.4a), **the shared source index** (§2.3) — each
     behind a dated measurement, not an assumption.
 

@@ -243,9 +243,20 @@ impl CommitPlan {
         match (&self, project) {
             (Self::Apply(_), LoadedProject::Ready(_)) => Ok(self),
             (Self::Finalise(_) | Self::Abort(_), LoadedProject::Pending(_)) => Ok(self),
+            // The two verbs this used to name -- `jails continue` and `jails
+            // abort` -- do not exist. `PendingIdentity`, `ResolutionIdentity`
+            // and `RestoreIdentity` are here with no route behind them
+            // (research.md §3.3), so the message sent a reader to a command
+            // that would answer "unrecognized subcommand". A `fix:` line that
+            // refuses is worse than none: it leaves the reader unable to tell
+            // which of jails' answers to believe. Say what is true instead,
+            // and say that finishing it forward is a gap rather than
+            // something they typed wrongly.
             (Self::Apply(_), LoadedProject::Pending(_)) => Err(jails_support::Failure::Told(
-                "this project has a frozen conflict.\n       fix: resolve the marked files, \
-                 then `jails continue` — or `jails abort` to put them back."
+                "this project has a frozen conflict, and jails cannot finish one yet -- \
+                 the resolve verbs are not built.\n       fix: move the marked files aside \
+                 and run the command again, or restore them from `jails history` and \
+                 `jails undo`. Both leave the project in a state jails can plan against."
                     .to_string(),
             )),
             (Self::Finalise(_) | Self::Abort(_), LoadedProject::Ready(_)) => Err(
