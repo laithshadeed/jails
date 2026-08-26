@@ -457,10 +457,19 @@ commit as the change that causes it.
       here, and the `add constraint` would otherwise fail at
       `flyway migrate` about a command that reported success. Re-declaring the
       same set writes nothing, so a re-run stays idempotent.
-- [ ] **P5.3** A `String` field with a small closed set is challenged
+- [x] **P5.3** A `String` field with a small closed set is challenged
       (modern §11.3). `direction:String!` produced an unconstrained column, an
       unconstrained record, and a `"sample"` fixture; jails already has
-      `g enum` and its own example manifest uses one here.
+      `g enum` and its own example manifest uses one here. A **warning and
+      never a refusal**: jails cannot know a `String` has a closed set, only
+      the reader can, and what a tool can do is notice the shape and name the
+      command. Detected on the emitted migration's bytes, in the one
+      projection every command goes through, so a kind added tomorrow is
+      covered. The name list is deliberately short and matched on the whole
+      trailing word — a longer one warns about ordinary text, a substring
+      match warns about `statuses_note`. It also closed the hole P1.3 left:
+      `AppliedReceipt` carries the warnings now, because one that appears on
+      `--pretend` and vanishes on the real run is one nobody sees.
 - [ ] **P5.4** The schema's remaining non-negotiables (modern §4.7):
       case-insensitive unique index on an email-shaped `@unique`, a
       `check (length(btrim(x)) > 0)` where the Java constructor rejects blank,

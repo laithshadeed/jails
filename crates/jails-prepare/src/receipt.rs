@@ -74,6 +74,14 @@ pub struct AppliedReceipt {
     pub ledger_after: FileImage,
     pub outcome: ApplyOutcome,
     pub post_commit: Vec<EffectReceipt>,
+    /// What the reader should know about what was just written.
+    ///
+    /// **The same projection `--pretend` shows.** A warning that appears on a
+    /// dry run and vanishes on the real one is a warning nobody sees: the dry
+    /// run is the path people skip. Derived from the prepared change's bytes,
+    /// exactly as `Report::of` derives it, so the two cannot disagree.
+    /// plan.md P5.3.
+    pub warnings: Vec<crate::report::Warning>,
 }
 
 impl AppliedReceipt {
@@ -144,6 +152,7 @@ mod tests {
 
     fn receipt(files: Vec<FileReceipt>) -> AppliedReceipt {
         AppliedReceipt {
+            warnings: Vec::new(),
             operation_id: OperationId::from_bytes(sha256(b"op")),
             transaction_id: TransactionId::from_bytes(sha256(b"tx")),
             operation_digest: ObjectId::from_bytes(sha256(b"ops")),

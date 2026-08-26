@@ -11,6 +11,9 @@
 
 use crate::Result;
 use crate::prepare::{DirectoryOp, FileOp, GuardedImage, PreparedChange, PreparedKind};
+mod warning;
+pub use warning::{Warning, WarningCode, warnings};
+
 use crate::receipt::AppliedReceipt;
 use jails_protocol::conflict::{FileImage, FileMode};
 use jails_protocol::effect::{EffectState, PostCommitEffect};
@@ -105,45 +108,6 @@ pub struct ReportedEffect {
     pub state: EffectState,
 }
 
-/// Something the reader should know that is not a failure.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub enum WarningCode {
-    UnmanagedRetained,
-    PostCommitDeferred,
-    EnvironmentConstrained,
-    /// A generated test is `@Disabled`, so it proves nothing and the suite
-    /// still reports green over it.
-    ///
-    /// modern.md §13.8. A generator that cannot write a meaningful assertion
-    /// -- a strategy implementation is `return Optional.empty()` with a TODO,
-    /// and asserting an accessor returns what was passed in only tests that
-    /// javac generated the accessor -- writes an honest `@Disabled` naming
-    /// what to prove. That is the right file to write and the wrong thing to
-    /// say nothing about: one real project shipped five of its nine tests
-    /// disabled, including both controller tests, and reported green. jails'
-    /// own `CLAUDE.md` already names this failure mode for skipped tier-3
-    /// tests; a generated `@Disabled` is the same thing one level down.
-    TestDisabled,
-}
-
-impl WarningCode {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::UnmanagedRetained => "unmanaged-retained",
-            Self::PostCommitDeferred => "post-commit-deferred",
-            Self::EnvironmentConstrained => "environment-constrained",
-            Self::TestDisabled => "test-disabled",
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct Warning {
-    pub code: WarningCode,
-    pub paths: Vec<ProjectPath>,
-    pub message: String,
-}
-
 /// One presentation-neutral description of a prepared change.
 ///
 /// A *pure projection* over `PreparedChange`, and deliberately not stored
@@ -189,7 +153,7 @@ impl Report {
                     state: EffectState::Deferred,
                 })
                 .collect(),
-            warnings: disabled_tests(change),
+            warnings: warnings(change),
         })
     }
 
@@ -216,42 +180,6 @@ impl Report {
 /// keyed off emitted bytes rather than written per kind: a rule twenty
 /// templates have to remember is a rule that decays. A generator added
 /// tomorrow gets this without knowing it exists.
-fn disabled_tests(change: &PreparedChange) -> Vec<Warning> {
-    let mut paths: Vec<ProjectPath> = Vec::new();
-    for operation in &change.operations {
-        let (path, after) = match operation {
-            FileOp::Create { path, after, .. } | FileOp::Replace { path, after, .. } => {
-                (path, after)
-            }
-            _ => continue,
-        };
-        if !path.as_str().ends_with(".java") {
-            continue;
-        }
-        let Some(bytes) = change.objects.get(&after.id) else {
-            continue;
-        };
-        if bytes.windows(9).any(|window| window == b"@Disabled") {
-            paths.push(path.clone());
-        }
-    }
-    if paths.is_empty() {
-        return Vec::new();
-    }
-    paths.sort();
-    let message = format!(
-        "{} generated test file(s) are @Disabled and prove nothing yet -- the suite \
-         reports green over them. Each names what to assert once the class it covers is \
-         written.",
-        paths.len()
-    );
-    vec![Warning {
-        code: WarningCode::TestDisabled,
-        paths,
-        message,
-    }]
-}
-
 fn directory_op(directory: &DirectoryOp) -> ReportedOp {
     ReportedOp {
         kind: ReportedOpKind::CreateDirectory,
@@ -738,6 +666,13 @@ pub(crate) fn render_receipt(receipt: &AppliedReceipt) -> String {
             state_label(&effect.state)
         ));
     }
+    for warning in &receipt.warnings {
+        out.push_str(&format!(
+            "  warn    {}: {}\n",
+            warning.code.label(),
+            warning.message
+        ));
+    }
     out
 }
 
@@ -806,6 +741,36 @@ mod tests {
         );
         let expected = include_str!("../../../tests/protocol-golden/command-envelope.txt");
         assert_eq!(actual, expected);
+    }
+
+    /// plan.md P5.3, modern.md §11.3. `direction:String!` produced an
+    /// unconstrained column and nothing pointed at it.
+    #[test]
+    fn a_free_text_column_that_reads_like_a_closed_set_is_named() {
+        let report = Report::of(&change_with(vec![create(
+            "src/main/resources/db/migration/V001__create_messages.sql",
+            b"create table messages (\n  id         uuid not null,\n  body       text not null,\n                direction  text not null\n);\n",
+        )]))
+        .unwrap();
+        let [warning] = report.warnings.as_slice() else {
+            panic!("expected one warning: {:?}", report.warnings);
+        };
+        assert_eq!(warning.code, WarningCode::FreeTextClosedSet);
+        assert!(warning.message.contains("direction"), "{warning:?}");
+        assert!(warning.message.contains("jails g enum"), "{warning:?}");
+        // `body` is text and means text.
+        assert!(!warning.message.contains("body"), "{warning:?}");
+    }
+
+    /// A column that already carries its closed set is the end of the matter.
+    #[test]
+    fn a_column_with_a_check_is_not_warned_about() {
+        let report = Report::of(&change_with(vec![create(
+            "src/main/resources/db/migration/V001__create_messages.sql",
+            b"create table messages (\n  direction  text not null,\n\n                constraint messages_direction_allowed\n    check (direction in ('IN', 'OUT'))\n);\n",
+        )]))
+        .unwrap();
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
     }
 
     /// The projection follows the prepared change's own order, which is

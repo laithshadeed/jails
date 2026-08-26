@@ -530,6 +530,7 @@ fn applied_receipt(
     prepared_after: ObjectId,
 ) -> AppliedReceipt {
     AppliedReceipt {
+        warnings: jails_prepare::report::warnings(change),
         operation_id: change.operation_id,
         transaction_id: change.transaction_id,
         operation_digest,

@@ -502,19 +502,14 @@ by a single follow-up read rather than by two exception types.
 
 These are notes for jails, not changes.
 
-1. **A `String` field with a small closed set should be challenged.**
-   `direction:String!` produced an unconstrained column, an unconstrained
-   record, and a test fixture of `"sample"`. jails already has `g enum` and its
-   own example manifest uses it here. Nothing pointed at it.
-
-2. **Evolution regenerates the schema but not the code that was derived from
+1. **Evolution regenerates the schema but not the code that was derived from
    it.** `g field id` wrote `V004` and left `InMemoryUserRepository.findById`
    returning `Optional.empty()` with a TODO saying the type has no id, and left
    `MessageRepository.findById(String)` typed against an id that is now a
    `UUID`. A generated file whose stated premise has become false should be
    re-planned or reported, not left with a comment contradicting the code beside it.
 
-3. **The generated prose is asserted, never checked.** "keyed on the `email`
+2. **The generated prose is asserted, never checked.** "keyed on the `email`
    component" (it is not), "ordering per entity" (it is not), "scoped matches
    cannot mutate another tenant's row" (there is no scope), "this type has no
    `id` component" (it has one). Comments that restate a decision are the
