@@ -3862,6 +3862,86 @@ fn generate_client_bounds_the_call_it_generates() {
     );
 }
 
+/// `add api` installed an error model nothing threw.
+///
+/// modern.md §6.1, §11.7 and §13.10: a sealed `ApiException`, an exhaustive
+/// handler with no `default` arm, RFC 9457 responses and forty lines of
+/// Javadoc explaining the exhaustiveness -- unreachable in **0 of 7** real
+/// projects, while the one operation with real failure modes hand-rolled its
+/// own status mapping with `ResponseStatusException` and bypassed the whole
+/// thing. A reader finds `ApiException`, believes it is the error model, and
+/// is wrong.
+///
+/// Both branches matter: without `add api` the class does not exist, so the
+/// other rendering is not a tidiness fallback -- it is the only one that
+/// compiles. Same rule `repository_wiring` follows for `JdbcClient`.
+#[test]
+fn a_transition_throws_into_the_error_model_the_project_installed() {
+    let with_api = temp_dir("transition-api-error-model");
+    write_spring_fixture(&with_api);
+    let build = |root: &std::path::Path, api: bool| {
+        if api {
+            assert!(
+                jails_cmd(root, None)
+                    .args(["add", "api", "--no-start"])
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+        for args in [
+            &[
+                "g",
+                "scaffold",
+                "Msg",
+                "id:uuid@pk",
+                "body:string!",
+                "isRead:boolean",
+                "version:long",
+            ][..],
+            &[
+                "g",
+                "transition",
+                "MarkRead",
+                "id:uuid",
+                "isRead:boolean",
+                "version:long",
+                "--on",
+                "Msg",
+            ][..],
+        ] {
+            let out = jails_cmd(root, None).args(args).output().unwrap();
+            assert!(out.status.success(), "{out:?}");
+        }
+        fs::read_to_string(root.join("src/main/java/com/example/demo/web/MarkReadController.java"))
+            .unwrap()
+    };
+
+    let installed = build(&with_api, true);
+    assert!(
+        installed.contains("import com.example.demo.api.ApiException;"),
+        "{installed}"
+    );
+    assert!(
+        installed.contains("throw new ApiException.NotFound("),
+        "{installed}"
+    );
+    assert!(
+        installed.contains("throw new ApiException.Conflict("),
+        "{installed}"
+    );
+    assert!(
+        !installed.contains("ResponseStatusException"),
+        "{installed}"
+    );
+
+    let without = temp_dir("transition-no-error-model");
+    write_spring_fixture(&without);
+    let plain = build(&without, false);
+    assert!(!plain.contains("ApiException"), "{plain}");
+    assert!(plain.contains("ResponseStatusException"), "{plain}");
+}
+
 #[test]
 fn generate_strategy_produces_a_project_that_compiles_and_passes_tests() {
     if !real_mvn_available() {

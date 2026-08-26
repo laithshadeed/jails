@@ -1,15 +1,11 @@
 package {{web}};
 
-{{command_import}}{{usecase_import}}{{scope_import}}import {{validation}}.validation.Valid;
+{{command_import}}{{usecase_import}}{{scope_import}}{{failure_imports}}import {{validation}}.validation.Valid;
 import java.util.Objects;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.server.ResponseStatusException;
-
-import static org.springframework.http.HttpStatus.CONFLICT;
-import static org.springframework.http.HttpStatus.NOT_FOUND;
 
 /** HTTP adapter for one optimistic state transition. */
 @RestController
@@ -31,10 +27,6 @@ public final class {{name}}Controller {
 {{scope_checks}}
         try {
             return {{target}}Response.from(useCase.execute(command));
-        } catch ({{name}}UseCase.NotFoundException missing) {
-            throw new ResponseStatusException(NOT_FOUND, missing.getMessage(), missing);
-        } catch ({{name}}UseCase.StaleVersionException stale) {
-            throw new ResponseStatusException(CONFLICT, stale.getMessage(), stale);
-        }
+{{failure_arms}}        }
     }
 }

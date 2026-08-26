@@ -811,6 +811,20 @@ impl Project {
         self.projected_sources("src/main/java")
     }
 
+    /// Whether this project declares a top-level type by that simple name.
+    ///
+    /// Read through the projection, so a transaction that is *about* to write
+    /// the type sees it -- the same rule every other planning read follows.
+    /// Used to ask whether a capability's own class is present: `add api`
+    /// installs a sealed `ApiException` and an exhaustive handler, and until
+    /// something threw one the whole RFC 9457 surface was unreachable code.
+    pub fn declares_type(&self, name: &str) -> bool {
+        self.projected_main_sources()
+            .values()
+            .filter_map(|source| crate::java::type_info(source))
+            .any(|info| info.name == name)
+    }
+
     /// The same, for the test tree.
     pub fn projected_test_sources(&self) -> BTreeMap<PathBuf, String> {
         self.projected_sources("src/test/java")

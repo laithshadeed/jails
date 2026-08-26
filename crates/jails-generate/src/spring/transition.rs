@@ -307,6 +307,7 @@ fn transition_controller_java(
         "/actions/{}",
         crate::sql::snake_case(name).replace('_', "-")
     );
+    let (failure_imports, failure_arms) = failure_mapping(slice, web, name);
     crate::template::render(
         crate::template_here!("spring/transition_controller_java.java"),
         &[
@@ -314,6 +315,8 @@ fn transition_controller_java(
                 "validation",
                 crate::spring::validation_package(slice.project()),
             ),
+            ("failure_imports", &*failure_imports),
+            ("failure_arms", &*failure_arms),
             ("web", web),
             ("command_import", &*command_import),
             ("usecase_import", &*usecase_import),
@@ -327,6 +330,54 @@ fn transition_controller_java(
             ("scope_parameter", &*scope_parameter),
             ("scope_checks", &*scope_checks),
         ],
+    )
+}
+
+/// How this controller turns the two expected outcomes into a status.
+///
+/// `add api` installs a sealed `ApiException`, an exhaustive handler with no
+/// `default` arm, RFC 9457 `ProblemDetail` responses, and forty lines of
+/// Javadoc explaining why the switch is exhaustive -- and **nothing threw it,
+/// in 0 of 7 real projects**. Meanwhile the one operation with real failure
+/// modes hand-rolled its own status mapping with `ResponseStatusException`,
+/// bypassing the whole thing. A reader finds `ApiException`, believes it is
+/// the error model, and is wrong.
+///
+/// So the transition throws into it when it is there. The other branch is not
+/// a fallback for tidiness: without `add api` the class does not exist and the
+/// generated controller would not compile -- the same rule
+/// `repository_wiring` follows for `JdbcClient`.
+///
+/// Read through the projection rather than off disk, so `jails add api` and
+/// `jails g transition` in one manifest apply see each other.
+fn failure_mapping(slice: &Slice, web: &str, name: &str) -> (String, String) {
+    // `owned`, not `placed`: this is where `add api` put its class, which is a
+    // different question from where this transition's own classes go.
+    let api: &str = &slice.owned(Layer::Api);
+    if !slice.project().declares_type("ApiException") {
+        return (
+            concat!(
+                "import org.springframework.web.server.ResponseStatusException;\n\n",
+                "import static org.springframework.http.HttpStatus.CONFLICT;\n",
+                "import static org.springframework.http.HttpStatus.NOT_FOUND;\n",
+            )
+            .to_string(),
+            format!(
+                "        }} catch ({name}UseCase.NotFoundException missing) {{\n            \
+                 throw new ResponseStatusException(NOT_FOUND, missing.getMessage(), missing);\n        \
+                 }} catch ({name}UseCase.StaleVersionException stale) {{\n            \
+                 throw new ResponseStatusException(CONFLICT, stale.getMessage(), stale);\n"
+            ),
+        );
+    }
+    (
+        crate::generate::import_of(web, api, "ApiException"),
+        format!(
+            "        }} catch ({name}UseCase.NotFoundException missing) {{\n            \
+             throw new ApiException.NotFound(missing.getMessage());\n        \
+             }} catch ({name}UseCase.StaleVersionException stale) {{\n            \
+             throw new ApiException.Conflict(stale.getMessage());\n"
+        ),
     )
 }
 

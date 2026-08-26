@@ -213,11 +213,16 @@ to go **red on landing**; P1.5 records what they name.
       and records the checksum, so the history asserts an index that does not
       exist (modern §13.7). Refuse to write an empty one, or write it in a form
       Flyway will not apply until it has content.
-- [ ] **P2.7** `add api` installs a sealed `ApiException`, an exhaustive
+- [x] **P2.7** `add api` installs a sealed `ApiException`, an exhaustive
       handler and 40 lines of Javadoc, and **nothing throws it in 0 of 7
       projects** (modern §6.1, §11.7, §13.10) — while the one operation with
-      real failure modes hand-rolls `ResponseStatusException`. Wire the
-      generated code into it, or say it did not.
+      real failure modes hand-rolls `ResponseStatusException`. Wired: a
+      generated transition raises `ApiException.NotFound`/`.Conflict` when the
+      project declares the type, read through the projection so `add api` and
+      `g transition` in one manifest apply see each other. The other branch is
+      not a tidiness fallback — without `add api` the class does not exist and
+      nothing else compiles, the same rule `repository_wiring` follows for
+      `JdbcClient`. Both branches are compiled and run.
 - [x] **P2.8** `jails migrate lint` and `jails schema diff` require
       `.jails/app.toml`, so neither runs on the shape `jails new` produces.
       `migrate lint` is closed: it wanted the manifest for the dialect alone,
