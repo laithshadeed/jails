@@ -23,7 +23,7 @@ pub(super) fn companion_updates(
     let mut changes = Vec::new();
     let mut entities = BTreeMap::new();
     let mut reads = ReadDeclaration::new();
-    for row in store.ledger.iter().flat_map(|ledger| ledger.applied.iter()) {
+    for row in store.entities() {
         let (EntityId::Intent(id), EntitySpec::Intent(spec)) = (&row.id, &row.version.spec) else {
             continue;
         };
