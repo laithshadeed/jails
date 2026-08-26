@@ -15,7 +15,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
-/** One SQL compare-and-swap: scoped matches cannot mutate another tenant's row. */
+/** One SQL compare-and-swap. */
 @Component
 public class JdbcChangePayoutStatusTransition implements ChangePayoutStatusUseCase {
 
@@ -27,7 +27,7 @@ public class JdbcChangePayoutStatusTransition implements ChangePayoutStatusUseCa
 
     @Override
     @Transactional
-    public Payout execute(ChangePayoutStatusCommand command) {
+    public ChangePayoutStatusUseCase.Result execute(ChangePayoutStatusCommand command, long expectedVersion) {
         Objects.requireNonNull(command, "command is required");
         var updated = db.sql("""
                         update payouts
@@ -39,22 +39,26 @@ public class JdbcChangePayoutStatusTransition implements ChangePayoutStatusUseCa
                         """)
                 .param("id", command.id())
                 .param("status", command.status().name())
-                .param("version", command.version())
+                .param("version", expectedVersion)
                 .query(JdbcChangePayoutStatusTransition::map)
                 .optional();
-        if (updated.isPresent()) return updated.orElseThrow();
+        if (updated.isPresent()) {
+            return new ChangePayoutStatusUseCase.Result.Applied(updated.orElseThrow());
+        }
 
-        boolean existsInScope = db.sql("""
-                        select exists(
-                            select 1 from payouts
-                            where id = :id
-                        )
+        // Nothing moved, and the two reasons are different facts: the row is
+        // at another version -- in which case the caller wants to see which,
+        // and gets it -- or there is no such row at all.
+        return db.sql("""
+                        select id, amount, status, version, created_at
+                        from payouts
+                        where id = :id
                         """)
                 .param("id", command.id())
-                .query(Boolean.class)
-                .single();
-        if (existsInScope) throw new ChangePayoutStatusUseCase.StaleVersionException();
-        throw new ChangePayoutStatusUseCase.NotFoundException();
+                .query(JdbcChangePayoutStatusTransition::map)
+                .optional()
+                .<ChangePayoutStatusUseCase.Result>map(ChangePayoutStatusUseCase.Result.StaleVersion::new)
+                .orElseGet(() -> new ChangePayoutStatusUseCase.Result.NotFound(command.id()));
     }
 
     private static Payout map(ResultSet rows, int rowNumber) throws SQLException {

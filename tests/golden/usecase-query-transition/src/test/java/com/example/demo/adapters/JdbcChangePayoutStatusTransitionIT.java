@@ -1,7 +1,6 @@
 package com.example.demo.adapters;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.example.demo.app.PayoutRepository;
 import com.example.demo.domain.Payout;
@@ -22,7 +21,7 @@ class JdbcChangePayoutStatusTransitionIT {
     @Autowired private ChangePayoutStatusUseCase useCase;
 
     @Test
-    void updatesOnceAndRejectsTheStaleVersionWithoutAnotherMutation() {
+    void appliesOnceAndReportsTheStaleVersionWithoutAnotherMutation() {
         var stored = repository.save(new Payout(
                 UUID.fromString("00000000-0000-0000-0000-000000000001"),
                 1L,
@@ -31,17 +30,19 @@ class JdbcChangePayoutStatusTransitionIT {
                 Instant.parse("2024-01-01T00:00:00Z")));
         var command = new ChangePayoutStatusCommand(
                 UUID.fromString("00000000-0000-0000-0000-000000000001"),
-                PayoutStatus.values()[0],
-                1L);
+                PayoutStatus.values()[0]);
 
-        var updated = useCase.execute(command);
+        var applied = useCase.execute(command, 1L);
 
-        assertThat(updated.version()).isEqualTo(command.version() + 1);
-        assertThatThrownBy(() -> useCase.execute(command))
-                .isInstanceOf(ChangePayoutStatusUseCase.StaleVersionException.class);
-        assertThat(repository.findById(command.id()))
-                .get().extracting(Payout::version)
-                .isEqualTo(updated.version());
+        assertThat(applied).isInstanceOf(ChangePayoutStatusUseCase.Result.Applied.class);
+        var resource = ((ChangePayoutStatusUseCase.Result.Applied) applied).resource();
+        assertThat(resource.version()).isEqualTo(1L + 1);
+
+        // The same expectation a second time is stale, and the outcome
+        // carries the row as it now stands rather than a message about it.
+        var again = useCase.execute(command, 1L);
+        assertThat(again).isInstanceOf(ChangePayoutStatusUseCase.Result.StaleVersion.class);
+        assertThat(((ChangePayoutStatusUseCase.Result.StaleVersion) again).current()).isEqualTo(resource);
+        assertThat(repository.findById(command.id())).contains(resource);
     }
-
 }

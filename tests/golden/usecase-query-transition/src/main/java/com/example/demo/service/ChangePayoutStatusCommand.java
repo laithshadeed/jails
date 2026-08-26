@@ -11,7 +11,7 @@ import java.util.UUID;
  * any instance that exists is a valid one and callers downstream do not
  * have to re-check.
  */
-public record ChangePayoutStatusCommand(UUID id, PayoutStatus status, long version) {
+public record ChangePayoutStatusCommand(UUID id, PayoutStatus status) {
 
     public ChangePayoutStatusCommand {
         Objects.requireNonNull(id, "id");

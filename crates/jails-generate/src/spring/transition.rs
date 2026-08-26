@@ -117,12 +117,14 @@ pub(crate) fn transition_files(
         Artifact {
             kind: "transition command",
             path: main_service.join(format!("{name}Command.java")),
-            contents: usecase_command_java(slice, name, fields),
+            // Without `version`: the expected version is a precondition,
+            // not data the command carries. plan.md P4.5.
+            contents: usecase_command_java(slice, name, &command_fields(fields)),
         },
         Artifact {
             kind: "transition port",
             path: main_service.join(format!("{name}UseCase.java")),
-            contents: transition_port_java(slice, name, target),
+            contents: transition_port_java(slice, name, target, fields),
         },
         Artifact {
             kind: "optimistic JDBC transition",
@@ -147,15 +149,77 @@ pub(crate) fn transition_files(
     ])
 }
 
-fn transition_port_java(slice: &Slice, name: &str, target: &str) -> String {
+/// How this transition talks about the boundary it enforces.
+///
+/// Empty where there is no `@scope` field, because there is then no scope in
+/// the SQL either. The old wording -- "resource not found in the authorized
+/// scope", "scoped matches cannot mutate another tenant's row" -- was printed
+/// over `where id = :id` in every project that declared no scope at all.
+/// modern.md 5.3, plan.md P4.5.
+fn scope_clause(fields: &[crate::generate::Field]) -> &'static str {
+    if fields.iter().any(|field| field.constraints.scoped) {
+        " within the caller's authorized scope"
+    } else {
+        ""
+    }
+}
+
+/// The version component, which `transition_files` has already proved exists
+/// and proved numeric.
+fn version_field(fields: &[crate::generate::Field]) -> &crate::generate::Field {
+    fields
+        .iter()
+        .find(|field| field.name == "version")
+        .expect("a transition is refused without a numeric version field")
+}
+
+/// The command a caller sends: every declared field except the version, which
+/// travels as `If-Match`. plan.md P4.5.
+fn command_fields(fields: &[crate::generate::Field]) -> Vec<crate::generate::Field> {
+    fields
+        .iter()
+        .filter(|field| field.name != "version")
+        .cloned()
+        .collect()
+}
+
+/// The Java type the expected version is passed as, and the parser for it.
+fn version_type(fields: &[crate::generate::Field]) -> (&'static str, &'static str) {
+    match usecase_normalized_type(&version_field(fields).java_type) {
+        "int" => ("int", "Integer.parseInt"),
+        _ => ("long", "Long.parseLong"),
+    }
+}
+
+fn transition_port_java(
+    slice: &Slice,
+    name: &str,
+    target: &str,
+    fields: &[crate::generate::Field],
+) -> String {
     let pkg: &str = &slice.placed(Layer::Service);
     let domain: &str = &slice.owned(Layer::Domain);
     let target_import = crate::generate::import_of(pkg, domain, target);
+    let (version_type, _) = version_type(fields);
+    let id = fields
+        .iter()
+        .find(|field| field.name == "id")
+        .expect("a transition is refused without an id field");
+    let key_type = crate::generate::builtin_by_java_name(&id.java_type)
+        .map(|(boxed, _)| boxed)
+        .unwrap_or("String");
+    let key_import = crate::generate::builtin_by_java_name(&id.java_type)
+        .and_then(|(_, import)| import)
+        .map(|import| format!("import {import};\n"))
+        .unwrap_or_default();
     crate::template::render(
         crate::template_here!("spring/transition_port_java.java"),
         &[
             ("pkg", pkg),
-            ("target_import", &*target_import),
+            ("target_import", &format!("{target_import}{key_import}")),
+            ("scope_clause", scope_clause(fields)),
+            ("version_type", version_type),
+            ("key_type", key_type),
             ("name", name),
             ("target", target),
         ],
@@ -248,8 +312,14 @@ fn jdbc_transition_java(
             .collect::<Vec<_>>()
             .join("\n")
     };
-    let all = fields.iter().collect::<Vec<_>>();
-    let update_bindings = bindings_for(&all, "                ");
+    // Every field except the version, which is bound from the separate
+    // `expectedVersion` parameter -- it is no longer a component of the
+    // command to read it off. plan.md P4.5.
+    let bound = fields
+        .iter()
+        .filter(|field| field.name != "version")
+        .collect::<Vec<_>>();
+    let update_bindings = bindings_for(&bound, "                ");
     let existence_bindings = bindings_for(&match_fields, "                ");
     let select = target_columns
         .iter()
@@ -279,6 +349,9 @@ fn jdbc_transition_java(
             ("update_bindings", &*update_bindings),
             ("existence_predicates", &*existence_predicates),
             ("existence_bindings", &*existence_bindings),
+            ("scope_clause", scope_clause(fields)),
+            ("version_type", version_type(fields).0),
+            ("id_component", "id"),
             ("map_args", &*map_args),
         ],
     )
@@ -307,7 +380,8 @@ fn transition_controller_java(
         "/actions/{}",
         crate::sql::snake_case(name).replace('_', "-")
     );
-    let (failure_imports, failure_arms) = failure_mapping(slice, web, name);
+    let (failure_imports, arms) = outcome_arms(slice, web, name, target);
+    let (version_type, parse) = version_type(fields);
     crate::template::render(
         crate::template_here!("spring/transition_controller_java.java"),
         &[
@@ -316,11 +390,14 @@ fn transition_controller_java(
                 crate::spring::validation_package(slice.project()),
             ),
             ("failure_imports", &*failure_imports),
-            ("failure_arms", &*failure_arms),
+            ("arms", &*arms),
             ("web", web),
             ("command_import", &*command_import),
             ("usecase_import", &*usecase_import),
+            ("target_import", ""),
             ("scope_import", &*scope_import),
+            ("version_type", version_type),
+            ("parse", parse),
             ("name", name),
             ("path", &*path),
             ("scope_field", &*scope_field),
@@ -333,50 +410,58 @@ fn transition_controller_java(
     )
 }
 
-/// How this controller turns the two expected outcomes into a status.
+/// How this controller turns each sealed outcome into a response.
 ///
-/// `add api` installs a sealed `ApiException`, an exhaustive handler with no
-/// `default` arm, RFC 9457 `ProblemDetail` responses, and forty lines of
-/// Javadoc explaining why the switch is exhaustive -- and **nothing threw it,
-/// in 0 of 7 real projects**. Meanwhile the one operation with real failure
-/// modes hand-rolled its own status mapping with `ResponseStatusException`,
-/// bypassing the whole thing. A reader finds `ApiException`, believes it is
-/// the error model, and is wrong.
+/// **The applied arm always returns**, with the new version as an `ETag`, so
+/// a caller's next `If-Match` is a value this endpoint issued.
 ///
-/// So the transition throws into it when it is there. The other branch is not
-/// a fallback for tidiness: without `add api` the class does not exist and the
-/// generated controller would not compile -- the same rule
-/// `repository_wiring` follows for `JdbcClient`.
+/// The other two depend on the project's error model, and that is deliberate.
+/// `add api` installs a sealed `ApiException`, an exhaustive handler and RFC
+/// 9457 responses -- and **nothing threw it, in 0 of 7 real projects**, while
+/// the one operation with real failure modes hand-rolled its own statuses. So
+/// where the class exists the transition raises into it, and the caller reads
+/// the current version from a follow-up `GET`. Without it there is no class to
+/// raise, and the response carries the stored row and its `ETag` directly --
+/// the same rule `repository_wiring` follows for `JdbcClient`.
 ///
-/// Read through the projection rather than off disk, so `jails add api` and
-/// `jails g transition` in one manifest apply see each other.
-fn failure_mapping(slice: &Slice, web: &str, name: &str) -> (String, String) {
+/// Both messages carry values. `backend.md` §1: *"Exception messages carry the
+/// values."* The string these replace was `"resource not found in the
+/// authorized scope"` -- the same text for every 404 the service would ever
+/// serve, naming neither the resource nor the id, over SQL with no scope in
+/// it at all.
+fn outcome_arms(slice: &Slice, web: &str, name: &str, target: &str) -> (String, String) {
+    let applied = format!(
+        "            case {name}UseCase.Result.Applied(var resource) ->\n                    \
+         ResponseEntity.ok()\n                            \
+         .eTag(String.valueOf(resource.version()))\n                            \
+         .body({target}Response.from(resource));"
+    );
     // `owned`, not `placed`: this is where `add api` put its class, which is a
     // different question from where this transition's own classes go.
     let api: &str = &slice.owned(Layer::Api);
-    if !slice.project().declares_type("ApiException") {
+    if slice.project().declares_type("ApiException") {
         return (
-            concat!(
-                "import org.springframework.web.server.ResponseStatusException;\n\n",
-                "import static org.springframework.http.HttpStatus.CONFLICT;\n",
-                "import static org.springframework.http.HttpStatus.NOT_FOUND;\n",
-            )
-            .to_string(),
+            crate::generate::import_of(web, api, "ApiException"),
             format!(
-                "        }} catch ({name}UseCase.NotFoundException missing) {{\n            \
-                 throw new ResponseStatusException(NOT_FOUND, missing.getMessage(), missing);\n        \
-                 }} catch ({name}UseCase.StaleVersionException stale) {{\n            \
-                 throw new ResponseStatusException(CONFLICT, stale.getMessage(), stale);\n"
+                "{applied}\n            \
+                 case {name}UseCase.Result.StaleVersion(var current) ->\n                    \
+                 throw new ApiException.Conflict(\n                            \
+                 \"expected version \" + expected + \", stored version is \"\n                                    \
+                 + current.version());\n            \
+                 case {name}UseCase.Result.NotFound(var id) ->\n                    \
+                 throw new ApiException.NotFound(\"no such {target}: \" + id);"
             ),
         );
     }
     (
-        crate::generate::import_of(web, api, "ApiException"),
+        String::new(),
         format!(
-            "        }} catch ({name}UseCase.NotFoundException missing) {{\n            \
-             throw new ApiException.NotFound(missing.getMessage());\n        \
-             }} catch ({name}UseCase.StaleVersionException stale) {{\n            \
-             throw new ApiException.Conflict(stale.getMessage());\n"
+            "{applied}\n            \
+             case {name}UseCase.Result.StaleVersion(var current) ->\n                    \
+             ResponseEntity.status(HttpStatus.PRECONDITION_FAILED)\n                            \
+             .eTag(String.valueOf(current.version()))\n                            \
+             .body({target}Response.from(current));\n            \
+             case {name}UseCase.Result.NotFound(var id) -> ResponseEntity.notFound().build();"
         ),
     )
 }
@@ -423,6 +508,15 @@ fn jdbc_transition_it_java(
         .collect::<Option<Vec<_>>>();
     let disabled = command_samples.is_none() || target_samples.is_none();
     let mut command_values = command_samples.unwrap_or_default();
+    // The version is no longer a component of the command, so its sample
+    // becomes the `expectedVersion` argument instead. plan.md P4.5.
+    let expected_version = fields
+        .iter()
+        .position(|field| field.name == "version")
+        .map(|index| command_values.remove(index))
+        .unwrap_or_else(|| "1L".to_string());
+    let fields: Vec<crate::generate::Field> = command_fields(fields);
+    let fields: &[crate::generate::Field] = &fields;
     // A database-assigned key is not a literal this test can predict: the
     // sequence does not roll back with the transaction, so the second run of
     // the suite selects a row that is not there. The saved row knows its own
@@ -468,8 +562,8 @@ fn jdbc_transition_it_java(
         var wrongScope = new {name}Command(
                 {args});
 
-        assertThatThrownBy(() -> useCase.execute(wrongScope))
-                .isInstanceOf({name}UseCase.NotFoundException.class);
+        assertThat(useCase.execute(wrongScope, {expected_version}))
+                .isInstanceOf({name}UseCase.Result.NotFound.class);
         assertThat(repository.findById({key_argument})).contains(stored);
     }}
 "#
@@ -511,6 +605,7 @@ fn jdbc_transition_it_java(
             ("target", target),
             ("target_args", &*target_args),
             ("command_args", &*command_args),
+            ("expected_version", &*expected_version),
             ("key_argument", &*command_key_argument),
             ("wrong_scope_test", &*wrong_scope_test),
         ],
@@ -530,7 +625,10 @@ fn transition_controller_test_java(
     let domain: &str = &slice.owned(Layer::Domain);
     let target_fields: &[crate::generate::Field] = &resource.fields;
     let target: &str = &resource.name;
-    let json = fields
+    // The body carries the command, and the command no longer carries the
+    // version -- it is the `If-Match` header. plan.md P4.5.
+    let command = command_fields(fields);
+    let json = command
         .iter()
         .map(|field| {
             json_sample(slice, field).map(|sample| format!("  \"{}\": {sample}", field.name))
@@ -563,6 +661,15 @@ fn transition_controller_test_java(
         ""
     };
     let (scope_import, scope_argument) = scope_test_parts(security, web, fields);
+    // The fake returns the target built from these samples, so the `ETag` it
+    // answers with is that sample's version. Written without the `L` suffix:
+    // this is an HTTP header, not Java.
+    let sample_version = target_fields
+        .iter()
+        .find(|field| field.name == "version")
+        .and_then(|field| crate::generate::sample_value(field, project, domain))
+        .map(|sample| sample.trim_end_matches(['L', 'l']).to_string())
+        .unwrap_or_else(|| "1".to_string());
     crate::template::render(
         // No classic form, for the same reason `g query` has none.
         crate::template_here!("spring/transition_controller_test_java.java"),
@@ -579,6 +686,7 @@ fn transition_controller_test_java(
             ("json", &*json),
             ("target", target),
             ("target_args", &*target_args),
+            ("sample_version", &*sample_version),
             ("scope_argument", &*scope_argument),
         ],
     )

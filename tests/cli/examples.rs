@@ -312,7 +312,9 @@ fn unheld_maven_example_manifest_passes_real_verification() {
             reports: 17,
             // 51 -> 52: `SendMessageUseCaseTest` gained the case missing.md
             // M3 says would have caught a create that never assigns a key.
-            tests: 52,
+            // 52 -> 53: `MarkAsReadControllerTest` gained the case for a
+            // request with no `If-Match`, which used to apply blind.
+            tests: 53,
             failures: 0,
             errors: 0,
             skipped: 0,

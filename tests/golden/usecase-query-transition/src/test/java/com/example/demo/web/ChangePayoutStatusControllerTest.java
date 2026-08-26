@@ -9,31 +9,46 @@ import com.example.demo.service.ChangePayoutStatusUseCase;
 import java.time.Instant;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
 
 class ChangePayoutStatusControllerTest {
 
     private final MockMvcTester mvc = MockMvcTester.of(new ChangePayoutStatusController(
-            command -> new Payout(
+            (command, expectedVersion) -> new ChangePayoutStatusUseCase.Result.Applied(new Payout(
                     UUID.fromString("00000000-0000-0000-0000-000000000001"),
                     1L,
                     PayoutStatus.values()[0],
                     1L,
-                    Instant.parse("2024-01-01T00:00:00Z"))));
+                    Instant.parse("2024-01-01T00:00:00Z")))));
 
     @Test
-    void putExecutesTheTransition() {
+    void putExecutesTheTransitionAndReturnsTheNewVersionAsAnETag() {
+        assertThat(mvc.put().uri(ChangePayoutStatusController.PATH)
+                .header(HttpHeaders.IF_MATCH, "\"1\"")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+{
+  "id": "00000000-0000-0000-0000-000000000001",
+  "status": "PENDING"
+}
+"""))
+                .hasStatusOk()
+                .hasHeader(HttpHeaders.ETAG, "\"1\"");
+    }
+
+    @Test
+    void aRequestWithNoIfMatchIsRefusedRatherThanAppliedBlind() {
         assertThat(mvc.put().uri(ChangePayoutStatusController.PATH)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
 {
   "id": "00000000-0000-0000-0000-000000000001",
-  "status": "PENDING",
-  "version": 7
+  "status": "PENDING"
 }
 """))
-                .hasStatusOk();
+                .hasStatus(400);
     }
 
 }

@@ -4046,8 +4046,21 @@ fn a_transition_throws_into_the_error_model_the_project_installed() {
         installed.contains("throw new ApiException.Conflict("),
         "{installed}"
     );
+    // Neither *outcome* becomes a `ResponseStatusException` where the project
+    // has an error model.
     assert!(
-        !installed.contains("ResponseStatusException"),
+        !installed.contains("ResponseStatusException(NOT_FOUND"),
+        "{installed}"
+    );
+    assert!(
+        !installed.contains("ResponseStatusException(CONFLICT"),
+        "{installed}"
+    );
+    // It survives for one thing, and only that: a malformed `If-Match` is a
+    // 400 -- jails could not read the request -- while every `ApiException`
+    // variant is about a request it read. plan.md P4.5.
+    assert!(
+        installed.contains("If-Match is not a version this resource issued"),
         "{installed}"
     );
 
@@ -4055,7 +4068,7 @@ fn a_transition_throws_into_the_error_model_the_project_installed() {
     write_spring_fixture(&without);
     let plain = build(&without, false);
     assert!(!plain.contains("ApiException"), "{plain}");
-    assert!(plain.contains("ResponseStatusException"), "{plain}");
+    assert!(plain.contains("PRECONDITION_FAILED"), "{plain}");
 }
 
 #[test]

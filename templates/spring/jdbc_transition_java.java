@@ -7,7 +7,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
-/** One SQL compare-and-swap: scoped matches cannot mutate another tenant's row. */
+/** One SQL compare-and-swap{{scope_clause}}. */
 @Component
 public class Jdbc{{name}}Transition implements {{name}}UseCase {
 
@@ -19,7 +19,7 @@ public class Jdbc{{name}}Transition implements {{name}}UseCase {
 
     @Override
     @Transactional
-    public {{target}} execute({{name}}Command command) {
+    public {{name}}UseCase.Result execute({{name}}Command command, {{version_type}} expectedVersion) {
         Objects.requireNonNull(command, "command is required");
         var updated = db.sql("""
                         update {{table}}
@@ -28,21 +28,26 @@ public class Jdbc{{name}}Transition implements {{name}}UseCase {
                         returning {{select}}
                         """)
 {{update_bindings}}
+                .param("version", expectedVersion)
                 .query(Jdbc{{name}}Transition::map)
                 .optional();
-        if (updated.isPresent()) return updated.orElseThrow();
+        if (updated.isPresent()) {
+            return new {{name}}UseCase.Result.Applied(updated.orElseThrow());
+        }
 
-        boolean existsInScope = db.sql("""
-                        select exists(
-                            select 1 from {{table}}
-                            where {{existence_predicates}}
-                        )
+        // Nothing moved, and the two reasons are different facts: the row is
+        // at another version -- in which case the caller wants to see which,
+        // and gets it -- or there is no such row at all.
+        return db.sql("""
+                        select {{select}}
+                        from {{table}}
+                        where {{existence_predicates}}
                         """)
 {{existence_bindings}}
-                .query(Boolean.class)
-                .single();
-        if (existsInScope) throw new {{name}}UseCase.StaleVersionException();
-        throw new {{name}}UseCase.NotFoundException();
+                .query(Jdbc{{name}}Transition::map)
+                .optional()
+                .<{{name}}UseCase.Result>map({{name}}UseCase.Result.StaleVersion::new)
+                .orElseGet(() -> new {{name}}UseCase.Result.NotFound(command.{{id_component}}()));
     }
 
     private static {{target}} map(ResultSet rows, int rowNumber) throws SQLException {

@@ -406,11 +406,26 @@ commit as the change that causes it.
       requests. `gen_random_uuid()` survives in exactly one place — the
       one-shot backfill `add_column` writes and then drops — where locality is
       not a property a single `update` has.
-- [ ] **P4.5** The version travels as an `ETag` / `If-Match` / `412` rather
+- [x] **P4.5** The version travels as an `ETag` / `If-Match` / `412` rather
       than as a bespoke JSON field (modern §7, §10.5), and expected outcomes
       are a sealed return type rather than two exception classes (§5.3, §10.3):
       a caller that forgets a `catch` finds out in production, one that forgets
-      a `switch` arm does not compile.
+      a `switch` arm does not compile. Both halves landed together because
+      they are one rewrite of `g transition`. The port returns a sealed
+      `Result` with `Applied`, `StaleVersion(current)` and `NotFound(id)` —
+      `StaleVersion` carries the stored row, which is what lets the 412 serve
+      its `ETag`, so the adapter's `select exists(…)` became a `select` of the
+      row. `version` left the command record and became a second parameter,
+      because an expected version is a precondition rather than data; it
+      arrives as `If-Match` (weak prefix and quotes accepted, since that is
+      what a client echoes back) and returns as `ETag`. §5.3's third point
+      closed with it: "in the authorized scope" is now printed only where a
+      `@scope` field exists, and the outcome records carry values instead of
+      one string shared by every 404. P2.7's `ApiException` wiring survives —
+      the switch *arms* raise into it where the class exists — and
+      `ResponseStatusException` survives for exactly one thing, a malformed
+      `If-Match`, which is a 400 rather than any of `ApiException`'s
+      variants.
 
 ## P5 — the closed set, in SQL (cause C)
 

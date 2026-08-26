@@ -153,37 +153,6 @@ adapter has to write `where id = cast(:id as uuid)`, the in-memory fake keys a
 takes a `UUID`. Two ports over two tables in one application disagree about how
 identity is typed.
 
-### 5.3 Expected outcomes modelled as exceptions
-
-```java
-public interface MarkAsReadUseCase {
-    Message execute(MarkAsReadCommand command);
-    final class NotFoundException extends RuntimeException {
-        public NotFoundException() { super("resource not found in the authorized scope"); }
-    }
-    final class StaleVersionException extends RuntimeException { … }
-}
-```
-
-Three problems in nine lines:
-
-1. **These are outcomes, not faults.** `java.md` §5: *"Domain failures that are
-   expected are not exceptions. Model them in the return type."* A caller that
-   forgets a `catch` finds out in production; a caller that forgets a `switch`
-   arm does not compile.
-2. **No values in the message.** `backend.md` §1: *"Exception messages carry the
-   values."* `"resource not found in the authorized scope"` names neither the
-   resource nor the id. It is the same string for every 404 the service will
-   ever serve.
-3. **"in the authorized scope" is not true.** The SQL is `where id = :id`. There
-   is no scope, no tenant, no authorization. The local variable is called
-   `existsInScope` and the class comment says *"scoped matches cannot mutate
-   another tenant's row."* Nothing in the query does that.
-
-The hand-built version is a sealed type with four outcomes (§10.3), and the
-controller's `switch` over it has no `default` — so a fifth outcome is a
-compile error at every site that has to decide what it means.
-
 ### 5.4 Boxed primitives on the wire
 
 `MessageResponse(… Boolean is_read, … Long version)` — boxed, so `null` is
@@ -267,13 +236,6 @@ three separate defects in the *read* and *command* endpoints:
   `{"is_read": true}` returns read messages.
 - `MAX_RESULTS = 100`, applied silently with no cursor, no total, and no
   indication to the caller that the list was truncated.
-
-### The version belongs in `If-Match`
-
-`MarkAsReadCommand` carries `version` in the JSON body. HTTP already has this:
-serve the version as an `ETag`, require `If-Match`, answer `412` on a mismatch.
-The hand-built controller does that in §10.5 and the client gets standard
-semantics instead of a bespoke field.
 
 ---
 
