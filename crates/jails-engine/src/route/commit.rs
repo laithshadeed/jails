@@ -250,5 +250,21 @@ pub(super) fn prepare_set(
 /// what `CommitError` *means*, and it is why this is a plain message rather
 /// than a recovery instruction.
 pub(super) fn describe(error: CommitError) -> String {
-    format!("{error:?}")
+    error.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::describe;
+    use jails_commit::outcome::CommitError;
+
+    #[test]
+    fn commit_errors_use_their_human_facing_message() {
+        let message = describe(CommitError::StaleInput(
+            "the project changed; rerun the command".to_string(),
+        ));
+
+        assert_eq!(message, "the project changed; rerun the command");
+        assert!(!message.contains("StaleInput"));
+    }
 }
