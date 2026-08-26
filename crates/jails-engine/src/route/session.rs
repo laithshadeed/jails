@@ -180,6 +180,8 @@ pub enum Outcome {
     /// different words from the receipt is the failure the one-projection rule
     /// exists to prevent.
     Planned(Box<PreparedOutcome>),
+    /// A retry of one effect from an already-durable project transaction.
+    EffectRetry(Box<EffectRetryOutcome>),
 }
 
 /// The canonical report and its optional-expansion material, both projected
@@ -191,6 +193,15 @@ pub struct PreparedOutcome {
     pub timings: jails_prepare::timing::TimingTrace,
 }
 
+#[derive(Debug)]
+pub struct EffectRetryOutcome {
+    pub report: EffectRetryReport,
+    pub result: Option<jails_commit::outcome::CommitEffectOutcome>,
+    pub review: jails_prepare::review::PreparedReview,
+    pub timings: jails_prepare::timing::TimingTrace,
+    pub fingerprint: jails_protocol::request::RequestSyntaxFingerprint,
+}
+
 impl Outcome {
     /// The commit, when the caller knows it asked for one.
     pub fn committed(self) -> Result<CommitResult> {
@@ -200,6 +211,10 @@ impl Outcome {
             }
             Self::Planned(_) => Err(jails_support::Failure::Told(
                 "this run was asked to pretend, so there is no commit".to_string(),
+            )),
+            Self::EffectRetry(_) => Err(jails_support::Failure::Told(
+                "an effect retry does not create another project commit.\n       fix: inspect its effect-retry report instead"
+                    .to_string(),
             )),
         }
     }
@@ -220,6 +235,7 @@ impl Outcome {
                 review
             }
             Self::Planned(prepared) => &prepared.bundle.review,
+            Self::EffectRetry(retry) => &retry.review,
         }
     }
 
@@ -227,6 +243,11 @@ impl Outcome {
     pub fn portable_plan(&self) -> Result<Vec<u8>> {
         match self {
             Self::Planned(prepared) => super::portable::encode(&prepared.bundle),
+            Self::EffectRetry(_) => Err(concat!(
+                "an effect retry cannot be exported as a project plan.\n       ",
+                "fix: rerun the same canonical command when the datasource is ready."
+            )
+            .into()),
             _ => Err(concat!(
                 "only a prepared preview can be exported as a plan.\n       ",
                 "fix: run the mutation with --pretend --plan-out."
@@ -241,6 +262,7 @@ impl Outcome {
             Self::Committed(_, _, timings, _)
             | Self::CommittedAfterRecovery(_, _, _, timings, _) => timings.spans(),
             Self::Planned(prepared) => prepared.timings.spans(),
+            Self::EffectRetry(retry) => retry.timings.spans(),
         }
     }
 
@@ -297,6 +319,41 @@ impl Outcome {
             }
             Self::Committed(result, _, _, _) => (result, Vec::new()),
             Self::CommittedAfterRecovery(result, recovery, _, _, _) => (result, recovery.clone()),
+            Self::EffectRetry(retry) => {
+                let envelope = match &retry.result {
+                    None => CommandEnvelope::effect_retry_preview(retry.report.clone()),
+                    Some(jails_commit::outcome::CommitEffectOutcome::Succeeded { .. }) => {
+                        CommandEnvelope::effect_retry_result(retry.report.clone(), false)
+                    }
+                    Some(jails_commit::outcome::CommitEffectOutcome::Superseded { .. }) => {
+                        CommandEnvelope::effect_retry_result(retry.report.clone(), true)
+                    }
+                    Some(jails_commit::outcome::CommitEffectOutcome::Failed { effect }) => {
+                        CommandEnvelope::effect_retry_failed(
+                            retry.report.clone(),
+                            format!(
+                                "post-commit effect {effect} failed again; the project transaction remains durable.\n       fix: inspect the recorded failure, repair the external system, then rerun the same command."
+                            ),
+                        )
+                    }
+                    Some(jails_commit::outcome::CommitEffectOutcome::DeferredError {
+                        effect,
+                        ..
+                    }) => CommandEnvelope::effect_retry_failed(
+                        retry.report.clone(),
+                        format!(
+                            "post-commit effect {effect} ran but its terminal receipt could not be published.\n       fix: inspect the authenticated receipt before another retry."
+                        ),
+                    ),
+                    Some(jails_commit::outcome::CommitEffectOutcome::NotApplicable) => {
+                        CommandEnvelope::effect_retry_failed(
+                            retry.report.clone(),
+                            "the recorded effect was no longer applicable when its retry ran",
+                        )
+                    }
+                };
+                return Some(envelope.with_timings(retry.timings.spans()));
+            }
         };
         let envelope = match result {
             CommitResult::NoOp => CommandEnvelope::no_op(),
@@ -371,6 +428,7 @@ impl Outcome {
                 .map(|invocation| invocation.request_syntax),
             Self::Committed(_, _, _, fingerprint)
             | Self::CommittedAfterRecovery(_, _, _, _, fingerprint) => Some(*fingerprint),
+            Self::EffectRetry(retry) => Some(retry.fingerprint),
         }
     }
 }

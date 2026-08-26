@@ -33,7 +33,7 @@ use clap::ValueEnum;
 use jails_commit::execute::{self, LockedProject, ProjectHandle};
 use jails_commit::outcome::{CommitError, CommitResult};
 use jails_generate::generate::Recipe;
-use jails_prepare::command::{CommandEnvelope, ProjectCommitDisposition};
+use jails_prepare::command::{CommandEnvelope, EffectRetryReport, ProjectCommitDisposition};
 use jails_prepare::desire;
 use jails_prepare::pipeline::{self, ObservedStore, PreparationContext};
 use jails_prepare::recovery::RecoveryOutcome;
@@ -66,7 +66,7 @@ use jails_protocol::resource::{
     DesiredResource, OneShotLifecycle, OneShotState, ResourceKey, ResourceOwner, ResourceValue,
 };
 use jails_protocol::snapshot::{MachineRootPresence, TemplateStore};
-use jails_protocol::transition::CommitPlan;
+use jails_protocol::transition::{CommitPlan, EffectResumeReason, EffectRetryPlan, ReceiptGuard};
 use jails_spec::spec::kind::{ArtifactKind, Capability};
 use jails_support::Result;
 
@@ -116,7 +116,7 @@ pub use session::{Outcome, Run};
 // module list was one or the other. Re-exported into this module's namespace so
 // the eleven route submodules keep saying `super::commit(..)` and
 // `super::Asked` -- the seam is where the code lives, not a new vocabulary.
-use commit::{commit, commit_set, commit_subject, observed};
+use commit::{commit, commit_set, commit_subject, observed, retry_existing};
 use request::{
     Asked, Declared, Request, asked_capabilities, declaration, declared, declared_capabilities,
     identity, record_capability, retiring,

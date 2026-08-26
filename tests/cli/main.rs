@@ -23,6 +23,7 @@ mod behavior_matrix;
 mod capabilities;
 mod developer_tools;
 mod editor_protocol;
+mod effects;
 mod examples;
 mod generate;
 mod history;

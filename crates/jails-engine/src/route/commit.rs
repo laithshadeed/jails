@@ -53,6 +53,9 @@ fn commit_with_subject(
     subject: Option<PlannedSubject>,
 ) -> Result<Outcome> {
     let project = run.project();
+    if let Some(plan) = retry_plan(run, declaration, asked)? {
+        return retry_effect(run, plan);
+    }
     let mut recovery = Vec::new();
     for attempt in 0..2 {
         // Read once per attempt, and let the same value decide the generation
@@ -80,6 +83,141 @@ fn commit_with_subject(
         }
     }
     unreachable!("the loop returns on every path")
+}
+
+/// Retry detection for routes whose original commit may make their ordinary
+/// semantic lookup invalid (for example, destroying a resource retires it).
+pub(super) fn retry_existing(run: &Run, asked: &Asked) -> Result<Option<Outcome>> {
+    let reads = capture::capability_reads()?;
+    retry_plan(run, &reads, asked)?
+        .map(|plan| retry_effect(run, plan))
+        .transpose()
+}
+
+/// Recognise a rerun of the canonical invocation that owns an unfinished or
+/// failed effect. Project semantics are deliberately not planned first: the
+/// original project transition is already durable and may have retired the
+/// very resource the command named.
+fn retry_plan(
+    run: &Run,
+    declaration: &ReadDeclaration,
+    asked: &Asked,
+) -> Result<Option<EffectRetryPlan>> {
+    let store = jails_commit::store::Store::at(run.project().root());
+    let receipts = store.read_receipts()?;
+    let candidates: Vec<_> = receipts
+        .into_iter()
+        .filter(|receipt| {
+            receipt.post_commit.iter().any(|row| {
+                matches!(
+                    row.state,
+                    jails_protocol::effect::EffectState::Deferred
+                        | jails_protocol::effect::EffectState::Pending { .. }
+                        | jails_protocol::effect::EffectState::Running { .. }
+                        | jails_protocol::effect::EffectState::Failed { .. }
+                )
+            })
+        })
+        .collect();
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+
+    let (snapshot, _) = run.measure(jails_prepare::timing::TimingPhase::Observe, || {
+        capture::projected(run.project(), declaration)
+    })?;
+    let invocation = asked.fingerprint(&snapshot)?;
+    for receipt in candidates {
+        let Some(recorded) = receipt.prepared.operation_identity.invocation.as_ref() else {
+            continue;
+        };
+        if recorded != &invocation {
+            continue;
+        }
+        let Some((index, row)) = receipt.post_commit.iter().enumerate().find(|(_, row)| {
+            matches!(
+                row.state,
+                jails_protocol::effect::EffectState::Deferred
+                    | jails_protocol::effect::EffectState::Pending { .. }
+                    | jails_protocol::effect::EffectState::Running { .. }
+                    | jails_protocol::effect::EffectState::Failed { .. }
+            )
+        }) else {
+            continue;
+        };
+        let reason = match row.state {
+            jails_protocol::effect::EffectState::Failed { .. } => EffectResumeReason::ExplicitRetry,
+            _ => EffectResumeReason::Interrupted,
+        };
+        let checksum = ObjectId::from_bytes(jails_support::codec::sha256(&receipt.encode()?));
+        return Ok(Some(EffectRetryPlan {
+            invocation,
+            receipt: ReceiptGuard {
+                transaction: receipt.transaction,
+                generation: receipt.generation,
+                record_checksum: checksum,
+            },
+            operation: receipt.prepared.operation_id,
+            effect_index: u32::try_from(index)
+                .map_err(|_| "a receipt carries too many effects to address one by index")?,
+            effect_id: row.id,
+            effect: row.effect.clone(),
+            expected_state: row.state.clone(),
+            reason,
+        }));
+    }
+    Ok(None)
+}
+
+fn retry_effect(run: &Run, plan: EffectRetryPlan) -> Result<Outcome> {
+    let fingerprint = plan.invocation.request_syntax;
+    let preview = EffectRetryReport::describe(&plan);
+    if !run.write {
+        return Ok(Outcome::EffectRetry(Box::new(
+            super::session::EffectRetryOutcome {
+                report: preview,
+                result: None,
+                review: Default::default(),
+                timings: run.timing_trace(),
+                fingerprint,
+            },
+        )));
+    }
+
+    let store = jails_commit::store::Store::at(run.project().root());
+    let result = run.measure(jails_prepare::timing::TimingPhase::Container, || {
+        jails_commit::runtime::retry_with_migrations(
+            &store,
+            run.project().root(),
+            &plan,
+            run.debug,
+            |datasource, migrations, debug| {
+                jails_drive::migrate::apply_effect(
+                    run.project(),
+                    datasource.as_str(),
+                    migrations,
+                    debug,
+                )
+                .map_err(|failure| failure.to_string())
+            },
+        )
+        .map_err(describe)
+    })?;
+    let terminal = store
+        .read_receipt(&plan.receipt.transaction)?
+        .post_commit
+        .get(usize::try_from(plan.effect_index).map_err(|_| "invalid effect index")?)
+        .map(|row| row.state.clone())
+        .unwrap_or_else(|| plan.expected_state.clone());
+    Ok(Outcome::EffectRetry(Box::new(
+        super::session::EffectRetryOutcome {
+            report: EffectRetryReport::describe_result(&plan, terminal),
+            result: Some(result),
+            review: Default::default(),
+            timings: run.timing_trace(),
+            fingerprint,
+        },
+    )))
 }
 
 /// The same steps, for a request that already knows what the store becomes.

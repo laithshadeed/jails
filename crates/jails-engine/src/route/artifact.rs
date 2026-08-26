@@ -143,6 +143,49 @@ pub fn destroy(
     let project = run.project();
     let id = identity(project, kind, name, package)?;
     let entity = EntityId::Intent(id.clone());
+    let expected_table = jails_protocol::request::SqlName::parse(
+        &jails_generate::sql::table_name(id.name.as_str()),
+    )?;
+    // A successful destroy retires the entity, so the normal lookup below is
+    // intentionally no longer valid on a retry. Recognise the exact original
+    // drop-and-migrate invocation before asking the active ledger for it.
+    if let (
+        ArtifactKind::Scaffold,
+        Some(RequestedStorageRetirement::Drop {
+            confirmed_table: Some(confirmed),
+        }),
+        Some(datasource),
+    ) = (kind, storage.as_ref(), migration_effect)
+        && confirmed == expected_table.as_str()
+    {
+        let requested = DestroyResourceRequestV2 {
+            entity: entity.clone(),
+            expected_path: JavaType::new(
+                Package::parse(&project.package_named(jails_spec::spec::layout::DOMAIN, package))?,
+                id.name.clone(),
+            ),
+            storage: jails_protocol::request::StorageRetirement::Drop {
+                confirmed_table: expected_table.clone(),
+            },
+            migration_effect: Some(DatasourceRef::parse(datasource)?),
+        };
+        let asked = Asked::new(
+            CanonicalMutationRequest::DestroyResourceV2 {
+                request: requested,
+                force,
+            },
+            &["destroy"],
+            vec![label(kind), name.to_string()],
+            BTreeMap::from([
+                ("storage".to_string(), vec!["drop".to_string()]),
+                ("datasource".to_string(), vec![datasource.to_string()]),
+            ]),
+            BTreeSet::from(["migrate".to_string()]),
+        );
+        if let Some(outcome) = retry_existing(run, &asked)? {
+            return Ok(outcome);
+        }
+    }
     let store = observed(project)?;
     if !store
         .ledger
@@ -176,9 +219,6 @@ pub fn destroy(
         .iter()
         .flat_map(|ledger| ledger.resources.iter())
         .any(|row| row.owners.contains(&owner) && row.key.is_migration_history());
-    let expected_table = jails_protocol::request::SqlName::parse(
-        &jails_generate::sql::table_name(id.name.as_str()),
-    )?;
     let (storage, drop_change) = if kind == ArtifactKind::Scaffold && table_backed {
         match storage {
             None => {

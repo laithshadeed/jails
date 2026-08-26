@@ -565,6 +565,50 @@ impl CommandEnvelope {
         }
     }
 
+    /// A preview of one already-committed effect retry.
+    pub fn effect_retry_preview(report: EffectRetryReport) -> Self {
+        Self {
+            status: CommandStatus::Preview,
+            project_commit: ProjectCommitDisposition::None,
+            recovery: Vec::new(),
+            report: Some(CommandReport::EffectRetry(Box::new(report))),
+            receipt: None,
+            error: None,
+            timings: Vec::new(),
+        }
+    }
+
+    /// A retry whose authenticated receipt now carries a terminal result.
+    pub fn effect_retry_result(report: EffectRetryReport, superseded: bool) -> Self {
+        Self {
+            status: if superseded {
+                CommandStatus::EffectSuperseded
+            } else {
+                CommandStatus::EffectRetried
+            },
+            project_commit: ProjectCommitDisposition::None,
+            recovery: Vec::new(),
+            report: Some(CommandReport::EffectRetry(Box::new(report))),
+            receipt: None,
+            error: None,
+            timings: Vec::new(),
+        }
+    }
+
+    /// A retry attempt failed; its report still identifies the exact effect
+    /// and terminal receipt state without implying another project commit.
+    pub fn effect_retry_failed(report: EffectRetryReport, message: impl Into<String>) -> Self {
+        Self {
+            status: CommandStatus::EffectFailed,
+            project_commit: ProjectCommitDisposition::None,
+            recovery: Vec::new(),
+            report: Some(CommandReport::EffectRetry(Box::new(report))),
+            receipt: None,
+            error: Some(ErrorReport::new(ErrorCode::EffectFailed, message)),
+            timings: Vec::new(),
+        }
+    }
+
     /// A commit that happened. The status is the receipt's own outcome, so a
     /// conflict, a finalisation and an abort cannot be reported as an
     /// ordinary apply by a caller that forgot which it asked for.

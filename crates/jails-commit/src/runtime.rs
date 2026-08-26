@@ -35,6 +35,7 @@ use jails_protocol::database::MigrationInputV1;
 use jails_protocol::effect::{EffectFailureCode, EffectId, EffectState, PostCommitEffect};
 use jails_protocol::identity::{ObjectId, OperationId, ServiceName};
 use jails_protocol::request::DatasourceRef;
+use jails_protocol::transition::EffectRetryPlan;
 use jails_support::codec::{Codec, Encoder, domain_hash};
 use jails_support::process::{Diagnostics, OutputMode, compose_spec, run as run_process};
 
@@ -99,12 +100,7 @@ where
     F: FnMut(&DatasourceRef, &[MigrationInputV1], bool) -> std::result::Result<(), String>,
 {
     let directory = store.receipt(transaction);
-    let mut receipt = match ReceiptV1::read(&directory) {
-        Ok(receipt) => receipt,
-        // The commit itself succeeded; a receipt this process cannot read back
-        // is a machine-state problem to report, never a reason to rerun files.
-        Err(why) => return Err(CommitError::CorruptMachineState(why.to_string())),
-    };
+    let receipt = read_receipt(store, transaction)?;
     let Some(row) = receipt.post_commit.first().cloned() else {
         return Ok(CommitEffectOutcome::NotApplicable);
     };
@@ -119,10 +115,169 @@ where
         },
     )?;
 
-    let state = match attempt(store, project_root, &row.effect, debug, &mut migrate) {
+    // The first read avoids locking for a settled receipt. This second one is
+    // authoritative: another invocation may have completed the effect before
+    // this process acquired the effects lock.
+    let mut receipt = read_receipt(store, transaction)?;
+    let Some(row) = receipt.post_commit.first().cloned() else {
+        return Ok(CommitEffectOutcome::NotApplicable);
+    };
+    if let Some(settled) = settled(&row.state, row.id) {
+        return Ok(settled);
+    }
+    let attempt = match row.state {
+        EffectState::Deferred => 1,
+        EffectState::Pending { next_attempt } => next_attempt,
+        _ => unreachable!("settled states returned above"),
+    };
+    run_attempt(
+        store,
+        project_root,
+        &directory,
+        &mut receipt,
+        0,
+        attempt,
+        debug,
+        &mut migrate,
+    )
+}
+
+/// Explicitly re-attempt one effect identified by an authenticated plan.
+///
+/// This takes only `effects.lock`: the project transaction is already durable
+/// and must never be replayed merely because its external consequence failed.
+pub fn retry_with_migrations<F>(
+    store: &Store,
+    project_root: &Path,
+    plan: &EffectRetryPlan,
+    debug: bool,
+    mut migrate: F,
+) -> std::result::Result<CommitEffectOutcome, CommitError>
+where
+    F: FnMut(&DatasourceRef, &[MigrationInputV1], bool) -> std::result::Result<(), String>,
+{
+    let _held =
+        Lock::acquire(&store.effects_lock_path(), "effect retry").map_err(|why| match why {
+            Contention::Held(_) => CommitError::EffectBusy(why.to_string()),
+            Contention::Refused(_) => CommitError::PreActivationIo(why.to_string()),
+        })?;
+    let directory = store.receipt(&plan.receipt.transaction);
+    let mut receipt = read_receipt(store, &plan.receipt.transaction)?;
+    validate_retry_guard(&receipt, plan)?;
+
+    let index = usize::try_from(plan.effect_index).map_err(|_| {
+        CommitError::StaleInput("the recorded effect index does not fit this platform".to_string())
+    })?;
+    let row = receipt.post_commit[index].clone();
+    let attempt = match row.state {
+        EffectState::Deferred => 1,
+        EffectState::Pending { next_attempt } => next_attempt,
+        EffectState::Failed { attempt, .. } => attempt.checked_add(1).ok_or_else(|| {
+            CommitError::CorruptMachineState("the effect attempt counter overflowed".to_string())
+        })?,
+        EffectState::Running { attempt } if attempt < 2 => attempt + 1,
+        EffectState::Running { attempt } => {
+            receipt.post_commit[index].state = EffectState::Failed {
+                attempt,
+                code: EffectFailureCode::InterruptedTwice,
+                summary: "the effect was interrupted twice; inspect the external system before another explicit retry".to_string(),
+            };
+            return if receipt.persist(&directory).is_ok() {
+                Ok(CommitEffectOutcome::Failed { effect: row.id })
+            } else {
+                Ok(CommitEffectOutcome::DeferredError {
+                    effect: row.id,
+                    error: crate::outcome::CommittedEffectError::ReceiptIo,
+                })
+            };
+        }
+        EffectState::Succeeded | EffectState::Superseded { .. } => {
+            return Err(CommitError::StaleInput(
+                "the effect reached a terminal state after this retry was planned.\n       fix: inspect the current receipt; do not replay an effect that already succeeded or was superseded"
+                    .to_string(),
+            ));
+        }
+    };
+    run_attempt(
+        store,
+        project_root,
+        &directory,
+        &mut receipt,
+        index,
+        attempt,
+        debug,
+        &mut migrate,
+    )
+}
+
+fn read_receipt(
+    store: &Store,
+    transaction: &jails_protocol::identity::TransactionId,
+) -> std::result::Result<ReceiptV1, CommitError> {
+    store
+        .read_receipt(transaction)
+        .map_err(|why| CommitError::CorruptMachineState(why.to_string()))
+}
+
+fn validate_retry_guard(
+    receipt: &ReceiptV1,
+    plan: &EffectRetryPlan,
+) -> std::result::Result<(), CommitError> {
+    let checksum = receipt
+        .encode()
+        .map(|bytes| ObjectId::from_bytes(jails_support::codec::sha256(&bytes)))
+        .map_err(|why| CommitError::CorruptMachineState(why.to_string()))?;
+    let index = usize::try_from(plan.effect_index).map_err(|_| {
+        CommitError::StaleInput("the recorded effect index does not fit this platform".to_string())
+    })?;
+    let row = receipt.post_commit.get(index).ok_or_else(|| {
+        CommitError::StaleInput("the recorded effect no longer exists in its receipt".to_string())
+    })?;
+    let guarded = receipt.transaction == plan.receipt.transaction
+        && receipt.generation == plan.receipt.generation
+        && checksum == plan.receipt.record_checksum
+        && receipt.prepared.operation_id == plan.operation
+        && row.id == plan.effect_id
+        && row.effect == plan.effect
+        && row.state == plan.expected_state;
+    if !guarded {
+        return Err(CommitError::StaleInput(
+            "the authenticated effect receipt changed after this retry was planned.\n       fix: inspect it and retry from fresh state"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_attempt<F>(
+    store: &Store,
+    project_root: &Path,
+    directory: &Path,
+    receipt: &mut ReceiptV1,
+    index: usize,
+    attempt_number: u32,
+    debug: bool,
+    migrate: &mut F,
+) -> std::result::Result<CommitEffectOutcome, CommitError>
+where
+    F: FnMut(&DatasourceRef, &[MigrationInputV1], bool) -> std::result::Result<(), String>,
+{
+    let row = receipt.post_commit[index].clone();
+    receipt.post_commit[index].state = EffectState::Running {
+        attempt: attempt_number,
+    };
+    receipt.persist(directory).map_err(|why| {
+        CommitError::PreActivationIo(format!(
+            "could not record effect {} attempt {attempt_number} before running it: {why}",
+            row.id
+        ))
+    })?;
+
+    let state = match attempt(store, project_root, &row.effect, debug, migrate) {
         Ok(()) => EffectState::Succeeded,
         Err(failure) => EffectState::Failed {
-            attempt: 1,
+            attempt: attempt_number,
             code: failure.code,
             summary: failure.summary,
         },
@@ -131,10 +286,8 @@ where
         EffectState::Succeeded => CommitEffectOutcome::Succeeded { effect: row.id },
         _ => CommitEffectOutcome::Failed { effect: row.id },
     };
-    receipt.post_commit[0].state = state;
-    if receipt.persist(&directory).is_err() {
-        // The attempt happened; only the record of it did not. Saying so is
-        // the honest answer, and it is exactly what `DeferredError` is for.
+    receipt.post_commit[index].state = state;
+    if receipt.persist(directory).is_err() {
         return Ok(CommitEffectOutcome::DeferredError {
             effect: row.id,
             error: crate::outcome::CommittedEffectError::ReceiptIo,
