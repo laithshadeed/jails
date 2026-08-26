@@ -2260,7 +2260,9 @@ fn an_overlapping_edit_refuses_without_writing_anything() {
     .unwrap_err();
 
     assert!(error.contains("overlap"), "{error}");
-    assert!(error.contains("§R5.4") || error.contains("R5.4"), "{error}");
+    assert!(error.contains("fix:"), "{error}");
+    assert!(!error.contains("plan.md"), "{error}");
+    assert!(!error.contains("R5.4"), "{error}");
     // Named, so the reader knows which file to look at rather than being told
     // only that something overlapped.
     assert!(
