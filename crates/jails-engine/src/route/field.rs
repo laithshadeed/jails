@@ -26,10 +26,13 @@ use super::*;
 mod companion;
 mod data;
 mod evolution;
+mod target;
 
 use companion::companion_updates;
 use data::{add_data_plan, read_backfill};
-use evolution::{evolve_existing, projected_column, safe_widening, storage_identity};
+use evolution::{
+    evolve_existing, projected_column, recipe_package, safe_widening, storage_identity,
+};
 use jails_protocol::declaration::{FieldType, Optionality};
 use jails_protocol::entity::{OneShotId, OneShotSpec, TypeTargetId};
 use jails_protocol::identity::SqlName;
@@ -37,6 +40,7 @@ use jails_protocol::request::{
     ColumnRenamePolicy, DataEvolution, EvolveFieldRequestV1, FieldEvolution, TypeChangeStrategy,
 };
 use jails_protocol::resource::{OneShotLifecycle, OneShotState};
+use target::recorded_target;
 
 /// Add one component to a generated artifact, and migrate the table for it.
 pub fn field(run: &Run, target: &str, component: &str, package: Option<&str>) -> Result<Outcome> {
@@ -426,6 +430,8 @@ fn add_field_with_syntax(
     let store = observed(project)?;
     let (id, spec) = recorded_target(project, &store, target, package)?;
     let (expected_path, expected_table) = storage_identity(&store, &id)?;
+    let package = recipe_package(project, &id, package)?;
+    let package = package.as_deref();
 
     let base = Package::parse(project.base())?;
     let added = FieldSpec::parse(component, &base)?;
@@ -687,57 +693,4 @@ fn recorded_migrations(store: &ObservedStore, target: &IntentId) -> BTreeSet<Pro
             _ => None,
         });
     lifecycle_paths.chain(owned_paths).collect()
-}
-
-/// The artifact this field is being added to, as the store records it.
-///
-/// Recorded rather than read off disk, because the spec is what the next
-/// render is computed from and a record's Java cannot say what its components
-/// were *declared* as: `@pk`, `@unique` and `@index` change the DDL and
-/// nothing about the type. Reading them back would produce a table missing
-/// the key somebody believed they had asked for.
-fn recorded_target(
-    project: &Project,
-    store: &ObservedStore,
-    target: &str,
-    package: Option<&str>,
-) -> Result<(IntentId, IntentSpec)> {
-    let name = Name::parse(&jails_spec::spec::field::capitalize(target))?;
-    let package = Package::parse(&project.package_named("", package))?;
-    let mut found = store
-        .ledger
-        .iter()
-        .flat_map(|ledger| ledger.applied.iter())
-        .filter_map(|row| match (&row.id, &row.version.spec) {
-            (EntityId::Intent(id), EntitySpec::Intent(spec))
-                if id.name == name
-                    && id.package == package
-                    && matches!(
-                        spec.arguments,
-                        jails_protocol::declaration::IntentArguments::Fields(_)
-                    ) =>
-            {
-                Some((id.clone(), spec.clone()))
-            }
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    // A logical Java type can be owned by both a narrow record intent and a
-    // scaffold. Evolve the widest projection as the primary so repositories,
-    // DTOs and HTTP surfaces move with the record; companion intents are
-    // updated in the same request below.
-    found.sort_by_key(|(id, _)| {
-        (
-            id.recipe != jails_protocol::entity::Recipe::Scaffold,
-            id.clone(),
-        )
-    });
-    Ok(found.into_iter().next().ok_or_else(|| {
-        format!(
-            "no `{name}` is recorded in this project.\n       fix: `jails g scaffold {name} \
-             ...` or `jails g record {name} ...` first. Adding a component to something the \
-             store never recorded would mean guessing what its other components were declared \
-             as, and a declaration is not readable from the Java it produced."
-        )
-    })?)
 }

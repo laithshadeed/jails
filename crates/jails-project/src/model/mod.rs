@@ -643,7 +643,7 @@ impl Project {
 
     /// Resolve a package override, or the configured conventional layer.
     pub fn package(&self, layer: Layer, package: Option<&str>) -> String {
-        crate::spec::subpackage(
+        resolve_package(
             &self.base,
             package.unwrap_or_else(|| self.layers.get(layer)),
         )
@@ -651,7 +651,7 @@ impl Project {
 
     /// Transitional string-key form for recipes not yet moved to [`Layer`].
     pub fn package_named(&self, default: &str, package: Option<&str>) -> String {
-        crate::spec::subpackage(&self.base, package.unwrap_or(self.layers.named(default)))
+        resolve_package(&self.base, package.unwrap_or(self.layers.named(default)))
     }
 
     /// Whether the resolved pom declares this dependency.
@@ -873,6 +873,15 @@ impl Project {
     }
 }
 
+fn resolve_package(base: &str, requested: &str) -> String {
+    let prefix = format!("{base}.");
+    if requested == base || requested.starts_with(&prefix) {
+        requested.to_string()
+    } else {
+        crate::spec::subpackage(base, requested)
+    }
+}
+
 /// Where one generated slice's classes go, and the rule that decides.
 ///
 /// `--package` places the **operation** being generated. The resource that
@@ -1050,6 +1059,20 @@ mod tests {
         assert_eq!(
             project.main(Layer::Domain, None),
             root.join("src/main/java/com/example/demo/model")
+        );
+    }
+
+    #[test]
+    fn a_fully_qualified_override_is_not_prefixed_with_the_base_again() {
+        let root = fixture();
+        let project = Project::load(&root).unwrap();
+        assert_eq!(
+            project.package_named("", Some("billing")),
+            "com.example.demo.billing"
+        );
+        assert_eq!(
+            project.package_named("", Some("com.example.demo.billing")),
+            "com.example.demo.billing"
         );
     }
 

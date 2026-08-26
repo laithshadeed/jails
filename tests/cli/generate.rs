@@ -183,6 +183,44 @@ fn resource_field_uses_scaffold_storage_identity_and_refuses_plain_records() {
 }
 
 #[test]
+fn package_overrides_normalize_the_base_and_unique_names_resolve_without_the_flag() {
+    let root = temp_dir("package-override-resolution");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    let generated = jails_cmd(&root, None)
+        .args([
+            "g",
+            "scaffold",
+            "Invoice",
+            "id:uuid@pk",
+            "amount:decimal",
+            "--package",
+            "com.example.demo.billing",
+        ])
+        .output()
+        .unwrap();
+    assert!(generated.status.success(), "{generated:?}");
+    let record = root.join("src/main/java/com/example/demo/billing/Invoice.java");
+    assert!(record.is_file(), "missing {}", record.display());
+    assert!(
+        !root
+            .join("src/main/java/com/example/demo/com/example/demo/billing")
+            .exists()
+    );
+
+    let evolved = jails_cmd(&root, None)
+        .args(["g", "field", "Invoice", "memo:string?"])
+        .output()
+        .unwrap();
+    assert!(evolved.status.success(), "{evolved:?}");
+    assert!(
+        fs::read_to_string(&record).unwrap().contains("memo"),
+        "{}",
+        record.display()
+    );
+}
+
+#[test]
 fn generate_scaffold_writes_a_raw_jdbc_slice() {
     let root = temp_dir("scaffold-files");
     write_spring_fixture(&root);

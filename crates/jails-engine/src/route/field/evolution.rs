@@ -33,6 +33,32 @@ pub(super) fn storage_identity(
     Ok((lifecycle.expected_path.clone(), table.table.clone()))
 }
 
+pub(super) fn recipe_package(
+    project: &Project,
+    id: &IntentId,
+    requested: Option<&str>,
+) -> Result<Option<String>> {
+    if let Some(requested) = requested {
+        return Ok(Some(requested.to_string()));
+    }
+    if id.package.as_str() == project.base() {
+        return Ok(None);
+    }
+    let prefix = format!("{}.", project.base());
+    id.package
+        .as_str()
+        .strip_prefix(&prefix)
+        .map(|relative| Some(relative.to_string()))
+        .ok_or_else(|| {
+            format!(
+                "recorded package `{}` is outside project base `{}`.\n       fix: repair the entity identity before evolving its fields.",
+                id.package,
+                project.base()
+            )
+            .into()
+        })
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn evolve_existing(
     run: &Run,
@@ -50,6 +76,8 @@ pub(super) fn evolve_existing(
 ) -> Result<Outcome> {
     let project = run.project();
     let (expected_path, expected_table) = storage_identity(store, &id)?;
+    let package = recipe_package(project, &id, package)?;
+    let package = package.as_deref();
     let fields: Vec<String> = after.fields().iter().map(FieldSpec::canonical).collect();
     let indexes: Vec<String> = after
         .indexes
