@@ -1,6 +1,6 @@
 package {{service}};
 
-{{target_import}}{{event_import}}{{store_import}}{{instant_import}}import java.util.Objects;
+{{target_import}}{{identity_import}}{{event_import}}{{store_import}}{{instant_import}}import java.util.Objects;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;

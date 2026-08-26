@@ -6,9 +6,9 @@ import com.example.demo.KafkaTestcontainersConfig;
 import com.example.demo.TestcontainersConfig;
 import java.time.Instant;
 import java.util.UUID;
-import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -25,10 +25,11 @@ import org.springframework.kafka.annotation.KafkaListener;
  * no bootstrap-servers property to override, and no chance of a test quietly
  * using the developer's own broker.
  *
- * <p>The latch is the part worth copying. Consumption is asynchronous, so an
+ * <p>The wait is the part worth copying. Consumption is asynchronous, so an
  * assertion made straight after publishing races the consumer and fails about
- * one run in five. Waiting on a latch with a timeout either observes the
- * message or fails saying so.
+ * one run in five. Waiting with a timeout either observes the message or
+ * fails saying so -- and it waits for <em>this</em> event by id, not for the
+ * next one on the topic.
  */
 @SpringBootTest(properties = {
     "spring.kafka.consumer.properties.group.protocol=classic",
@@ -51,10 +52,9 @@ class MessageReceivedMessagingIT {
 
         publisher.publish(event);
 
-        assertThat(probe.received.await(30, TimeUnit.SECONDS))
-                .as("the event should have been consumed within 30s")
+        assertThat(probe.await(event.id(), 30))
+                .as("the published event should have been consumed within 30s")
                 .isTrue();
-        assertThat(probe.last.get().id()).isEqualTo(UUID.fromString("00000000-0000-0000-0000-000000000001"));
     }
 
     /**
@@ -64,12 +64,11 @@ class MessageReceivedMessagingIT {
      * a test instance is not a bean -- Spring creates it and injects into it,
      * but never processes its annotations. A listener declared on the test
      * class is therefore silently never subscribed, and the only symptom is a
-     * latch that times out with nothing in the log to explain it.
+     * wait that times out with nothing in the log to explain it.
      */
     static class Probe {
 
-        private final CountDownLatch received = new CountDownLatch(1);
-        private final AtomicReference<MessageReceivedEvent> last = new AtomicReference<>();
+        private final BlockingQueue<MessageReceivedEvent> received = new LinkedBlockingQueue<>();
 
         /**
          * Its own consumer group, so it does not compete with the
@@ -78,8 +77,32 @@ class MessageReceivedMessagingIT {
          */
         @KafkaListener(topics = "${topics.message-received:message-received}", groupId = "message-received-it-probe")
         void on(MessageReceivedEvent event) {
-            last.set(event);
-            received.countDown();
+            received.add(event);
+        }
+
+        /**
+         * Waits for the event with this id, not for the next event on the
+         * topic.
+         *
+         * <p>The probe's consumer group is new, so {@code
+         * auto-offset-reset=earliest} replays everything already published --
+         * including whatever a neighbouring test or an outbox delivery put
+         * there. Asserting on whichever record arrived first makes this test
+         * pass or fail on what its neighbours did, and it passes by accident
+         * whenever their ids happen to agree with this one's.
+         */
+        boolean await(Object id, long seconds) throws InterruptedException {
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(seconds);
+            for (long left = deadline - System.nanoTime(); left > 0; left = deadline - System.nanoTime()) {
+                MessageReceivedEvent next = received.poll(left, TimeUnit.NANOSECONDS);
+                if (next == null) {
+                    return false;
+                }
+                if (id.equals(next.id())) {
+                    return true;
+                }
+            }
+            return false;
         }
     }
 

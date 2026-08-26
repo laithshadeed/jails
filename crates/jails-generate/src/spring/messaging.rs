@@ -387,13 +387,12 @@ fn messaging_it_java(
     let pkg: &str = &slice.placed(Layer::Messaging);
     let base: String = slice.root_package();
     let domain: &str = &slice.placed(Layer::Domain);
-    let (event_imports, disabled_import, disabled, event_args, expected_id) = if fields.is_empty() {
+    let (event_imports, disabled_import, disabled, event_args) = if fields.is_empty() {
         (
             "import java.time.Instant;\n".to_string(),
             String::new(),
             String::new(),
             "\"probe-1\", Instant.parse(\"2024-01-01T00:00:00Z\")".to_string(),
-            "\"probe-1\"".to_string(),
         )
     } else {
         let samples = fields
@@ -406,12 +405,6 @@ fn messaging_it_java(
             .filter(|(_, sample)| sample.is_none())
             .map(|(field, _)| field.name.as_str())
             .collect::<Vec<_>>();
-        let expected_id = fields
-            .iter()
-            .zip(&samples)
-            .find(|(field, _)| field.name == "id")
-            .and_then(|(_, sample)| sample.clone())
-            .unwrap_or_else(|| "null /* TODO: an event id sample */".to_string());
         let event_args = fields
             .iter()
             .zip(samples)
@@ -443,13 +436,7 @@ fn messaging_it_java(
             .map(|import| format!("import {import};\n"))
             .collect::<String>();
         if missing.is_empty() {
-            (
-                imports,
-                String::new(),
-                String::new(),
-                event_args,
-                expected_id,
-            )
+            (imports, String::new(), String::new(), event_args)
         } else {
             (
                 imports,
@@ -459,7 +446,6 @@ fn messaging_it_java(
                     missing.join(", ")
                 ),
                 event_args,
-                expected_id,
             )
         }
     };
@@ -478,7 +464,6 @@ fn messaging_it_java(
             ),
             ("KAFKA_TESTCONTAINERS_CONFIG", KAFKA_TESTCONTAINERS_CONFIG),
             ("event_args", &event_args),
-            ("expected_id", &expected_id),
         ],
     )
 }

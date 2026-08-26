@@ -59,8 +59,23 @@ pub(crate) fn outbox_files(
     let target_fields = Target::read(slice, "usecase", usecase, target)?.fields;
     let mut expressions = Vec::with_capacity(event_fields.len());
     let mut needs_instant = false;
+    let mut needs_identity = false;
     for event_field in &event_fields {
-        if let Some(field) = target_fields
+        if event_field.name == "id" {
+            // The event's own identity is **minted**, never mapped. Both the
+            // command and the target usually carry an `id` of the same type,
+            // and taking it made the event id equal the resource id -- so the
+            // outbox's `on conflict (id) do nothing` silently discarded the
+            // second event about that resource instead of deduplicating a
+            // retried stage. `<target>Id` below is how an event refers to the
+            // resource; this is how it refers to itself.
+            needs_identity = true;
+            expressions.push(
+                super::identity::mint("UUID")
+                    .expect("the outbox has already required a UUID id")
+                    .to_string(),
+            );
+        } else if let Some(field) = target_fields
             .iter()
             .find(|candidate| candidate.name == event_field.name)
         {
@@ -114,8 +129,16 @@ pub(crate) fn outbox_files(
     let emission = Emission {
         expressions,
         needs_instant,
+        needs_identity,
     };
-    Ok(vec![
+    let mut artifacts = Vec::new();
+    if needs_identity {
+        // Minting the event id needs the minter. It is one class per project
+        // and `artifacts` returns nothing when it is already on disk, so this
+        // is the same shared-file rule `g scaffold` follows.
+        artifacts.extend(super::identity::artifacts(slice));
+    }
+    artifacts.extend([
         Artifact {
             kind: "scheduling",
             path: main_jobs.join("SchedulingConfig.java"),
@@ -163,7 +186,8 @@ pub(crate) fn outbox_files(
             path: crate::generate::migration_file(slice.project(), &format!("create_{table}"))?,
             contents: outbox_migration(&table),
         },
-    ])
+    ]);
+    Ok(artifacts)
 }
 
 /// How one outbox row's payload is built: an expression per event component,
@@ -174,6 +198,7 @@ pub(crate) fn outbox_files(
 struct Emission {
     expressions: Vec<String>,
     needs_instant: bool,
+    needs_identity: bool,
 }
 
 fn ensure_outbox_type(
@@ -209,6 +234,15 @@ fn outbox_usecase_java(
     let expressions: &[String] = &emission.expressions;
     let needs_instant: bool = emission.needs_instant;
     let target_import = crate::generate::import_of(service, domain, target);
+    let identity_import = if emission.needs_identity {
+        crate::generate::import_of(
+            service,
+            &super::identity::package(slice),
+            super::identity::TIME_ORDERED_UUID,
+        )
+    } else {
+        String::new()
+    };
     let event_import = crate::generate::import_of(service, messaging, &format!("{event}Event"));
     let store_import = crate::generate::import_of(service, jobs, &format!("Jdbc{usecase}Outbox"));
     let instant_import = if needs_instant {
@@ -226,6 +260,7 @@ fn outbox_usecase_java(
         &[
             ("service", service),
             ("target_import", &*target_import),
+            ("identity_import", &*identity_import),
             ("event_import", &*event_import),
             ("store_import", &*store_import),
             ("instant_import", instant_import),

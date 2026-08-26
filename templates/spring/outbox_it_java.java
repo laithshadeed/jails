@@ -27,16 +27,17 @@ class {{usecase}}OutboxIT {
                 {{args}});
 
         var result = useCase.execute(command);
+        var staged = stagedEventId();
 
         assertThat(results.findById({{key_argument}}))
                 .get().extracting({{target}}::id).isEqualTo(result.id());
-        assertThat(outbox.status(result.id())).get()
+        assertThat(outbox.status(staged)).get()
                 .extracting(Jdbc{{usecase}}Outbox.Status::state)
                 .isEqualTo(Jdbc{{usecase}}Outbox.State.PENDING);
 
         worker.runOnce();
 
-        assertThat(outbox.status(result.id())).get()
+        assertThat(outbox.status(staged)).get()
                 .extracting(Jdbc{{usecase}}Outbox.Status::state)
                 .isEqualTo(Jdbc{{usecase}}Outbox.State.SUCCEEDED);
     }
@@ -45,7 +46,8 @@ class {{usecase}}OutboxIT {
     void retriesKeepTheStableEventIdAndTerminalFailureIsInspectable() {
         var command = new {{usecase}}Command(
                 {{args}});
-        var result = useCase.execute(command);
+        useCase.execute(command);
+        var staged = stagedEventId();
 
         var first = outbox.claim().orElseThrow();
         outbox.fail(first.id(), new IllegalStateException("provider unavailable"));
@@ -54,10 +56,22 @@ class {{usecase}}OutboxIT {
         var second = outbox.claim().orElseThrow();
         outbox.fail(second.id(), new IllegalStateException("provider unavailable"));
 
-        assertThat(second.id()).isEqualTo(result.id()).isEqualTo(first.id());
-        assertThat(outbox.status(result.id())).get().satisfies(status -> {
+        assertThat(second.id()).isEqualTo(staged).isEqualTo(first.id());
+        assertThat(outbox.status(staged)).get().satisfies(status -> {
             assertThat(status.state()).isEqualTo(Jdbc{{usecase}}Outbox.State.FAILED);
             assertThat(status.lastError()).contains("provider unavailable");
         });
+    }
+
+    /**
+     * The staged row's id is the <em>event's</em> id, minted once per event --
+     * not the resource's. Reading it back rather than assuming
+     * {@code result.id()} is what keeps this test honest about the difference:
+     * while the two were wrongly the same value, an outbox that discarded
+     * every event after the first about one resource still passed.
+     */
+    private java.util.UUID stagedEventId() {
+        return db.sql("select id from {{usecase_snake}}_outbox")
+                .query(java.util.UUID.class).single();
     }
 }

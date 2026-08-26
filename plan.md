@@ -505,9 +505,22 @@ commit as the change that causes it.
       defensible answers and only the caller knows which. The
       `outbox-http-sink` scenario carries `--on Message` so the ordered branch
       is in the goldens.
-- [ ] **P6.2** The event id **is** the message id, and the outbox stages
+- [x] **P6.2** The event id **is** the message id, and the outbox stages
       `on conflict (id) do nothing`, so a second event about the same entity is
       silently discarded (modern §8.2).
+      *Done:* the event's own `id` is now **minted** by the outbox
+      (`TimeOrderedUuid.next()`), never mapped from the command or the target.
+      `<target>Id` is how an event refers to the resource; `id` is how it
+      refers to itself. Two generated tests were passing on the coincidence:
+      `{Usecase}OutboxIT` looked its row up by `result.id()`, and
+      `{Name}MessagingIT` asserted on whichever record reached its probe
+      first — which, with a fresh consumer group and
+      `auto-offset-reset=earliest`, is whatever a neighbouring test left on the
+      topic. Both now read the value they mean: the IT selects the staged row's
+      id back out of the outbox table, and the probe waits for the event whose
+      id it published. The second of those went red on the real broker the
+      moment the ids stopped agreeing, which is the whole argument for the
+      end-to-end tier.
 - [ ] **P6.3** The outbox relay ceiling is one event per second (`claim()` is
       `limit 1` on a `fixedDelay=PT1S` worker), there is no jitter on the
       backoff, and a multi-sink partial failure re-sends a Kafka publish that

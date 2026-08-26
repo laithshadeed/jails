@@ -1,6 +1,7 @@
 package com.example.demo.service;
 
 import com.example.demo.domain.Message;
+import com.example.demo.domain.TimeOrderedUuid;
 import com.example.demo.jobs.JdbcReceiveMessageOutbox;
 import com.example.demo.messaging.MessageReceivedEvent;
 import java.time.Instant;
@@ -27,7 +28,7 @@ public class OutboxReceiveMessageUseCase implements ReceiveMessageUseCase {
     public Message execute(ReceiveMessageCommand command) {
         var result = delegate.execute(command);
         outbox.stage(new MessageReceivedEvent(
-                result.id(),
+                TimeOrderedUuid.next(),
                 result.id(),
                 Instant.now()));
         return result;

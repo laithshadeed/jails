@@ -679,8 +679,10 @@ mod event_tests {
             integration_test.contains("Instant.parse"),
             "{integration_test}"
         );
+        // The probe waits for the event it published rather than for the next
+        // record on the topic -- see `messaging_it_java`'s Javadoc.
         assert!(
-            integration_test.contains("isEqualTo(UUID.fromString"),
+            integration_test.contains("probe.await(event.id(), 30)"),
             "{integration_test}"
         );
     }

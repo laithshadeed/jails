@@ -1,9 +1,9 @@
 package {{pkg}};
 
 {{event_imports}}{{disabled_import}}{{kafka_testcontainers_import}}
-import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -22,10 +22,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  * no bootstrap-servers property to override, and no chance of a test quietly
  * using the developer's own broker.
  *
- * <p>The latch is the part worth copying. Consumption is asynchronous, so an
+ * <p>The wait is the part worth copying. Consumption is asynchronous, so an
  * assertion made straight after publishing races the consumer and fails about
- * one run in five. Waiting on a latch with a timeout either observes the
- * message or fails saying so.
+ * one run in five. Waiting with a timeout either observes the message or
+ * fails saying so -- and it waits for <em>this</em> event by id, not for the
+ * next one on the topic.
  */
 {{disabled}}@SpringBootTest(properties = {
     "spring.kafka.consumer.properties.group.protocol=classic",
@@ -46,10 +47,9 @@ class {{name}}MessagingIT {
 
         publisher.publish(event);
 
-        assertThat(probe.received.await(30, TimeUnit.SECONDS))
-                .as("the event should have been consumed within 30s")
+        assertThat(probe.await(event.id(), 30))
+                .as("the published event should have been consumed within 30s")
                 .isTrue();
-        assertThat(probe.last.get().id()).isEqualTo({{expected_id}});
     }
 
     /**
@@ -59,12 +59,11 @@ class {{name}}MessagingIT {
      * a test instance is not a bean -- Spring creates it and injects into it,
      * but never processes its annotations. A listener declared on the test
      * class is therefore silently never subscribed, and the only symptom is a
-     * latch that times out with nothing in the log to explain it.
+     * wait that times out with nothing in the log to explain it.
      */
     static class Probe {
 
-        private final CountDownLatch received = new CountDownLatch(1);
-        private final AtomicReference<{{name}}Event> last = new AtomicReference<>();
+        private final BlockingQueue<{{name}}Event> received = new LinkedBlockingQueue<>();
 
         /**
          * Its own consumer group, so it does not compete with the
@@ -73,8 +72,32 @@ class {{name}}MessagingIT {
          */
         @KafkaListener(topics = "${topics.{{topic}}:{{topic}}}", groupId = "{{topic}}-it-probe")
         void on({{name}}Event event) {
-            last.set(event);
-            received.countDown();
+            received.add(event);
+        }
+
+        /**
+         * Waits for the event with this id, not for the next event on the
+         * topic.
+         *
+         * <p>The probe's consumer group is new, so {@code
+         * auto-offset-reset=earliest} replays everything already published --
+         * including whatever a neighbouring test or an outbox delivery put
+         * there. Asserting on whichever record arrived first makes this test
+         * pass or fail on what its neighbours did, and it passes by accident
+         * whenever their ids happen to agree with this one's.
+         */
+        boolean await(Object id, long seconds) throws InterruptedException {
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(seconds);
+            for (long left = deadline - System.nanoTime(); left > 0; left = deadline - System.nanoTime()) {
+                {{name}}Event next = received.poll(left, TimeUnit.NANOSECONDS);
+                if (next == null) {
+                    return false;
+                }
+                if (id.equals(next.id())) {
+                    return true;
+                }
+            }
+            return false;
         }
     }
 
