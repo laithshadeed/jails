@@ -7,13 +7,20 @@ import java.util.Objects;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
-/** The conventional implementation generated from the target record's field model. */
+/**
+ * The implementation that stores the resource and does nothing else.
+ *
+ * <p>Named for what it does rather than for its position. `Default` is what
+ * you call a class when you have not decided what it is, and it gave the
+ * reader no way to tell this apart from {@code OutboxAddItemUseCase}, which
+ * stores the resource <em>and</em> stages its event.
+ */
 @Component
-public class DefaultAddItemUseCase implements AddItemUseCase {
+public class StoringAddItemUseCase implements AddItemUseCase {
 
     private final ItemRepository repository;
 
-    public DefaultAddItemUseCase(ItemRepository repository) {
+    public StoringAddItemUseCase(ItemRepository repository) {
         this.repository = Objects.requireNonNull(repository, "repository is required");
     }
 

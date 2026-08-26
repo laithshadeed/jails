@@ -7,7 +7,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 {{disabled}}class {{name}}UseCaseTest {
 
     private final InMemory{{target}}Repository repository = new InMemory{{target}}Repository();
-    private final {{name}}UseCase useCase = new Default{{name}}UseCase(repository);
+    private final {{name}}UseCase useCase = new Storing{{name}}UseCase(repository);
 
     @Test
     void createsAndPersistsTheResource() {

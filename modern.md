@@ -65,15 +65,16 @@ These were run, not inferred.
 | `Message.message()` | The field has the same name as its type. Reads as `message.message()`. | `body` — which is what both the Rails `t.text "message"` and jails' own example manifest call it |
 | `time_stamp` | Names the *datatype*, not the event. Every column is a timestamp. | `sentAt` |
 | `MessageService` | Does nothing but forward four calls | delete it, or name the thing it actually coordinates |
-| `Message_userAssociationIT` | An underscore in a Java class name | `MessageBelongsToUserIT` |
 | `MyMinicomApplication` | "My" is the directory name, not the system's | `MinicomApplication` |
-| `UnreadMessagesQuery` / `UnreadMessagesQueryPort` | The params record and the interface differ by the suffix `Port`. Neither name says which is which. | `ConversationPage` / the repository method that returns it |
 | `JdbcMarkAsReadTransition` | A JDBC class implementing a *use case* interface | see §6.2 |
-| `DefaultSendMessageUseCase` | `Default` is what you name something when you have not decided what it is | `Conversation.send(…)` |
 
-`backend.md` §8 bans `Helper`, `Manager`, `Util`, `Processor` because they are
-"a bag of unrelated functions with no invariant." `Default…UseCase` and
-`…QueryPort` are the same failure wearing hexagonal-architecture clothes.
+The three jails chose itself are closed (plan.md P3.4): a generated Java type
+name may no longer contain `_`, `{X}QueryPort`/`{X}Query` are now
+`{X}Query`/`{X}Criteria` — the interface named for what it is and the record
+named for what it holds — and `Default{X}UseCase` is `Storing{X}UseCase`,
+named for what it does rather than for its position beside
+`Outbox{X}UseCase`. What is left in this table is a *field spec* jails
+rendered faithfully, plus `MessageService`, which §6.4 covers.
 
 ---
 

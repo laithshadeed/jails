@@ -67,7 +67,10 @@ pub(crate) fn query_files(
         }
     }
     let target_columns = crate::sql::columns(&target_fields, slice.project(), domain, "row");
-    let filter_columns = crate::sql::columns(fields, slice.project(), domain, "query");
+    // The receiver baked into every bind expression: the criteria record
+    // the port takes. plan.md P3.4 renamed it from `query`, which the port
+    // interface now owns.
+    let filter_columns = crate::sql::columns(fields, slice.project(), domain, "criteria");
     let unmapped = target_columns
         .iter()
         .chain(filter_columns.iter())
@@ -95,13 +98,13 @@ pub(crate) fn query_files(
     };
     Ok(vec![
         Artifact {
-            kind: "query input",
-            path: main_service.join(format!("{name}Query.java")),
+            kind: "query criteria",
+            path: main_service.join(format!("{name}Criteria.java")),
             contents: query_record_java(slice, name, fields),
         },
         Artifact {
-            kind: "query port",
-            path: main_service.join(format!("{name}QueryPort.java")),
+            kind: "query",
+            path: main_service.join(format!("{name}Query.java")),
             contents: query_port_java(slice, name, target),
         },
         Artifact {
@@ -130,7 +133,7 @@ pub(crate) fn query_files(
 fn query_record_java(slice: &Slice, name: &str, fields: &[crate::generate::Field]) -> String {
     let pkg: &str = &slice.placed(Layer::Service);
     let domain: &str = &slice.owned(Layer::Domain);
-    let class = format!("{name}Query");
+    let class = format!("{name}Criteria");
     let mut source = crate::generate::record_java(pkg, &class, fields);
     let mut imports = fields
         .iter()
@@ -172,8 +175,8 @@ fn jdbc_query_java(slice: &Slice, name: &str, target: &str, projection: &Project
     let target_columns: &[crate::sql::Column] = &projection.target_columns;
     let filter_columns: &[crate::sql::Column] = &projection.filter_columns;
     let target_import = crate::generate::import_of(pkg, domain, target);
-    let query_import = crate::generate::import_of(pkg, service, &format!("{name}Query"));
-    let port_import = crate::generate::import_of(pkg, service, &format!("{name}QueryPort"));
+    let query_import = crate::generate::import_of(pkg, service, &format!("{name}Criteria"));
+    let port_import = crate::generate::import_of(pkg, service, &format!("{name}Query"));
     let mut imports = crate::sql::imports(target_columns)
         .into_iter()
         .chain(crate::sql::imports(filter_columns))
@@ -280,8 +283,8 @@ fn jdbc_query_it_java(
         .unwrap_or_default()
         .join(",\n                ");
     let target_import = crate::generate::import_of(pkg, domain, target);
-    let query_import = crate::generate::import_of(pkg, service, &format!("{name}Query"));
-    let port_import = crate::generate::import_of(pkg, service, &format!("{name}QueryPort"));
+    let query_import = crate::generate::import_of(pkg, service, &format!("{name}Criteria"));
+    let port_import = crate::generate::import_of(pkg, service, &format!("{name}Query"));
     let repository_import = crate::generate::import_of(pkg, app, &format!("{target}Repository"));
     let imports = java_literal_imports(target_fields, domain)
         .into_iter()
@@ -328,8 +331,8 @@ fn query_controller_java(
     let security: &str = slice.base();
     let service: &str = &slice.placed(Layer::Service);
     let web: &str = &slice.placed(Layer::Web);
-    let query_import = crate::generate::import_of(web, service, &format!("{name}Query"));
-    let port_import = crate::generate::import_of(web, service, &format!("{name}QueryPort"));
+    let query_import = crate::generate::import_of(web, service, &format!("{name}Criteria"));
+    let port_import = crate::generate::import_of(web, service, &format!("{name}Query"));
     let path = format!(
         "/queries/{}",
         crate::sql::snake_case(name).replace('_', "-")
@@ -341,7 +344,7 @@ fn query_controller_java(
         scope_assignment,
         scope_parameter,
         scope_checks,
-    ) = scope_controller_parts(security, web, fields, "query");
+    ) = scope_controller_parts(security, web, fields, "criteria");
     crate::template::render(
         crate::template_here!("spring/query_controller_java.java"),
         &[
@@ -393,7 +396,7 @@ fn query_controller_test_java(
     let target_args = target_samples
         .unwrap_or_default()
         .join(",\n                    ");
-    let port_import = crate::generate::import_of(web, service, &format!("{name}QueryPort"));
+    let port_import = crate::generate::import_of(web, service, &format!("{name}Query"));
     let target_import = crate::generate::import_of(web, domain, target);
     let imports = java_literal_imports(target_fields, domain)
         .into_iter()

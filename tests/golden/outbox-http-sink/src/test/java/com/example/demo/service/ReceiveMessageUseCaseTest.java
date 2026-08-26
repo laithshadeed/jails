@@ -10,7 +10,7 @@ import org.junit.jupiter.api.Test;
 class ReceiveMessageUseCaseTest {
 
     private final InMemoryMessageRepository repository = new InMemoryMessageRepository();
-    private final ReceiveMessageUseCase useCase = new DefaultReceiveMessageUseCase(repository);
+    private final ReceiveMessageUseCase useCase = new StoringReceiveMessageUseCase(repository);
 
     @Test
     void createsAndPersistsTheResource() {

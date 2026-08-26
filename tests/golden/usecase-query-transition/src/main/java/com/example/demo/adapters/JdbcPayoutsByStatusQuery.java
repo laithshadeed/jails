@@ -2,8 +2,8 @@ package com.example.demo.adapters;
 
 import com.example.demo.domain.Payout;
 import com.example.demo.domain.PayoutStatus;
+import com.example.demo.service.PayoutsByStatusCriteria;
 import com.example.demo.service.PayoutsByStatusQuery;
-import com.example.demo.service.PayoutsByStatusQueryPort;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
@@ -17,7 +17,7 @@ import org.springframework.stereotype.Component;
 
 /** Visible, named-parameter SQL generated from the target and filter field models. */
 @Component
-public final class JdbcPayoutsByStatusQuery implements PayoutsByStatusQueryPort {
+public final class JdbcPayoutsByStatusQuery implements PayoutsByStatusQuery {
 
     /** Equality queries are deliberately bounded; use a keyset query for navigation. */
     private static final int MAX_RESULTS = 100;
@@ -38,8 +38,8 @@ public final class JdbcPayoutsByStatusQuery implements PayoutsByStatusQueryPort 
     }
 
     @Override
-    public List<Payout> execute(PayoutsByStatusQuery query) {
-        Objects.requireNonNull(query, "query is required");
+    public List<Payout> execute(PayoutsByStatusCriteria criteria) {
+        Objects.requireNonNull(criteria, "criteria is required");
         return db.sql("""
                         select %s
                         from payouts
@@ -47,7 +47,7 @@ public final class JdbcPayoutsByStatusQuery implements PayoutsByStatusQueryPort 
                         order by id
                         limit :max_results
                         """.formatted(COLUMNS))
-                .param("status", query.status().name())
+                .param("status", criteria.status().name())
                 .param("max_results", MAX_RESULTS)
                 .query(JdbcPayoutsByStatusQuery::map)
                 .list();

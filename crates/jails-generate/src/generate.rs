@@ -107,6 +107,34 @@ fn require_spring_project(project: &Project, kind: &str) -> Result<()> {
     crate::spring::require_spring(project.flavor(), kind)
 }
 
+/// A name that becomes a Java type must read like one.
+///
+/// plan.md P3.4, from modern.md 3.2: `g association Message_user` wrote
+/// `Message_userAssociationIT.java` -- a class name with a word starting
+/// mid-identifier in lowercase, which reads as machine output rather than as
+/// code somebody wrote. `recorded_name` capitalises the first letter and
+/// stops, so the underscore travelled all the way into the file name.
+///
+/// Refused rather than normalised, on the rule the field spec already
+/// follows: `Message_user` could mean `MessageUser` or `MessageBelongsToUser`
+/// and jails cannot tell, so the reader picks. `migration` and `cases` are
+/// exempt because their name is not a Java class -- `recorded_name` already
+/// says so and this reads the same condition through it.
+fn require_java_type_name(kind: ArtifactKind, name: &str) -> Result<()> {
+    if matches!(kind, ArtifactKind::Cases | ArtifactKind::Migration) || !name.contains('_') {
+        return Ok(());
+    }
+    let suggestion: String = name
+        .split('_')
+        .map(jails_spec::spec::field::capitalize)
+        .collect();
+    Err(format!(
+        "`{name}` becomes a Java type name, and `_` does not belong in one.\n       \
+         fix: name it `{suggestion}`, or spell out what the `_` stands for."
+    )
+    .into())
+}
+
 /// What a persistent `generate` intends, computed without writing anything.
 ///
 /// plan.md §R6.2 turns a generator into an `IntentSpec` that becomes a
@@ -146,6 +174,7 @@ pub fn plan_recipe(
     }
     let root = project.root().to_path_buf();
     let name = recorded_name(kind, recipe.name);
+    require_java_type_name(kind, &name)?;
     let artifacts = artifacts_for(
         project,
         &Recipe {

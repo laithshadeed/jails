@@ -291,10 +291,22 @@ commit as the change that causes it.
       disagreeing. And `cast(:id as uuid)` / `setString` are gone wherever the
       parameter is already the column's own type — they existed only to undo
       the text port.
-- [ ] **P3.4** Names that carry no meaning (modern §3.2): the
+- [x] **P3.4** Names that carry no meaning (modern §3.2): the
       `Message_userAssociation` underscore, `Default…UseCase`, `…QueryPort`.
       `backend.md` §8 bans `Helper`/`Manager`/`Util` for the same reason.
-      Narrow, template-only.
+      Narrow, template-only. The underscore is closed at the *identity*
+      boundary rather than in the association template — `recorded_name`
+      capitalises the first letter and stops, so any kind whose name becomes a
+      Java type had it — and refused rather than normalised, because
+      `Message_user` could mean `MessageUser` or `MessageBelongsToUser` and
+      only the reader knows which. `{X}QueryPort`/`{X}Query` became
+      `{X}Query`/`{X}Criteria`, so `Jdbc{X}Query implements {X}Query` reads
+      the way `Jdbc{X}Repository implements {X}Repository` already does.
+      `Default{X}UseCase` became `Storing{X}UseCase` — what it does, against
+      `Outbox{X}UseCase`, which stores *and* stages. **modern.md §6.4 stays
+      open**: with no `--yields` the port still has exactly one
+      implementation, which `backend.md` §8 bans outright, and collapsing the
+      two is a structural change rather than a rename.
 
 ## P4 — who assigns identity (cause B)
 

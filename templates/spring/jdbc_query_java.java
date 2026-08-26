@@ -9,7 +9,7 @@ import org.springframework.stereotype.Component;
 
 /** Visible, named-parameter SQL generated from the target and filter field models. */
 @Component
-public final class Jdbc{{name}}Query implements {{name}}QueryPort {
+public final class Jdbc{{name}}Query implements {{name}}Query {
 
     /** Equality queries are deliberately bounded; use a keyset query for navigation. */
     private static final int MAX_RESULTS = 100;
@@ -26,8 +26,8 @@ public final class Jdbc{{name}}Query implements {{name}}QueryPort {
     }
 
     @Override
-    public List<{{target}}> execute({{name}}Query query) {
-        Objects.requireNonNull(query, "query is required");
+    public List<{{target}}> execute({{name}}Criteria criteria) {
+        Objects.requireNonNull(criteria, "criteria is required");
         return db.sql("""
                         select %s
                         from {{table}}

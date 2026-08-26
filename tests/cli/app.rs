@@ -609,7 +609,7 @@ fn app_manifest_builds_the_crawler_skeleton_and_is_resumable() {
     assert!(main.join("domain/CrawlRun.java").is_file());
     assert!(main.join("domain/CrawledPage.java").is_file());
     assert!(main.join("service/QueueCrawlUseCase.java").is_file());
-    assert!(main.join("service/DefaultQueueCrawlUseCase.java").is_file());
+    assert!(main.join("service/StoringQueueCrawlUseCase.java").is_file());
     assert!(main.join("web/QueueCrawlController.java").is_file());
     assert!(main.join("service/RecordCrawledPageUseCase.java").is_file());
     assert!(main.join("service/CrawlRunsByStatusQuery.java").is_file());

@@ -403,7 +403,7 @@ fn a_field_regenerates_the_companions_that_construct_the_resource() {
     let companions = [
         "src/main/java/com/example/demo/adapters/JdbcFindOrdersQuery.java",
         "src/main/java/com/example/demo/adapters/JdbcShipOrderTransition.java",
-        "src/main/java/com/example/demo/service/DefaultPlaceOrderUseCase.java",
+        "src/main/java/com/example/demo/service/StoringPlaceOrderUseCase.java",
     ];
     for companion in companions {
         assert!(

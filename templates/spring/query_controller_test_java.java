@@ -10,11 +10,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 class {{name}}QueryControllerTest {
 
     private final MockMvcTester mvc = MockMvcTester.of(new {{name}}QueryController(
-            query -> List.of(new {{target}}(
+            criteria -> List.of(new {{target}}(
                     {{target_args}})){{scope_argument}}));
 
 {{annotation}}    @Test
-    void postExecutesTheDatabaseQueryPort() {
+    void postExecutesTheDatabaseQuery() {
         assertThat(mvc.post()
                 .uri({{name}}QueryController.PATH)
                 .contentType(MediaType.APPLICATION_JSON)

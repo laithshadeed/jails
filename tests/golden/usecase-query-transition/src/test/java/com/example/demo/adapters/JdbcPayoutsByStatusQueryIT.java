@@ -5,8 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.example.demo.app.PayoutRepository;
 import com.example.demo.domain.Payout;
 import com.example.demo.domain.PayoutStatus;
+import com.example.demo.service.PayoutsByStatusCriteria;
 import com.example.demo.service.PayoutsByStatusQuery;
-import com.example.demo.service.PayoutsByStatusQueryPort;
 import java.time.Instant;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -21,7 +21,7 @@ class JdbcPayoutsByStatusQueryIT {
     private PayoutRepository repository;
 
     @Autowired
-    private PayoutsByStatusQueryPort queryPort;
+    private PayoutsByStatusQuery query;
 
     @Test
     void filtersInTheRealDatabase() {
@@ -33,7 +33,7 @@ class JdbcPayoutsByStatusQueryIT {
                 Instant.parse("2024-01-01T00:00:00Z"));
         repository.save(stored);
 
-        var found = queryPort.execute(new PayoutsByStatusQuery(
+        var found = query.execute(new PayoutsByStatusCriteria(
                 PayoutStatus.values()[0]));
 
         assertThat(found).contains(stored);

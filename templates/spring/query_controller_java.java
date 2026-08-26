@@ -15,18 +15,18 @@ public final class {{name}}QueryController {
 
     public static final String PATH = "{{path}}";
 
-    private final {{name}}QueryPort queryPort;
+    private final {{name}}Query query;
 {{scope_field}}
 
-    public {{name}}QueryController({{name}}QueryPort queryPort{{scope_constructor}}) {
-        this.queryPort = Objects.requireNonNull(queryPort, "queryPort is required");
+    public {{name}}QueryController({{name}}Query query{{scope_constructor}}) {
+        this.query = Objects.requireNonNull(query, "query is required");
 {{scope_assignment}}
     }
 
     @PostMapping
     public List<{{target}}Response> execute(
-            @Valid @RequestBody {{name}}Query query{{scope_parameter}}) {
+            @Valid @RequestBody {{name}}Criteria criteria{{scope_parameter}}) {
 {{scope_checks}}
-        return queryPort.execute(query).stream().map({{target}}Response::from).toList();
+        return query.execute(criteria).stream().map({{target}}Response::from).toList();
     }
 }

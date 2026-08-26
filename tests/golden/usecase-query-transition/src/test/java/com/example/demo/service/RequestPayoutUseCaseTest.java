@@ -10,7 +10,7 @@ import org.junit.jupiter.api.Test;
 class RequestPayoutUseCaseTest {
 
     private final InMemoryPayoutRepository repository = new InMemoryPayoutRepository();
-    private final RequestPayoutUseCase useCase = new DefaultRequestPayoutUseCase(repository);
+    private final RequestPayoutUseCase useCase = new StoringRequestPayoutUseCase(repository);
 
     @Test
     void createsAndPersistsTheResource() {

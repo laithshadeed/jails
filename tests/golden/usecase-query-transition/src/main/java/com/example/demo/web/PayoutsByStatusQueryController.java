@@ -1,7 +1,7 @@
 package com.example.demo.web;
 
+import com.example.demo.service.PayoutsByStatusCriteria;
 import com.example.demo.service.PayoutsByStatusQuery;
-import com.example.demo.service.PayoutsByStatusQueryPort;
 import jakarta.validation.Valid;
 import java.util.List;
 import java.util.Objects;
@@ -17,17 +17,17 @@ public final class PayoutsByStatusQueryController {
 
     public static final String PATH = "/queries/payouts-by-status";
 
-    private final PayoutsByStatusQueryPort queryPort;
+    private final PayoutsByStatusQuery query;
 
-    public PayoutsByStatusQueryController(PayoutsByStatusQueryPort queryPort) {
-        this.queryPort = Objects.requireNonNull(queryPort, "queryPort is required");
+    public PayoutsByStatusQueryController(PayoutsByStatusQuery query) {
+        this.query = Objects.requireNonNull(query, "query is required");
 
     }
 
     @PostMapping
     public List<PayoutResponse> execute(
-            @Valid @RequestBody PayoutsByStatusQuery query) {
+            @Valid @RequestBody PayoutsByStatusCriteria criteria) {
 
-        return queryPort.execute(query).stream().map(PayoutResponse::from).toList();
+        return query.execute(criteria).stream().map(PayoutResponse::from).toList();
     }
 }

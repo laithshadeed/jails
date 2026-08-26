@@ -14,7 +14,7 @@ class Jdbc{{name}}QueryIT {
     private {{target}}Repository repository;
 
     @Autowired
-    private {{name}}QueryPort queryPort;
+    private {{name}}Query query;
 
     @Test
     void filtersInTheRealDatabase() {
@@ -22,7 +22,7 @@ class Jdbc{{name}}QueryIT {
                 {{target_args}});
         repository.save(stored);
 
-        var found = queryPort.execute(new {{name}}Query(
+        var found = query.execute(new {{name}}Criteria(
                 {{query_args}}));
 
         assertThat(found).contains(stored);

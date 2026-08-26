@@ -10,10 +10,10 @@ import org.springframework.transaction.annotation.Transactional;
 @Component
 public class Outbox{{usecase}}UseCase implements {{usecase}}UseCase {
 
-    private final Default{{usecase}}UseCase delegate;
+    private final Storing{{usecase}}UseCase delegate;
     private final Jdbc{{usecase}}Outbox outbox;
 
-    public Outbox{{usecase}}UseCase(Default{{usecase}}UseCase delegate, Jdbc{{usecase}}Outbox outbox) {
+    public Outbox{{usecase}}UseCase(Storing{{usecase}}UseCase delegate, Jdbc{{usecase}}Outbox outbox) {
         this.delegate = Objects.requireNonNull(delegate, "delegate is required");
         this.outbox = Objects.requireNonNull(outbox, "outbox is required");
     }

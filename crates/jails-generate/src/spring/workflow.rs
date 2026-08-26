@@ -224,7 +224,7 @@ pub(crate) fn usecase_files(
         },
         Artifact {
             kind: "usecase implementation",
-            path: main_service.join(format!("Default{name}UseCase.java")),
+            path: main_service.join(format!("Storing{name}UseCase.java")),
             contents: usecase_impl_java(slice, name, target, &defaults, transactional),
         },
         Artifact {

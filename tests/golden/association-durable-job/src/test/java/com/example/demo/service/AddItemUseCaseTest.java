@@ -10,7 +10,7 @@ import org.junit.jupiter.api.Test;
 class AddItemUseCaseTest {
 
     private final InMemoryItemRepository repository = new InMemoryItemRepository();
-    private final AddItemUseCase useCase = new DefaultAddItemUseCase(repository);
+    private final AddItemUseCase useCase = new StoringAddItemUseCase(repository);
 
     @Test
     void createsAndPersistsTheResource() {

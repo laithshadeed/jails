@@ -14,10 +14,10 @@ import org.springframework.transaction.annotation.Transactional;
 @Component
 public class OutboxReceiveMessageUseCase implements ReceiveMessageUseCase {
 
-    private final DefaultReceiveMessageUseCase delegate;
+    private final StoringReceiveMessageUseCase delegate;
     private final JdbcReceiveMessageOutbox outbox;
 
-    public OutboxReceiveMessageUseCase(DefaultReceiveMessageUseCase delegate, JdbcReceiveMessageOutbox outbox) {
+    public OutboxReceiveMessageUseCase(StoringReceiveMessageUseCase delegate, JdbcReceiveMessageOutbox outbox) {
         this.delegate = Objects.requireNonNull(delegate, "delegate is required");
         this.outbox = Objects.requireNonNull(outbox, "outbox is required");
     }
