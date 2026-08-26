@@ -10,7 +10,7 @@
 //! every drift bug in this repository's history.
 
 use crate::Result;
-use crate::identity::{JavaType, Name, Package};
+use crate::identity::{JavaType, Name, Package, SqlName};
 use jails_support::codec::{Codec, Decoder, Encoder};
 
 /// A built-in scalar, or a type the project owns.
@@ -463,10 +463,12 @@ pub struct FieldSpec {
 ///
 /// [`Field`]: jails_spec::spec::Field
 pub fn parse_fields(tokens: &[String]) -> Result<Vec<jails_spec::spec::Field>> {
-    tokens
+    let specs: Vec<FieldSpec> = tokens
         .iter()
-        .map(|token| FieldSpec::parse(token, &Package::base())?.projected())
-        .collect()
+        .map(|token| FieldSpec::parse(token, &Package::base()))
+        .collect::<Result<_>>()?;
+    validate_field_names(&specs)?;
+    specs.iter().map(FieldSpec::projected).collect()
 }
 
 impl FieldSpec {
@@ -480,6 +482,7 @@ impl FieldSpec {
             .split_once(':')
             .ok_or_else(|| format!("field `{token}` needs a `name:type`"))?;
         let name = Name::parse(name)?;
+        reject_record_component_name(name.as_str())?;
         reject_sql_keyword(name.as_str())?;
 
         let mut parts = rest.split('@');
@@ -614,6 +617,52 @@ impl FieldSpec {
         }
         out
     }
+}
+
+/// Rules that only become visible after every component has been parsed.
+pub(super) fn validate_field_names(fields: &[FieldSpec]) -> Result<()> {
+    for (index, field) in fields.iter().enumerate() {
+        for previous in &fields[..index] {
+            if previous.name == field.name {
+                return Err(format!("field `{}` is declared twice", field.name).into());
+            }
+            let previous_column = SqlName::conventional_column(&previous.name);
+            let column = SqlName::conventional_column(&field.name);
+            if previous_column == column {
+                return Err(format!(
+                    "fields `{}` and `{}` both map to SQL column `{}`.\n       \
+                     fix: rename one field so its snake_case SQL name is unique.",
+                    previous.name,
+                    field.name,
+                    column.as_str()
+                )
+                .into());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn reject_record_component_name(name: &str) -> Result<()> {
+    if matches!(
+        name,
+        "clone"
+            | "equals"
+            | "finalize"
+            | "getClass"
+            | "hashCode"
+            | "notify"
+            | "notifyAll"
+            | "toString"
+            | "wait"
+    ) {
+        return Err(format!(
+            "field name `{name}` conflicts with java.lang.Object record behavior.\n       \
+             fix: choose a domain-specific component name such as `contentHash` or `description`."
+        )
+        .into());
+    }
+    Ok(())
 }
 
 fn reject_sql_keyword(name: &str) -> Result<()> {
@@ -762,6 +811,47 @@ mod tests {
             assert!(error.contains("reserved by PostgreSQL"), "{name}: {error}");
             assert!(error.contains("fix:"), "{name}: {error}");
         }
+    }
+
+    #[test]
+    fn object_method_names_are_refused_but_record_remains_legal() {
+        for name in [
+            "clone",
+            "equals",
+            "finalize",
+            "getClass",
+            "hashCode",
+            "notify",
+            "notifyAll",
+            "toString",
+            "wait",
+        ] {
+            let error = FieldSpec::parse(
+                &format!("{name}:string"),
+                &Package::parse("com.example.demo").unwrap(),
+            )
+            .unwrap_err();
+            assert!(error.contains("java.lang.Object"), "{name}: {error}");
+            assert!(error.contains("fix:"), "{name}: {error}");
+        }
+        assert!(FieldSpec::parse("record:string", &Package::base()).is_ok());
+    }
+
+    #[test]
+    fn fields_that_share_a_sql_column_are_refused_together() {
+        for tokens in [
+            ["id:uuid@pk", "Id:string"],
+            ["userId:uuid", "user_id:string"],
+        ] {
+            let tokens = tokens.map(str::to_string);
+            let error = parse_fields(&tokens).unwrap_err();
+            let names = tokens.map(|token| token.split(':').next().unwrap().to_string());
+            assert!(error.contains(&names[0]), "{error}");
+            assert!(error.contains(&names[1]), "{error}");
+            assert!(error.contains("SQL column"), "{error}");
+            assert!(error.contains("fix:"), "{error}");
+        }
+        assert!(parse_fields(&["email:string".into(), "eMail:string".into()]).is_ok());
     }
 
     #[test]

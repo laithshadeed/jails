@@ -374,23 +374,11 @@ pub fn table_name(type_name: &str) -> String {
 /// (`customerURL` -> `customer_url`) so an acronym does not explode into
 /// one underscore per letter.
 pub fn snake_case(name: &str) -> String {
-    let chars: Vec<char> = name.chars().collect();
-    let mut out = String::with_capacity(name.len() + 4);
-    for (i, &c) in chars.iter().enumerate() {
-        if c.is_uppercase() {
-            let starts_run = i > 0 && !chars[i - 1].is_uppercase();
-            let ends_run = i > 0
-                && chars[i - 1].is_uppercase()
-                && chars.get(i + 1).is_some_and(|n| n.is_lowercase());
-            if starts_run || ends_run {
-                out.push('_');
-            }
-            out.extend(c.to_lowercase());
-        } else {
-            out.push(c);
-        }
-    }
-    out
+    let component = jails_protocol::identity::Name::parse(name)
+        .expect("generated names are validated before SQL projection");
+    jails_protocol::identity::SqlName::conventional_column(&component)
+        .as_str()
+        .to_string()
 }
 
 /// The `create table` for a scaffolded type, as a Flyway migration body.

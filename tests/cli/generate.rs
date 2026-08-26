@@ -103,6 +103,72 @@ fn scaffold_refuses_an_implicit_or_composite_identity_before_writing() {
 }
 
 #[test]
+fn field_names_that_collapse_to_one_sql_column_refuse_before_writing() {
+    let root = temp_dir("scaffold-column-collision");
+    write_spring_fixture(&root);
+
+    for (name, fields, column) in [
+        ("Weird", ["id:uuid@pk", "Id:string"], "id"),
+        ("Pair", ["userId:uuid@pk", "user_id:string"], "user_id"),
+    ] {
+        let before = snapshot_tree(&root);
+        let output = jails_cmd(&root, None)
+            .args(
+                ["generate", "scaffold", name]
+                    .into_iter()
+                    .chain(fields)
+                    .collect::<Vec<_>>(),
+            )
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{name} unexpectedly succeeded");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        for field in fields {
+            assert!(
+                stderr.contains(field.split(':').next().unwrap()),
+                "{name}: {stderr}"
+            );
+        }
+        assert!(stderr.contains(column), "{name}: {stderr}");
+        assert!(stderr.contains("fix:"), "{name}: {stderr}");
+        assert_eq!(snapshot_tree(&root), before, "{name} refusal wrote files");
+    }
+}
+
+#[test]
+fn object_method_field_names_refuse_before_writing_but_record_is_allowed() {
+    let root = temp_dir("record-component-name");
+    write_project_skeleton(&root);
+
+    for field in ["hashCode:string", "toString:string", "equals:string"] {
+        let before = snapshot_tree(&root);
+        let output = jails_cmd(&root, None)
+            .args(["generate", "record", "Box", field])
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{field} unexpectedly succeeded");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(field.split(':').next().unwrap()),
+            "{stderr}"
+        );
+        assert!(stderr.contains("java.lang.Object"), "{stderr}");
+        assert!(stderr.contains("fix:"), "{stderr}");
+        assert_eq!(snapshot_tree(&root), before, "{field} refusal wrote files");
+    }
+
+    let output = jails_cmd(&root, None)
+        .args(["generate", "record", "Allowed", "record:string"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn plain_project_scaffold_refuses_without_writing_uncompilable_spring_java() {
     let root = temp_dir("scaffold-plain-refusal");
     write_plain_fixture(&root);

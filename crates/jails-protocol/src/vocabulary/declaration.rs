@@ -148,14 +148,11 @@ impl IntentArguments {
     pub fn parse(recipe: Recipe, tokens: &[String], base: &Package) -> Result<Self> {
         match crate::recipe::argument_shape(recipe) {
             ArgumentShape::Fields => {
-                let mut fields: Vec<FieldSpec> = Vec::new();
-                for token in tokens {
-                    let field = FieldSpec::parse(token, base)?;
-                    if fields.iter().any(|existing| existing.name == field.name) {
-                        return Err(format!("field `{}` is declared twice", field.name).into());
-                    }
-                    fields.push(field);
-                }
+                let fields = tokens
+                    .iter()
+                    .map(|token| FieldSpec::parse(token, base))
+                    .collect::<Result<Vec<_>>>()?;
+                field::validate_field_names(&fields)?;
                 Ok(Self::Fields(fields))
             }
             ArgumentShape::Names => {
@@ -196,17 +193,9 @@ impl Codec for IntentArguments {
         encoder.tag(self.tag());
         match self {
             Self::Fields(fields) => {
+                field::validate_field_names(fields)?;
                 encoder.count(fields.len())?;
-                let mut previous: Option<&Name> = None;
                 for field in fields {
-                    // Field *order* is semantic (it is the record component
-                    // order), so fields are a list rather than a set -- but
-                    // two fields may not share a name, and that is checked
-                    // here rather than trusted.
-                    if previous == Some(&field.name) {
-                        return Err(format!("field `{}` is declared twice", field.name).into());
-                    }
-                    previous = Some(&field.name);
                     field.encode(encoder)?;
                 }
             }
@@ -698,6 +687,22 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("declared twice"), "{error}");
+    }
+
+    #[test]
+    fn sql_column_collisions_refuse_at_the_declaration_edge() {
+        for (tokens, column) in [
+            (vec!["id:uuid@pk", "Id:string"], "id"),
+            (vec!["userId:uuid", "user_id:string"], "user_id"),
+        ] {
+            let tokens = tokens.into_iter().map(str::to_string).collect::<Vec<_>>();
+            let error =
+                IntentSpec::parse(Recipe::Scaffold, &tokens, &[], false, &base()).unwrap_err();
+            for token in &tokens {
+                assert!(error.contains(token.split(':').next().unwrap()), "{error}");
+            }
+            assert!(error.contains(column), "{error}");
+        }
     }
 
     #[test]

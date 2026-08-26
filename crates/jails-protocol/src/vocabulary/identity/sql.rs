@@ -39,6 +39,14 @@ impl SqlName {
     pub fn conventional_table(entity: &Name) -> Self {
         Self(plural_snake_case(entity.as_str()))
     }
+
+    /// The one conventional physical column spelling for a Java component.
+    ///
+    /// Declaration validation and SQL generation both call this function so
+    /// two distinct Java names cannot quietly become one unquoted column.
+    pub fn conventional_column(component: &Name) -> Self {
+        Self(snake_case(component.as_str()))
+    }
 }
 
 impl Codec for SqlName {
@@ -52,22 +60,7 @@ impl Codec for SqlName {
 }
 
 fn plural_snake_case(value: &str) -> String {
-    let chars: Vec<char> = value.chars().collect();
-    let mut base = String::with_capacity(value.len() + 4);
-    for (index, &character) in chars.iter().enumerate() {
-        if character.is_uppercase() {
-            let starts_run = index > 0 && !chars[index - 1].is_uppercase();
-            let ends_run = index > 0
-                && chars[index - 1].is_uppercase()
-                && chars.get(index + 1).is_some_and(|next| next.is_lowercase());
-            if starts_run || ends_run {
-                base.push('_');
-            }
-            base.extend(character.to_lowercase());
-        } else {
-            base.push(character);
-        }
-    }
+    let base = snake_case(value);
     let (prefix, last) = match base.rfind('_') {
         Some(at) => base.split_at(at + 1),
         None => ("", base.as_str()),
@@ -101,6 +94,26 @@ fn plural_snake_case(value: &str) -> String {
     } else {
         format!("{base}s")
     }
+}
+
+fn snake_case(value: &str) -> String {
+    let chars: Vec<char> = value.chars().collect();
+    let mut out = String::with_capacity(value.len() + 4);
+    for (index, &character) in chars.iter().enumerate() {
+        if character.is_uppercase() {
+            let starts_run = index > 0 && !chars[index - 1].is_uppercase();
+            let ends_run = index > 0
+                && chars[index - 1].is_uppercase()
+                && chars.get(index + 1).is_some_and(|next| next.is_lowercase());
+            if starts_run || ends_run {
+                out.push('_');
+            }
+            out.extend(character.to_lowercase());
+        } else {
+            out.push(character);
+        }
+    }
+    out
 }
 
 fn irregular_plural(word: &str) -> Option<&'static str> {
