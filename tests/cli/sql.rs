@@ -78,6 +78,223 @@ esac
     .unwrap();
 }
 
+fn hex(value: &str) -> String {
+    value
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn catalog_row(kind: &str, fields: [&str; 10]) -> String {
+    format!(
+        "{kind}\t{}",
+        fields.map(hex).into_iter().collect::<Vec<_>>().join("\t")
+    )
+}
+
+fn write_catalog_psql(dir: &Path, log: &Path) {
+    let enum_labels = format!("{},{}", hex("due"), hex("paid"));
+    let catalog = [
+        catalog_row(
+            "schema",
+            ["public", "public", "", "", "", "", "", "", "", ""],
+        ),
+        catalog_row(
+            "table",
+            ["public", "orders", "", "", "", "", "", "", "", ""],
+        ),
+        catalog_row(
+            "column",
+            [
+                "public",
+                "id",
+                "orders",
+                "uuid",
+                "false",
+                "1",
+                "",
+                "",
+                "",
+                "identifier",
+            ],
+        ),
+        catalog_row(
+            "primary_key",
+            [
+                "public",
+                "orders_pkey",
+                "orders",
+                "id",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+            ],
+        ),
+        catalog_row(
+            "foreign_key",
+            [
+                "public",
+                "orders_account_fk",
+                "orders",
+                "FOREIGN KEY (account_id) REFERENCES accounts(id)",
+                "public",
+                "accounts",
+                "",
+                "",
+                "",
+                "",
+            ],
+        ),
+        catalog_row(
+            "unique",
+            [
+                "public",
+                "orders_id_key",
+                "orders",
+                "UNIQUE (id)",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+            ],
+        ),
+        catalog_row(
+            "index",
+            [
+                "public",
+                "orders_id_idx",
+                "orders",
+                "CREATE INDEX orders_id_idx ON public.orders USING btree (id)",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+            ],
+        ),
+        catalog_row(
+            "check",
+            [
+                "public",
+                "orders_total_check",
+                "orders",
+                "CHECK ((total >= (0)::numeric))",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+            ],
+        ),
+        catalog_row(
+            "enum",
+            [
+                "public",
+                "order_status",
+                "",
+                &enum_labels,
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+            ],
+        ),
+        catalog_row(
+            "domain",
+            [
+                "public",
+                "money",
+                "",
+                "numeric NOT NULL",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+            ],
+        ),
+        catalog_row(
+            "view",
+            [
+                "public",
+                "payable_orders",
+                "",
+                " SELECT orders.id FROM orders;",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+            ],
+        ),
+        catalog_row(
+            "routine",
+            [
+                "public",
+                "find_order_01234567",
+                "",
+                "CREATE FUNCTION public.find_order() RETURNS uuid LANGUAGE sql",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+            ],
+        ),
+        catalog_row(
+            "policy",
+            [
+                "public",
+                "tenant_orders",
+                "orders",
+                "PERMISSIVE=true;COMMAND=r;ROLES=0;USING=true;CHECK=",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+            ],
+        ),
+    ]
+    .join("\n");
+    write_fake_maven(dir, &["psql"], log);
+    fs::write(
+        dir.join("psql"),
+        format!(
+            r#"#!/bin/sh
+input=
+while IFS= read -r line; do
+  input="${{input}}${{line}}
+"
+done
+printf '%s' "$input" >> '{}'
+case "$input" in
+  *server_version_num*) printf '170004\n' ;;
+  *"WITH observed"*) printf '%s\n' '{}' ;;
+  *) printf '1\n' ;;
+esac
+"#,
+            log.display(),
+            catalog
+        ),
+    )
+    .unwrap();
+}
+
 #[test]
 fn sql_check_compiles_a_manifest_query_offline() {
     let root = sql_fixture("sql-check");
@@ -160,6 +377,153 @@ fn live_check_without_a_datasource_refuses_before_starting_a_client() {
     );
     assert!(read_log(&log).is_empty(), "psql ran without a datasource");
     assert_eq!(snapshot_tree(&root), before);
+}
+
+#[test]
+fn introspect_and_pull_observe_every_catalog_kind_without_writing() {
+    let root = sql_fixture("schema-observe");
+    add_postgres_datasource(&root, "catalog-secret");
+    let fake = temp_dir("schema-observe-bin");
+    let log = fake.join("psql.log");
+    write_catalog_psql(&fake, &log);
+    let before = snapshot_tree(&root);
+
+    let introspected = jails_cmd(&root, Some(&fake))
+        .args([
+            "--debug",
+            "introspect",
+            "db",
+            "--datasource",
+            "postgres",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        introspected.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&introspected.stdout),
+        String::from_utf8_lossy(&introspected.stderr)
+    );
+    let json = String::from_utf8_lossy(&introspected.stdout);
+    for kind in [
+        "schema",
+        "table",
+        "column",
+        "primary-key",
+        "foreign-key",
+        "unique",
+        "index",
+        "check",
+        "enum",
+        "domain",
+        "view",
+        "routine",
+        "policy",
+    ] {
+        assert!(
+            json.contains(&format!("\"kind\":\"{kind}\"")),
+            "{kind}: {json}"
+        );
+    }
+    let diagnostics = String::from_utf8_lossy(&introspected.stderr);
+    assert!(
+        diagnostics.contains("PGPASSWORD=<redacted>"),
+        "{diagnostics}"
+    );
+    assert!(!diagnostics.contains("catalog-secret"), "{diagnostics}");
+    assert!(!json.contains("catalog-secret"), "{json}");
+    assert_eq!(snapshot_tree(&root), before, "introspection wrote files");
+
+    let first = jails_cmd(&root, Some(&fake))
+        .args([
+            "pull",
+            "--datasource",
+            "postgres",
+            "--into-slice",
+            "Billing",
+        ])
+        .output()
+        .unwrap();
+    let second = jails_cmd(&root, Some(&fake))
+        .args([
+            "pull",
+            "--datasource",
+            "postgres",
+            "--into-slice",
+            "Billing",
+        ])
+        .output()
+        .unwrap();
+    assert!(first.status.success() && second.status.success());
+    assert_eq!(
+        first.stdout, second.stdout,
+        "no-change pull was not byte-idempotent"
+    );
+    let pulled = String::from_utf8_lossy(&first.stdout);
+    assert!(pulled.contains("jails.schema-import.v1"), "{pulled}");
+    assert!(pulled.contains("public.orders"), "{pulled}");
+    assert_eq!(snapshot_tree(&root), before, "pull wrote files");
+}
+
+#[test]
+fn schema_diff_and_migration_lint_report_typed_risks_read_only() {
+    let root = sql_fixture("schema-diff");
+    add_postgres_datasource(&root, "secret");
+    let fake = temp_dir("schema-diff-bin");
+    let log = fake.join("psql.log");
+    write_catalog_psql(&fake, &log);
+    let before = snapshot_tree(&root);
+    let diff = jails_cmd(&root, Some(&fake))
+        .args([
+            "schema",
+            "diff",
+            "--from",
+            "migrations",
+            "--to",
+            "live",
+            "--datasource",
+            "postgres",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        diff.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&diff.stdout),
+        String::from_utf8_lossy(&diff.stderr)
+    );
+    let report = String::from_utf8_lossy(&diff.stdout);
+    assert!(
+        report.contains("schema diff Migrations -> Live"),
+        "{report}"
+    );
+    assert!(
+        report.contains("additive") || report.contains("data-dependent"),
+        "{report}"
+    );
+    assert_eq!(snapshot_tree(&root), before, "schema diff wrote files");
+
+    fs::write(
+        root.join("src/main/resources/db/migration/V002__drop_note.sql"),
+        "ALTER TABLE orders DROP COLUMN note;",
+    )
+    .unwrap();
+    let lint_before = snapshot_tree(&root);
+    let linted = jails_cmd(&root, None)
+        .args(["migrate", "lint"])
+        .output()
+        .unwrap();
+    assert!(linted.status.success());
+    let lint = String::from_utf8_lossy(&linted.stdout);
+    assert!(lint.contains("destructive"), "{lint}");
+    assert!(lint.contains("V002__drop_note.sql"), "{lint}");
+    assert_eq!(
+        snapshot_tree(&root),
+        lint_before,
+        "migration lint wrote files"
+    );
 }
 
 #[test]

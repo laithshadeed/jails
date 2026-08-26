@@ -4,11 +4,16 @@ use crate::application_manifest::{self, ManifestFormat};
 use crate::model::Project;
 use crate::query_compiler::{compile_catalog, compile_query_with_inputs, parse_query_file};
 use jails_protocol::application::ApplicationSpecV1;
-use jails_protocol::database::{QueryContractV1, QuerySource};
-use jails_protocol::identity::{Package, ProjectPath};
+use jails_protocol::application::{AuditPolicy, DeclaredEntityLifecycle};
+use jails_protocol::database::{
+    CatalogSnapshot, QualifiedSqlName, QueryContractV1, QuerySource, SchemaObject, SchemaObjectId,
+    SchemaObjectKind, SchemaProvenance, SchemaSnapshot, SqlDialect, SqlTypeName,
+};
+use jails_protocol::declaration::{FieldType, Optionality, ScalarFieldType};
+use jails_protocol::identity::{Package, ProjectPath, SqlName};
 use jails_support::Result;
 use jails_support::codec::{Codec, Encoder, domain_hash};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -89,6 +94,243 @@ pub fn check_offline(
     }
     checked.sort_by(|left, right| left.source.id.cmp(&right.source.id));
     Ok(checked)
+}
+
+/// Compile migration authority without conflating it with declared or live
+/// state. The ordered file list remains provenance, while the catalog digest
+/// covers the normalized facts and every opaque statement.
+pub fn migration_schema(project: &Project, manifest_path: Option<&Path>) -> Result<SchemaSnapshot> {
+    let (manifest, _) = read_manifest(project, manifest_path)?;
+    let migrations = migrations(project)?;
+    let files = migrations.iter().map(|(path, _)| path.clone()).collect();
+    Ok(SchemaSnapshot {
+        catalog: compile_catalog(manifest.dialect, &migrations)?,
+        provenance: SchemaProvenance::Migrations { files },
+        ignored_schemas: BTreeSet::new(),
+        ignores_extension_owned_objects: false,
+    })
+}
+
+pub fn migration_lint(
+    project: &Project,
+    manifest_path: Option<&Path>,
+) -> Result<Vec<crate::query_compiler::MigrationFinding>> {
+    let (manifest, _) = read_manifest(project, manifest_path)?;
+    crate::query_compiler::lint_migration_sources(manifest.dialect, &migrations(project)?)
+}
+
+pub fn declared_schema(project: &Project, manifest_path: Option<&Path>) -> Result<SchemaSnapshot> {
+    let (manifest, _) = read_manifest(project, manifest_path)?;
+    if manifest.dialect != SqlDialect::PostgreSql {
+        return Err(
+            "declared schema projection currently requires PostgreSQL.\n       fix: select migration or live authority for this dialect."
+                .into(),
+        );
+    }
+    let namespace = SqlName::parse("public")?;
+    let mut objects = BTreeMap::from([(
+        SchemaObjectId {
+            dialect: manifest.dialect,
+            namespace: namespace.clone(),
+            kind: SchemaObjectKind::Schema,
+            name: namespace.clone(),
+            parent: None,
+        },
+        SchemaObject::Schema,
+    )]);
+    for slice in manifest.slices.values() {
+        for entity in slice.entities.values() {
+            if matches!(
+                entity.lifecycle,
+                DeclaredEntityLifecycle::RetiredDropPlanned { .. }
+            ) {
+                continue;
+            }
+            let table = entity.table.table.clone();
+            objects.insert(
+                schema_id(
+                    manifest.dialect,
+                    &namespace,
+                    SchemaObjectKind::Table,
+                    &table,
+                    None,
+                ),
+                SchemaObject::Table,
+            );
+            let parent = QualifiedSqlName {
+                namespace: Some(namespace.clone()),
+                name: table.clone(),
+            };
+            let mut primary = Vec::new();
+            let mut ordinal = 0u32;
+            for field in &entity.fields {
+                ordinal += 1;
+                let column = SqlName::parse(&snake_case(field.name.as_str()))?;
+                objects.insert(
+                    schema_id(
+                        manifest.dialect,
+                        &namespace,
+                        SchemaObjectKind::Column,
+                        &column,
+                        Some(parent.clone()),
+                    ),
+                    SchemaObject::Column {
+                        sql_type: declared_sql_type(&field.field_type)?,
+                        nullable: field.optionality == Optionality::Nullable,
+                        ordinal,
+                        default_expression: None,
+                        generated: None,
+                        identity: None,
+                        comment: None,
+                    },
+                );
+                if field.constraints.primary_key {
+                    primary.push(column.clone());
+                }
+                let suffix = if field.constraints.unique {
+                    Some((SchemaObjectKind::Unique, "key"))
+                } else if field.constraints.indexed {
+                    Some((SchemaObjectKind::Index, "idx"))
+                } else {
+                    None
+                };
+                if let Some((kind, suffix)) = suffix {
+                    let name = SqlName::parse(&format!(
+                        "{}_{}_{}",
+                        table.as_str(),
+                        column.as_str(),
+                        suffix
+                    ))?;
+                    let definition = format!("({})", column.as_str());
+                    let object = if kind == SchemaObjectKind::Unique {
+                        SchemaObject::Unique { definition }
+                    } else {
+                        SchemaObject::Index { definition }
+                    };
+                    objects.insert(
+                        schema_id(
+                            manifest.dialect,
+                            &namespace,
+                            kind,
+                            &name,
+                            Some(parent.clone()),
+                        ),
+                        object,
+                    );
+                }
+            }
+            for name in audit_columns(entity.audit) {
+                ordinal += 1;
+                let column = SqlName::parse(name)?;
+                objects.insert(
+                    schema_id(
+                        manifest.dialect,
+                        &namespace,
+                        SchemaObjectKind::Column,
+                        &column,
+                        Some(parent.clone()),
+                    ),
+                    SchemaObject::Column {
+                        sql_type: SqlTypeName::parse("timestamptz")?,
+                        nullable: false,
+                        ordinal,
+                        default_expression: None,
+                        generated: None,
+                        identity: None,
+                        comment: None,
+                    },
+                );
+            }
+            if !primary.is_empty() {
+                let name = SqlName::parse(&format!("{}_pkey", table.as_str()))?;
+                objects.insert(
+                    schema_id(
+                        manifest.dialect,
+                        &namespace,
+                        SchemaObjectKind::PrimaryKey,
+                        &name,
+                        Some(parent),
+                    ),
+                    SchemaObject::PrimaryKey { columns: primary },
+                );
+            }
+        }
+    }
+    Ok(SchemaSnapshot {
+        catalog: CatalogSnapshot::new(manifest.dialect, objects, Vec::new())?,
+        provenance: SchemaProvenance::Declared,
+        ignored_schemas: BTreeSet::new(),
+        ignores_extension_owned_objects: false,
+    })
+}
+
+fn schema_id(
+    dialect: SqlDialect,
+    namespace: &SqlName,
+    kind: SchemaObjectKind,
+    name: &SqlName,
+    parent: Option<QualifiedSqlName>,
+) -> SchemaObjectId {
+    SchemaObjectId {
+        dialect,
+        namespace: namespace.clone(),
+        kind,
+        name: name.clone(),
+        parent,
+    }
+}
+
+fn audit_columns(policy: AuditPolicy) -> &'static [&'static str] {
+    match policy {
+        AuditPolicy::None => &[],
+        AuditPolicy::Created => &["created_at"],
+        AuditPolicy::CreatedAndUpdated => &["created_at", "updated_at"],
+    }
+}
+
+fn declared_sql_type(field_type: &FieldType) -> Result<SqlTypeName> {
+    let name = match field_type {
+        FieldType::List(_) | FieldType::Map { .. } => "jsonb".to_string(),
+        FieldType::Scalar(scalar) => match scalar {
+            ScalarFieldType::Text
+            | ScalarFieldType::Currency
+            | ScalarFieldType::ZoneId
+            | ScalarFieldType::Uri
+            | ScalarFieldType::Path => "text".to_string(),
+            ScalarFieldType::Integer => "int4".to_string(),
+            ScalarFieldType::Long => "int8".to_string(),
+            ScalarFieldType::Boolean => "bool".to_string(),
+            ScalarFieldType::LocalDate => "date".to_string(),
+            ScalarFieldType::LocalDateTime => "timestamp".to_string(),
+            ScalarFieldType::Instant => "timestamptz".to_string(),
+            ScalarFieldType::Uuid => "uuid".to_string(),
+            ScalarFieldType::Decimal => "numeric".to_string(),
+            ScalarFieldType::Bytes => "bytea".to_string(),
+            ScalarFieldType::Duration => "interval".to_string(),
+            ScalarFieldType::Double => "float8".to_string(),
+            ScalarFieldType::Project(java_type) => {
+                let qualified = java_type.qualified();
+                let simple = qualified.rsplit('.').next().unwrap_or(&qualified);
+                format!("public.{}", snake_case(simple))
+            }
+        },
+    };
+    SqlTypeName::parse(&name)
+}
+
+fn snake_case(value: &str) -> String {
+    let mut out = String::new();
+    for (index, character) in value.chars().enumerate() {
+        if character.is_ascii_uppercase() {
+            if index > 0 {
+                out.push('_');
+            }
+            out.push(character.to_ascii_lowercase());
+        } else {
+            out.push(character);
+        }
+    }
+    out
 }
 
 fn ordered_migration_digest(

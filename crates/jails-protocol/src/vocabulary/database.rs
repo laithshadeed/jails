@@ -188,6 +188,7 @@ pub enum SchemaObjectKind {
     View,
     Routine,
     Policy,
+    Opaque,
 }
 
 impl SchemaObjectKind {
@@ -206,6 +207,7 @@ impl SchemaObjectKind {
             Self::View => 10,
             Self::Routine => 11,
             Self::Policy => 12,
+            Self::Opaque => 13,
         }
     }
 }
@@ -231,6 +233,7 @@ impl Codec for SchemaObjectKind {
             10 => Ok(Self::View),
             11 => Ok(Self::Routine),
             12 => Ok(Self::Policy),
+            13 => Ok(Self::Opaque),
             other => Err(format!(
                 "unknown schema object kind tag {other}.\n       fix: upgrade jails or restore the record from a known-good contract."
             )

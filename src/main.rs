@@ -12,6 +12,7 @@ mod arguments;
 mod cli;
 mod dispatch;
 mod new;
+mod schema_command;
 mod sql_command;
 
 // What the CLI accepts lives in `cli`; what it does is the match below.
@@ -111,6 +112,22 @@ fn main() -> std::process::ExitCode {
         }),
         Command::App { command } => app::run(command, invocation),
         Command::Sql { command } => sql_command::run(command, invocation),
+        Command::Introspect { command } => schema_command::introspect(command, invocation),
+        Command::Pull {
+            datasource,
+            schema,
+            table,
+            into_slice,
+            services,
+        } => schema_command::pull(
+            &datasource,
+            &schema,
+            table.as_deref(),
+            into_slice.as_deref(),
+            services,
+            invocation,
+        ),
+        Command::Schema { command } => schema_command::schema(command, invocation),
         Command::Generate {
             kind,
             name,
@@ -397,18 +414,22 @@ fn main() -> std::process::ExitCode {
         Command::Notes { tag, json } => inspect::notes(tag.as_deref(), json),
         Command::Routes { json } => inspect::routes(json),
         Command::Beans { pattern, json } => inspect::beans(pattern.as_deref(), json),
-        Command::Migrate { check, no_start } => {
-            if !check {
-                Err(
-                    "`--check` is the only mode jails has: it applies the migrations to a \
+        Command::Migrate {
+            command,
+            check,
+            no_start,
+        } => match command {
+            Some(cli::MigrateCommand::Lint { manifest }) => {
+                schema_command::migrate_lint(manifest.as_deref(), invocation)
+            }
+            None if !check => Err(
+                "`--check` is the only mode jails has: it applies the migrations to a \
                      scratch database and drops it. Applying them for real is Flyway's job, \
                      which the application does at startup.\n\nfix: run `jails migrate`."
-                        .into(),
-                )
-            } else {
-                migrate::check(no_start, debug)
-            }
-        }
+                    .into(),
+            ),
+            None => migrate::check(no_start, debug),
+        },
         Command::Kafka { command, no_start } => kafka::kafka(command, no_start, debug),
         Command::Lint => lint::lint(),
         Command::Db {

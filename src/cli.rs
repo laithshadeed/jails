@@ -23,6 +23,9 @@ use clap::{Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 use std::path::PathBuf;
 
+mod schema;
+pub(crate) use schema::*;
+
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub(crate) enum StoragePolicy {
     Preserve,
@@ -515,6 +518,29 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: SqlCommand,
     },
+    /// Observe a live system without changing project or service state
+    Introspect {
+        #[command(subcommand)]
+        command: IntrospectCommand,
+    },
+    /// Render a canonical import proposal from live schema evidence
+    Pull {
+        #[arg(long, value_name = "NAME")]
+        datasource: String,
+        #[arg(long, default_value = "public")]
+        schema: String,
+        #[arg(long, value_name = "GLOB")]
+        table: Option<String>,
+        #[arg(long, value_name = "SLICE")]
+        into_slice: Option<String>,
+        #[arg(long, value_enum, default_value = "existing")]
+        services: RunServicesArg,
+    },
+    /// Compare declared, migration-derived, and live schema authorities
+    Schema {
+        #[command(subcommand)]
+        command: SchemaCommand,
+    },
     /// Generate a scaffold or one small Java/SQL artifact
     ///
     /// FIELDS are `name:type`, with an optional suffix:
@@ -802,6 +828,8 @@ pub(crate) enum Command {
     /// migrations writes. Doctor can say whether anything will run them;
     /// this says whether they work.
     Migrate {
+        #[command(subcommand)]
+        command: Option<MigrateCommand>,
         /// Apply to a scratch database and drop it. The only mode there is --
         /// jails does not run migrations against a real database, Flyway
         /// does. Accepted so the documented `jails migrate --check` keeps

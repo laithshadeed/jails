@@ -28,6 +28,7 @@ lint	jails-drive	read-only+external-process	lint::lint
 routes	jails-project	read-only	inspect::routes
 beans	jails-project	read-only	inspect::beans
 migrate	jails-drive	external-process+service-lifecycle	migrate::check
+migrate lint	jails-project	read-only	query_workspace::migration_lint
 kafka	jails-drive	dispatch-only	kafka::kafka
 kafka topics	jails-drive	broker-read+service-lifecycle	kafka::tool
 kafka describe	jails-drive	broker-read+service-lifecycle	kafka::tool
@@ -71,3 +72,8 @@ completion	jails	read-only	clap_complete::generate
 sql	jails	dispatch-only	main command dispatch
 sql check	jails-project/jails-drive	read-only	query_workspace::check_offline / live_sql::check
 sql generate	jails-engine	project-mutation	route::sql_generate
+introspect	jails	dispatch-only	schema_command::introspect
+introspect db	jails-drive	read-only+external-process	live_sql::observe
+pull	jails-drive	read-only+external-process	schema_command::pull
+schema	jails	dispatch-only	schema_command::schema
+schema diff	jails-project/jails-drive	read-only	schema::diff / live_sql::observe

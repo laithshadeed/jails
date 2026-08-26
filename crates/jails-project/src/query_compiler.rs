@@ -5,9 +5,9 @@
 //! admitted. Every other migration statement is retained as an opaque blocker.
 
 use jails_protocol::database::{
-    ByteSpan, Cardinality, CatalogSnapshot, DeclaredParameter, OpaqueMigrationStatement,
-    QualifiedSqlName, QueryId, QueryName, QuerySource, SchemaObject, SchemaObjectId,
-    SchemaObjectKind, SliceName, SqlDialect, SqlTypeName,
+    ByteSpan, Cardinality, CatalogSnapshot, DeclaredParameter, MigrationRisk,
+    OpaqueMigrationStatement, QualifiedSqlName, QueryId, QueryName, QuerySource, SchemaObject,
+    SchemaObjectId, SchemaObjectKind, SliceName, SqlDialect, SqlTypeName,
 };
 use jails_protocol::identity::{Name, ObjectId, ProjectPath, SqlName};
 use jails_support::Result;
@@ -27,6 +27,69 @@ pub struct QueryFile<'a> {
     pub slice: &'a str,
     pub path: &'a str,
     pub contents: &'a str,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MigrationFinding {
+    pub path: ProjectPath,
+    pub statement: u32,
+    pub summary: String,
+    pub risks: BTreeSet<MigrationRisk>,
+}
+
+/// Parse every migration and classify operations that need deployment or data
+/// review. This never executes SQL and never treats lexical resemblance inside
+/// a comment/string as an operation because classification happens after the
+/// PostgreSQL parser has produced a statement.
+pub fn lint_migration_sources(
+    dialect: SqlDialect,
+    migrations: &[(ProjectPath, String)],
+) -> Result<Vec<MigrationFinding>> {
+    let mut findings = Vec::new();
+    for (path, source) in migrations {
+        let statements = Parser::parse_sql(parser_dialect(dialect), source).map_err(|error| {
+            format!(
+                "migration `{path}` does not parse: {error}.\n       fix: correct the migration before linting it."
+            )
+        })?;
+        for (index, statement) in statements.iter().enumerate() {
+            let rendered = statement.to_string();
+            let upper = rendered.to_ascii_uppercase();
+            let mut risks = BTreeSet::new();
+            if upper.starts_with("DROP ") || upper.contains(" DROP COLUMN ") {
+                risks.insert(MigrationRisk::Destructive);
+            }
+            if upper.contains(" DROP CONSTRAINT ") {
+                risks.insert(MigrationRisk::ConstraintLoss);
+                risks.insert(MigrationRisk::Destructive);
+            }
+            if upper.contains(" ALTER COLUMN ")
+                && (upper.contains(" TYPE ") || upper.contains(" SET NOT NULL"))
+            {
+                risks.insert(MigrationRisk::DataDependent);
+                risks.insert(MigrationRisk::DeploymentIncompatible);
+            }
+            if upper.starts_with("ALTER TABLE ")
+                && upper.contains(" ADD COLUMN ")
+                && upper.contains(" NOT NULL")
+                && !upper.contains(" DEFAULT ")
+            {
+                risks.insert(MigrationRisk::DataDependent);
+                risks.insert(MigrationRisk::DeploymentIncompatible);
+            }
+            if !risks.is_empty() {
+                findings.push(MigrationFinding {
+                    path: path.clone(),
+                    statement: u32::try_from(index + 1).map_err(|_| {
+                        "migration has too many statements.\n       fix: split it into smaller ordered migrations."
+                    })?,
+                    summary: rendered,
+                    risks,
+                });
+            }
+        }
+    }
+    Ok(findings)
 }
 
 /// Parse several query files and enforce the project-wide qualified identity.
@@ -507,6 +570,10 @@ fn create_table_facts(
                 ordinal: u32::try_from(ordinal).map_err(|_| {
                     "too many table columns.\n       fix: split this schema into smaller tables."
                 })?,
+                default_expression: None,
+                generated: None,
+                identity: None,
+                comment: None,
             },
         ));
     }
