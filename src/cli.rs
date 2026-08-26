@@ -374,6 +374,12 @@ pub(crate) enum SqlCommand {
         /// Use an explicitly selected live datasource
         #[arg(long, conflicts_with = "offline")]
         live: bool,
+        /// Declared datasource name; required with --live
+        #[arg(long, requires = "live", value_name = "NAME")]
+        datasource: Option<String>,
+        /// Whether live checking may start declared services
+        #[arg(long, value_enum, default_value = "existing", requires = "live")]
+        services: RunServicesArg,
         /// Refuse when checked-in contracts differ; never update them
         #[arg(long)]
         frozen: bool,

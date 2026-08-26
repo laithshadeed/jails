@@ -36,6 +36,48 @@ source = "src/main/resources/db/queries/FindPayableOrders.sql"
     root
 }
 
+fn add_postgres_datasource(root: &Path, password: &str) {
+    fs::write(
+        root.join("compose.yaml"),
+        format!(
+            "services:\n  postgres:\n    # jails:db\n    image: postgres:17\n    environment:\n      POSTGRES_DB: app\n      POSTGRES_USER: app\n      POSTGRES_PASSWORD: {password}\n    ports:\n      - \"5432:5432\"\n"
+        ),
+    )
+    .unwrap();
+}
+
+fn write_describing_psql(dir: &Path, log: &Path) {
+    write_fake_maven(dir, &["psql"], log);
+    fs::write(
+        dir.join("psql"),
+        format!(
+            r#"#!/bin/sh
+input=
+while IFS= read -r line; do
+  input="${{input}}${{line}}
+"
+done
+printf '%s\n' "$*" >> '{}'
+printf '%s' "$input" >> '{}'
+case "$input" in
+  *server_version_num*) printf '170004\n' ;;
+  *gdesc*)
+    printf 'id\tuuid\n'
+    printf 'account_id\tuuid\n'
+    printf 'total\tnumeric\n'
+    printf 'status\torder_status\n'
+    printf 'created_at\ttimestamp with time zone\n'
+    ;;
+  *) printf '1\n' ;;
+esac
+"#,
+            log.display(),
+            log.display()
+        ),
+    )
+    .unwrap();
+}
+
 #[test]
 fn sql_check_compiles_a_manifest_query_offline() {
     let root = sql_fixture("sql-check");
@@ -51,6 +93,73 @@ fn sql_check_compiles_a_manifest_query_offline() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Sample.FindPayableOrders"), "{stdout}");
     assert!(stdout.contains("verified-offline"), "{stdout}");
+}
+
+#[test]
+fn live_check_requires_and_describes_only_the_explicit_datasource() {
+    let root = sql_fixture("sql-live");
+    add_postgres_datasource(&root, "live-secret");
+    let fake = temp_dir("sql-live-bin");
+    let log = fake.join("psql.log");
+    write_describing_psql(&fake, &log);
+    let before = snapshot_tree(&root);
+
+    let output = jails_cmd(&root, Some(&fake))
+        .args([
+            "--debug",
+            "sql",
+            "check",
+            "--live",
+            "--datasource",
+            "postgres",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.contains("verified-live (postgres 17)"), "{stdout}");
+    assert!(stderr.contains("PGPASSWORD=<redacted>"), "{stderr}");
+    assert!(!stderr.contains("live-secret"), "{stderr}");
+    let invoked = read_log(&log);
+    assert!(invoked.contains("BEGIN READ ONLY;"), "{invoked}");
+    assert!(invoked.contains("NULL::public.order_status"), "{invoked}");
+    assert!(invoked.contains("NULL::numeric"), "{invoked}");
+    assert!(invoked.contains("NULL::int4"), "{invoked}");
+    assert!(invoked.contains("\\gdesc"), "{invoked}");
+    assert!(!invoked.contains(":status"), "{invoked}");
+    assert_eq!(
+        snapshot_tree(&root),
+        before,
+        "live check wrote project files"
+    );
+}
+
+#[test]
+fn live_check_without_a_datasource_refuses_before_starting_a_client() {
+    let root = sql_fixture("sql-live-explicit");
+    add_postgres_datasource(&root, "secret");
+    let fake = temp_dir("sql-live-explicit-bin");
+    let log = fake.join("psql.log");
+    write_describing_psql(&fake, &log);
+    let before = snapshot_tree(&root);
+    let output = jails_cmd(&root, Some(&fake))
+        .args(["sql", "check", "--live"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("--datasource"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(read_log(&log).is_empty(), "psql ran without a datasource");
+    assert_eq!(snapshot_tree(&root), before);
 }
 
 #[test]

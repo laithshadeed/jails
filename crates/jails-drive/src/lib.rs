@@ -19,6 +19,7 @@ pub mod console;
 pub mod kafka;
 pub(crate) mod launcher;
 pub mod lint;
+pub mod live_sql;
 pub mod migrate;
 pub(crate) mod reports;
 pub mod run;

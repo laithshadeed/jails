@@ -13,22 +13,56 @@ pub(crate) fn run(command: SqlCommand, invocation: crate::Invocation) -> Result<
             target,
             offline: _,
             live,
+            datasource,
+            services,
             frozen,
             no_cache: _,
             manifest,
         } => {
-            if live {
-                return Err(
-                    "live SQL evidence requires an explicit datasource and is not available in the offline compiler.\n       fix: use `--offline`; live description is introduced with datasource selection."
-                        .into(),
-                );
-            }
             let project = Project::discover()?;
             let checked = jails_project::query_workspace::check_offline(
                 &project,
                 manifest.as_deref(),
                 target.as_deref(),
             )?;
+            if live {
+                let datasource = datasource.as_deref().ok_or_else(|| {
+                    "live SQL checking requires an explicit datasource.\n       fix: pass `--datasource postgres`."
+                        .to_string()
+                })?;
+                let descriptions = jails_drive::live_sql::check(
+                    &project,
+                    datasource,
+                    match services {
+                        crate::cli::RunServicesArg::Existing => {
+                            jails_drive::live_sql::LiveServices::Existing
+                        }
+                        crate::cli::RunServicesArg::Start => {
+                            jails_drive::live_sql::LiveServices::Start
+                        }
+                        crate::cli::RunServicesArg::None => {
+                            jails_drive::live_sql::LiveServices::None
+                        }
+                    },
+                    &checked,
+                    invocation.debug,
+                )?;
+                for (query, description) in checked.iter().zip(descriptions) {
+                    if frozen {
+                        check_frozen(&project, query)?;
+                    }
+                    println!(
+                        "✓ {}.{}  :{}  {} param(s)  {} column(s)  verified-live (postgres {})",
+                        query.source.id.slice.as_str(),
+                        query.source.id.name.as_str(),
+                        query.source.cardinality.label(),
+                        query.contract.parameters.len(),
+                        description.columns.len(),
+                        description.server_major,
+                    );
+                }
+                return Ok(());
+            }
             for query in &checked {
                 if frozen {
                     check_frozen(&project, query)?;

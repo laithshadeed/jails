@@ -203,6 +203,50 @@ fn set_once<T>(slot: &mut Option<T>, value: T, label: &str) -> Result<()> {
 struct ParameterUses {
     named: BTreeSet<String>,
     positional: bool,
+    occurrences: Vec<ParameterUse>,
+}
+
+#[derive(Debug)]
+struct ParameterUse {
+    start: usize,
+    end: usize,
+    name: String,
+}
+
+/// Render a server-description query without changing reader-owned source.
+///
+/// PostgreSQL receives typed NULLs in place of named parameters, which makes
+/// operator and cast resolution meaningful while keeping values and
+/// credentials out of evidence. The terminal semicolon is removed so psql's
+/// `\gdesc` describes the buffer instead of executing it.
+pub fn live_description_sql(source: &QuerySource) -> Result<String> {
+    let uses = parameter_uses(&source.sql);
+    let declared = source
+        .declared_parameters
+        .iter()
+        .map(|parameter| (parameter.name.as_str(), parameter.sql_type.as_str()))
+        .collect::<BTreeMap<_, _>>();
+    let mut rendered = String::with_capacity(source.sql.len());
+    let mut copied = 0usize;
+    for occurrence in uses.occurrences {
+        rendered.push_str(&source.sql[copied..occurrence.start]);
+        let sql_type = declared.get(occurrence.name.as_str()).ok_or_else(|| {
+            format!(
+                "query uses undeclared parameter `:{}`.\n       fix: add its `jails:param` directive before live checking.",
+                occurrence.name
+            )
+        })?;
+        rendered.push_str("NULL::");
+        rendered.push_str(sql_type);
+        copied = occurrence.end;
+    }
+    rendered.push_str(&source.sql[copied..]);
+    let trimmed = rendered.trim_end();
+    let statement = trimmed.strip_suffix(';').ok_or_else(|| {
+        "live SQL description requires one terminated statement.\n       fix: end the managed query with `;`."
+            .to_string()
+    })?;
+    Ok(statement.to_string())
 }
 
 fn validate_parameter_uses(sql: &str, declared: &[DeclaredParameter]) -> Result<()> {
@@ -288,6 +332,11 @@ fn parameter_uses(sql: &str) -> ParameterUses {
                 }
                 uses.named
                     .insert(String::from_utf8_lossy(&bytes[start..cursor]).into_owned());
+                uses.occurrences.push(ParameterUse {
+                    start: start - 1,
+                    end: cursor,
+                    name: String::from_utf8_lossy(&bytes[start..cursor]).into_owned(),
+                });
             }
             _ => cursor += 1,
         }

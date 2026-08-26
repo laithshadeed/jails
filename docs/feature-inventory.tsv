@@ -69,5 +69,5 @@ explain	jails-report	read-only	explain::explain
 commands	jails-report	read-only	commands::commands
 completion	jails	read-only	clap_complete::generate
 sql	jails	dispatch-only	main command dispatch
-sql check	jails-project	read-only	query_workspace::check_offline
+sql check	jails-project/jails-drive	read-only	query_workspace::check_offline / live_sql::check
 sql generate	jails-engine	project-mutation	route::sql_generate
