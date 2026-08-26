@@ -215,10 +215,15 @@ impl JavaType {
             Some((package, name)) => (Package::parse(package)?, name),
             None => (Package::base(), text),
         };
-        Ok(Self {
-            package,
-            name: Name::parse(name)?,
-        })
+        let name = if package.is_base() && is_java_primitive(name) {
+            // Primitive type tokens are JLS keywords, so the ordinary `Name`
+            // constructor correctly refuses them as identifiers. A Java type
+            // is the one vocabulary where those tokens are valid values.
+            Name(name.to_string())
+        } else {
+            Name::parse(name)?
+        };
+        Ok(Self { package, name })
     }
 
     pub fn package(&self) -> &Package {
@@ -236,6 +241,13 @@ impl JavaType {
             format!("{}.{}", self.package.0, self.name.0)
         }
     }
+}
+
+fn is_java_primitive(text: &str) -> bool {
+    matches!(
+        text,
+        "boolean" | "byte" | "char" | "double" | "float" | "int" | "long" | "short" | "void"
+    )
 }
 impl Codec for JavaType {
     fn encode(&self, encoder: &mut Encoder) -> Result<()> {
@@ -669,6 +681,17 @@ mod tests {
         let flat = JavaType::parse("Note").unwrap();
         assert!(flat.package().is_base());
         assert_eq!(flat.qualified(), "Note");
+    }
+
+    #[test]
+    fn java_primitive_types_are_types_even_though_they_are_not_identifiers() {
+        for primitive in [
+            "boolean", "byte", "char", "double", "float", "int", "long", "short",
+        ] {
+            let ty = JavaType::parse(primitive).unwrap();
+            assert_eq!(ty.to_string(), primitive);
+        }
+        assert!(Name::parse("int").is_err());
     }
 
     /// The refusals are the whole point: a recorded path is replayed later by

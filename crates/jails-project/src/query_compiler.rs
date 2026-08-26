@@ -19,6 +19,9 @@ use sqlparser::dialect::{Dialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect
 use sqlparser::parser::Parser;
 use std::collections::{BTreeMap, BTreeSet};
 
+mod contract;
+pub use contract::compile_query;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct QueryFile<'a> {
     pub slice: &'a str,
@@ -599,6 +602,7 @@ fn statement_kind(statement: &Statement) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jails_protocol::database::EvidenceLevel;
 
     fn query(sql: &str) -> Result<QuerySource> {
         parse_query_file(
@@ -697,5 +701,61 @@ WHERE value = :wanted -- :comment
         assert_eq!(catalog.objects.len(), 4);
         assert_eq!(catalog.opaque.len(), 1);
         assert!(catalog.opaque[0].reason.contains("ALTER TABLE"));
+    }
+
+    #[test]
+    fn flagship_query_compiles_to_a_typed_offline_contract() {
+        let migration =
+            ProjectPath::parse("src/main/resources/db/migration/V001__create_orders.sql").unwrap();
+        let catalog = compile_catalog(
+            SqlDialect::PostgreSql,
+            &[(
+                migration,
+                "CREATE TABLE orders (id uuid PRIMARY KEY, account_id uuid NOT NULL, total numeric NOT NULL, status text NOT NULL, created_at timestamptz NOT NULL);"
+                    .to_string(),
+            )],
+        )
+        .unwrap();
+        let source = parse_query_file(
+            "Billing",
+            "src/main/resources/db/queries/FindPayableOrders.sql",
+            "-- jails:name FindPayableOrders\n-- jails:cardinality many\n-- jails:param status text\n-- jails:param minimum numeric\n-- jails:param limit int4\nSELECT id, account_id, total, status, created_at\nFROM orders\nWHERE status = :status AND total >= :minimum\nORDER BY created_at, id\nLIMIT :limit;\n",
+            SqlDialect::PostgreSql,
+        )
+        .unwrap();
+        let contract = compile_query(&source, &catalog).unwrap();
+        assert_eq!(contract.parameters.len(), 3);
+        assert_eq!(contract.columns.len(), 5);
+        assert_eq!(contract.columns[1].java_name.as_str(), "accountId");
+        assert_eq!(
+            contract.columns[2].java_type.to_string(),
+            "java.math.BigDecimal"
+        );
+        assert_eq!(
+            contract.columns[4].java_type.to_string(),
+            "java.time.Instant"
+        );
+        assert_eq!(contract.evidence.level, EvidenceLevel::VerifiedOffline);
+        assert_eq!(contract.evidence.catalog_digest, Some(catalog.digest));
+    }
+
+    #[test]
+    fn opaque_migrations_refuse_offline_contracts() {
+        let migration =
+            ProjectPath::parse("src/main/resources/db/migration/V002__alter.sql").unwrap();
+        let catalog = compile_catalog(
+            SqlDialect::PostgreSql,
+            &[(
+                migration,
+                "ALTER TABLE items ADD COLUMN label text;".to_string(),
+            )],
+        )
+        .unwrap();
+        let source =
+            query("-- jails:name FindItems\n-- jails:cardinality many\nSELECT id FROM items;\n")
+                .unwrap();
+        let error = compile_query(&source, &catalog).unwrap_err();
+        assert!(error.to_string().contains("needs live verification"));
+        assert!(error.to_string().contains("fix:"));
     }
 }
