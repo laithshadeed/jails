@@ -5,10 +5,12 @@ use jails_project::compose::{self, PostgresConnect};
 use jails_project::model::Project;
 use jails_project::query_workspace::CheckedQuery;
 use jails_protocol::database::{
-    CatalogSnapshot, QualifiedSqlName, ResolvedDatasource, SchemaObject, SchemaObjectId,
-    SchemaObjectKind, SchemaProvenance, SchemaSnapshot, SqlDialect, SqlTypeName,
+    CatalogSnapshot, FlywayAppliedMigrationV1, FlywayHistoryV1, QualifiedSqlName,
+    ResolvedDatasource, SchemaObject, SchemaObjectId, SchemaObjectKind, SchemaProvenance,
+    SchemaSnapshot, SqlDialect, SqlTypeName,
 };
 use jails_protocol::identity::{ObjectId, SqlName};
+use jails_protocol::lifecycle::MigrationVersion;
 use jails_support::Result;
 use jails_support::codec::domain_hash;
 use jails_support::process::{CommandSpec, Diagnostics, OutputMode};
@@ -82,6 +84,93 @@ pub fn resolve(
     debug: bool,
 ) -> Result<ResolvedDatasource> {
     Ok(connect(project, datasource, services, debug)?.resolved)
+}
+
+/// Observe Flyway's own applied-history authority from an explicitly selected,
+/// already reachable datasource. An absent history table is an empty history;
+/// this function never creates it or applies migrations.
+pub fn observe_flyway(
+    project: &Project,
+    datasource: &str,
+    services: LiveServices,
+    debug: bool,
+) -> Result<FlywayHistoryV1> {
+    let database = connect(project, datasource, services, debug)?;
+    let exists = psql(
+        &database.conn,
+        "SELECT pg_catalog.to_regclass('flyway_schema_history') IS NOT NULL;\n",
+        debug,
+    )
+    .map_err(|_| flyway_unavailable(&database.resolved))?;
+    let applied = if exists.trim() == "t" {
+        let output = psql(&database.conn, FLYWAY_HISTORY_SQL, debug)
+            .map_err(|_| flyway_unavailable(&database.resolved))?;
+        parse_flyway_history(&output)?
+    } else if exists.trim() == "f" {
+        Vec::new()
+    } else {
+        return Err(format!(
+            "live Flyway probe at {} returned an invalid table-presence value.\n       fix: verify the selected PostgreSQL client and datasource permissions.",
+            database.resolved.redacted_endpoint.label()
+        )
+        .into());
+    };
+    FlywayHistoryV1::new(database.resolved, applied)
+}
+
+fn flyway_unavailable(resolved: &ResolvedDatasource) -> jails_support::Failure {
+    format!(
+        "service-unavailable: Flyway history at {} could not be observed from the jails command consumer.\n       fix: make the endpoint reachable and grant read access to `flyway_schema_history`, then retry.",
+        resolved.redacted_endpoint.label()
+    )
+    .into()
+}
+
+fn parse_flyway_history(output: &str) -> Result<Vec<FlywayAppliedMigrationV1>> {
+    output
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let fields = line.split('\t').collect::<Vec<_>>();
+            if fields.len() != 6 {
+                return Err(format!(
+                    "Flyway history returned {} fields instead of 6.\n       fix: verify the selected PostgreSQL client and retry.",
+                    fields.len()
+                )
+                .into());
+            }
+            let installed_rank = fields[0].parse::<u32>().map_err(|_| {
+                format!(
+                    "Flyway installed rank `{}` is invalid.\n       fix: inspect `flyway_schema_history` before using it as evidence.",
+                    fields[0]
+                )
+            })?;
+            let version = match fields[1] {
+                "" => None,
+                raw => Some(MigrationVersion::new(raw.parse::<u32>().map_err(|_| {
+                    format!(
+                        "Flyway version `{raw}` is outside the supported integer version policy.\n       fix: use offline evidence or migrate this project to integer Flyway versions."
+                    )
+                })?)?),
+            };
+            let checksum = match fields[4] {
+                "" => None,
+                raw => Some(raw.parse::<i32>().map_err(|_| {
+                    format!(
+                        "Flyway checksum `{raw}` is invalid.\n       fix: inspect `flyway_schema_history` before using it as evidence."
+                    )
+                })?),
+            };
+            FlywayAppliedMigrationV1::new(
+                installed_rank,
+                version,
+                unhex(fields[2])?,
+                unhex(fields[3])?,
+                checksum,
+                parse_bool(fields[5])?,
+            )
+        })
+        .collect()
 }
 
 /// Observe a bounded PostgreSQL catalog into stable identities. Observation is
@@ -679,3 +768,41 @@ FROM observed
 ORDER BY kind, schema_name, parent_name, object_name, d1, d2, d3, d4, d5, d6, d7;
 ROLLBACK;
 "#;
+
+const FLYWAY_HISTORY_SQL: &str = r#"BEGIN READ ONLY;
+SELECT installed_rank::text,
+       COALESCE(version, ''),
+       encode(convert_to(description, 'UTF8'), 'hex'),
+       encode(convert_to(script, 'UTF8'), 'hex'),
+       COALESCE(checksum::text, ''),
+       success::text
+FROM flyway_schema_history
+ORDER BY installed_rank;
+ROLLBACK;
+"#;
+
+#[cfg(test)]
+mod flyway_tests {
+    use super::*;
+
+    #[test]
+    fn flyway_rows_parse_without_runtime_or_credential_fields() {
+        let rows = parse_flyway_history(
+            "1\t1\t637265617465207461736b73\t563030315f5f6372656174655f7461736b732e73716c\t-42\tt\n",
+        )
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].installed_rank, 1);
+        assert_eq!(rows[0].version.unwrap().get(), 1);
+        assert_eq!(rows[0].description, "create tasks");
+        assert_eq!(rows[0].script, "V001__create_tasks.sql");
+        assert_eq!(rows[0].checksum, Some(-42));
+        assert!(rows[0].success);
+    }
+
+    #[test]
+    fn noninteger_flyway_versions_refuse_as_unsupported_evidence() {
+        let error = parse_flyway_history("1\t1.2\t61\t62\t\tt\n").unwrap_err();
+        assert!(error.contains("integer version policy"), "{error}");
+    }
+}

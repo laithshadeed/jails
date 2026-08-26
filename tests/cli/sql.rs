@@ -297,6 +297,7 @@ done
 printf '%s' "$input" >> '{}'
 case "$input" in
   *server_version_num*) printf '170004\n' ;;
+  *to_regclass*) printf 'f\n' ;;
   *"WITH observed"*) printf '%s\n' '{}' ;;
   *) printf '1\n' ;;
 esac
@@ -454,6 +455,44 @@ fn unreachable_environment_datasource_reports_only_the_redacted_endpoint() {
         "psql was not used as the reachability probe"
     );
     assert_eq!(snapshot_tree(&root), before);
+}
+
+#[test]
+fn resource_status_uses_live_flyway_and_catalog_evidence_without_writing() {
+    let root = temp_dir("resource-status-live");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    let generated = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(generated.status.success(), "{generated:?}");
+    add_postgres_datasource(&root, "status-secret");
+
+    let fake = temp_dir("resource-status-live-bin");
+    let log = fake.join("psql.log");
+    write_catalog_psql(&fake, &log);
+    let before = snapshot_tree(&root);
+    let output = jails_cmd(&root, Some(&fake))
+        .args(["resource", "status", "Task", "--datasource", "postgres"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("state: runtime-schema-behind"), "{stdout}");
+    assert!(stdout.contains("live: absent"), "{stdout}");
+    assert!(stdout.contains("live-table-missing"), "{stdout}");
+    assert!(!stdout.contains("status-secret"), "{stdout}");
+    assert_eq!(
+        snapshot_tree(&root),
+        before,
+        "live status wrote project files"
+    );
 }
 
 #[test]

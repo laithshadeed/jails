@@ -2,6 +2,7 @@
 
 use crate::generate::find_project_root;
 use jails_project::model::Project;
+use jails_protocol::database::{FlywayHistoryV1, SchemaObject, SchemaObjectKind, SchemaSnapshot};
 use jails_protocol::entity::{EntityId, IntentId};
 use jails_protocol::lifecycle::{ResourceLifecycleV1, ResourceState};
 use jails_protocol::request::CanonicalRequestSyntaxV1;
@@ -221,6 +222,95 @@ pub fn inspect(project: &Project, selector: &str, datasource: Option<&str>) -> R
     }
 }
 
+/// Add independently observed live Flyway and catalog authority to the
+/// offline lifecycle report. This function is pure over its typed evidence;
+/// the caller owns datasource resolution and I/O.
+pub fn inspect_live(
+    project: &Project,
+    selector: &str,
+    history: &FlywayHistoryV1,
+    catalog: &SchemaSnapshot,
+) -> ResourceStatusV1 {
+    let mut report = inspect(project, selector, None);
+    report.live = Some(AuthorityStatus::Present);
+    if history.applied.iter().any(|row| !row.success) {
+        report.live = Some(AuthorityStatus::Diverged);
+        report.state = ResourceConsistency::Ambiguous;
+        report.findings.push(finding(
+            "live-migration-failed",
+            "Flyway history contains an unsuccessful migration",
+        ));
+        return report;
+    }
+
+    let Some(entity) = &report.entity else {
+        return report;
+    };
+    let MachineState::Current(store) = jails_state::compat::read(project.root()) else {
+        return report;
+    };
+    let Some(lifecycle) = store
+        .lifecycles
+        .iter()
+        .find(|lifecycle| &lifecycle.entity == entity)
+    else {
+        return report;
+    };
+    let table_present = report.table.as_ref().is_some_and(|table| {
+        catalog.catalog.objects.iter().any(|(id, object)| {
+            id.kind == SchemaObjectKind::Table
+                && id.name == *table
+                && matches!(object, SchemaObject::Table)
+        })
+    });
+
+    match &lifecycle.state {
+        ResourceState::RetiredDropPlanned { migration, .. } => {
+            let script = migration.as_str().rsplit('/').next().unwrap_or_default();
+            let applied = history
+                .applied
+                .iter()
+                .any(|row| row.success && row.script == script);
+            match (applied, table_present) {
+                (true, false) => report.state = ResourceConsistency::DropObservedApplied,
+                (true, true) => {
+                    report.live = Some(AuthorityStatus::Diverged);
+                    report.state = ResourceConsistency::Ambiguous;
+                    report.findings.push(finding(
+                        "applied-drop-left-table",
+                        format!(
+                            "Flyway records `{script}` as applied but table `{}` is still present",
+                            report
+                                .table
+                                .as_ref()
+                                .map_or("unknown", |table| table.as_str())
+                        ),
+                    ));
+                }
+                (false, _) => report.state = ResourceConsistency::DropPending,
+            }
+        }
+        ResourceState::Active | ResourceState::RetiredPreservingStorage { .. }
+            if report.table.is_some() && !table_present =>
+        {
+            report.live = Some(AuthorityStatus::Absent);
+            report.state = ResourceConsistency::RuntimeSchemaBehind;
+            report.findings.push(finding(
+                "live-table-missing",
+                format!(
+                    "table `{}` is absent from the observed catalog",
+                    report
+                        .table
+                        .as_ref()
+                        .map_or("unknown", |table| table.as_str())
+                ),
+            ));
+        }
+        _ => {}
+    }
+    report
+}
+
 fn selector_matches(lifecycle: &ResourceLifecycleV1, selector: &str) -> bool {
     lifecycle.expected_path.qualified() == selector
         || matches!(&lifecycle.entity, EntityId::Intent(id) if id.name.as_str().eq_ignore_ascii_case(selector))
@@ -300,6 +390,9 @@ pub fn render_human(report: &ResourceStatusV1) -> String {
         report.generated.label(),
         report.migration_history.label()
     ));
+    if let Some(live) = report.live {
+        out.push_str(&format!("live: {}\n", live.label()));
+    }
     if let Some(table) = &report.table {
         out.push_str(&format!("table: {}\n", table.as_str()));
     }

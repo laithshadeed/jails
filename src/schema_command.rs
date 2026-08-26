@@ -12,6 +12,38 @@ use jails_support::Result;
 use std::collections::BTreeSet;
 use std::path::Path;
 
+pub(crate) fn resource_status(
+    selector: &str,
+    datasource: Option<&str>,
+    invocation: crate::Invocation,
+) -> Result<()> {
+    let Some(datasource) = datasource else {
+        return jails_report::lifecycle_status::status(selector, None, invocation.output.is_json());
+    };
+    let project = Project::discover()?;
+    let history = jails_drive::live_sql::observe_flyway(
+        &project,
+        datasource,
+        jails_drive::live_sql::LiveServices::Existing,
+        invocation.debug,
+    )?;
+    let catalog = jails_drive::live_sql::observe(
+        &project,
+        datasource,
+        jails_drive::live_sql::LiveServices::Existing,
+        "public",
+        invocation.debug,
+    )?;
+    let report =
+        jails_report::lifecycle_status::inspect_live(&project, selector, &history, &catalog);
+    if invocation.output.is_json() {
+        println!("{}", jails_report::lifecycle_status::render_json(&report));
+    } else {
+        print!("{}", jails_report::lifecycle_status::render_human(&report));
+    }
+    Ok(())
+}
+
 pub(crate) fn introspect(command: IntrospectCommand, invocation: crate::Invocation) -> Result<()> {
     match command {
         IntrospectCommand::Db {

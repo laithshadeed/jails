@@ -380,10 +380,10 @@ fn main() -> std::process::ExitCode {
             ResourceCommand::Status {
                 selector,
                 datasource,
-            } => lifecycle_status::status(
+            } => schema_command::resource_status(
                 &selector,
                 datasource.as_deref(),
-                invocation.output.is_json(),
+                invocation,
             ),
             ResourceCommand::Revive { selector, table } => {
                 dispatch::mutate(invocation, false, |run| {
