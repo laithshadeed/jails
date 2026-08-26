@@ -325,6 +325,20 @@ fn main() -> std::process::ExitCode {
                     },
                 )
             }),
+            Some(cli::RenameCommand::Storage {
+                resource,
+                complete,
+                old_version_retired,
+                force,
+            }) => dispatch::mutate(invocation, false, |run| {
+                jails_engine::route::rename_storage(
+                    run,
+                    &resource,
+                    &complete,
+                    old_version_retired,
+                    force,
+                )
+            }),
             None => match (old, new) {
                 (Some(old), Some(new)) => dispatch::mutate(invocation, false, |run| {
                     jails_engine::route::rename(run, &old, &new, force)

@@ -100,6 +100,7 @@ pub use field::{
 pub use lifecycle::{repair, revive};
 pub use maintenance::{
     RenameResourceInvocation, adopt_layout, app_init, format, rename, rename_resource,
+    rename_storage,
 };
 pub use oneshot::{cases, migration};
 pub use query::sql_generate;

@@ -111,6 +111,7 @@ pub fn inspect(project: &Project, selector: &str, datasource: Option<&str>) -> R
             ResourceConsistency::RetiredStoragePresent
         }
         ResourceState::RetiredDropPlanned { .. } => ResourceConsistency::DropPending,
+        ResourceState::RenamePending { .. } => ResourceConsistency::RenamePending,
     };
     for seal in &lifecycle.migrations {
         match std::fs::read(root.join(seal.path.as_str())) {
@@ -180,6 +181,21 @@ pub fn inspect(project: &Project, selector: &str, datasource: Option<&str>) -> R
             selector,
             Some(("table", table.as_str())),
         ));
+    }
+    if let ResourceState::RenamePending { campaign, .. } = &lifecycle.state {
+        findings.push(finding(
+            "rename-campaign-awaiting-retirement",
+            format!(
+                "rolling rename campaign {} is waiting for the old application version to retire",
+                campaign.to_hex()
+            ),
+        ));
+        next_requests.push(CanonicalRequestSyntaxV1 {
+            command_path: vec!["rename".to_string(), "storage".to_string()],
+            positionals: vec![selector.to_string()],
+            options: BTreeMap::from([("complete".to_string(), vec![campaign.to_hex()])]),
+            flags: BTreeSet::from(["old-version-retired".to_string()]),
+        });
     }
     if matches!(
         consistency,

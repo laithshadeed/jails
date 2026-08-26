@@ -273,6 +273,7 @@ pub enum CanonicalMutationRequest {
         force: bool,
     },
     RenameResource(RenameResourceRequestV1),
+    CompleteStorageRename(CompleteStorageRenameRequestV1),
     AdoptLayout,
     FastTest,
     Format {
@@ -499,6 +500,7 @@ impl CanonicalMutationRequest {
             Self::SqlGenerate { .. } => 20,
             Self::ContractEmit { .. } => 21,
             Self::RenameResource(_) => 22,
+            Self::CompleteStorageRename(_) => 23,
         }
     }
 }
@@ -536,6 +538,7 @@ impl Codec for CanonicalMutationRequest {
                 encoder.bool(*force);
             }
             Self::RenameResource(request) => request.encode(encoder)?,
+            Self::CompleteStorageRename(request) => request.encode(encoder)?,
             Self::AdoptLayout | Self::FastTest => {}
             Self::Format { scopes } => {
                 encoder.set(scopes)?;
@@ -655,6 +658,7 @@ impl Codec for CanonicalMutationRequest {
                 json_schema: decoder.bool()?,
             },
             22 => Self::RenameResource(RenameResourceRequestV1::decode(decoder)?),
+            23 => Self::CompleteStorageRename(CompleteStorageRenameRequestV1::decode(decoder)?),
             other => Err(format!("unknown mutation request tag {other}"))?,
         })
     }
@@ -1121,6 +1125,15 @@ mod tests {
             api: ExternalRenamePolicy::Rename,
             target_route: Some(crate::application::RoutePath::parse("/entries").unwrap()),
         };
+        let completion = CompleteStorageRenameRequestV1 {
+            entity: intent_id(),
+            campaign: rename.campaign_id().unwrap(),
+            expected_path: JavaType::parse("com.example.domain.Entry").unwrap(),
+            current_table: SqlName::parse("notes").unwrap(),
+            target_table: SqlName::parse("entries").unwrap(),
+            code_stage_receipt: crate::identity::OperationId::from_bytes([7; codec::DIGEST_BYTES]),
+            old_version_retired: true,
+        };
 
         for request in [
             CanonicalMutationRequest::EvolveField(evolve),
@@ -1131,6 +1144,7 @@ mod tests {
                 force: true,
             },
             CanonicalMutationRequest::RenameResource(rename),
+            CanonicalMutationRequest::CompleteStorageRename(completion),
             CanonicalMutationRequest::SqlGenerate {
                 queries: BTreeSet::from([QueryId::new(
                     SliceName::parse("Billing").unwrap(),
@@ -1323,7 +1337,7 @@ mod tests {
     #[test]
     fn request_tags_match_the_specified_numbers() {
         let path = || ProjectPath::parse("x.txt").unwrap();
-        let cases: [(CanonicalMutationRequest, u8); 13] = [
+        let cases: [(CanonicalMutationRequest, u8); 14] = [
             (CanonicalMutationRequest::Sync { no_start: false }, 2),
             (CanonicalMutationRequest::AppInit { target: path() }, 5),
             (CanonicalMutationRequest::AppApply { no_start: false }, 6),
@@ -1403,6 +1417,22 @@ mod tests {
                     target_route: None,
                 }),
                 22,
+            ),
+            (
+                CanonicalMutationRequest::CompleteStorageRename(CompleteStorageRenameRequestV1 {
+                    entity: intent_id(),
+                    campaign: crate::lifecycle::RenameCampaignId::from_object(
+                        ObjectId::from_bytes([6; codec::DIGEST_BYTES]),
+                    ),
+                    expected_path: JavaType::parse("Entry").unwrap(),
+                    current_table: SqlName::parse("notes").unwrap(),
+                    target_table: SqlName::parse("entries").unwrap(),
+                    code_stage_receipt: crate::identity::OperationId::from_bytes(
+                        [7; codec::DIGEST_BYTES],
+                    ),
+                    old_version_retired: true,
+                }),
+                23,
             ),
         ];
         for (request, tag) in cases {

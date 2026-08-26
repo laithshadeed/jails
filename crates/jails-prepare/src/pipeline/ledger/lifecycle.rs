@@ -91,6 +91,9 @@ pub(in crate::pipeline) fn record_lifecycle(
     if let PlannedSubject::RenameResource(request) = context.subject {
         return record_resource_rename(store, &mut context, request);
     }
+    if let PlannedSubject::CompleteStorageRename(request) = context.subject {
+        return record_storage_rename_completion(store, &mut context, request);
+    }
     let Some(target) = Target::from_subject(context.subject) else {
         return adopt_new_scaffolds(store, &mut context);
     };
@@ -162,6 +165,9 @@ pub(in crate::pipeline) fn record_lifecycle(
                     target.entity
                 )
                 .into());
+            }
+            ResourceState::RenamePending { .. } => {
+                return Err("a resource with an active rename campaign cannot be revived.\n       fix: complete the campaign or keep using the current active resource".into());
             }
             ResourceState::Active => {
                 return Err(format!(
@@ -305,6 +311,13 @@ fn record_resource_rename(
     {
         return Err("the renamed identity already has lifecycle state.\n       fix: choose an unused logical name or reconcile the conflicting resource first".into());
     }
+    let EntityId::Intent(id) = &renamed.id else {
+        return Err("direct resource rename produced a non-intent identity.\n       fix: reconcile the application manifest before retrying".into());
+    };
+    let EntitySpec::Intent(spec) = &renamed.spec else {
+        return Err("direct resource rename produced a non-intent specification.\n       fix: reconcile the resource declaration before retrying".into());
+    };
+    let renamed_path = JavaType::new(id.package.clone(), id.name.clone());
 
     match request.strategy {
         RenameStrategy::PreserveTable => {
@@ -328,22 +341,80 @@ fn record_resource_rename(
             lifecycle.table = Some(TableBinding { table: target });
         }
         RenameStrategy::Rolling => {
-            return Err("storage rename state reached the preserve-only lifecycle recorder.\n       fix: prepare the coordinated storage plan again".into());
+            let current_table = lifecycle
+                .table
+                .as_ref()
+                .ok_or("rolling rename has no current table binding.\n       fix: adopt an explicit binding and prepare the campaign again")?
+                .table
+                .clone();
+            let target_table = request.target_table.clone().ok_or(
+                "rolling rename has no resolved target table.\n       fix: prepare the campaign again with its exact target",
+            )?;
+            lifecycle.state = ResourceState::RenamePending {
+                campaign: request.campaign_id()?,
+                from_logical: request.expected_path.clone(),
+                to_logical: renamed_path.clone(),
+                current_table,
+                target_table,
+                code_stage_receipt: context.operation,
+            };
         }
     }
-    let EntityId::Intent(id) = &renamed.id else {
-        return Err("direct resource rename produced a non-intent identity.\n       fix: reconcile the application manifest before retrying".into());
-    };
-    let EntitySpec::Intent(spec) = &renamed.spec else {
-        return Err("direct resource rename produced a non-intent specification.\n       fix: reconcile the resource declaration before retrying".into());
-    };
     lifecycle.entity = renamed.id.clone();
-    lifecycle.expected_path = JavaType::new(id.package.clone(), id.name.clone());
+    lifecycle.expected_path = renamed_path;
     lifecycle.last_spec = EntitySpec::Intent(spec.clone());
     store.lifecycles[position] = lifecycle;
     store
         .lifecycles
         .sort_by(|left, right| left.entity.cmp(&right.entity));
+    Ok(())
+}
+
+fn record_storage_rename_completion(
+    store: &mut jails_protocol::envelope::LedgerV2,
+    context: &mut LifecycleContext<'_>,
+    request: &jails_protocol::request::CompleteStorageRenameRequestV1,
+) -> Result<()> {
+    request.validate()?;
+    let position = store
+        .lifecycles
+        .iter()
+        .position(|lifecycle| lifecycle.entity == request.entity)
+        .ok_or("storage completion target has no lifecycle.\n       fix: restore the rolling campaign before retrying")?;
+    let mut lifecycle = store.lifecycles[position].clone();
+    if lifecycle.expected_path != request.expected_path {
+        return Err("storage completion is stale against the current logical path.\n       fix: use the current campaign reported by `resource status`".into());
+    }
+    let ResourceState::RenamePending {
+        campaign,
+        current_table,
+        target_table,
+        code_stage_receipt,
+        ..
+    } = &lifecycle.state
+    else {
+        return Err("storage completion target has no active rolling campaign.\n       fix: inspect `resource status` before retrying".into());
+    };
+    if campaign != &request.campaign
+        || current_table != &request.current_table
+        || target_table != &request.target_table
+        || code_stage_receipt != &request.code_stage_receipt
+    {
+        return Err("storage completion no longer matches the durable campaign.\n       fix: discard the stale plan and use the exact request from `resource status`".into());
+    }
+    let published = seal_migrations(&request.entity, &mut lifecycle.migrations, store, context)?;
+    if published.len() != 1 {
+        return Err(format!(
+            "storage completion expected one new forward migration, found {}.\n       fix: prepare exactly one table-rename migration",
+            published.len()
+        )
+        .into());
+    }
+    lifecycle.table = Some(TableBinding {
+        table: request.target_table.clone(),
+    });
+    lifecycle.state = ResourceState::Active;
+    store.lifecycles[position] = lifecycle;
     Ok(())
 }
 

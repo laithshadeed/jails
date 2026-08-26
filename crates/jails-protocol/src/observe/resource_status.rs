@@ -14,6 +14,7 @@ pub enum ResourceConsistency {
     RetiredStoragePresent,
     DropPending,
     DropObservedApplied,
+    RenamePending,
     Ambiguous,
 }
 
@@ -28,6 +29,7 @@ impl ResourceConsistency {
             Self::RetiredStoragePresent => "retired-storage-present",
             Self::DropPending => "drop-pending",
             Self::DropObservedApplied => "drop-observed-applied",
+            Self::RenamePending => "rename-pending",
             Self::Ambiguous => "ambiguous",
         }
     }

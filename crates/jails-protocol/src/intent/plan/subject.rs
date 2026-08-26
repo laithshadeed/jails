@@ -8,8 +8,8 @@ use crate::entity::{EntityId, OneShotId, OneShotSpec};
 use crate::identity::{JavaType, ProjectPath};
 use crate::ownership::{DesiredEntity, DesiredState, ReconcileScope};
 use crate::request::{
-    DestroyResourceRequestV2, EvolveFieldRequestV1, RenameResourceRequestV1,
-    RepairResourceRequestV1, ReviveResourceRequestV1,
+    CompleteStorageRenameRequestV1, DestroyResourceRequestV2, EvolveFieldRequestV1,
+    RenameResourceRequestV1, RepairResourceRequestV1, ReviveResourceRequestV1,
 };
 use jails_support::codec::{Codec, Decoder, Encoder, ordered};
 use std::collections::{BTreeMap, BTreeSet};
@@ -35,6 +35,7 @@ pub enum PlannedSubject {
         force: bool,
     },
     RenameResource(Box<RenameResourceRequestV1>),
+    CompleteStorageRename(Box<CompleteStorageRenameRequestV1>),
     AdoptLayout,
     Format {
         scopes: BTreeSet<ProjectPath>,
@@ -60,6 +61,7 @@ impl PlannedSubject {
             Self::AppInit { .. } => MaintenanceAttribution::AppInit,
             Self::Rename { .. } => MaintenanceAttribution::Rename,
             Self::RenameResource(_) => MaintenanceAttribution::Rename,
+            Self::CompleteStorageRename(_) => MaintenanceAttribution::Rename,
             Self::AdoptLayout => MaintenanceAttribution::AdoptLayout,
             Self::Format { .. } => MaintenanceAttribution::Format,
             Self::ContractProjection { .. } => MaintenanceAttribution::ContractProjection,
@@ -90,6 +92,7 @@ impl PlannedSubject {
             Self::GenerateQueries { .. } => 12,
             Self::ContractProjection { .. } => 13,
             Self::RenameResource(_) => 14,
+            Self::CompleteStorageRename(_) => 15,
         }
     }
 }
@@ -116,6 +119,7 @@ impl Codec for PlannedSubject {
                 Ok(())
             }
             Self::RenameResource(request) => request.encode(encoder),
+            Self::CompleteStorageRename(request) => request.encode(encoder),
             Self::AdoptLayout => Ok(()),
             Self::Format { scopes } => {
                 encoder.set(scopes)?;
@@ -172,6 +176,9 @@ impl Codec for PlannedSubject {
                 json_schema: decoder.bool()?,
             },
             14 => Self::RenameResource(Box::new(RenameResourceRequestV1::decode(decoder)?)),
+            15 => Self::CompleteStorageRename(Box::new(CompleteStorageRenameRequestV1::decode(
+                decoder,
+            )?)),
             other => Err(format!(
                 "unknown planned subject tag {other}.\n       fix: upgrade jails or restore \
                  compatible `.jails` state"

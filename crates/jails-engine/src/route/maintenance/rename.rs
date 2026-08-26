@@ -230,6 +230,24 @@ fn rename_with(
         });
     }
 
+    if let Some((_, request)) = &resource_request {
+        let (renamed, spec, _) = renamed_entities
+            .get(&request.entity)
+            .ok_or("resource rename did not resolve its output provenance.\n       fix: prepare the rename again from the adopted entity")?;
+        let EntityId::Intent(id) = renamed else {
+            return Err("resource rename provenance requires an intent identity.\n       fix: reconcile the resource declaration before retrying".into());
+        };
+        provenance::stamp_files(
+            &mut change,
+            project,
+            RendererId::Recipe(id.recipe),
+            Some(RenderedSubjectContext::Entity {
+                id: renamed.clone(),
+                spec: spec.clone(),
+            }),
+        )?;
+    }
+
     if let Some(cutover) = &cutover {
         let (_, request) = resource_request
             .as_ref()
@@ -536,11 +554,57 @@ pub fn rename_resource(run: &Run, invocation: RenameResourceInvocation<'_>) -> R
                 Some((selector.to_string(), request)),
             )
         }
-        jails_protocol::request::RenameStrategy::Rolling => Err(
-            "`rolling` requires a durable expand/contract campaign.\n       fix: use `--strategy preserve-table`, or prepare the rolling campaign after upgrading jails"
-                .into(),
-        ),
+        jails_protocol::request::RenameStrategy::Rolling => {
+            let conventional_current =
+                jails_protocol::identity::SqlName::conventional_table(&Name::parse(current)?);
+            let target = match target_table {
+                Some(target) => target,
+                None if current_table.table == conventional_current => {
+                    jails_protocol::identity::SqlName::conventional_table(&Name::parse(new)?)
+                }
+                None => {
+                    return Err(format!(
+                        "`{selector}` has explicit table binding `{}`.\n       fix: pass `--table <target-table>` or use `--strategy preserve-table`",
+                        current_table.table.as_str()
+                    )
+                    .into());
+                }
+            };
+            if target == current_table.table {
+                return Err(format!(
+                    "target table `{}` is already the current binding.\n       fix: choose a distinct target table or use `--strategy preserve-table`",
+                    target.as_str()
+                )
+                .into());
+            }
+            let mut request = request;
+            request.target_table = Some(target);
+            let campaign = request.campaign_id()?;
+            let outcome = rename_with(
+                run,
+                current,
+                new,
+                force,
+                Some((selector.to_string(), request)),
+            )?;
+            println!("rename-campaign: {}", campaign.to_hex());
+            println!(
+                "next: jails rename storage {slice}.{new} --complete {} --old-version-retired",
+                campaign.to_hex()
+            );
+            Ok(outcome)
+        }
     }
+}
+
+pub fn rename_storage(
+    run: &Run,
+    selector: &str,
+    campaign: &str,
+    old_version_retired: bool,
+    force: bool,
+) -> Result<Outcome> {
+    cutover::complete_storage_rename(run, selector, campaign, old_version_retired, force)
 }
 
 fn rename_strategy_name(strategy: jails_protocol::request::RenameStrategy) -> &'static str {

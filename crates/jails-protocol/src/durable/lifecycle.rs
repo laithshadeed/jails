@@ -8,6 +8,34 @@ use std::collections::BTreeSet;
 
 pub type ReceiptId = OperationId;
 
+/// Stable identifier for one durable rolling storage-rename campaign.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+pub struct RenameCampaignId(ObjectId);
+
+impl RenameCampaignId {
+    pub fn from_object(object: ObjectId) -> Self {
+        Self(object)
+    }
+
+    pub fn parse_hex(text: &str) -> Result<Self> {
+        ObjectId::parse_hex(text).map(Self)
+    }
+
+    pub fn to_hex(self) -> String {
+        self.0.to_hex()
+    }
+}
+
+impl Codec for RenameCampaignId {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        self.0.encode(encoder)
+    }
+
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(Self(ObjectId::decode(decoder)?))
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
 pub struct MigrationVersion(u32);
 
@@ -62,6 +90,14 @@ pub enum ResourceState {
         migration: ProjectPath,
         retired_by: ReceiptId,
     },
+    RenamePending {
+        campaign: RenameCampaignId,
+        from_logical: JavaType,
+        to_logical: JavaType,
+        current_table: SqlName,
+        target_table: SqlName,
+        code_stage_receipt: ReceiptId,
+    },
 }
 
 impl Codec for ResourceState {
@@ -83,6 +119,22 @@ impl Codec for ResourceState {
                 migration.encode(encoder)?;
                 retired_by.encode(encoder)
             }
+            Self::RenamePending {
+                campaign,
+                from_logical,
+                to_logical,
+                current_table,
+                target_table,
+                code_stage_receipt,
+            } => {
+                encoder.tag(3);
+                campaign.encode(encoder)?;
+                from_logical.encode(encoder)?;
+                to_logical.encode(encoder)?;
+                current_table.encode(encoder)?;
+                target_table.encode(encoder)?;
+                code_stage_receipt.encode(encoder)
+            }
         }
     }
 
@@ -95,6 +147,14 @@ impl Codec for ResourceState {
             2 => Self::RetiredDropPlanned {
                 migration: ProjectPath::decode(decoder)?,
                 retired_by: OperationId::decode(decoder)?,
+            },
+            3 => Self::RenamePending {
+                campaign: RenameCampaignId::decode(decoder)?,
+                from_logical: JavaType::decode(decoder)?,
+                to_logical: JavaType::decode(decoder)?,
+                current_table: SqlName::decode(decoder)?,
+                target_table: SqlName::decode(decoder)?,
+                code_stage_receipt: OperationId::decode(decoder)?,
             },
             other => Err(format!(
                 "unknown resource state tag {other}.\n       fix: upgrade jails or restore \
@@ -251,5 +311,24 @@ mod tests {
         let mut encoder = Encoder::new();
         let error = value.encode(&mut encoder).unwrap_err();
         assert!(error.to_string().contains("duplicate key"), "{error}");
+    }
+
+    #[test]
+    fn a_rolling_campaign_round_trips_inside_the_resource_lifecycle() {
+        let mut value = lifecycle();
+        value.state = ResourceState::RenamePending {
+            campaign: RenameCampaignId::from_object(ObjectId::from_bytes([9; codec::DIGEST_BYTES])),
+            from_logical: JavaType::parse("com.example.domain.Task").unwrap(),
+            to_logical: JavaType::parse("com.example.domain.WorkItem").unwrap(),
+            current_table: SqlName::parse("tasks").unwrap(),
+            target_table: SqlName::parse("work_items").unwrap(),
+            code_stage_receipt: OperationId::from_bytes([8; codec::DIGEST_BYTES]),
+        };
+        let mut encoder = Encoder::new();
+        value.encode(&mut encoder).unwrap();
+        let bytes = encoder.finish().unwrap();
+        let mut decoder = Decoder::new(&bytes).unwrap();
+        assert_eq!(ResourceLifecycleV1::decode(&mut decoder).unwrap(), value);
+        decoder.finish().unwrap();
     }
 }

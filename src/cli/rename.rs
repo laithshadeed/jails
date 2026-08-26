@@ -63,4 +63,18 @@ pub(crate) enum RenameCommand {
         #[arg(long)]
         force: bool,
     },
+    /// Complete the physical-storage stage of a rolling rename
+    Storage {
+        /// Current `<slice>.<resource>` identity
+        resource: String,
+        /// Exact durable campaign identifier
+        #[arg(long)]
+        complete: String,
+        /// Attest that no old application version can access the old table
+        #[arg(long)]
+        old_version_retired: bool,
+        /// Skip the confirmation prompt
+        #[arg(long)]
+        force: bool,
+    },
 }

@@ -2,8 +2,9 @@ use crate::Result;
 use crate::application::RoutePath;
 use crate::declaration::{FieldSpec, FieldType};
 use crate::entity::EntityId;
-use crate::identity::{JavaType, Name, ProjectPath};
-use jails_support::codec::{Codec, Decoder, Encoder};
+use crate::identity::{JavaType, Name, ObjectId, OperationId, ProjectPath};
+use crate::lifecycle::RenameCampaignId;
+use jails_support::codec::{self, Codec, Decoder, Encoder};
 
 pub use crate::identity::SqlName;
 
@@ -129,6 +130,14 @@ impl RenameResourceRequestV1 {
         }
         Ok(())
     }
+
+    pub fn campaign_id(&self) -> Result<RenameCampaignId> {
+        let mut encoder = Encoder::new();
+        self.encode(&mut encoder)?;
+        Ok(RenameCampaignId::from_object(ObjectId::from_bytes(
+            codec::domain_hash("JAILS-RENAME-CAMPAIGN-1", &encoder.finish()?),
+        )))
+    }
 }
 
 impl Codec for RenameResourceRequestV1 {
@@ -156,6 +165,58 @@ impl Codec for RenameResourceRequestV1 {
             target_table: decoder.option(SqlName::decode)?,
             api: ExternalRenamePolicy::decode(decoder)?,
             target_route: decoder.option(RoutePath::decode)?,
+        };
+        request.validate()?;
+        Ok(request)
+    }
+}
+
+/// Attested completion of the storage half of a rolling resource rename.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CompleteStorageRenameRequestV1 {
+    pub entity: EntityId,
+    pub campaign: RenameCampaignId,
+    pub expected_path: EntityPath,
+    pub current_table: SqlName,
+    pub target_table: SqlName,
+    pub code_stage_receipt: OperationId,
+    pub old_version_retired: bool,
+}
+
+impl CompleteStorageRenameRequestV1 {
+    pub fn validate(&self) -> Result<()> {
+        if !self.old_version_retired {
+            return Err("rolling storage completion requires the old-version-retired attestation.\n       fix: retire the old application version, then pass `--old-version-retired`".into());
+        }
+        if self.current_table == self.target_table {
+            return Err("rolling storage completion has identical current and target tables.\n       fix: inspect the active campaign and use its exact table identities".into());
+        }
+        Ok(())
+    }
+}
+
+impl Codec for CompleteStorageRenameRequestV1 {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        self.validate()?;
+        self.entity.encode(encoder)?;
+        self.campaign.encode(encoder)?;
+        self.expected_path.encode(encoder)?;
+        self.current_table.encode(encoder)?;
+        self.target_table.encode(encoder)?;
+        self.code_stage_receipt.encode(encoder)?;
+        encoder.bool(self.old_version_retired);
+        Ok(())
+    }
+
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        let request = Self {
+            entity: EntityId::decode(decoder)?,
+            campaign: RenameCampaignId::decode(decoder)?,
+            expected_path: JavaType::decode(decoder)?,
+            current_table: SqlName::decode(decoder)?,
+            target_table: SqlName::decode(decoder)?,
+            code_stage_receipt: OperationId::decode(decoder)?,
+            old_version_retired: decoder.bool()?,
         };
         request.validate()?;
         Ok(request)

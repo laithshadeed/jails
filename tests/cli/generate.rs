@@ -624,6 +624,122 @@ fn single_cutover_reports_reader_owned_sql_without_writing() {
 }
 
 #[test]
+fn rolling_rename_waits_for_attestation_then_completes_storage_forward() {
+    let root = temp_dir("resource-rename-rolling");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    let generated = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(generated.status.success(), "{generated:?}");
+
+    let staged = jails_cmd(&root, None)
+        .args([
+            "rename",
+            "resource",
+            "Billing.Task",
+            "WorkItem",
+            "--strategy",
+            "rolling",
+            "--force",
+        ])
+        .output()
+        .unwrap();
+    assert!(staged.status.success(), "{staged:?}");
+    let stdout = String::from_utf8_lossy(&staged.stdout);
+    let campaign = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("rename-campaign: "))
+        .expect("rolling rename reports its campaign");
+    assert_eq!(campaign.len(), 64, "{stdout}");
+    assert!(stdout.contains("--old-version-retired"), "{stdout}");
+    assert!(
+        !root
+            .join("src/main/resources/db/migration/V002__rename_tasks_to_work_items.sql")
+            .exists()
+    );
+    let adapter_path =
+        root.join("src/main/java/com/example/demo/adapters/JdbcWorkItemRepository.java");
+    let staged_adapter = fs::read_to_string(&adapter_path).unwrap();
+    assert!(staged_adapter.contains("from tasks"), "{staged_adapter}");
+
+    let status = jails_cmd(&root, None)
+        .args(["resource", "status", "WorkItem", "--output", "json"])
+        .output()
+        .unwrap();
+    assert!(status.status.success(), "{status:?}");
+    let status_json = String::from_utf8_lossy(&status.stdout);
+    assert!(
+        status_json.contains("\"state\":\"rename-pending\""),
+        "{status_json}"
+    );
+    assert!(status_json.contains(campaign), "{status_json}");
+
+    let before_refusal = snapshot_tree(&root);
+    let refused = jails_cmd(&root, None)
+        .args([
+            "rename",
+            "storage",
+            "Billing.WorkItem",
+            "--complete",
+            campaign,
+            "--force",
+        ])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success(), "{refused:?}");
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("old-version-retired"),
+        "{refused:?}"
+    );
+    assert_eq!(snapshot_tree(&root), before_refusal);
+
+    let completed = jails_cmd(&root, None)
+        .args([
+            "rename",
+            "storage",
+            "Billing.WorkItem",
+            "--complete",
+            campaign,
+            "--old-version-retired",
+            "--force",
+        ])
+        .output()
+        .unwrap();
+    assert!(completed.status.success(), "{completed:?}");
+    let migration =
+        root.join("src/main/resources/db/migration/V002__rename_tasks_to_work_items.sql");
+    assert!(migration.is_file());
+    let completed_adapter = fs::read_to_string(adapter_path).unwrap();
+    assert!(
+        completed_adapter.contains("from work_items"),
+        "{completed_adapter}"
+    );
+    assert!(
+        !completed_adapter.contains("from tasks"),
+        "{completed_adapter}"
+    );
+    let store = jails_commit::store::Store::at(&root)
+        .observe()
+        .unwrap()
+        .ledger
+        .unwrap();
+    let [lifecycle] = store.lifecycles.as_slice() else {
+        panic!("expected one lifecycle: {:?}", store.lifecycles);
+    };
+    assert!(matches!(
+        lifecycle.state,
+        jails_protocol::lifecycle::ResourceState::Active
+    ));
+    assert_eq!(
+        lifecycle.table.as_ref().unwrap().table.as_str(),
+        "work_items"
+    );
+    assert_eq!(lifecycle.migrations.len(), 2);
+}
+
+#[test]
 fn coordinated_resource_rename_reports_reader_owned_java_without_rewriting_it() {
     let root = temp_dir("resource-rename-manual-java");
     write_spring_fixture(&root);
