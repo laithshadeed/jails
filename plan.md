@@ -310,13 +310,20 @@ commit as the change that causes it.
 
 ## P4 — who assigns identity (cause B)
 
-- [ ] **P4.1** `g scaffold` **refuses without a primary key**. `rails g
+- [x] **P4.1** `g scaffold` **refuses without a primary key**. `rails g
       scaffold` gives you one whether you ask or not because it is not a
       preference; jails made it opt-in and a project that did not opt in got
       two tables with no primary key, a `findById` that throws if two rows
       match, and a compare-and-swap presented as atomic over a multi-row update
       (modern §4.1, §11.2). `create_table` already emits `primary key (id)`
-      when an `id` column exists — the gap is the refusal.
+      when an `id` column exists — the gap is the refusal. **Already shipped**
+      when this phase was reached: `scaffold::require_single_primary_key`
+      refuses both an implicit identity and a composite one before writing,
+      and `scaffold_refuses_an_implicit_or_composite_identity_before_writing`
+      pins both. That closes §4.1's third bullet too — with a declared `@pk`,
+      `migrations_declare_unique_key` finds the primary key and stops adding
+      `create unique index … on users (id)` just to give a foreign key a
+      target. Only the documents needed changing.
 - [ ] **P4.2** An assignment policy on the pk field —
       `ClientSupplied | ServerGenerated | DatabaseGenerated` — consumed by
       `create_table`, the use case, the request DTO and the in-memory fake.

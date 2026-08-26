@@ -80,44 +80,6 @@ rendered faithfully, plus `MessageService`, which §6.4 covers.
 
 ## 4. Migrations — the part that is actually dangerous
 
-### 4.1 No primary keys
-
-```sql
--- V001__create_users.sql
-create table users (
-  id     uuid        not null,     -- not a primary key
-  email  text        not null unique,
-  name   text
-);
-
--- V002__create_messages.sql   (no id column at all)
-create table messages (
-  user_id     uuid        not null,
-  message     text        not null,
-  is_read     boolean     not null,
-  direction   text        not null,
-  time_stamp  timestamptz not null
-);
-
--- V004__add_id_to_messages.sql
-alter table messages add column id uuid default gen_random_uuid() not null;
-```
-
-`messages.id` is a nullable-free `uuid` column with no unique constraint and no
-index. Everything downstream assumes it is a key:
-
-- `JdbcMessageRepository.findById` does `where id = :id` and calls `.optional()`
-  — which throws if two rows ever match.
-- `JdbcMarkAsReadTransition` runs `update … where id = :id and version = :version`
-  as a compare-and-swap. Without uniqueness that is a **multi-row update
-  presented as an atomic single-row CAS**.
-- `V003` adds `create unique index users_id_association_key on users (id)`
-  purely so the foreign key has a target. The right fix — `primary key` — was
-  available and one word shorter.
-
-`backend.md` §5: *"The schema is the last line of defence and the cheapest
-one."* Here it is not a line of defence at all.
-
 ### 4.2 uuidv4 as a key, on PostgreSQL 18
 
 `gen_random_uuid()` in the migration and `UUID.randomUUID()` in Java are both
@@ -618,26 +580,19 @@ by a single follow-up read rather than by two exception types.
 
 These are notes for jails, not changes.
 
-1. **`scaffold` has no non-negotiable core.** `rails g scaffold` gives you a
-   primary key, timestamps and an FK index whether you ask or not, because
-   those are not preferences. jails made all three opt-in (`@pk`,
-   `timestamps = true`, `indexes = [...]`), and a project that did not opt in
-   got two tables with no primary key and no index. **A scaffold with no
-   primary key should be a refusal, not an output.**
-
-2. **A `String` field with a small closed set should be challenged.**
+1. **A `String` field with a small closed set should be challenged.**
    `direction:String!` produced an unconstrained column, an unconstrained
    record, and a test fixture of `"sample"`. jails already has `g enum` and its
    own example manifest uses it here. Nothing pointed at it.
 
-3. **Evolution regenerates the schema but not the code that was derived from
+2. **Evolution regenerates the schema but not the code that was derived from
    it.** `g field id` wrote `V004` and left `InMemoryUserRepository.findById`
    returning `Optional.empty()` with a TODO saying the type has no id, and left
    `MessageRepository.findById(String)` typed against an id that is now a
    `UUID`. A generated file whose stated premise has become false should be
    re-planned or reported, not left with a comment contradicting the code beside it.
 
-4. **The generated prose is asserted, never checked.** "keyed on the `email`
+3. **The generated prose is asserted, never checked.** "keyed on the `email`
    component" (it is not), "ordering per entity" (it is not), "scoped matches
    cannot mutate another tenant's row" (there is no scope), "this type has no
    `id` component" (it has one). Comments that restate a decision are the
