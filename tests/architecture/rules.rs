@@ -371,6 +371,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-drive", "bench", 8),
     ("jails-drive", "reports", 8),
     ("jails-drive", "lint", 8),
+    ("jails-drive", "datasource", 8),
     ("jails-drive", "live_sql", 8),
     // jails-cli: the binary and the whole-project lifecycle commands.
     ("jails", "new", 9),

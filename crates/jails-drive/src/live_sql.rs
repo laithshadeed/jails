@@ -1,25 +1,18 @@
 //! Explicit, read-only PostgreSQL evidence for managed SQL queries.
 
+pub use crate::datasource::LiveServices;
 use jails_project::compose::{self, PostgresConnect};
 use jails_project::model::Project;
 use jails_project::query_workspace::CheckedQuery;
 use jails_protocol::database::{
-    CatalogSnapshot, QualifiedSqlName, SchemaObject, SchemaObjectId, SchemaObjectKind,
-    SchemaProvenance, SchemaSnapshot, SqlDialect, SqlTypeName,
+    CatalogSnapshot, QualifiedSqlName, ResolvedDatasource, SchemaObject, SchemaObjectId,
+    SchemaObjectKind, SchemaProvenance, SchemaSnapshot, SqlDialect, SqlTypeName,
 };
 use jails_protocol::identity::{ObjectId, SqlName};
 use jails_support::Result;
 use jails_support::codec::domain_hash;
 use jails_support::process::{CommandSpec, Diagnostics, OutputMode};
 use std::collections::{BTreeMap, BTreeSet};
-use std::time::Duration;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum LiveServices {
-    Existing,
-    Start,
-    None,
-}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LiveDescription {
@@ -44,13 +37,20 @@ pub fn check(
     let database = connect(project, datasource, services, debug)?;
     queries
         .iter()
-        .map(|query| describe(&database.conn, query, database.server_major, debug))
+        .map(|query| {
+            describe(
+                &database.conn,
+                query,
+                u32::from(database.resolved.server_major),
+                debug,
+            )
+        })
         .collect()
 }
 
 struct LiveDatabase {
     conn: PostgresConnect,
-    server_major: u32,
+    resolved: ResolvedDatasource,
 }
 
 fn connect(
@@ -59,40 +59,29 @@ fn connect(
     services: LiveServices,
     debug: bool,
 ) -> Result<LiveDatabase> {
-    if datasource != "postgres" {
-        return Err(format!(
-            "unknown live datasource `{datasource}`.\n       fix: select the declared Compose datasource with `--datasource postgres`."
-        )
-        .into());
-    }
-    if services == LiveServices::None {
-        return Err(
-            "live SQL checking is disabled by `--services none`.\n       fix: use `--services existing`, or explicitly allow startup with `--services start`."
-                .into(),
-        );
-    }
+    let candidate = crate::datasource::select(project, datasource, services)?;
     if !crate::process::on_path("psql") {
         return Err(
             "psql not on PATH.\n       fix: install the PostgreSQL client and try again.".into(),
         );
     }
-    let yaml = compose::read(project.root())?;
-    let conn = compose::postgres_connect(&yaml).ok_or_else(|| {
-        "datasource `postgres` is not declared in compose.yaml.\n       fix: run `jails add db`, or select a declared datasource."
-            .to_string()
-    })?;
-    if services == LiveServices::Start {
-        if !compose::up(project.root(), &["postgres"], debug) {
-            return Err(
-                "could not start datasource `postgres`.\n       fix: inspect the Compose error above, then retry."
-                    .into(),
-            );
-        }
-        wait_until_ready(&conn, debug)?;
-    }
+    let server_major = server_major(&candidate.connection, debug)
+        .map_err(|failure| candidate.unavailable(&failure))?;
+    let resolved = candidate.finish(server_major)?;
+    Ok(LiveDatabase {
+        conn: candidate.connection,
+        resolved,
+    })
+}
 
-    let server_major = server_major(&conn, debug)?;
-    Ok(LiveDatabase { conn, server_major })
+/// Resolve and probe an already available datasource without starting it.
+pub fn resolve(
+    project: &Project,
+    datasource: &str,
+    services: LiveServices,
+    debug: bool,
+) -> Result<ResolvedDatasource> {
+    Ok(connect(project, datasource, services, debug)?.resolved)
 }
 
 /// Observe a bounded PostgreSQL catalog into stable identities. Observation is
@@ -117,9 +106,7 @@ pub fn observe(
     Ok(SchemaSnapshot {
         catalog: CatalogSnapshot::new(SqlDialect::PostgreSql, objects, Vec::new())?,
         provenance: SchemaProvenance::Live {
-            server_major: u16::try_from(database.server_major).map_err(|_| {
-                "PostgreSQL server major overflows u16.\n       fix: upgrade jails for this server version."
-            })?,
+            server_major: database.resolved.server_major,
             database_fingerprint: fingerprint,
         },
         ignored_schemas: ["information_schema", "pg_catalog", "pg_toast"]
@@ -692,19 +679,3 @@ FROM observed
 ORDER BY kind, schema_name, parent_name, object_name, d1, d2, d3, d4, d5, d6, d7;
 ROLLBACK;
 "#;
-
-fn wait_until_ready(conn: &PostgresConnect, debug: bool) -> Result<()> {
-    let mut last = String::new();
-    for attempt in 0..120 {
-        match psql(conn, "SELECT 1;\n", debug && attempt == 0) {
-            Ok(_) => return Ok(()),
-            Err(error) => last = error.to_string(),
-        }
-        std::thread::sleep(Duration::from_millis(250));
-    }
-    Err(format!(
-        "postgres at {}:{} did not accept connections within 30 seconds -- last error: {last}.\n       fix: inspect the declared service and retry when it is ready.",
-        conn.host, conn.port
-    )
-    .into())
-}

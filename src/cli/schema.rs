@@ -33,7 +33,7 @@ pub(crate) enum IntrospectCommand {
         /// Result projection
         #[arg(long, value_enum, default_value = "human")]
         format: IntrospectFormatArg,
-        /// Whether observation may start declared services
+        /// Existing-service policy; start is refused until `jails start` is run explicitly
         #[arg(long, value_enum, default_value = "existing")]
         services: RunServicesArg,
     },

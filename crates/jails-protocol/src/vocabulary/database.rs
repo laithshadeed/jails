@@ -10,6 +10,8 @@ use jails_support::codec::{Codec, Decoder, Encoder, domain_hash};
 
 mod catalog;
 pub use catalog::*;
+mod datasource;
+pub use datasource::*;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
 pub enum SqlDialect {

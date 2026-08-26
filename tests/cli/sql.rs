@@ -78,6 +78,19 @@ esac
     .unwrap();
 }
 
+fn write_unreachable_psql(dir: &Path, log: &Path, hostile_stderr: &str) {
+    write_fake_maven(dir, &["psql"], log);
+    fs::write(
+        dir.join("psql"),
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nprintf '%s\\n' '{}' >&2\nexit 2\n",
+            log.display(),
+            hostile_stderr
+        ),
+    )
+    .unwrap();
+}
+
 fn hex(value: &str) -> String {
     value
         .as_bytes()
@@ -376,6 +389,70 @@ fn live_check_without_a_datasource_refuses_before_starting_a_client() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(read_log(&log).is_empty(), "psql ran without a datasource");
+    assert_eq!(snapshot_tree(&root), before);
+}
+
+#[test]
+fn live_check_never_starts_a_declared_service() {
+    let root = sql_fixture("sql-live-no-start");
+    add_postgres_datasource(&root, "secret");
+    let fake = temp_dir("sql-live-no-start-bin");
+    let log = fake.join("clients.log");
+    write_fake_maven(&fake, &["docker", "psql"], &log);
+    let before = snapshot_tree(&root);
+
+    let output = jails_cmd(&root, Some(&fake))
+        .args([
+            "sql",
+            "check",
+            "--live",
+            "--datasource",
+            "postgres",
+            "--services",
+            "start",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("do not start services"), "{stderr}");
+    assert!(
+        read_log(&log).is_empty(),
+        "a client was launched: {}",
+        read_log(&log)
+    );
+    assert_eq!(snapshot_tree(&root), before);
+}
+
+#[test]
+fn unreachable_environment_datasource_reports_only_the_redacted_endpoint() {
+    let root = sql_fixture("sql-live-unreachable");
+    let fake = temp_dir("sql-live-unreachable-bin");
+    let log = fake.join("psql.log");
+    write_unreachable_psql(&fake, &log, "hostile diagnostic: s3cr3t orders alice");
+    let before = snapshot_tree(&root);
+
+    let output = jails_cmd(&root, Some(&fake))
+        .env(
+            "DEV_DATABASE_URL",
+            "postgresql://alice:s3cr3t@[::1]:5544/orders",
+        )
+        .args(["sql", "check", "--live", "--datasource", "DEV_DATABASE_URL"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("service-unavailable"), "{stderr}");
+    assert!(stderr.contains("[::1]:5544"), "{stderr}");
+    for secret in ["s3cr3t", "orders", "alice", "postgresql://"] {
+        assert!(!stderr.contains(secret), "leaked `{secret}`: {stderr}");
+    }
+    assert!(
+        !read_log(&log).is_empty(),
+        "psql was not used as the reachability probe"
+    );
     assert_eq!(snapshot_tree(&root), before);
 }
 
