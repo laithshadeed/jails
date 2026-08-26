@@ -670,7 +670,9 @@ pub(crate) const SCRATCH_RS: &str = "jails-support/src/scratch.rs";
 /// refusal carry the exact valid spelling to retry.
 /// 426 → 425 when the durable-job identity refusal named the satisfiable
 /// use-case change instead of asking for a payload the command rejects.
-pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 425;
+/// 425 → 424 when colliding generated field names gained an actionable rename
+/// instruction.
+pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 424;
 
 /// A refusal that builds a message and does not say what to do next.
 ///

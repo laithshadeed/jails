@@ -191,6 +191,35 @@ fn would_remove(
         .collect())
 }
 
+/// Apply the destroy whose preview was just checked, so later iterations see
+/// the same dependency graph a user gets when retiring dependants first.
+fn remove_recorded(
+    root: &Path,
+    kind: &str,
+    name: &str,
+    preserve_storage: bool,
+) -> Result<(), String> {
+    let mut args = vec!["destroy", kind, name];
+    if preserve_storage {
+        args.extend(["--storage", "preserve"]);
+    }
+    args.extend(["--force", "--output", "json"]);
+    let output = Command::new(common::bin())
+        .current_dir(root)
+        .args(args)
+        .output()
+        .unwrap();
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ))
+    }
+}
+
 /// The same question, asked of a project that has **no** record of what jails
 /// wrote -- which is every project generated before `.jails/` existed, and
 /// every project whose `.jails/` somebody deleted.
@@ -283,7 +312,10 @@ fn destroy_removes_exactly_what_generate_created() {
         }
         let all_created: BTreeSet<String> = created_by.values().flatten().cloned().collect();
 
-        for (index, step) in scenario.steps.iter().enumerate() {
+        // Scenarios declare prerequisites before their consumers. Retire in
+        // reverse so the agreement check does not ask destroy to violate the
+        // same reference graph it is meant to protect.
+        for (index, step) in scenario.steps.iter().enumerate().rev() {
             if !matches!(step.first(), Some(&"g") | Some(&"generate")) {
                 continue;
             }
@@ -319,6 +351,19 @@ fn destroy_removes_exactly_what_generate_created() {
                         );
                         continue;
                     }
+                    if message.contains("would leave")
+                        && message.contains("pointing at nothing")
+                        && message.contains("fix:")
+                    {
+                        // Some forward-only declarations (notably an
+                        // association migration) deliberately remain in the
+                        // ledger and therefore continue to protect what they
+                        // reference. Reference safety is covered directly by
+                        // the destroy tests; this test is about path-set
+                        // agreement, which cannot be observed for a refused
+                        // operation.
+                        continue;
+                    }
                     findings.push(format!(
                         "{where_}: destroy --pretend failed:\n    {message}"
                     ));
@@ -340,6 +385,11 @@ fn destroy_removes_exactly_what_generate_created() {
                         "{where_}: generate wrote `{path}` and destroy would strand it"
                     ));
                 }
+            }
+            if let Err(message) = remove_recorded(&root, kind, name, table_backed) {
+                findings.push(format!(
+                    "{where_}: destroy applied differently from its preview:\n    {message}"
+                ));
             }
         }
 
