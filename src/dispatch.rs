@@ -128,6 +128,20 @@ pub(crate) fn mutate_confirmed(
     let discovering = std::time::Instant::now();
     let project = model::Project::discover()?;
     let discover_time = discovering.elapsed();
+    // Finish an interrupted transaction before any route reads the store.
+    //
+    // The executor recovers under the lock as well, but from there it can only
+    // tell the caller its plan is stale -- and the routes that build their own
+    // change set commit it directly, with no replan loop to catch that. So a
+    // torn write left every subsequent command answering "run it again" while
+    // the tear stayed on disk. One recovery here settles the project for
+    // whatever plans next, and it still rides in the envelope, so `--output
+    // json` says what was finished.
+    let recovered = if invocation.pretend {
+        Vec::new()
+    } else {
+        jails_engine::route::finish_interrupted(&project)?
+    };
     fn configure(
         mut run: jails_engine::route::Run<'_>,
         no_start: bool,
@@ -151,7 +165,8 @@ pub(crate) fn mutate_confirmed(
                 invocation.debug,
             ),
             &bytes,
-        )?;
+        )?
+        .after_recovery(recovered);
         drop_compiled_shadows(&project, &outcome);
         return report(
             &outcome,
@@ -218,9 +233,19 @@ pub(crate) fn mutate_confirmed(
         no_start,
         invocation.debug,
     );
-    let outcome = match portable {
-        Some(bytes) => jails_engine::route::apply_plan(&run, &bytes)?,
-        None => route(&run)?,
+    let routed = match portable {
+        Some(bytes) => jails_engine::route::apply_plan(&run, &bytes),
+        None => route(&run),
+    };
+    // A refusal after recovery is still a refusal, but the reader has to be
+    // told what the project just did on its own -- otherwise the command that
+    // finished an interrupted transaction reports only that the component it
+    // was asked to add is already there, which reads as nothing happening.
+    // On the success path the recovery rides in the envelope instead, so it is
+    // said once either way and `--output json` carries it.
+    let outcome = match routed {
+        Ok(outcome) => outcome.after_recovery(recovered),
+        Err(error) => return Err(said_after_recovery(error, &recovered)),
     };
     drop_compiled_shadows(&project, &outcome);
     report(
@@ -230,6 +255,24 @@ pub(crate) fn mutate_confirmed(
         invocation.review(),
         invocation.debug,
     )
+}
+
+/// A failure, prefixed with what recovery finished before it.
+fn said_after_recovery(
+    error: jails_support::Failure,
+    recovered: &[jails_prepare::recovery::RecoveryOutcome],
+) -> jails_support::Failure {
+    let lines: Vec<String> = recovered
+        .iter()
+        .flat_map(|outcome| outcome.changes.iter())
+        .map(|change| format!("recovered {}", jails_prepare::report::recovery_line(change)))
+        .collect();
+    match (lines.is_empty(), error.message()) {
+        (true, _) | (_, None) => error,
+        (false, Some(message)) => {
+            jails_support::Failure::Told(format!("{}\n{message}", lines.join("\n")))
+        }
+    }
 }
 
 fn read_plan(path: impl AsRef<std::path::Path>) -> Result<Vec<u8>> {

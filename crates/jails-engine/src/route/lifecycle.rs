@@ -126,6 +126,27 @@ pub fn repair(run: &Run, selector: &str, datasource: Option<&str>) -> Result<Out
     let project = run.project();
     let store = observed(project)?;
     let lifecycle = selected_lifecycle(&store, selector)?.clone();
+    // An interrupted transaction is finished by running the command again,
+    // not by adopting the half-applied state. `--strategy roll-forward` takes
+    // what is on disk as the new recorded base, so running it here recorded
+    // the tear as the truth: `doctor` went green over a project whose every
+    // insert named a column no migration had created.
+    //
+    // A repair *after* the interrupted transaction has finished is an ordinary
+    // repair, so this refuses only while one is actually pending.
+    if let Some(journal) = jails_commit::store::Store::at(project.root())
+        .unfinished_transactions()
+        .first()
+    {
+        return Err(format!(
+            "transaction {} started and did not finish, so what is on disk is a half-applied \
+             commit rather than a projection to repair.\n       fix: run the command that was \
+             interrupted again -- it finishes the transaction before doing anything new -- and \
+             repair afterwards only if `jails doctor` still reports drift.",
+            journal.transaction
+        )
+        .into());
+    }
     if !matches!(lifecycle.state, ResourceState::Active) {
         return Err(format!(
             "resource `{selector}` is retired, so repair cannot recreate its projections.\n       \

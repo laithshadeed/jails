@@ -52,3 +52,9 @@ target/
 # Ignored rather than deleted, so a local scratch copy costs nothing -- the
 # same bargain `/deps/` gets.
 /playground/
+
+# Reference clones for assessing generated output. Not this project's code.
+# `git add -A` would otherwise file one as a gitlink -- 81 of those went out
+# in a commit once, and nobody could clone any of them.
+/my-minicom/
+/minicom-jails/

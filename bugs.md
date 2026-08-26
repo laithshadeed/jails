@@ -59,7 +59,7 @@ Closed by `e3c7041`, mid-pass:
 - **B43** `jails add format` re-records the bytes `spotless:apply` rewrites, so
   `doctor` goes from eight unexplained drift warnings to `26 checks, all clear`.
 
-**Still broken, re-reproduced verbatim at `e3c7041`:** B5, B14, B18.
+**Every report in this file is now closed.**
 
 Closed after that pass, in the same session:
 
@@ -103,102 +103,28 @@ Closed after that pass, in the same session:
   what was missing was `--wait`. `up -d --wait --wait-timeout 120` returns when
   PostgreSQL is *healthy* (`pg_isready`) rather than merely running, which is
   what `jails run` was racing.
+- **B18** the write phase was transactional the whole time and nothing called
+  it. `recover_locked`, the journal states, the roll-forward pass and
+  `CommitResult::RecoveredPriorTransaction` had all existed since §R4.4 with a
+  replan loop waiting for them, and no route ever invoked one -- so a torn
+  write stayed torn for the life of the project. Recovery now runs once at the
+  entry point every mutating command shares, before any route reads the store,
+  so the next command finishes what the last one started whether or not it is
+  the same command. `doctor` reports the pending transaction as one fact rather
+  than five accusations, and `resource repair` cannot reach the adoption path
+  while one is open.
+- **B5 / B14** three questions, all asked now. Every migration a resource
+  sealed is checked against its bytes on disk -- which is what closes the
+  verified blind spot, since a migration written by `jails resource field`
+  carries no renderer stamp and was outside the managed-output check entirely.
+  On top of the seals, a bounded replay of the sealed lineage answers *does a
+  recorded entity's field list match the columns its migrations created*, and
+  reports a component with no column and a column no component claims. It reads
+  only digest-verified bytes jails published and **unknown widens**: a statement
+  outside the handful `jails-generate::sql` emits leaves the answer silent
+  rather than confidently wrong.
 
 **No jails source, test, build or doc file was modified while reproducing.**
-
----
-
-## B18 — a failed write tears the transaction in half, and the repair verb then adopts the tear
-
-**Severity: critical. This is the most important report in the file.** Triggered
-by anything that makes one path unwritable mid-transaction — a root-owned
-directory, a full disk, NFS, an IDE lock.
-
-```
-jails new b9 --offline --no-git && cd b9 && jails add db
-jails g scaffold Order id:uuid@pk total:decimal
-chmod 555 src/main/resources/db/migration
-jails g field Order zzz:string?
-```
-```
-jails: a file could not be read (could not publish .../V002__add_zzz_to_orders.sql:
-       Permission denied (os error 13)).
-       fix: make it readable and run the command again.
-```
-
-The command failed. The project did not roll back:
-
-```
-Order.java                 : 2 occurrences of zzz
-JdbcOrderRepository.java   : 5 occurrences of zzz
-migrations creating zzz    : 0
-```
-
-Then the advertised repair makes the tear the recorded truth:
-
-```
-$ jails doctor
-30 checks: 0 failing, 5 warning(s)          # the five torn files, as "changed"
-
-$ jails resource repair Order --strategy roll-forward
-applied acb420e0…   ledger replace
-
-$ jails doctor
-25 checks, all clear.
-
-$ grep -o 'insert into orders ([^)]*)' .../JdbcOrderRepository.java
-insert into orders (id, total, zzz)
-```
-
-`doctor` is green, `mvn verify` is green, and every insert fails at runtime with
-`column "zzz" does not exist`.
-
-**Expected:** the write phase is already transactional — there is a journal and a
-blocked-recovery state, so the machinery exists. A publish that cannot complete
-must roll back or roll forward, never stop half-applied. And `resource repair`
-must distinguish *bytes jails wrote and lost track of* from *bytes jails wrote
-and should never have written*; today both are "adopt what is on disk".
-
----
-
-## B5 / B14 — nothing checks that a recorded entity's fields match the columns its migrations created
-
-**Severity: medium as a report, critical as the enabling gap.** *B5 and B14 are
-merged: they were always one question.*
-
-`doctor` answers **"are these the bytes jails wrote"** — a `managed <Entity>`
-check reports a recorded output that is missing (`FAIL`) or edited since the last
-commit (`warn`), and it catches a hand-deleted adapter and a hand-deleted create
-migration. That is real and it works.
-
-It does not answer **"is this project coherent"**. Three questions are still
-unasked, and each one is the exact hole a report above escapes through:
-
-- does a recorded entity's field list match the columns its migrations created?
-  (**B18** and **B2** both end green because of this one)
-- is there a `create table` in the migrations with no live entity claiming it?
-  (**B22** produces exactly this)
-- do the record, the request DTO, the JDBC insert and the fixture agree on the
-  component list?
-
-`capability_drift_checks` already does this shape of work for capabilities by
-re-planning; entities have no equivalent.
-
-The existing check also has a verified blind spot: **a migration written by
-`jails resource field` is not recorded as managed output.**
-
-```
-$ rm src/main/resources/db/migration/V002__rename_borower_to_borrower.sql
-$ jails doctor
-34 checks: 0 failing, 8 warning(s)       # not one of them is the deleted file
-
-$ rm src/main/resources/db/migration/V001__create_loans.sql
-$ jails doctor
-… 2 failing                              # the create migration is caught
-```
-
-`jails sync` is also still not the command its name promises: it prints
-`applied … ledger replace` over a missing file and restores nothing.
 
 ---
 
@@ -276,41 +202,41 @@ unless noted.
 
 ## The shape of it
 
-*Rewritten at `e3c7041`. Fifteen reports were deleted this pass — the previous
-version's first theme is gone entirely.*
+*Rewritten at `d1c67f1`+. Every numbered report in this file is closed; what
+follows is why, kept because the reasons outlive the entries.*
 
-**The migration seal has its escape hatch now.** B1, B3, B12 and B33 were one
-gap — a create migration could not be superseded, so re-creating a destroyed
-entity, changing a field and undoing a typo all dead-ended at the same refusal.
-`jails resource field` and forward drop/create migrations closed all four. That
-was the largest single theme in this file and it is closed.
+**The migration seal has its escape hatch.** B1, B3, B12 and B33 were one gap —
+a create migration could not be superseded, so re-creating a destroyed entity,
+changing a field and undoing a typo all dead-ended at the same refusal. `jails
+resource field` and forward drop/create migrations closed all four.
 
-What is left divides in two.
-
-**1. One question is unasked, and everything else that ends badly ends there.**
+**One question was unasked, and everything that ended badly ended there.**
 *Does a recorded entity's field list match the columns its migrations created?*
-`doctor` can answer "are these the bytes jails wrote" and cannot answer this.
-**B18** reaches a green `doctor` over a project whose every insert fails; **B2**
-reaches the same state through a rename that exits 0; **B22** leaves an orphan
-table nothing claims. Three different roads, one missing check at the end of all
-of them. It is also the check that would make the repair verb safe, because
-"adopt what is on disk" is only wrong when what is on disk is incoherent.
+B18 reached a green `doctor` over a project whose every insert failed; B2
+reached the same state through a rename that exited 0; B22 left an orphan table
+nothing claimed. Three roads, one missing check at the end of all of them — and
+it is the check that makes the repair verb safe, because "adopt what is on
+disk" is only wrong when what is on disk is incoherent. It exists now, over
+digest-verified sealed migrations, and widens to silence rather than guessing.
 
-**2. The recovery surface still disagrees with itself.** **B41** is the clean
-case: `doctor` names `resource repair`, `repair` says the resource is retired and
-names `revive`, `revive` answers with an internal planning term, and the entity in
-question is fully present on disk. **B37** is the same shape with two commands
-each naming the other. Every one of these is a pair of commands reading the same
-store and answering differently — cheap to detect, and corrosive out of
-proportion to the code behind it, because the reader cannot tell which answer to
-believe.
+**The write phase was transactional and nothing called it.** B18's cause turned
+out to be one missing invocation rather than missing machinery, which is the
+most useful thing this file recorded: a protocol with no caller passes every
+test written about the protocol. The control against a repeat is that recovery
+now happens at the one entry point every mutating command shares, so a route
+cannot forget it by being written after the fact.
 
-**And the declarative path is a tier behind the imperative one.** **B20** (a
-field cannot be added to a manifest entity) and **B22** (a manifest deletion skips
-the storage ceremony) are the same gap seen from both ends: `app apply` has no
-route to the field-evolution and storage-policy machinery the CLI grew. The
-manifest is the surface the proof applications and `new --app` are built on, so it
-is not a side path.
+**Two commands reading one store must not answer differently.** B41 was the
+clean case — `doctor` named `resource repair`, `repair` named `revive`, and
+`revive` answered with an internal planning term over an entity fully present
+on disk. B37 was the same shape with two commands each naming the other. Cheap
+to detect and corrosive out of proportion to the code behind it, because the
+reader cannot tell which answer to believe.
+
+**The declarative path was a tier behind the imperative one.** B20 and B22 were
+one gap from both ends: `app apply` had no route to the field-evolution and
+storage-policy machinery the CLI grew. The manifest is the surface the proof
+applications and `new --app` are built on, so it was never a side path.
 
 ## Coverage
 

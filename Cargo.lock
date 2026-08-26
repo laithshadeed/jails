@@ -334,6 +334,7 @@ name = "jails-report"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "jails-commit",
  "jails-generate",
  "jails-java",
  "jails-project",

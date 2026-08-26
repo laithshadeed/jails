@@ -92,6 +92,7 @@ mod support;
 pub use app::{Intent, app_apply};
 pub use artifact::{RequestedStorageRetirement, destroy, generate, recipe, recipe_with_field_data};
 pub use capability::{install, remove, sync};
+pub use commit::finish_interrupted;
 pub use contract::contract_emit;
 pub use declare::{add_dependency, set_property, undeclare};
 pub use feature::{install_fast_test, remove_fast_test};

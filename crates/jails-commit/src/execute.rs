@@ -169,6 +169,35 @@ pub fn commit(
     crate::fault::trip("after-lock")
         .map_err(|failure| CommitError::PreActivationIo(failure.to_string()))?;
 
+    // Step 1a. Finish whatever an earlier run started and did not complete,
+    // *before* planning anything new against the project it left behind.
+    //
+    // This crate has had crash recovery, its journal states and its
+    // roll-forward pass since §R4.4, with `RecoveredPriorTransaction` on
+    // `CommitResult` and a replan loop in the caller waiting for it -- and
+    // nothing called it. A write that stopped part-way therefore stayed
+    // half-applied for the life of the project: jails' own newer bytes on
+    // disk, the ledger at the older state, `doctor` reporting five generated
+    // files as the developer's edits, and `resource repair --strategy
+    // roll-forward` offering to adopt them. The machinery was all there; the
+    // call was not.
+    let recovered = crate::recover::recover_locked(locked).map_err(|error| match error {
+        crate::outcome::RecoveryError::RecoveryBlocked(reason) => {
+            CommitError::RecoveryBlocked(reason)
+        }
+        crate::outcome::RecoveryError::CorruptMachineState(why) => {
+            CommitError::CorruptMachineState(why)
+        }
+        crate::outcome::RecoveryError::MutationBusy(why) => CommitError::MutationBusy(why),
+        crate::outcome::RecoveryError::Io(why) => CommitError::PreActivationIo(why),
+    })?;
+    // The plan was made against the project as it was *before* that cleanup,
+    // so it is stale rather than wrong. The caller reloads and replans once,
+    // which is what `RecoveredPriorTransaction` is for.
+    if !recovered.is_clean() {
+        return Ok(CommitResult::RecoveredPriorTransaction(Box::new(recovered)));
+    }
+
     // Step 2. Recheck every guard under the lock. A mismatch is stale, and
     // stale is a refusal — commit never substitutes changed operations.
     recheck(locked, change)?;

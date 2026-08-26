@@ -230,7 +230,8 @@ pub(crate) fn apply_in(root: &Path, no_start: bool, debug: bool) -> Result<Appli
     if debug {
         run = run.with_debug();
     }
-    let outcome = declared(&run, None)?;
+    let recovered = jails_engine::route::finish_interrupted(&project)?;
+    let outcome = declared(&run, None)?.after_recovery(recovered);
     let committed = outcome.is_committed();
     match crate::dispatch::report(
         &outcome,

@@ -37,7 +37,11 @@ const BODY: &[u8] = b"class App {}\n";
 const AT: &str = "src/main/java/App.java";
 
 fn one_create() -> PreparedChange {
-    let after = ObjectRef::new(ObjectId::from_bytes(sha256(BODY)), BODY.len() as u64);
+    create_at(AT, BODY)
+}
+
+fn create_at(at: &str, body: &'static [u8]) -> PreparedChange {
+    let after = ObjectRef::new(ObjectId::from_bytes(sha256(body)), body.len() as u64);
     let operation_identity = OperationIdentityV1 {
         snapshot: ObjectId::from_bytes(sha256(b"snapshot")),
         operation_context: OperationContextFingerprint::default(),
@@ -61,7 +65,7 @@ fn one_create() -> PreparedChange {
         preparation: PreparationContextFingerprint::default(),
         input_preconditions: Vec::new(),
         operations: vec![FileOp::Create {
-            path: ProjectPath::parse(AT).unwrap(),
+            path: ProjectPath::parse(at).unwrap(),
             after,
             mode: FileMode::new(0o644).unwrap(),
             contributors: BTreeSet::new(),
@@ -74,7 +78,7 @@ fn one_create() -> PreparedChange {
             .collect(),
         ledger_before: FileImage::Absent,
         ledger_after: FileImage::Absent,
-        objects: BTreeMap::from([(ObjectId::from_bytes(sha256(BODY)), Arc::from(BODY.to_vec()))]),
+        objects: BTreeMap::from([(ObjectId::from_bytes(sha256(body)), Arc::from(body.to_vec()))]),
         post_commit: Vec::new(),
         kind: PreparedKind::Apply,
     };
@@ -171,6 +175,60 @@ fn every_named_failpoint_converges() {
 
         scratch.close().unwrap();
     }
+}
+
+/// The next command finishes the interrupted one, without being asked to.
+///
+/// This suite has always called `recover_locked` itself, which is why it was
+/// green for as long as it was: the roll-forward pass, the journal states and
+/// `CommitResult::RecoveredPriorTransaction` all worked, and nothing in the
+/// engine ever called them. A write that stopped part-way therefore stayed
+/// half-applied for the life of the project. The assertion that matters here
+/// is the absent one -- no `recover_twice` between the two commits.
+#[test]
+fn an_interrupted_transaction_is_finished_by_the_next_command_not_left_half_applied() {
+    let (scratch, locked) = project();
+    let change = one_create();
+    let interrupted = change.transaction_id;
+    {
+        let _armed = Armed::at("after-journal-active");
+        commit(&locked, &bundle(&locked, change)).unwrap_err();
+    }
+    assert!(
+        !scratch.path().join(AT).exists(),
+        "the interrupted commit published its file anyway"
+    );
+    assert_eq!(
+        locked.handle().store().unfinished_transactions().len(),
+        1,
+        "the interruption left nothing to recover, so this test proves nothing"
+    );
+
+    // An unrelated second command over the same project. It never reaches its
+    // own guards: recovery runs first and the caller is told to replan.
+    let result = commit(
+        &locked,
+        &bundle(
+            &locked,
+            create_at("src/main/java/Other.java", b"class Other {}\n"),
+        ),
+    )
+    .unwrap();
+    assert!(
+        matches!(result, CommitResult::RecoveredPriorTransaction(_)),
+        "{result:?}"
+    );
+
+    assert!(
+        scratch.path().join(AT).exists(),
+        "the interrupted transaction was not rolled forward"
+    );
+    assert!(locked.handle().store().receipt(&interrupted).exists());
+    assert!(
+        locked.handle().store().unfinished_transactions().is_empty(),
+        "recovery left the journal behind"
+    );
+    scratch.close().unwrap();
 }
 
 /// The instant that divides the protocol, from both sides.

@@ -351,6 +351,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     // jails-report: commands that answer a question. Read-only by contract,
     // and below `jails-drive` so the contract is structural.
     ("jails-report", "doctor", 7),
+    ("jails-report", "schema_lineage", 7),
     ("jails-report", "diagnostic", 7),
     ("jails-report", "why", 7),
     ("jails-report", "why_subject", 7),

@@ -15,6 +15,46 @@ pub(super) fn observed(project: &Project) -> Result<ObservedStore> {
     jails_commit::store::Store::at(project.root()).observe()
 }
 
+/// Finish an interrupted transaction *before* anything plans against the
+/// project, and say what it finished.
+///
+/// The executor recovers under the lock too, and has since §R4.4. What it
+/// cannot do from there is make the caller's plan true again: by the time the
+/// lock is taken the request has already been measured against the project the
+/// interruption left behind, so the only honest answer is `RecoveredPrior-
+/// Transaction` — replan. [`commit`] below does exactly that, but twelve
+/// routes assemble their own `DesiredChangeSet` and call [`commit_set`]
+/// directly, and for those the replan had nowhere to happen: the reader was
+/// told to run the command again, and running it again said the same thing
+/// until the recovery finally settled.
+///
+/// Recovering here, once, at the entry point every mutating command shares,
+/// means every route plans against a settled project and the commit-time pass
+/// is the race backstop it was designed to be — two processes, not two phases
+/// of one.
+///
+/// Read-only when there is nothing to do: the lock is taken only after the
+/// journal says a transaction is unfinished, so the ordinary command pays one
+/// directory read.
+pub fn finish_interrupted(project: &Project) -> Result<Vec<RecoveryOutcome>> {
+    if jails_commit::store::Store::at(project.root())
+        .unfinished_transactions()
+        .is_empty()
+    {
+        return Ok(Vec::new());
+    }
+    let handle = ProjectHandle::at(project.root())?;
+    let locked =
+        LockedProject::acquire(handle, "finish an interrupted transaction").map_err(describe)?;
+    let outcome =
+        jails_commit::recover::recover_locked(&locked).map_err(|error| error.to_string())?;
+    Ok(if outcome.is_clean() {
+        Vec::new()
+    } else {
+        vec![outcome]
+    })
+}
+
 /// Steps 3 and 5 to 7: capture, prepare, lock, commit.
 ///
 /// Replans exactly once, and §R3.4 says why once: recovery may have finished

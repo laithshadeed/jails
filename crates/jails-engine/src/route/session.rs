@@ -294,7 +294,7 @@ impl Outcome {
     }
 
     /// The same outcome, carrying what recovery finished on the way.
-    pub(super) fn after_recovery(self, recovery: Vec<RecoveryOutcome>) -> Self {
+    pub fn after_recovery(self, recovery: Vec<RecoveryOutcome>) -> Self {
         match (self, recovery.is_empty()) {
             (outcome, true) => outcome,
             (Self::Committed(result, review, timings, fingerprint), false) => {

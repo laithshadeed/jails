@@ -139,6 +139,31 @@ impl Store {
         self.receipts().join(id.to_hex())
     }
 
+    /// Transactions that started and did not finish, newest first.
+    ///
+    /// Read-only, and deliberately available to `doctor`: a half-applied
+    /// transaction is the one state where jails' own output on disk is
+    /// legitimately not what the ledger records, and every command that
+    /// mutates already recovers it under the lock before doing anything new.
+    /// Without a way to *ask*, the read-only reports had no choice but to
+    /// describe the half-applied files as changes the developer made -- and to
+    /// offer a repair that adopts them, which turns an interruption into the
+    /// recorded truth.
+    pub fn unfinished_transactions(&self) -> Vec<crate::journal::JournalV1> {
+        let Ok(entries) = std::fs::read_dir(self.transactions()) else {
+            return Vec::new();
+        };
+        let mut pending: Vec<crate::journal::JournalV1> = entries
+            .flatten()
+            .filter(|entry| entry.path().is_dir())
+            .filter_map(|entry| crate::journal::JournalV1::read(&entry.path()).ok())
+            .filter(|journal| !matches!(journal.state, crate::journal::JournalState::Complete))
+            .collect();
+        pending.sort_by_key(|journal| journal.generation);
+        pending.reverse();
+        pending
+    }
+
     /// Read and authenticate one published receipt.
     pub fn read_receipt(&self, id: &TransactionId) -> Result<crate::journal::ReceiptV1> {
         let path = self.receipt(id);

@@ -22,6 +22,7 @@ pub mod doctor;
 pub mod explain;
 pub mod lifecycle_status;
 mod managed_drift;
+mod schema_lineage;
 pub mod source;
 pub mod why;
 pub mod why_subject;

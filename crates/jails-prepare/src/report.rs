@@ -708,7 +708,7 @@ fn state_label(state: &EffectState) -> &'static str {
     }
 }
 
-fn recovery_line(change: &crate::recovery::RecoveryChange) -> String {
+pub fn recovery_line(change: &crate::recovery::RecoveryChange) -> String {
     use crate::recovery::RecoveryChange;
     match change {
         RecoveryChange::Transaction {

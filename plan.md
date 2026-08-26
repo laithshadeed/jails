@@ -82,16 +82,23 @@ is rolled forward by the next unrelated command, `doctor` names the pending
 transaction instead of green-lighting it, `resource repair` refuses while one
 is open, and a deleted or edited sealed migration is reported.
 
-- [ ] **P0.1** Fix the three gates. `("jails-report", "schema_lineage", 7)` is
+- [x] **P0.1** Fix the three gates. `("jails-report", "schema_lineage", 7)` is
       already added to `LAYERS` in `tests/architecture/rules.rs`. Remaining:
       the `doctor` module-lines ratchet (1479 vs ceiling 1477 — raise once with
       the reason recorded beside it in `tests/architecture/board.rs`), and
       `core_generation_stays_free_of_showcase_vocabulary` (add the new files to
       the `ledger` allow-list in `tests/genericity.rs` with a reason).
-- [ ] **P0.2** Regression tests: an interrupted transaction recovered on the
-      next command; the seal + lineage checks.
-- [ ] **P0.3** Delete **B18** and **B5/B14** from `bugs.md`; delete
-      research.md §0.1 and roadmap items 1 and 2. Commit, push.
+- [x] **P0.2** Regression tests: an interrupted transaction recovered on the
+      next command; the seal + lineage checks. Writing the first one surfaced
+      the real shape of B18: recovery inside `execute::commit` can only tell
+      its caller the plan is stale, and **twelve routes call `commit_set`
+      directly** with no replan loop to catch that — so a torn write answered
+      "run the command again" forever. `route::finish_interrupted` now runs
+      once in `dispatch::mutate_confirmed`, before any route reads the store,
+      and a refusal after it still says what recovery finished.
+- [x] **P0.3** Deleted **B18** and **B5/B14** from `bugs.md` — every numbered
+      report in that file is now closed — and research.md §0.1, §0.3 and
+      roadmap items 1, 2 and 4 (§0.3's manifest routing landed with B20/B22).
 
 ## P1 — the controls, as a block (cause D)
 

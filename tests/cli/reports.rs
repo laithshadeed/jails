@@ -360,6 +360,167 @@ fn doctor_reports_missing_and_changed_managed_outputs_with_repair_guidance() {
     );
 }
 
+/// The verified blind spot in `bugs.md` B5/B14: a migration written by
+/// `jails resource field` carries no renderer stamp, so it is not *managed
+/// output* and deleting it left `doctor` reporting all clear -- while deleting
+/// the neighbouring create migration, written by `g scaffold`, was caught.
+/// Published schema history is sealed with its content digest, and the seal is
+/// the authority the check was missing.
+#[test]
+fn doctor_reports_a_sealed_migration_that_was_deleted_or_edited() {
+    let root = temp_dir("doctor-migration-seals");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    assert!(
+        jails_cmd(&root, None)
+            .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        jails_cmd(&root, None)
+            .args(["resource", "field", "add", "Task", "priority:int?"])
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let clean = jails_cmd(&root, None).arg("doctor").output().unwrap();
+    let report = String::from_utf8_lossy(&clean.stdout).to_string();
+    assert!(!report.contains("sealed migration"), "{report}");
+
+    // The command's own migration, not the scaffold's -- the exact file the
+    // old check could not see.
+    let evolution = root.join("src/main/resources/db/migration/V002__add_priority_to_tasks.sql");
+    let sealed = fs::read(&evolution).unwrap();
+    fs::remove_file(&evolution).unwrap();
+    let output = jails_cmd(&root, None).arg("doctor").output().unwrap();
+    assert!(!output.status.success());
+    let report = String::from_utf8_lossy(&output.stdout);
+    assert!(report.contains("migrations Task"), "{report}");
+    assert!(
+        report.contains("V002__add_priority_to_tasks.sql` is missing"),
+        "{report}"
+    );
+    assert!(
+        report.contains("jails resource repair Task --strategy roll-forward"),
+        "{report}"
+    );
+
+    // An edit is a different fact from a deletion, and must not be answered
+    // with a command that silently discards it.
+    fs::write(&evolution, sealed).unwrap();
+    let created = root.join("src/main/resources/db/migration/V001__create_tasks.sql");
+    fs::write(&created, b"-- corrected by hand\nselect 1;\n").unwrap();
+    let output = jails_cmd(&root, None).arg("doctor").output().unwrap();
+    assert!(!output.status.success());
+    let report = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        report.contains("V001__create_tasks.sql` differs from the bytes jails published"),
+        "{report}"
+    );
+    assert!(report.contains("append-only"), "{report}");
+}
+
+/// `bugs.md` B18, as the reproduction that found it: make one path unwritable
+/// mid-transaction and the write phase stops half-applied.
+///
+/// The two answers this pins are the ones that were wrong. `doctor` used to
+/// describe the five half-written files as the developer's edits and point at
+/// `resource repair --strategy roll-forward`, which adopts them as the
+/// recorded truth -- a green `doctor` over a project whose every insert names
+/// a column no migration created. There is one fact to report, and the repair
+/// verb must decline while it is true.
+fn a_read_only_directory_refuses_a_write(under: &std::path::Path) -> bool {
+    let probe = under.join("readonly-probe");
+    fs::create_dir_all(&probe).unwrap();
+    let mut mode = fs::metadata(&probe).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut mode, 0o555);
+    fs::set_permissions(&probe, mode).unwrap();
+    let refused = fs::write(probe.join("x"), b"x").is_err();
+    let mut mode = fs::metadata(&probe).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut mode, 0o755);
+    fs::set_permissions(&probe, mode).unwrap();
+    fs::remove_dir_all(&probe).unwrap();
+    refused
+}
+
+#[test]
+fn doctor_names_an_interrupted_transaction_and_repair_declines_to_adopt_it() {
+    let root = temp_dir("doctor-interrupted");
+    if !a_read_only_directory_refuses_a_write(&root) {
+        // Root ignores the mode bits, and so do some filesystems. Probing is
+        // the honest test: asserting on the uid would claim to know why.
+        common::skip("this user can write into a read-only directory");
+        return;
+    }
+    write_spring_fixture(&root);
+    let migrations = root.join("src/main/resources/db/migration");
+    fs::create_dir_all(&migrations).unwrap();
+    assert!(
+        jails_cmd(&root, None)
+            .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let sealed = fs::metadata(&migrations).unwrap().permissions();
+    let mut locked = sealed.clone();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut locked, 0o555);
+    fs::set_permissions(&migrations, locked).unwrap();
+    let torn = jails_cmd(&root, None)
+        .args(["resource", "field", "add", "Task", "priority:int?"])
+        .output()
+        .unwrap();
+    assert!(!torn.status.success(), "the write was not torn");
+
+    let output = jails_cmd(&root, None).arg("doctor").output().unwrap();
+    let report = String::from_utf8_lossy(&output.stdout);
+    assert!(!output.status.success(), "{report}");
+    assert!(report.contains("started and did not finish"), "{report}");
+    assert!(report.contains("run the same command again"), "{report}");
+    assert!(
+        report.contains("Do not run `jails resource repair`"),
+        "{report}"
+    );
+
+    // The advertised repair used to adopt the half-applied state as the
+    // recorded truth. It must not get that far: recovery is attempted first
+    // and cannot finish while the path is unwritable, so the command stops
+    // with the reason and the project is left exactly as it was.
+    let repair = jails_cmd(&root, None)
+        .args(["resource", "repair", "Task", "--strategy", "roll-forward"])
+        .output()
+        .unwrap();
+    assert!(!repair.status.success(), "{repair:?}");
+    let still = jails_cmd(&root, None).arg("doctor").output().unwrap();
+    let report = String::from_utf8_lossy(&still.stdout);
+    assert!(report.contains("started and did not finish"), "{report}");
+
+    // Unblocked, the ordinary next command finishes what was interrupted --
+    // an unrelated one, because the point is that nobody has to know which
+    // command was torn.
+    fs::set_permissions(&migrations, sealed).unwrap();
+    let again = jails_cmd(&root, None)
+        .args(["g", "record", "Note", "body:string!"])
+        .output()
+        .unwrap();
+    assert!(again.status.success(), "{again:?}");
+    let said = String::from_utf8_lossy(&again.stdout);
+    assert!(said.contains("recovered"), "{said}");
+    assert!(
+        root.join("src/main/resources/db/migration/V002__add_priority_to_tasks.sql")
+            .exists(),
+        "the interrupted transaction's migration was not published"
+    );
+    let cleared = jails_cmd(&root, None).arg("doctor").output().unwrap();
+    let report = String::from_utf8_lossy(&cleared.stdout);
+    assert!(cleared.status.success(), "{report}");
+    assert!(!report.contains("did not finish"), "{report}");
+}
+
 #[test]
 fn doctor_reports_resolved_developer_tool_paths_and_versions() {
     let root = temp_dir("doctor-tools");

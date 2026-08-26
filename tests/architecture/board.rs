@@ -628,7 +628,15 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // and the repair is `jails sync` rather than a rule against the
                 // order. A check whose reason is not written down is one the
                 // next reader deletes as noise.
-                ceiling: 1477,
+                //
+                // 1477 -> 1479 for the two lines that call the coherence
+                // checks -- `migration_seal_checks` and
+                // `schema_lineage_checks`. Both bodies live in their own
+                // modules (`managed_drift.rs`, `schema_lineage.rs`), so what
+                // this row sees is only the two `checks.extend(..)` calls.
+                // That is the shape rung 9 wants: `doctor` keeps the report and
+                // the derivation moves out.
+                ceiling: 1479,
                 // Withdrawn, not reached. abstract.md §8.0.1 audits all ten
                 // checks: none is a re-encoded dependency fact, so the 700
                 // measured a saving that is not there. Ratchet against growth.

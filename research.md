@@ -72,28 +72,6 @@ Everything below is what remains.
 
 ## Section 0: Where the work actually is now
 
-### 0.1 One missing check accounts for most of the remaining harm
-
-The dogfooding ledger (`bugs.md`, rechecked at this same HEAD) closed fifteen
-reports and left eight. Three of the survivors — B18, B2, B22 — are different
-roads to one destination: a project where `doctor` is green, `mvn verify` is
-green, and every insert fails at runtime because the Java names a column no
-migration creates.
-
-The enabling gap is a question nothing asks:
-
-> **does a recorded entity's field list match the columns its migrations
-> created?**
-
-`doctor` answers *"are these the bytes jails wrote"*. `capability_drift_checks`
-already does the harder shape of work for capabilities — it re-plans, purely,
-and reports what the plan wants and the project lacks. Entities have no
-equivalent, and every projection needed to build one already exists in
-`jails-generate`'s planning half.
-
-This is the highest-leverage remaining item in the whole report, and it is
-smaller than anything else on this list.
-
 ### 0.2 The second theme is oracles that disagree
 
 `bugs.md` B41 and B37 are one shape: two or three commands read the same store
@@ -107,16 +85,7 @@ the developer's edits. That is the pattern to copy — **the command that change
 the bytes is the command that re-records them** — and the same reasoning applies
 to anything else that rewrites owned output as a side effect.
 
-### 0.3 The declarative path is a tier behind the imperative one
-
-`app apply` has no route to the field-evolution or storage-policy machinery the
-CLI grew (`bugs.md` B20 and B22). Since `new --app` and the whole proof-app
-portfolio run on the manifest, this is not a side path. The fix is routing, not
-new mechanism: an added or changed field in a `[[generate]]` block should build
-the same canonical request `jails resource field add` builds, and a removed block
-should require the same storage policy `destroy` requires.
-
-### 0.4 Constraints that still hold
+### 0.3 Constraints that still hold
 
 - Generated migrations are forward-only; file recovery is roll-forward. This RFC
   does not add generated down migrations or database undo.
@@ -137,10 +106,10 @@ should require the same storage policy `destroy` requires.
 |---:|---|---|---|
 | 1 | SQL Contract Compiler | **shipped** | — |
 | 2 | Evidence-Carrying Prepared Diffs | **shipped** | — |
-| 3 | Safe Resource Lifecycle and Coordinated Rename | **mostly shipped** | the coherence check (§0.1); the logical→physical column binding (§3.10); rename reachable without slices (§4.2) |
+| 3 | Safe Resource Lifecycle and Coordinated Rename | **mostly shipped** | the logical→physical column binding (§3.10); rename reachable without slices (§4.2) |
 | 4 | Unified Fast Test and Run Loop | **Maven only** | warm-engine parity for Gradle (§5.1) |
 | 5 | Maven/Gradle Behavioral Parity | **partial** | §5.1 |
-| 6 | Existing App-Manifest Extension | **open** | §4.1, §4.2, §4.7, and the routing in §0.3 |
+| 6 | Existing App-Manifest Extension | **open** | §4.1, §4.2, §4.7 |
 | 7 | Bounded Schema Observation | **shipped** | — |
 | 8 | Evidence-Bounded Diagnostics | **shipped** | — |
 | 9 | Generated Test Economy | **partial** | §4.6 — `g factory` exists; states, seeds and the repository contract test do not |
@@ -591,28 +560,19 @@ contract test should land together or the layout changes twice.
 Six phases shipped. What is left is small enough to sequence in one list, ordered
 by leverage rather than by phase number.
 
-1. **The entity coherence check** (§0.1). Re-plan a recorded entity and compare
-   its field list to the columns its migrations create. Closes the enabling gap
-   behind `bugs.md` B18, B2 and B22. *Exit gate:* the B18 reproduction — a torn
-   transaction adopted by `resource repair` — reports a failure rather than
-   `25 checks, all clear`.
-2. **Transactional integrity of the write phase** (`bugs.md` B18, B45). A publish
-   that cannot complete rolls back or forward, never stops half-applied; a failed
-   post-commit effect never unmakes the commit.
-3. **Oracle agreement** (§0.2). A conformance test over every `fix:` command the
+1. **Oracle agreement** (§0.2). A conformance test over every `fix:` command the
    scenario suite emits.
-4. **Manifest routing** (§0.3). `app apply` reaches field evolution and storage
-   policy.
-5. **The column binding** (§3.10). Unblocks `--column preserve` and makes item 1
-   cheap.
-6. **The repository contract test** (§4.6). One interface, two adapters, one
+2. **The column binding** (§3.10). Unblocks `--column preserve`, and gives the
+   entity coherence check a recorded binding to compare *through* instead of
+   re-deriving the column from the field name.
+3. **The repository contract test** (§4.6). One interface, two adapters, one
    failing test when they drift.
-7. **Frozen conflict `continue`/`abort`** (§3.3). The durable state machine.
-8. **Slices** (§4.2), then the extended field grammar (§4.1), then policy
+4. **Frozen conflict `continue`/`abort`** (§3.3). The durable state machine.
+5. **Slices** (§4.2), then the extended field grammar (§4.1), then policy
    matrices (§4.7). In that order: the grammar and the policy form both name
    slices.
-9. **Gradle warm-engine parity** (§5.1), gated on installing a `gradle` binary.
-10. **Semantic readiness** (§2.4c), **service identity labels** (§2.4b),
+6. **Gradle warm-engine parity** (§5.1), gated on installing a `gradle` binary.
+7. **Semantic readiness** (§2.4c), **service identity labels** (§2.4b),
     **test-dependency hints** (§2.4a), **the shared source index** (§2.3) — each
     behind a dated measurement, not an assumption.
 
@@ -641,7 +601,7 @@ application services.
 | `jails-project` | the shared source index (§2.3), compose readiness probes | starting long-running tools, durable commits |
 | `jails-generate` | the repository contract test, factory states, seeds, policy projections | anything that writes |
 | `jails-prepare` | the pending-conflict half of §3.3 | a second mutation engine |
-| `jails-report` | the entity coherence check | starting anything — it is below `jails-drive` by design |
+| `jails-report` | further coherence checks over recorded state | starting anything — it is below `jails-drive` by design |
 
 ---
 
