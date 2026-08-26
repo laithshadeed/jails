@@ -717,7 +717,7 @@ impl OneShotSpec {
                     target: t,
                     field: f,
                 },
-            ) => target == t && field == &f.name,
+            ) => target == t && f.name == *field,
             (OneShotId::Migration { path }, Self::Migration { path: p, .. }) => path == p,
             (OneShotId::Cases { source }, Self::Cases { source: s, .. }) => source == s,
             _ => false,

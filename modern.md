@@ -58,30 +58,6 @@ These were run, not inferred.
 
 ## 3. Naming — the loudest problem, and the cheapest to fix
 
-### 3.1 snake_case components in a Java record
-
-```java
-public record Message(UUID user_id, String message, boolean is_read,
-                      String direction, Instant time_stamp, UUID id, long version) {
-```
-
-`message.is_read()`. `message.time_stamp()`. `command.user_id()`. This is not a
-style quibble — it is the first thing any Java reviewer sees, and it makes the
-whole tree read as machine output rather than as code someone wrote.
-
-The cause is mechanical: the field spec was typed as `user_id:uuid
-is_read:boolean time_stamp:timestamptz`, and jails renders the spec name
-verbatim as the Java component name *and* the SQL column name. jails' own
-`examples/minicom/.jails/app.toml` uses `userId`, `isRead`, `timeStamp` — so
-the tool is capable of the right output and simply has no opinion about which
-it gets.
-
-**What it should do:** the spec name is a *concept*, and the two renderings are
-different. `userId` → Java `userId`, SQL `user_id`. `user_id` → Java `userId`,
-SQL `user_id`. Both spellings converge, and a Java identifier that cannot be
-produced by convention is the only case worth an error. There is no reading of
-"idiomatic Java" in which `is_read()` is an accessor.
-
 ### 3.2 Names that carry no meaning
 
 | Generated | Problem | Better |
@@ -98,17 +74,6 @@ produced by convention is the only case worth an error. There is no reading of
 `backend.md` §8 bans `Helper`, `Manager`, `Util`, `Processor` because they are
 "a bag of unrelated functions with no invariant." `Default…UseCase` and
 `…QueryPort` are the same failure wearing hexagonal-architecture clothes.
-
-### 3.3 Three naming conventions inside one five-component record
-
-```java
-public record MessageCreatedEvent(UUID id, UUID messageId, UUID user_id,
-                                  String message, Instant occurredAt) {
-```
-
-`id`, `messageId` (camel), `user_id` (snake), `occurredAt` (camel). Two of
-these came from a template and two from the field spec, and nothing reconciled
-them.
 
 ---
 
@@ -652,32 +617,26 @@ by a single follow-up read rather than by two exception types.
 
 These are notes for jails, not changes.
 
-1. **The field spec is rendered verbatim into three languages that have three
-   conventions.** One concept should produce `userId` in Java, `user_id` in
-   SQL, and whatever the wire format wants. Rendering the input string into all
-   three is why `is_read()` is an accessor. This is the highest-value single
-   fix in the list.
-
-2. **`scaffold` has no non-negotiable core.** `rails g scaffold` gives you a
+1. **`scaffold` has no non-negotiable core.** `rails g scaffold` gives you a
    primary key, timestamps and an FK index whether you ask or not, because
    those are not preferences. jails made all three opt-in (`@pk`,
    `timestamps = true`, `indexes = [...]`), and a project that did not opt in
    got two tables with no primary key and no index. **A scaffold with no
    primary key should be a refusal, not an output.**
 
-3. **A `String` field with a small closed set should be challenged.**
+2. **A `String` field with a small closed set should be challenged.**
    `direction:String!` produced an unconstrained column, an unconstrained
    record, and a test fixture of `"sample"`. jails already has `g enum` and its
    own example manifest uses it here. Nothing pointed at it.
 
-4. **Evolution regenerates the schema but not the code that was derived from
+3. **Evolution regenerates the schema but not the code that was derived from
    it.** `g field id` wrote `V004` and left `InMemoryUserRepository.findById`
    returning `Optional.empty()` with a TODO saying the type has no id, and left
    `MessageRepository.findById(String)` typed against an id that is now a
    `UUID`. A generated file whose stated premise has become false should be
    re-planned or reported, not left with a comment contradicting the code beside it.
 
-5. **The generated prose is asserted, never checked.** "keyed on the `email`
+4. **The generated prose is asserted, never checked.** "keyed on the `email`
    component" (it is not), "ordering per entity" (it is not), "scoped matches
    cannot mutate another tenant's row" (there is no scope), "this type has no
    `id` component" (it has one). Comments that restate a decision are the

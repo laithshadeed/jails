@@ -691,17 +691,16 @@ mod tests {
 
     #[test]
     fn sql_column_collisions_refuse_at_the_declaration_edge() {
-        for (tokens, column) in [
-            (vec!["id:uuid@pk", "Id:string"], "id"),
-            (vec!["userId:uuid", "user_id:string"], "user_id"),
+        for (tokens, java, column) in [
+            (vec!["id:uuid@pk", "Id:string"], "id", "id"),
+            (vec!["userId:uuid", "user_id:string"], "userId", "user_id"),
         ] {
             let tokens = tokens.into_iter().map(str::to_string).collect::<Vec<_>>();
             let error =
                 IntentSpec::parse(Recipe::Scaffold, &tokens, &[], false, &base()).unwrap_err();
-            for token in &tokens {
-                assert!(error.contains(token.split(':').next().unwrap()), "{error}");
-            }
+            assert!(error.contains(java), "{error}");
             assert!(error.contains(column), "{error}");
+            assert!(error.contains("declared twice"), "{error}");
         }
     }
 

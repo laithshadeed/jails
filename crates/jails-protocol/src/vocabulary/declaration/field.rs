@@ -10,7 +10,7 @@
 //! every drift bug in this repository's history.
 
 use crate::Result;
-use crate::identity::{JavaType, Name, Package, SqlName};
+use crate::identity::{FieldName, JavaType, Name, Package};
 use jails_support::codec::{Codec, Decoder, Encoder};
 
 /// A built-in scalar, or a type the project owns.
@@ -434,7 +434,7 @@ impl Codec for FieldConstraints {
 /// One declared field, fully resolved.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct FieldSpec {
-    pub name: Name,
+    pub name: FieldName,
     pub field_type: FieldType,
     pub optionality: Optionality,
     pub constraints: FieldConstraints,
@@ -481,9 +481,10 @@ impl FieldSpec {
         let (name, rest) = token
             .split_once(':')
             .ok_or_else(|| format!("field `{token}` needs a `name:type`"))?;
-        let name = Name::parse(name)?;
-        reject_record_component_name(name.as_str())?;
-        reject_sql_keyword(name.as_str())?;
+        // `FieldName` owns both renderings and every check that reads one
+        // of them -- the reserved words on the Java side, the PostgreSQL
+        // keywords on the SQL side. plan.md P3.1.
+        let name = FieldName::parse(name)?;
 
         let mut parts = rest.split('@');
         let head = parts.next().unwrap_or_default();
@@ -581,7 +582,7 @@ impl FieldSpec {
             Optionality::Nullable => jails_spec::spec::Optionality::Nullable,
         };
         jails_spec::spec::derive_field(
-            self.name.as_str(),
+            self.name.java(),
             &self.field_type.canonical(),
             optionality,
             constraints,
@@ -620,21 +621,22 @@ impl FieldSpec {
 }
 
 /// Rules that only become visible after every component has been parsed.
+///
+/// **One check, not two.** This used to compare the declared names and then
+/// compare their snake_case columns, because `userId` and `user_id` were two
+/// fields that shared one column. Under [`FieldName`] they are one field --
+/// the column is the normal form and the Java name is derived from it -- so
+/// the collision arrives here already collapsed, and the second check was a
+/// branch nothing could reach. plan.md P3.1.
 pub(super) fn validate_field_names(fields: &[FieldSpec]) -> Result<()> {
     for (index, field) in fields.iter().enumerate() {
         for previous in &fields[..index] {
             if previous.name == field.name {
-                return Err(format!("field `{}` is declared twice", field.name).into());
-            }
-            let previous_column = SqlName::conventional_column(&previous.name);
-            let column = SqlName::conventional_column(&field.name);
-            if previous_column == column {
                 return Err(format!(
-                    "fields `{}` and `{}` both map to SQL column `{}`.\n       \
-                     fix: rename one field so its snake_case SQL name is unique.",
-                    previous.name,
+                    "field `{}` is declared twice; it is one field with one Java name and one \
+                     SQL column `{}`, however it is spelled.\n       fix: declare it once.",
                     field.name,
-                    column.as_str()
+                    field.name.column().as_str()
                 )
                 .into());
             }
@@ -643,38 +645,6 @@ pub(super) fn validate_field_names(fields: &[FieldSpec]) -> Result<()> {
     Ok(())
 }
 
-fn reject_record_component_name(name: &str) -> Result<()> {
-    if matches!(
-        name,
-        "clone"
-            | "equals"
-            | "finalize"
-            | "getClass"
-            | "hashCode"
-            | "notify"
-            | "notifyAll"
-            | "toString"
-            | "wait"
-    ) {
-        return Err(format!(
-            "field name `{name}` conflicts with java.lang.Object record behavior.\n       \
-             fix: choose a domain-specific component name such as `contentHash` or `description`."
-        )
-        .into());
-    }
-    Ok(())
-}
-
-fn reject_sql_keyword(name: &str) -> Result<()> {
-    if SqlName::is_postgres_reserved(name) {
-        return Err(format!(
-            "field name `{name}` is reserved by PostgreSQL and would make generated SQL invalid.\n       \
-             fix: choose a domain-specific name such as `source`, `target`, or `sortOrder`."
-        )
-        .into());
-    }
-    Ok(())
-}
 impl Codec for FieldSpec {
     fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.name.encode(encoder)?;
@@ -685,7 +655,7 @@ impl Codec for FieldSpec {
 
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Ok(Self {
-            name: Name::decode(decoder)?,
+            name: FieldName::decode(decoder)?,
             field_type: FieldType::decode(decoder)?,
             optionality: Optionality::from_tag(decoder.tag()?)?,
             constraints: FieldConstraints::decode(decoder)?,
@@ -778,20 +748,23 @@ mod tests {
         assert!(FieldSpec::parse("record:string", &Package::base()).is_ok());
     }
 
+    /// plan.md P3.1. These pairs used to be two fields sharing one column;
+    /// under `FieldName` they are one field spelled twice, so the refusal
+    /// names one Java component and one column rather than two of each.
     #[test]
     fn fields_that_share_a_sql_column_are_refused_together() {
-        for tokens in [
-            ["id:uuid@pk", "Id:string"],
-            ["userId:uuid", "user_id:string"],
+        for (tokens, java, column) in [
+            (["id:uuid@pk", "Id:string"], "id", "id"),
+            (["userId:uuid", "user_id:string"], "userId", "user_id"),
         ] {
             let tokens = tokens.map(str::to_string);
             let error = parse_fields(&tokens).unwrap_err();
-            let names = tokens.map(|token| token.split(':').next().unwrap().to_string());
-            assert!(error.contains(&names[0]), "{error}");
-            assert!(error.contains(&names[1]), "{error}");
-            assert!(error.contains("SQL column"), "{error}");
+            assert!(error.contains(java), "{error}");
+            assert!(error.contains(column), "{error}");
+            assert!(error.contains("declared twice"), "{error}");
             assert!(error.contains("fix:"), "{error}");
         }
+        // `email` and `eMail` still differ: `e_mail` is not `email`.
         assert!(parse_fields(&["email:string".into(), "eMail:string".into()]).is_ok());
     }
 

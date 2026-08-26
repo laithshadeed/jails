@@ -406,14 +406,22 @@ fn scaffold_refuses_an_implicit_or_composite_identity_before_writing() {
     }
 }
 
+/// plan.md P3.1. These pairs used to be two fields sharing one column; they
+/// are now one field spelled twice, which is why the refusal names a single
+/// Java component and a single column rather than two of each.
 #[test]
 fn field_names_that_collapse_to_one_sql_column_refuse_before_writing() {
     let root = temp_dir("scaffold-column-collision");
     write_spring_fixture(&root);
 
-    for (name, fields, column) in [
-        ("Weird", ["id:uuid@pk", "Id:string"], "id"),
-        ("Pair", ["userId:uuid@pk", "user_id:string"], "user_id"),
+    for (name, fields, java, column) in [
+        ("Weird", ["id:uuid@pk", "Id:string"], "id", "id"),
+        (
+            "Pair",
+            ["userId:uuid@pk", "user_id:string"],
+            "userId",
+            "user_id",
+        ),
     ] {
         let before = snapshot_tree(&root);
         let output = jails_cmd(&root, None)
@@ -427,15 +435,35 @@ fn field_names_that_collapse_to_one_sql_column_refuse_before_writing() {
             .unwrap();
         assert!(!output.status.success(), "{name} unexpectedly succeeded");
         let stderr = String::from_utf8_lossy(&output.stderr);
-        for field in fields {
-            assert!(
-                stderr.contains(field.split(':').next().unwrap()),
-                "{name}: {stderr}"
-            );
-        }
+        assert!(stderr.contains(java), "{name}: {stderr}");
         assert!(stderr.contains(column), "{name}: {stderr}");
+        assert!(stderr.contains("declared twice"), "{name}: {stderr}");
         assert!(stderr.contains("fix:"), "{name}: {stderr}");
         assert_eq!(snapshot_tree(&root), before, "{name} refusal wrote files");
+    }
+}
+
+/// The other half of the same convergence: one spelling in, the other out.
+/// A snake_case declaration produces a lowerCamelCase Java component and a
+/// snake_case column, and a camelCase one produces exactly the same pair.
+#[test]
+fn a_snake_case_field_declaration_produces_a_camel_case_java_component() {
+    let root = temp_dir("field-name-convergence");
+    write_spring_fixture(&root);
+
+    for (name, field) in [("Snake", "user_id:uuid"), ("Camel", "userId:uuid")] {
+        let output = jails_cmd(&root, None)
+            .args(["generate", "record", name, "id:uuid@pk", field])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{name}: {output:?}");
+        let record = std::fs::read_to_string(
+            root.join("src/main/java/com/example/demo/domain")
+                .join(format!("{name}.java")),
+        )
+        .unwrap();
+        assert!(record.contains("UUID userId"), "{name}: {record}");
+        assert!(!record.contains("user_id"), "{name}: {record}");
     }
 }
 

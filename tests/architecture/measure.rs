@@ -672,7 +672,11 @@ pub(crate) const SCRATCH_RS: &str = "jails-support/src/scratch.rs";
 /// use-case change instead of asking for a payload the command rejects.
 /// 425 → 424 when colliding generated field names gained an actionable rename
 /// instruction.
-pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 424;
+/// 424 → 423 when `FieldName` collapsed the two spellings of one field into
+/// one value (plan.md P3.1): the column-collision refusal and the
+/// duplicate-name refusal were two branches of one condition, and the branch
+/// that survives is the one that already carried a `fix:` line.
+pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 423;
 
 /// A refusal that builds a message and does not say what to do next.
 ///

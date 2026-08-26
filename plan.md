@@ -237,14 +237,22 @@ to go **red on landing**; P1.5 records what they name.
 Full convergence, as chosen. Expect large golden churn; regenerate in the same
 commit as the change that causes it.
 
-- [ ] **P3.1** `FieldName` in `jails-protocol` owning both renderings:
+- [x] **P3.1** `FieldName` in `jails-protocol` owning both renderings:
       `java()` → lowerCamelCase, `column()` → snake_case. `user_id:uuid` and
       `userId:uuid` converge on Java `userId` + SQL `user_id`; a spec name that
       cannot produce a Java identifier by convention is the only error case.
       `sql::snake_case` already exists
       (`crates/jails-generate/src/sql.rs:376`) and is the SQL half; the Java
       half is currently the raw spec string. Templates lose access to the raw
-      name. Closes modern §3.1, §3.3, §11.1.
+      name. Closes modern §3.1, §3.3, §11.1. Landed with the column as the
+      **normal form** and the Java name derived from it, which is what makes
+      `user_id`, `userId` and `user_ID` one field rather than three. That in
+      turn made the mapping's reversibility load-bearing, so a word not
+      starting with a letter (`_id`, `a_1b`) is the refusal — without it
+      `a_1b` and `a1b` reach a record as two components of one name. The
+      column-collision refusal and the duplicate-name refusal collapsed into
+      one branch, since two distinct `FieldName`s can no longer share a
+      column.
 - [ ] **P3.2** Recorded `ColumnBinding` — a `(EntityId, field name) → column
       name` pair per managed entity, written at create time and consulted by
       every SQL projection instead of re-deriving. `TableBinding` already does

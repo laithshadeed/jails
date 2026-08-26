@@ -35,7 +35,7 @@ use evolution::{
 };
 use jails_protocol::declaration::{FieldType, Optionality};
 use jails_protocol::entity::{OneShotId, OneShotSpec, TypeTargetId};
-use jails_protocol::identity::SqlName;
+use jails_protocol::identity::{FieldName, SqlName};
 use jails_protocol::request::{
     ColumnRenamePolicy, DataEvolution, EvolveFieldRequestV1, FieldEvolution, TypeChangeStrategy,
 };
@@ -136,7 +136,11 @@ pub fn rename_field(
     let store = observed(project)?;
     let (id, spec) = recorded_target(project, &store, target, package)?;
     let field = Name::parse(field)?;
-    let new_name = Name::parse(new_name)?;
+    // Both renderings, from the one type that owns them: the rename has to
+    // move a Java component *and* a SQL column, and deriving each half
+    // separately is how the two came to disagree. plan.md P3.1.
+    let renamed = FieldName::parse(new_name)?;
+    let new_name = renamed.as_name().clone();
     if spec
         .fields()
         .iter()
@@ -149,7 +153,8 @@ pub fn rename_field(
         .iter_mut()
         .find(|candidate| candidate.name == field)
         .ok_or_else(|| unknown_field(&id, &field, spec.fields()))?;
-    changed.name = new_name.clone();
+    let from = changed.name.column().as_str().to_string();
+    changed.name = renamed.clone();
     let mut after = spec.clone();
     after.arguments = IntentArguments::Fields(fields);
     for index in &mut after.indexes {
@@ -159,9 +164,8 @@ pub fn rename_field(
             }
         }
     }
-    let from = jails_generate::sql::snake_case(field.as_str());
-    let to = jails_generate::sql::snake_case(new_name.as_str());
-    let body = jails_generate::sql::rename_column(id.name.as_str(), &from, &to);
+    let to = renamed.column().as_str();
+    let body = jails_generate::sql::rename_column(id.name.as_str(), &from, to);
     evolve_existing(
         run,
         &store,
@@ -525,7 +529,7 @@ fn add_field_with_syntax(
     // retires the overlay without deleting a migration the database has run.
     let one_shot = OneShotId::Field {
         target: TypeTargetId::Managed(id.clone()),
-        field: added.name.clone(),
+        field: added.name.as_name().clone(),
     };
     let mut migration = DesiredChange::owned_by(ResourceOwner::OneShot(one_shot.clone()));
     // Projected, not re-parsed. `FieldSpec` is the model and `Field` is its
