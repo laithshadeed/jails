@@ -131,11 +131,17 @@ to go **red on landing**; P1.5 records what they name.
       `add cors` and `add h2` uncompiled on Boot 4, and `add h2` writing a
       `java.sql` test outside `adapters`, which is a red build against the
       ArchUnit rule `g scaffold` installs.
-- [ ] **P1.3** The `@Disabled` honesty gate (modern §13.8). A generated
+- [x] **P1.3** The `@Disabled` honesty gate (modern §13.8). A generated
       `@Disabled` test reports green exactly as a skipped tier-3 test does.
       Either the command's summary names what it could not assert, or no test
       file is written. `minicom-2025-12-13` has five of nine disabled,
-      including both controller tests, and reports green.
+      including both controller tests, and reports green. Answered on both
+      surfaces: a `test-disabled` warning derived from the *bytes* in the one
+      report projection every command goes through (so a generator added
+      tomorrow gets it without knowing it exists), and a `doctor` warning over
+      recorded test output, which keeps answering after the summary scrolls
+      away. A warning and never a failure — the file is exactly what jails
+      meant to write, and the work it names is the reader's.
 - [ ] **P1.4** The `fix:`-command conformance test (research §0.2). Extract
       every `fix:` command the scenario suite emits and assert it does not
       immediately refuse. This is the control for the whole "oracles disagree"

@@ -937,46 +937,6 @@ migration history asserts otherwise. A blank migration is an unusual thing to
 want; the safer default is to refuse to write one, or to write it as a file
 Flyway will not apply until it has content.
 
-### 13.8 Between a quarter and a half of the tests are inert
-
-| project | `@Disabled` / `@Test` |
-|---|---|
-| 2025-11-16 | 14 / 53 — **26%** |
-| 2025-12-13 | 5 / 9 — **56%** |
-| 2026-02-05 | 3 / 72 |
-| others | 0 |
-
-Two different causes, and only one is defensible.
-
-`g strategy`'s six stub rules ship six `@Disabled` tests, which is honest — the
-implementations are `return Optional.empty()` with a TODO. Though it does mean
-a clean generate produces six `@Component` beans that never fire, six inert
-tests, and a red architecture rule, and nothing ties those three facts together.
-
-The other cause is not defensible:
-
-```java
-class VerificationTest {
-    @Test
-    @Disabled("todo: state what Verification guarantees, then assert it")
-    void todo() {
-        Verification verification = new Verification(true);
-        // Verification has no validation to pin, so assert on what it is
-        // *for*. Asserting that an accessor returns what was passed in
-        // only tests that javac generated the accessor.
-    }
-}
-```
-
-The reasoning in that comment is correct and well put. The outcome is that
-`minicom-2025-12-13` — nine production classes — has **five of its nine tests
-disabled**, including both controller tests, and reports green. jails' own
-`CLAUDE.md` already names this failure mode for tier-3 skips (*"A skipped
-tier-3 test is reported as passing"*); it applies identically to a generated
-`@Disabled`. If a generator cannot write a meaningful assertion, the honest
-output is no test file and a line in the command's summary saying so — not a
-green tick over an empty method.
-
 ### 13.9 Two generators, two answers, one of them arguing against the other
 
 `minicom-2026-06-01`, same record, same two audit columns:
@@ -1032,7 +992,6 @@ input:
 | **`findById(String)`** | | ❌ §13.5 — 11 of 12 ports |
 | **dead `ApiException`** | | ❌ §13.10 — 0 of 7 projects |
 | **`g client` has no timeout** | | ❌ §13.6 |
-| **`@Disabled` tests reported green** | | ❌ §13.8 |
 
 The second column is the list worth working from. None of it is a taste
 argument, all of it is reproducible from a clean `jails new`, and the top three

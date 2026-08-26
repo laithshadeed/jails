@@ -111,6 +111,19 @@ pub enum WarningCode {
     UnmanagedRetained,
     PostCommitDeferred,
     EnvironmentConstrained,
+    /// A generated test is `@Disabled`, so it proves nothing and the suite
+    /// still reports green over it.
+    ///
+    /// modern.md §13.8. A generator that cannot write a meaningful assertion
+    /// -- a strategy implementation is `return Optional.empty()` with a TODO,
+    /// and asserting an accessor returns what was passed in only tests that
+    /// javac generated the accessor -- writes an honest `@Disabled` naming
+    /// what to prove. That is the right file to write and the wrong thing to
+    /// say nothing about: one real project shipped five of its nine tests
+    /// disabled, including both controller tests, and reported green. jails'
+    /// own `CLAUDE.md` already names this failure mode for skipped tier-3
+    /// tests; a generated `@Disabled` is the same thing one level down.
+    TestDisabled,
 }
 
 impl WarningCode {
@@ -119,6 +132,7 @@ impl WarningCode {
             Self::UnmanagedRetained => "unmanaged-retained",
             Self::PostCommitDeferred => "post-commit-deferred",
             Self::EnvironmentConstrained => "environment-constrained",
+            Self::TestDisabled => "test-disabled",
         }
     }
 }
@@ -175,7 +189,7 @@ impl Report {
                     state: EffectState::Deferred,
                 })
                 .collect(),
-            warnings: Vec::new(),
+            warnings: disabled_tests(change),
         })
     }
 
@@ -193,6 +207,49 @@ impl Report {
         self.warnings.push(warning);
         self.warnings.sort();
     }
+}
+
+/// The generated tests this change leaves `@Disabled`.
+///
+/// Derived from the *bytes*, in the one projection every command's report goes
+/// through, for the same reason `ensure_failsafe` and `ensure_assertj` are
+/// keyed off emitted bytes rather than written per kind: a rule twenty
+/// templates have to remember is a rule that decays. A generator added
+/// tomorrow gets this without knowing it exists.
+fn disabled_tests(change: &PreparedChange) -> Vec<Warning> {
+    let mut paths: Vec<ProjectPath> = Vec::new();
+    for operation in &change.operations {
+        let (path, after) = match operation {
+            FileOp::Create { path, after, .. } | FileOp::Replace { path, after, .. } => {
+                (path, after)
+            }
+            _ => continue,
+        };
+        if !path.as_str().ends_with(".java") {
+            continue;
+        }
+        let Some(bytes) = change.objects.get(&after.id) else {
+            continue;
+        };
+        if bytes.windows(9).any(|window| window == b"@Disabled") {
+            paths.push(path.clone());
+        }
+    }
+    if paths.is_empty() {
+        return Vec::new();
+    }
+    paths.sort();
+    let message = format!(
+        "{} generated test file(s) are @Disabled and prove nothing yet -- the suite \
+         reports green over them. Each names what to assert once the class it covers is \
+         written.",
+        paths.len()
+    );
+    vec![Warning {
+        code: WarningCode::TestDisabled,
+        paths,
+        message,
+    }]
 }
 
 fn directory_op(directory: &DirectoryOp) -> ReportedOp {

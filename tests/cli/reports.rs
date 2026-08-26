@@ -521,6 +521,57 @@ fn doctor_names_an_interrupted_transaction_and_repair_declines_to_adopt_it() {
     assert!(!report.contains("did not finish"), "{report}");
 }
 
+/// A generated `@Disabled` test is honest about what it does not prove and
+/// completely silent about existing, so `mvn test` reports green over it.
+///
+/// modern.md §13.8: one real project shipped five of its nine tests disabled,
+/// including both controller tests, and passed. `CLAUDE.md` already names this
+/// for skipped tier-3 tests; a generated `@Disabled` is the same failure one
+/// level down. Both surfaces answer now -- the plan says it when the file is
+/// about to be written, and `doctor` keeps saying it afterwards, because a
+/// line in one command's summary scrolls away.
+#[test]
+fn a_generated_disabled_test_is_named_when_it_is_written_and_afterwards() {
+    let root = temp_dir("doctor-disabled-tests");
+    write_spring_fixture(&root);
+    assert!(
+        jails_cmd(&root, None)
+            .args(["g", "record", "Post", "title:string!"])
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let planned = jails_cmd(&root, None)
+        .args([
+            "g",
+            "strategy",
+            "PostRule",
+            "Featured",
+            "--on",
+            "Post",
+            "--pretend",
+        ])
+        .output()
+        .unwrap();
+    let plan = String::from_utf8_lossy(&planned.stdout);
+    assert!(plan.contains("test-disabled"), "{plan}");
+
+    assert!(
+        jails_cmd(&root, None)
+            .args(["g", "strategy", "PostRule", "Featured", "--on", "Post"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let output = jails_cmd(&root, None).arg("doctor").output().unwrap();
+    let report = String::from_utf8_lossy(&output.stdout);
+    assert!(report.contains("generated tests"), "{report}");
+    assert!(report.contains("FeaturedPostRuleTest.java"), "{report}");
+    // A warning, not a failure: the file is exactly what jails meant to write.
+    assert!(output.status.success(), "{report}");
+}
+
 #[test]
 fn doctor_reports_resolved_developer_tool_paths_and_versions() {
     let root = temp_dir("doctor-tools");

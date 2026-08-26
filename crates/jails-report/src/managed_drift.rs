@@ -201,3 +201,65 @@ fn owner_action(owners: &std::collections::BTreeSet<ResourceOwner>) -> Option<(S
     }
     None
 }
+
+/// Generated test files that are `@Disabled`, and therefore prove nothing.
+///
+/// modern.md §13.8. A generator that cannot write a meaningful assertion --
+/// a strategy implementation is `return Optional.empty()` with a TODO, and
+/// asserting that an accessor returns what was passed in only tests that javac
+/// generated the accessor -- writes an honest `@Disabled` naming what to
+/// prove. Writing it is right; saying nothing about it afterwards is not. One
+/// real project shipped **five of its nine tests disabled**, including both
+/// controller tests, and reported green. `CLAUDE.md` already names this
+/// failure mode for skipped tier-3 tests; a generated `@Disabled` is the same
+/// thing one level down, and the count hides both.
+///
+/// A `warn`, never a `FAIL`: the file is exactly what jails meant to write,
+/// and the work it names is the reader's. What `doctor` owes them is that the
+/// number is visible rather than folded into a green tick -- and it keeps
+/// answering, which a line in one command's summary does not.
+///
+/// Only *recorded* output is examined. A hand-written `@Disabled` is a
+/// deliberate decision by somebody who can see it in their own diff.
+pub(crate) fn disabled_generated_tests(project: &Project) -> Vec<Check> {
+    let MachineState::Current(store) = jails_state::compat::read(project.root()) else {
+        return Vec::new();
+    };
+    let mut pending: Vec<&str> = Vec::new();
+    for output in &store.outputs {
+        let path = output.path.as_str();
+        if !path.starts_with("src/test/java/") || !path.ends_with(".java") {
+            continue;
+        }
+        let Ok(source) = std::fs::read_to_string(project.root().join(path)) else {
+            continue;
+        };
+        // Through `blanked`, so an `@Disabled` inside a Javadoc example -- the
+        // way `is_spring_boot_test` reads a `@SpringBootTest` -- is not counted
+        // as one on a method.
+        if jails_java::java::blanked(&source).contains("@Disabled") {
+            pending.push(path);
+        }
+    }
+    if pending.is_empty() {
+        return Vec::new();
+    }
+    pending.sort_unstable();
+    let named = pending.join("`, `");
+    vec![
+        Check::new(
+            Status::Warn,
+            "generated tests",
+            format!(
+                "{} generated test file(s) are @Disabled, so `mvn test` reports green over \
+                 them: `{named}`",
+                pending.len()
+            ),
+        )
+        .fix(
+            "each names what to prove in its @Disabled reason. Write the class it covers, \
+             then delete the annotation -- or delete the test, which is the honest answer \
+             when the assertion was never going to be worth making",
+        ),
+    ]
+}

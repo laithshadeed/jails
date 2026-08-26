@@ -635,8 +635,10 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // modules (`managed_drift.rs`, `schema_lineage.rs`), so what
                 // this row sees is only the two `checks.extend(..)` calls.
                 // That is the shape rung 9 wants: `doctor` keeps the report and
-                // the derivation moves out.
-                ceiling: 1479,
+                // the derivation moves out. 1479 -> 1480 for the third, same
+                // shape: `disabled_generated_tests`, whose body is in
+                // `managed_drift.rs`.
+                ceiling: 1480,
                 // Withdrawn, not reached. abstract.md §8.0.1 audits all ten
                 // checks: none is a re-encoded dependency fact, so the 700
                 // measured a saving that is not there. Ratchet against growth.
