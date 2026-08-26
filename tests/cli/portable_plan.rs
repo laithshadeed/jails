@@ -125,3 +125,53 @@ fn imported_plan_refuses_a_changed_preimage_without_writing() {
     );
     assert!(!root.join(".jails/state").exists());
 }
+
+#[test]
+fn imported_plan_refuses_protocol_and_toolchain_mismatches() {
+    let root = temp_dir("portable-plan-version-mismatch");
+    let plan_dir = temp_dir("portable-plan-version-file");
+    let plan = plan_dir.join("record.json");
+    write_spring_fixture(&root);
+    let exported = jails_cmd(&root, None)
+        .args([
+            "g",
+            "record",
+            "Note",
+            "--pretend",
+            "--plan-out",
+            plan.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(exported.status.success(), "{exported:?}");
+    let original = fs::read(&plan).unwrap();
+    let before = snapshot_tree(&root);
+
+    let mut protocol: serde_json::Value = serde_json::from_slice(&original).unwrap();
+    protocol["protocol_version"] = serde_json::json!(2);
+    fs::write(&plan, serde_json::to_vec_pretty(&protocol).unwrap()).unwrap();
+    let refused = jails_cmd(&root, None)
+        .args(["g", "record", "--plan-in", plan.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success(), "{refused:?}");
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("protocol 2"),
+        "{refused:?}"
+    );
+    assert_eq!(snapshot_tree(&root), before);
+
+    let mut toolchain: serde_json::Value = serde_json::from_slice(&original).unwrap();
+    toolchain["tool_version"] = serde_json::json!("999.0.0");
+    fs::write(&plan, serde_json::to_vec_pretty(&toolchain).unwrap()).unwrap();
+    let refused = jails_cmd(&root, None)
+        .args(["g", "record", "--plan-in", plan.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success(), "{refused:?}");
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("999.0.0"),
+        "{refused:?}"
+    );
+    assert_eq!(snapshot_tree(&root), before);
+}

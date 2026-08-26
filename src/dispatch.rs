@@ -89,9 +89,7 @@ pub(crate) fn mutate_confirmed(
         run
     }
     if let Some(path) = &invocation.plan_in {
-        let bytes = std::fs::read(path).map_err(|error| {
-            format!("failed to read prepared plan `{}`: {error}", path.display())
-        })?;
+        let bytes = read_plan(path)?;
         let outcome = jails_engine::route::apply_plan(
             &configure(
                 jails_engine::route::Run::committing(&project)
@@ -176,6 +174,31 @@ pub(crate) fn mutate_confirmed(
         invocation.review(),
         invocation.debug,
     )
+}
+
+fn read_plan(path: impl AsRef<std::path::Path>) -> Result<Vec<u8>> {
+    let path = path.as_ref();
+    let metadata = std::fs::metadata(path).map_err(|error| {
+        format!(
+            "failed to inspect prepared plan `{}`: {error}",
+            path.display()
+        )
+    })?;
+    let cap = (jails_support::codec::MAX_PROTOCOL_RECORD as u64)
+        .checked_mul(2)
+        .and_then(|bytes| bytes.checked_add(1024 * 1024))
+        .expect("the protocol record cap fits u64");
+    if metadata.len() > cap {
+        return Err(format!(
+            "prepared plan `{}` is {} bytes, over the {cap}-byte limit.\n       \
+             fix: discard the oversized file and export the plan again.",
+            path.display(),
+            metadata.len()
+        )
+        .into());
+    }
+    Ok(std::fs::read(path)
+        .map_err(|error| format!("failed to read prepared plan `{}`: {error}", path.display()))?)
 }
 
 /// Run a mutation the reader did not ask for, and say nothing if it was

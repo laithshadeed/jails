@@ -567,6 +567,29 @@ there the unit is a whole service block rather than a setting.)
   mentions it skipped. Neovim's `grn` (jdt.ls) is scope-aware and better where
   it works — this is for when the language server is not attached or the
   project does not currently compile.
+- `jails rename resource <Slice.Current> <New> --strategy
+  preserve-table|single-cutover|rolling` — coordinate the durable entity,
+  generated Java, table binding, migration history, and owned SQL literals.
+  `preserve-table` is the safe default shape: it changes the logical Java name
+  while retaining the physical table and external route. `single-cutover`
+  appends one forward PostgreSQL migration and refuses reader-owned SQL,
+  opaque routines/views/triggers, or unowned storage-object names. `rolling`
+  records a durable campaign and requires the exact reported
+  `rename storage ... --old-version-retired` attestation before it appends the
+  physical cutover.
+- Every mutating command accepts `--pretend --plan-out <file>`. The named plan
+  is atomically written mode 0600 outside the project transaction and contains
+  the exact prepared bytes plus root, generation, protocol, toolchain,
+  preimage, and content-digest bindings. Apply it from the same command path
+  without repeating semantic arguments, for example
+  `jails generate scaffold --plan-in /tmp/reviewed-plan.json`. Import verifies
+  the plan before taking the project lock, never reparses the original intent,
+  and then uses the normal journaled executor.
+- `jails history`, `jails show <transaction> [--diff] [--why]`, and
+  `jails undo <transaction>` inspect authenticated receipts and restore an
+  eligible newest file-only receipt as a new forward transaction. Undo refuses
+  migrations, rolling campaigns, external effects, and edited after-images;
+  crash recovery remains a separate automatic protocol.
 - `jails db|dbconsole [file] [--no-start] [-- <args>...]` — `rails dbconsole`:
   `psql` against the compose postgres that `add db` started (credentials from
   `compose.yaml`). Starts postgres first unless `--no-start`. Pass a SQLite
