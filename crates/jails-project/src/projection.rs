@@ -800,7 +800,7 @@ mod tests {
     fn an_undeclared_read_is_still_an_error_through_the_projection() {
         let projected = project(&[("pom.xml", POM)], &[]);
         let error = projected.read(&path("build.gradle")).unwrap_err();
-        assert!(error.contains("not captured"), "{error}");
+        assert!(error.contains("without observing it first"), "{error}");
     }
 
     #[test]

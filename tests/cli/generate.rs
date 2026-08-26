@@ -931,6 +931,84 @@ fn task_scaffold_cannot_rewrite_or_delete_its_published_v001() {
     );
 }
 
+/// Regenerating a dropped resource revives its lifecycle, so the recovery
+/// commands agree about it.
+///
+/// The recreate appended `V003__create_books.sql` and left the lifecycle at
+/// `drop-pending`, which every recovery command then read and refused on:
+/// `doctor` named `resource repair`, repair said the resource was retired and
+/// named `resource revive`, and revive leaked an instruction meant for whoever
+/// was editing the route. A closed loop from an ordinary
+/// destroy-then-regenerate.
+#[test]
+fn regenerating_a_dropped_resource_returns_it_to_a_consistent_lifecycle() {
+    let root = temp_dir("recreate-revives-lifecycle");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+
+    for command in [
+        vec!["g", "scaffold", "Book", "id:uuid@pk", "title:string"],
+        vec![
+            "destroy",
+            "scaffold",
+            "Book",
+            "--storage",
+            "drop",
+            "--confirm-table",
+            "books",
+            "--force",
+        ],
+        vec!["g", "scaffold", "Book", "id:uuid@pk", "title:string"],
+    ] {
+        let output = jails_cmd(&root, None).args(&command).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{command:?}: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    // The lineage is create, drop, create -- forward-only, and coherent with
+    // the Java that queries the table.
+    for migration in [
+        "V001__create_books.sql",
+        "V002__drop_books.sql",
+        "V003__create_books.sql",
+    ] {
+        assert!(
+            root.join("src/main/resources/db/migration")
+                .join(migration)
+                .is_file(),
+            "{migration} is missing"
+        );
+    }
+
+    let status = jails_cmd(&root, None)
+        .args(["resource", "status", "Book"])
+        .output()
+        .unwrap();
+    let status = String::from_utf8_lossy(&status.stdout);
+    assert!(status.contains("state: consistent"), "{status}");
+    assert!(status.contains("table: books"), "{status}");
+
+    // And the entity can be evolved again, which is what the loop prevented.
+    let evolved = jails_cmd(&root, None)
+        .args(["g", "field", "Book", "pages:int?"])
+        .output()
+        .unwrap();
+    assert!(
+        evolved.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&evolved.stdout),
+        String::from_utf8_lossy(&evolved.stderr)
+    );
+    assert!(
+        root.join("src/main/resources/db/migration/V004__add_pages_to_books.sql")
+            .is_file()
+    );
+}
+
 /// Renaming a resource carries the storage, or refuses.
 ///
 /// The textual rename carries the Java and nothing else. On a storage-backed

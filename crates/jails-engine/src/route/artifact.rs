@@ -62,7 +62,23 @@ pub fn generate(run: &Run, recipe: &Recipe<'_>, package: Option<&str>) -> Result
             spec: entity.spec.clone(),
         }),
     )?;
-    let reads = declaration(project, &change, &desired)?;
+    let mut reads = declaration(project, &change, &desired)?;
+    // A regeneration that revives a retired resource re-seals its recorded
+    // migration lineage, so it depends on those bytes and has to declare them.
+    // Without this the revive read past the snapshot and the refusal that came
+    // back -- "declare it in the read set" -- was an instruction to the tool's
+    // own author, handed to the reader on the recovery path.
+    let observed_store = observed(project)?;
+    if observed_store
+        .lifecycles()
+        .iter()
+        .any(|lifecycle| lifecycle.entity == EntityId::Intent(id.clone()))
+    {
+        for path in recorded_migrations(&observed_store, &id) {
+            reads = reads.file(path);
+        }
+        reads = reads.directory(ProjectPath::parse("src/main/resources/db/migration")?);
+    }
     // The request carries the resolved identity and spec, not the argument
     // strings: `g record Note title:string!` and the same call with the
     // package spelled out are one request, and a resume must recognise them

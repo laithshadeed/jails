@@ -698,31 +698,3 @@ fn unknown_field(id: &IntentId, field: &Name, fields: &[FieldSpec]) -> jails_sup
     )
     .into()
 }
-
-fn recorded_migrations(store: &ObservedStore, target: &IntentId) -> BTreeSet<ProjectPath> {
-    let lifecycle_paths = store
-        .ledger
-        .iter()
-        .flat_map(|ledger| ledger.lifecycles.iter())
-        .filter(|lifecycle| lifecycle.entity == EntityId::Intent(target.clone()))
-        .flat_map(|lifecycle| lifecycle.migrations.iter().map(|seal| seal.path.clone()));
-    let owned_paths = store
-        .ledger
-        .iter()
-        .flat_map(|ledger| ledger.resources.iter())
-        .filter(|row| {
-            row.owners.iter().any(|owner| match owner {
-                ResourceOwner::Entity(EntityId::Intent(owner)) => owner == target,
-                ResourceOwner::OneShot(OneShotId::Field {
-                    target: TypeTargetId::Managed(owner),
-                    ..
-                }) => owner == target,
-                _ => false,
-            })
-        })
-        .filter_map(|row| match &row.key {
-            ResourceKey::WholeFile(path) if row.key.is_migration_history() => Some(path.clone()),
-            _ => None,
-        });
-    lifecycle_paths.chain(owned_paths).collect()
-}

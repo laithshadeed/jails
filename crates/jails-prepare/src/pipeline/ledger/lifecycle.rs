@@ -213,11 +213,42 @@ fn adopt_new_scaffolds(
         })
         .collect::<Vec<_>>();
     for (entity, id, spec) in candidates {
-        if store
+        // A retired scaffold that is declared again is *revived* by the
+        // declaration, not skipped. Skipping it left the state at
+        // `drop-pending` over a project whose create migration had just been
+        // appended and whose Java was on disk -- and every recovery command
+        // then read that stale state and refused: `doctor` named `resource
+        // repair`, repair said the resource was retired and named `resource
+        // revive`, and revive leaked an internal planning term. A closed loop,
+        // from an ordinary destroy-then-regenerate.
+        if let Some(held) = store
             .lifecycles
-            .iter()
-            .any(|lifecycle| lifecycle.entity == entity)
+            .iter_mut()
+            .find(|lifecycle| lifecycle.entity == entity)
         {
+            if matches!(
+                held.state,
+                ResourceState::RetiredPreservingStorage { .. }
+                    | ResourceState::RetiredDropPlanned { .. }
+            ) {
+                held.state = ResourceState::Active;
+                held.last_spec = spec;
+                held.table = Some(TableBinding {
+                    table: SqlName::conventional_table(&id.name),
+                });
+                if let Some(path) = owned_scaffold_type(context.intent, &entity, &id) {
+                    held.expected_path = path;
+                }
+                let mut migrations = std::mem::take(&mut held.migrations);
+                seal_migrations(&entity, &mut migrations, store, context)?;
+                if let Some(held) = store
+                    .lifecycles
+                    .iter_mut()
+                    .find(|lifecycle| lifecycle.entity == entity)
+                {
+                    held.migrations = migrations;
+                }
+            }
             continue;
         }
         let mut lifecycle = ResourceLifecycleV1 {

@@ -59,8 +59,7 @@ Closed by `e3c7041`, mid-pass:
 - **B43** `jails add format` re-records the bytes `spotless:apply` rewrites, so
   `doctor` goes from eight unexplained drift warnings to `26 checks, all clear`.
 
-**Still broken, re-reproduced verbatim at `e3c7041`:** B5, B14, B18, B20,
-B22, B41.
+**Still broken, re-reproduced verbatim at `e3c7041`:** B5, B14, B18, B20, B22.
 
 Closed after that pass, in the same session:
 
@@ -69,6 +68,14 @@ Closed after that pass, in the same session:
   used to throw the failure out of the publish-by-rename, discarding the whole
   scratch tree -- so a compose service that would not start left `ledger
   create` in the report and no directory at all.
+- **B41** the loop had one cause: `adopt_new_scaffolds` *skipped* an entity
+  that already had a lifecycle, so regenerating a dropped scaffold left the
+  state at `drop-pending` over a project whose create migration had just been
+  appended. A re-declaration revives it instead, and all three oracles agree.
+  The one surviving **B19** leak went with it -- "declare it in the read set"
+  is an instruction to whoever is editing the route, and it now says it is a
+  bug in jails, names the path, and offers the read-only commands that still
+  work.
 - **B2** `rename resource <Name> <New> --strategy preserve-table` takes a bare
   name -- demanding `<slice>.<current-name>` made the one path that carries the
   storage unreachable from every imperative project -- and keeps the resource's
@@ -139,42 +146,6 @@ blocked-recovery state, so the machinery exists. A publish that cannot complete
 must roll back or roll forward, never stop half-applied. And `resource repair`
 must distinguish *bytes jails wrote and lost track of* from *bytes jails wrote
 and should never have written*; today both are "adopt what is on disk".
-
----
-
-## B41 — a closed refusal loop: doctor names repair, repair names revive, revive leaks an internal planning term
-
-**Severity: high.** Three commands, three different answers about one entity, and
-no exit. Reproduced on an entity that is entirely present on disk:
-
-```
-$ jails doctor
-warn  managed Book   recorded output `…/V003__create_books.sql` changed since the last jails commit
-                     fix: jails resource repair Book --strategy roll-forward
-
-$ jails resource repair Book --strategy roll-forward
-jails: resource `Book` is retired, so repair cannot recreate its projections.
-       fix: use `jails resource revive Book --table <recorded-table>` first.
-
-$ jails resource revive Book --table books
-jails: `src/main/resources/db/migration/V003__create_books.sql` was not captured,
-       so planning may not read it.
-       fix: declare it in the read set. Reaching past the snapshot would decide on
-       a fact nothing recorded, and the commit-time staleness check would have
-       nothing to compare.
-```
-
-Three things are wrong at once. `Book` is not retired — it was re-created two
-commands earlier and `V003` creates its table (`resource status Book` reports
-`state: drop-pending` for it, which is the underlying error). "Declare it in the
-read set" is not something a user can do; it is the last surviving instance of
-**B19**, and it is on the recovery path, which is the worst place for it. And the
-first `fix:` line names a command that refuses.
-
-**Expected:** the three oracles agree, or the disagreement is the error message.
-Any `fix:` line naming another jails command should be reachable — a cheap
-integration test could run every `fix:` command this file's scenarios produce and
-assert it does not immediately refuse.
 
 ---
 

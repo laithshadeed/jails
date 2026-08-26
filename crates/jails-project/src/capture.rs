@@ -341,7 +341,7 @@ mod tests {
         )
         .unwrap();
         let error = snapshot.read(&path("compose.yaml")).unwrap_err();
-        assert!(error.contains("was not captured"), "{error}");
+        assert!(error.contains("without observing it first"), "{error}");
     }
 
     #[test]

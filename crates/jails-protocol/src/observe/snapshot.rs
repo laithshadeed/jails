@@ -517,8 +517,15 @@ impl ProjectSnapshot {
     /// **An undeclared read is an error**, and that is the whole discipline: a
     /// planner that could reach past the snapshot would make decisions on
     /// facts nothing recorded, and the stale check at commit would have
-    /// nothing to compare. The message names the path so the fix — declare it
-    /// — is obvious.
+    /// nothing to compare.
+    ///
+    /// **The message is written for the reader, not the author.** "Declare it
+    /// in the read set" is an instruction to whoever is editing the route --
+    /// there is no `--read-set` and nothing a user can do with it -- and it
+    /// was reached on the *recovery* path, which is the worst place to hand
+    /// somebody a sentence about jails' internals. It says what it is now: a
+    /// bug in the command, with the path that exposed it and something to try
+    /// meanwhile.
     pub fn read(&self, path: &ProjectPath) -> Result<Captured<'_>> {
         if let Some(file) = self.files.get(path) {
             return Ok(Captured::Present(file));
@@ -527,9 +534,10 @@ impl ProjectSnapshot {
             return Ok(Captured::Absent);
         }
         Err(format!(
-            "`{path}` was not captured, so planning may not read it.\n       fix: declare it in \
-             the read set. Reaching past the snapshot would decide on a fact nothing recorded, \
-             and the commit-time staleness check would have nothing to compare."
+            "this command planned against `{path}` without observing it first, which is a bug in \
+             jails rather than in your project -- nothing was written.\n       fix: report the \
+             command and that path. `jails resource status` and `jails doctor` are read-only and \
+             still work meanwhile."
         )
         .into())
     }
@@ -666,8 +674,9 @@ mod tests {
     fn an_undeclared_read_is_an_error_not_a_filesystem_access() {
         let snapshot = snapshot();
         let error = snapshot.read(&path("src/main/java/App.java")).unwrap_err();
-        assert!(error.contains("was not captured"), "{error}");
-        assert!(error.contains("fix: declare it"), "{error}");
+        assert!(error.contains("without observing it first"), "{error}");
+        assert!(error.contains("a bug in jails"), "{error}");
+        assert!(error.contains("fix: report the command"), "{error}");
 
         let error = snapshot.list(&path("src/test/java")).unwrap_err();
         assert!(error.contains("not enumerated"), "{error}");

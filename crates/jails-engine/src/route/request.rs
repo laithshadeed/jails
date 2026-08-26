@@ -220,6 +220,37 @@ pub(super) fn retiring(store: &ObservedStore, owner: &ResourceOwner) -> Result<R
     Ok(declaration)
 }
 
+pub(super) fn recorded_migrations(
+    store: &ObservedStore,
+    target: &IntentId,
+) -> BTreeSet<ProjectPath> {
+    let lifecycle_paths = store
+        .ledger
+        .iter()
+        .flat_map(|ledger| ledger.lifecycles.iter())
+        .filter(|lifecycle| lifecycle.entity == EntityId::Intent(target.clone()))
+        .flat_map(|lifecycle| lifecycle.migrations.iter().map(|seal| seal.path.clone()));
+    let owned_paths = store
+        .ledger
+        .iter()
+        .flat_map(|ledger| ledger.resources.iter())
+        .filter(|row| {
+            row.owners.iter().any(|owner| match owner {
+                ResourceOwner::Entity(EntityId::Intent(owner)) => owner == target,
+                ResourceOwner::OneShot(jails_protocol::entity::OneShotId::Field {
+                    target: jails_protocol::entity::TypeTargetId::Managed(owner),
+                    ..
+                }) => owner == target,
+                _ => false,
+            })
+        })
+        .filter_map(|row| match &row.key {
+            ResourceKey::WholeFile(path) if row.key.is_migration_history() => Some(path.clone()),
+            _ => None,
+        });
+    lifecycle_paths.chain(owned_paths).collect()
+}
+
 /// Every capability `jails.toml`'s scope currently declares, with `changed`
 /// applied to it.
 ///
