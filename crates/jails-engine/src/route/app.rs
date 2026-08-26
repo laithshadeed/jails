@@ -198,6 +198,8 @@ fn declare(
         changes.push(desired);
     }
 
+    refuse_undeclared_storage(&store, &declared)?;
+
     // Everything the store already owns, so a row the manifest stopped naming
     // can be *retired*. A removal is a decision about what is there, and the
     // executor guards the preimage it deletes -- which is only meaningful if
@@ -251,4 +253,73 @@ fn widen(
         }
     }
     Ok(reads)
+}
+
+/// Refuse to retire a table-backed resource that the manifest merely stopped
+/// naming.
+///
+/// The imperative path insists on a storage policy: `jails destroy scaffold
+/// Deal` refuses without `--storage preserve` or `--storage drop
+/// --confirm-table deals`, because deleting the Java says nothing about what
+/// happens to the rows. Deleting the `[[generate]]` block did the same removal
+/// with no policy, no confirmation and no `drop table` migration -- the table
+/// survived with no code that knows about it, and nothing reports an orphan.
+/// The same intent, expressed two ways, got two different levels of care.
+///
+/// The manifest has no syntax for storage intent, so this does not invent one:
+/// it names the command that does have it. Running that destroy retires the
+/// row, after which the manifest and the store agree and `app apply` is a
+/// no-op for that resource.
+fn refuse_undeclared_storage(
+    store: &ObservedStore,
+    declared: &BTreeMap<EntityId, DesiredEntity>,
+) -> Result<()> {
+    let mut orphaned = Vec::new();
+    for lifecycle in store.lifecycles() {
+        let EntityId::Intent(id) = &lifecycle.entity else {
+            continue;
+        };
+        let Some(table) = lifecycle.table.as_ref() else {
+            continue;
+        };
+        if !matches!(
+            lifecycle.state,
+            jails_protocol::lifecycle::ResourceState::Active
+        ) || declared.contains_key(&lifecycle.entity)
+        {
+            continue;
+        }
+        let claimed_by_manifest = store
+            .entities()
+            .iter()
+            .any(|row| row.id == lifecycle.entity && row.owners.contains(&OwnerId::AppManifest));
+        if claimed_by_manifest {
+            orphaned.push((id.name.clone(), table.table.as_str().to_string()));
+        }
+    }
+    let [(name, table)] = orphaned.as_slice() else {
+        if orphaned.is_empty() {
+            return Ok(());
+        }
+        let names = orphaned
+            .iter()
+            .map(|(name, table)| format!("`{name}` (table `{table}`)"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(format!(
+            "storage-policy-required: the manifest no longer declares {names}, and the manifest \
+             cannot say what happens to the rows.\n       fix: retire each one explicitly first \
+             -- `jails destroy scaffold <Name> --storage preserve` keeps the table, `--storage \
+             drop --confirm-table <table>` plans the data loss -- then re-run `jails app apply`."
+        )
+        .into());
+    };
+    Err(format!(
+        "storage-policy-required: the manifest no longer declares `{name}`, which is backed by \
+         table `{table}`, and the manifest cannot say what happens to the rows.\n       fix: \
+         `jails destroy scaffold {name} --storage preserve` keeps the table, or `jails destroy \
+         scaffold {name} --storage drop --confirm-table {table}` plans the data loss. Then \
+         re-run `jails app apply`."
+    )
+    .into())
 }

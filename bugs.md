@@ -59,7 +59,7 @@ Closed by `e3c7041`, mid-pass:
 - **B43** `jails add format` re-records the bytes `spotless:apply` rewrites, so
   `doctor` goes from eight unexplained drift warnings to `26 checks, all clear`.
 
-**Still broken, re-reproduced verbatim at `e3c7041`:** B5, B14, B18, B20, B22.
+**Still broken, re-reproduced verbatim at `e3c7041`:** B5, B14, B18, B20.
 
 Closed after that pass, in the same session:
 
@@ -68,6 +68,11 @@ Closed after that pass, in the same session:
   used to throw the failure out of the publish-by-rename, discarding the whole
   scratch tree -- so a compose service that would not start left `ledger
   create` in the report and no directory at all.
+- **B22** deleting a table-backed `[[generate]]` block is refused with
+  `storage-policy-required`, naming both retirement commands -- the same
+  ceremony the imperative `destroy` insists on. The manifest still has no
+  syntax for storage intent, so this does not invent one: it names the command
+  that has it, after which the manifest and the store agree.
 - **B41** the loop had one cause: `adopt_new_scaffolds` *skipped* an entity
   that already had a lifecycle, so regenerating a dropped scaffold left the
   state at `drop-pending` over a project whose create migration had just been
@@ -222,35 +227,6 @@ the most common shape change there is.
 **Expected:** `app apply` routes an added/changed field in a `[[generate]]` block
 to the same canonical field-evolution request `jails resource field add` builds,
 and appends the forward migration itself.
-
----
-
-## B22 — imperative and declarative removal disagree about data loss
-
-**Severity: high.** The same intent, expressed two ways, gets two different levels
-of care.
-
-```
-$ jails destroy scaffold Deal
-jails: storage-policy-required: `Deal` is backed by table `deals`.
-       fix: preserve it with `--storage preserve`, or plan data loss with
-            `--storage drop --confirm-table deals`.
-```
-
-Delete the same entity's block from `.jails/app.toml` and re-apply:
-
-```
-$ jails app apply
-  … 19 deletions …
-  ledger  replace
-```
-
-No storage policy. No confirmation. No `drop table` migration —
-`V001__create_deals.sql` is left in place, so the table survives with no code that
-knows about it, and **B5/B14** means nothing reports the orphan.
-
-The manifest has no syntax for expressing storage intent, so the ceremony the
-imperative path insists on cannot even be written down in the declarative one.
 
 ---
 

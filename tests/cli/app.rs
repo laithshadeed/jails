@@ -179,6 +179,96 @@ fn app_plan_names_an_entity_the_manifest_no_longer_declares() {
     );
 }
 
+/// Removing a table-backed row from the manifest demands the same care the
+/// imperative destroy does.
+///
+/// `jails destroy scaffold Deal` refuses without a storage policy, because
+/// deleting the Java says nothing about what happens to the rows. Deleting the
+/// `[[generate]]` block did the same removal with no policy, no confirmation
+/// and no `drop table` migration: the table survived with no code that knows
+/// about it, and nothing reports an orphan. The same intent, expressed two
+/// ways, got two different levels of care.
+#[test]
+fn a_manifest_removal_of_a_table_backed_row_needs_a_storage_policy() {
+    let root = temp_dir("app-remove-storage-policy");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    let manifest = root.join(".jails/app.toml");
+    let declared = "schema = 1\ncapabilities = [\"db\"]\n\n         [[generate]]\nkind = \"scaffold\"\nname = \"Deal\"\n         fields = [\"id:uuid@pk\", \"amount:decimal\"]\n";
+    fs::write(&manifest, declared).unwrap();
+    let applied = jails_cmd(&root, None)
+        .args(["app", "apply", "--no-start"])
+        .output()
+        .unwrap();
+    assert!(
+        applied.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&applied.stdout),
+        String::from_utf8_lossy(&applied.stderr)
+    );
+    let create = root.join("src/main/resources/db/migration/V001__create_deals.sql");
+    assert!(create.is_file());
+
+    fs::write(&manifest, "schema = 1\ncapabilities = [\"db\"]\n").unwrap();
+    let before = snapshot_tree(&root);
+    let refused = jails_cmd(&root, None)
+        .args(["app", "apply", "--no-start"])
+        .output()
+        .unwrap();
+    assert_eq!(refused.status.code(), Some(1), "{refused:?}");
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(stderr.contains("storage-policy-required"), "{stderr}");
+    assert!(stderr.contains("table `deals`"), "{stderr}");
+    // Both options named, exactly as the imperative refusal names them.
+    assert!(
+        stderr.contains("jails destroy scaffold Deal --storage preserve"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("--storage drop --confirm-table deals"),
+        "{stderr}"
+    );
+    assert_eq!(snapshot_tree(&root), before, "the refusal mutated the tree");
+
+    // And the way through is the command it names.
+    let retired = jails_cmd(&root, None)
+        .args([
+            "destroy",
+            "scaffold",
+            "Deal",
+            "--storage",
+            "drop",
+            "--confirm-table",
+            "deals",
+            "--force",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        retired.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&retired.stdout),
+        String::from_utf8_lossy(&retired.stderr)
+    );
+    assert!(
+        root.join("src/main/resources/db/migration/V002__drop_deals.sql")
+            .is_file(),
+        "the retirement appends the drop the manifest could not express"
+    );
+    assert!(create.is_file(), "V001 is append-only and stays");
+
+    let reapplied = jails_cmd(&root, None)
+        .args(["app", "apply", "--no-start"])
+        .output()
+        .unwrap();
+    assert!(
+        reapplied.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&reapplied.stdout),
+        String::from_utf8_lossy(&reapplied.stderr)
+    );
+}
+
 #[test]
 fn app_manifest_merges_an_edited_intent_over_user_changes() {
     let root = temp_dir("app-intent-merge");
