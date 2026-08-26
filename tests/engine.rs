@@ -3231,7 +3231,10 @@ fn a_capability_with_a_container_plans_one_runtime_reconciliation() {
         desired_services,
         stop_services,
         ..
-    } = &planned[0].effect;
+    } = &planned[0].effect
+    else {
+        panic!("expected a Compose reconciliation effect");
+    };
     assert_eq!(compose_output.to_string(), "compose.yaml");
     assert!(
         prior_managed_services.is_empty(),
@@ -3294,7 +3297,10 @@ fn a_capability_with_a_container_plans_one_runtime_reconciliation() {
         desired_services,
         stop_services,
         ..
-    } = &effects[0].effect;
+    } = &effects[0].effect
+    else {
+        panic!("expected a Compose reconciliation effect");
+    };
     assert_eq!(prior_managed_services.len(), 1);
     assert!(desired_services.is_empty(), "{desired_services:?}");
     assert_eq!(stop_services.len(), 1, "{stop_services:?}");

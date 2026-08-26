@@ -31,8 +31,10 @@ use jails_support::Result;
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use jails_protocol::database::MigrationInputV1;
 use jails_protocol::effect::{EffectFailureCode, EffectId, EffectState, PostCommitEffect};
 use jails_protocol::identity::{ObjectId, OperationId, ServiceName};
+use jails_protocol::request::DatasourceRef;
 use jails_support::codec::{Codec, Encoder, domain_hash};
 use jails_support::process::{Diagnostics, OutputMode, compose_spec, run as run_process};
 
@@ -74,6 +76,28 @@ pub fn reconcile(
     transaction: &jails_protocol::identity::TransactionId,
     debug: bool,
 ) -> std::result::Result<CommitEffectOutcome, CommitError> {
+    reconcile_with_migrations(store, project_root, transaction, debug, |_, _, _| {
+        Err(concat!(
+            "the migration effect has no datasource adapter.\n       ",
+            "fix: retry it through the jails command that recorded the receipt."
+        )
+        .to_string())
+    })
+}
+
+/// Reconcile a receipt with the caller's credential-bearing datasource
+/// adapter. The callback is invoked only after the project commit and outside
+/// the project lock; descriptors and receipts remain credential-free.
+pub fn reconcile_with_migrations<F>(
+    store: &Store,
+    project_root: &Path,
+    transaction: &jails_protocol::identity::TransactionId,
+    debug: bool,
+    mut migrate: F,
+) -> std::result::Result<CommitEffectOutcome, CommitError>
+where
+    F: FnMut(&DatasourceRef, &[MigrationInputV1], bool) -> std::result::Result<(), String>,
+{
     let directory = store.receipt(transaction);
     let mut receipt = match ReceiptV1::read(&directory) {
         Ok(receipt) => receipt,
@@ -95,7 +119,7 @@ pub fn reconcile(
         },
     )?;
 
-    let state = match attempt(store, project_root, &row.effect, debug) {
+    let state = match attempt(store, project_root, &row.effect, debug, &mut migrate) {
         Ok(()) => EffectState::Succeeded,
         Err(failure) => EffectState::Failed {
             attempt: 1,
@@ -150,33 +174,46 @@ struct EffectFailure {
 /// services, networks or volumes in a compose project jails shares with the
 /// reader. Removal is bounded to the names that were managed and are no longer
 /// declared, which is what makes it an inverse rather than a sweep.
-fn attempt(
+fn attempt<F>(
     store: &Store,
     project_root: &Path,
     effect: &PostCommitEffect,
     debug: bool,
-) -> std::result::Result<(), EffectFailure> {
-    let PostCommitEffect::ComposeReconcile {
-        before_document,
-        after_document,
-        desired_services,
-        stop_services,
-        ..
-    } = effect;
-
-    if !stop_services.is_empty() {
-        let document = object(store, before_document)?;
-        let names = sorted(stop_services);
-        for verb in [vec!["stop"], vec!["rm", "-f"]] {
-            run(project_root, &document, &verb, &names, debug)?;
+    migrate: &mut F,
+) -> std::result::Result<(), EffectFailure>
+where
+    F: FnMut(&DatasourceRef, &[MigrationInputV1], bool) -> std::result::Result<(), String>,
+{
+    match effect {
+        PostCommitEffect::ComposeReconcile {
+            before_document,
+            after_document,
+            desired_services,
+            stop_services,
+            ..
+        } => {
+            if !stop_services.is_empty() {
+                let document = object(store, before_document)?;
+                let names = sorted(stop_services);
+                for verb in [vec!["stop"], vec!["rm", "-f"]] {
+                    run(project_root, &document, &verb, &names, debug)?;
+                }
+            }
+            if !desired_services.is_empty() {
+                let document = object(store, after_document)?;
+                let names = sorted(&desired_services.keys().cloned().collect());
+                run(project_root, &document, &["up", "-d"], &names, debug)?;
+            }
+            Ok(())
         }
+        PostCommitEffect::ApplyMigrations {
+            datasource,
+            migrations,
+        } => migrate(datasource, migrations, debug).map_err(|summary| EffectFailure {
+            code: EffectFailureCode::ExitNonzero,
+            summary,
+        }),
     }
-    if !desired_services.is_empty() {
-        let document = object(store, after_document)?;
-        let names = sorted(&desired_services.keys().cloned().collect());
-        run(project_root, &document, &["up", "-d"], &names, debug)?;
-    }
-    Ok(())
 }
 
 fn object(

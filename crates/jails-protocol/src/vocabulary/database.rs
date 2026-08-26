@@ -12,6 +12,8 @@ mod catalog;
 pub use catalog::*;
 mod datasource;
 pub use datasource::*;
+mod flyway;
+pub use flyway::*;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
 pub enum SqlDialect {

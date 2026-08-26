@@ -319,6 +319,14 @@ fn effect_label(effect: &PostCommitEffect) -> String {
             desired_services.len(),
             stop_services.len()
         ),
+        PostCommitEffect::ApplyMigrations {
+            datasource,
+            migrations,
+        } => format!(
+            "apply {} migration(s) to datasource {}",
+            migrations.len(),
+            datasource.as_str()
+        ),
     }
 }
 

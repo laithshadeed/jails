@@ -295,6 +295,25 @@ fn post_commit(value: &PostCommitEffect) -> String {
                 )),
             ),
         ),
+        PostCommitEffect::ApplyMigrations {
+            datasource,
+            migrations,
+        } => variant(
+            "apply-migrations",
+            &format!(
+                "{{\"datasource\":{},\"migrations\":{}}}",
+                quoted(datasource.as_str()),
+                array(migrations, |migration| format!(
+                    "{{\"version\":{},\"path\":{},\"content_digest\":{}}}",
+                    migration
+                        .version
+                        .map(|version| version.get().to_string())
+                        .unwrap_or_else(|| "null".to_string()),
+                    quoted(migration.path.as_str()),
+                    quoted(&migration.content_digest.to_hex())
+                ))
+            ),
+        ),
     }
 }
 

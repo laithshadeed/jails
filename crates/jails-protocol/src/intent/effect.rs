@@ -19,7 +19,9 @@
 //! condition that will never clear.
 
 use crate::Result;
+use crate::database::MigrationInputV1;
 use crate::identity::{ObjectId, OperationId, ProjectPath, ServiceName};
+use crate::request::DatasourceRef;
 use jails_support::codec::{Codec, Decoder, Encoder};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -209,6 +211,10 @@ pub enum PostCommitEffect {
         desired_services: BTreeMap<ServiceName, ObjectId>,
         stop_services: BTreeSet<ServiceName>,
     },
+    ApplyMigrations {
+        datasource: DatasourceRef,
+        migrations: Vec<MigrationInputV1>,
+    },
 }
 
 impl Codec for PostCommitEffect {
@@ -230,6 +236,17 @@ impl Codec for PostCommitEffect {
                 encoder.map(desired_services)?;
                 encoder.set(stop_services)?;
             }
+            Self::ApplyMigrations {
+                datasource,
+                migrations,
+            } => {
+                encoder.tag(1);
+                datasource.encode(encoder)?;
+                encoder.count(migrations.len())?;
+                for migration in migrations {
+                    migration.encode(encoder)?;
+                }
+            }
         }
         Ok(())
     }
@@ -244,6 +261,17 @@ impl Codec for PostCommitEffect {
                 desired_services: decoder.map()?,
                 stop_services: decoder.set()?,
             }),
+            1 => Ok(Self::ApplyMigrations {
+                datasource: DatasourceRef::decode(decoder)?,
+                migrations: {
+                    let count = decoder.count()?;
+                    let mut migrations = Vec::with_capacity(count as usize);
+                    for _ in 0..count {
+                        migrations.push(MigrationInputV1::decode(decoder)?);
+                    }
+                    migrations
+                },
+            }),
             other => Err(format!("unknown post-commit effect tag {other}").into()),
         }
     }
@@ -257,6 +285,9 @@ pub enum DeferredEffectIntent {
         compose_output: ProjectPath,
         prior_managed_services: BTreeMap<ServiceName, ObjectId>,
         desired_services: BTreeMap<ServiceName, ObjectId>,
+    },
+    ApplyMigrations {
+        datasource: DatasourceRef,
     },
 }
 
@@ -275,6 +306,10 @@ impl Codec for DeferredEffectIntent {
                 encoder.map(prior_managed_services)?;
                 encoder.map(desired_services)?;
             }
+            Self::ApplyMigrations { datasource } => {
+                encoder.tag(1);
+                datasource.encode(encoder)?;
+            }
         }
         Ok(())
     }
@@ -286,6 +321,9 @@ impl Codec for DeferredEffectIntent {
                 compose_output: ProjectPath::decode(decoder)?,
                 prior_managed_services: decoder.map()?,
                 desired_services: decoder.map()?,
+            }),
+            1 => Ok(Self::ApplyMigrations {
+                datasource: DatasourceRef::decode(decoder)?,
             }),
             other => Err(format!("unknown deferred effect tag {other}").into()),
         }
@@ -398,19 +436,52 @@ mod tests {
     }
 
     #[test]
-    fn a_deferred_intent_round_trips() {
-        let intent = DeferredEffectIntent::ComposeReconcile {
-            before_document: None,
-            compose_output: ProjectPath::parse("compose.yaml").unwrap(),
-            prior_managed_services: BTreeMap::new(),
-            desired_services: BTreeMap::from([(service("postgres"), object("pg"))]),
+    fn migration_effect_appends_tag_one_and_binds_frozen_inputs() {
+        let effect = PostCommitEffect::ApplyMigrations {
+            datasource: DatasourceRef::parse("dev-db").unwrap(),
+            migrations: vec![
+                MigrationInputV1::new(
+                    ProjectPath::parse("src/main/resources/db/migration/V002__drop_tasks.sql")
+                        .unwrap(),
+                    object("drop-tasks"),
+                )
+                .unwrap(),
+            ],
         };
         let mut encoder = Encoder::new();
-        intent.encode(&mut encoder).unwrap();
+        effect.encode(&mut encoder).unwrap();
         let bytes = encoder.finish().unwrap();
+        let mut tag = Decoder::new(&bytes).unwrap();
+        assert_eq!(
+            tag.tag().unwrap(),
+            1,
+            "the old Compose effect keeps tag zero"
+        );
         let mut decoder = Decoder::new(&bytes).unwrap();
-        assert_eq!(DeferredEffectIntent::decode(&mut decoder).unwrap(), intent);
+        assert_eq!(PostCommitEffect::decode(&mut decoder).unwrap(), effect);
         decoder.finish().unwrap();
+    }
+
+    #[test]
+    fn a_deferred_intent_round_trips() {
+        for intent in [
+            DeferredEffectIntent::ComposeReconcile {
+                before_document: None,
+                compose_output: ProjectPath::parse("compose.yaml").unwrap(),
+                prior_managed_services: BTreeMap::new(),
+                desired_services: BTreeMap::from([(service("postgres"), object("pg"))]),
+            },
+            DeferredEffectIntent::ApplyMigrations {
+                datasource: DatasourceRef::parse("dev-db").unwrap(),
+            },
+        ] {
+            let mut encoder = Encoder::new();
+            intent.encode(&mut encoder).unwrap();
+            let bytes = encoder.finish().unwrap();
+            let mut decoder = Decoder::new(&bytes).unwrap();
+            assert_eq!(DeferredEffectIntent::decode(&mut decoder).unwrap(), intent);
+            decoder.finish().unwrap();
+        }
     }
 
     /// One value, one encoding — the same rule the codec applies to every set.
