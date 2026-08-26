@@ -71,7 +71,8 @@ public final class JdbcNoteRepository implements NoteRepository {
 
     @Override
     public List<Note> findAll() {
-        // Ordered explicitly: SQL does not otherwise promise row order.
+        // Ordered explicitly: SQL does not otherwise promise row order, and
+        // this table has no timestamp to order by.
         try (var query = connection.prepareStatement(FIND_ALL);
                 var rows = query.executeQuery()) {
             var all = new ArrayList<Note>();

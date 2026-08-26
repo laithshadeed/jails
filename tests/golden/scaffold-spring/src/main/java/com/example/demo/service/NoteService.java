@@ -2,6 +2,7 @@ package com.example.demo.service;
 
 import com.example.demo.app.NoteRepository;
 import com.example.demo.domain.Note;
+import com.example.demo.domain.TimeOrderedUuid;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -40,7 +41,7 @@ public class NoteService {
      */
     public Note create(Note note) {
         return repository.save(new Note(
-                UUID.randomUUID(),
+                TimeOrderedUuid.next(),
                 note.title(),
                 note.createdAt()));
     }

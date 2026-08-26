@@ -42,7 +42,7 @@ public final class JdbcNoteRepository implements NoteRepository {
                 title,
                 created_at
             from notes
-            order by id
+            order by created_at desc, id
             """;
     private static final String INSERT =
             """
@@ -76,7 +76,8 @@ public final class JdbcNoteRepository implements NoteRepository {
 
     @Override
     public List<Note> findAll() {
-        // Ordered explicitly: SQL does not otherwise promise row order.
+        // Newest first, with the key as the tiebreak so two rows written in
+        // the same instant do not swap between two identical requests.
         try (var query = connection.prepareStatement(FIND_ALL);
                 var rows = query.executeQuery()) {
             var all = new ArrayList<Note>();

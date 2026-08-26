@@ -80,6 +80,13 @@ const ALLOWED_LEFTOVER: &[(&str, &str, &str)] = &[
     ),
     (
         "",
+        "TimeOrderedUuid",
+        "one time-ordered identifier per project, shared by every scaffold and \
+         use case that mints a key; destroying one entity must not take the \
+         generator the others call",
+    ),
+    (
+        "",
         "HttpClientsConfig.java",
         "shared registration: a second client still needs the group",
     ),

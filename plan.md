@@ -386,10 +386,26 @@ commit as the change that causes it.
       documented placeholder nothing reads. `g dto` passes no assigned key at
       all — it owns no table. modern §7's other three entries are read-side
       and stay open.
-- [ ] **P4.4** `uuidv7()` where the database supports it, not
+- [x] **P4.4** `uuidv7()` where the database supports it, not
       `gen_random_uuid()` (modern §4.2 — `backend.md` §5 names random UUID keys
       specifically), and `order by` a real ordering column rather than a random
-      id (§4.4).
+      id (§4.4). Landed the other way round on the first half: the database
+      does not assign the key here — the *application* does — so the fix is a
+      generated `TimeOrderedUuid`, version 7 per RFC 9562, and every mint goes
+      through it. That is the `g auth` / `add sse` shape: the JDK has no v7
+      factory, `UUID.randomUUID()` is wrong in a way nothing reports, and the
+      generated test is what keeps it fixed because a generator that went back
+      to version 4 would look identical at every call site. Making the *column*
+      default to `uuidv7()` was rejected: it needs PostgreSQL 18, has no H2
+      equivalent, and would turn every UUID key into
+      `Assignment::DatabaseGenerated`, which refuses the client-supplied
+      `id:uuid` that is the idempotent-create idiom `examples/web-crawler`
+      uses. `sql::ordering` closes §4.4: newest first by whichever timestamp
+      the table has, with the key as the *tiebreak* rather than the sort, so
+      two rows written in the same instant do not swap between two identical
+      requests. `gen_random_uuid()` survives in exactly one place — the
+      one-shot backfill `add_column` writes and then drops — where locality is
+      not a property a single `update` has.
 - [ ] **P4.5** The version travels as an `ETag` / `If-Match` / `412` rather
       than as a bespoke JSON field (modern §7, §10.5), and expected outcomes
       are a sealed return type rather than two exception classes (§5.3, §10.3):

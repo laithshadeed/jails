@@ -62,11 +62,12 @@ public final class JdbcItemRepository implements ItemRepository {
 
     @Override
     public List<Item> findAll() {
-        // Ordered explicitly: SQL does not otherwise promise row order.
+        // Newest first, with the key as the tiebreak so two rows written in
+        // the same instant do not swap between two identical requests.
         return db.sql("""
                         select %s
                         from items
-                        order by id
+                        order by created_at desc, id
                         """.formatted(COLUMNS))
                 .query(JdbcItemRepository::map)
                 .list();

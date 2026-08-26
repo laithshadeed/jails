@@ -229,11 +229,9 @@ fn jdbc_query_java(slice: &Slice, name: &str, target: &str, projection: &Project
         .collect::<Vec<_>>()
         .join(",\n");
     let table = crate::sql::table_name(target);
-    let order = target_columns
-        .iter()
-        .find(|column| column.name == "id")
-        .map(|column| column.name.as_str())
-        .unwrap_or(&target_columns[0].name);
+    // Newest first, not by key: `order by id` over a random UUID is a stable
+    // random order presented to a reader as their data. plan.md P4.4.
+    let order = crate::sql::ordering(target_columns);
     crate::template::render(
         crate::template_here!("spring/jdbc_query_java.java"),
         &[
@@ -247,7 +245,7 @@ fn jdbc_query_java(slice: &Slice, name: &str, target: &str, projection: &Project
             ("target", target),
             ("table", &*table),
             ("predicates", &*predicates),
-            ("order", order),
+            ("order", &order),
             ("bindings", &*bindings),
             ("map_args", &*map_args),
         ],

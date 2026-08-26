@@ -47,7 +47,7 @@ public final class JdbcPayoutRepository implements PayoutRepository {
                 version,
                 created_at
             from payouts
-            order by id
+            order by created_at desc, id
             """;
     private static final String INSERT =
             """
@@ -81,7 +81,8 @@ public final class JdbcPayoutRepository implements PayoutRepository {
 
     @Override
     public List<Payout> findAll() {
-        // Ordered explicitly: SQL does not otherwise promise row order.
+        // Newest first, with the key as the tiebreak so two rows written in
+        // the same instant do not swap between two identical requests.
         try (var query = connection.prepareStatement(FIND_ALL);
                 var rows = query.executeQuery()) {
             var all = new ArrayList<Payout>();

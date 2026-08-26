@@ -218,6 +218,17 @@ pub(super) fn jdbc_client_repository(
     };
     let key_java = &key_type.java;
     let key_import = &key_type.import;
+    // Newest first where the table has a timestamp, the key only as the
+    // tiebreak. `order by id` over a random UUID is a stable random order.
+    // plan.md P4.4.
+    let ordering = crate::sql::ordering(columns);
+    let ordering_note = if ordering == id_column {
+        "// Ordered explicitly: SQL does not otherwise promise row order, and
+        // this table has no timestamp to order by."
+    } else {
+        "// Newest first, with the key as the tiebreak so two rows written in
+        // the same instant do not swap between two identical requests."
+    };
     let key_note = if composite_key {
         " * <p>The declared primary key is composite. The current {@code String id} port cannot\n * represent it, so the two single-key operations fail explicitly until the port is modelled.\n"
             .to_string()
@@ -442,11 +453,11 @@ public final class Jdbc{name}Repository implements {name}Repository {{
 
     @Override
     public List<{name}> findAll() {{
-        // Ordered explicitly: SQL does not otherwise promise row order.
+        {ordering_note}
         return db.sql("""
                         select %s
                         from {table}
-                        order by {id_column}
+                        order by {ordering}
                         """.formatted(COLUMNS))
                 .query(Jdbc{name}Repository::map)
                 .list();
@@ -527,6 +538,17 @@ pub(super) fn jdbc_repository(
     };
     let key_java = &key_type.java;
     let key_import = &key_type.import;
+    // Newest first where the table has a timestamp, the key only as the
+    // tiebreak. `order by id` over a random UUID is a stable random order.
+    // plan.md P4.4.
+    let ordering = crate::sql::ordering(columns);
+    let ordering_note = if ordering == id_column {
+        "// Ordered explicitly: SQL does not otherwise promise row order, and
+        // this table has no timestamp to order by."
+    } else {
+        "// Newest first, with the key as the tiebreak so two rows written in
+        // the same instant do not swap between two identical requests."
+    };
     let key_note = if composite_key {
         " * <p>The declared primary key is composite. The current {@code String id} port cannot\n              * represent it, so the two single-key operations fail explicitly until the port is modelled.\n"
             .to_string()
@@ -741,7 +763,7 @@ public final class Jdbc{name}Repository implements {name}Repository {{
             select
 {select_list}
             from {table}
-            order by {id_column}
+            order by {ordering}
             """;
     private static final String INSERT =
             """
@@ -767,7 +789,7 @@ public final class Jdbc{name}Repository implements {name}Repository {{
 
     @Override
     public List<{name}> findAll() {{
-        // Ordered explicitly: SQL does not otherwise promise row order.
+        {ordering_note}
         try (var query = connection.prepareStatement(FIND_ALL);
                 var rows = query.executeQuery()) {{
             var all = new ArrayList<{name}>();
@@ -1429,6 +1451,8 @@ mod repository_test_generation_tests {
         assert!(src.contains("implements TransactionRepository"), "{src}");
         assert!(src.contains("connection.prepareStatement"), "{src}");
         assert!(src.contains("try (var query"), "try-with-resources: {src}");
+        // No field spec here, so there is no timestamp to order by and the
+        // key is all there is. plan.md P4.4.
         assert!(
             src.contains("order by id"),
             "unordered findAll would flake a test: {src}"

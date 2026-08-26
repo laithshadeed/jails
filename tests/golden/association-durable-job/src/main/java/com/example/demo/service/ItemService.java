@@ -2,6 +2,7 @@ package com.example.demo.service;
 
 import com.example.demo.app.ItemRepository;
 import com.example.demo.domain.Item;
+import com.example.demo.domain.TimeOrderedUuid;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -40,7 +41,7 @@ public class ItemService {
      */
     public Item create(Item item) {
         return repository.save(new Item(
-                UUID.randomUUID(),
+                TimeOrderedUuid.next(),
                 item.ownerId(),
                 item.name(),
                 item.createdAt()));

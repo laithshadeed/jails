@@ -288,15 +288,17 @@ fn usecase_default(slice: &Slice, field: &crate::generate::Field) -> Option<(Str
         };
         return Some((expression.to_string(), vec![import.to_string()]));
     }
+    // The key is minted through the project's own generator, not
+    // `UUID.randomUUID()`: a version 4 key is random, and a random primary
+    // key destroys b-tree locality on the table it names. plan.md P4.4.
+    let identifier = format!(
+        "{}.{}",
+        crate::spring::identity::package(slice),
+        crate::spring::identity::TIME_ORDERED_UUID
+    );
     match field.java_type.as_str() {
-        "UUID" if field.name == "id" => Some((
-            "UUID.randomUUID()".to_string(),
-            vec!["java.util.UUID".to_string()],
-        )),
-        "String" if field.name == "id" => Some((
-            "UUID.randomUUID().toString()".to_string(),
-            vec!["java.util.UUID".to_string()],
-        )),
+        "UUID" | "String" if field.name == "id" => crate::spring::identity::mint(&field.java_type)
+            .map(|expression| (expression.to_string(), vec![identifier])),
         "Instant" => Some((
             "Instant.now()".to_string(),
             vec!["java.time.Instant".to_string()],
@@ -784,8 +786,10 @@ mod usecase_tests {
             .unwrap()
             .contents;
 
+        // Version 7, through the project's own generator: a random key
+        // destroys b-tree locality on the table it names. plan.md P4.4.
         assert!(
-            implementation.contains("UUID.randomUUID()"),
+            implementation.contains("TimeOrderedUuid.next()"),
             "{implementation}"
         );
         assert!(
@@ -938,7 +942,12 @@ mod query_tests {
             "{adapter}"
         );
         assert!(adapter.contains(".param(\"conversation_id\""), "{adapter}");
-        assert!(adapter.contains("order by id"), "{adapter}");
+        // Newest first with the key as the tiebreak: `order by id` over a
+        // random UUID is a stable random order. plan.md P4.4.
+        assert!(
+            adapter.contains("order by created_at desc, id"),
+            "{adapter}"
+        );
         assert!(adapter.contains("limit :max_results"), "{adapter}");
         assert!(adapter.contains("MAX_RESULTS = 100"), "{adapter}");
         assert!(

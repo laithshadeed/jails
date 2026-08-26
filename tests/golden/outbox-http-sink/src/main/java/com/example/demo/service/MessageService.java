@@ -2,6 +2,7 @@ package com.example.demo.service;
 
 import com.example.demo.app.MessageRepository;
 import com.example.demo.domain.Message;
+import com.example.demo.domain.TimeOrderedUuid;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -40,7 +41,7 @@ public class MessageService {
      */
     public Message create(Message message) {
         return repository.save(new Message(
-                UUID.randomUUID(),
+                TimeOrderedUuid.next(),
                 message.body(),
                 message.createdAt()));
     }

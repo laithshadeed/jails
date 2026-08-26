@@ -207,6 +207,11 @@ pub(crate) fn scaffold_artifacts_from_fields(
         ]);
     }
 
+    // Written once per project, and only where a key is minted here rather
+    // than by the caller or the database. plan.md P4.4.
+    if crate::sql::server_generated_key(&columns).is_some() {
+        artifacts.extend(crate::spring::identity::artifacts(slice));
+    }
     artifacts.extend(vec![
         Artifact {
             kind: "repository port",
@@ -296,6 +301,7 @@ pub(crate) fn scaffold_artifacts_from_fields(
             kind: "service",
             path: main_dir(root, &service).join(format!("{name}Service.java")),
             contents: crate::spring::resource_service_java(
+                slice,
                 &service,
                 name,
                 &format!(

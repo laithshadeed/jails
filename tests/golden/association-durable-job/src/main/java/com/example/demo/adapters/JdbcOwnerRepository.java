@@ -61,11 +61,12 @@ public final class JdbcOwnerRepository implements OwnerRepository {
 
     @Override
     public List<Owner> findAll() {
-        // Ordered explicitly: SQL does not otherwise promise row order.
+        // Newest first, with the key as the tiebreak so two rows written in
+        // the same instant do not swap between two identical requests.
         return db.sql("""
                         select %s
                         from owners
-                        order by id
+                        order by created_at desc, id
                         """.formatted(COLUMNS))
                 .query(JdbcOwnerRepository::map)
                 .list();

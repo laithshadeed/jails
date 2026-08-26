@@ -2,6 +2,7 @@ package com.example.demo.service;
 
 import com.example.demo.app.ArticleRepository;
 import com.example.demo.domain.Article;
+import com.example.demo.domain.TimeOrderedUuid;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -40,7 +41,7 @@ public class ArticleService {
      */
     public Article create(Article article) {
         return repository.save(new Article(
-                UUID.randomUUID(),
+                TimeOrderedUuid.next(),
                 article.title(),
                 article.body()));
     }

@@ -58,7 +58,8 @@ public final class JdbcArticleRepository implements ArticleRepository {
 
     @Override
     public List<Article> findAll() {
-        // Ordered explicitly: SQL does not otherwise promise row order.
+        // Ordered explicitly: SQL does not otherwise promise row order, and
+        // this table has no timestamp to order by.
         return db.sql("""
                         select %s
                         from articles

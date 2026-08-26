@@ -146,11 +146,7 @@ pub(crate) fn server_generated_key(columns: &[Column]) -> Option<(&Column, &'sta
         return None;
     }
     let key = key_column(columns)?;
-    let expression = match key.java_type.as_str() {
-        "UUID" => "UUID.randomUUID()",
-        "String" => "UUID.randomUUID().toString()",
-        _ => return None,
-    };
+    let expression = crate::spring::identifiers::mint(&key.java_type)?;
     Some((key, expression))
 }
 
@@ -455,6 +451,56 @@ pub(crate) fn imports(columns: &[Column]) -> Vec<&'static str> {
     }
     found.sort_unstable();
     found
+}
+
+/// The `order by` clause a list of this table's rows gets.
+///
+/// **Not the key.** `order by id` over a random UUID is a stable *random*
+/// order presented to a reader as their data, which modern.md §4.4 calls the
+/// defect a reader is most likely to notice as a user and least likely to
+/// find in the code. `backend.md` §5 is the same point from the schema side.
+///
+/// So: the newest first, by whichever timestamp the table actually has --
+/// `createdAt` where the scaffold was written with `--timestamps`, otherwise
+/// the first required timestamp component declared. The key is appended as
+/// the tiebreak rather than used as the sort, because two rows written in the
+/// same instant otherwise come back in whatever order the plan happens to
+/// produce, and a list that reorders between two identical requests is worse
+/// than one ordered by something arbitrary but fixed.
+///
+/// A table with no timestamp at all falls back to the key, and the caller
+/// says so in a comment: there is nothing else to order by, and SQL promises
+/// no order without a clause.
+pub(crate) fn ordering(columns: &[Column]) -> String {
+    let key = key_column(columns).map(|column| column.name.as_str());
+    let timestamp = columns
+        .iter()
+        .filter(|column| column.not_null && is_timestamp(&column.sql_type))
+        .min_by_key(|column| match column.component.as_str() {
+            "createdAt" => 0,
+            _ => 1,
+        })
+        .map(|column| column.name.as_str());
+    match (timestamp, key) {
+        (Some(timestamp), Some(key)) => format!("{timestamp} desc, {key}"),
+        (Some(timestamp), None) => format!("{timestamp} desc"),
+        (None, Some(key)) => key.to_string(),
+        // No key and no timestamp. With columns, the first is the only thing
+        // left to name; with none, jails was given no field spec at all and
+        // `id` is the same convention the rest of the adapter falls back on.
+        (None, None) => columns
+            .first()
+            .map(|column| column.name.clone())
+            .unwrap_or_else(|| "id".to_string()),
+    }
+}
+
+/// Whether this column carries a point in time, in either dialect's spelling.
+fn is_timestamp(sql_type: &str) -> bool {
+    matches!(
+        sql_type,
+        "timestamptz" | "timestamp" | "timestamp with time zone" | "date"
+    )
 }
 
 /// The table a type maps to: snake_case plus conservative regular-English

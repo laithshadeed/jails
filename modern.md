@@ -80,14 +80,6 @@ rendered faithfully, plus `MessageService`, which §6.4 covers.
 
 ## 4. Migrations — the part that is actually dangerous
 
-### 4.2 uuidv4 as a key, on PostgreSQL 18
-
-`gen_random_uuid()` in the migration and `UUID.randomUUID()` in Java are both
-v4. `backend.md` §5 names this exactly: *"Do not use `uuidv4` /
-`gen_random_uuid()` for a primary key on a large table — random UUIDs destroy
-b-tree locality."* PostgreSQL 18 ships `uuidv7()`; the project runs Postgres 17
-in tests and has no reason to.
-
 ### 4.3 No index serves any query the application runs
 
 `JdbcUnreadMessagesQuery` runs:
@@ -100,13 +92,6 @@ There is no index on `(user_id, is_read)`, none on `user_id`, none on
 `time_stamp`. Every unread lookup is a sequential scan and a sort. The example
 manifest asks for `indexes = ["user_id, time_stamp desc"]`; this one did not,
 and jails did not mention it.
-
-### 4.4 `order by id` on a random UUID
-
-The list endpoint, the unread query and `findAll` all `order by id`. With v4
-ids that is a **stable random order** presented to a user as their conversation.
-Messages must order by `sent_at desc`. This is the defect a reader is most
-likely to notice as a user and least likely to find in the code.
 
 ### 4.5 A closed set stored as free text
 

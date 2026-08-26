@@ -2,6 +2,7 @@ package com.example.demo.service;
 
 import com.example.demo.app.PayoutRepository;
 import com.example.demo.domain.Payout;
+import com.example.demo.domain.TimeOrderedUuid;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -40,7 +41,7 @@ public class PayoutService {
      */
     public Payout create(Payout payout) {
         return repository.save(new Payout(
-                UUID.randomUUID(),
+                TimeOrderedUuid.next(),
                 payout.amount(),
                 payout.status(),
                 payout.version(),

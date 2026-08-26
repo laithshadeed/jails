@@ -21,6 +21,7 @@ use super::*;
 /// check, an event to publish) there is somewhere for it to go that is not a
 /// controller method.
 pub(crate) fn resource_service_java(
+    slice: &Slice,
     pkg: &str,
     name: &str,
     extra: &str,
@@ -44,9 +45,13 @@ pub(crate) fn resource_service_java(
                     ))
                 })
                 .expect("a server-generated key rebuilds the record"),
-            "import java.util.UUID;\n",
+            crate::generate::import_of(
+                pkg,
+                &crate::spring::identity::package(slice),
+                crate::spring::identity::TIME_ORDERED_UUID,
+            ),
         ),
-        None => (var.clone(), ""),
+        None => (var.clone(), String::new()),
     };
     crate::template::render(
         crate::template_here!("spring/resource_service_java.java"),
@@ -55,7 +60,7 @@ pub(crate) fn resource_service_java(
             ("extra", extra),
             ("key", &key.java),
             ("key_import", &key.import),
-            ("uuid_import", uuid_import),
+            ("uuid_import", &uuid_import),
             ("name", name),
             ("created", &*created),
             ("var", &*var),

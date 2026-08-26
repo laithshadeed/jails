@@ -2,6 +2,7 @@ package com.example.demo.service;
 
 import com.example.demo.app.OwnerRepository;
 import com.example.demo.domain.Owner;
+import com.example.demo.domain.TimeOrderedUuid;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -40,7 +41,7 @@ public class OwnerService {
      */
     public Owner create(Owner owner) {
         return repository.save(new Owner(
-                UUID.randomUUID(),
+                TimeOrderedUuid.next(),
                 owner.name(),
                 owner.createdAt()));
     }

@@ -44,7 +44,7 @@ public final class JdbcPayoutsByStatusQuery implements PayoutsByStatusQuery {
                         select %s
                         from payouts
                         where status = :status
-                        order by id
+                        order by created_at desc, id
                         limit :max_results
                         """.formatted(COLUMNS))
                 .param("status", criteria.status().name())
