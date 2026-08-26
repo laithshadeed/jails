@@ -1090,6 +1090,19 @@ fn scaffold_reuses_an_existing_record_and_destroy_preserves_it() {
     assert!(source.contains("UUID id"), "{source}");
     assert!(source.contains("String title"), "{source}");
 
+    let field = jails_cmd(&root, None)
+        .args(["g", "field", "Post", "createdAt:instant?"])
+        .output()
+        .unwrap();
+    assert!(field.status.success(), "{field:?}");
+    let evolved = fs::read_to_string(&record_path).unwrap();
+    assert!(evolved.contains("Optional<Instant> createdAt"), "{evolved}");
+    let jdbc = fs::read_to_string(
+        root.join("src/main/java/com/example/demo/adapters/JdbcPostRepository.java"),
+    )
+    .unwrap();
+    assert!(jdbc.contains("created_at"), "{jdbc}");
+
     let destroy = jails_cmd(&root, None)
         .args(["destroy", "scaffold", "Post", "--force"])
         .status()
@@ -1098,6 +1111,11 @@ fn scaffold_reuses_an_existing_record_and_destroy_preserves_it() {
     assert!(
         record_path.is_file(),
         "destroy scaffold must not remove the record created by a prior intent"
+    );
+    let preserved = fs::read_to_string(&record_path).unwrap();
+    assert!(
+        preserved.contains("Optional<Instant> createdAt"),
+        "destroy scaffold reverted the field shared with the record intent: {preserved}"
     );
     assert!(
         root.join("src/test/java/com/example/demo/domain/PostTest.java")

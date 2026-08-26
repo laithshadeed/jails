@@ -62,6 +62,7 @@ pub(super) fn evolve_existing(
             spec: EntitySpec::Intent(after.clone()),
         }),
     )?;
+    let companions = companion_updates(project, store, &id, after.fields(), package)?;
 
     let directory = ProjectPath::parse("src/main/resources/db/migration")?;
     if !project.root().join(directory.as_str()).is_dir() {
@@ -90,7 +91,9 @@ pub(super) fn evolve_existing(
         spec: EntitySpec::Intent(after),
         owners: BTreeSet::from([OwnerId::DirectCli]),
     };
-    let mut reads = declaration(project, &change, &desired)?.directory(directory);
+    let mut reads = declaration(project, &change, &desired)?
+        .merge(companions.reads)
+        .directory(directory);
     for recorded in recorded_migrations(store, &id) {
         reads = reads.file(recorded);
     }
@@ -98,10 +101,15 @@ pub(super) fn evolve_existing(
         reads = reads.file(path.clone());
     }
     reads = reads.file(path);
+    let mut declared = companions.entities;
+    declared.insert(entity.id.clone(), entity);
+    let mut changes = vec![desired];
+    changes.extend(companions.changes);
+    changes.push(migration);
     let request = Request {
         scope: ReconcileScope::DirectEntity(EntityId::Intent(id.clone())),
-        declared: BTreeMap::from([(entity.id.clone(), entity)]),
-        changes: vec![desired, migration],
+        declared,
+        changes,
     };
     let expected_path = JavaType::new(id.package.clone(), id.name.clone());
     let evolution = EvolveFieldRequestV1 {

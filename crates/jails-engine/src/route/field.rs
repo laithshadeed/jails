@@ -23,9 +23,11 @@
 
 use super::*;
 
+mod companion;
 mod data;
 mod evolution;
 
+use companion::companion_updates;
 use data::{add_data_plan, read_backfill};
 use evolution::{evolve_existing, projected_column, safe_widening};
 use jails_protocol::declaration::{FieldType, Optionality};
@@ -499,6 +501,7 @@ fn add_field_with_syntax(
             spec: EntitySpec::Intent(after.clone()),
         }),
     )?;
+    let companions = companion_updates(project, &store, &id, after.fields(), package)?;
 
     // The append-only half, and the reason this is a one-shot at all. It is
     // owned by the field rather than by the target, so removing the target
@@ -580,7 +583,9 @@ fn add_field_with_syntax(
         spec: EntitySpec::Intent(after),
         owners: BTreeSet::from([OwnerId::DirectCli]),
     };
-    let mut reads = declaration(project, &change, &desired)?.directory(directory);
+    let mut reads = declaration(project, &change, &desired)?
+        .merge(companions.reads)
+        .directory(directory);
     if let Some(path) = data_input {
         reads = reads.file(path);
     }
@@ -588,14 +593,17 @@ fn add_field_with_syntax(
         reads = reads.file(path);
     }
     let mut ordered = vec![desired];
+    ordered.extend(companions.changes);
     if let Some((path, _)) = &migrated {
         reads = reads.file(path.clone());
         ordered.push(migration);
     }
 
+    let mut declared = companions.entities;
+    declared.insert(entity.id.clone(), entity);
     let request = Request {
         scope: ReconcileScope::DirectEntity(EntityId::Intent(id.clone())),
-        declared: BTreeMap::from([(entity.id.clone(), entity)]),
+        declared,
         changes: ordered,
     };
     let mut set = request.against(&store)?;
@@ -699,19 +707,35 @@ fn recorded_target(
 ) -> Result<(IntentId, IntentSpec)> {
     let name = Name::parse(&jails_spec::spec::field::capitalize(target))?;
     let package = Package::parse(&project.package_named("", package))?;
-    let found = store
+    let mut found = store
         .ledger
         .iter()
         .flat_map(|ledger| ledger.applied.iter())
-        .find_map(|row| match (&row.id, &row.version.spec) {
+        .filter_map(|row| match (&row.id, &row.version.spec) {
             (EntityId::Intent(id), EntitySpec::Intent(spec))
-                if id.name == name && id.package == package =>
+                if id.name == name
+                    && id.package == package
+                    && matches!(
+                        spec.arguments,
+                        jails_protocol::declaration::IntentArguments::Fields(_)
+                    ) =>
             {
                 Some((id.clone(), spec.clone()))
             }
             _ => None,
-        });
-    Ok(found.ok_or_else(|| {
+        })
+        .collect::<Vec<_>>();
+    // A logical Java type can be owned by both a narrow record intent and a
+    // scaffold. Evolve the widest projection as the primary so repositories,
+    // DTOs and HTTP surfaces move with the record; companion intents are
+    // updated in the same request below.
+    found.sort_by_key(|(id, _)| {
+        (
+            id.recipe != jails_protocol::entity::Recipe::Scaffold,
+            id.clone(),
+        )
+    });
+    Ok(found.into_iter().next().ok_or_else(|| {
         format!(
             "no `{name}` is recorded in this project.\n       fix: `jails g scaffold {name} \
              ...` or `jails g record {name} ...` first. Adding a component to something the \
