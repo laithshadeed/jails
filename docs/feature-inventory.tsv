@@ -41,6 +41,7 @@ kafka reset	jails-drive	broker-mutation+service-lifecycle	kafka::tool
 db	jails-drive	external-process+service-lifecycle	console::db
 console	jails-drive	external-process	console::console
 rename	jails-engine	project-mutation	route::rename
+rename resource	jails-engine	project-mutation	route::rename_resource
 destroy	jails-engine	project-mutation	route::destroy
 resource	jails	dispatch-only	main command dispatch
 resource status	jails-report	read-only	lifecycle_status::status
