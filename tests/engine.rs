@@ -604,6 +604,7 @@ fn destroying_a_record_takes_back_exactly_what_generating_it_wrote() {
         None,
         false,
         None,
+        None,
     )
     .unwrap();
 
@@ -653,6 +654,7 @@ fn destroying_one_record_leaves_another_alone() {
         None,
         false,
         None,
+        None,
     )
     .unwrap();
 
@@ -688,6 +690,7 @@ fn destroying_what_was_never_generated_names_the_command_that_records_it() {
         "Note",
         None,
         false,
+        None,
         None,
     )
     .unwrap_err();
@@ -825,6 +828,7 @@ fn every_persistent_kind_destroys_back_to_its_projection_baseline() {
             step[2],
             invocation.package.as_deref(),
             false,
+            None,
             None,
         )
         .unwrap_or_else(|why| panic!("{}: destroy refused: {why}", scenario.name));
@@ -2729,6 +2733,7 @@ fn renaming_a_generated_type_moves_what_the_store_says_it_owns() {
         None,
         false,
         None,
+        None,
     )
     .unwrap();
     assert!(
@@ -3099,6 +3104,7 @@ fn a_generated_command_is_registered_in_the_dispatcher_that_runs_it() {
         None,
         false,
         None,
+        None,
     )
     .unwrap();
     let after = std::fs::read_to_string(&dispatcher).unwrap();
@@ -3149,6 +3155,7 @@ fn a_recipe_states_the_block_it_puts_in_somebody_elses_file() {
         "ItemDispatcher",
         None,
         false,
+        None,
         None,
     )
     .unwrap();

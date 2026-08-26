@@ -892,6 +892,12 @@ pub(crate) enum Command {
         /// Exact generated table name; required with `--storage drop`.
         #[arg(long, requires = "storage")]
         confirm_table: Option<String>,
+        /// Apply the committed migration history as a post-commit effect.
+        #[arg(long, requires = "datasource")]
+        migrate: bool,
+        /// Already available datasource used only by an explicit migrate effect.
+        #[arg(long, requires = "migrate", value_name = "NAME")]
+        datasource: Option<String>,
     },
     /// Inspect or change a generated resource by its durable identity
     Resource {

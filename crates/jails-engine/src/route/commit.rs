@@ -138,11 +138,20 @@ pub(super) fn reconciled(run: &Run, result: CommitResult) -> Result<CommitResult
     }
     let store = jails_commit::store::Store::at(run.project().root());
     let effect = run.measure(jails_prepare::timing::TimingPhase::Container, || {
-        jails_commit::runtime::reconcile(
+        jails_commit::runtime::reconcile_with_migrations(
             &store,
             run.project().root(),
             &committed.receipt.transaction_id,
             run.debug,
+            |datasource, migrations, debug| {
+                jails_drive::migrate::apply_effect(
+                    run.project(),
+                    datasource.as_str(),
+                    migrations,
+                    debug,
+                )
+                .map_err(|failure| failure.to_string())
+            },
         )
         .map_err(describe)
     })?;

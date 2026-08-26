@@ -26,6 +26,10 @@ pub(crate) struct Candidate {
 }
 
 impl Candidate {
+    pub fn endpoint_label(&self) -> String {
+        self.endpoint.label()
+    }
+
     pub fn finish(&self, server_major: u32) -> Result<ResolvedDatasource> {
         ResolvedDatasource::new(
             SqlDialect::PostgreSql,

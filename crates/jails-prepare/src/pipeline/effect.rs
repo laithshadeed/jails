@@ -30,8 +30,10 @@
 
 use crate::Result;
 use crate::prepare::FileOp;
+use jails_protocol::database::MigrationInputV1;
 use jails_protocol::effect::PostCommitEffect;
 use jails_protocol::identity::{ObjectId, ProjectPath, ServiceName};
+use jails_protocol::plan::PlannedSubject;
 use jails_protocol::resource::{ResourceKey, ResourceValue};
 use jails_protocol::snapshot::{Captured, ProjectSnapshot};
 use jails_support::codec::{Codec, Encoder, domain_hash};
@@ -154,6 +156,101 @@ pub(super) fn compose_reconcile(
         desired_services,
         stop_services,
     }))
+}
+
+/// Freeze the complete committed Flyway input set for an explicit migration
+/// effect. The datasource is chosen by the request, while the bytes are
+/// chosen here because only preparation knows the post-merge file images.
+pub(super) fn migration_apply(
+    subject: &PlannedSubject,
+    base: &ProjectSnapshot,
+    operations: &[FileOp],
+) -> Result<Option<PostCommitEffect>> {
+    let PlannedSubject::DestroyResourceV2(request) = subject else {
+        return Ok(None);
+    };
+    let Some(datasource) = &request.migration_effect else {
+        return Ok(None);
+    };
+    if !matches!(
+        request.storage,
+        jails_protocol::request::StorageRetirement::Drop { .. }
+    ) {
+        return Err(concat!(
+            "a migration effect was requested without an explicit table drop.\n       ",
+            "fix: remove the effect or prepare the resource with storage=drop."
+        )
+        .into());
+    }
+
+    let directory = ProjectPath::parse("src/main/resources/db/migration")?;
+    let mut paths: BTreeSet<ProjectPath> = base
+        .list(&directory)?
+        .iter()
+        .filter(|path| path.as_str().ends_with(".sql"))
+        .cloned()
+        .collect();
+    paths.extend(
+        operations
+            .iter()
+            .map(FileOp::target)
+            .filter(|path| migration_child(&directory, path) && path.as_str().ends_with(".sql"))
+            .cloned(),
+    );
+
+    let mut migrations = Vec::new();
+    for path in paths {
+        let committed = operations
+            .iter()
+            .find(|operation| operation.target() == &path)
+            .map(FileOp::after);
+        let digest = match committed {
+            Some(Some(after)) => Some(after.id),
+            Some(None) => None,
+            None => match base.read(&path)? {
+                Captured::Present(file) => Some(file.sha256),
+                Captured::Absent => None,
+            },
+        };
+        if let Some(digest) = digest {
+            migrations.push(MigrationInputV1::new(path, digest)?);
+        }
+    }
+    migrations.sort_by(|left, right| {
+        let left_key = (
+            left.version.is_none(),
+            left.version
+                .map(|version| version.get())
+                .unwrap_or_default(),
+            &left.path,
+        );
+        let right_key = (
+            right.version.is_none(),
+            right
+                .version
+                .map(|version| version.get())
+                .unwrap_or_default(),
+            &right.path,
+        );
+        left_key.cmp(&right_key)
+    });
+    if migrations.is_empty() {
+        return Err(concat!(
+            "the migration effect has no committed Flyway inputs.\n       ",
+            "fix: keep the generated migration in `src/main/resources/db/migration`, then retry."
+        )
+        .into());
+    }
+    Ok(Some(PostCommitEffect::ApplyMigrations {
+        datasource: datasource.clone(),
+        migrations,
+    }))
+}
+
+fn migration_child(directory: &ProjectPath, path: &ProjectPath) -> bool {
+    path.as_str()
+        .strip_prefix(directory.as_str())
+        .is_some_and(|rest| rest.starts_with('/') && !rest[1..].contains('/'))
 }
 
 /// One managed service row, as `(name, spec hash)`.

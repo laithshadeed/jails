@@ -6,7 +6,7 @@
 //! read as absence.
 
 use super::*;
-use jails_protocol::request::DestroyResourceRequestV2;
+use jails_protocol::request::{DatasourceRef, DestroyResourceRequestV2};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RequestedStorageRetirement {
@@ -106,6 +106,7 @@ pub fn destroy(
     package: Option<&str>,
     force: bool,
     storage: Option<RequestedStorageRetirement>,
+    migration_effect: Option<&str>,
 ) -> Result<Outcome> {
     // Decided before anything is looked up: these three are *forward-only*,
     // and "no such row" would be the wrong reason to refuse. A migration that
@@ -239,7 +240,22 @@ pub fn destroy(
         }
         (None, None)
     };
+    if migration_effect.is_some()
+        && !matches!(
+            storage,
+            Some(jails_protocol::request::StorageRetirement::Drop { .. })
+        )
+    {
+        return Err(concat!(
+            "`--migrate` is allowed only with `--storage drop`.\n       ",
+            "fix: remove `--migrate`, or explicitly confirm the table drop."
+        )
+        .into());
+    }
     let mut reads = retiring(&store, &owner)?;
+    if migration_effect.is_some() {
+        reads = migration_history_reads(project, reads)?;
+    }
     let mut changes = Vec::new();
     if let Some(change) = drop_change {
         let mut desired = desire::contribution(&owner, &change, project)?;
@@ -299,7 +315,7 @@ pub fn destroy(
                 id.name.clone(),
             ),
             storage,
-            migration_effect: None,
+            migration_effect: migration_effect.map(DatasourceRef::parse).transpose()?,
         }),
         None => None,
     };
@@ -310,7 +326,7 @@ pub fn destroy(
         },
         None => CanonicalMutationRequest::destroy_entity(entity, force)?,
     };
-    let options = match storage {
+    let mut options = match storage {
         Some(jails_protocol::request::StorageRetirement::Preserve { .. }) => {
             BTreeMap::from([("storage".to_string(), vec!["preserve".to_string()])])
         }
@@ -319,12 +335,18 @@ pub fn destroy(
         }
         None => BTreeMap::new(),
     };
+    if let Some(datasource) = migration_effect {
+        options.insert("datasource".to_string(), vec![datasource.to_string()]);
+    }
+    let flags = migration_effect
+        .map(|_| BTreeSet::from(["migrate".to_string()]))
+        .unwrap_or_default();
     let asked = Asked::new(
         canonical,
         &["destroy"],
         vec![label(kind), name.to_string()],
         options,
-        BTreeSet::new(),
+        flags,
     );
     match lifecycle_request {
         Some(requested) => commit_subject(
@@ -336,6 +358,21 @@ pub fn destroy(
         ),
         None => commit(run, request, &reads, &asked),
     }
+}
+
+fn migration_history_reads(
+    project: &Project,
+    mut reads: ReadDeclaration,
+) -> Result<ReadDeclaration> {
+    const DIRECTORY: &str = "src/main/resources/db/migration";
+    let directory = ProjectPath::parse(DIRECTORY)?;
+    reads = reads.directory(directory);
+    for name in project.projected_names_in(DIRECTORY) {
+        if name.ends_with(".sql") {
+            reads = reads.file(ProjectPath::parse(&format!("{DIRECTORY}/{name}"))?);
+        }
+    }
+    Ok(reads)
 }
 
 /// Every class implementing this strategy's port that the strategy does not

@@ -300,7 +300,7 @@ fn apply(
     // `compose.yaml` -- a route knows what it asked for, and a clean
     // three-way merge means those are not the same bytes.
     let mut objects = objects;
-    let post_commit = effect::compose_reconcile(
+    let compose_effect = effect::compose_reconcile(
         context.start_services,
         context
             .observed_store
@@ -312,9 +312,19 @@ fn apply(
         &base,
         &operations,
         &mut objects,
-    )?
-    .into_iter()
-    .collect();
+    )?;
+    let migration_effect = effect::migration_apply(&set.subject, &base, &operations)?;
+    let post_commit: Vec<_> = [compose_effect, migration_effect]
+        .into_iter()
+        .flatten()
+        .collect();
+    if post_commit.len() > 1 {
+        return Err(concat!(
+            "one change prepared more than one post-commit effect.\n       ",
+            "fix: split runtime reconciliation and migration application into separate commands."
+        )
+        .into());
+    }
 
     assemble(
         base,

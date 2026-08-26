@@ -86,3 +86,28 @@ pub(crate) fn declared_property(
         key: jails_protocol::identity::PropertyKey::parse(key)?,
     })
 }
+
+/// Translate the two destroy flags into the engine's closed storage choice.
+pub(crate) fn storage_retirement(
+    storage: Option<crate::cli::StoragePolicy>,
+    confirm_table: Option<String>,
+) -> Result<Option<jails_engine::route::RequestedStorageRetirement>> {
+    Ok(match storage {
+        Some(crate::cli::StoragePolicy::Preserve) if confirm_table.is_some() => {
+            return Err(
+                "`--confirm-table` is only meaningful with `--storage drop`.\n       \
+                 fix: remove the confirmation when preserving storage."
+                    .into(),
+            );
+        }
+        Some(crate::cli::StoragePolicy::Preserve) => {
+            Some(jails_engine::route::RequestedStorageRetirement::Preserve)
+        }
+        Some(crate::cli::StoragePolicy::Drop) => {
+            Some(jails_engine::route::RequestedStorageRetirement::Drop {
+                confirmed_table: confirm_table,
+            })
+        }
+        None => None,
+    })
+}

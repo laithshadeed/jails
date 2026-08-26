@@ -1198,6 +1198,95 @@ fn task_drop_keeps_v001_and_appends_an_exact_forward_migration() {
 }
 
 #[test]
+fn task_drop_can_explicitly_apply_the_frozen_history_after_commit() {
+    let root = temp_dir("task-drop-apply-migrations");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    assert!(
+        jails_cmd(&root, None)
+            .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let fake = temp_dir("task-drop-flyway-bin");
+    let log = fake.join("flyway.log");
+    write_fake_maven(&fake, &["flyway"], &log);
+    let before = snapshot_tree(&root);
+    let preview = jails_cmd(&root, Some(&fake))
+        .env(
+            "DATABASE_URL",
+            "postgresql://app:secret@127.0.0.1:5432/demo",
+        )
+        .args([
+            "destroy",
+            "scaffold",
+            "Task",
+            "--storage",
+            "drop",
+            "--confirm-table",
+            "tasks",
+            "--force",
+            "--migrate",
+            "--datasource",
+            "DATABASE_URL",
+            "--pretend",
+            "--output",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert!(preview.status.success(), "{preview:?}");
+    assert_eq!(snapshot_tree(&root), before, "preview committed the drop");
+    assert!(read_log(&log).is_empty(), "preview ran Flyway");
+    let json = String::from_utf8(preview.stdout).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let effect = &value["report"]["data"]["post_commit"][0]["effect"];
+    let effect = &effect["apply-migrations"];
+    assert_eq!(effect["datasource"], "DATABASE_URL", "{json}");
+    let migrations = effect["migrations"].as_array().unwrap();
+    assert_eq!(migrations.len(), 2, "{json}");
+    assert_eq!(migrations[0]["version"], 1, "{json}");
+    assert_eq!(migrations[1]["version"], 2, "{json}");
+
+    let committed = jails_cmd(&root, Some(&fake))
+        .env(
+            "DATABASE_URL",
+            "postgresql://app:secret@127.0.0.1:5432/demo",
+        )
+        .args([
+            "destroy",
+            "scaffold",
+            "Task",
+            "--storage",
+            "drop",
+            "--confirm-table",
+            "tasks",
+            "--force",
+            "--migrate",
+            "--datasource",
+            "DATABASE_URL",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        committed.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&committed.stdout),
+        String::from_utf8_lossy(&committed.stderr)
+    );
+    let invoked = read_log(&log);
+    assert!(invoked.contains("flyway migrate"), "{invoked}");
+    assert!(!invoked.contains("secret"), "credential leaked: {invoked}");
+    assert!(
+        root.join("src/main/resources/db/migration/V002__drop_tasks.sql")
+            .is_file(),
+        "effect ran without the migration commit"
+    );
+}
+
+#[test]
 fn scaffold_reuses_an_existing_record_and_destroy_preserves_it() {
     let root = temp_dir("scaffold-model-first");
     write_spring_fixture(&root);

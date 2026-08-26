@@ -240,6 +240,7 @@ name = "jails-drive"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "jails-commit",
  "jails-generate",
  "jails-java",
  "jails-project",
@@ -256,6 +257,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "jails-commit",
+ "jails-drive",
  "jails-generate",
  "jails-java",
  "jails-prepare",

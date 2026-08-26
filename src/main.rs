@@ -355,26 +355,20 @@ fn main() -> std::process::ExitCode {
             package,
             storage,
             confirm_table,
+            migrate,
+            datasource,
         } => dispatch::mutate_confirmed(invocation, false, force, |run| {
-            let storage = match storage {
-                Some(cli::StoragePolicy::Preserve) if confirm_table.is_some() => {
-                    return Err(
-                        "`--confirm-table` is only meaningful with `--storage drop`.\n       \
-                         fix: remove the confirmation when preserving storage."
-                            .into(),
-                    );
-                }
-                Some(cli::StoragePolicy::Preserve) => {
-                    Some(jails_engine::route::RequestedStorageRetirement::Preserve)
-                }
-                Some(cli::StoragePolicy::Drop) => {
-                    Some(jails_engine::route::RequestedStorageRetirement::Drop {
-                        confirmed_table: confirm_table.clone(),
-                    })
-                }
-                None => None,
-            };
-            jails_engine::route::destroy(run, kind, &name, package.as_deref(), force, storage)
+            let storage = arguments::storage_retirement(storage, confirm_table.clone())?;
+            let migration_effect = migrate.then_some(datasource.as_deref()).flatten();
+            jails_engine::route::destroy(
+                run,
+                kind,
+                &name,
+                package.as_deref(),
+                force,
+                storage,
+                migration_effect,
+            )
         }),
         Command::Resource { command } => match command {
             ResourceCommand::Status {
