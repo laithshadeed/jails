@@ -8,10 +8,10 @@ use jails_protocol::database::{
 };
 use jails_protocol::identity::{JavaType, Name, ObjectId, SqlName};
 use jails_support::Result;
-use jails_support::codec::domain_hash;
+use jails_support::codec::{Encoder, domain_hash};
 use sqlparser::ast::{Expr, JoinOperator, SelectItem, Statement, TableFactor};
 use sqlparser::parser::Parser;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug)]
 struct Relation {
@@ -23,6 +23,15 @@ struct Relation {
 /// Compile the deliberately bounded SELECT subset into a deterministic Java
 /// contract. Anything not proven by migrations requires live evidence.
 pub fn compile_query(source: &QuerySource, catalog: &CatalogSnapshot) -> Result<QueryContractV1> {
+    compile_query_with_inputs(source, catalog, catalog.digest, &BTreeMap::new())
+}
+
+pub fn compile_query_with_inputs(
+    source: &QuerySource,
+    catalog: &CatalogSnapshot,
+    ordered_migration_digest: ObjectId,
+    type_mappings: &BTreeMap<SqlTypeName, JavaType>,
+) -> Result<QueryContractV1> {
     if catalog.dialect != SqlDialect::PostgreSql {
         return Err(
             "offline semantic contracts currently require PostgreSQL.\n       fix: use parse-only or a live check for this dialect."
@@ -63,21 +72,33 @@ pub fn compile_query(source: &QuerySource, catalog: &CatalogSnapshot) -> Result<
         );
     };
     let relations = collect_relations(select, catalog)?;
-    let columns = compile_columns(&select.projection, &relations, catalog, &source.id)?;
+    let mapping_digest = type_mapping_digest(type_mappings)?;
+    let columns = compile_columns(
+        &select.projection,
+        &relations,
+        catalog,
+        &source.id,
+        type_mappings,
+        mapping_digest,
+    )?;
     let parameters = source
         .declared_parameters
         .iter()
-        .map(|declared| compile_parameter(declared, &source.id))
+        .map(|declared| compile_parameter(declared, &source.id, type_mappings, mapping_digest))
         .collect::<Result<Vec<_>>>()?;
     let toolchain_digest = digest(
         "JAILS-SQL-TOOLCHAIN-1",
-        b"sqlparser=0.62.0;catalog=jails-bounded-1;java-types=jails-postgres-1",
+        format!(
+            "sqlparser=0.62.0;catalog=jails-bounded-1;java-types=jails-postgres-1;mapping={mapping_digest}"
+        )
+        .as_bytes(),
     );
     let details_digest = digest(
         "JAILS-SQL-OFFLINE-DETAILS-1",
         format!(
-            "{}:{}:{}",
+            "{}:{}:{}:{}",
             source.query_digest(),
+            ordered_migration_digest,
             catalog.digest,
             columns.len()
         )
@@ -214,6 +235,8 @@ fn compile_columns(
     relations: &[Relation],
     catalog: &CatalogSnapshot,
     query: &QueryId,
+    type_mappings: &BTreeMap<SqlTypeName, JavaType>,
+    mapping_digest: ObjectId,
 ) -> Result<Vec<ColumnContract>> {
     let mut columns = Vec::with_capacity(projection.len());
     let mut java_names = BTreeSet::new();
@@ -267,9 +290,14 @@ fn compile_columns(
             name: output_name,
             sql_type: sql_type.clone(),
             java_name,
-            java_type: java_type(sql_type)?,
+            java_type: java_type(sql_type, type_mappings)?,
             nullable: *nullable || relation.nullable,
-            evidence: mapping_evidence(query, column_name.as_str(), sql_type.as_str()),
+            evidence: mapping_evidence(
+                query,
+                column_name.as_str(),
+                sql_type.as_str(),
+                mapping_digest,
+            ),
         });
     }
     Ok(columns)
@@ -311,17 +339,33 @@ fn resolve_column<'a>(
     }
 }
 
-fn compile_parameter(parameter: &DeclaredParameter, query: &QueryId) -> Result<ParameterContract> {
+fn compile_parameter(
+    parameter: &DeclaredParameter,
+    query: &QueryId,
+    type_mappings: &BTreeMap<SqlTypeName, JavaType>,
+    mapping_digest: ObjectId,
+) -> Result<ParameterContract> {
     Ok(ParameterContract {
         name: parameter.name.clone(),
         sql_type: parameter.sql_type.clone(),
-        java_type: java_type(&parameter.sql_type)?,
+        java_type: java_type(&parameter.sql_type, type_mappings)?,
         nullable: parameter.nullable,
-        evidence: mapping_evidence(query, parameter.name.as_str(), parameter.sql_type.as_str()),
+        evidence: mapping_evidence(
+            query,
+            parameter.name.as_str(),
+            parameter.sql_type.as_str(),
+            mapping_digest,
+        ),
     })
 }
 
-fn java_type(sql_type: &SqlTypeName) -> Result<JavaType> {
+fn java_type(
+    sql_type: &SqlTypeName,
+    type_mappings: &BTreeMap<SqlTypeName, JavaType>,
+) -> Result<JavaType> {
+    if let Some(mapped) = type_mappings.get(sql_type) {
+        return Ok(mapped.clone());
+    }
     let java = match sql_type.as_str() {
         "text" | "varchar" | "bpchar" => "java.lang.String",
         "uuid" => "java.util.UUID",
@@ -357,16 +401,30 @@ fn lower_camel(sql: &str) -> String {
     output
 }
 
-fn mapping_evidence(query: &QueryId, name: &str, sql_type: &str) -> ObjectId {
+fn mapping_evidence(
+    query: &QueryId,
+    name: &str,
+    sql_type: &str,
+    mapping_digest: ObjectId,
+) -> ObjectId {
     digest(
         "JAILS-SQL-MAPPING-1",
         format!(
-            "{}.{}:{name}:{sql_type}",
+            "{}.{}:{name}:{sql_type}:{mapping_digest}",
             query.slice.as_str(),
             query.name.as_str()
         )
         .as_bytes(),
     )
+}
+
+fn type_mapping_digest(mappings: &BTreeMap<SqlTypeName, JavaType>) -> Result<ObjectId> {
+    let mut encoder = Encoder::new();
+    encoder.map(mappings)?;
+    Ok(ObjectId::from_bytes(domain_hash(
+        "JAILS-SQL-TYPE-MAPPINGS-1",
+        &encoder.finish()?,
+    )))
 }
 
 fn digest(domain: &str, bytes: &[u8]) -> ObjectId {

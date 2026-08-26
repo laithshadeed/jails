@@ -2,11 +2,12 @@
 
 use crate::application_manifest::{self, ManifestFormat};
 use crate::model::Project;
-use crate::query_compiler::{compile_catalog, compile_query, parse_query_file};
+use crate::query_compiler::{compile_catalog, compile_query_with_inputs, parse_query_file};
 use jails_protocol::application::ApplicationSpecV1;
 use jails_protocol::database::{QueryContractV1, QuerySource};
 use jails_protocol::identity::{Package, ProjectPath};
 use jails_support::Result;
+use jails_support::codec::{Codec, Encoder, domain_hash};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -32,6 +33,7 @@ pub fn check_offline(
         .collect::<BTreeSet<_>>();
     common_inputs.insert(project_relative(project, &manifest_source)?);
     let catalog = compile_catalog(manifest.dialect, &migrations)?;
+    let migration_digest = ordered_migration_digest(&migrations)?;
     let mut checked = Vec::new();
     for (slice_name, slice) in &manifest.slices {
         let package = slice.package.as_ref().unwrap_or(&manifest.base_package);
@@ -59,7 +61,12 @@ pub fn check_offline(
                 )
                 .into());
             }
-            let contract = compile_query(&source, &catalog)?;
+            let contract = compile_query_with_inputs(
+                &source,
+                &catalog,
+                migration_digest,
+                &manifest.type_mappings,
+            )?;
             let mut inputs = common_inputs.clone();
             inputs.insert(query.source.clone());
             checked.push(CheckedQuery {
@@ -82,6 +89,21 @@ pub fn check_offline(
     }
     checked.sort_by(|left, right| left.source.id.cmp(&right.source.id));
     Ok(checked)
+}
+
+fn ordered_migration_digest(
+    migrations: &[(ProjectPath, String)],
+) -> Result<jails_protocol::identity::ObjectId> {
+    let mut encoder = Encoder::new();
+    encoder.count(migrations.len())?;
+    for (path, contents) in migrations {
+        path.encode(&mut encoder)?;
+        encoder.string(contents)?;
+    }
+    Ok(jails_protocol::identity::ObjectId::from_bytes(domain_hash(
+        "JAILS-SQL-MIGRATIONS-1",
+        &encoder.finish()?,
+    )))
 }
 
 fn project_relative(project: &Project, path: &Path) -> Result<ProjectPath> {

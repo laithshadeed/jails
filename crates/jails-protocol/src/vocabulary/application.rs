@@ -1,10 +1,10 @@
 //! Canonical application and slice intent shared by CLI and manifests.
 
 use crate::Result;
-use crate::database::{QueryName, SliceName, SqlDialect};
+use crate::database::{QueryName, SliceName, SqlDialect, SqlTypeName};
 use crate::declaration::{FieldSpec, IndexSpec};
 use crate::entity::EntityId;
-use crate::identity::{Name, ObjectId, Package, ProjectPath};
+use crate::identity::{JavaType, Name, ObjectId, Package, ProjectPath};
 use crate::lifecycle::TableBinding;
 use jails_support::codec::{Codec, Decoder, Encoder, domain_hash};
 use std::collections::BTreeMap;
@@ -234,6 +234,7 @@ pub struct ApplicationSpecV1 {
     pub base_package: Package,
     pub java_release: JavaRelease,
     pub dialect: SqlDialect,
+    pub type_mappings: BTreeMap<SqlTypeName, JavaType>,
     pub slices: BTreeMap<SliceName, SliceSpecV1>,
 }
 
@@ -254,6 +255,7 @@ impl Codec for ApplicationSpecV1 {
         self.base_package.encode(encoder)?;
         self.java_release.encode(encoder)?;
         self.dialect.encode(encoder)?;
+        encoder.map(&self.type_mappings)?;
         encoder.map(&self.slices)
     }
 
@@ -263,6 +265,7 @@ impl Codec for ApplicationSpecV1 {
             base_package: Package::decode(decoder)?,
             java_release: JavaRelease::decode(decoder)?,
             dialect: SqlDialect::decode(decoder)?,
+            type_mappings: decoder.map()?,
             slices: decoder.map()?,
         })
     }
@@ -287,6 +290,7 @@ mod tests {
             base_package: Package::parse("com.acme").unwrap(),
             java_release: JavaRelease::new(26).unwrap(),
             dialect: SqlDialect::PostgreSql,
+            type_mappings: BTreeMap::new(),
             slices: BTreeMap::from([(
                 SliceName::parse("Billing").unwrap(),
                 SliceSpecV1 {

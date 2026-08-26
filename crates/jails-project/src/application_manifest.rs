@@ -7,10 +7,10 @@ use jails_protocol::application::{
     ApplicationSpecV1, AuditPolicy, DeclaredEntityLifecycle, EntitySpecV1, JavaRelease,
     QuerySpecV1, RoutePath, SliceSpecV1,
 };
-use jails_protocol::database::{QueryName, SliceName, SqlDialect};
+use jails_protocol::database::{QueryName, SliceName, SqlDialect, SqlTypeName};
 use jails_protocol::declaration::{FieldSpec, IndexSpec};
 use jails_protocol::entity::EntityId;
-use jails_protocol::identity::{Name, ObjectId, Package, ProjectPath, SqlName};
+use jails_protocol::identity::{JavaType, Name, ObjectId, Package, ProjectPath, SqlName};
 use jails_protocol::lifecycle::TableBinding;
 use jails_support::Result;
 use jails_support::codec::domain_hash;
@@ -49,6 +49,8 @@ struct Application {
     base_package: String,
     java_release: u16,
     dialect: String,
+    #[serde(default)]
+    type_mappings: BTreeMap<String, String>,
 }
 
 #[derive(Default, Deserialize)]
@@ -122,6 +124,12 @@ impl Document {
         let base_package = Package::parse(&self.application.base_package)?;
         let java_release = JavaRelease::new(self.application.java_release)?;
         let dialect = SqlDialect::parse(&self.application.dialect)?;
+        let type_mappings = self
+            .application
+            .type_mappings
+            .into_iter()
+            .map(|(sql, java)| Ok((SqlTypeName::parse(&sql)?, JavaType::parse(&java)?)))
+            .collect::<Result<BTreeMap<_, _>>>()?;
         let application_identity = format!("{}|{}", name.as_str(), base_package.as_str());
         let mut slices = BTreeMap::new();
         let mut routes = BTreeSet::new();
@@ -160,6 +168,7 @@ impl Document {
             base_package,
             java_release,
             dialect,
+            type_mappings,
             slices,
         })
     }
@@ -302,6 +311,7 @@ name = "Orders"
 base_package = "com.acme"
 java_release = 26
 dialect = "postgresql"
+type_mappings = { "public.order_status" = "java.lang.String" }
 [slices.Billing]
 package = "com.acme.billing"
 route_prefix = "/billing"
@@ -321,7 +331,7 @@ source = "src/main/resources/db/queries/FindPayableOrders.sql"
     fn toml_and_json_construct_identical_typed_values() {
         let json = r#"{
           "schema":"jails.app.v1",
-          "application":{"name":"Orders","base_package":"com.acme","java_release":26,"dialect":"postgresql"},
+          "application":{"name":"Orders","base_package":"com.acme","java_release":26,"dialect":"postgresql","type_mappings":{"public.order_status":"java.lang.String"}},
           "slices":{"Billing":{"package":"com.acme.billing","route_prefix":"/billing",
             "entities":{"Order":{"table":"orders","audit":"created-and-updated","fields":["id:uuid@pk","total:decimal@positive"],"indexes":[{"name":"orders_total_idx","fields":["total"],"unique":false}]}},
             "queries":{"FindPayableOrders":{"source":"src/main/resources/db/queries/FindPayableOrders.sql"}}}}

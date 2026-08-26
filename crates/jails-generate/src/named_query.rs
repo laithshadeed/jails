@@ -189,20 +189,21 @@ fn jdbc_java(
     packages: &NamedQueryPackages,
 ) -> Result<String> {
     let name = source.id.name.as_str();
-    let mut imports = BTreeSet::from([
+    let mut java_imports = BTreeSet::from([
         format!("{}.{}", packages.application_query.as_str(), name),
         "org.springframework.jdbc.core.RowMapper".to_string(),
         "org.springframework.jdbc.core.simple.JdbcClient".to_string(),
         "org.springframework.stereotype.Repository".to_string(),
     ]);
+    java_imports.extend(imports(contract));
     if contract
         .columns
         .iter()
         .any(|column| column.java_type.to_string() == "java.time.Instant")
     {
-        imports.insert("java.time.OffsetDateTime".to_string());
+        java_imports.insert("java.time.OffsetDateTime".to_string());
     }
-    let imports = render_imports(&imports);
+    let imports = render_imports(&java_imports);
     let mapper = if contract.columns.is_empty() {
         String::new()
     } else {
@@ -512,11 +513,12 @@ fn contract_json(contract: &QueryContractV1) -> Result<String> {
         .iter()
         .map(|parameter| {
             format!(
-                "    {{\"name\":\"{}\",\"sql_type\":\"{}\",\"java_type\":\"{}\",\"nullable\":{}}}",
+                "    {{\"name\":\"{}\",\"sql_type\":\"{}\",\"java_type\":\"{}\",\"nullable\":{},\"evidence\":\"{}\"}}",
                 parameter.name.as_str(),
                 parameter.sql_type.as_str(),
                 parameter.java_type,
-                parameter.nullable
+                parameter.nullable,
+                parameter.evidence
             )
         })
         .collect::<Vec<_>>()
@@ -526,12 +528,13 @@ fn contract_json(contract: &QueryContractV1) -> Result<String> {
         .iter()
         .map(|column| {
             format!(
-                "    {{\"name\":\"{}\",\"java_name\":\"{}\",\"sql_type\":\"{}\",\"java_type\":\"{}\",\"nullable\":{}}}",
+                "    {{\"name\":\"{}\",\"java_name\":\"{}\",\"sql_type\":\"{}\",\"java_type\":\"{}\",\"nullable\":{},\"evidence\":\"{}\"}}",
                 column.name.as_str(),
                 column.java_name.as_str(),
                 column.sql_type.as_str(),
                 column.java_type,
-                column.nullable
+                column.nullable,
+                column.evidence
             )
         })
         .collect::<Vec<_>>()
@@ -648,17 +651,44 @@ mod tests {
     }
 
     #[test]
-    fn generated_port_and_fake_compile_with_javac() {
+    fn complete_generated_query_slice_compiles_with_ordinary_javac() {
         let (source, contract, packages) = fixture();
         let files = project(&source, &contract, &packages).unwrap();
         let scratch = tempfile::tempdir().unwrap();
         let classes = scratch.path().join("classes");
         fs::create_dir_all(&classes).unwrap();
         let mut sources = Vec::new();
-        for file in [&files[0], &files[2]] {
+        for file in &files[..4] {
             let path = scratch.path().join(&file.path);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(&path, &file.contents).unwrap();
+            sources.push(path);
+        }
+        for (path, source) in [
+            (
+                "org/springframework/stereotype/Repository.java",
+                "package org.springframework.stereotype; public @interface Repository {}",
+            ),
+            (
+                "org/springframework/jdbc/core/RowMapper.java",
+                "package org.springframework.jdbc.core; public interface RowMapper<T> { T map(java.sql.ResultSet result, int rowNumber) throws java.sql.SQLException; }",
+            ),
+            (
+                "org/springframework/jdbc/core/simple/JdbcClient.java",
+                "package org.springframework.jdbc.core.simple; import java.util.*; import org.springframework.jdbc.core.RowMapper; public final class JdbcClient { public StatementSpec sql(String sql) { return null; } public interface StatementSpec { StatementSpec param(String name, Object value); <T> MappedQuerySpec<T> query(RowMapper<T> mapper); int update(); } public interface MappedQuerySpec<T> { T single(); Optional<T> optional(); List<T> list(); } }",
+            ),
+            (
+                "org/junit/jupiter/api/Test.java",
+                "package org.junit.jupiter.api; public @interface Test {}",
+            ),
+            (
+                "org/junit/jupiter/api/Assertions.java",
+                "package org.junit.jupiter.api; public final class Assertions { public static void assertTrue(boolean value) {} public static void assertNull(Object value) {} public static void assertEquals(Object expected, Object actual) {} public static void assertDoesNotThrow(Runnable action) { action.run(); } }",
+            ),
+        ] {
+            let path = scratch.path().join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, source).unwrap();
             sources.push(path);
         }
         let output = Command::new("javac")

@@ -20,7 +20,7 @@ use sqlparser::parser::Parser;
 use std::collections::{BTreeMap, BTreeSet};
 
 mod contract;
-pub use contract::compile_query;
+pub use contract::{compile_query, compile_query_with_inputs};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct QueryFile<'a> {
@@ -603,6 +603,7 @@ fn statement_kind(statement: &Statement) -> &'static str {
 mod tests {
     use super::*;
     use jails_protocol::database::EvidenceLevel;
+    use jails_protocol::identity::JavaType;
 
     fn query(sql: &str) -> Result<QuerySource> {
         parse_query_file(
@@ -737,6 +738,43 @@ WHERE value = :wanted -- :comment
         );
         assert_eq!(contract.evidence.level, EvidenceLevel::VerifiedOffline);
         assert_eq!(contract.evidence.catalog_digest, Some(catalog.digest));
+    }
+
+    #[test]
+    fn a_vendor_type_requires_and_uses_an_explicit_project_mapping() {
+        let migration =
+            ProjectPath::parse("src/main/resources/db/migration/V001__entries.sql").unwrap();
+        let catalog = compile_catalog(
+            SqlDialect::PostgreSql,
+            &[(
+                migration,
+                "CREATE TABLE entries (id uuid PRIMARY KEY, state public.entry_state NOT NULL);"
+                    .to_string(),
+            )],
+        )
+        .unwrap();
+        let source = query(
+            "-- jails:name FindItems\n-- jails:cardinality many\nSELECT id, state FROM entries;\n",
+        )
+        .unwrap();
+
+        let error = compile_query(&source, &catalog).unwrap_err();
+        assert!(error.to_string().contains("public.entry_state"), "{error}");
+        assert!(
+            error.to_string().contains("explicit type mapping"),
+            "{error}"
+        );
+
+        let mappings = BTreeMap::from([(
+            SqlTypeName::parse("public.entry_state").unwrap(),
+            JavaType::parse("java.lang.String").unwrap(),
+        )]);
+        let contract =
+            compile_query_with_inputs(&source, &catalog, catalog.digest, &mappings).unwrap();
+        assert_eq!(
+            contract.columns[1].java_type.to_string(),
+            "java.lang.String"
+        );
     }
 
     #[test]
