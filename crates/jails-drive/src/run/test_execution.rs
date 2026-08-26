@@ -29,10 +29,18 @@ pub(super) fn run_inherited_timeout(
     }
     cmd.stdout(std::process::Stdio::inherit())
         .stderr(std::process::Stdio::inherit());
+    jails_support::hermetic::own_process_group(&mut cmd);
     let program = cmd.get_program().to_string_lossy().into_owned();
     let mut child = cmd
         .spawn()
         .map_err(|error| format!("failed to run {program}: {error}"))?;
+    let _signals = match jails_support::hermetic::ForegroundSignals::install(child.id()) {
+        Ok(signals) => signals,
+        Err(error) => {
+            let _ = jails_support::hermetic::terminate_process_group(&mut child);
+            return Err(error);
+        }
+    };
     let started = std::time::Instant::now();
     loop {
         if let Some(status) = child
@@ -50,8 +58,7 @@ pub(super) fn run_inherited_timeout(
             };
         }
         if started.elapsed() >= timeout {
-            let _ = child.kill();
-            let _ = child.wait();
+            jails_support::hermetic::terminate_process_group(&mut child)?;
             return Err(format!(
                 "test run exceeded {} second(s)\n       fix: raise `--timeout`, narrow the \
                  selection, or remove the limit",
@@ -322,10 +329,18 @@ pub(super) fn run_silent_timeout(
     command
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
+    jails_support::hermetic::own_process_group(&mut command);
     let program = command.get_program().to_string_lossy().into_owned();
     let mut child = command
         .spawn()
         .map_err(|error| format!("failed to run {program}: {error}"))?;
+    let _signals = match jails_support::hermetic::ForegroundSignals::install(child.id()) {
+        Ok(signals) => signals,
+        Err(error) => {
+            let _ = jails_support::hermetic::terminate_process_group(&mut child);
+            return Err(error);
+        }
+    };
     let started = std::time::Instant::now();
     loop {
         if let Some(status) = child
@@ -339,8 +354,7 @@ pub(super) fn run_silent_timeout(
             };
         }
         if started.elapsed() >= timeout {
-            let _ = child.kill();
-            let _ = child.wait();
+            jails_support::hermetic::terminate_process_group(&mut child)?;
             return Err(format!(
                 "test run exceeded {} second(s)\n       fix: raise `--timeout`, narrow the selection, or remove the limit",
                 timeout.as_secs()

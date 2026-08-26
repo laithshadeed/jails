@@ -39,13 +39,14 @@
 //! tool.
 
 use crate::Result;
-use nix::sys::signal::{Signal, killpg};
+use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal, killpg, sigaction};
 use nix::unistd::Pid;
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, Instant};
 
 /// The environment and process rules one runner version guarantees.
@@ -63,6 +64,105 @@ pub(crate) const MAX_STREAM_BYTES: usize = 64 * 1024;
 
 /// How long a terminated group gets to exit before it is killed.
 const GRACE: Duration = Duration::from_secs(2);
+
+static FOREGROUND_GROUP: AtomicI32 = AtomicI32::new(0);
+
+extern "C" fn forward_foreground_signal(signal: i32) {
+    let group = FOREGROUND_GROUP.load(Ordering::Relaxed);
+    if group > 0 {
+        // SAFETY: kill is async-signal-safe, and a negative pid addresses the
+        // exact process group created for this invocation.
+        unsafe {
+            nix::libc::kill(-group, signal);
+        }
+    }
+}
+
+/// Give a foreground child its own process group before spawning it.
+pub fn own_process_group(command: &mut Command) {
+    command.process_group(0);
+}
+
+/// Forward Ctrl-C/termination to one exact foreground process group.
+pub struct ForegroundSignals {
+    previous_interrupt: SigAction,
+    previous_terminate: SigAction,
+}
+
+impl ForegroundSignals {
+    pub fn install(child_pid: u32) -> Result<Self> {
+        let group = i32::try_from(child_pid)
+            .map_err(|_| {
+                "foreground child pid exceeds the platform signal range\n       fix: retry the invocation after the operating system recycles process identifiers"
+            })?;
+        FOREGROUND_GROUP
+            .compare_exchange(0, group, Ordering::SeqCst, Ordering::SeqCst)
+            .map_err(|_| {
+                "another foreground process group is already active\n       fix: wait for that invocation to finish before starting another"
+            })?;
+        let action = SigAction::new(
+            SigHandler::Handler(forward_foreground_signal),
+            SaFlags::SA_RESTART,
+            SigSet::empty(),
+        );
+        // SAFETY: the handler only performs an async-signal-safe kill and
+        // reads one lock-free atomic.
+        let previous_interrupt = match unsafe { sigaction(Signal::SIGINT, &action) } {
+            Ok(previous) => previous,
+            Err(error) => {
+                FOREGROUND_GROUP.store(0, Ordering::SeqCst);
+                return Err(format!(
+                    "could not install Ctrl-C forwarding: {error}\n       fix: restore ordinary SIGINT handling and retry"
+                )
+                .into());
+            }
+        };
+        // SAFETY: same handler contract as above.
+        let previous_terminate = match unsafe { sigaction(Signal::SIGTERM, &action) } {
+            Ok(previous) => previous,
+            Err(error) => {
+                // SAFETY: restoring the exact action returned by sigaction.
+                unsafe {
+                    let _ = sigaction(Signal::SIGINT, &previous_interrupt);
+                }
+                FOREGROUND_GROUP.store(0, Ordering::SeqCst);
+                return Err(format!(
+                    "could not install termination forwarding: {error}\n       fix: restore ordinary SIGTERM handling and retry"
+                )
+                .into());
+            }
+        };
+        Ok(Self {
+            previous_interrupt,
+            previous_terminate,
+        })
+    }
+}
+
+impl Drop for ForegroundSignals {
+    fn drop(&mut self) {
+        FOREGROUND_GROUP.store(0, Ordering::SeqCst);
+        // SAFETY: restoring the exact actions returned by sigaction.
+        unsafe {
+            let _ = sigaction(Signal::SIGINT, &self.previous_interrupt);
+            let _ = sigaction(Signal::SIGTERM, &self.previous_terminate);
+        }
+    }
+}
+
+/// Terminate and reap the whole process group owned by a direct child.
+pub fn terminate_process_group(child: &mut std::process::Child) -> Result<()> {
+    terminate(child.id() as i32, child)?;
+    child
+        .wait()
+        .map(|_| ())
+        .map_err(|error| {
+            format!(
+                "could not reap the foreground child: {error}\n       fix: verify the child process has exited before retrying"
+            )
+            .into()
+        })
+}
 
 /// One captured stream.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

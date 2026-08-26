@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const CACHE: &str = "runtime-classpath-v1";
+const CACHE: &str = "runtime-classpath-v2";
 
 pub(super) struct Resolved {
     pub entries: Vec<PathBuf>,
@@ -314,7 +314,7 @@ impl Cache {
 fn read_cache(project: &Project) -> Option<Cache> {
     let text = fs::read_to_string(project.root().join(".jails/run").join(CACHE)).ok()?;
     let mut lines = text.lines();
-    if lines.next()? != "version=1" {
+    if lines.next()? != "version=2" {
         return None;
     }
     if lines.next()? != format!("root={}", root_id(project)) {
@@ -330,7 +330,7 @@ fn read_cache(project: &Project) -> Option<Cache> {
 fn write_cache(project: &Project, entries: &[PathBuf]) -> Result<()> {
     let outputs = outputs(project)?;
     let mut text = format!(
-        "version=1\nroot={}\nsnapshot={}\n",
+        "version=2\nroot={}\nsnapshot={}\n",
         root_id(project),
         snapshot(project, &outputs, entries)
     );
@@ -364,11 +364,11 @@ fn snapshot(project: &Project, outputs: &[PathBuf], entries: &[PathBuf]) -> Stri
     for output in outputs {
         paths.extend(walk(output));
     }
-    paths.extend(entries.iter().cloned());
     paths.sort();
     paths.dedup();
     let mut bytes = Vec::new();
     for path in paths {
+        bytes.extend_from_slice(b"project\0");
         bytes.extend_from_slice(
             path.strip_prefix(project.root())
                 .unwrap_or(&path)
@@ -384,7 +384,27 @@ fn snapshot(project: &Project, outputs: &[PathBuf], entries: &[PathBuf]) -> Stri
             Err(_) => bytes.extend_from_slice(&u64::MAX.to_be_bytes()),
         }
     }
-    hex(&domain_hash("JAILS-RUNTIME-SNAPSHOT-1", &bytes))
+    for (index, path) in entries.iter().filter(|path| path.is_file()).enumerate() {
+        bytes.extend_from_slice(b"classpath\0");
+        bytes.extend_from_slice(&(index as u64).to_be_bytes());
+        bytes.extend_from_slice(
+            path.file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .as_bytes(),
+        );
+        bytes.push(0);
+        match fs::read(path) {
+            Ok(content) => {
+                bytes.extend_from_slice(&(content.len() as u64).to_be_bytes());
+                bytes.extend_from_slice(&domain_hash("JAILS-RUNTIME-DEPENDENCY-2", &content));
+            }
+            Err(_) => bytes.extend_from_slice(&u64::MAX.to_be_bytes()),
+        }
+    }
+    bytes.extend_from_slice(b"release\0");
+    bytes.extend_from_slice(&project.java_release().unwrap_or_default().to_be_bytes());
+    hex(&domain_hash("JAILS-RUNTIME-SNAPSHOT-2", &bytes))
 }
 
 fn build_inputs(project: &Project) -> Vec<PathBuf> {
@@ -455,5 +475,37 @@ mod tests {
                 .unwrap()
                 .current(&project, &outputs(&project).unwrap())
         );
+    }
+
+    #[test]
+    fn semantic_snapshot_does_not_depend_on_checkout_or_dependency_cache_prefixes() {
+        let scratch = jails_support::scratch::ScratchDir::in_temp("runtime-host-prefix").unwrap();
+        let mut snapshots = Vec::new();
+        for name in ["first", "second"] {
+            let root = scratch.path().join(name).join("project");
+            let source = root.join("src/main/java/com/example/App.java");
+            let class = root.join("target/classes/com/example/App.class");
+            let dependency = scratch
+                .path()
+                .join(name)
+                .join("cache/repository/example-1.0.jar");
+            fs::create_dir_all(source.parent().unwrap()).unwrap();
+            fs::create_dir_all(class.parent().unwrap()).unwrap();
+            fs::create_dir_all(dependency.parent().unwrap()).unwrap();
+            fs::write(root.join("pom.xml"), "<project/>").unwrap();
+            fs::write(&source, "class App {}\n").unwrap();
+            fs::write(&class, "compiled").unwrap();
+            fs::write(&dependency, "same artifact bytes").unwrap();
+            let project = Project::inspect(&root).unwrap();
+            snapshots.push(snapshot(
+                &project,
+                &outputs(&project).unwrap(),
+                &[
+                    class.parent().unwrap().parent().unwrap().to_path_buf(),
+                    dependency,
+                ],
+            ));
+        }
+        assert_eq!(snapshots[0], snapshots[1]);
     }
 }

@@ -884,7 +884,7 @@ fn run_no_build_runs_already_compiled_plain_classes_without_mvn() {
         String::from_utf8_lossy(&output.stdout)
     );
     assert!(
-        root.join(".jails/run/runtime-classpath-v1").is_file(),
+        root.join(".jails/run/runtime-classpath-v2").is_file(),
         "the direct launcher must persist its content-addressed classpath"
     );
 
@@ -902,6 +902,157 @@ fn run_no_build_runs_already_compiled_plain_classes_without_mvn() {
         String::from_utf8_lossy(&stale.stderr).contains("classes are stale"),
         "{}",
         String::from_utf8_lossy(&stale.stderr)
+    );
+}
+
+#[test]
+fn direct_launch_refuses_a_selected_jdk_older_than_the_project_release() {
+    let root = temp_dir("run-old-jdk");
+    let source = root.join("src/main/java/com/example/demo/App.java");
+    let class = root.join("target/classes/com/example/demo/App.class");
+    fs::create_dir_all(source.parent().unwrap()).unwrap();
+    fs::create_dir_all(class.parent().unwrap()).unwrap();
+    fs::write(
+        root.join("pom.xml"),
+        "<project><properties><maven.compiler.release>26</maven.compiler.release></properties></project>\n",
+    )
+    .unwrap();
+    fs::write(
+        &source,
+        "package com.example.demo;\npublic class App { public static void main(String[] args) {} }\n",
+    )
+    .unwrap();
+    fs::write(&class, "compiled").unwrap();
+    let tools = temp_dir("run-old-jdk-tools");
+    let log = tools.join("java.log");
+    write_fake_maven(&tools, &["java"], &log);
+    fs::write(
+        tools.join("java"),
+        format!(
+            "#!/bin/sh\necho \"$*\" >> \"{}\"\nif [ \"$1\" = \"-version\" ]; then echo 'openjdk version \"21.0.8\"' >&2; exit 0; fi\nexit 99\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+
+    let output = jails_cmd(&root, Some(&tools))
+        .env_remove("JAVA_HOME")
+        .args(["run", "--launcher", "classpath", "--compile", "none"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(
+        stderr.contains("Java 21 cannot run project release 26"),
+        "{stderr}"
+    );
+    let log = read_log(&log);
+    assert!(log.contains("-version"), "{log}");
+    assert!(
+        !log.contains("-cp"),
+        "an incompatible JDK launched the app: {log}"
+    );
+}
+
+#[test]
+fn jar_launch_reuses_only_a_byte_current_proved_artifact() {
+    let root = temp_dir("run-proved-jar");
+    let source = root.join("src/main/java/com/example/demo/App.java");
+    fs::create_dir_all(source.parent().unwrap()).unwrap();
+    fs::write(root.join("pom.xml"), "<project/>\n").unwrap();
+    fs::write(&source, "package com.example.demo;\nclass App {}\n").unwrap();
+    let tools = temp_dir("run-proved-jar-tools");
+    let log = tools.join("tools.log");
+    write_fake_maven(&tools, &["mvn", "java"], &log);
+    fs::write(
+        tools.join("mvn"),
+        format!(
+            "#!/bin/sh\necho \"mvn $*\" >> \"{}\"\n/bin/mkdir -p target\necho packaged > target/app.jar\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+    fs::write(
+        tools.join("java"),
+        format!(
+            "#!/bin/sh\necho \"java $*\" >> \"{}\"\nif [ \"$1\" = \"-version\" ]; then echo 'openjdk version \"26\"' >&2; fi\nexit 0\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+
+    let built = jails_cmd(&root, Some(&tools))
+        .env_remove("JAVA_HOME")
+        .args([
+            "run",
+            "--launcher",
+            "jar",
+            "--compile",
+            "build",
+            "--services",
+            "none",
+            "--",
+            "hello world",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&built.stdout),
+        String::from_utf8_lossy(&built.stderr)
+    );
+    assert!(root.join(".jails/run/packaged-artifact-v1").is_file());
+
+    let reused = jails_cmd(&root, Some(&tools))
+        .env_remove("JAVA_HOME")
+        .args([
+            "run",
+            "--launcher",
+            "jar",
+            "--compile",
+            "none",
+            "--services",
+            "none",
+        ])
+        .output()
+        .unwrap();
+    assert!(reused.status.success());
+    let before_stale = read_log(&log);
+    let package_runs = before_stale.matches("mvn package").count();
+    assert_eq!(
+        package_runs, 1,
+        "compile none rebuilt the jar: {before_stale}"
+    );
+
+    fs::write(
+        &source,
+        "package com.example.demo;\nclass App { int changed; }\n",
+    )
+    .unwrap();
+    let stale = jails_cmd(&root, Some(&tools))
+        .env_remove("JAVA_HOME")
+        .args([
+            "run",
+            "--launcher",
+            "jar",
+            "--compile",
+            "none",
+            "--services",
+            "none",
+        ])
+        .output()
+        .unwrap();
+    assert!(!stale.status.success());
+    assert!(
+        String::from_utf8_lossy(&stale.stderr).contains("packaged artifact is stale"),
+        "{}",
+        String::from_utf8_lossy(&stale.stderr)
+    );
+    assert_eq!(
+        read_log(&log).matches("java -jar").count(),
+        2,
+        "the stale jar was launched"
     );
 }
 
@@ -1053,7 +1204,15 @@ fn gradle_json_is_one_report_and_timeout_is_bounded_without_tool_noise() {
         "Gradle leaked into JSON: {json}"
     );
 
-    fs::write(tools.join("gradle"), "#!/bin/sh\n/bin/sleep 30\n").unwrap();
+    let child_pid_file = tools.join("child.pid");
+    fs::write(
+        tools.join("gradle"),
+        format!(
+            "#!/bin/sh\n/bin/sleep 30 &\necho \"$!\" > \"{}\"\nwait\n",
+            child_pid_file.display()
+        ),
+    )
+    .unwrap();
     let started = std::time::Instant::now();
     let timed = jails_cmd(&root, Some(&tools))
         .args([
@@ -1085,6 +1244,20 @@ fn gradle_json_is_one_report_and_timeout_is_bounded_without_tool_noise() {
     assert!(
         elapsed < std::time::Duration::from_secs(10),
         "the 1s Gradle timeout took {elapsed:?}"
+    );
+    let child_pid = fs::read_to_string(&child_pid_file)
+        .unwrap()
+        .trim()
+        .parse::<u32>()
+        .unwrap();
+    let child_proc = PathBuf::from(format!("/proc/{child_pid}"));
+    let reaped_by = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while child_proc.exists() && std::time::Instant::now() < reaped_by {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(
+        !child_proc.exists(),
+        "the timed-out Gradle process left child pid {child_pid} alive"
     );
 }
 

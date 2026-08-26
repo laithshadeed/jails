@@ -138,6 +138,7 @@ fn run_watched(mut cmd: Command, debug: bool) -> Result<()> {
 
     cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
+    jails_support::hermetic::own_process_group(&mut cmd);
     if debug {
         jails_support::debug_cmd(&cmd);
     }
@@ -145,6 +146,14 @@ fn run_watched(mut cmd: Command, debug: bool) -> Result<()> {
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("failed to run {program}: {e}"))?;
+    let _signals = match jails_support::hermetic::ForegroundSignals::install(child.id()) {
+        Ok(signals) => signals,
+        Err(error) => {
+            let _ = jails_support::hermetic::terminate_process_group(&mut child);
+            return Err(error);
+        }
+    };
+    println!("jails: process-started; pid={}", child.id());
 
     // stderr on its own thread: reading the two pipes in sequence would
     // deadlock the moment the child filled the one we are not reading.
@@ -166,6 +175,7 @@ fn run_watched(mut cmd: Command, debug: bool) -> Result<()> {
     });
 
     let mut log = String::new();
+    let mut lifecycle = ApplicationSignals::default();
     if let Some(mut stdout) = child.stdout.take() {
         let mut chunk = [0u8; 4096];
         while let Ok(n) = stdout.read(&mut chunk) {
@@ -176,6 +186,7 @@ fn run_watched(mut cmd: Command, debug: bool) -> Result<()> {
             print!("{text}");
             std::io::Write::flush(&mut std::io::stdout()).ok();
             log.push_str(&text);
+            lifecycle.observe(&log);
         }
     }
     let status = child
@@ -183,7 +194,9 @@ fn run_watched(mut cmd: Command, debug: bool) -> Result<()> {
         .map_err(|e| format!("failed to wait for {program}: {e}"))?;
     if let Ok(errors) = collector.join() {
         log.push_str(&errors);
+        lifecycle.observe(&log);
     }
+    println!("jails: stopped; status={status}");
 
     if !status.success() {
         report_maven_failure(&log);
@@ -204,6 +217,32 @@ fn run_watched(mut cmd: Command, debug: bool) -> Result<()> {
     // The report above is the message; main.rs prints nothing for an empty
     // error and just sets the exit code.
     Err(jails_support::Failure::Reported)
+}
+
+#[derive(Default)]
+struct ApplicationSignals {
+    started: bool,
+    ready: bool,
+}
+
+impl ApplicationSignals {
+    fn observe(&mut self, output: &str) {
+        if self.ready || !spring_started(output) {
+            return;
+        }
+        if !self.started {
+            println!("jails: application-started; signal=spring-started");
+            self.started = true;
+        }
+        println!("jails: application-ready; signal=spring-started");
+        self.ready = true;
+    }
+}
+
+fn spring_started(output: &str) -> bool {
+    output.lines().any(|line| {
+        line.contains(" Started ") && line.contains(" in ") && line.contains(" seconds")
+    })
 }
 
 /// Force colour back on for a piped child. Maven and Spring Boot both turn
@@ -773,6 +812,17 @@ mod tests {
         let (pkg, class_name) = find_main_class(&root).unwrap();
         assert_eq!(pkg, "");
         assert_eq!(class_name, "Cli");
+    }
+
+    #[test]
+    fn a_spawned_jvm_is_not_readiness_but_the_spring_started_signal_is() {
+        assert!(!spring_started("jails: process-started; pid=42\n"));
+        assert!(!spring_started(
+            "Tomcat initialized with port 8080 (http)\n"
+        ));
+        assert!(spring_started(
+            "2026-08-26 INFO  app.Main : Started Main in 0.742 seconds (process running for 1.0)\n"
+        ));
     }
 }
 
