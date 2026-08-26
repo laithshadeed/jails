@@ -88,6 +88,24 @@ impl Lock {
         Ok(held)
     }
 
+    /// Lock an existing directory without creating a lock-file artifact in it.
+    ///
+    /// This is for publication into a directory that is not itself a jails
+    /// project yet. The directory is the stable inode shared by all competing
+    /// publishers, so it has the same no-unlink safety property as a retained
+    /// lock file without leaving bookkeeping in the user's parent directory.
+    pub fn acquire_directory(path: &Path) -> std::result::Result<Self, Contention> {
+        let file = File::open(path).map_err(|error| {
+            Contention::Refused(format!("could not open {}: {error}", path.display()))
+        })?;
+        contend(&file, path)?;
+        same_entry(&file, path).map_err(|failure| Contention::Refused(failure.to_string()))?;
+        Ok(Self {
+            file,
+            path: path.to_path_buf(),
+        })
+    }
+
     /// Replace the diagnostic content. Never authority for anything.
     fn describe(&mut self, description: &str) -> Result<()> {
         let content = format!("pid {}\n{description}\n", std::process::id());
@@ -281,6 +299,23 @@ mod tests {
         }
         Lock::acquire(&path, "two").unwrap();
         scratch.close().unwrap();
+    }
+
+    #[test]
+    fn an_existing_directory_can_be_locked_without_creating_a_file() {
+        let scratch = ScratchDir::in_temp("jails-directory-lock").unwrap();
+        let before: Vec<_> = std::fs::read_dir(scratch.path()).unwrap().collect();
+        let held = Lock::acquire_directory(scratch.path()).unwrap();
+
+        let error = Lock::acquire_directory(scratch.path()).unwrap_err();
+        assert!(matches!(error, Contention::Held(_)), "{error}");
+        assert_eq!(
+            std::fs::read_dir(scratch.path()).unwrap().count(),
+            before.len()
+        );
+
+        drop(held);
+        Lock::acquire_directory(scratch.path()).unwrap();
     }
 
     /// Contention is reported, not waited out.

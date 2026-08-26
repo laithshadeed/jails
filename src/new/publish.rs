@@ -20,22 +20,19 @@
 //!   within one filesystem, and `/tmp` is frequently a different one. Reserving
 //!   beside the destination is what makes the last step a rename rather than a
 //!   copy.
-//! - **The lock is on the parent directory, not on the destination.** A lock
-//!   file inside the destination would have to be created before the thing it
-//!   guards exists, and would then be part of the project it published. So two
-//!   `jails new` runs in one directory serialise on `<parent>/.jails-new.lock`,
-//!   which is also what makes the "already exists" check meaningful: it is
-//!   rechecked under the lock, so it cannot be overtaken between the check and
-//!   the rename.
+//! - **The lock is the parent directory, not the destination.** A lock file
+//!   inside the destination would have to be created before the thing it
+//!   guards exists, and would then be part of the project it published. The
+//!   existing parent directory is already a stable inode shared by competing
+//!   runs, and locking it leaves no `.jails-new.lock` in the user's workspace.
+//!   The "already exists" check is rechecked under that lock, so it cannot be
+//!   overtaken between the check and the rename.
 
 use jails_support::Result;
 pub(crate) use jails_support::apply::Tree;
 use jails_support::lock::Lock;
 use jails_support::scratch::ScratchDir;
 use std::path::{Path, PathBuf};
-
-/// The name of the advisory lock two concurrent `jails new` runs contend on.
-pub(crate) const LOCK_FILE: &str = ".jails-new.lock";
 
 /// A reserved destination and the scratch tree standing in for it.
 #[derive(Debug)]
@@ -78,7 +75,7 @@ impl Publication {
             .into());
         }
 
-        let lock = Lock::acquire(&parent.join(LOCK_FILE), "jails new").map_err(|contention| {
+        let lock = Lock::acquire_directory(&parent).map_err(|contention| {
             format!(
                 "cannot create a project in {}: {contention}",
                 parent.display()
@@ -177,7 +174,6 @@ mod tests {
         let leftovers: Vec<_> = std::fs::read_dir(parent.path())
             .unwrap()
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-            .filter(|name| name != LOCK_FILE)
             .collect();
         assert!(
             leftovers.is_empty(),
