@@ -1,5 +1,8 @@
-package com.example.demo.domain;
+package com.example.demo.service;
 
+import com.example.demo.domain.Reward;
+import com.example.demo.domain.RewardRule;
+import com.example.demo.domain.Transaction;
 import java.util.Optional;
 
 /**

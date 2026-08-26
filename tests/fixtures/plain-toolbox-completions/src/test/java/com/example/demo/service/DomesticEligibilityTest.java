@@ -1,7 +1,8 @@
-package com.example.demo.domain;
+package com.example.demo.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.example.demo.domain.Transaction;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 

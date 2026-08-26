@@ -102,16 +102,16 @@ fn overlay_plain_toolbox_completions(root: &Path) {
         "src/main/java/com/example/demo/MoneyMoved.java",
         "src/main/java/com/example/demo/domain/Tally.java",
         "src/main/java/com/example/demo/domain/Transaction.java",
-        "src/main/java/com/example/demo/domain/DomesticEligibility.java",
-        "src/main/java/com/example/demo/domain/ExactReferenceMatchRule.java",
-        "src/main/java/com/example/demo/domain/AmountAndDateMatchRule.java",
-        "src/main/java/com/example/demo/domain/FuzzyMemoMatchRule.java",
+        "src/main/java/com/example/demo/service/DomesticEligibility.java",
+        "src/main/java/com/example/demo/service/ExactReferenceMatchRule.java",
+        "src/main/java/com/example/demo/service/AmountAndDateMatchRule.java",
+        "src/main/java/com/example/demo/service/FuzzyMemoMatchRule.java",
         "src/test/java/com/example/demo/MoneyMovedTest.java",
         "src/test/java/com/example/demo/domain/TallyTest.java",
-        "src/test/java/com/example/demo/domain/DomesticEligibilityTest.java",
-        "src/test/java/com/example/demo/domain/ExactReferenceMatchRuleTest.java",
-        "src/test/java/com/example/demo/domain/AmountAndDateMatchRuleTest.java",
-        "src/test/java/com/example/demo/domain/FuzzyMemoMatchRuleTest.java",
+        "src/test/java/com/example/demo/service/DomesticEligibilityTest.java",
+        "src/test/java/com/example/demo/service/ExactReferenceMatchRuleTest.java",
+        "src/test/java/com/example/demo/service/AmountAndDateMatchRuleTest.java",
+        "src/test/java/com/example/demo/service/FuzzyMemoMatchRuleTest.java",
         "src/test/java/com/example/demo/BriefTest.java",
         "src/test/java/com/example/demo/CheckoutIT.java",
     ];
@@ -307,8 +307,16 @@ struct SpringToolboxes {
 fn verified_spring_toolboxes(path: &str) -> &'static SpringToolboxes {
     static VERIFIED: std::sync::OnceLock<SpringToolboxes> = std::sync::OnceLock::new();
     VERIFIED.get_or_init(|| {
-        let (core, core_fresh) = cached_toolchain_dir("spring-core-toolbox");
-        let (services, services_fresh) = cached_toolchain_dir("spring-services-toolbox");
+        // Salted with this file's own text, not just the product binary.
+        // A toolbox is a *harness* input: adding a generator to the list below
+        // changes what the shared project proves, and without the salt the
+        // cached tree from the previous run is reused and the new step never
+        // runs -- a control that reports green over commands it did not
+        // execute. Same failure as a skipped tier-3 test, one level up.
+        let salt = include_str!("main.rs");
+        let (core, core_fresh) = cached_toolchain_dir_with_salt("spring-core-toolbox", salt);
+        let (services, services_fresh) =
+            cached_toolchain_dir_with_salt("spring-services-toolbox", salt);
 
         if core_fresh {
             write_spring_fixture(&core);
@@ -351,6 +359,19 @@ fn verified_spring_toolboxes(path: &str) -> &'static SpringToolboxes {
                 ][..],
                 &["generate", "dto", "Payout"][..],
                 &["generate", "client", "Billing"][..],
+                // Two kinds that only contradict each other in company.
+                // `g scaffold` writes an ArchUnit rule forbidding
+                // `org.springframework..` inside `domain..`, and `g strategy`
+                // wrote `@Component` implementations into it -- a red build on
+                // a clean generate, invisible to every scenario in the suite
+                // because each exercises one kind in one project. This toolbox
+                // is where a first-party generator meets the fitness function
+                // another first-party generator installed.
+                &["generate", "enum", "Visibility", "PUBLIC", "PRIVATE"][..],
+                &[
+                    "generate", "strategy", "PostRule", "Featured", "Standard", "--on", "Post",
+                    "--yields", "Tag",
+                ][..],
             ] {
                 let status = jails_cmd_with_path(&core, path)
                     .args(args)
@@ -450,7 +471,8 @@ fn verified_spring_services_toolbox(path: &str) -> &'static std::path::PathBuf {
 fn verified_spring_db_toolbox(path: &str) -> &'static std::path::PathBuf {
     static VERIFIED: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
     VERIFIED.get_or_init(|| {
-        let (root, fresh) = cached_toolchain_dir("spring-db-toolbox");
+        let (root, fresh) =
+            cached_toolchain_dir_with_salt("spring-db-toolbox", include_str!("main.rs"));
         if fresh {
             write_spring_fixture(&root);
             let status = jails_cmd_with_path(&root, path)

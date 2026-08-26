@@ -21,11 +21,22 @@ no hand-written Java, no hand-edited pom. Sources are at
 | `mc-public-09-01-2026` | Django 5 | `minicom-2026-01-09` | **green**, 34 tests |
 | `mc-13-12-2025` | Django 5 / Node / Rails / Spring skeleton | `minicom-2025-12-13` | **green**, 9 tests |
 | `mc-21-11-2025` | Django + Channels, read receipts | `minicom-2025-11-21` | **green**, 32 tests |
-| `mc-16-11-2025` | Django + Channels + HF bot | `minicom-2025-11-16` | **RED** — see M1 |
+| `mc-16-11-2025` | Django + Channels + HF bot | `minicom-2025-11-16` | **RED** — M1, now closed |
 
 A seventh check ran `jails` inside the *unmodified* `mc-01-06-2026/spring`
 tree — Gradle 8.5, Spring Boot 2.7.18, Java 21 — to test the foreign-project
 path. That is M2.
+
+**M1 is closed.** The port stays in `domain` and its beans moved to `service`,
+so the ArchUnit rule `g scaffold` writes and the `@Component` `g strategy`
+needs stop contradicting each other; `--on`/`--yields` reach both through
+`import_of`, which is what makes `--package` compile; and a `destroy` that
+cannot find a `--package`-placed resource now names the package it was
+recorded under instead of reporting it as never generated. The reason the
+suite could not see it is closed too — the shared Spring toolbox generates a
+scaffold *and* a strategy into one project and runs `mvn test` over both, and
+its cache is salted with the harness text so adding a step to that list
+actually runs it.
 
 The domain modelling held up well. `g scaffold`, `g enum`, `g association`,
 `g query`, `g transition`, `g usecase`, `g strategy`, `add db/api/cors/json/sse`
@@ -34,111 +45,6 @@ reached `BUILD SUCCESS` with no file touched by hand. What follows is the
 remainder.
 
 ---
-
-## M1 — `g strategy` and `g scaffold` contradict each other, and there is no third option
-
-**This is the one thing that made a build red.** Three defects, one blast
-radius: **a strategy cannot be generated into any project that also has a
-scaffold.**
-
-`g scaffold` writes an `ArchitectureTest` forbidding `org.springframework..`
-inside `domain..`. `g strategy` writes `@Component` implementations *into*
-`domain..` — and the `@Component` is load-bearing, as its own Javadoc says:
-without it the bean is silently absent from the injected `List<BotRule>`.
-
-### Reproduce — six commands, no database, ~40 s
-
-```sh
-jails new m1 --package com.x --offline --no-git && cd m1
-jails g enum Sender CUSTOMER BOT AGENT
-jails g scaffold Message id:long@pk sender:Sender content:string!
-jails g record BotReply text:string!
-jails g strategy BotRule Greeting Fallback --on Message --yields BotReply
-jails build
-```
-
-```
-Class <com.x.domain.FallbackBotRule> is annotated with <org.springframework.stereotype.Component> in (FallbackBotRule.java:0)
-Class <com.x.domain.GreetingBotRule> is annotated with <org.springframework.stereotype.Component> in (GreetingBotRule.java:0)
-[ERROR] Tests run: 24, Failures: 1, Errors: 0, Skipped: 4
-[ERROR]   ArchitectureTest.DOMAIN_HAS_NO_FRAMEWORK_DEPENDENCIES
-[INFO] BUILD FAILURE
-```
-
-### M1a — `--package` never imports the `--on` / `--yields` types
-
-The obvious workaround does not compile. From the same directory:
-
-```sh
-jails destroy strategy BotRule
-jails g strategy BotRule Greeting Fallback --on Message --yields BotReply --package service
-head -4 src/main/java/com/x/service/BotRule.java
-```
-
-```java
-package com.x.service;
-
-import java.util.Optional;          // ← that is the whole import list
-```
-
-```sh
-jails build
-```
-
-```
-src/main/java/com/x/service/BotRule.java:[28,30] cannot find symbol
-  symbol:   class Message
-src/main/java/com/x/service/BotRule.java:[28,14] cannot find symbol
-  symbol:   class BotReply
-src/main/java/com/x/service/FallbackBotRule.java:[17,37] cannot find symbol
-  symbol:   class Message
-…
-```
-
-`--package ''` fails identically in the base package. So the default
-placement is the only one that compiles, and it is the one ArchUnit rejects.
-
-The fix is narrow: whatever renders `--on` / `--yields` into the port and the
-implementations has to go through the same `import_of`-style helper the
-scaffold uses for its cross-package imports (`CLAUDE.md`, "scaffold now
-crosses package boundaries"), which already returns an empty string when the
-packages match. Today the strategy renderer appears to assume they always
-match.
-
-### M1b — `destroy` cannot undo a `--package`-placed strategy
-
-```sh
-jails destroy strategy BotRule
-```
-
-```
-jails: no `strategy BotRule` is recorded in this project.
-       fix: `jails g strategy BotRule` is what records one. A destroy that
-            guessed at paths would delete files jails never wrote.
-```
-
-— seconds after the generate that printed `ledger replace`. Five files stay in
-`service/`. They *are* recoverable, but only through the transaction log:
-
-```sh
-jails history            # take the top hash
-jails undo <hash>        # deletes all five
-```
-
-which works, and is not what the error message points at. So the reading is
-that the strategy row is recorded without its placement, and `destroy`
-reconstructs the default `domain..` paths, finds nothing, and reports the
-resource as absent rather than as placed elsewhere. `--package` is a one-way
-door for every generator that resolves paths this way; strategy is just where
-it showed.
-
-### Why the suite cannot see any of this
-
-`tests/agreement.rs` and the golden scenarios exercise **one kind per
-scenario**. M1 needs a scaffold *and* a strategy in one project; M1a needs
-`--package` *and* a cross-package `--on`. A scenario pairing two kinds — or an
-`ArchitectureTest` assertion in the strategy scenario — is what would have
-caught it.
 
 ## M2 — `add db` has no Spring Boot floor, and produces an unresolvable build on Boot 2
 
@@ -745,9 +651,10 @@ and should stay that way. It is the observation that *get-or-create by natural
 key*, *read across an association*, and *bidirectional push* are three generic
 primitives, and that all six of these projects needed all three.
 
-M1 and M2 are different: those are defects, not absences, and both are
-invisible to the current test suite for the same reason — the golden scenarios
-exercise one kind on one flavour, and both bugs need a second thing present.
+M1 and M2 were different: defects rather than absences, and both invisible to
+the suite for the same reason — the golden scenarios exercise one kind on one
+flavour, and each bug needs a second thing present. M1 is closed, along with
+the blind spot behind it.
 
 ---
 

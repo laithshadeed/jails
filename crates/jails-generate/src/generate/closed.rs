@@ -294,12 +294,21 @@ pub(super) fn strategy_interface_java(
     variants: &[String],
     on: &str,
     yields: Option<&str>,
+    extra: &str,
 ) -> String {
     let (ret, method, param) = strategy_method(on, yields);
     let param_name = lower_first(on);
     let mut out = format!("package {pkg};\n\n");
     if yields.is_some() {
-        out += "import java.util.Optional;\n\n";
+        out += "import java.util.Optional;\n";
+    }
+    // The signature names types this file does not own, and until `--package`
+    // existed they were always siblings. `import_of` is empty when they still
+    // are, so the ordinary layout is unchanged and the overridden one compiles
+    // instead of failing on `cannot find symbol` for a line nobody wrote.
+    out += extra;
+    if yields.is_some() || !extra.is_empty() {
+        out += "\n";
     }
     out += "/**\n";
     out += &format!(" * One reason a {param_name} produces a result.\n");
@@ -351,6 +360,7 @@ pub(super) fn strategy_impl_java(
     on: &str,
     yields: Option<&str>,
     spring: bool,
+    extra: &str,
 ) -> String {
     let (ret, method, param) = strategy_method(on, yields);
     let param_name = lower_first(on);
@@ -358,6 +368,12 @@ pub(super) fn strategy_impl_java(
     if yields.is_some() {
         out += "import java.util.Optional;\n";
     }
+    // The port and the two signature types. On Spring this file is a layer
+    // away from all three, which is the point: the bean annotation stays out
+    // of `domain` and the port stays framework-free, so the ArchUnit rule
+    // `g scaffold` writes and the `@Component` this class needs stop
+    // contradicting each other.
+    out += extra;
     if spring {
         out += "import org.springframework.stereotype.Component;\n";
     }

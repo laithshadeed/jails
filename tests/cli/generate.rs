@@ -3887,12 +3887,21 @@ fn generate_strategy_produces_a_project_that_compiles_and_passes_tests() {
             .success()
     );
 
+    // The port is framework-free and stays in `domain`; the beans that
+    // implement it carry `@Component` on Spring and live a layer up, so the
+    // ArchUnit rule `g scaffold` writes and the annotation this pattern needs
+    // no longer contradict each other. The placement is the same on plain
+    // Maven, where there is neither -- one layout is easier to explain than
+    // one that depends on the build file.
     let verified = verified_plain_toolbox(&path);
-    for class in ["Eligibility", "DomesticEligibility"] {
+    for (layer, class) in [
+        ("domain", "Eligibility"),
+        ("service", "DomesticEligibility"),
+    ] {
         assert!(
             verified
                 .join(format!(
-                    "target/classes/com/example/demo/domain/{class}.class"
+                    "target/classes/com/example/demo/{layer}/{class}.class"
                 ))
                 .is_file(),
             "shared toolchain matrix did not compile {class}"

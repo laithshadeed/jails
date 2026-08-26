@@ -1025,11 +1025,29 @@ jails knows nothing about.
   which is why the generated Javadoc says so and why `--on`/`--yields` types
   that are not in the project are named at generation time. `destroy strategy`
   cannot be given the variant list (destroy takes no fields), so it finds
-  implementations by reading `java::type_info(...).supertypes` under the
-  domain package. That is deliberately *better* than a stored list: an
-  implementation added by hand after the generate call is still one of this
-  strategy's classes, and leaving it behind implementing a deleted interface
-  stops the project compiling.
+  implementations by reading `java::type_info(...).supertypes` in **every
+  main-source directory the recorded rows name** -- not the port's own. That
+  is deliberately *better* than a stored list: an implementation added by hand
+  after the generate call is still one of this strategy's classes, and leaving
+  it behind implementing a deleted interface stops the project compiling.
+
+  **The port is in `domain` and the beans are in `service`**, and the split is
+  load-bearing rather than taste: `g scaffold` writes an ArchUnit rule
+  forbidding `org.springframework..` inside `domain..`, and the `@Component`
+  on each implementation is the thing that puts it in the injected list. Two
+  first-party generators cannot disagree about where the domain boundary is,
+  and the disagreement was a red build on a clean generate. The port needs no
+  framework, so it stays; the beans move. Plain-Maven projects get the same
+  layout with no annotation, because one placement is easier to explain than
+  one that depends on the build file. `--on` and `--yields` reach the
+  implementations through `import_of`, which is what makes `--package` compile
+  at all -- it used to emit a signature naming types it never imported.
+
+  **`--package` is part of an entity's identity, so `destroy` needs the same
+  one.** Two resources of a name in two packages are two resources, which is
+  what makes slices possible; what was missing is that a lookup miss reported
+  the resource as never generated, seconds after the generate that recorded
+  it. The refusal names the recorded package now.
 - **A name that already carries its kind's suffix must not get it twice.**
   `strip_redundant_suffix` runs in `generate` **and** `destroy` — applied to
   one and not the other, `destroy` rebuilds different paths and strands the

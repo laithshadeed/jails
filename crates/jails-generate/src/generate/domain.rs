@@ -799,17 +799,31 @@ mod tests {
     /// says so, because that is the only place a reader will find it.
     #[test]
     fn a_spring_strategy_implementation_is_a_bean_and_says_why() {
+        // The bean lives a layer up from the port, so the port, the input and
+        // the result are all imports now -- and the `@Component` that used to
+        // violate the ArchUnit rule `g scaffold` writes is nowhere near
+        // `domain`.
+        let ported = concat!(
+            "import com.example.demo.domain.RewardRule;\n",
+            "import com.example.demo.domain.Transaction;\n",
+            "import com.example.demo.domain.Reward;\n",
+        );
         let spring = strategy_impl_java(
-            "com.example.demo.domain",
+            "com.example.demo.service",
             "RewardRule",
             "CoffeeRewardRule",
             "Transaction",
             Some("Reward"),
             true,
+            ported,
         );
         assert!(spring.contains("@Component"), "{spring}");
         assert!(
             spring.contains("import org.springframework.stereotype.Component;"),
+            "{spring}"
+        );
+        assert!(
+            spring.contains("import com.example.demo.domain.RewardRule;"),
             "{spring}"
         );
         assert!(spring.contains("its absence is silent"), "{spring}");
@@ -817,12 +831,13 @@ mod tests {
         // A plain Maven project has no Spring on the classpath, so the
         // annotation would not resolve and the import would not compile.
         let plain = strategy_impl_java(
-            "com.example.demo.domain",
+            "com.example.demo.service",
             "RewardRule",
             "CoffeeRewardRule",
             "Transaction",
             Some("Reward"),
             false,
+            ported,
         );
         assert!(!plain.contains("@Component"), "{plain}");
         assert!(!plain.contains("springframework"), "{plain}");

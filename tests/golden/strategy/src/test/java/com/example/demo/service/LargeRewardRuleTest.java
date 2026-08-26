@@ -1,4 +1,4 @@
-package com.example.demo.domain;
+package com.example.demo.service;
 
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;

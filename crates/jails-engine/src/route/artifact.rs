@@ -220,6 +220,24 @@ pub fn destroy(
         .as_ref()
         .is_some_and(|ledger| ledger.applied.iter().any(|row| row.id == entity))
     {
+        // A `--package`-placed entity is a *different* entity, deliberately:
+        // two resources of one name in two packages are two things, which is
+        // what makes slices possible at all. What was missing is that a
+        // lookup miss then reported the thing as never generated, seconds
+        // after the generate that printed `ledger replace` -- so the files
+        // stayed, and `jails history` plus `jails undo` was the only way back
+        // to a state the error message said was already there.
+        if let Some(elsewhere) = recorded_elsewhere(&store, &id) {
+            let kind = label(kind);
+            let name = &id.name;
+            return Err(format!(
+                "no `{kind} {name}` is recorded here, but one is recorded under \
+                 `--package {elsewhere}`.\n       fix: `jails destroy {kind} {name} \
+                 --package {elsewhere}`. A `--package` names a different resource, so \
+                 destroying without it would leave that one where it is."
+            )
+            .into());
+        }
         // Naming the command that *would* have recorded it is the whole
         // difference between this and a bare "nothing to destroy" printed
         // over files that are right there.
@@ -452,6 +470,31 @@ fn migration_history_reads(
 /// are not something `destroy` is given -- it takes a kind and a name and no
 /// fields. Reading them back is therefore not a shortcut but the *better*
 /// answer: an implementation written by hand after the generate call is still
+/// The `--package` a same-named resource of this kind was recorded under.
+///
+/// Only reached on a lookup miss, and only to make the refusal name the
+/// spelling that works. One answer or none: two overrides for one name is
+/// ambiguous, and guessing between them would be the "destroy that guessed at
+/// paths" the ordinary refusal exists to prevent.
+fn recorded_elsewhere(
+    store: &ObservedStore,
+    wanted: &jails_protocol::entity::IntentId,
+) -> Option<String> {
+    let mut found = store
+        .ledger
+        .as_ref()
+        .into_iter()
+        .flat_map(|ledger| ledger.applied.iter())
+        .filter_map(|row| match &row.id {
+            EntityId::Intent(id) if id.name == wanted.name && id.recipe == wanted.recipe => {
+                Some(id.package.as_str().to_string())
+            }
+            _ => None,
+        });
+    let first = found.next()?;
+    found.next().is_none().then_some(first)
+}
+
 /// one of this strategy's classes, and leaving it behind implementing a
 /// deleted interface stops the project compiling on the one operation whose
 /// whole job is to leave no trace.
@@ -478,18 +521,24 @@ fn unnamed_implementations(
         })
         .collect();
     const MAIN: &str = "src/main/java/";
-    // The port's own file, found by name among the rows this entity owns. Not
-    // the first main source it owns: a strategy owns its implementations too,
-    // and taking one of those as the port would sweep every class implementing
-    // *it* instead.
-    let Some(directory) = owned.iter().find_map(|path| {
-        let stem = path.as_str().strip_suffix(".java")?;
-        let (directory, name) = stem.rsplit_once('/')?;
-        (name == port && path.as_str().starts_with(MAIN)).then(|| format!("{directory}/"))
-    }) else {
+    // Every main-source directory this entity owns, not just the port's. The
+    // port is framework-free and lives in `domain`; its beans carry
+    // `@Component` and live a layer up, so a sweep anchored on the port's own
+    // package would look in the one directory an implementation is not in.
+    // Reading the directories off the recorded rows also means a strategy
+    // generated under `--package` is swept where it actually landed.
+    let directories: BTreeSet<String> = owned
+        .iter()
+        .filter(|path| path.as_str().starts_with(MAIN))
+        .filter_map(|path| {
+            let stem = path.as_str().strip_suffix(".java")?;
+            let (directory, _) = stem.rsplit_once('/')?;
+            Some(format!("{directory}/"))
+        })
+        .collect();
+    if directories.is_empty() {
         return Ok(Vec::new());
-    };
-    let tests = format!("src/test/java/{}", &directory[MAIN.len()..]);
+    }
     let mut strays = Vec::new();
     for (absolute, source) in project.projected_main_sources() {
         let Ok(relative) = absolute.strip_prefix(project.root()) else {
@@ -498,9 +547,16 @@ fn unnamed_implementations(
         let Ok(path) = ProjectPath::parse(&relative.to_string_lossy()) else {
             continue;
         };
-        if owned.contains(&path) || !path.as_str().starts_with(&directory) {
+        let Some(directory) = directories
+            .iter()
+            .find(|directory| path.as_str().starts_with(directory.as_str()))
+        else {
+            continue;
+        };
+        if owned.contains(&path) {
             continue;
         }
+        let tests = format!("src/test/java/{}", &directory[MAIN.len()..]);
         let Some(info) = jails_java::java::type_info(&source) else {
             continue;
         };

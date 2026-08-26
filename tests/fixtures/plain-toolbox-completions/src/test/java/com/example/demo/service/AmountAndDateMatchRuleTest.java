@@ -1,7 +1,11 @@
-package com.example.demo.domain;
+package com.example.demo.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.example.demo.domain.Entry;
+import com.example.demo.domain.MatchCandidate;
+import com.example.demo.domain.MatchOutcome;
+import com.example.demo.domain.Money;
 import java.time.LocalDate;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;

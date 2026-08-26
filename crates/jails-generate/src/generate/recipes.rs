@@ -583,6 +583,7 @@ pub(crate) fn artifacts_for(
         }
         ArtifactKind::Strategy => {
             let variants = parse_variants(fields)?;
+            let slice = crate::model::Slice::new(project, package);
             let domain = place(layout::DOMAIN);
             let on = strategy_on.ok_or_else(|| {
                 format!(
@@ -607,29 +608,60 @@ pub(crate) fn artifacts_for(
                      `jails g record {missing} <field:type ...>` writes one"
                 );
             }
+            // Where `--on` and `--yields` already live. They are somebody
+            // else's types, so their home is the conventional one whatever
+            // `--package` says about this call's own classes.
+            let owner = slice.owned(Layer::Domain);
+            let signature = |user: &str| {
+                let mut imports = crate::generate::import_of(user, &owner, on);
+                if let Some(yields) = strategy_yields {
+                    imports += &crate::generate::import_of(user, &owner, yields);
+                }
+                imports
+            };
+            // A `@Component` in `domain` violates the ArchUnit rule
+            // `g scaffold` writes, and the annotation is load-bearing: without
+            // it the bean is silently absent from the injected `List<Port>`.
+            // Two first-party generators cannot disagree about where the
+            // domain boundary is, so the beans live a layer up and the port --
+            // which needs no framework at all -- stays where it belongs. On a
+            // plain-Maven project there is no annotation and no rule, but the
+            // placement stays the same, because one layout is easier to
+            // explain than one that depends on the build file.
+            let beans = place(layout::SERVICE);
             let mut artifacts = vec![Artifact {
                 kind: "strategy",
                 path: main_dir(&root, &domain).join(format!("{name}.java")),
-                contents: strategy_interface_java(&domain, name, &variants, on, strategy_yields),
+                contents: strategy_interface_java(
+                    &domain,
+                    name,
+                    &variants,
+                    on,
+                    strategy_yields,
+                    &signature(&domain),
+                ),
             }];
+            let mut extra = crate::generate::import_of(&beans, &domain, name);
+            extra += &signature(&beans);
             for variant in &variants {
                 let class = strategy_class(variant, name);
                 artifacts.push(Artifact {
                     kind: "strategy implementation",
-                    path: main_dir(&root, &domain).join(format!("{class}.java")),
+                    path: main_dir(&root, &beans).join(format!("{class}.java")),
                     contents: strategy_impl_java(
-                        &domain,
+                        &beans,
                         name,
                         &class,
                         on,
                         strategy_yields,
                         spring,
+                        &extra,
                     ),
                 });
                 artifacts.push(Artifact {
                     kind: "strategy implementation test",
-                    path: test_dir(&root, &domain).join(format!("{class}Test.java")),
-                    contents: strategy_impl_test(&domain, name, &class, on, strategy_yields),
+                    path: test_dir(&root, &beans).join(format!("{class}Test.java")),
+                    contents: strategy_impl_test(&beans, name, &class, on, strategy_yields),
                 });
             }
             artifacts

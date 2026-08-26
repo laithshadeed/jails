@@ -1,5 +1,8 @@
-package com.example.demo.domain;
+package com.example.demo.service;
 
+import com.example.demo.domain.MatchCandidate;
+import com.example.demo.domain.MatchOutcome;
+import com.example.demo.domain.MatchRule;
 import java.util.Optional;
 
 /** Matches ledger entries whose money and posting date are both equal. */

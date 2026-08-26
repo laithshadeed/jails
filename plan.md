@@ -106,12 +106,17 @@ Chosen deliberately over pairing each with its fix: land all four so the whole
 surfaced defect list is visible before any generator changes. Each is expected
 to go **red on landing**; P1.5 records what they name.
 
-- [ ] **P1.1** A combined-kind tier-3 scenario. One project on the **Boot 4
+- [x] **P1.1** A combined-kind tier-3 scenario. One project on the **Boot 4
       default** flavour with `scaffold` + `enum` + `strategy` + `usecase` +
       `association` + the default capability set, compiled and run with real
       `mvn test`. The existing scenarios exercise one kind on one flavour,
       which is exactly why missing M1 and modern §2 are invisible. Extend
-      `tests/common/scenarios.rs` and `tests/cli/generate.rs`.
+      the shared Spring **core toolbox** (`tests/cli/main.rs`), which already
+      generates many kinds into one project and runs real `mvn test` over it —
+      it was missing `strategy` and `enum` beside its `scaffold`, which is
+      exactly the pair M1 needs. It also had a second hole: the toolbox cache
+      is keyed on the product binary, so adding a step to that list reused the
+      previous tree and never ran it. Salted with the harness text now.
 - [ ] **P1.2** The default-variant execution gate (modern §11.6's
       generalisation). `add cors` *is* run through real `mvn test` — against
       `write_spring2_fixture`, a Boot 2 project, so the Boot 4 branch every
@@ -137,7 +142,7 @@ to go **red on landing**; P1.5 records what they name.
       `app.cors.allowed-origins=http://127.0.0.1:8008,…` and a test asserting
       `https://example.invalid` is allowed. The test must assert the origins
       the capability configured.
-- [ ] **P2.2** `g strategy` vs jails' own ArchUnit rule (missing M1 / modern
+- [x] **P2.2** `g strategy` vs jails' own ArchUnit rule (missing M1 / modern
       §13.2). `g scaffold` writes `DOMAIN_HAS_NO_FRAMEWORK_DEPENDENCIES`;
       `g strategy` writes `@Component` implementations into `domain..`, and the
       `@Component` is load-bearing. Two first-party generators disagreeing
@@ -145,7 +150,7 @@ to go **red on landing**; P1.5 records what they name.
       by placing the beans in `service`/`adapters` and keeping `domain`
       framework-free. `crates/jails-generate/src/generate/recipes.rs:584` is
       the kind's arm.
-- [ ] **P2.3** M1a — `--package` never imports the `--on`/`--yields` types, so
+- [x] **P2.3** M1a — `--package` never imports the `--on`/`--yields` types, so
       the workaround does not compile either. Route the strategy renderer
       through the same `import_of` helper the scaffold uses for cross-package
       imports; it already returns an empty string when the packages match.
@@ -302,12 +307,13 @@ commit as the change that causes it.
       on a colliding counter, `deleteById` removing a `UUID` from a
       `Map<String, …>` (modern §8.3). Extend the companion re-plan that landed
       for `g field` in `e3c7041`.
-- [ ] **P7.2** Placement is recorded, so `--package` is not a one-way door
-      (missing M1b). The strategy row is recorded without its placement, so
-      `destroy` reconstructs default `domain..` paths, finds nothing, and
-      reports the resource as absent seconds after the generate that recorded
-      it — recoverable only through `jails history` + `jails undo`, which is
-      not what the error message points at. Same family as B2's package fix.
+- [x] **P7.2** `--package` is not a one-way door (missing M1b). The report was
+      that placement is unrecorded; it is not — `--package` is part of an
+      entity's *identity*, deliberately, which is what makes slices possible.
+      The defect was the refusal: a lookup miss reported the resource as never
+      generated, seconds after the generate that printed `ledger replace`, so
+      `jails history` + `jails undo` was the only way back to a state the error
+      said was already there. The refusal names the recorded package now.
 
 ## P8 — the primitives the six real projects needed (cause G)
 

@@ -764,7 +764,7 @@ Every one of them was built and run.
 
 | snapshot | capabilities | main/test files | `mvn test` |
 |---|---|---|---|
-| 2025-11-16 | db, api, cors | 49 / 30 | **FAILS** — `ArchitectureTest` (§13.2) |
+| 2025-11-16 | db, api, cors | 49 / 30 | **FAILS** — `ArchitectureTest` (§13.2, closed) |
 | 2025-11-21 | db, api, cors, sse | 30 / 16 | green |
 | 2025-12-13 | api, cors | 9 / 6 | green (5 of 9 tests `@Disabled`) |
 | 2026-01-09 | db, api, cors | 31 / 17 | green |
@@ -808,33 +808,6 @@ case, and the delta is almost entirely the field spec.** That is the strongest
 possible argument for §11.2: the input that produces a table with no primary
 key should be refused, because the same tool given one more character produces
 this.
-
-### 13.2 jails ships an architecture rule and the code that breaks it
-
-`crates/jails-generate/src/architecture.rs` generates `ArchitectureTest.java`
-— an ArchUnit fitness function, present in five of the six. One of its rules is
-`DOMAIN_HAS_NO_FRAMEWORK_DEPENDENCIES`.
-
-`g strategy` writes its implementations into `domain` **with `@Component` on
-each**. Result, on a clean generate:
-
-```
-Rule 'no classes that reside in a package 'com.intercom.minicom.domain..'
-should depend on classes that reside in any package ['org.springframework..', …]'
-was violated (7 times):
-Class <…domain.DamageBotRule>   is annotated with <org.springframework.stereotype.Component>
-Class <…domain.FallbackBotRule> is annotated with <org.springframework.stereotype.Component>
-Class <…domain.GreetingBotRule> …  (7 in total)
-```
-
-Two first-party generators disagreeing about where the domain boundary is, and
-the disagreement is a red build. Either `g strategy` places its beans in
-`service`/`adapters` and keeps `domain` framework-free, or the rule admits
-`@Component`. It cannot be both, and today it is both.
-
-This is the same failure as the `add cors` one in §2 and §11.6, one level up: a
-capability that generates a *check* has to be run against everything else that
-generates *code*.
 
 ### 13.3 `g usecase` hard-codes the primary key to `0L` — in every project
 
@@ -1078,7 +1051,6 @@ input:
 | **`g usecase` id = `0L`** | | ❌ §13.3 — every project, create path broken |
 | **`findById(String)`** | | ❌ §13.5 — 11 of 12 ports |
 | **dead `ApiException`** | | ❌ §13.10 — 0 of 7 projects |
-| **`g strategy` breaks jails' own ArchUnit rule** | | ❌ §13.2 |
 | **`g client` has no timeout** | | ❌ §13.6 |
 | **`@Disabled` tests reported green** | | ❌ §13.8 |
 | **`add cors` ships a red test** | | ❌ §2 |
