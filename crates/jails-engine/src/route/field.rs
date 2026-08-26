@@ -29,7 +29,7 @@ mod evolution;
 
 use companion::companion_updates;
 use data::{add_data_plan, read_backfill};
-use evolution::{evolve_existing, projected_column, safe_widening};
+use evolution::{evolve_existing, projected_column, safe_widening, storage_identity};
 use jails_protocol::declaration::{FieldType, Optionality};
 use jails_protocol::entity::{OneShotId, OneShotSpec, TypeTargetId};
 use jails_protocol::identity::SqlName;
@@ -425,6 +425,7 @@ fn add_field_with_syntax(
     let project = run.project();
     let store = observed(project)?;
     let (id, spec) = recorded_target(project, &store, target, package)?;
+    let (expected_path, expected_table) = storage_identity(&store, &id)?;
 
     let base = Package::parse(project.base())?;
     let added = FieldSpec::parse(component, &base)?;
@@ -533,14 +534,10 @@ fn add_field_with_syntax(
         default_literal,
         backfill_file,
     )?;
-    let expected_path = JavaType::new(
-        Package::parse(&project.package_named(jails_spec::spec::layout::DOMAIN, package))?,
-        id.name.clone(),
-    );
     let evolution = EvolveFieldRequestV1 {
         entity: EntityId::Intent(id.clone()),
         expected_path,
-        expected_table: SqlName::parse(&table)?,
+        expected_table,
         action: FieldEvolution::Add(added.clone()),
         data: data.clone(),
     };

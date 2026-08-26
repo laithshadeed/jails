@@ -126,6 +126,63 @@ fn machine_output_carries_failures_that_stop_before_an_outcome() {
 }
 
 #[test]
+fn resource_field_uses_scaffold_storage_identity_and_refuses_plain_records() {
+    let root = temp_dir("resource-field-storage-identity");
+    write_spring_fixture(&root);
+    let migrations = root.join("src/main/resources/db/migration");
+    fs::create_dir_all(&migrations).unwrap();
+    let scaffold = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Customer", "id:uuid@pk", "phoen:string?"])
+        .output()
+        .unwrap();
+    assert!(scaffold.status.success(), "{scaffold:?}");
+
+    let renamed = jails_cmd(&root, None)
+        .args([
+            "resource",
+            "field",
+            "rename",
+            "Customer",
+            "phoen",
+            "phone",
+            "--column",
+            "single-cutover",
+        ])
+        .output()
+        .unwrap();
+    assert!(renamed.status.success(), "{renamed:?}");
+    assert!(
+        migrations.join("V002__rename_phoen_to_phone.sql").is_file(),
+        "{renamed:?}"
+    );
+
+    let record = jails_cmd(&root, None)
+        .args(["g", "record", "Tag", "id:uuid@pk", "label:string?"])
+        .output()
+        .unwrap();
+    assert!(record.status.success(), "{record:?}");
+    let before = fs::read_dir(&migrations).unwrap().count();
+    let refused = jails_cmd(&root, None)
+        .args([
+            "resource",
+            "field",
+            "rename",
+            "Tag",
+            "label",
+            "name",
+            "--column",
+            "single-cutover",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(refused.status.code(), Some(1), "{refused:?}");
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(stderr.contains("record"), "{stderr}");
+    assert!(stderr.contains("no table columns"), "{stderr}");
+    assert_eq!(fs::read_dir(&migrations).unwrap().count(), before);
+}
+
+#[test]
 fn generate_scaffold_writes_a_raw_jdbc_slice() {
     let root = temp_dir("scaffold-files");
     write_spring_fixture(&root);

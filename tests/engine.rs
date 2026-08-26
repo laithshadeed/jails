@@ -1378,7 +1378,7 @@ fn field_evolution_appends_rename_type_nullability_and_drop_migrations() {
     jails_engine::route::generate(
         &committing(&Project::load(&root).unwrap()),
         &jails_generate::generate::Recipe {
-            kind: jails_spec::spec::kind::ArtifactKind::Record,
+            kind: jails_spec::spec::kind::ArtifactKind::Scaffold,
             name: "Task",
             fields: &[
                 "id:uuid@pk".to_string(),
@@ -1433,18 +1433,18 @@ fn field_evolution_appends_rename_type_nullability_and_drop_migrations() {
 
     let expected = [
         (
-            "V001__rename_title_to_headline.sql",
+            "V002__rename_title_to_headline.sql",
             "rename column title to headline",
         ),
         (
-            "V002__widen_priority_type.sql",
+            "V003__widen_priority_type.sql",
             "alter column priority type bigint",
         ),
         (
-            "V003__make_description_nullable.sql",
+            "V004__make_description_nullable.sql",
             "alter column description drop not null",
         ),
-        ("V004__drop_legacy_code.sql", "drop column legacy_code"),
+        ("V005__drop_legacy_code.sql", "drop column legacy_code"),
     ];
     for (file, ddl) in expected {
         let migration =
@@ -1476,8 +1476,46 @@ fn field_evolution_appends_rename_type_nullability_and_drop_migrations() {
             .iter()
             .map(|seal| seal.version.get())
             .collect::<Vec<_>>(),
-        vec![1, 2, 3, 4]
+        vec![1, 2, 3, 4, 5]
     );
+}
+
+#[test]
+fn physical_field_evolution_refuses_a_plain_record_without_writing_sql() {
+    let root = common::temp_dir("engine-record-field-evolution-refusal");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_spring_fixture(&root);
+    let migrations = root.join("src/main/resources/db/migration");
+    std::fs::create_dir_all(&migrations).unwrap();
+    jails_engine::route::generate(
+        &committing(&Project::load(&root).unwrap()),
+        &jails_generate::generate::Recipe {
+            kind: jails_spec::spec::kind::ArtifactKind::Record,
+            name: "Tag",
+            fields: &["id:uuid@pk".to_string(), "label:string?".to_string()],
+            indexes: &[],
+            strategy_on: None,
+            strategy_yields: None,
+            method: None,
+        },
+        None,
+    )
+    .unwrap();
+    let before = std::fs::read_dir(&migrations).unwrap().count();
+
+    let error = jails_engine::route::rename_field(
+        &committing(&Project::load(&root).unwrap()),
+        "Tag",
+        "label",
+        "name",
+        jails_protocol::request::ColumnRenamePolicy::SingleCutover,
+        None,
+    )
+    .unwrap_err();
+    assert!(error.contains("record"), "{error}");
+    assert!(error.contains("no table columns"), "{error}");
+    assert!(error.contains("fix:"), "{error}");
+    assert_eq!(std::fs::read_dir(&migrations).unwrap().count(), before);
 }
 
 #[test]

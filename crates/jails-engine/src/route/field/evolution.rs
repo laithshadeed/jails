@@ -1,5 +1,38 @@
 use super::*;
 
+pub(super) fn storage_identity(
+    store: &ObservedStore,
+    id: &IntentId,
+) -> Result<(JavaType, SqlName)> {
+    if id.recipe != ArtifactKind::Scaffold {
+        return Err(format!(
+            "resource `{}` is recorded as `{}` and has no table columns to evolve.\n       \
+             fix: use a scaffold for storage-backed fields; keep a plain record source-only.",
+            id.name,
+            label(id.recipe)
+        )
+        .into());
+    }
+    let entity = EntityId::Intent(id.clone());
+    let lifecycle = store
+        .lifecycles()
+        .iter()
+        .find(|lifecycle| lifecycle.entity == entity)
+        .ok_or_else(|| {
+            format!(
+                "scaffold `{}` has no recorded storage lifecycle.\n       fix: inspect `jails resource status {}` and repair or revive it before evolving fields.",
+                id.name, id.name
+            )
+        })?;
+    let table = lifecycle.table.as_ref().ok_or_else(|| {
+        format!(
+            "scaffold `{}` has no recorded table binding.\n       fix: inspect `jails resource status {}` and adopt its exact table before evolving fields.",
+            id.name, id.name
+        )
+    })?;
+    Ok((lifecycle.expected_path.clone(), table.table.clone()))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn evolve_existing(
     run: &Run,
@@ -16,6 +49,7 @@ pub(super) fn evolve_existing(
     mut options: BTreeMap<String, Vec<String>>,
 ) -> Result<Outcome> {
     let project = run.project();
+    let (expected_path, expected_table) = storage_identity(store, &id)?;
     let fields: Vec<String> = after.fields().iter().map(FieldSpec::canonical).collect();
     let indexes: Vec<String> = after
         .indexes
@@ -111,11 +145,10 @@ pub(super) fn evolve_existing(
         declared,
         changes,
     };
-    let expected_path = JavaType::new(id.package.clone(), id.name.clone());
     let evolution = EvolveFieldRequestV1 {
         entity: EntityId::Intent(id.clone()),
         expected_path,
-        expected_table: SqlName::parse(&jails_generate::sql::table_name(id.name.as_str()))?,
+        expected_table,
         action,
         data,
     };
