@@ -441,7 +441,7 @@ pub(crate) fn artifacts_for(
         ArtifactKind::Enum => {
             let constants = parse_constants(fields)?;
             let domain = place(layout::DOMAIN);
-            vec![
+            let mut artifacts = vec![
                 Artifact {
                     kind: "enum",
                     path: main_dir(&root, &domain).join(format!("{name}.java")),
@@ -452,7 +452,11 @@ pub(crate) fn artifacts_for(
                     path: test_dir(&root, &domain).join(format!("{name}Test.java")),
                     contents: enum_test(&domain, name, &constants),
                 },
-            ]
+            ];
+            // The schema carries the closed set (P5.1), so widening the enum
+            // is a schema change as much as a Java one. plan.md P5.2.
+            artifacts.extend(closed_set_widening(project, &domain, name, &constants)?);
+            artifacts
         }
         ArtifactKind::Repo => {
             let app = place(layout::APP);

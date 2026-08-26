@@ -464,3 +464,124 @@ pub(super) fn strategy_impl_test(
     let _ = name;
     out
 }
+
+/// Migrations that re-state a table's `check (col in (…))` after the enum
+/// behind it gained a constant.
+///
+/// **The follow-on question P5.1 creates, answered rather than avoided.**
+/// Once the schema carries the closed set, adding a constant to the Java enum
+/// and stopping leaves a column that refuses a value every other layer
+/// accepts -- a failure at `insert`, in production, about a change that
+/// looked like it only touched Java. plan.md P5.2.
+///
+/// Nothing is emitted when the enum is new: `create_table` carries the set
+/// for a table generated after it. Nothing is emitted when the constants are
+/// unchanged either, so a re-run is still idempotent.
+pub(super) fn closed_set_widening(
+    project: &Project,
+    domain: &str,
+    name: &str,
+    constants: &[String],
+) -> Result<Vec<Artifact>> {
+    let Some(previous) = crate::generate::enum_constants(project, domain, name) else {
+        return Ok(Vec::new());
+    };
+    if previous == constants {
+        return Ok(Vec::new());
+    }
+    // **A removal is refused rather than migrated.** A row may still hold the
+    // dropped constant, and jails cannot ask the database from here -- so the
+    // `add constraint` would fail at `flyway migrate`, on whichever machine
+    // runs it first, about a command that reported success.
+    let removed = previous
+        .iter()
+        .filter(|constant| !constants.contains(constant))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !removed.is_empty() {
+        return Err(format!(
+            "`{name}` currently allows {}, and this drops {}. A stored row may still hold \
+             {}, which jails cannot check from here.\n       \
+             fix: keep the constant and stop writing it, or write the migration that proves \
+             no row holds it and then re-declare the enum.",
+            previous.join(", "),
+            removed.join(", "),
+            if removed.len() == 1 { "it" } else { "one" }
+        )
+        .into());
+    }
+
+    let values = constants
+        .iter()
+        .map(|constant| format!("'{constant}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut artifacts = Vec::new();
+    for (table, column) in columns_typed_as(project, name) {
+        artifacts.push(Artifact {
+            kind: "closed-set migration",
+            path: crate::generate::migration_file(
+                project,
+                &format!("allow_{table}_{column}_{}", constants.len()),
+            )?,
+            contents: format!(
+                "-- Forward-only migration: `{name}` gained a constant, and the column that\n\
+                 -- stores it has to allow the value before anything writes one.\n\
+                 alter table {table}\n  \
+                 drop constraint if exists {table}_{column}_allowed;\n\n\
+                 alter table {table}\n  \
+                 add constraint {table}_{column}_allowed\n  \
+                 check ({column} in ({values}));\n"
+            ),
+        });
+    }
+    Ok(artifacts)
+}
+
+/// Every `(table, column)` that stores this enum, from the records that name
+/// it and the migrations that created their tables.
+///
+/// Read off the source rather than the ledger, for the same reason
+/// `destroy strategy` reads the source: a record somebody wrote by hand
+/// against a generated table is still a column with this constraint on it.
+/// The migration directory is what says a record has a table at all --
+/// without that check this would emit `alter table` for a plain `g record`,
+/// which is unappliable everywhere and reported nowhere.
+fn columns_typed_as(project: &Project, name: &str) -> Vec<(String, String)> {
+    let created = project.projected_names_in("src/main/resources/db/migration");
+    let mut found = Vec::new();
+    for (path, source) in project.projected_main_sources() {
+        let Some(stem) = path
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().to_string())
+        else {
+            continue;
+        };
+        let Some(info) = crate::java::type_info(&source) else {
+            continue;
+        };
+        let table = crate::sql::table_name(&stem);
+        if !created
+            .iter()
+            .any(|migration| migration.ends_with(&format!("__create_{table}.sql")))
+        {
+            continue;
+        }
+        for parameter in &info.constructor_params {
+            // The simple name, which is what every other projection question
+            // here matches on: jails holds no type model, and two types of
+            // one name in two packages is not a shape it can tell apart.
+            let declared = parameter
+                .raw_type
+                .strip_prefix("Optional<")
+                .and_then(|rest| rest.strip_suffix('>'))
+                .unwrap_or(&parameter.raw_type);
+            if declared == name {
+                found.push((table.clone(), crate::sql::snake_case(&parameter.name)));
+            }
+        }
+    }
+    found.sort();
+    found.dedup();
+    found
+}

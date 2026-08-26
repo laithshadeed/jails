@@ -125,6 +125,90 @@ fn machine_output_carries_failures_that_stop_before_an_outcome() {
     assert!(value["error"]["message"].is_string(), "{value}");
 }
 
+/// plan.md P5.2. Once the schema carries the closed set, adding a constant to
+/// the Java enum and stopping leaves a column that refuses a value every
+/// other layer accepts.
+#[test]
+fn widening_an_enum_migrates_every_table_that_stores_it() {
+    let root = temp_dir("enum-closed-set-widening");
+    write_spring_fixture(&root);
+    let migrations = root.join("src/main/resources/db/migration");
+    fs::create_dir_all(&migrations).unwrap();
+
+    for args in [
+        vec!["g", "enum", "Status", "OPEN", "CLOSED"],
+        vec!["g", "scaffold", "Ticket", "id:uuid@pk", "status:Status"],
+        // A plain record with the same component: no table, so no migration.
+        vec!["g", "record", "Draft", "id:uuid@pk", "status:Status"],
+    ] {
+        let output = jails_cmd(&root, None).args(args).output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+    }
+    let created = fs::read_to_string(migrations.join("V001__create_tickets.sql")).unwrap();
+    assert!(
+        created.contains("check (status in ('OPEN', 'CLOSED'))"),
+        "{created}"
+    );
+
+    let widened = jails_cmd(&root, None)
+        .args(["g", "enum", "Status", "OPEN", "CLOSED", "PENDING"])
+        .output()
+        .unwrap();
+    assert!(widened.status.success(), "{widened:?}");
+    let migration =
+        fs::read_to_string(migrations.join("V002__allow_tickets_status_3.sql")).unwrap();
+    assert!(
+        migration.contains("drop constraint if exists tickets_status_allowed"),
+        "{migration}"
+    );
+    assert!(
+        migration.contains("check (status in ('OPEN', 'CLOSED', 'PENDING'))"),
+        "{migration}"
+    );
+    // One table, not two: `Draft` has no `create_drafts` migration, and an
+    // `alter table drafts` would be unappliable everywhere.
+    assert!(!migration.contains("drafts"), "{migration}");
+    assert_eq!(
+        fs::read_dir(&migrations)
+            .unwrap()
+            .filter(|entry| entry
+                .as_ref()
+                .is_ok_and(|entry| entry.file_name().to_string_lossy().ends_with(".sql")))
+            .count(),
+        2
+    );
+
+    // Re-running the same declaration is idempotent: nothing changed, so
+    // there is nothing to migrate.
+    let again = jails_cmd(&root, None)
+        .args(["g", "enum", "Status", "OPEN", "CLOSED", "PENDING"])
+        .output()
+        .unwrap();
+    assert!(again.status.success(), "{again:?}");
+    assert_eq!(
+        fs::read_dir(&migrations)
+            .unwrap()
+            .filter(|entry| entry
+                .as_ref()
+                .is_ok_and(|entry| entry.file_name().to_string_lossy().ends_with(".sql")))
+            .count(),
+        2
+    );
+
+    // Dropping one is refused: a stored row may hold it, and jails cannot ask
+    // the database from here.
+    let before = snapshot_tree(&root);
+    let dropped = jails_cmd(&root, None)
+        .args(["g", "enum", "Status", "OPEN"])
+        .output()
+        .unwrap();
+    assert!(!dropped.status.success(), "{dropped:?}");
+    let stderr = String::from_utf8_lossy(&dropped.stderr);
+    assert!(stderr.contains("drops CLOSED, PENDING"), "{stderr}");
+    assert!(stderr.contains("fix:"), "{stderr}");
+    assert_eq!(snapshot_tree(&root), before, "refusal wrote project files");
+}
+
 /// plan.md P3.2. `--column preserve` is the whole reason a field name is a
 /// recorded pair rather than a derivation: the Java name moves, the column
 /// stays where a live database already has it, and no migration is written

@@ -443,10 +443,20 @@ commit as the change that causes it.
       `flyway migrate`, on whichever machine runs it first. The association
       probe's row had to stop using `'association-probe'` for such a column,
       which is the constraint doing exactly its job on the first run.
-- [ ] **P5.2** `g enum` adding a constant generates the
+- [x] **P5.2** `g enum` adding a constant generates the
       `alter table … drop constraint … add constraint …` migration in the same
       step — the follow-on question P5.1 creates, answered rather than avoided,
       through the append-only sealing machinery `resource field` already uses.
+      Which tables is read off the *source*, the same way `destroy strategy`
+      reads its implementations — a record written by hand against a generated
+      table is still a column with this constraint on it — and gated on a
+      `create_<table>` migration existing, without which a plain `g record`
+      would get an `alter table` that is unappliable everywhere and reported
+      nowhere. **A removal is refused rather than migrated**: a stored row may
+      still hold the dropped constant, jails cannot ask the database from
+      here, and the `add constraint` would otherwise fail at
+      `flyway migrate` about a command that reported success. Re-declaring the
+      same set writes nothing, so a re-run stays idempotent.
 - [ ] **P5.3** A `String` field with a small closed set is challenged
       (modern §11.3). `direction:String!` produced an unconstrained column, an
       unconstrained record, and a `"sample"` fixture; jails already has
