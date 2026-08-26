@@ -234,7 +234,7 @@ fn unheld_maven_example_manifest_passes_real_verification() {
         maven_report_summary(root, "surefire-reports"),
         MavenReportSummary {
             reports: 17,
-            tests: 50,
+            tests: 51,
             failures: 0,
             errors: 0,
             skipped: 0,

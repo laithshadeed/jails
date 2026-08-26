@@ -5,6 +5,6 @@
 # [[architecture.allow]]
 # from = "billing"
 # to = "shared"
-# packages = ["com.example.shared.money.."]
+# packages = ["com.example.demo.domain.shared.money.."]
 # reason = "Money is the reviewed shared-kernel value"
-# expires = "2027-01-31"
+# expires = "2099-01-31"

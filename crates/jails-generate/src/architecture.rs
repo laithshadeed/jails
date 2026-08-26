@@ -16,6 +16,7 @@ pub(crate) const ARCHUNIT_JUNIT5: Dependency = Dependency {
 };
 
 pub(crate) fn artifacts(project: &Project) -> Vec<Artifact> {
+    let packages = Packages::of(project);
     let architecture_test =
         crate::generate::test_dir(project.root(), project.base()).join("ArchitectureTest.java");
     if architecture_test.is_file() {
@@ -25,12 +26,12 @@ pub(crate) fn artifacts(project: &Project) -> Vec<Artifact> {
         Artifact {
             kind: "architecture test",
             path: architecture_test,
-            contents: test_java(&Packages::of(project)),
+            contents: test_java(&packages),
         },
         Artifact {
             kind: "architecture policy",
             path: project.root().join(".jails/architecture.toml"),
-            contents: policy(),
+            contents: policy(&packages),
         },
         Artifact {
             kind: "architecture baseline configuration",
@@ -90,18 +91,20 @@ fn test_java(packages: &Packages) -> String {
     )
 }
 
-fn policy() -> String {
-    "# Reviewed cross-slice exceptions. Every allowance must be bounded, used,\n\
-     # justified, and removed or renewed before its ISO-8601 expiry date.\n\
-     # Blanket package patterns (the base package, `..`, or every slice) are refused.\n\
-     #\n\
-     # [[architecture.allow]]\n\
-     # from = \"billing\"\n\
-     # to = \"shared\"\n\
-     # packages = [\"com.example.shared.money..\"]\n\
-     # reason = \"Money is the reviewed shared-kernel value\"\n\
-     # expires = \"2027-01-31\"\n"
-        .to_string()
+fn policy(packages: &Packages) -> String {
+    format!(
+        "# Reviewed cross-slice exceptions. Every allowance must be bounded, used,\n\
+         # justified, and removed or renewed before its ISO-8601 expiry date.\n\
+         # Blanket package patterns (the base package, `..`, or every slice) are refused.\n\
+         #\n\
+         # [[architecture.allow]]\n\
+         # from = \"billing\"\n\
+         # to = \"shared\"\n\
+         # packages = [\"{}.shared.money..\"]\n\
+         # reason = \"Money is the reviewed shared-kernel value\"\n\
+         # expires = \"2099-01-31\"\n",
+        packages.domain
+    )
 }
 
 #[cfg(test)]
@@ -143,13 +146,24 @@ mod tests {
 
     #[test]
     fn policy_documents_bounded_expiring_allowances() {
-        let policy = policy();
+        let policy = policy(&Packages {
+            base: "com.example.demo".into(),
+            domain: "com.example.demo.domain".into(),
+            app: "com.example.demo.app".into(),
+            service: "com.example.demo.service".into(),
+            web: "com.example.demo.web".into(),
+            adapters: "com.example.demo.adapters".into(),
+            messaging: "com.example.demo.messaging".into(),
+            clients: "com.example.demo.clients".into(),
+            jobs: "com.example.demo.jobs".into(),
+        });
         for key in ["from", "to", "packages", "reason", "expires"] {
             assert!(
                 policy.contains(key),
                 "missing architecture allowance key {key}"
             );
         }
+        assert!(policy.contains("com.example.demo.domain.shared.money.."));
     }
 
     #[test]
