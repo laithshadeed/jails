@@ -459,15 +459,21 @@ pub fn add_dependency_ref(text: &str, dep: DependencyRef<'_>) -> Result<Option<S
         Some(version) => format!("{}:{}:{version}", dep.group_id, dep.artifact_id),
         None => format!("{}:{}", dep.group_id, dep.artifact_id),
     };
+    let inline = !text[body.clone()].contains('\n');
     let line = format!(
-        "{}{} '{coordinate}'\n",
+        "{}{}{} '{coordinate}'\n",
+        if inline { "\n" } else { "" },
         indent_of(text, body.clone()),
         configuration_for(dep.scope, dep.optional)
     );
     // Inserted before the closing brace, so it lands last in the block and
     // every existing byte -- comments, ordering, blank lines -- is untouched.
     let mut out = String::with_capacity(text.len() + line.len());
-    let at = trailing_insert_point(text, body);
+    let at = if inline {
+        body.end
+    } else {
+        trailing_insert_point(text, body)
+    };
     out.push_str(&text[..at]);
     out.push_str(&line);
     out.push_str(&text[at..]);
@@ -761,6 +767,16 @@ dependencies {
             has_dependency(&out, "org.assertj", "assertj-core"),
             Some(true)
         );
+    }
+
+    #[test]
+    fn a_single_line_dependencies_block_is_spliced_in_place_and_idempotent() {
+        let build = "plugins { id 'java' }\ndependencies { implementation 'org.springframework.boot:spring-boot-starter-web' }\n";
+        let once = add_dependency_ref(build, assertj_ref()).unwrap().unwrap();
+        let body = top_level_body(&once, "dependencies").unwrap();
+        assert!(once[body].contains("testImplementation 'org.assertj:assertj-core'"));
+        assert_eq!(once.matches("assertj-core").count(), 1, "{once}");
+        assert_eq!(add_dependency_ref(&once, assertj_ref()).unwrap(), None);
     }
 
     /// Same contract as `pom::add_dependency_ref`, so the projection can treat

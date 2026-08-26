@@ -1165,6 +1165,69 @@ fn destroy_refuses_to_remove_a_type_used_by_a_retained_entity() {
 }
 
 #[test]
+fn destroy_refuses_to_drop_a_table_referenced_by_an_association() {
+    let root = temp_dir("destroy-incoming-association");
+    write_spring_fixture(&root);
+    assert!(
+        jails_cmd(&root, None)
+            .args(["add", "db", "--no-start"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    for command in [
+        vec!["g", "scaffold", "Parent", "id:uuid@pk", "name:string!"],
+        vec![
+            "g",
+            "scaffold",
+            "Child",
+            "id:uuid@pk",
+            "parentId:uuid",
+            "title:string!",
+        ],
+        vec![
+            "g",
+            "association",
+            "ChildParent",
+            "parentId=id",
+            "--on",
+            "Child",
+            "--yields",
+            "Parent",
+        ],
+    ] {
+        let output = jails_cmd(&root, None).args(command).output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+    }
+    let before = snapshot_tree(&root);
+
+    let refused = jails_cmd(&root, None)
+        .args([
+            "destroy",
+            "scaffold",
+            "Parent",
+            "--storage",
+            "drop",
+            "--confirm-table",
+            "parents",
+            "--force",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!refused.status.success(), "{refused:?}");
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(stderr.contains("pointing at nothing"), "{stderr}");
+    assert!(stderr.contains("association ChildParent"), "{stderr}");
+    assert_eq!(snapshot_tree(&root), before, "refusal mutated the project");
+    assert!(
+        !root
+            .join("src/main/resources/db/migration/V004__drop_parents.sql")
+            .exists()
+    );
+}
+
+#[test]
 fn field_driven_generators_refuse_an_absent_model_with_a_fix() {
     let root = temp_dir("missing-model-fix");
     write_spring_fixture(&root);
