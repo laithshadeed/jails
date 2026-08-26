@@ -1058,15 +1058,12 @@ pub(crate) enum Command {
     /// ignored until this has run, and every test run pays for a fresh
     /// PostgreSQL.
     Setup {},
-    /// Print a shell-completion script: source <(jails completion bash)
     /// Explain what a generator kind is for, and the trap it invites
     ///
     /// The generated Javadoc carries this reasoning for whoever reads the file.
     /// This is for whoever is deciding whether to generate it -- and for an
     /// agent, which otherwise "fixes" the deliberate asymmetries.
-    Explain {
-        kind: generate::ArtifactKind,
-    },
+    Explain { kind: generate::ArtifactKind },
     /// Print every subcommand, generator kind, capability and flag jails accepts
     ///
     /// Derived from the same clap definition that parses the arguments, so it
@@ -1076,9 +1073,8 @@ pub(crate) enum Command {
         #[arg(long)]
         json: bool,
     },
-    Completion {
-        shell: Shell,
-    },
+    /// Print a shell-completion script: source <(jails completion bash)
+    Completion { shell: Shell },
 }
 
 /// The one resource `add` takes that is not a capability.
@@ -1177,6 +1173,28 @@ mod tests {
         let mut accepted = BTreeSet::new();
         collect_commands(&Cli::command(), "", &mut accepted);
         assert_eq!(inventoried, accepted);
+    }
+
+    #[test]
+    fn explain_and_completion_keep_their_own_descriptions() {
+        let command = Cli::command();
+        let explain = command
+            .get_subcommands()
+            .find(|child| child.get_name() == "explain")
+            .unwrap();
+        let completion = command
+            .get_subcommands()
+            .find(|child| child.get_name() == "completion")
+            .unwrap();
+
+        assert_eq!(
+            explain.get_about().unwrap().to_string(),
+            "Explain what a generator kind is for, and the trap it invites"
+        );
+        assert_eq!(
+            completion.get_about().unwrap().to_string(),
+            "Print a shell-completion script: source <(jails completion bash)"
+        );
     }
 
     fn collect_commands(command: &clap::Command, prefix: &str, paths: &mut BTreeSet<String>) {
