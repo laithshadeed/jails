@@ -2270,7 +2270,7 @@ fn record_and_command_compile_and_pass_in_a_plain_cli_project() {
             "Money",
             "amount:long",
             "currency:string",
-            "on:date",
+            "occurredOn:date",
         ],
         vec!["generate", "command", "Greet"],
         vec!["generate", "class", "MoneyMoved"],
@@ -2418,7 +2418,7 @@ fn generators_compose_through_user_owned_field_types() {
     // and the one that lives carries a `fix:` line -- which is why this asserts
     // on the sentence rather than on the older "only applies to text".
     let output = jails_cmd_with_path(&root, &path)
-        .args(["generate", "value", "bad", "when:date!"])
+        .args(["generate", "value", "bad", "occurredOn:date!"])
         .output()
         .unwrap();
     assert!(!output.status.success());
@@ -2631,7 +2631,7 @@ fn a_project_without_a_migration_directory_gets_no_migration() {
     write_spring_fixture(&root);
 
     let output = jails_cmd(&root, None)
-        .args(["generate", "scaffold", "Payout", "id:uuid"])
+        .args(["generate", "scaffold", "Payout", "id:uuid@pk"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -2646,7 +2646,7 @@ fn pretend_writes_nothing_but_still_reports_the_whole_plan() {
     write_spring_fixture(&root);
 
     let output = jails_cmd(&root, None)
-        .args(["generate", "scaffold", "Payout", "id:uuid", "--pretend"])
+        .args(["generate", "scaffold", "Payout", "id:uuid@pk", "--pretend"])
         .output()
         .unwrap();
     assert!(output.status.success(), "{output:?}");
@@ -2731,7 +2731,7 @@ fn a_project_without_a_fixtures_directory_gets_no_fixture() {
     write_spring_fixture(&root);
 
     let output = jails_cmd(&root, None)
-        .args(["generate", "scaffold", "Payout", "id:uuid"])
+        .args(["generate", "scaffold", "Payout", "id:uuid@pk"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -3141,7 +3141,14 @@ fn planned_package_infos_are_one_per_package() {
     fs::write(root.join("pom.xml"), pom).unwrap();
 
     let preview = jails_cmd(&root, None)
-        .args(["g", "scaffold", "Task", "title:string", "--pretend"])
+        .args([
+            "g",
+            "scaffold",
+            "Task",
+            "id:uuid@pk",
+            "title:string",
+            "--pretend",
+        ])
         .output()
         .unwrap();
     assert!(preview.status.success());

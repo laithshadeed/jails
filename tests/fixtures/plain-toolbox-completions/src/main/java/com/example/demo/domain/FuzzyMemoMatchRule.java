@@ -8,8 +8,8 @@ public final class FuzzyMemoMatchRule implements MatchRule {
 
     @Override
     public Optional<MatchOutcome> apply(MatchCandidate candidate) {
-        var left = normalize(candidate.left().memo());
-        var right = normalize(candidate.right().memo());
+        var left = normalize(candidate.sourceEntry().memo());
+        var right = normalize(candidate.targetEntry().memo());
         if (left.isPresent() && left.equals(right)) {
             return Optional.of(MatchOutcome.MATCHED);
         }

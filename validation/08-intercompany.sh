@@ -37,7 +37,7 @@ run jails g value EntityRecord id:string! entity:string! counterparty:string! \
 
 # The canonicalised pair key: (A,B) and (B,A) must produce the same value, so
 # a pair is a type rather than a concatenated string.
-run jails g value EntityPair left:string! right:string!
+run jails g value EntityPair firstEntity:string! secondEntity:string!
 
 # Tolerances, versioned like every other policy in the gym.
 run jails g value MatchTolerance version:string! amountToleranceMinor:long dateToleranceDays:int

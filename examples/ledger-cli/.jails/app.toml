@@ -34,7 +34,7 @@ fields = ["reference:string!", "postedAt:date", "amount:Money", "memo:string?"]
 [[generate]]
 kind = "record"
 name = "MatchCandidate"
-fields = ["left:Entry", "right:Entry"]
+fields = ["sourceEntry:Entry", "targetEntry:Entry"]
 
 [[generate]]
 kind = "strategy"

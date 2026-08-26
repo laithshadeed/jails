@@ -87,6 +87,6 @@ build
 # `!` means non-blank, and only a String can be blank. Silently ignoring it on
 # other types would leave you believing you had added a constraint.
 section errors "misapplied suffixes rejected"
-rejects "date! rejected" jails g value Bad when:date!
+rejects "date! rejected" jails g value Bad occurredOn:date!
 
 verdict "workout 1 (normalise)"
