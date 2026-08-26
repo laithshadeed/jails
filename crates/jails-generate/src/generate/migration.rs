@@ -78,6 +78,36 @@ pub fn drop_table_change(project: &Project, table: &str) -> Result<Change> {
     })
 }
 
+/// The forward migration that retires an association's foreign key.
+///
+/// Appending `drop constraint` is not un-running the migration that added it:
+/// it is the next one, exactly as `drop table` is the next one after `create
+/// table`. Refusing the whole verb because "associations are forward-only"
+/// conflated the two and left a hard deadlock -- neither half of an
+/// association could be destroyed, because removing either entity was refused
+/// for pointing at the other, and the refusal's own `fix:` named a command
+/// that refused on principle.
+///
+/// `if exists` because the reader may already have dropped it by hand while
+/// looking for a way out of that deadlock, and a migration that fails on the
+/// second attempt is a worse answer than one that is idempotent.
+pub fn drop_constraint_change(
+    project: &Project,
+    table: &str,
+    constraint: &str,
+    slug: &str,
+) -> Result<Change> {
+    let path = migration_file(project, &format!("drop_{slug}_association"))?;
+    Ok(Change {
+        files: vec![Artifact {
+            kind: "migration",
+            path,
+            contents: format!("alter table {table}\n  drop constraint if exists {constraint};\n"),
+        }],
+        ..Change::default()
+    })
+}
+
 /// Plan the one forward PostgreSQL migration for a coordinated physical
 /// table cutover. Both identifiers have already crossed the protocol's
 /// `SqlName` boundary, so quoting them here is deterministic and cannot turn

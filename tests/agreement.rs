@@ -129,19 +129,23 @@ const ALLOWED_LEFTOVER: &[(&str, &str, &str)] = &[
     ),
 ];
 
-/// Kinds whose `destroy` is a documented refusal rather than a delete.
 /// Kinds `destroy` refuses, and the refusal is the point.
 ///
-/// The first three are forward-only: a migration that has run cannot be
-/// unrun by deleting its file, an association's DDL is the same, and a field
-/// overlay is undone by another overlay. `cases` is the fourth **one-shot**,
-/// and it joined this list with the dispatch flip: V1 destroyed it by
-/// rebuilding the test path from the markdown path, while a one-shot is now a
-/// receipt over the source's bytes and the ledger schema has no list for
-/// taking one back. Regenerating from the same brief is already a no-op, so
-/// the receipt is never in the way -- the generated test is the reader's to
-/// delete.
-const FORWARD_ONLY: &[&str] = &["migration", "association", "field", "cases"];
+/// The first two are forward-only: a migration that has run cannot be unrun by
+/// deleting its file, and a field overlay is undone by another overlay.
+/// `cases` is the third **one-shot**, and it joined this list with the
+/// dispatch flip: V1 destroyed it by rebuilding the test path from the
+/// markdown path, while a one-shot is now a receipt over the source's bytes
+/// and the ledger schema has no list for taking one back. Regenerating from
+/// the same brief is already a no-op, so the receipt is never in the way --
+/// the generated test is the reader's to delete.
+///
+/// `association` was here and is not. Its DDL is append-only too, but
+/// retiring it *appends* `drop constraint` -- the next migration, not the
+/// un-running of one -- exactly as `--storage drop` appends `drop table`.
+/// Refusing the verb left both halves of an association permanently
+/// undestroyable.
+const FORWARD_ONLY: &[&str] = &["migration", "field", "cases"];
 
 fn explanation(kind: &str, rel: &str) -> Option<&'static str> {
     ALLOWED_LEFTOVER

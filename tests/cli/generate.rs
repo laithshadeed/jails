@@ -1923,7 +1923,7 @@ fn destroy_refuses_to_remove_a_type_used_by_a_retained_entity() {
 }
 
 #[test]
-fn destroy_refuses_to_drop_a_table_referenced_by_an_association() {
+fn an_association_blocks_a_drop_until_it_is_itself_retired_forward() {
     let root = temp_dir("destroy-incoming-association");
     write_spring_fixture(&root);
     assert!(
@@ -1982,6 +1982,56 @@ fn destroy_refuses_to_drop_a_table_referenced_by_an_association() {
         !root
             .join("src/main/resources/db/migration/V004__drop_parents.sql")
             .exists()
+    );
+
+    // And the way out exists. "Remove the dependant first" used to name a
+    // command that refused on principle, so neither half of an association
+    // could ever be destroyed -- a hard deadlock reachable in three commands.
+    // Retiring the association *appends* `drop constraint`, which is the next
+    // migration rather than the un-running of one.
+    let retired = jails_cmd(&root, None)
+        .args(["destroy", "association", "ChildParent", "--force"])
+        .output()
+        .unwrap();
+    assert!(
+        retired.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&retired.stdout),
+        String::from_utf8_lossy(&retired.stderr)
+    );
+    let drop_constraint =
+        root.join("src/main/resources/db/migration/V004__drop_child_parent_association.sql");
+    let sql = fs::read_to_string(&drop_constraint).unwrap();
+    assert!(sql.contains("alter table children"), "{sql}");
+    assert!(
+        sql.contains("drop constraint if exists children_child_parent_fk"),
+        "{sql}"
+    );
+    assert!(
+        root.join("src/main/resources/db/migration/V003__add_child_parent_association.sql")
+            .is_file(),
+        "the migration that added the constraint is append-only and stays"
+    );
+
+    // The refusal it was blocking is now gone.
+    let dropped = jails_cmd(&root, None)
+        .args([
+            "destroy",
+            "scaffold",
+            "Parent",
+            "--storage",
+            "drop",
+            "--confirm-table",
+            "parents",
+            "--force",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        dropped.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&dropped.stdout),
+        String::from_utf8_lossy(&dropped.stderr)
     );
 }
 

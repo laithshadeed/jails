@@ -60,7 +60,7 @@ Closed by `e3c7041`, mid-pass:
   `doctor` goes from eight unexplained drift warnings to `26 checks, all clear`.
 
 **Still broken, re-reproduced verbatim at `e3c7041`:** B2, B5, B14, B18, B20,
-B22, B37, B41.
+B22, B41.
 
 Closed after that pass, in the same session:
 
@@ -69,6 +69,10 @@ Closed after that pass, in the same session:
   used to throw the failure out of the publish-by-rename, discarding the whole
   scratch tree -- so a compose service that would not start left `ledger
   create` in the report and no directory at all.
+- **B37** `destroy association` retires the row and appends `drop constraint`,
+  which is the *next* migration rather than the un-running of one -- so the
+  deadlock is gone in both directions and the whole lineage still applies
+  cleanly to a scratch PostgreSQL.
 - **B10** every generated compose service already declared a `healthcheck`;
   what was missing was `--wait`. `up -d --wait --wait-timeout 120` returns when
   PostgreSQL is *healthy* (`pg_isready`) rather than merely running, which is
@@ -314,35 +318,6 @@ knows about it, and **B5/B14** means nothing reports the orphan.
 
 The manifest has no syntax for expressing storage intent, so the ceremony the
 imperative path insists on cannot even be written down in the declarative one.
-
----
-
-## B37 — an entity in an association can never be destroyed, and the fix line names a command that refuses
-
-**Severity: high.** A hard deadlock, reproduced in three commands.
-
-```
-jails g scaffold Author id:uuid@pk name:string!
-jails g scaffold Book id:uuid@pk title:string! authorId:uuid
-jails g association BookAuthor authorId=id --on Book --yields Author
-```
-```
-$ jails destroy scaffold Book --storage drop --confirm-table books --force
-jails: removing `scaffold Book` would leave `association BookAuthor` pointing at nothing.
-       fix: remove the dependant first, or keep a declaration that owns `scaffold Book`.
-
-$ jails destroy association BookAuthor --force
-jails: migrations, associations, and field changes are forward-only; create a new
-       migration instead of destroying one
-```
-
-`destroy scaffold Author` gives the identical first refusal. So neither half of an
-association can be removed, the offered fix is refused by the command it names,
-and "create a new migration instead" is not an escape from a dependency check.
-
-**Expected:** either `destroy association` supports a forward retirement (drop the
-constraint in a new migration, retire the row), or the dependant check names that
-path instead of one that cannot run.
 
 ---
 

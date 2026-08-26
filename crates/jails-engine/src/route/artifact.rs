@@ -114,19 +114,25 @@ pub fn destroy(
     storage: Option<RequestedStorageRetirement>,
     migration_effect: Option<&str>,
 ) -> Result<Outcome> {
-    // Decided before anything is looked up: these three are *forward-only*,
-    // and "no such row" would be the wrong reason to refuse. A migration that
-    // has run cannot be unrun by deleting its file, an association's DDL is
-    // the same, and a field overlay is undone by another overlay. `why.rs`
-    // explains the migration case to anyone who hits it, so the wording is
-    // load-bearing rather than decorative.
-    if matches!(
-        kind,
-        ArtifactKind::Migration | ArtifactKind::Association | ArtifactKind::Field
-    ) {
+    // Decided before anything is looked up: these two are *forward-only*, and
+    // "no such row" would be the wrong reason to refuse. A migration that has
+    // run cannot be unrun by deleting its file, and a field overlay is undone
+    // by another overlay. `why.rs` explains the migration case to anyone who
+    // hits it, so the wording is load-bearing rather than decorative.
+    //
+    // `association` used to be in this list and is not, because it was the
+    // wrong conclusion from the right premise. Its DDL is append-only, yes --
+    // and retiring it appends `drop constraint`, which is the *next* migration
+    // rather than the un-running of one, exactly as `--storage drop` appends
+    // `drop table`. Refusing the verb outright made both halves of an
+    // association permanently undestroyable: each entity was refused for
+    // pointing at the association, and the association was refused on
+    // principle, so the first refusal's `fix:` named a command that could not
+    // run.
+    if matches!(kind, ArtifactKind::Migration | ArtifactKind::Field) {
         return Err(jails_support::Failure::Told(
-            "migrations, associations, and field changes are forward-only; create a new \
-             migration instead of destroying one"
+            "migrations and field changes are forward-only; create a new migration instead of \
+             destroying one"
                 .to_string(),
         ));
     }
@@ -275,6 +281,8 @@ pub fn destroy(
                 )
             }
         }
+    } else if kind == ArtifactKind::Association {
+        (None, Some(association_retirement(project, &store, &id)?))
     } else {
         if storage.is_some() {
             return Err(format!(
@@ -610,4 +618,46 @@ fn reject_field_data_options(
         );
     }
     Ok(())
+}
+
+/// The forward migration that retires an association's foreign key.
+///
+/// The constraint name is *derived*, exactly as the generator derived it when
+/// it wrote the `add constraint`: `<child table>_<snake association name>_fk`.
+/// Deriving it is what lets `destroy` name the same object `generate` created
+/// without a second table to drift -- the same rule that removed
+/// `KIND_FILES`.
+fn association_retirement(
+    project: &Project,
+    store: &ObservedStore,
+    id: &IntentId,
+) -> Result<jails_project::model::Change> {
+    let entity = EntityId::Intent(id.clone());
+    let child = store
+        .entities()
+        .iter()
+        .find(|row| row.id == entity)
+        .and_then(|row| match &row.version.spec {
+            EntitySpec::Intent(spec) => spec.on.clone(),
+            _ => None,
+        })
+        .ok_or_else(|| {
+            format!(
+                "`association {}` does not record the resource it constrains.\n       fix: \
+                 inspect `jails resource status {}`; an association written before its target \
+                 was recorded cannot be retired automatically.",
+                id.name, id.name
+            )
+        })?;
+    let table = jails_generate::sql::table_name(child.name().as_str());
+    let constraint = format!(
+        "{table}_{}_fk",
+        jails_generate::sql::snake_case(id.name.as_str())
+    );
+    jails_generate::generate::drop_constraint_change(
+        project,
+        &table,
+        &constraint,
+        &jails_generate::sql::snake_case(id.name.as_str()),
+    )
 }
