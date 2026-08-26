@@ -162,6 +162,33 @@ impl<'a> StoredKey<'a> {
 ///
 /// `None` when the database does not assign this table's key, which is also
 /// the signal that a caller may return its argument unchanged. plan.md P4.2.
+/// The record rebuilt around a value this layer supplies for the key column,
+/// whoever the assignment policy says owns it.
+///
+/// [`rebuilt_record`] is the same construction gated on a *database*-assigned
+/// key; this one answers for an application-assigned one, which the storage
+/// layer never sees.
+pub(crate) fn rebuilt_with(
+    name: &str,
+    var: &str,
+    columns: &[crate::sql::Column],
+    key_expression: &str,
+) -> String {
+    let key = crate::sql::key_column(columns).map(|column| column.component.clone());
+    let arguments = columns
+        .iter()
+        .map(|column| {
+            if Some(&column.component) == key.as_ref() {
+                format!("                {key_expression}")
+            } else {
+                format!("                {var}.{}()", column.component)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(",\n");
+    format!("new {name}(\n{arguments})")
+}
+
 pub(crate) fn rebuilt_record(
     name: &str,
     var: &str,

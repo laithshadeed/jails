@@ -31,8 +31,18 @@ public class OwnerService {
         return repository.findById(id);
     }
 
+    /**
+     * Creates the resource, assigning whatever the caller does not.
+     *
+     * <p>The key is minted here rather than in the request record: deciding
+     * what a row is called is an application decision, and the web layer
+     * translates.
+     */
     public Owner create(Owner owner) {
-        return repository.save(owner);
+        return repository.save(new Owner(
+                UUID.randomUUID(),
+                owner.name(),
+                owner.createdAt()));
     }
 
     /** @return true when a row was actually removed. */

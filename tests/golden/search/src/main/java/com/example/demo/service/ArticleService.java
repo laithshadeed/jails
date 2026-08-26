@@ -31,8 +31,18 @@ public class ArticleService {
         return repository.findById(id);
     }
 
+    /**
+     * Creates the resource, assigning whatever the caller does not.
+     *
+     * <p>The key is minted here rather than in the request record: deciding
+     * what a row is called is an application decision, and the web layer
+     * translates.
+     */
     public Article create(Article article) {
-        return repository.save(article);
+        return repository.save(new Article(
+                UUID.randomUUID(),
+                article.title(),
+                article.body()));
     }
 
     /** @return true when a row was actually removed. */

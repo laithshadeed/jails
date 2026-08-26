@@ -31,8 +31,20 @@ public class PayoutService {
         return repository.findById(id);
     }
 
+    /**
+     * Creates the resource, assigning whatever the caller does not.
+     *
+     * <p>The key is minted here rather than in the request record: deciding
+     * what a row is called is an application decision, and the web layer
+     * translates.
+     */
     public Payout create(Payout payout) {
-        return repository.save(payout);
+        return repository.save(new Payout(
+                UUID.randomUUID(),
+                payout.amount(),
+                payout.status(),
+                payout.version(),
+                payout.createdAt()));
     }
 
     /** @return true when a row was actually removed. */

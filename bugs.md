@@ -128,17 +128,6 @@ Closed after that pass, in the same session:
 
 ---
 
-## Design question, not a bug — the POST body requires the client to invent the id
-
-`CustomerRequest` renders the `@pk` component as `@NotNull UUID id`, and
-`customer.http` posts a hardcoded
-`"id": "00000000-0000-0000-0000-000000000001"`. Nothing generates an identity
-server-side. That is a defensible choice (it makes creates idempotent), but it is
-unstated, and posting the sample body twice will violate the primary key. Worth a
-line in `explain scaffold` either way.
-
----
-
 ## Not a bug, but it makes one command unusable where it is most wanted
 
 *`jails migrate lint` is closed.* It asked for `.jails/app.toml` to learn one

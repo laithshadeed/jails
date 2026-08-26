@@ -31,8 +31,19 @@ public class ItemService {
         return repository.findById(id);
     }
 
+    /**
+     * Creates the resource, assigning whatever the caller does not.
+     *
+     * <p>The key is minted here rather than in the request record: deciding
+     * what a row is called is an application decision, and the web layer
+     * translates.
+     */
     public Item create(Item item) {
-        return repository.save(item);
+        return repository.save(new Item(
+                UUID.randomUUID(),
+                item.ownerId(),
+                item.name(),
+                item.createdAt()));
     }
 
     /** @return true when a row was actually removed. */

@@ -16,7 +16,7 @@ package {{pkg}};
 public record {{name}}Request(
 {{components}}) {
 
-    /** @return the domain type this request describes. */
+{{placeholder}}    /** @return the domain type this request describes. */
     public {{name}} toDomain() {
 {{preamble}}        return new {{name}}(
 {{arguments}});

@@ -25,8 +25,29 @@ pub(crate) fn resource_service_java(
     name: &str,
     extra: &str,
     key: &crate::generate::KeyType,
+    columns: &[crate::sql::Column],
 ) -> String {
     let var = crate::generate::lower_first(name);
+    // **Identity is minted here, not in the web layer.** The request record
+    // used to call `UUID.randomUUID()` inside `toDomain`, which puts the
+    // decision "what is this row called" in the HTTP adapter -- the one layer
+    // that is supposed to translate and nothing else. modern.md 7,
+    // plan.md P4.3.
+    let (created, uuid_import) = match crate::sql::server_generated_key(columns) {
+        Some((_, expression)) => (
+            crate::generate::rebuilt_record(name, &var, columns, expression, "                ")
+                .or_else(|| {
+                    // `rebuilt_record` answers only for a database-assigned key;
+                    // this one is assigned here, so it is built directly.
+                    Some(crate::generate::rebuilt_with(
+                        name, &var, columns, expression,
+                    ))
+                })
+                .expect("a server-generated key rebuilds the record"),
+            "import java.util.UUID;\n",
+        ),
+        None => (var.clone(), ""),
+    };
     crate::template::render(
         crate::template_here!("spring/resource_service_java.java"),
         &[
@@ -34,7 +55,9 @@ pub(crate) fn resource_service_java(
             ("extra", extra),
             ("key", &key.java),
             ("key_import", &key.import),
+            ("uuid_import", uuid_import),
             ("name", name),
+            ("created", &*created),
             ("var", &*var),
         ],
     )

@@ -19,19 +19,24 @@ import java.util.UUID;
  * rejection is reported as a 400 naming each bad field.
  */
 public record PayoutRequest(
-        @NotNull UUID id,
         @NotNull Long amount,
         @NotNull PayoutStatus status,
-        @NotNull Long version,
         @NotNull Instant createdAt) {
+
+    /**
+     * A value nothing reads. The key is assigned after this record is
+     * built -- by the service, or by the insert -- and a record component
+     * cannot be absent, so the slot has to hold something recognisable.
+     */
+    private static final UUID PLACEHOLDER_ID = new UUID(0L, 0L);
 
     /** @return the domain type this request describes. */
     public Payout toDomain() {
         return new Payout(
-                id,
+                PLACEHOLDER_ID,
                 amount,
                 status,
-                version,
+                0L,
                 createdAt);
     }
 }

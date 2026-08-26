@@ -277,6 +277,7 @@ pub(crate) fn scaffold_artifacts_from_fields(
                 parsed,
                 &domain_in(&web),
                 &domain,
+                crate::spring::assigned_key(&columns),
             ),
         },
         Artifact {
@@ -303,6 +304,7 @@ pub(crate) fn scaffold_artifacts_from_fields(
                     import_of(&service, &repository, &format!("{name}Repository"))
                 ),
                 &super::repository::key_type(&columns),
+                &columns,
             ),
         },
         Artifact {

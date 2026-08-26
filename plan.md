@@ -368,11 +368,24 @@ commit as the change that causes it.
       new: `twoCreatesAreTwoRows`, emitted only where the use case assigns
       the key, because a command that carries it is `ClientSupplied` and two
       identical commands are then one row on purpose.
-- [ ] **P4.3** The request DTO stops asking the client for server state
+- [x] **P4.3** The request DTO stops asking the client for server state
       (modern §7). `POST /messages` currently requires the primary key, the
       timestamp, the read flag *and* the optimistic-lock version — the exact
       defect the generated test's own Javadoc describes and then commits.
-      Closes bugs.md's "POST body invents the id" note.
+      Closes bugs.md's "POST body invents the id" note. Three components are
+      withheld now — the audit pair, an assigned primary key, and a required
+      numeric `version`, recognised by the same rule `g transition` uses to
+      find it. Two exceptions are deliberate and each was a real generated
+      project: a **`@scope`** component is proved against the caller's own
+      token, so it is exactly what the caller must send even when it is the
+      key (`support-inbox` declares `id:uuid@pk@scope`); and a key **not
+      named `id`** is a natural one the caller chose, which is the convention
+      `usecase_default` has always used for the `String` case, stated once in
+      `sql::key_assignment` now. Identity moved out of the web layer at the
+      same time: `{X}Service.create` mints it, and `toDomain` writes a
+      documented placeholder nothing reads. `g dto` passes no assigned key at
+      all — it owns no table. modern §7's other three entries are read-side
+      and stay open.
 - [ ] **P4.4** `uuidv7()` where the database supports it, not
       `gen_random_uuid()` (modern §4.2 — `backend.md` §5 names random UUID keys
       specifically), and `order by` a real ordering column rather than a random

@@ -18,14 +18,20 @@ import java.util.UUID;
  * rejection is reported as a 400 naming each bad field.
  */
 public record ArticleRequest(
-        @NotNull UUID id,
         @NotBlank String title,
         @NotNull String body) {
+
+    /**
+     * A value nothing reads. The key is assigned after this record is
+     * built -- by the service, or by the insert -- and a record component
+     * cannot be absent, so the slot has to hold something recognisable.
+     */
+    private static final UUID PLACEHOLDER_ID = new UUID(0L, 0L);
 
     /** @return the domain type this request describes. */
     public Article toDomain() {
         return new Article(
-                id,
+                PLACEHOLDER_ID,
                 title,
                 body);
     }

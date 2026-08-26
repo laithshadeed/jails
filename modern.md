@@ -265,37 +265,12 @@ independent write paths into `messages` with different validation.
 
 ---
 
-## 7. The HTTP contract is wrong in a way that would be caught in review
+## 7. The HTTP contract, and what is left of it
 
-```java
-public record MessageRequest(
-        @NotNull  UUID    user_id,
-        @NotBlank String  message,
-        @NotNull  Boolean is_read,      // server state
-        @NotBlank String  direction,
-        @NotNull  Instant time_stamp,   // server clock
-        @NotNull  UUID    id,           // primary key
-        @NotNull  Long    version) {    // concurrency counter
-```
-
-`POST /messages` **requires the client to supply the primary key, the
-timestamp, the read flag and the optimistic-lock version.** A client can post a
-message that is already read, backdated, at version 900, under an id it chose.
-`UserRequest` has the opposite bug — it calls `UUID.randomUUID()` inside the
-web layer, so identity is minted in the HTTP adapter.
-
-The generated test knows about this class of defect and commits it anyway. Its
-own Javadoc:
-
-> *"a collection describing a request the record refuses is a request nobody can
-> make, and it shipped. A timestamped scaffold asked the caller for `createdAt`
-> and `updatedAt`, so its own documented POST answered 400 naming two columns
-> the create path sets itself."*
-
-— and directly beneath it, `CREATE_REQUEST` sends `id`, `version`, `is_read`
-and `time_stamp`. The lesson was written down and not applied.
-
-Two more:
+The create body is closed (plan.md P4.3): a request carries neither the
+primary key, nor the audit pair, nor the optimistic-lock version, and identity
+is minted in the service rather than in the request record. What survives is
+three separate defects in the *read* and *command* endpoints:
 
 - `MarkAsReadController` and `UnreadMessagesQueryController` bind
   `minicom.service.MarkAsReadCommand` and `minicom.service.UnreadMessagesQuery`

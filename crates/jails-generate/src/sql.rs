@@ -89,20 +89,36 @@ pub enum Assignment {
 /// how to make. [`Assignment::ClientSupplied`] is the one a *use case* adds,
 /// since only a command can say the caller supplied it.
 pub fn key_assignment(columns: &[Column]) -> Assignment {
+    // A composite key has no single assigned component, so `key_column`
+    // answers `None` and nothing here assigns one.
+    let key = key_column(columns);
+    match key {
+        // **Named `id`, not merely marked `@pk`.** A key called something
+        // else is a natural one the caller chose -- an order `reference`, a
+        // country `code` -- and assigning it would overwrite the value that
+        // is the whole point of declaring it. That is the convention
+        // `usecase_default` has always used for a `String` key; it is stated
+        // once here now.
+        // A `@scope` key is proved against the caller's own token, so the
+        // caller is precisely who supplies it.
+        Some(key) if key.constraints.scoped => Assignment::ClientSupplied,
+        Some(key) if key.component != "id" => Assignment::ClientSupplied,
+        Some(key) if is_integer_key(&key.java_type) => Assignment::DatabaseGenerated,
+        Some(_) => Assignment::ServerGenerated,
+        None => Assignment::ClientSupplied,
+    }
+}
+
+/// The column this table's key is, whoever assigns it.
+pub(crate) fn key_column(columns: &[Column]) -> Option<&Column> {
     let declared: Vec<&Column> = columns
         .iter()
         .filter(|column| column.constraints.primary_key)
         .collect();
-    let key = match declared.as_slice() {
+    match declared.as_slice() {
         [key] => Some(*key),
-        // A composite key has no single generated component, and an
-        // undeclared one is not a key jails will assign.
         [_, _, ..] => None,
         [] => columns.iter().find(|column| column.name == "id"),
-    };
-    match key {
-        Some(key) if is_integer_key(&key.java_type) => Assignment::DatabaseGenerated,
-        _ => Assignment::ServerGenerated,
     }
 }
 
@@ -115,13 +131,27 @@ fn is_integer_key(java_type: &str) -> bool {
 
 /// The column this table's key is, when the database assigns it.
 pub(crate) fn generated_key(columns: &[Column]) -> Option<&Column> {
-    if key_assignment(columns) != Assignment::DatabaseGenerated {
+    (key_assignment(columns) == Assignment::DatabaseGenerated)
+        .then(|| key_column(columns))
+        .flatten()
+}
+
+/// The key the *application* assigns, and the expression that assigns it.
+///
+/// `None` covers both a client-supplied key and a database-assigned one --
+/// the same answer to the only question the caller asks: is there something
+/// for this layer to write here?
+pub(crate) fn server_generated_key(columns: &[Column]) -> Option<(&Column, &'static str)> {
+    if key_assignment(columns) != Assignment::ServerGenerated {
         return None;
     }
-    columns
-        .iter()
-        .find(|column| column.constraints.primary_key)
-        .or_else(|| columns.iter().find(|column| column.name == "id"))
+    let key = key_column(columns)?;
+    let expression = match key.java_type.as_str() {
+        "UUID" => "UUID.randomUUID()",
+        "String" => "UUID.randomUUID().toString()",
+        _ => return None,
+    };
+    Some((key, expression))
 }
 
 /// Derive a column for every component. The project and `pkg` are needed to recognise

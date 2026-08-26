@@ -41,7 +41,11 @@ pub(crate) fn dto_files(
         Artifact {
             kind: "request",
             path: main.join(format!("{name}Request.java")),
-            contents: request_java_for(validation, pkg, name, fields, &domain_import, domain),
+            // `g dto` is not a scaffold: nothing here owns a table, so no
+            // component's key is jails' to assign and the caller sends the
+            // lot. The audit pair and the lock version are still withheld --
+            // those are facts about the *fields*, not about storage.
+            contents: request_java_for(validation, pkg, name, fields, &domain_import, domain, None),
         },
         Artifact {
             kind: "response",
@@ -51,7 +55,7 @@ pub(crate) fn dto_files(
         Artifact {
             kind: "dto test",
             path: test.join(format!("{name}DtoTest.java")),
-            contents: dto_test_java(slice, name, fields, &domain_import),
+            contents: dto_test_java(slice, name, fields, &domain_import, None),
         },
     ]
 }
@@ -235,14 +239,95 @@ pub(crate) fn is_audit_component(field: &crate::generate::Field, pair: bool) -> 
     pair && names_an_audit_column(field)
 }
 
+/// A component that carries the optimistic-lock counter rather than data.
+///
+/// The same rule `g transition` uses to find it -- a required numeric
+/// component called `version` -- stated here because the *request* has to
+/// know it too. A caller that can send `version` can post a row already at
+/// 900, which defeats the lock the transition exists to hold. plan.md P4.3,
+/// modern.md 7.
+pub(crate) fn is_lock_version(field: &crate::generate::Field) -> bool {
+    field.name == "version"
+        && !is_optional(field)
+        && matches!(
+            crate::spring::usecase_normalized_type(&field.java_type),
+            "long" | "int"
+        )
+}
+
+/// Whether the server, not the caller, decides this component's value.
+///
+/// Three kinds, and each was a real defect in a generated `POST`: the audit
+/// pair (a caller could backdate a row), the optimistic-lock version (a
+/// caller could post at version 900), and an assigned primary key (a caller
+/// could choose the id, and `POST` twice with the same one). A key the caller
+/// *is* meant to choose -- a natural key, `Assignment::ClientSupplied` -- is
+/// deliberately not here.
+pub(crate) fn is_server_owned(
+    field: &crate::generate::Field,
+    pair: bool,
+    assigned_key: Option<&str>,
+) -> bool {
+    // A `@scope` component is proved against the caller's own token, so it
+    // is exactly the thing the caller must send -- even when it is the key.
+    if field.constraints.scoped {
+        return false;
+    }
+    is_audit_component(field, pair)
+        || is_lock_version(field)
+        || assigned_key == Some(field.name.as_str())
+}
+
+/// The component whose value the server assigns, if the caller must not.
+///
+/// Takes the resolved columns rather than re-deriving, so the DTO, the DDL
+/// and both adapters agree about which component that is.
+pub(crate) fn assigned_key(columns: &[crate::sql::Column]) -> Option<&str> {
+    match crate::sql::key_assignment(columns) {
+        crate::sql::Assignment::ClientSupplied => None,
+        _ => crate::sql::key_column(columns).map(|column| column.component.as_str()),
+    }
+}
+
 /// The components a client may send: everything the server does not set itself.
-pub(crate) fn client_supplied(fields: &[crate::generate::Field]) -> Vec<crate::generate::Field> {
+pub(crate) fn client_supplied(
+    fields: &[crate::generate::Field],
+    assigned_key: Option<&str>,
+) -> Vec<crate::generate::Field> {
     let pair = has_audit_pair(fields);
     fields
         .iter()
-        .filter(|field| !is_audit_component(field, pair))
+        .filter(|field| !is_server_owned(field, pair, assigned_key))
         .cloned()
         .collect()
+}
+
+/// What `toDomain` writes where the caller sent nothing.
+///
+/// A placeholder for an assigned key is the one uncomfortable value here, and
+/// it is unavoidable: a record component is required, so *something* has to
+/// occupy it between the request and the layer that assigns it. Nothing reads
+/// it -- `{X}Service.create` replaces it for an application-assigned key, and
+/// the insert omits the column entirely for a database-assigned one -- so the
+/// comment above it says so rather than leaving a reader to wonder.
+fn server_value(field: &crate::generate::Field, assigned_key: Option<&str>) -> Option<String> {
+    if is_lock_version(field) {
+        return Some(
+            match crate::spring::usecase_normalized_type(&field.java_type) {
+                "int" => "0".to_string(),
+                _ => "0L".to_string(),
+            },
+        );
+    }
+    if assigned_key != Some(field.name.as_str()) {
+        return None;
+    }
+    Some(match field.java_type.as_str() {
+        "UUID" => "PLACEHOLDER_ID".to_string(),
+        "String" => "\"\"".to_string(),
+        "int" | "Integer" => "0".to_string(),
+        _ => "0L".to_string(),
+    })
 }
 
 pub(crate) fn request_java_for(
@@ -252,6 +337,7 @@ pub(crate) fn request_java_for(
     fields: &[crate::generate::Field],
     domain_import: &str,
     domain: &str,
+    assigned: Option<&str>,
 ) -> String {
     // Imports come from the full spec, not from the wire components: `Instant`
     // is still needed by `Instant.now()` even when no component carries it.
@@ -261,24 +347,40 @@ pub(crate) fn request_java_for(
     } else {
         ""
     };
-    let wire = client_supplied(fields);
+    let wire = client_supplied(fields, assigned);
     let components = components(&wire, true);
-    let audited = wire.len() != fields.len();
-    let preamble = if audited {
-        concat!(
+    let pair = has_audit_pair(fields);
+    let audited = pair && wire.len() != fields.len();
+    let mut preamble = String::new();
+    if audited {
+        preamble.push_str(concat!(
             "        // Audit columns: set here rather than received, and one\n",
             "        // instant for both, so a freshly created row does not look\n",
             "        // already edited.\n",
             "        Instant now = Instant.now();\n",
-        )
-    } else {
-        ""
-    };
+        ));
+    }
+    let placeholder = assigned
+        .and_then(|key| fields.iter().find(|field| field.name == key))
+        .filter(|field| field.java_type == "UUID")
+        .map(|_| {
+            concat!(
+                "    /**\n",
+                "     * A value nothing reads. The key is assigned after this record is\n",
+                "     * built -- by the service, or by the insert -- and a record component\n",
+                "     * cannot be absent, so the slot has to hold something recognisable.\n",
+                "     */\n",
+                "    private static final UUID PLACEHOLDER_ID = new UUID(0L, 0L);\n\n",
+            )
+        })
+        .unwrap_or("");
     let arguments = fields
         .iter()
         .map(|field| {
-            if is_audit_component(field, audited) {
+            if is_audit_component(field, pair) {
                 "now".to_string()
+            } else if let Some(value) = server_value(field, assigned) {
+                value
             } else {
                 write_to_domain(field)
             }
@@ -295,7 +397,8 @@ pub(crate) fn request_java_for(
             ("imports", &*imports),
             ("name", name),
             ("components", &*components),
-            ("preamble", preamble),
+            ("placeholder", placeholder),
+            ("preamble", &*preamble),
             ("arguments", &*arguments),
         ],
     )
@@ -345,6 +448,7 @@ fn dto_test_java(
     name: &str,
     fields: &[crate::generate::Field],
     domain_import: &str,
+    assigned: Option<&str>,
 ) -> String {
     let project = slice.project();
     let pkg: &str = &slice.placed(Layer::Web);
@@ -352,7 +456,7 @@ fn dto_test_java(
     let var = crate::generate::lower_first(name);
     // The same wire components the request carries -- a sample for one the
     // record does not declare would not compile.
-    let fields = &client_supplied(fields)[..];
+    let fields = &client_supplied(fields, assigned)[..];
     // A request component is the *wire* type: an Optional domain component is
     // a plain nullable field here, so `Optional.empty()` would not compile as
     // its sample. `null` is the honest wire-level equivalent.
@@ -428,21 +532,37 @@ mod tests {
             .expect("valid field specs")
     }
 
-    #[test]
-    fn the_audit_pair_is_set_by_the_create_path_not_sent_by_the_caller() {
-        let java = request_java_for(
+    /// The columns a scaffold would derive, so the request sees the same
+    /// assignment policy the DDL and the adapters do.
+    fn columns_of(fields: &[crate::generate::Field]) -> Vec<crate::sql::Column> {
+        let (dir, project) =
+            crate::spring::scratch_project("dto-request-columns", "<project></project>");
+        let columns = crate::sql::columns(fields, &project, "com.example.demo.domain", "value");
+        std::fs::remove_dir_all(&dir).ok();
+        columns
+    }
+
+    fn request_of(specs: &[&str]) -> String {
+        let fields = fields(specs);
+        request_java_for(
             "jakarta",
             "com.example.demo.web",
             "Note",
-            &fields(&[
-                "id:uuid@pk",
-                "title:string!",
-                "createdAt:instant",
-                "updatedAt:instant",
-            ]),
+            &fields,
             "import com.example.demo.domain.Note;\n",
             "com.example.demo.domain",
-        );
+            assigned_key(&columns_of(&fields)),
+        )
+    }
+
+    #[test]
+    fn the_audit_pair_is_set_by_the_create_path_not_sent_by_the_caller() {
+        let java = request_of(&[
+            "id:uuid@pk",
+            "title:string!",
+            "createdAt:instant",
+            "updatedAt:instant",
+        ]);
         // Not a component: `@NotNull Instant createdAt` on the wire is a 400 on
         // the documented POST, and a caller who supplies it backdates the row.
         assert!(!java.contains("Instant createdAt"), "{java}");
@@ -472,29 +592,44 @@ mod tests {
     fn a_hand_declared_created_at_alone_is_still_the_callers_to_send() {
         // `--timestamps` writes the pair and refuses to expand over either
         // name, so one on its own was declared by hand and means data.
-        let java = request_java_for(
-            "jakarta",
-            "com.example.demo.web",
-            "Note",
-            &fields(&["id:uuid@pk", "title:string!", "createdAt:instant"]),
-            "import com.example.demo.domain.Note;\n",
-            "com.example.demo.domain",
-        );
+        let java = request_of(&["id:uuid@pk", "title:string!", "createdAt:instant"]);
         assert!(java.contains("Instant createdAt"), "{java}");
         assert!(!java.contains("Instant.now()"), "{java}");
     }
 
     #[test]
     fn a_scaffold_with_no_timestamps_is_unchanged() {
-        let java = request_java_for(
-            "jakarta",
-            "com.example.demo.web",
-            "Note",
-            &fields(&["id:uuid@pk", "title:string!"]),
-            "import com.example.demo.domain.Note;\n",
-            "com.example.demo.domain",
-        );
+        let java = request_of(&["id:uuid@pk", "title:string!"]);
         assert!(!java.contains("Instant"), "{java}");
         assert!(java.contains("        return new Note("), "{java}");
+    }
+
+    /// plan.md P4.3, modern.md 7: `POST` required the primary key, the
+    /// timestamps and the optimistic-lock version, so a caller could post a
+    /// backdated row at version 900 under an id it chose.
+    #[test]
+    fn the_caller_sends_none_of_the_state_the_server_owns() {
+        let java = request_of(&[
+            "id:uuid@pk",
+            "title:string!",
+            "version:long@nonnegative",
+            "createdAt:instant",
+            "updatedAt:instant",
+        ]);
+        assert!(!java.contains("UUID id"), "{java}");
+        assert!(!java.contains("long version"), "{java}");
+        assert!(!java.contains("Long version"), "{java}");
+        assert!(java.contains("@NotBlank String title"), "{java}");
+        assert!(java.contains("PLACEHOLDER_ID"), "{java}");
+    }
+
+    /// A key the caller is meant to choose stays the caller's. Only a key
+    /// named `id` is assigned, which is the rule `usecase_default` has always
+    /// used for the `String` case.
+    #[test]
+    fn a_natural_key_is_still_the_callers_to_send() {
+        let java = request_of(&["reference:string!@pk", "title:string!"]);
+        assert!(java.contains("String reference"), "{java}");
+        assert!(!java.contains("PLACEHOLDER_ID"), "{java}");
     }
 }
