@@ -434,17 +434,37 @@ pub(crate) fn scaffold_requests(name: &str, fields: &[Field], body: &str) -> Str
     let route = resource_path(name);
     // Scoped resources are create-only; reads go through `jails g query`,
     // which writes its own collection.
-    let list = if fields.iter().any(|field| field.constraints.scoped) {
+    let browse = if fields.iter().any(|field| field.constraints.scoped) {
         String::new()
     } else {
-        format!("\n### List {name}\nGET {{{{baseUrl}}}}{route}\nAccept: application/json\n")
+        let item = fields
+            .iter()
+            .find(|field| field.constraints.primary_key)
+            .and_then(|key| {
+                let prefix = format!("  \"{}\": ", key.name);
+                body.lines()
+                    .find_map(|line| line.strip_prefix(&prefix))
+                    .map(|value| value.trim_end_matches(',').trim_matches('"'))
+            })
+            .map(|id| {
+                format!(
+                    "\n@id = {id}\n\n\
+                     ### Get {name}\n\
+                     GET {{{{baseUrl}}}}{route}/{{{{id}}}}\n\
+                     Accept: application/json\n\n\
+                     ### Delete {name}\n\
+                     DELETE {{{{baseUrl}}}}{route}/{{{{id}}}}\n"
+                )
+            })
+            .unwrap_or_default();
+        format!("\n### List {name}\nGET {{{{baseUrl}}}}{route}\nAccept: application/json\n{item}")
     };
     format!(
         "@baseUrl = http://localhost:8080\n\n\
          ### Create {name}\n\
          POST {{{{baseUrl}}}}{route}\n\
          Content-Type: application/json\n\n\
-         {{\n{body}\n}}\n{list}"
+         {{\n{body}\n}}\n{browse}"
     )
 }
 

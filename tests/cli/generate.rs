@@ -1500,6 +1500,19 @@ fn scaffold_writes_http_requests_and_factory_builds_typed_test_data() {
     );
     let requests = fs::read_to_string(root.join("requests/note.http")).unwrap();
     assert!(requests.contains("POST {{baseUrl}}/notes"), "{requests}");
+    assert!(requests.contains("GET {{baseUrl}}/notes"), "{requests}");
+    assert!(
+        requests.contains("GET {{baseUrl}}/notes/{{id}}"),
+        "{requests}"
+    );
+    assert!(
+        requests.contains("DELETE {{baseUrl}}/notes/{{id}}"),
+        "{requests}"
+    );
+    assert!(
+        requests.contains("@id = 00000000-0000-0000-0000-000000000001"),
+        "{requests}"
+    );
     assert!(
         requests.contains("\"createdAt\": \"2026-01-01T00:00:00Z\""),
         "{requests}"
