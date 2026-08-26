@@ -81,6 +81,9 @@ const ALLOWED: &[AllowedConcept] = &[
             "crates/jails-prepare/src/pipeline/ledger/lifecycle.rs",
             // A report, a receipt and a command envelope each say what
             // happened to the ledger file, which is the name of the thing.
+            // The after-image a prepared transaction hashes *is* the ledger
+            // image the commit will write, before and after.
+            "crates/jails-prepare/src/prepared_after.rs",
             "crates/jails-prepare/src/report.rs",
             "crates/jails-prepare/src/receipt.rs",
             "crates/jails-prepare/src/command.rs",
@@ -94,10 +97,16 @@ const ALLOWED: &[AllowedConcept] = &[
             "crates/jails-engine/src/route/artifact.rs",
             "crates/jails-engine/src/route/capability.rs",
             "crates/jails-engine/src/route/field.rs",
+            // Resolving which recorded entity a field command targets is a
+            // search of the ledger's applied rows.
+            "crates/jails-engine/src/route/field/target.rs",
             "crates/jails-engine/src/route/maintenance/adopt.rs",
             "crates/jails-engine/src/route/maintenance/app_init.rs",
             "crates/jails-engine/src/route/maintenance/format.rs",
             "crates/jails-engine/src/route/maintenance/rename.rs",
+            // A rename's identity transition is read out of the ledger's
+            // applied rows, which is what names the entities being renamed.
+            "crates/jails-engine/src/route/maintenance/rename/source.rs",
             "crates/jails-engine/src/route/oneshot.rs",
             // Reading the store *is* reading `ledger.toml`, and the reader
             // cannot name the file it opens without naming it.

@@ -1114,7 +1114,7 @@ mod tests {
         let evolve = EvolveFieldRequestV1 {
             entity: intent_id(),
             expected_path: expected_path(),
-            expected_table: expected_table(),
+            expected_table: Some(expected_table()),
             action: FieldEvolution::ChangeType {
                 field: Name::parse("priority").unwrap(),
                 to: FieldType::parse("long", &Package::base()).unwrap(),
@@ -1394,7 +1394,7 @@ mod tests {
                 CanonicalMutationRequest::EvolveField(EvolveFieldRequestV1 {
                     entity: intent_id(),
                     expected_path: JavaType::parse("Note").unwrap(),
-                    expected_table: SqlName::parse("notes").unwrap(),
+                    expected_table: Some(SqlName::parse("notes").unwrap()),
                     action: FieldEvolution::Add(
                         FieldSpec::parse("title:string", &Package::base()).unwrap(),
                     ),

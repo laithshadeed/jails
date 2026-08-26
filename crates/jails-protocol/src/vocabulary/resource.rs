@@ -27,7 +27,7 @@
 use crate::Result;
 use crate::coordinate::{DependencySpec, MavenCoordinate, PluginSpec};
 use crate::database::QueryId;
-use crate::entity::{CapabilitySpec, EntityId, OneShotId};
+use crate::entity::{CapabilitySpec, EntityId, OneShotId, TypeTargetId};
 use crate::feature::BuildFeature;
 use crate::identity::{JavaType, MarkerId, ProjectPath, PropertyKey, ServiceName, VolumeName};
 use jails_support::codec::{Codec, Decoder, Encoder, ordered};
@@ -540,6 +540,29 @@ pub enum ResourceOwner {
     Query(QueryId),
     /// Shared project-level architecture tests and their reviewed policy.
     ProjectArchitecture,
+}
+
+impl ResourceOwner {
+    /// Whether this owner speaks for `entity`.
+    ///
+    /// Not the same question as `owner == Entity(entity)`. A field overlay is
+    /// owned by its own `OneShotId` so that removing the target retires the
+    /// overlay without deleting a migration the database has already run --
+    /// but the file it wrote is still one of that entity's, and every pass
+    /// that gathers "this entity's resources" has to agree about that. Two
+    /// spellings of this rule is how `destroy` came to plan against a
+    /// migration it had not captured: the seal walk resolved the one-shot back
+    /// to its target and the read declaration did not.
+    pub fn names_entity(&self, entity: &EntityId) -> bool {
+        match self {
+            Self::Entity(owner) => owner == entity,
+            Self::OneShot(OneShotId::Field {
+                target: TypeTargetId::Managed(target),
+                ..
+            }) => matches!(entity, EntityId::Intent(intent) if intent == target),
+            _ => false,
+        }
+    }
 }
 
 impl Codec for ResourceOwner {

@@ -42,8 +42,68 @@ pub struct Request<'a> {
     /// `bootJar { archiveVersion }`. Only read when `jar_name` is set.
     pub jar_version: Option<&'a str>,
     pub app: Option<&'a Path>,
+    /// Write the manifest's Compose services without starting them.
+    pub no_start: bool,
     pub debug: bool,
     pub pretend: bool,
+}
+
+/// `jails new`'s arguments as the request the creation path takes.
+///
+/// The translation lives here rather than in `main.rs` because `Request` is
+/// this module's value: dispatch names a command, it does not build one.
+pub fn request<'a>(args: &'a crate::cli::NewArgs, debug: bool, pretend: bool) -> Request<'a> {
+    Request {
+        name: &args.name,
+        group: args.group.as_deref(),
+        package: args.package.as_deref(),
+        deps: &args.deps,
+        java: &args.java,
+        git: !args.no_git,
+        devtools: !args.no_devtools,
+        offline: args.offline,
+        gradle: args.gradle,
+        boot: args.boot.as_deref(),
+        gradle_version: args.gradle_version.as_deref(),
+        jar_name: args.jar_name.as_deref(),
+        jar_version: args.jar_version.as_deref(),
+        app: args.app.as_deref(),
+        no_start: args.no_start,
+        debug,
+        pretend,
+    }
+}
+
+/// `jails new-cli`'s arguments as the same request.
+///
+/// Every Spring-shaped field is spelled out rather than defaulted: `new-cli`
+/// writes a plain Maven project and has no flag for any of them, so a field
+/// added to `Request` arrives here as a compile error asking what `new-cli`
+/// should do with it rather than as a silent `Default`.
+pub fn cli_request<'a>(
+    args: &'a crate::cli::NewCliArgs,
+    debug: bool,
+    pretend: bool,
+) -> Request<'a> {
+    Request {
+        name: &args.name,
+        group: args.group.as_deref(),
+        package: args.package.as_deref(),
+        java: &args.release,
+        git: !args.no_git,
+        app: args.app.as_deref(),
+        no_start: args.no_start,
+        debug,
+        pretend,
+        deps: "",
+        devtools: false,
+        offline: true,
+        gradle: false,
+        boot: None,
+        gradle_version: None,
+        jar_name: None,
+        jar_version: None,
+    }
 }
 
 /// The entry point's class name, and the one name it must not be.
@@ -305,6 +365,7 @@ mod tests {
             java: crate::pom::TARGET_RELEASE,
             git,
             app: None,
+            no_start: true,
             debug: false,
             pretend: false,
             deps: "",

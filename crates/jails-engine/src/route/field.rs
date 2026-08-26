@@ -429,7 +429,6 @@ fn add_field_with_syntax(
     let project = run.project();
     let store = observed(project)?;
     let (id, spec) = recorded_target(project, &store, target, package)?;
-    let (expected_path, expected_table) = storage_identity(&store, &id)?;
     let package = recipe_package(project, &id, package)?;
     let package = package.as_deref();
 
@@ -491,6 +490,8 @@ fn add_field_with_syntax(
             })
     });
 
+    let (expected_path, expected_table) = storage_identity(&store, &id, &change, project)?;
+
     let owner = ResourceOwner::Entity(EntityId::Intent(id.clone()));
     let mut desired = desire::contribution(&owner, &change, project)?;
     let after = IntentSpec {
@@ -531,15 +532,37 @@ fn add_field_with_syntax(
     )
     .pop()
     .expect("one field produces one column");
-    let table = jails_generate::sql::table_name(id.name.as_str());
-    let (data, backfill, data_input) = add_data_plan(
-        project,
-        &added,
-        &table,
-        &column.name,
-        default_literal,
-        backfill_file,
-    )?;
+    // The table this column joins, when the resource has one at all. Named by
+    // the recorded lifecycle rather than derived from the entity name: a
+    // source-only kind has no table, and inventing `tags` for `g record Tag`
+    // is what appended `alter table tags` to a project that never created it.
+    let table = expected_table
+        .as_ref()
+        .map(|table| table.as_str().to_string());
+    let (data, backfill, data_input) = match &table {
+        Some(table) => add_data_plan(
+            project,
+            &added,
+            table,
+            &column.name,
+            default_literal,
+            backfill_file,
+        )?,
+        None => {
+            if let Some(flag) = default_literal
+                .map(|_| "--default-literal")
+                .or(backfill_file.map(|_| "--backfill-file"))
+            {
+                return Err(format!(
+                    "`{flag}` plans data for a column, and `{} {}` has no table.\n       fix: drop the flag -- a source-only component needs no backfill -- or evolve a scaffold.",
+                    label(id.recipe),
+                    id.name
+                )
+                .into());
+            }
+            (DataEvolution::None, None, None)
+        }
+    };
     let evolution = EvolveFieldRequestV1 {
         entity: EntityId::Intent(id.clone()),
         expected_path,
@@ -549,7 +572,9 @@ fn add_field_with_syntax(
     };
     let directory = ProjectPath::parse("src/main/resources/db/migration")?;
     let mut migrated = None;
-    if project.root().join(directory.as_str()).is_dir() {
+    if let Some(table) = &table
+        && project.root().join(directory.as_str()).is_dir()
+    {
         let version = jails_generate::generate::next_migration_version(
             &project.root().join(directory.as_str()),
         )?;

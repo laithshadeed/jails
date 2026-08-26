@@ -978,7 +978,7 @@ mod tests {
 
     #[test]
     fn record_java_sorts_time_imports_with_the_objects_import() {
-        let fields = parse_fields(&["on:date".to_string()]).unwrap();
+        let fields = parse_fields(&["startedOn:date".to_string()]).unwrap();
         let src = record_java("com.example.demo", "Entry", &fields);
 
         let time = src.find("import java.time.LocalDate;").unwrap();

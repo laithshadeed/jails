@@ -553,7 +553,7 @@ pub(super) fn create(request: &super::Request<'_>, deps: &str, boot: &str) -> Re
         tree.put(".gitignore", GRADLE_GITIGNORE)?;
         super::git_init(&tree, request.debug);
     }
-    super::seed(&publication, request.app, request.debug)?;
+    super::seed(&publication, request.app, request.no_start, request.debug)?;
 
     publication.publish()?;
     println!("Created ./{name} (Gradle {gradle}, Spring Boot {boot}, Java {java}, deps: {deps})");

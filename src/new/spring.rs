@@ -79,7 +79,7 @@ pub fn new(request: Request<'_>) -> Result<()> {
     if git {
         git_init(&tree, debug);
     }
-    seed(&publication, app, debug)?;
+    seed(&publication, app, request.no_start, debug)?;
 
     publication.publish()?;
     println!("Created ./{name} (deps: {deps}, Java {java})");
@@ -260,7 +260,7 @@ fn new_offline(request: &Request<'_>, deps: &str) -> Result<()> {
         tree.put(".gitignore", GITIGNORE)?;
         git_init(&tree, debug);
     }
-    seed(&publication, app, debug)?;
+    seed(&publication, app, request.no_start, debug)?;
 
     publication.publish()?;
     println!("Created ./{name} offline (deps: {deps}, Java {java})");

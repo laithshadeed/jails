@@ -125,7 +125,7 @@ pub fn new_cli(request: &Request<'_>) -> Result<()> {
         tree.put(".gitignore", GITIGNORE)?;
         git_init(&tree, debug);
     }
-    seed(&publication, app, debug)?;
+    seed(&publication, app, request.no_start, debug)?;
 
     publication.publish()?;
     println!("Created ./{name} (package: {package}, Java {java})");

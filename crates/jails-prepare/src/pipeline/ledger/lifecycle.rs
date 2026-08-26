@@ -46,7 +46,7 @@ impl Target {
             PlannedSubject::EvolveField(request) => Self {
                 entity: request.entity.clone(),
                 expected_path: Some(request.expected_path.clone()),
-                expected_table: Some(request.expected_table.clone()),
+                expected_table: request.expected_table.clone(),
                 transition: Transition::Evolve,
             },
             PlannedSubject::DestroyResourceV2(request) => {
@@ -641,14 +641,7 @@ fn is_migration_path(path: &ProjectPath) -> bool {
 }
 
 fn owner_names(owner: &ResourceOwner, entity: &EntityId) -> bool {
-    match owner {
-        ResourceOwner::Entity(owner) => owner == entity,
-        ResourceOwner::OneShot(OneShotId::Field {
-            target: TypeTargetId::Managed(target),
-            ..
-        }) => matches!(entity, EntityId::Intent(intent) if intent == target),
-        _ => false,
-    }
+    owner.names_entity(entity)
 }
 
 fn entity_contributor(owner: &ResourceOwner) -> Option<EntityId> {

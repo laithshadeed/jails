@@ -445,16 +445,36 @@ impl Codec for DataEvolution {
 pub struct EvolveFieldRequestV1 {
     pub entity: EntityId,
     pub expected_path: EntityPath,
-    pub expected_table: SqlName,
+    /// The table this evolution migrates, when the resource has one.
+    ///
+    /// `None` is not "unknown": it is the recorded fact that this resource is
+    /// source-only -- a `record`, a `value`, a `dto`. A field on one of those
+    /// is a Java component and nothing else, so there is no column to alter
+    /// and no migration to append. Deriving a table name from the entity name
+    /// instead is what wrote `alter table tags` into a project that has never
+    /// had a `tags` table.
+    pub expected_table: Option<SqlName>,
     pub action: FieldEvolution,
     pub data: DataEvolution,
+}
+
+impl EvolveFieldRequestV1 {
+    /// Whether this evolution changes physical storage.
+    ///
+    /// The single question every caller asks, so that "has a table" and
+    /// "writes a migration" cannot drift into two different answers.
+    pub fn touches_storage(&self) -> bool {
+        self.expected_table.is_some()
+    }
 }
 
 impl Codec for EvolveFieldRequestV1 {
     fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         self.entity.encode(encoder)?;
         self.expected_path.encode(encoder)?;
-        self.expected_table.encode(encoder)?;
+        encoder.option(self.expected_table.as_ref(), |encoder, table| {
+            table.encode(encoder)
+        })?;
         self.action.encode(encoder)?;
         self.data.encode(encoder)
     }
@@ -463,7 +483,7 @@ impl Codec for EvolveFieldRequestV1 {
         Ok(Self {
             entity: EntityId::decode(decoder)?,
             expected_path: JavaType::decode(decoder)?,
-            expected_table: SqlName::decode(decoder)?,
+            expected_table: decoder.option(SqlName::decode)?,
             action: FieldEvolution::decode(decoder)?,
             data: DataEvolution::decode(decoder)?,
         })

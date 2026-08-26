@@ -303,7 +303,7 @@ mod tests {
             EvolveFieldRequestV1 {
                 entity: entity.clone(),
                 expected_path: path.clone(),
-                expected_table: table.clone(),
+                expected_table: Some(table.clone()),
                 action: FieldEvolution::Add(
                     FieldSpec::parse("body:string", &Package::base()).unwrap(),
                 ),

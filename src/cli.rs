@@ -41,6 +41,8 @@ mod command_path;
 pub(crate) use command_path::command_path_from_env;
 mod output;
 pub(crate) use output::Output;
+mod project_args;
+pub(crate) use project_args::{NewArgs, NewCliArgs};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub(crate) enum TestScopeArg {
@@ -376,98 +378,9 @@ pub(crate) enum Command {
     /// Restore an eligible receipt's file preimages as a new forward transaction
     Undo(UndoArgs),
     /// Create a new Spring Boot project via start.spring.io
-    New {
-        name: String,
-        /// Maven groupId, e.g. `com.intercom`
-        ///
-        /// Without `--package`, the base package becomes `<group>.<name>`.
-        #[arg(long)]
-        group: Option<String>,
-        /// Base package, e.g. `com.intercom.spring`
-        ///
-        /// Outranks `--group`: it states the whole answer. An existing service
-        /// already has a package, and it is never `com.example`.
-        #[arg(long)]
-        package: Option<String>,
-        #[arg(long, default_value = "web")]
-        deps: String,
-        #[arg(long, default_value = pom::TARGET_RELEASE)]
-        java: String,
-        /// Skip `git init` and the .gitignore it normally sets up
-        #[arg(long)]
-        no_git: bool,
-        /// Skip adding spring-boot-devtools (needed for `run --watch`)
-        #[arg(long)]
-        no_devtools: bool,
-        /// Create from jails' vendored Spring fixture without contacting
-        /// start.spring.io
-        #[arg(long)]
-        offline: bool,
-        /// Write a Groovy Gradle build instead of fetching a Maven project
-        ///
-        /// jails writes every file itself on this path and never contacts
-        /// start.spring.io, which is what makes `--boot` able to name a
-        /// version Initializr no longer serves -- and what makes `--pretend`
-        /// honest here when it cannot be for Maven.
-        #[arg(long)]
-        gradle: bool,
-        /// Spring Boot version to pin, e.g. `2.7.18`. Gradle only
-        ///
-        /// A 2.x version selects the `buildscript {}` build file, which is the
-        /// only shape that applies the Boot 2 Gradle plugin. Anything later
-        /// gets `plugins {}` and Gradle's native bom support.
-        #[arg(long, value_name = "VERSION")]
-        boot: Option<String>,
-        /// Gradle distribution the wrapper pins. Gradle only
-        ///
-        /// Defaults from the Boot version rather than to one number: Boot 4's
-        /// plugin throws below Gradle 8.14, and Boot 2.7 does not run on 9.x.
-        #[arg(long, value_name = "VERSION")]
-        gradle_version: Option<String>,
-        /// `bootJar` archive base name. Gradle only
-        ///
-        /// Omitted, there is no `bootJar` block and Gradle names the jar after
-        /// the project.
-        #[arg(long, value_name = "NAME")]
-        jar_name: Option<String>,
-        /// `bootJar` archive version. Gradle only, and only with `--jar-name`
-        #[arg(long, value_name = "VERSION")]
-        jar_version: Option<String>,
-        /// Apply this application manifest to the new project immediately
-        ///
-        /// Equivalent to `new`, then `mkdir .jails`, then copying the manifest
-        /// in, then `jails app apply` -- four steps that only ever appear
-        /// together. The path is read relative to where you are standing.
-        #[arg(long, value_name = "MANIFEST")]
-        app: Option<std::path::PathBuf>,
-    },
+    New(NewArgs),
     /// Create a new plain Maven CLI project
-    NewCli {
-        name: String,
-        /// Maven groupId, e.g. `com.intercom`
-        ///
-        /// Without `--package`, the base package becomes `<group>.<name>`.
-        #[arg(long)]
-        group: Option<String>,
-        /// Base package, e.g. `com.intercom.spring`
-        ///
-        /// Outranks `--group`: it states the whole answer.
-        #[arg(long)]
-        package: Option<String>,
-        /// Java release to compile against (>= 21)
-        #[arg(long, default_value = pom::TARGET_RELEASE)]
-        release: String,
-        /// Skip `git init` and the .gitignore it normally sets up
-        #[arg(long)]
-        no_git: bool,
-        /// Apply this application manifest to the new project immediately
-        ///
-        /// Equivalent to `new`, then `mkdir .jails`, then copying the manifest
-        /// in, then `jails app apply` -- four steps that only ever appear
-        /// together. The path is read relative to where you are standing.
-        #[arg(long, value_name = "MANIFEST")]
-        app: Option<std::path::PathBuf>,
-    },
+    NewCli(NewCliArgs),
     /// Plan or apply a generic declarative application manifest
     App {
         #[command(subcommand)]

@@ -65,7 +65,7 @@ pub(super) fn stamp_files(
     Ok(())
 }
 
-fn provenance(
+pub(super) fn provenance(
     project: &Project,
     renderer: RendererId,
     subject: Option<RenderedSubjectContext>,

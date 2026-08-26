@@ -6,7 +6,9 @@ use super::*;
 mod cutover;
 mod source;
 use cutover::{prepare_cutover, prepare_owned_object_renames, validate_cutover_sql};
-use source::{rename_destination, validate, walked_directories};
+use source::{
+    carried_resource_reads, rename_destination, renamed_entities, validate, walked_directories,
+};
 
 /// Rename a Java type across the project, as one transition.
 ///
@@ -64,12 +66,20 @@ fn rename_with(
     let to = jails_protocol::identity::JavaType::parse(new)?;
     let store = observed(project)?;
     let mut cutover = prepare_cutover(project, &store, resource_request.as_ref())?;
+    let renamed_entities = renamed_entities(
+        &store,
+        old,
+        new,
+        resource_request
+            .as_ref()
+            .map(|(_, request)| &request.entity),
+    )?;
 
     // The walk that finds the sources is not itself a read the snapshot can
     // guard -- something has to look first. What it finds is then declared,
     // directories included, so the recheck covers both the contents of every
     // file considered and the membership of every directory walked.
-    let mut reads = capture::capability_reads()?;
+    let mut reads = carried_resource_reads(&store, &renamed_entities, capture::capability_reads()?);
     if let Some(cutover) = &cutover {
         reads = reads
             .directory(ProjectPath::parse("src/main/resources/db/migration")?)
@@ -114,38 +124,6 @@ fn rename_with(
             .1
             .entity;
         prepare_owned_object_renames(project, &snapshot, &store, entity, cutover)?;
-    }
-
-    // Which entities this rename is an identity transition *for*. An entity
-    // is named by its `IntentId`, and the name is half of that -- so
-    // `g record Reward` followed by `rename Reward Bonus` leaves a project
-    // whose `Bonus.java` is owned by an entity called `Reward`, and
-    // `destroy record Bonus` finds nothing while `destroy record Reward`
-    // strands the file it claims to delete. plan.md §R2.5 permits exactly
-    // this: a maintenance change may propose rows owned by real entities when
-    // its `LedgerIntent` describes the exact identity transition.
-    let mut renamed_entities = BTreeMap::new();
-    for applied in store.ledger.iter().flat_map(|ledger| ledger.applied.iter()) {
-        let EntityId::Intent(id) = &applied.id else {
-            continue;
-        };
-        if id.name.as_str() != old
-            || resource_request
-                .as_ref()
-                .is_some_and(|(_, request)| request.entity != applied.id)
-        {
-            continue;
-        }
-        let mut renamed = id.clone();
-        renamed.name = jails_protocol::identity::Name::parse(new)?;
-        renamed_entities.insert(
-            applied.id.clone(),
-            (
-                EntityId::Intent(renamed),
-                applied.version.spec.clone(),
-                applied.owners.clone(),
-            ),
-        );
     }
 
     let mut change = DesiredChange::maintenance(MaintenanceAttribution::Rename);
@@ -229,12 +207,36 @@ fn rename_with(
                 ResourceValue::WholeFile,
             )?);
         }
+        let renderer = claim
+            .as_ref()
+            .and_then(|(_, owners)| {
+                owners.iter().find_map(|owner| match owner {
+                    ResourceOwner::Entity(entity) => renamed_entities
+                        .values()
+                        .find(|(renamed, _, _)| renamed == entity),
+                    _ => None,
+                })
+            })
+            .map(|(entity, spec, _)| {
+                let EntityId::Intent(id) = entity else {
+                    unreachable!("renamed generated entities are intents")
+                };
+                provenance::provenance(
+                    project,
+                    RendererId::Recipe(id.recipe),
+                    Some(RenderedSubjectContext::Entity {
+                        id: entity.clone(),
+                        spec: spec.clone(),
+                    }),
+                )
+            })
+            .transpose()?;
         change.files.push(DesiredFile {
             path: destination,
             body: DesiredBody::Bytes(updated.into_bytes().into()),
             mode: None,
             resource: claim.map(|(key, _)| key),
-            renderer: None,
+            renderer,
         });
     }
 

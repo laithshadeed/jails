@@ -2,6 +2,56 @@
 
 use super::*;
 
+pub(super) type RenamedEntities = BTreeMap<EntityId, (EntityId, EntitySpec, BTreeSet<OwnerId>)>;
+
+pub(super) fn renamed_entities(
+    store: &ObservedStore,
+    old: &str,
+    new: &str,
+    only: Option<&EntityId>,
+) -> Result<RenamedEntities> {
+    let mut renamed_entities = BTreeMap::new();
+    for applied in store.ledger.iter().flat_map(|ledger| ledger.applied.iter()) {
+        let EntityId::Intent(id) = &applied.id else {
+            continue;
+        };
+        if id.name.as_str() != old || only.is_some_and(|entity| entity != &applied.id) {
+            continue;
+        }
+        let mut renamed = id.clone();
+        renamed.name = Name::parse(new)?;
+        renamed_entities.insert(
+            applied.id.clone(),
+            (
+                EntityId::Intent(renamed),
+                applied.version.spec.clone(),
+                applied.owners.clone(),
+            ),
+        );
+    }
+    Ok(renamed_entities)
+}
+
+pub(super) fn carried_resource_reads(
+    store: &ObservedStore,
+    renamed: &RenamedEntities,
+    mut reads: ReadDeclaration,
+) -> ReadDeclaration {
+    for row in store
+        .ledger
+        .iter()
+        .flat_map(|ledger| ledger.resources.iter())
+    {
+        let carried = row.owners.iter().any(
+            |owner| matches!(owner, ResourceOwner::Entity(entity) if renamed.contains_key(entity)),
+        );
+        if carried && let ResourceKey::WholeFile(path) = &row.key {
+            reads = reads.file(path.clone());
+        }
+    }
+    reads
+}
+
 pub(super) fn validate(old: &str, new: &str) -> Result<()> {
     for (label, name) in [("old", old), ("new", new)] {
         if name.is_empty() {

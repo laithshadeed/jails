@@ -56,12 +56,26 @@ pub const SCENARIOS: &[Scenario] = &[
             "at:instant",
         ]],
     },
+    // `g field` has two halves and they are not the same command. On a
+    // source-only kind it adds a Java component and nothing else; on a
+    // scaffold it also appends one forward migration for the column. One
+    // scenario covers both, because a snapshot of only the second is what let
+    // `alter table notes` be written for a `record` that owns no table.
     Scenario {
         name: "field",
         fixture: Fixture::Plain,
         seed: &[("src/main/resources/db/migration/.gitkeep", "")],
         steps: &[
             &["g", "record", "Note", "id:uuid", "title:string!"],
+            &["g", "field", "Note", "createdAt:instant"],
+        ],
+    },
+    Scenario {
+        name: "field-storage",
+        fixture: Fixture::Spring,
+        seed: &[("src/main/resources/db/migration/.gitkeep", "")],
+        steps: &[
+            &["g", "scaffold", "Note", "id:uuid@pk", "title:string!"],
             &[
                 "g",
                 "field",

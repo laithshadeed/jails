@@ -1244,10 +1244,14 @@ fn a_field_evolves_the_record_and_migrates_the_table_for_it() {
     common::write_spring_fixture(&root);
     std::fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
 
+    // A scaffold, because this test asserts migrations. The column half of
+    // `g field` belongs to the kind that owns a table; asserting it over a
+    // `record` is what pinned `alter table notes` for a project with no
+    // `notes` table -- see the source-only test below for the other half.
     jails_engine::route::generate(
         &committing(&Project::load(&root).unwrap()),
         &jails_generate::generate::Recipe {
-            kind: jails_spec::spec::kind::ArtifactKind::Record,
+            kind: jails_spec::spec::kind::ArtifactKind::Scaffold,
             name: "Note",
             fields: &["id:uuid@pk".to_string(), "title:string!".to_string()],
             indexes: &[],
@@ -1306,10 +1310,12 @@ fn a_field_evolves_the_record_and_migrates_the_table_for_it() {
     );
 
     // And one receipt per field, whose append-only halves are the migrations.
+    // V001 is the scaffold's own `create table`, so the two field migrations
+    // are the versions after it.
     assert_eq!(store.one_shots.len(), 2, "{:?}", store.one_shots);
-    let migration = root.join("src/main/resources/db/migration/V001__add_archived_at_to_notes.sql");
+    let migration = root.join("src/main/resources/db/migration/V002__add_archived_at_to_notes.sql");
     let second_migration =
-        root.join("src/main/resources/db/migration/V002__add_priority_to_notes.sql");
+        root.join("src/main/resources/db/migration/V003__add_priority_to_notes.sql");
     assert!(
         migration.is_file(),
         "{:?}",
@@ -1341,12 +1347,12 @@ fn a_field_evolves_the_record_and_migrates_the_table_for_it() {
     );
     assert_eq!(lifecycle.table.as_ref().unwrap().table.as_str(), "notes");
     assert_eq!(lifecycle.last_spec, store.applied[0].version.spec);
-    assert_eq!(lifecycle.migrations.len(), 2);
-    let first_seal = &lifecycle.migrations[0];
-    assert_eq!(first_seal.version.get(), 1);
+    assert_eq!(lifecycle.migrations.len(), 3);
+    let first_seal = &lifecycle.migrations[1];
+    assert_eq!(first_seal.version.get(), 2);
     assert_eq!(
         first_seal.path.as_str(),
-        "src/main/resources/db/migration/V001__add_archived_at_to_notes.sql"
+        "src/main/resources/db/migration/V002__add_archived_at_to_notes.sql"
     );
     assert_eq!(
         first_seal.content_digest,
@@ -1358,8 +1364,8 @@ fn a_field_evolves_the_record_and_migrates_the_table_for_it() {
         first_seal.contributors,
         std::collections::BTreeSet::from([store.applied[0].id.clone()])
     );
-    let second_seal = &lifecycle.migrations[1];
-    assert_eq!(second_seal.version.get(), 2);
+    let second_seal = &lifecycle.migrations[2];
+    assert_eq!(second_seal.version.get(), 3);
     assert_eq!(
         second_seal.content_digest,
         jails_protocol::identity::ObjectId::from_bytes(jails_support::codec::sha256(
@@ -1480,9 +1486,17 @@ fn field_evolution_appends_rename_type_nullability_and_drop_migrations() {
     );
 }
 
+/// A source-only resource evolves its Java and writes no SQL at all.
+///
+/// The other half of `g field`. A `record` owns no table, so a rename is a
+/// component rename and nothing else: no `alter table`, no migration file, no
+/// version consumed. The previous contract derived a table name from the
+/// entity name and appended `alter table tags` to a project that has never
+/// created `tags`, which is unappliable in every environment and reported by
+/// nothing -- the migration is not recorded output, so `doctor` cannot see it.
 #[test]
-fn physical_field_evolution_refuses_a_plain_record_without_writing_sql() {
-    let root = common::temp_dir("engine-record-field-evolution-refusal");
+fn field_evolution_on_a_plain_record_changes_java_and_writes_no_migration() {
+    let root = common::temp_dir("engine-record-field-evolution-source-only");
     std::fs::create_dir_all(&root).unwrap();
     common::write_spring_fixture(&root);
     let migrations = root.join("src/main/resources/db/migration");
@@ -1503,7 +1517,7 @@ fn physical_field_evolution_refuses_a_plain_record_without_writing_sql() {
     .unwrap();
     let before = std::fs::read_dir(&migrations).unwrap().count();
 
-    let error = jails_engine::route::rename_field(
+    jails_engine::route::rename_field(
         &committing(&Project::load(&root).unwrap()),
         "Tag",
         "label",
@@ -1511,11 +1525,90 @@ fn physical_field_evolution_refuses_a_plain_record_without_writing_sql() {
         jails_protocol::request::ColumnRenamePolicy::SingleCutover,
         None,
     )
+    .unwrap();
+    jails_engine::route::field(
+        &committing(&Project::load(&root).unwrap()),
+        "Tag",
+        "note:string?",
+        None,
+    )
+    .unwrap();
+    jails_engine::route::drop_field(
+        &committing(&Project::load(&root).unwrap()),
+        "Tag",
+        "note",
+        "note",
+        None,
+    )
+    .unwrap();
+
+    let record =
+        std::fs::read_to_string(root.join("src/main/java/com/example/demo/domain/Tag.java"))
+            .unwrap();
+    assert!(record.contains("Optional<String> name"), "{record}");
+    assert!(!record.contains("label"), "{record}");
+    assert!(!record.contains("note"), "{record}");
+    assert_eq!(
+        std::fs::read_dir(&migrations).unwrap().count(),
+        before,
+        "a source-only resource appends no migration"
+    );
+
+    // And the recorded lifecycle says why: there is no table binding to
+    // migrate against, rather than a plausible one derived from the name.
+    let ledger = jails_commit::store::Store::at(&root)
+        .observe()
+        .unwrap()
+        .ledger
+        .unwrap();
+    let lifecycle = ledger
+        .lifecycles
+        .iter()
+        .find(|row| matches!(&row.entity, jails_protocol::entity::EntityId::Intent(id) if id.name.as_str() == "Tag"))
+        .unwrap();
+    assert!(lifecycle.table.is_none(), "{:?}", lifecycle.table);
+    assert!(
+        lifecycle.migrations.is_empty(),
+        "{:?}",
+        lifecycle.migrations
+    );
+}
+
+/// A data plan is refused on a resource with no column to backfill.
+#[test]
+fn a_source_only_field_refuses_a_backfill_plan_by_name() {
+    let root = common::temp_dir("engine-record-field-backfill-refusal");
+    std::fs::create_dir_all(&root).unwrap();
+    common::write_spring_fixture(&root);
+    std::fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    jails_engine::route::generate(
+        &committing(&Project::load(&root).unwrap()),
+        &jails_generate::generate::Recipe {
+            kind: jails_spec::spec::kind::ArtifactKind::Record,
+            name: "Tag",
+            fields: &["id:uuid@pk".to_string()],
+            indexes: &[],
+            strategy_on: None,
+            strategy_yields: None,
+            method: None,
+        },
+        None,
+    )
+    .unwrap();
+
+    let error = jails_engine::route::field_with_data(
+        &committing(&Project::load(&root).unwrap()),
+        "Tag",
+        "createdAt:instant",
+        None,
+        Some("2026-08-25T12:00:00Z"),
+        None,
+    )
     .unwrap_err();
+
+    assert!(error.contains("--default-literal"), "{error}");
     assert!(error.contains("record"), "{error}");
-    assert!(error.contains("no table columns"), "{error}");
     assert!(error.contains("fix:"), "{error}");
-    assert_eq!(std::fs::read_dir(&migrations).unwrap().count(), before);
 }
 
 #[test]

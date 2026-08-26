@@ -21,7 +21,12 @@ use super::*;
 /// steps that only ever appear together. The manifest path is resolved against
 /// the directory the *user* is standing in, not the project just created,
 /// because that is where they are pointing from.
-pub fn seed_manifest(tree: &publish::Tree<'_>, manifest: &Path, debug: bool) -> Result<()> {
+pub fn seed_manifest(
+    tree: &publish::Tree<'_>,
+    manifest: &Path,
+    no_start: bool,
+    debug: bool,
+) -> Result<()> {
     let source = std::fs::read_to_string(manifest).map_err(|error| {
         format!(
             "failed to read the application manifest {}: {error}\n       \
@@ -31,7 +36,7 @@ pub fn seed_manifest(tree: &publish::Tree<'_>, manifest: &Path, debug: bool) -> 
     })?;
     tree.put(".jails/app.toml", &source)?;
     println!("  manifest {}", manifest.display());
-    crate::app::apply_in(tree.root(), false, debug)
+    crate::app::apply_in(tree.root(), no_start, debug)
 }
 
 /// Apply `--app <manifest>` to the project being created, before it is
@@ -45,10 +50,11 @@ pub fn seed_manifest(tree: &publish::Tree<'_>, manifest: &Path, debug: bool) -> 
 pub(super) fn seed(
     publication: &publish::Publication,
     app: Option<&Path>,
+    no_start: bool,
     debug: bool,
 ) -> Result<()> {
     match app {
-        Some(manifest) => seed_manifest(&publication.tree(), manifest, debug),
+        Some(manifest) => seed_manifest(&publication.tree(), manifest, no_start, debug),
         None => Ok(()),
     }
 }

@@ -110,6 +110,10 @@ fn generated_unheld_maven_example() -> &'static PathBuf {
                 "--offline",
                 "--no-devtools",
                 "--no-git",
+                // The manifest declares Compose services. Proving it
+                // *generates* must not depend on a container engine being up
+                // on the machine running the suite.
+                "--no-start",
                 "--app",
                 MINICOM_MANIFEST,
             ])
@@ -149,6 +153,10 @@ fn generated_unheld_gradle_example() -> &'static PathBuf {
                 "web,data-jdbc,h2",
                 "--no-devtools",
                 "--no-git",
+                // The manifest declares Compose services. Proving it
+                // *generates* must not depend on a container engine being up
+                // on the machine running the suite.
+                "--no-start",
                 "--app",
                 MINICOM_SPRING_MANIFEST,
             ])

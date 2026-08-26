@@ -126,7 +126,7 @@ fn machine_output_carries_failures_that_stop_before_an_outcome() {
 }
 
 #[test]
-fn resource_field_uses_scaffold_storage_identity_and_refuses_plain_records() {
+fn resource_field_uses_scaffold_storage_identity_and_leaves_plain_records_source_only() {
     let root = temp_dir("resource-field-storage-identity");
     write_spring_fixture(&root);
     let migrations = root.join("src/main/resources/db/migration");
@@ -156,13 +156,18 @@ fn resource_field_uses_scaffold_storage_identity_and_refuses_plain_records() {
         "{renamed:?}"
     );
 
+    // The same command on a resource with no table renames the component and
+    // appends nothing. It used to derive `tags` from the entity name and write
+    // `alter table tags` into a project that has never created that table --
+    // unappliable everywhere, and invisible to `doctor`, because a migration
+    // written this way is not recorded output.
     let record = jails_cmd(&root, None)
         .args(["g", "record", "Tag", "id:uuid@pk", "label:string?"])
         .output()
         .unwrap();
     assert!(record.status.success(), "{record:?}");
     let before = fs::read_dir(&migrations).unwrap().count();
-    let refused = jails_cmd(&root, None)
+    let renamed = jails_cmd(&root, None)
         .args([
             "resource",
             "field",
@@ -175,11 +180,32 @@ fn resource_field_uses_scaffold_storage_identity_and_refuses_plain_records() {
         ])
         .output()
         .unwrap();
+    assert!(renamed.status.success(), "{renamed:?}");
+    assert_eq!(fs::read_dir(&migrations).unwrap().count(), before);
+    let tag =
+        fs::read_to_string(root.join("src/main/java/com/example/demo/domain/Tag.java")).unwrap();
+    assert!(tag.contains("Optional<String> name"), "{tag}");
+    assert!(!tag.contains("label"), "{tag}");
+
+    // And the data-plan flags are refused by name rather than silently
+    // planning an update against a table that is not there.
+    let refused = jails_cmd(&root, None)
+        .args([
+            "resource",
+            "field",
+            "add",
+            "Tag",
+            "createdAt:instant",
+            "--default-literal",
+            "2026-08-25T12:00:00Z",
+        ])
+        .output()
+        .unwrap();
     assert_eq!(refused.status.code(), Some(1), "{refused:?}");
     let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(stderr.contains("--default-literal"), "{stderr}");
     assert!(stderr.contains("record"), "{stderr}");
-    assert!(stderr.contains("no table columns"), "{stderr}");
-    assert_eq!(fs::read_dir(&migrations).unwrap().count(), before);
+    assert!(stderr.contains("fix:"), "{stderr}");
 }
 
 #[test]
@@ -468,8 +494,6 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
             "field",
             "Note",
             "createdAt:instant",
-            "--default-literal",
-            "2026-08-25T12:00:00Z",
             "--pretend",
             "--diff",
             "--ast",
@@ -634,8 +658,6 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
             "field",
             "Note",
             "createdAt:instant",
-            "--default-literal",
-            "2026-08-25T12:00:00Z",
             "--pretend",
             "--output",
             "json",
@@ -874,6 +896,58 @@ fn task_scaffold_cannot_rewrite_or_delete_its_published_v001() {
         String::from_utf8_lossy(&active_status.stdout).contains("\"state\":\"consistent\""),
         "{}",
         String::from_utf8_lossy(&active_status.stdout)
+    );
+}
+
+#[test]
+fn legacy_rename_captures_storage_and_records_the_renamed_output_base() {
+    let root = temp_dir("legacy-rename-recorded-bases");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+
+    let scaffold = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Member", "id:uuid@pk", "name:string!"])
+        .output()
+        .unwrap();
+    assert!(scaffold.status.success(), "{scaffold:?}");
+    let create = root.join("src/main/resources/db/migration/V001__create_members.sql");
+    let sealed = fs::read(&create).unwrap();
+    let renamed = jails_cmd(&root, None)
+        .args(["rename", "Member", "Reader", "--force"])
+        .output()
+        .unwrap();
+    assert!(renamed.status.success(), "{renamed:?}");
+    assert_eq!(fs::read(&create).unwrap(), sealed);
+    let evolved = jails_cmd(&root, None)
+        .args(["g", "field", "Reader", "nickname:string?"])
+        .output()
+        .unwrap();
+    assert!(evolved.status.success(), "{evolved:?}");
+    assert!(
+        fs::read_to_string(root.join("src/main/java/com/example/demo/domain/Reader.java"))
+            .unwrap()
+            .contains("nickname")
+    );
+
+    let record = jails_cmd(&root, None)
+        .args(["g", "record", "Note", "body:string!"])
+        .output()
+        .unwrap();
+    assert!(record.status.success(), "{record:?}");
+    let renamed = jails_cmd(&root, None)
+        .args(["rename", "Note", "Memo", "--force"])
+        .output()
+        .unwrap();
+    assert!(renamed.status.success(), "{renamed:?}");
+    let destroyed = jails_cmd(&root, None)
+        .args(["destroy", "record", "Memo", "--force"])
+        .output()
+        .unwrap();
+    assert!(destroyed.status.success(), "{destroyed:?}");
+    assert!(
+        !root
+            .join("src/main/java/com/example/demo/domain/Memo.java")
+            .exists()
     );
 }
 
@@ -2043,11 +2117,15 @@ fn resource_field_commands_use_the_risk_specific_cli_contracts() {
     let root = temp_dir("resource-field-commands");
     write_spring_fixture(&root);
     fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    // A scaffold: these are column operations, and the kind that owns a table
+    // is the kind they apply to. `V001` is its own `create table`, so the
+    // evolutions below start at `V002`.
     let generated = jails_cmd(&root, None)
         .args([
             "g",
-            "record",
+            "scaffold",
             "Task",
+            "id:uuid@pk",
             "title:string!",
             "priority:int",
             "description:string",
@@ -2144,7 +2222,7 @@ fn resource_field_commands_use_the_risk_specific_cli_contracts() {
         .unwrap();
     assert!(required.status.success(), "{required:?}");
     let migration = fs::read_to_string(
-        root.join("src/main/resources/db/migration/V005__make_description_required.sql"),
+        root.join("src/main/resources/db/migration/V006__make_description_required.sql"),
     )
     .unwrap();
     assert!(

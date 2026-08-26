@@ -1,17 +1,23 @@
 use super::*;
 
+/// Where a field evolution's Java lives, and which table -- if any -- it
+/// migrates.
+///
+/// Two answers, and the difference between them is the whole point. A
+/// `scaffold` owns a table, so its identity has to come from the *recorded*
+/// lifecycle: deriving it from the entity name instead is how a rename came to
+/// be planned against a path the ledger did not hold. Every other kind is
+/// source-only -- a `record` is a Java record and nothing else -- so it has no
+/// column to alter, and saying so with `None` is what keeps `alter table tags`
+/// out of a project that has never had a `tags` table.
 pub(super) fn storage_identity(
     store: &ObservedStore,
     id: &IntentId,
-) -> Result<(JavaType, SqlName)> {
+    change: &jails_project::model::Change,
+    project: &Project,
+) -> Result<(JavaType, Option<SqlName>)> {
     if id.recipe != ArtifactKind::Scaffold {
-        return Err(format!(
-            "resource `{}` is recorded as `{}` and has no table columns to evolve.\n       \
-             fix: use a scaffold for storage-backed fields; keep a plain record source-only.",
-            id.name,
-            label(id.recipe)
-        )
-        .into());
+        return Ok((source_only_path(project, id, change)?, None));
     }
     let entity = EntityId::Intent(id.clone());
     let lifecycle = store
@@ -30,7 +36,41 @@ pub(super) fn storage_identity(
             id.name, id.name
         )
     })?;
-    Ok((lifecycle.expected_path.clone(), table.table.clone()))
+    Ok((lifecycle.expected_path.clone(), Some(table.table.clone())))
+}
+
+/// The generated Java type of a source-only resource, read off the plan that
+/// places it.
+///
+/// A scaffold reads this from its recorded lifecycle. A source-only kind has
+/// no lifecycle until its first evolution bootstraps one, so the path is taken
+/// from the artifact the generator just planned -- deriving it rather than
+/// keeping a second kind-to-layer table, for the same reason `destroy` has no
+/// path table: a second copy is one that drifts.
+fn source_only_path(
+    project: &Project,
+    id: &IntentId,
+    change: &jails_project::model::Change,
+) -> Result<JavaType> {
+    let file = format!("{}.java", id.name);
+    let sources = project.root().join("src/main/java");
+    let placed = change
+        .files
+        .iter()
+        .filter_map(|artifact| artifact.path.strip_prefix(&sources).ok())
+        .find(|path| path.file_name().is_some_and(|name| name == file.as_str()))
+        .ok_or_else(|| {
+            format!(
+                "`{} {}` plans no `{file}` under `src/main/java`.\n       fix: regenerate the resource before evolving its fields.",
+                label(id.recipe),
+                id.name
+            )
+        })?;
+    let package = placed
+        .parent()
+        .map(|parent| parent.to_string_lossy().replace(['/', '\\'], "."))
+        .unwrap_or_default();
+    Ok(JavaType::new(Package::parse(&package)?, id.name.clone()))
 }
 
 pub(super) fn recipe_package(
@@ -75,7 +115,6 @@ pub(super) fn evolve_existing(
     mut options: BTreeMap<String, Vec<String>>,
 ) -> Result<Outcome> {
     let project = run.project();
-    let (expected_path, expected_table) = storage_identity(store, &id)?;
     let package = recipe_package(project, &id, package)?;
     let package = package.as_deref();
     let fields: Vec<String> = after.fields().iter().map(FieldSpec::canonical).collect();
@@ -113,6 +152,8 @@ pub(super) fn evolve_existing(
             })
     });
 
+    let (expected_path, expected_table) = storage_identity(store, &id, &change, project)?;
+
     let owner = ResourceOwner::Entity(EntityId::Intent(id.clone()));
     let mut desired = desire::contribution(&owner, &change, project)?;
     provenance::stamp_files(
@@ -126,48 +167,58 @@ pub(super) fn evolve_existing(
     )?;
     let companions = companion_updates(project, store, &id, after.fields(), package)?;
 
-    let directory = ProjectPath::parse("src/main/resources/db/migration")?;
-    if !project.root().join(directory.as_str()).is_dir() {
-        return Err("field evolution requires `src/main/resources/db/migration`.\n       fix: add Flyway or scaffold the resource before evolving it.".into());
+    // The storage half, and it exists only when there is storage. A
+    // source-only resource -- a `record`, a `value` -- has no column to alter,
+    // so appending `alter table <plural>` for it would publish a migration
+    // naming a table the project has never created, which is unappliable
+    // everywhere and reported nowhere.
+    let mut migration = None;
+    if expected_table.is_some() {
+        let directory = ProjectPath::parse("src/main/resources/db/migration")?;
+        if !project.root().join(directory.as_str()).is_dir() {
+            return Err("field evolution requires `src/main/resources/db/migration`.\n       fix: add Flyway or scaffold the resource before evolving it.".into());
+        }
+        let version = jails_generate::generate::next_migration_version(
+            &project.root().join(directory.as_str()),
+        )?;
+        let path = ProjectPath::parse(&format!("{directory}/V{version:03}__{migration_slug}.sql"))?;
+        let key = ResourceKey::WholeFile(path.clone());
+        let mut change = DesiredChange::owned_by(owner.clone());
+        change.resources.push(DesiredResource::new(
+            key.clone(),
+            BTreeSet::from([owner.clone()]),
+            ResourceValue::WholeFile,
+        )?);
+        change.files.push(DesiredFile {
+            path: path.clone(),
+            body: DesiredBody::Bytes(migration_body.as_bytes().into()),
+            mode: None,
+            resource: Some(key),
+            renderer: None,
+        });
+        migration = Some((directory, path, change));
     }
-    let version =
-        jails_generate::generate::next_migration_version(&project.root().join(directory.as_str()))?;
-    let path = ProjectPath::parse(&format!("{directory}/V{version:03}__{migration_slug}.sql"))?;
-    let key = ResourceKey::WholeFile(path.clone());
-    let mut migration = DesiredChange::owned_by(owner.clone());
-    migration.resources.push(DesiredResource::new(
-        key.clone(),
-        BTreeSet::from([owner]),
-        ResourceValue::WholeFile,
-    )?);
-    migration.files.push(DesiredFile {
-        path: path.clone(),
-        body: DesiredBody::Bytes(migration_body.as_bytes().into()),
-        mode: None,
-        resource: Some(key),
-        renderer: None,
-    });
 
     let entity = DesiredEntity {
         id: EntityId::Intent(id.clone()),
         spec: EntitySpec::Intent(after),
         owners: BTreeSet::from([OwnerId::DirectCli]),
     };
-    let mut reads = declaration(project, &change, &desired)?
-        .merge(companions.reads)
-        .directory(directory);
-    for recorded in recorded_migrations(store, &id) {
-        reads = reads.file(recorded);
+    let mut reads = declaration(project, &change, &desired)?.merge(companions.reads);
+    if let Some((directory, path, _)) = &migration {
+        reads = reads.directory(directory.clone()).file(path.clone());
+        for recorded in recorded_migrations(store, &id) {
+            reads = reads.file(recorded);
+        }
     }
     if let DataEvolution::ReaderOwnedSql(path) = &data {
         reads = reads.file(path.clone());
     }
-    reads = reads.file(path);
     let mut declared = companions.entities;
     declared.insert(entity.id.clone(), entity);
     let mut changes = vec![desired];
     changes.extend(companions.changes);
-    changes.push(migration);
+    changes.extend(migration.map(|(_, _, change)| change));
     let request = Request {
         scope: ReconcileScope::DirectEntity(EntityId::Intent(id.clone())),
         declared,

@@ -12,6 +12,10 @@
 
 use super::*;
 
+mod naming;
+
+pub(super) use naming::refuse_reserved_variable;
+
 /// `(recipe, name, resolved package)` — the identity everything about this
 /// artifact is filed under.
 ///
@@ -31,17 +35,6 @@ pub(super) fn identity(
     let canonical = Name::parse(&canonical).map_err(|error| {
         format!(
             "{error}.\n       fix: choose an entity name that is a valid Java identifier, such as `Order`."
-        )
-    })?;
-    let mut characters = canonical.as_str().chars();
-    let instance = characters
-        .next()
-        .map(|first| first.to_lowercase().collect::<String>() + characters.as_str())
-        .unwrap_or_default();
-    Name::parse(&instance).map_err(|_| {
-        format!(
-            "entity name `{name}` derives Java variable `{instance}`, which is reserved.\n       \
-             fix: choose a domain-specific entity name whose lower-camel spelling is not a Java keyword."
         )
     })?;
     if kind == ArtifactKind::Scaffold {
@@ -195,7 +188,17 @@ pub(super) fn retiring(store: &ObservedStore, owner: &ResourceOwner) -> Result<R
         // be an invariant of the transition. Migration history is shared with
         // `SchemaHistory`: destroying the entity must capture and verify those
         // bytes even though the history owner keeps the file alive.
-        if !row.owners.contains(owner) {
+        // `contains` is not the whole rule. A field overlay's migration is
+        // owned by its own one-shot, and the seal walk still resolves that
+        // one-shot back to the entity being retired -- so planning reads the
+        // file whether or not the entity is listed on the row. Declaring only
+        // the direct rows left `destroy scaffold Note` planning against a
+        // `V002__add_..._to_notes.sql` it had not captured, and refusing its
+        // own request.
+        let claimed = row.owners.contains(owner)
+            || matches!(owner, ResourceOwner::Entity(entity)
+                if row.owners.iter().any(|held| held.names_entity(entity)));
+        if !claimed {
             continue;
         }
         match &row.key {
