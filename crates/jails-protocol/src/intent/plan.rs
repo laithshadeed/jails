@@ -14,7 +14,7 @@ use jails_support::codec::{Codec, Decoder, Encoder, ordered};
 use std::collections::BTreeSet;
 
 mod subject;
-pub use subject::PlannedSubject;
+pub use subject::{PlannedSubject, UndoFilesPlanV1};
 
 // ---------------------------------------------------------------------------
 // The change set
@@ -203,6 +203,25 @@ pub struct DesiredChangeSet {
 }
 
 impl DesiredChangeSet {
+    /// Build a maintenance-only transition against the observed generation.
+    pub fn maintenance_only(
+        generation_before: u64,
+        subject: PlannedSubject,
+        change: DesiredChange,
+    ) -> Self {
+        Self {
+            ledger_intent: LedgerIntent {
+                generation_before,
+                entities_after: Vec::new(),
+                one_shots_after: Vec::new(),
+                resources_after: Vec::new(),
+                entities_removed: Vec::new(),
+            },
+            ordered: vec![change],
+            subject,
+        }
+    }
+
     /// Refuses a maintenance change under a resource subject and vice versa.
     ///
     /// This is the check that keeps `destroy` honest: a file a `format` run

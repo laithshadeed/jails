@@ -316,6 +316,11 @@ pub struct PreparedIdentityV1 {
 }
 
 impl PreparedIdentityV1 {
+    /// The authenticated project state observed before this transaction.
+    pub fn state_before(&self) -> &FileImage {
+        &self.ledger_before
+    }
+
     /// `SHA256("JAILS-PREPARED-1" || encode(self))`.
     ///
     /// §R4.2 names this prefix, and a journal's directory name and stored

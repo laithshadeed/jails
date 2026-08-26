@@ -34,7 +34,7 @@ use crate::entity::{
     CapabilityId, CapabilityInstance, CapabilitySpec, EntityId, EntitySpec, ExternalPathId,
     OneShotId, OneShotSpec, ToolFeature,
 };
-use crate::identity::{JavaType, ObjectId, ProjectPath};
+use crate::identity::{JavaType, ObjectId, ProjectPath, TransactionId};
 use jails_support::codec::{self, Codec, Decoder, Encoder, ordered};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -318,6 +318,29 @@ pub enum CanonicalMutationRequest {
         target: ProjectPath,
         json_schema: bool,
     },
+    UndoFiles(UndoFilesRequestV1),
+}
+
+/// A forward file restoration named by one authenticated receipt.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UndoFilesRequestV1 {
+    pub transaction: TransactionId,
+    pub merge: bool,
+}
+
+impl Codec for UndoFilesRequestV1 {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        self.transaction.encode(encoder)?;
+        encoder.bool(self.merge);
+        Ok(())
+    }
+
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(Self {
+            transaction: TransactionId::decode(decoder)?,
+            merge: decoder.bool()?,
+        })
+    }
 }
 
 impl CanonicalMutationRequest {
@@ -501,6 +524,7 @@ impl CanonicalMutationRequest {
             Self::ContractEmit { .. } => 21,
             Self::RenameResource(_) => 22,
             Self::CompleteStorageRename(_) => 23,
+            Self::UndoFiles(_) => 24,
         }
     }
 }
@@ -539,6 +563,7 @@ impl Codec for CanonicalMutationRequest {
             }
             Self::RenameResource(request) => request.encode(encoder)?,
             Self::CompleteStorageRename(request) => request.encode(encoder)?,
+            Self::UndoFiles(request) => request.encode(encoder)?,
             Self::AdoptLayout | Self::FastTest => {}
             Self::Format { scopes } => {
                 encoder.set(scopes)?;
@@ -659,6 +684,7 @@ impl Codec for CanonicalMutationRequest {
             },
             22 => Self::RenameResource(RenameResourceRequestV1::decode(decoder)?),
             23 => Self::CompleteStorageRename(CompleteStorageRenameRequestV1::decode(decoder)?),
+            24 => Self::UndoFiles(UndoFilesRequestV1::decode(decoder)?),
             other => Err(format!("unknown mutation request tag {other}"))?,
         })
     }

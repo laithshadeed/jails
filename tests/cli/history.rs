@@ -60,4 +60,94 @@ fn migration_receipts_explain_why_file_undo_is_refused() {
             .unwrap()
             .starts_with("contains-migration:")
     );
+    let transaction = receipt["transaction_id"].as_str().unwrap();
+    let before = snapshot_tree(&root);
+    let refused = jails_cmd(&root, None)
+        .args(["undo", transaction])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success(), "{refused:?}");
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("forward corrective migration"),
+        "{refused:?}"
+    );
+    assert_eq!(snapshot_tree(&root), before);
+}
+
+#[test]
+fn undo_restores_exact_preimages_as_a_new_forward_transaction() {
+    let root = temp_dir("receipt-file-undo");
+    write_spring_fixture(&root);
+    let generated = jails_cmd(&root, None)
+        .args(["g", "record", "Note", "text:string!"])
+        .output()
+        .unwrap();
+    assert!(generated.status.success(), "{generated:?}");
+    let history = jails_cmd(&root, None)
+        .args(["history", "--limit", "1", "--output", "json"])
+        .output()
+        .unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&history.stdout).unwrap();
+    let transaction = value["receipts"][0]["transaction_id"].as_str().unwrap();
+    let source = root.join("src/main/java/com/example/demo/domain/Note.java");
+    assert!(source.is_file());
+
+    let preview = jails_cmd(&root, None)
+        .args(["undo", transaction, "--pretend", "--output", "json"])
+        .output()
+        .unwrap();
+    assert!(preview.status.success(), "{preview:?}");
+    assert!(source.is_file(), "preview removed a project file");
+    let preview: serde_json::Value = serde_json::from_slice(&preview.stdout).unwrap();
+    assert_eq!(preview["status"], "preview");
+
+    let undone = jails_cmd(&root, None)
+        .args(["undo", transaction])
+        .output()
+        .unwrap();
+    assert!(undone.status.success(), "{undone:?}");
+    assert!(!source.exists());
+    assert!(
+        !root
+            .join("src/test/java/com/example/demo/domain/NoteTest.java")
+            .exists()
+    );
+
+    let regenerated = jails_cmd(&root, None)
+        .args(["g", "record", "Note", "text:string!"])
+        .output()
+        .unwrap();
+    assert!(regenerated.status.success(), "{regenerated:?}");
+    assert!(source.is_file());
+}
+
+#[test]
+fn undo_refuses_a_user_edited_after_image_without_writing() {
+    let root = temp_dir("receipt-file-undo-edited");
+    write_spring_fixture(&root);
+    let generated = jails_cmd(&root, None)
+        .args(["g", "record", "Note", "text:string!"])
+        .output()
+        .unwrap();
+    assert!(generated.status.success(), "{generated:?}");
+    let history = jails_cmd(&root, None)
+        .args(["history", "--limit", "1", "--output", "json"])
+        .output()
+        .unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&history.stdout).unwrap();
+    let transaction = value["receipts"][0]["transaction_id"].as_str().unwrap();
+    let source = root.join("src/main/java/com/example/demo/domain/Note.java");
+    fs::write(&source, "// reader edit\n").unwrap();
+    let before = snapshot_tree(&root);
+
+    let refused = jails_cmd(&root, None)
+        .args(["undo", transaction, "--merge"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success(), "{refused:?}");
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("undo-after-image-changed"),
+        "{refused:?}"
+    );
+    assert_eq!(snapshot_tree(&root), before);
 }

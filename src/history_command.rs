@@ -193,6 +193,17 @@ fn undo_eligibility(receipt: &jails_commit::journal::ReceiptV1) -> (bool, Option
     if !receipt.post_commit.is_empty() || !receipt.prepared.post_commit.is_empty() {
         return (false, Some("contains-external-effect".to_string()));
     }
+    if matches!(
+        &receipt.prepared.operation_identity.semantics,
+        OperationSemanticsV1::Apply(apply)
+            if matches!(
+                &apply.subject,
+                jails_protocol::plan::PlannedSubject::RenameResource(request)
+                    if request.strategy == jails_protocol::request::RenameStrategy::Rolling
+            )
+    ) {
+        return (false, Some("contains-rename-campaign".to_string()));
+    }
     if !matches!(receipt.prepared.kind, PreparedKind::Apply) {
         return (false, Some("not-an-ordinary-apply".to_string()));
     }

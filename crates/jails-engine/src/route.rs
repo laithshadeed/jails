@@ -78,6 +78,7 @@ mod contract;
 mod declare;
 mod feature;
 mod field;
+mod history;
 mod lifecycle;
 mod maintenance;
 mod oneshot;
@@ -97,6 +98,7 @@ pub use field::{
     add_field, add_field_with_data, change_field_type, drop_field, field, field_with_data,
     rename_field, set_field_nullability, set_field_nullability_with_data,
 };
+pub use history::undo_files;
 pub use lifecycle::{repair, revive};
 pub use maintenance::{
     RenameResourceInvocation, adopt_layout, app_init, format, rename, rename_resource,

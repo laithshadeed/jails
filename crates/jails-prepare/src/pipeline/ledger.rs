@@ -57,21 +57,36 @@ pub(super) fn unchanged(store: &LedgerV2, observed: &Option<LedgerV2>) -> bool {
 pub(super) fn record_store(
     observed: &ObservedStore,
     intent: &LedgerIntent,
+    subject: &jails_protocol::plan::PlannedSubject,
     operation: jails_protocol::identity::OperationId,
     generation: u64,
 ) -> Result<LedgerV2> {
     observed.validate()?;
-    let mut store = observed.ledger.clone().unwrap_or_else(|| LedgerV2 {
-        written_by: String::new(),
-        generation: 0,
-        last_operation: None,
-        applied: Vec::new(),
-        one_shots: Vec::new(),
-        resources: Vec::new(),
-        outputs: Vec::new(),
-        lifecycles: vec![],
-        pending_conflict: None,
-    });
+    let restored = match subject {
+        jails_protocol::plan::PlannedSubject::UndoFiles(plan) => plan
+            .state_before
+            .as_deref()
+            .map(|bytes| {
+                let source = std::str::from_utf8(bytes)
+                    .map_err(|error| format!("stored project state is not UTF-8: {error}"))?;
+                LedgerV2::parse_file(source)
+            })
+            .transpose()?,
+        _ => None,
+    };
+    let mut store = restored
+        .or_else(|| observed.ledger.clone())
+        .unwrap_or_else(|| LedgerV2 {
+            written_by: String::new(),
+            generation: 0,
+            last_operation: None,
+            applied: Vec::new(),
+            one_shots: Vec::new(),
+            resources: Vec::new(),
+            outputs: Vec::new(),
+            lifecycles: vec![],
+            pending_conflict: None,
+        });
     store.written_by = env!("CARGO_PKG_VERSION").to_string();
     store.generation = generation;
     store.last_operation = Some(operation);

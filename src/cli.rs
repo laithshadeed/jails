@@ -35,6 +35,8 @@ mod rename;
 pub(crate) use rename::*;
 mod history;
 pub(crate) use history::*;
+mod testing;
+pub(crate) use testing::*;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub(crate) enum TestScopeArg {
@@ -116,25 +118,6 @@ pub(crate) enum RunServicesArg {
     Existing,
     Start,
     None,
-}
-
-#[derive(Subcommand)]
-pub(crate) enum TestCommand {
-    /// Inspect or control this project's resident test process
-    Daemon {
-        #[command(subcommand)]
-        action: TestDaemonAction,
-    },
-}
-
-#[derive(Subcommand)]
-pub(crate) enum TestDaemonAction {
-    /// Say whether the daemon is running
-    Status,
-    /// Stop the daemon if it is running
-    Stop,
-    /// Replace the daemon and report its new status
-    Restart,
 }
 
 #[derive(Parser)]
@@ -382,6 +365,8 @@ pub(crate) enum Command {
     History(HistoryArgs),
     /// Inspect one committed transaction and its exact before/after images
     Show(ShowArgs),
+    /// Restore an eligible receipt's file preimages as a new forward transaction
+    Undo(UndoArgs),
     /// Create a new Spring Boot project via start.spring.io
     New {
         name: String,

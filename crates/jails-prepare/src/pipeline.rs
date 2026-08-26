@@ -787,6 +787,7 @@ fn assemble(
         let mut store = ledger::record_store(
             &context.observed_store,
             &apply.ledger_intent,
+            &apply.subject,
             change.operation_id,
             change.operation_identity.proposed_generation,
         )?;

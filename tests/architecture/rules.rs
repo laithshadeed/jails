@@ -378,6 +378,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails", "contract_command", 9),
     ("jails", "tool_command", 9),
     ("jails", "history_command", 9),
+    ("jails", "facade", 9),
     ("jails", "template_macro", 9),
     ("jails", "cli", 9),
     ("jails", "dispatch", 9),

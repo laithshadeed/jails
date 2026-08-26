@@ -9,9 +9,9 @@ use crate::identity::{JavaType, ProjectPath};
 use crate::ownership::{DesiredEntity, DesiredState, ReconcileScope};
 use crate::request::{
     CompleteStorageRenameRequestV1, DestroyResourceRequestV2, EvolveFieldRequestV1,
-    RenameResourceRequestV1, RepairResourceRequestV1, ReviveResourceRequestV1,
+    RenameResourceRequestV1, RepairResourceRequestV1, ReviveResourceRequestV1, UndoFilesRequestV1,
 };
-use jails_support::codec::{Codec, Decoder, Encoder, ordered};
+use jails_support::codec::{Codec, Decoder, Encoder, MAX_PROTOCOL_RECORD, ordered};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// What the whole invocation is about.
@@ -51,6 +51,30 @@ pub enum PlannedSubject {
         target: ProjectPath,
         json_schema: bool,
     },
+    UndoFiles(Box<UndoFilesPlanV1>),
+}
+
+/// The authenticated state needed to restore a receipt without re-deriving it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UndoFilesPlanV1 {
+    pub request: UndoFilesRequestV1,
+    pub state_before: Option<Vec<u8>>,
+}
+
+impl Codec for UndoFilesPlanV1 {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        self.request.encode(encoder)?;
+        encoder.option(self.state_before.as_ref(), |encoder, state| {
+            encoder.object(state, MAX_PROTOCOL_RECORD as u64)
+        })
+    }
+
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(Self {
+            request: UndoFilesRequestV1::decode(decoder)?,
+            state_before: decoder.option(|decoder| decoder.object(MAX_PROTOCOL_RECORD as u64))?,
+        })
+    }
 }
 
 impl PlannedSubject {
@@ -65,6 +89,7 @@ impl PlannedSubject {
             Self::AdoptLayout => MaintenanceAttribution::AdoptLayout,
             Self::Format { .. } => MaintenanceAttribution::Format,
             Self::ContractProjection { .. } => MaintenanceAttribution::ContractProjection,
+            Self::UndoFiles(_) => MaintenanceAttribution::Undo,
             Self::Reconcile(_)
             | Self::ApplyOneShot { .. }
             | Self::DestroyCases { .. }
@@ -93,6 +118,7 @@ impl PlannedSubject {
             Self::ContractProjection { .. } => 13,
             Self::RenameResource(_) => 14,
             Self::CompleteStorageRename(_) => 15,
+            Self::UndoFiles(_) => 16,
         }
     }
 }
@@ -120,6 +146,7 @@ impl Codec for PlannedSubject {
             }
             Self::RenameResource(request) => request.encode(encoder),
             Self::CompleteStorageRename(request) => request.encode(encoder),
+            Self::UndoFiles(plan) => plan.encode(encoder),
             Self::AdoptLayout => Ok(()),
             Self::Format { scopes } => {
                 encoder.set(scopes)?;
@@ -179,6 +206,7 @@ impl Codec for PlannedSubject {
             15 => Self::CompleteStorageRename(Box::new(CompleteStorageRenameRequestV1::decode(
                 decoder,
             )?)),
+            16 => Self::UndoFiles(Box::new(UndoFilesPlanV1::decode(decoder)?)),
             other => Err(format!(
                 "unknown planned subject tag {other}.\n       fix: upgrade jails or restore \
                  compatible `.jails` state"

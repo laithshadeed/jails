@@ -1,15 +1,11 @@
 // Lower crates are re-exported so existing facade paths stay stable.
-pub(crate) use jails_drive::{bench, console, doctor, kafka, lint, migrate, run, testd};
-pub(crate) use jails_generate::{add, generate};
-pub(crate) use jails_java::template;
-pub(crate) use jails_project::{compose, inspect, model, pom, project};
-pub(crate) use jails_report::{commands, explain, lifecycle_status, source, why};
 mod app;
 mod arguments;
 mod cli;
 mod contract_command;
 mod dispatch;
 mod editor_command;
+mod facade;
 mod history_command;
 mod new;
 mod schema_command;
@@ -18,11 +14,11 @@ mod template_macro;
 mod tool_command;
 
 // What the CLI accepts lives in `cli`; what it does is the match below.
-pub(crate) use add::Capability;
 pub(crate) use cli::{
     Cli, Command, Declare, Invocation, Output, ResourceCommand, ResourceFieldCommand, SqlCommand,
     Undeclare,
 };
+pub(crate) use facade::*;
 
 use clap::{CommandFactory, Parser};
 
@@ -129,6 +125,9 @@ fn main() -> std::process::ExitCode {
         Command::Show(show) => {
             history_command::show(&show.transaction, invocation.diff, show.why, invocation.output)
         }
+        Command::Undo(undo) => dispatch::mutate(invocation, false, |run| {
+            jails_engine::route::undo_files(run, &undo.transaction, undo.merge)
+        }),
         Command::Request { request } => tool_command::request(
             tool_command::HttpRequest {
                 method: request.method,
