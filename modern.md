@@ -10,6 +10,12 @@ slice**; its essential files are reproduced in §10. It compiles against
 `my-minicom`'s own `pom.xml` (Boot 4.1.1, Java 26) and its six behaviour tests
 pass.
 
+**§1–§12 are about `my-minicom`. §13 is about the six other attempts at the
+same app in `~/code/minicom-jails`**, all of which were also built and run.
+That second corpus is what separates *"jails rendered a bad field spec
+faithfully"* from *"jails does this whatever you type"* — §13.11 is the split,
+and the right place to start.
+
 ---
 
 ## 1. The verdict
@@ -745,3 +751,338 @@ Being fair about this, because a rewrite that discards it would be worse:
 
 The bones are 2026. The naming, the schema and the type modelling are not — and
 those three are what a reader judges first.
+
+---
+
+## 13. The other six: `~/code/minicom-jails`
+
+Six independent attempts at the same app between 2025-11-16 and 2026-06-01.
+This is the more useful dataset, because it separates *"jails rendered bad
+input faithfully"* from *"jails does this no matter what you type"*.
+
+Every one of them was built and run.
+
+| snapshot | capabilities | main/test files | `mvn test` |
+|---|---|---|---|
+| 2025-11-16 | db, api, cors | 49 / 30 | **FAILS** — `ArchitectureTest` (§13.2) |
+| 2025-11-21 | db, api, cors, sse | 30 / 16 | green |
+| 2025-12-13 | api, cors | 9 / 6 | green (5 of 9 tests `@Disabled`) |
+| 2026-01-09 | db, api, cors | 31 / 17 | green |
+| 2026-02-05 | db, api, json, cors, sse | 65 / 37 | green |
+| 2026-06-01 | db, api, cors | 34 / 20 | green |
+| *`my-minicom`* | +kafka, actuator, o11y | 53 / 30 | **FAILS** — `CorsConfigTest` (§2) |
+
+### 13.1 First: better input really does produce much better output
+
+These six confirm §11.1 and §11.2 outright. They were written with `id:long@pk`,
+camelCase names, real enums, and in one case `timestamps = true` — and they read
+enormously better than `my-minicom`:
+
+```java
+public record Conversation(long id, boolean agentJoined, Instant createdAt, long version)
+public record Message(long id, long conversationId, Sender sender, String content, Instant createdAt)
+public record Issue(long id, long userId, String issueSummary, String conversationSummary,
+                    IssueStatus status, Instant createdAt)
+public enum Sender { CUSTOMER, BOT, AGENT }
+```
+
+Identity first. camelCase throughout. Closed sets as enums. And the schemas
+have what `my-minicom`'s lacked:
+
+```sql
+create table messages (
+  id               bigint      not null,
+  conversation_id  bigint      not null,
+  ...
+  constraint messages_pk primary key (id)
+);
+create index messages_conversation_id_idx on messages (conversation_id);
+```
+
+Primary keys everywhere, an index generated automatically beside every
+association, and the `version` migration uses the safe three-step form
+(add nullable → backfill → `set not null`) rather than a default-and-drop.
+
+**So `my-minicom` is close to the worst case and these are close to the best
+case, and the delta is almost entirely the field spec.** That is the strongest
+possible argument for §11.2: the input that produces a table with no primary
+key should be refused, because the same tool given one more character produces
+this.
+
+### 13.2 jails ships an architecture rule and the code that breaks it
+
+`crates/jails-generate/src/architecture.rs` generates `ArchitectureTest.java`
+— an ArchUnit fitness function, present in five of the six. One of its rules is
+`DOMAIN_HAS_NO_FRAMEWORK_DEPENDENCIES`.
+
+`g strategy` writes its implementations into `domain` **with `@Component` on
+each**. Result, on a clean generate:
+
+```
+Rule 'no classes that reside in a package 'com.intercom.minicom.domain..'
+should depend on classes that reside in any package ['org.springframework..', …]'
+was violated (7 times):
+Class <…domain.DamageBotRule>   is annotated with <org.springframework.stereotype.Component>
+Class <…domain.FallbackBotRule> is annotated with <org.springframework.stereotype.Component>
+Class <…domain.GreetingBotRule> …  (7 in total)
+```
+
+Two first-party generators disagreeing about where the domain boundary is, and
+the disagreement is a red build. Either `g strategy` places its beans in
+`service`/`adapters` and keeps `domain` framework-free, or the rule admits
+`@Component`. It cannot be both, and today it is both.
+
+This is the same failure as the `add cors` one in §2 and §11.6, one level up: a
+capability that generates a *check* has to be run against everything else that
+generates *code*.
+
+### 13.3 `g usecase` hard-codes the primary key to `0L` — in every project
+
+```java
+// DefaultPostMessageUseCase, 2026-06-01
+Message message = new Message(
+        0L,                       // <- the primary key
+        command.userId(),
+        command.customerId(),
+        command.content(),
+        false,
+        Instant.now(),
+        Instant.now());
+repository.save(message);
+```
+
+Every generated use case over a `long@pk` target does this. All five, across
+four projects:
+
+| project | use case | id passed |
+|---|---|---|
+| 2025-11-16 | `DefaultPostMessageUseCase` | `0L` |
+| 2026-01-09 | `DefaultCreateMessageUseCase` | `0L` |
+| 2026-02-05 | `DefaultSendMessageUseCase` | `0L` |
+| 2026-02-05 | `DefaultEscalateIssueUseCase` | `0L` |
+| 2026-06-01 | `DefaultPostMessageUseCase` | `0L` |
+
+And the table is:
+
+```sql
+id bigint not null,
+constraint messages_pk primary key (id)
+```
+
+**No `generated always as identity`. No `default nextval(...)`. No sequence
+anywhere in any migration.** So nothing assigns an id, the use case supplies
+`0`, and the *second* call to any of these endpoints is a duplicate-key
+violation surfaced as a 500. The primary create path of every one of these
+projects works exactly once.
+
+`my-minicom` escaped this only because its id was a `uuid`, where jails emits
+`UUID.randomUUID()`. The `long@pk` form — the one jails' own
+`examples/minicom/.jails/app.toml` recommends — is the broken one.
+
+The generated test cannot see it:
+
+```java
+Message created = useCase.execute(command);
+assertThat(created.id()).isNotNull();       // a primitive long. Never null.
+```
+
+`id()` returns `long`; autoboxing makes `isNotNull()` a tautology, and it holds
+for `0L`. The test also inserts exactly one row, so the collision never occurs.
+**The single test of the create path asserts something that cannot fail, about
+the one value that is wrong.**
+
+Fixing this is a schema question, not a Java one: `id bigint generated always as
+identity primary key`, and the use case stops naming the id at all — which is
+what the hand-built slice does with `insert … returning` (§10).
+
+### 13.4 The closed set is still never enforced in the schema — 0 checks in 20 migrations
+
+`grep -c "check (" */src/main/resources/db/migration/*.sql` → **zero**, across
+all six projects and `my-minicom`. Every enum column is bare `text`:
+
+```sql
+sender       text not null,   -- Sender { CUSTOMER, BOT, AGENT }
+sender_type  text not null,   -- SenderType { ADMIN, … }
+status       text not null,   -- IssueStatus { OPEN, IN_PROGRESS, … }
+```
+
+This is not an input problem. The user declared `g enum`, jails generated the
+Java enum, jails generated the column, and jails knows the constant list —
+and still wrote a column that accepts `'banana'`. A one-line
+`check (sender in ('CUSTOMER','BOT','AGENT'))` is derivable from information
+jails already holds, and `backend.md` §5 makes it the highest-value line in the
+file.
+
+The follow-on question jails would then have to answer — what happens to that
+`check` when a constant is added — is a real design problem, and worth solving
+rather than avoiding: `g enum` adding a constant should generate the
+`alter table … drop constraint … add constraint …` migration in the same step.
+
+### 13.5 `findById(String)` in 11 of 12 generated ports
+
+| domain component | port signature |
+|---|---|
+| `Conversation(long id, …)` | `findById(String)` |
+| `Message(long id, …)` ×5 | `findById(String)` |
+| `Ticket(UUID id, …)` | `findById(String)` |
+| `Issue(long id, …)` | `findById(String)` |
+| `User(long id, …)` ×2 | `findById(String)` |
+| `User(UUID id, …)` — `my-minicom` | `findById(UUID)` |
+
+Neither `long` nor `UUID` survives to the port. The one exception is in
+`my-minicom`, where `UserRepository` takes a `UUID` and `MessageRepository`
+takes a `String` — **two ports in one application, over two tables, disagreeing
+about how identity is typed.** Everything downstream inherits it:
+`repository.findById(String.valueOf(created.id()))` appears in every generated
+test, and the JDBC adapter has to `cast(:id as uuid)` to undo it.
+
+### 13.6 `g client` produces a remote call with no timeout, no URL and no auth
+
+`minicom-2026-02-05` has `g client OpenAiChat`:
+
+```java
+@Configuration(proxyBeanMethods = false)
+@ImportHttpServices(group = "open-ai-chat", basePackages = "…clients")
+public class HttpClientsConfig {}
+
+public interface OpenAiChatClient {
+    @GetExchange("/open-ai-chats")            List<OpenAiChatPayload> findAll();
+    @GetExchange("/open-ai-chats/{id}")       OpenAiChatPayload findById(@PathVariable String id);
+    record OpenAiChatPayload(String id, String name) {}
+}
+```
+
+`grep -E "timeout|api-key" application.properties` finds only the Hikari and
+shutdown timeouts. There is **no base URL, no connect timeout, no read timeout,
+no retry, no auth and no defined failure mode.**
+
+`backend.md` §1 makes this the fourth of five reflexes and admits no exceptions:
+*"Every remote call has a timeout, a bounded retry, and a defined failure mode."*
+A generator whose entire subject is an outbound HTTP call is the one place that
+rule must be baked in, not left to the reader. At minimum
+`spring.http.client.connect-timeout` / `read-timeout` and a commented
+`…base-url` should be written alongside, the way `ensure_failsafe` and
+`ensure_assertj` are.
+
+(The generic CRUD shape applied to a name like `OpenAiChat` — yielding
+`GET /open-ai-chats` returning `{id, name}` — is separately worth flagging.
+It is plausible-looking fiction, and it is the kind of output that gets
+committed because it compiles.)
+
+### 13.7 An empty migration named for an index that does not exist
+
+`minicom-2026-06-01/src/main/resources/db/migration/V003__add_customer_id_index.sql`,
+in full:
+
+```sql
+-- Forward-only migration. Write explicit SQL below.
+```
+
+Flyway applies it, records the checksum, and never mentions it again.
+`messages.customer_id` is a nullable foreign key with **no index**, and the
+migration history asserts otherwise. A blank migration is an unusual thing to
+want; the safer default is to refuse to write one, or to write it as a file
+Flyway will not apply until it has content.
+
+### 13.8 Between a quarter and a half of the tests are inert
+
+| project | `@Disabled` / `@Test` |
+|---|---|
+| 2025-11-16 | 14 / 53 — **26%** |
+| 2025-12-13 | 5 / 9 — **56%** |
+| 2026-02-05 | 3 / 72 |
+| others | 0 |
+
+Two different causes, and only one is defensible.
+
+`g strategy`'s six stub rules ship six `@Disabled` tests, which is honest — the
+implementations are `return Optional.empty()` with a TODO. Though it does mean
+a clean generate produces six `@Component` beans that never fire, six inert
+tests, and a red architecture rule, and nothing ties those three facts together.
+
+The other cause is not defensible:
+
+```java
+class VerificationTest {
+    @Test
+    @Disabled("todo: state what Verification guarantees, then assert it")
+    void todo() {
+        Verification verification = new Verification(true);
+        // Verification has no validation to pin, so assert on what it is
+        // *for*. Asserting that an accessor returns what was passed in
+        // only tests that javac generated the accessor.
+    }
+}
+```
+
+The reasoning in that comment is correct and well put. The outcome is that
+`minicom-2025-12-13` — nine production classes — has **five of its nine tests
+disabled**, including both controller tests, and reports green. jails' own
+`CLAUDE.md` already names this failure mode for tier-3 skips (*"A skipped
+tier-3 test is reported as passing"*); it applies identically to a generated
+`@Disabled`. If a generator cannot write a meaningful assertion, the honest
+output is no test file and a line in the command's summary saying so — not a
+green tick over an empty method.
+
+### 13.9 Two generators, two answers, one of them arguing against the other
+
+`minicom-2026-06-01`, same record, same two audit columns:
+
+```java
+// MessageRequest.toDomain() — the scaffold path
+// Audit columns: set here rather than received, and one
+// instant for both, so a freshly created row does not look
+// already edited.
+Instant now = Instant.now();
+return new Message(id, userId, …, now, now);
+```
+
+```java
+// DefaultPostMessageUseCase.execute() — the use-case path
+Message message = new Message(0L, command.userId(), …,
+        Instant.now(),
+        Instant.now());          // a different instant
+```
+
+One generator writes a comment explaining precisely why both timestamps must be
+the same value, and the other calls the clock twice. Both are in the same
+package, generated by the same command sequence, minutes apart.
+
+### 13.10 Smaller, consistent across all six
+
+- **`timestamp` as a column name** (2025-11-21, 2026-01-09, 2026-02-05). Legal
+  in Postgres, but it is a type name; `sentAt`/`createdAt` costs nothing.
+- **`deferrable initially deferred` on every generated foreign key**, in all
+  six, with no comment saying why. It moves every FK violation from the
+  statement to the commit, which changes where the error surfaces and what a
+  retry means. Either it is a deliberate default worth one line of explanation,
+  or it should not be the default.
+- **`ApiException` is thrown in 0 of 7 projects.** §6.1's finding is not a
+  `my-minicom` accident — `add api` has never once installed error machinery
+  that anything used.
+- **`users.email` is only unique where `@unique` was typed** (2026-02-05 has it,
+  2026-06-01 does not), and never case-insensitively.
+
+### 13.11 What this changes about §11
+
+The corpus splits the root causes cleanly, and only the first two are about
+input:
+
+| | fixable by typing a better spec | jails-side, survives perfect input |
+|---|---|---|
+| snake_case in Java | ✅ (but §11.1 still holds — jails should converge) | |
+| no primary key | ✅ | |
+| no FK index | ✅ | |
+| enum vs `String` in Java | ✅ | |
+| **enum not enforced in SQL** | | ❌ §13.4 — 0 checks in 20 migrations |
+| **`g usecase` id = `0L`** | | ❌ §13.3 — every project, create path broken |
+| **`findById(String)`** | | ❌ §13.5 — 11 of 12 ports |
+| **dead `ApiException`** | | ❌ §13.10 — 0 of 7 projects |
+| **`g strategy` breaks jails' own ArchUnit rule** | | ❌ §13.2 |
+| **`g client` has no timeout** | | ❌ §13.6 |
+| **`@Disabled` tests reported green** | | ❌ §13.8 |
+| **`add cors` ships a red test** | | ❌ §2 |
+
+The second column is the list worth working from. None of it is a taste
+argument, all of it is reproducible from a clean `jails new`, and the top three
+are each a defect a reviewer would block a PR on.

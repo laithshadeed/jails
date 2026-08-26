@@ -37,58 +37,108 @@ remainder.
 
 ## M1 — `g strategy` and `g scaffold` contradict each other, and there is no third option
 
-**This is the one thing that made a build red.** Reproduction, from an empty
-directory:
+**This is the one thing that made a build red.** Three defects, one blast
+radius: **a strategy cannot be generated into any project that also has a
+scaffold.**
 
-```
-jails new x --package com.x && cd x
-jails add db
-jails g enum Sender CUSTOMER BOT AGENT
-jails g scaffold Message id:long@pk conversationId:long@index sender:Sender content:string! createdAt:instant
-jails g record BotReply text:string!
-jails g strategy BotRule Greeting Order Refund Fallback --on Message --yields BotReply
-jails build
-```
-
-```
-ArchitectureTest.DOMAIN_HAS_NO_FRAMEWORK_DEPENDENCIES … violated (7 times):
-Class <com.x.domain.GreetingBotRule> is annotated with <org.springframework.stereotype.Component>
-```
-
-`g scaffold` writes `ArchitectureTest`, which forbids `org.springframework..`
+`g scaffold` writes an `ArchitectureTest` forbidding `org.springframework..`
 inside `domain..`. `g strategy` writes `@Component` implementations *into*
 `domain..` — and the `@Component` is load-bearing, as its own Javadoc says:
 without it the bean is silently absent from the injected `List<BotRule>`.
 
-Both workarounds fail:
+### Reproduce — six commands, no database, ~40 s
 
-- `--package service` → **does not compile.** The generated `BotRule.java` and
-  every implementation reference `Message` and `BotReply` with no import:
-  `cannot find symbol: class Message`. `g strategy` never imports its `--on` /
-  `--yields` types when it is placed anywhere but the default package.
-- `--package ''` → identical compile failure in the base package.
-
-And after generating with `--package service`, `jails destroy strategy BotRule`
-refuses:
-
-```
-fix: `jails g strategy BotRule` is what records one. A destroy that guessed at
-     paths would delete files jails never wrote.
+```sh
+jails new m1 --package com.x --offline --no-git && cd m1
+jails g enum Sender CUSTOMER BOT AGENT
+jails g scaffold Message id:long@pk sender:Sender content:string!
+jails g record BotReply text:string!
+jails g strategy BotRule Greeting Fallback --on Message --yields BotReply
+jails build
 ```
 
-leaving 8 orphan files under `service/` that only `rm` removes. So the
-`--package` path is a one-way door.
+```
+Class <com.x.domain.FallbackBotRule> is annotated with <org.springframework.stereotype.Component> in (FallbackBotRule.java:0)
+Class <com.x.domain.GreetingBotRule> is annotated with <org.springframework.stereotype.Component> in (GreetingBotRule.java:0)
+[ERROR] Tests run: 24, Failures: 1, Errors: 0, Skipped: 4
+[ERROR]   ArchitectureTest.DOMAIN_HAS_NO_FRAMEWORK_DEPENDENCIES
+[INFO] BUILD FAILURE
+```
 
-Three distinct defects, one blast radius: **a strategy cannot be generated into
-any project that also has a scaffold.** This is the exact bot-dispatch shape
-that `mc-16-11-2025/django/chat/bot.py` uses (seven keyword rules → one reply),
-and the shape `minicom-05-02-2026`'s AI escalation wants too.
+### M1a — `--package` never imports the `--on` / `--yields` types
 
-Worth noting `tests/agreement.rs` and the golden suite cannot see this: the
-scenario table exercises each kind in isolation, and the collision needs *two*
-kinds in one project.
+The obvious workaround does not compile. From the same directory:
 
----
+```sh
+jails destroy strategy BotRule
+jails g strategy BotRule Greeting Fallback --on Message --yields BotReply --package service
+head -4 src/main/java/com/x/service/BotRule.java
+```
+
+```java
+package com.x.service;
+
+import java.util.Optional;          // ← that is the whole import list
+```
+
+```sh
+jails build
+```
+
+```
+src/main/java/com/x/service/BotRule.java:[28,30] cannot find symbol
+  symbol:   class Message
+src/main/java/com/x/service/BotRule.java:[28,14] cannot find symbol
+  symbol:   class BotReply
+src/main/java/com/x/service/FallbackBotRule.java:[17,37] cannot find symbol
+  symbol:   class Message
+…
+```
+
+`--package ''` fails identically in the base package. So the default
+placement is the only one that compiles, and it is the one ArchUnit rejects.
+
+The fix is narrow: whatever renders `--on` / `--yields` into the port and the
+implementations has to go through the same `import_of`-style helper the
+scaffold uses for its cross-package imports (`CLAUDE.md`, "scaffold now
+crosses package boundaries"), which already returns an empty string when the
+packages match. Today the strategy renderer appears to assume they always
+match.
+
+### M1b — `destroy` cannot undo a `--package`-placed strategy
+
+```sh
+jails destroy strategy BotRule
+```
+
+```
+jails: no `strategy BotRule` is recorded in this project.
+       fix: `jails g strategy BotRule` is what records one. A destroy that
+            guessed at paths would delete files jails never wrote.
+```
+
+— seconds after the generate that printed `ledger replace`. Five files stay in
+`service/`. They *are* recoverable, but only through the transaction log:
+
+```sh
+jails history            # take the top hash
+jails undo <hash>        # deletes all five
+```
+
+which works, and is not what the error message points at. So the reading is
+that the strategy row is recorded without its placement, and `destroy`
+reconstructs the default `domain..` paths, finds nothing, and reports the
+resource as absent rather than as placed elsewhere. `--package` is a one-way
+door for every generator that resolves paths this way; strategy is just where
+it showed.
+
+### Why the suite cannot see any of this
+
+`tests/agreement.rs` and the golden scenarios exercise **one kind per
+scenario**. M1 needs a scaffold *and* a strategy in one project; M1a needs
+`--package` *and* a cross-package `--on`. A scenario pairing two kinds — or an
+`ArchitectureTest` assertion in the strategy scenario — is what would have
+caught it.
 
 ## M2 — `add db` has no Spring Boot floor, and produces an unresolvable build on Boot 2
 
@@ -133,40 +183,139 @@ predicate has to be the Boot **version**, the same one
 covers `add cors`, `g enum`, `g scaffold`, `g usecase` — `add db` is in
 neither list, so this is untested rather than known-broken.
 
+### Reproduce
+
+```sh
+cp -r minicom/mc-01-06-2026/spring /tmp/m2 && cd /tmp/m2
+jails doctor          # ok project: Spring Boot (Gradle) — jails reads it correctly
+jails add db          # succeeds, no warning
+JAVA_HOME=<a JDK 21> ./gradlew build
+```
+
+```
+> Could not resolve all files for configuration ':compileClasspath'.
+   > Could not find org.springframework.boot:spring-boot-flyway:.
+   > Could not find org.flywaydb:flyway-database-postgresql:.
+```
+
+Note the trailing `:` with nothing after it — the coordinate was spliced with
+no version because jails classified the project as `MANAGED`.
+
+The contrast is one command away, in the same directory:
+
+```sh
+jails add api
+```
+
+```
+jails: `api` generates code that uses ProblemDetail, and this project is Spring Boot 2.
+       ProblemDetail arrived with the Jakarta EE 9 line, which is Spring Boot 3 …
+       fix: `jails g controller`, `jails g scaffold`, `jails g usecase`, `jails add cors`
+            and every non-web kind … work on this project.
+```
+
+That is exactly the refusal `add db` should be giving, and the `fix:` line is
+exactly the shape it should have. `require_jakarta_spring` names a *type*;
+this one would name the *module* — "`add db` wires Flyway through
+`spring-boot-flyway`, which is Spring Boot 4's split-out auto-configuration
+module and does not exist on this project."
+
+Confirming the version predicate is the right one, also one command:
+
+```sh
+cd /tmp/m2 && grep -n "spring-boot-gradle-plugin" build.gradle
+#   classpath("org.springframework.boot:spring-boot-gradle-plugin:2.7.18")
+```
+
+jails already reads that number — `jails doctor` prints "Spring Boot (Gradle)"
+and `mockmvc_autoconfigure_import` / `webmvc_test_import` / `validation_package`
+all branch on the Boot version. `add db` is the one that does not.
+
 This matters because the Boot 2.7 Gradle server is the *only* Spring server
 four of the six checkouts ship. It is the project a reader is actually in.
 
 ---
 
-## M3 — no identity column for integer primary keys
+## M3 — no identity column for integer primary keys, and the loss is silent
 
 `id:uuid@pk` is complete: the create use case emits `UUID.randomUUID()`.
-`id:long@pk` and `id:int@pk` are not:
+`id:long@pk` and `id:int@pk` are not.
 
-```java
-Message message = new Message(
-        0L,                       // ← every insert, every time
-        command.toUserId(), …);
-repository.save(message);
+### Reproduce — two commands
+
+```sh
+jails new m3 --package com.x --offline --no-git && cd m3
+jails g scaffold Message id:long@pk sender:string! content:string!
+jails g usecase PostMessage sender:string! content:string! --on Message
+sed -n '/public Message execute/,/^    }/p' src/main/java/com/x/service/DefaultPostMessageUseCase.java
 ```
 
-and the DDL is `id bigint not null` with no `generated always as identity` and
-no sequence. The second `POST /actions/send-message` violates the primary key.
+```java
+public Message execute(PostMessageCommand command) {
+    Objects.requireNonNull(command, "command is required");
+    Message message = new Message(
+            0L,                      // ← every insert, every time
+            command.sender(),
+            command.content());
+    repository.save(message);
+    return message;
+}
+```
 
-Every one of the six originals uses an auto-incrementing integer key — Django's
-implicit `AutoField`, Sequelize's `autoIncrement: true`. There is no marker
-that asks for one: `@pk` says "this is the key", not "the database assigns it".
+```sh
+head -4 src/main/resources/db/migration/V001__create_messages.sql
+```
+
+```sql
+create table messages (
+  id       bigint not null,          -- no identity, no sequence, no default
+```
+
+Swap `id:long@pk` for `id:uuid@pk` and the same command emits
+`UUID.randomUUID()` and `id uuid not null`. So the machinery for
+"server assigns the key" exists and is reachable for exactly one type.
+
+### The failure is worse on the default adapter than in the database
+
+`InMemoryMessageRepository.save` is `items.put(String.valueOf(message.id()), message)`
+— and `message.id()` is always `0`. Run it:
+
+```sh
+jails build
+cat > /tmp/probe.jsh <<'EOF'
+import com.x.adapters.InMemoryMessageRepository;
+import com.x.service.*;
+var repo = new InMemoryMessageRepository();
+var uc = new DefaultPostMessageUseCase(repo);
+uc.execute(new PostMessageCommand("alice", "first"));
+uc.execute(new PostMessageCommand("alice", "second"));
+System.out.println("rows after two creates: " + repo.findAll().size() + " -> " + repo.findAll());
+/exit
+EOF
+jshell --class-path target/classes -q /tmp/probe.jsh
+```
+
+```
+rows after two creates: 1 -> [Message[id=0, sender=alice, content=second]]
+```
+
+Two creates, one row, the first message **silently gone** — no exception, no
+log line. Against the JDBC adapter the same pair is a primary-key violation
+instead, so the app fails one way in dev and another in production.
+
+No generated test catches it because every generated test inserts exactly one
+row. A `saves_two` case on the scaffold's own service test would have.
+
+### What is missing
+
+A constraint marker in the field spec — `@identity`, or `@pk` on an integer
+type implying it — that emits `generated always as identity` and makes the
+generated create read the key back rather than construct it. All six originals
+use one: Django's implicit `AutoField`, Sequelize's `autoIncrement: true`.
 
 This is adjacent to the "client must invent the id" note in `bugs.md`, but it
-is a different failure: there the request carries a value the caller chose;
-here the *generated server code* hardcodes `0`, and no test catches it because
-each generated test inserts exactly one row.
-
-What is missing is a constraint marker — `@identity`, or `@pk` on an integer
-implying it — that emits `generated always as identity` and makes the use case
-read the key back rather than construct it.
-
----
+is a different failure: there the *request* carries a value the caller chose;
+here the generated *server* hardcodes `0` and drops rows.
 
 ## M4 — no WebSocket anything
 
@@ -178,53 +327,107 @@ Four of the six originals are bidirectional chat over Django Channels:
 - `minicom-05-02-2026` — `ws/chat/<email>?role=`, plus admin presence tracking
   and an `admin_status` broadcast on connect/disconnect
 
-`jails commands` lists no websocket kind or capability. `add sse` is the
-nearest thing and is one-directional (`GET /events/{topic}/stream`), which
-covers the server→client half of read receipts and presence and none of the
-client→server half. Everything above was written by hand outside jails.
+### Reproduce
 
-Two separable pieces, and the second is the harder and more valuable one:
+```sh
+jails commands | grep -iE 'socket|websocket' ; echo "exit=$?"
+```
 
-1. **A `@ServerEndpoint`-shaped kind** — a `WebSocketHandler`, its registration,
-   and a test. Mechanical.
-2. **A presence primitive.** `minicom-05-02-2026` tracks admin presence in a
-   module-level dict and says in a comment why that is allowed
-   (`InMemoryChannelLayer` = single Daphne process) — which is to say the author
-   knew it was wrong and shipped it anyway. This is the same class of "the
-   default is wrong in a way nothing reports" that `g auth` and `add sse` exist
-   for: an in-memory presence map is silently correct on one node and silently
-   wrong on two, with no error either way.
+```
+exit=1        # no kind, no capability, no subcommand
+```
 
----
+The nearest thing is one-directional:
+
+```sh
+jails add sse && jails routes | grep stream
+```
+
+```
+GET     /events/{topic}/stream             EventStreamController#stream
+```
+
+which covers the server→client half of read receipts and presence and none of
+the client→server half. Everything above was written by hand outside jails.
+
+### Two separable pieces, and the second is the valuable one
+
+1. **A `WebSocketHandler`-shaped kind** — the handler, its
+   `WebSocketConfigurer` registration, and a test. Mechanical; the same shape
+   as `g handler`.
+2. **A presence primitive.** `minicom-05-02-2026/django/minicom/consumers.py`
+   tracks admin presence in a module-level dict and says in a comment why that
+   is allowed:
+
+   ```python
+   # Module-level presence tracker: { group_name: set(channel_names) }
+   # Works because InMemoryChannelLayer = single Daphne process.
+   ```
+
+   — which is to say the author knew it was wrong and shipped it anyway. That
+   is the same class of "the default is wrong in a way nothing reports" that
+   `g auth` and `add sse` exist for: an in-memory presence map is silently
+   correct on one node and silently wrong on two, with no error either way.
 
 ## M5 — a query cannot join, so no endpoint keyed by a natural key works
 
 `g query --on X` filters on X's own columns by equality. Every real read in
-these apps crosses a table:
+these apps crosses a table.
+
+### Reproduce
+
+In a project with `User(id, email)`, `Message(id, toUserId, …)` and the
+association between them — which is what `minicom-2026-02-05` is:
+
+```sh
+jails g association MessageRecipient toUserId=id --on Message --yields User   # succeeds
+jails g query MessagesByEmail email:string! --on Message --pretend
+```
+
+```
+jails: query MessagesByEmail filters `email`, but Message has no component with that name
+```
+
+The refusal is correct and there is no flag that changes it. There is also no
+ordering or bound:
+
+```sh
+jails g query RecentMessages toUserId:long --on Message --limit 20
+```
+
+```
+error: unexpected argument '--limit' found
+```
+
+### What each original endpoint needs
 
 | original endpoint | what it needs |
 |---|---|
 | `POST /customer_api/ping {email}` | `users ⋈ messages` — unread messages for the user *with that email* |
 | `GET /messages` (node) | each message with its author's `{id, email}` embedded |
 | `GET /api/conversations/` | 20 most recent conversations, each with its **last** message |
-| `GET /admin_api/issues` | issues with `user.email` — the Django code says `select_related('user')` |
+| `GET /admin_api/issues` | issues with `user.email` — the Django says `select_related('user')` |
 
 The first is the whole customer-facing surface of `minicom-05-02-2026`. jails
 generated `UnreadMessagesForUserQuery(toUserId, read)` — correct, and reachable
 only by a caller who already knows the surrogate id, which no minicom client
 does.
 
-`g association` already reads both records and type-checks the field mapping
-across the boundary. That is exactly the information a join needs; it is
-recorded and then used only to emit a foreign key. A `--via <Association>` on
-`g query`, letting a filter name a column on the parent, would cover all four
-rows above without inventing a query language.
+### The information needed is already recorded
 
-Related and smaller: **no aggregate or ordering.** No `order by`, no `limit`,
-no `count`, no `max`. `GET /api/conversations/` is `[:20]` ordered by
-`-created_at`; `User.unread_count()` is a `count()`. Both are hand-written.
+`g association` reads both records and type-checks the field mapping across the
+boundary; that is exactly what a join needs, and it is used today only to emit
+a foreign key. A `--via <Association>` on `g query`, letting one filter name a
+column on the parent, would cover all four rows above without inventing a query
+language:
 
----
+```sh
+jails g query UnreadForEmail email:string! read:boolean --on Message --via MessageRecipient
+```
+
+Ordering and bounds are a separate, smaller ask (`--order-by`, `--limit`).
+`GET /api/conversations/` is `[:20]` ordered by `-created_at`;
+`User.unread_count()` is a `count()`. Both are hand-written today.
 
 ## M6 — no get-or-create, and it is the first line of three of the six apps
 
@@ -234,43 +437,118 @@ await User.upsert({ id: 1, email: … })   # mc-01-06-2026, on every request
 conv = Conversation.objects.create() if not conv_id else …   # mc-16-11-2025
 ```
 
-There is no jails verb for it. `g usecase` always inserts. `g idempotency` is a
-different primitive (retained result keyed by request hash) and `explain` is
-right that it is different — but the shape a chat app needs on every inbound
-message is "one row per natural key, return it either way", which is one
-`insert … on conflict (email) do nothing returning`, the same statement
-`g idempotency` already knows how to write.
+### Reproduce
 
-This is the single most repeated hand-written line across the six projects.
+```sh
+jails commands | grep -iE 'upsert|get-or-create|find-or|ensure' ; echo "exit=$?"
+```
 
----
+```
+exit=1
+```
+
+`g usecase` is the only create verb and it always inserts — see the M3
+transcript: `repository.save(...)` with no conflict clause anywhere. On a
+column with `@unique` (which `email` has, and must have) the second call is a
+constraint violation, not a fetch.
+
+### Why `g idempotency` is not it
+
+```sh
+jails explain idempotency
+```
+
+```
+idempotency  At-most-once execution with a retained result: receipt store, guard, table.
+
+  A `@unique` column on the key already gives you one row per key. What it does
+  not give you is the *retained result* …
+```
+
+`explain` is right that it is a different primitive — it keys on a hash of the
+request, not on a natural key of the row, and it stores a receipt beside the
+data rather than returning the row. But the *statement* it already knows how to
+write is the one this needs:
+
+```sql
+insert into users (email) values (?) on conflict (email) do nothing returning *
+```
+
+which `explain idempotency` itself describes verbatim: "The claim is one
+`insert ... on conflict do nothing returning`. Select-then-insert leaves a
+window where two callers both see nothing and both proceed."
+
+So the shape exists; what is missing is a verb that applies it to a scaffold's
+own unique key — `jails g ensure User email:string!@unique --on User`, or a
+`--on-conflict <field>` on `g usecase`. This is the single most repeated
+hand-written line across the six projects.
 
 ## M7 — `g client` has one fixed shape, and it is a REST collection
 
-`jails g client OpenAiChatClient` produces:
+### Reproduce
 
-```java
-@GetExchange("/open-ai-chats")     List<OpenAiChatPayload> findAll();
-@GetExchange("/open-ai-chats/{id}") OpenAiChatPayload findById(@PathVariable String id);
+```sh
+jails g client OpenAiChatClient
+cat src/main/java/com/x/clients/OpenAiChatClient.java
 ```
 
-The call `minicom-05-02-2026` actually makes is
-`POST /v1/chat/completions` with a JSON body of messages. Nothing about the
-generated interface survives: not the verb, not the path, not the arguments,
-not the return type. The `HttpClientsConfig` and the `spring-boot-starter-restclient`
-splice — the parts that are genuinely hard to remember, per the module's own
-docs — are worth having; the interface is 100% overwritten.
+```java
+public interface OpenAiChatClient {
+    @GetExchange("/open-ai-chats")      List<OpenAiChatPayload> findAll();
+    @GetExchange("/open-ai-chats/{id}") OpenAiChatPayload findById(@PathVariable String id);
+    record OpenAiChatPayload(String id, String name) {}
+}
+```
 
-`g controller` already takes `--method`, `--on` (request body) and `--returns`.
-`g client` taking the same three would make it generate the call the project
-makes rather than a shape to delete.
+The call `minicom-05-02-2026/django/minicom/ai_service.py` actually makes is
+`POST /v1/chat/completions` with a JSON body of `{role, content}` messages and
+a `model`/`temperature`/`max_tokens` envelope. Nothing above survives: not the
+verb, not the path, not the arguments, not the return type. 100% overwritten.
 
----
+What *is* worth keeping is what the same command wrote alongside it —
+`HttpClientsConfig`, the `spring-boot-starter-restclient` splice, and the
+`spring.http.serviceclient.*.base-url` convention. That splice is the
+non-obvious part the module's own docs flag (`@ImportHttpServices` builds the
+proxies without it, and the first call dies on `URI with undefined scheme`).
+
+### The fix already exists on a sibling generator
+
+`g controller` takes exactly the three arguments this needs:
+
+```sh
+jails g controller Verify --method post --on ChatRequest --returns ChatResponse
+```
+
+`g client` taking `--method` / `--on` / `--returns` (and a path, see M8) would
+make it generate the call the project makes rather than a shape to delete.
 
 ## M8 — no way to name a route path
 
-Route paths are derived from the generated name, with no override anywhere in
-`jails g --help`. The originals are not derivable:
+### Reproduce
+
+```sh
+jails g --help | grep -cE -- '--path|--route|--url|--mapping'
+```
+
+```
+0
+```
+
+Paths are derived from the generated name, everywhere:
+
+```sh
+jails routes
+```
+
+```
+POST    /actions/escalate-issue            EscalateIssueController#execute
+PUT     /actions/mark-message-read         MarkMessageReadController#execute
+POST    /actions/send-message              SendMessageController#execute
+POST    /queries/unread-messages-for-user  UnreadMessagesForUserQueryController#execute
+GET     /users                             UserController#list
+```
+
+The originals are not derivable from any name:
 
 ```
 /customer_api/ping        /customer_api/read
@@ -278,88 +556,176 @@ Route paths are derived from the generated name, with no override anywhere in
 /api/customer/message/    /api/agent/reply/       /api/conversations/
 ```
 
-against jails' `/actions/send-message`, `/queries/unread-messages-for-user`,
-`/users`. For a greenfield service that is a virtue — one convention, and
-`destroy` can find what `generate` wrote. For **porting an existing service, or
-writing a new server against an existing frontend, the URLs are a fixed
-external contract** and jails cannot meet it. Both `foo-website/foo.js` and
-`bar-website/bar.js` in every checkout hardcode their paths.
+For a greenfield service the convention is a virtue — one shape, and `destroy`
+can find what `generate` wrote. For **porting an existing service, or writing a
+new server against an existing frontend, the URLs are a fixed external
+contract** and jails cannot meet it. `foo-website/foo.js` and
+`bar-website/bar.js` in every checkout hardcode theirs.
 
-`POST /foo` and `POST /bar` are the exception that proves it: `jails g
-controller Foo --method post` does land on `/foo`, by luck of the singular
-name. The body still has to be written by hand — `g controller --returns
-Verification` emits `throw new UnsupportedOperationException("todo: …")`, so
-the two-line `{"success": true}` that the minicom README makes the whole
-acceptance test is not something jails can produce.
+### The exception that proves it
 
-A `--path` on `g controller` / `g usecase` / `g query`, recorded in the ledger
-like any other value, would close this. The derivability argument does not
-apply once the path is a recorded value rather than a recomputed one.
+`POST /foo` and `POST /bar` are the whole acceptance test in every minicom
+README ("verify that an alert with `Yay! Everything works` fires"). jails gets
+half of it, by luck of the singular name:
 
----
+```sh
+jails g record Verification success:boolean
+jails g controller Bar --method post --returns Verification
+sed -n '/class BarController/,$p' src/main/java/com/x/web/BarController.java
+```
+
+```java
+class BarController {
+    @PostMapping("/bar")                       // ← right path, for free
+    Verification post() {
+        throw new UnsupportedOperationException(
+                "todo: build the Verification this route answers with");
+    }
+}
+```
+
+The refusal is the right call — jails cannot know what a `Verification` should
+contain. But it means the two-line `{"success": true}` that the whole minicom
+setup is graded on is not something jails can produce.
+
+### The derivability argument does not block this
+
+`destroy` finds files by what the ledger recorded, not by recomputing paths
+(`CLAUDE.md`: "`destroy` acts on what the store recorded, and nothing else …
+`KIND_FILES` is deleted"). A `--path` recorded as a value is no harder to undo
+than a `--package` is meant to be. Wanted on `g controller`, `g usecase`,
+`g query`.
 
 ## M9 — no way to add an index to an existing table
 
 `--index` exists on `g scaffold` and `@index` on a field, both at creation
-time. Afterwards there is nothing: `mc-01-06-2026`'s third migration is
-`addIndex('messages', ['customer_id'])` on a live table, and
-`jails g migration add_customer_id_index` produces
+time. Afterwards there is nothing.
+
+### Reproduce
+
+```sh
+jails g scaffold Message id:long@pk userId:long@index customerId:long? content:string!
+jails g migration add_customer_id_index
+cat src/main/resources/db/migration/V00*__add_customer_id_index.sql
+```
 
 ```sql
 -- Forward-only migration. Write explicit SQL below.
 ```
 
-`g field` can already add a column to a live table with a data plan
-(`--default-literal` / `--backfill-file`), which is the harder problem. An
-index has no data plan to argue about.
+That is the whole file. `mc-01-06-2026`'s third migration is exactly this on a
+live table:
 
----
+```ts
+await queryInterface.addIndex('messages', ['customer_id']);
+```
+
+`g field` can already add a *column* to a live table with a data plan
+(`--default-literal` / `--backfill-file`), which is the harder problem — an
+index has no data plan to argue about. `sql::validate_index` already parses
+`'created_at desc'` into column plus ordering for the `--index` flag, so the
+validation half exists too.
+
+Wanted: `jails g index MessagesByCustomer 'customer_id' --on Message`, or
+`--index` accepted on `g field` / a `resource index` verb.
 
 ## M10 — no seed or fixture data path
 
-`mc-01-06-2026` seeds three users and four messages on every request because it
-has nowhere else to put them; `minicom-05-02-2026` relies on
-`get_or_create_from_email`. jails writes `src/test/resources/fixtures/*.json`
-for tests, and nothing for `dev`. There is no `db/seed` convention, no
-`jails db seed`, and `add db` writes no `V00X__seed_*.sql`.
+### Reproduce
 
-Lower severity than the rest — it is a convention, not a mechanism — but it is
-why the Node app does database writes inside a GET handler.
+```sh
+jails add db
+jails commands | grep -icE 'seed|fixture'      # 0
+ls src/main/resources/db/migration/            # .gitkeep only
+ls src/test/resources/fixtures/                # messages.json, users.json — test scope only
+```
 
----
+jails writes `src/test/resources/fixtures/*.json` for generated tests and
+nothing for `dev`. There is no `db/seed` convention, no `jails db seed`, and
+`add db` writes no `V00X__seed_*.sql`.
+
+This is why `mc-01-06-2026` does database writes inside a `GET` handler:
+
+```ts
+async function listMessages(_req, res) {
+  await ensureSeedUsers();      // User.upsert(...) x3, on every request
+  await ensureSeedMessages();   // Message.bulkCreate(...), on every request
+  …
+}
+```
+
+Lower severity than the rest — it is a convention, not a mechanism — but the
+convention's absence is what pushed a write into a read path.
 
 ## M11 — `transition` requires a `version` column the original schema does not have
 
 Marking a message read is, in all three Django apps, `is_read = True; save()`.
-In jails it is:
+
+### Reproduce
+
+```sh
+jails g scaffold Message id:long@pk content:string! isRead:boolean
+jails g transition MarkRead id:long isRead:boolean --on Message --pretend
+```
 
 ```
+jails: transition MarkRead needs a required numeric `version` field
+```
+
+```sh
+jails g field Message version:long --pretend
+```
+
+```
+jails: required field `version` needs a data plan for existing rows.
+       fix: pass `--default-literal <typed-value>` or `--backfill-file <project-path>`.
+```
+
+So the working sequence is two commands and a column the schema's owner did not
+ask for:
+
+```sh
 jails g field Message version:long --default-literal 0
-jails g transition MarkMessageRead id:long read:boolean version:long --on Message
+jails g transition MarkRead id:long isRead:boolean version:long --on Message
 ```
 
-The compare-and-set argument is right and `explain transition` makes it well.
-But there is no unguarded alternative, so a schema being *ported* grows a column
-its owner did not ask for. Worth either an `--unguarded` that says in the
-generated Javadoc what was given up, or a line in `explain transition` naming
-`g usecase` + a manual update as the escape hatch. Recording it as friction,
-not as a defect.
+Both refusals are good ones and `explain transition` argues the compare-and-set
+case well. The friction is that there is no unguarded alternative, so a schema
+being *ported* grows a column to satisfy the tool. Worth either an
+`--unguarded` that states in the generated Javadoc what was given up, or a line
+in `explain transition` naming `g usecase` plus a manual update as the escape
+hatch. Recording it as friction, not as a defect.
 
----
+## Two smaller things, with their one-line checks
 
-## Two smaller things, noted without a section
+**`g strategy` generates no evaluator, and has no ordering.**
 
-- **`g strategy` generates no evaluator.** The port's Javadoc shows the
-  `List<BotRule>` fold you are meant to write, and `--yields` makes the return
-  shape unambiguous, so the fold is derivable. There is also no ordering
-  concept, which matters here: `FallbackBotRule` must run last, and nothing in
-  the generated code says so.
-- **A `usecase` defaults an enum positionally**, `IssueStatus.values()[0]`.
-  It happened to be `OPEN`, which is what the Django `default='OPEN'` says —
-  by luck of declaration order. Reordering the `g enum` arguments would silently
-  change the default of every generated create.
+```sh
+grep -rn 'List<BotRule>' src/main/java/ | grep -v '\*'      # nothing outside Javadoc
+grep -rn '@Order\|Ordered' src/main/java/com/x/domain/       # nothing
+```
 
----
+The port's Javadoc shows the fold you are meant to write, and `--yields` makes
+the return shape unambiguous, so the fold is derivable. Ordering matters here
+specifically: `FallbackBotRule` must run last or it swallows every message, and
+nothing in the generated code says so.
+
+**A `usecase` defaults an enum positionally.**
+
+```sh
+jails g enum IssueStatus OPEN IN_PROGRESS RESOLVED
+jails g scaffold Issue id:long@pk summary:string! status:IssueStatus
+jails g usecase EscalateIssue summary:string! --on Issue
+grep -n 'IssueStatus' src/main/java/com/x/service/DefaultEscalateIssueUseCase.java
+```
+
+```java
+IssueStatus.values()[0],
+```
+
+It happened to be `OPEN`, which is what the Django `default='OPEN'` says — by
+luck of declaration order. Reordering the `g enum` arguments silently changes
+the default of every generated create, and no test would notice.
 
 ## What this exercise says about the tool
 
@@ -385,34 +751,22 @@ exercise one kind on one flavour, and both bugs need a second thing present.
 
 ---
 
-## Reproducing
+## Where the evidence lives
 
 The six builds are at `/home/laith/code/minicom-jails/`, each a plain Maven
-project — `cd` into one and `jails build`. The full command log per project is
-its `.jails/ledger.toml`; `jails history` prints it.
+project — `cd` into one and `jails build`. The command log per project is its
+`.jails/ledger.toml`; `jails history` prints it.
 
-The two defects reproduce from an empty directory in under a minute:
+Every transcript above was produced by running the commands as written, on
+`jails 0.1.0` built from `9aac1b0`, JDK 26.0.2, Maven via `./mvnw`. The M2
+Gradle run used `JAVA_HOME=…/openjdk-21.0.2` because Gradle 8.5 cannot run on
+JDK 26 (`Unsupported class file major version 70`) — that part is the
+checkout's age, not a jails problem.
 
-```sh
-# M1 — strategy vs. scaffold
-jails new m1 --package com.x && cd m1
-jails add db
-jails g enum Sender CUSTOMER BOT AGENT
-jails g scaffold Message id:long@pk sender:Sender content:string!
-jails g record BotReply text:string!
-jails g strategy BotRule Greeting Fallback --on Message --yields BotReply
-jails build          # ArchitectureTest fails
-jails g strategy … --package service   # then: cannot find symbol: class Message
-```
+The M2 module claims were checked against `deps/spring-boot`, not from memory:
 
 ```sh
-# M2 — add db on Spring Boot 2
-cp -r minicom/mc-01-06-2026/spring /tmp/m2 && cd /tmp/m2
-jails add db         # succeeds
-JAVA_HOME=…/openjdk-21.0.2 ./gradlew build
-                     # Could not find org.springframework.boot:spring-boot-flyway:
+cd deps/spring-boot
+git ls-tree -r --name-only v2.7.18 | grep -c spring-boot-flyway          # 0
+git ls-tree -r --name-only v2.7.18 | grep -c spring-boot-testcontainers  # 0
 ```
-
-M3 needs only `jails g scaffold X id:long@pk name:string!` followed by
-`jails g usecase MakeX name:string! --on X` — read the generated
-`DefaultMakeXUseCase.execute` and the `V001` DDL.
