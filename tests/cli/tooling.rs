@@ -585,6 +585,40 @@ fn run_starts_compose_services_only_when_explicitly_requested() {
 }
 
 #[test]
+fn migrate_check_does_not_restart_a_database_that_already_answers() {
+    let root = temp_dir("migrate-ready-postgres");
+    write_project_skeleton(&root);
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    fs::write(
+        root.join("src/main/resources/db/migration/V001__ready.sql"),
+        "select 1;\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("compose.yaml"),
+        "services:\n  postgres:\n    image: postgres:17-alpine\n    ports: [\"5432:5432\"]\n    environment:\n      POSTGRES_DB: app\n      POSTGRES_USER: app\n      POSTGRES_PASSWORD: app\n",
+    )
+    .unwrap();
+    let fake = temp_dir("migrate-ready-postgres-bin");
+    let log = fake.join("log.txt");
+    write_fake_maven(&fake, &["docker", "psql"], &log);
+
+    let output = jails_cmd(&root, Some(&fake))
+        .args(["migrate", "--check"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let invocation = read_log(&log);
+    assert!(!invocation.contains("compose up"), "{invocation}");
+    assert!(invocation.contains("psql"), "{invocation}");
+}
+
+#[test]
 fn start_and_stop_drive_docker_compose() {
     let root = temp_dir("mock-start-stop");
     write_project_skeleton(&root);

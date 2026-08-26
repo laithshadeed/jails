@@ -58,7 +58,13 @@ pub fn check(no_start: bool, debug: bool) -> Result<()> {
         return Err("psql not on PATH -- install the postgres client and try again".into());
     }
     if !no_start {
-        compose::up(&root, &["postgres"], debug);
+        // A reachable server is already ready; asking Compose to start a
+        // second postgres can only produce a misleading port-conflict error.
+        // The quiet probe is captured, so an ordinary not-ready result is not
+        // printed as a failed command before startup gets a chance to help.
+        if psql(&conn, &conn.database, "select 1", false).is_err() {
+            compose::up(&root, &["postgres"], debug);
+        }
         wait_until_ready(&conn, debug)?;
     }
 

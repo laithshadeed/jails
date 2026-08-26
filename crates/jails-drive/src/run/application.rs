@@ -7,7 +7,9 @@ use jails_support::Result;
 use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::fs;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::process::Command;
+use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RunLauncher {
@@ -510,12 +512,16 @@ fn services(project: &Project, policy: RunServices, debug: bool) -> Result<()> {
         return Ok(());
     }
     if policy == RunServices::Start {
-        return crate::compose::up(project.root(), &[], debug)
+        crate::compose::up(project.root(), &[], debug)
             .then_some(())
             .ok_or_else(|| {
-                "declared services did not start\n       fix: run `jails start` and inspect the Compose diagnostic"
-                    .into()
-            });
+                jails_support::Failure::Told(
+                    "declared services did not start\n       fix: run `jails start` and inspect the Compose diagnostic"
+                        .to_string(),
+                )
+            })?;
+        wait_for_postgres(project)?;
+        return Ok(());
     }
     let (program, prefix) = crate::process::compose_program().ok_or_else(|| {
         "declared services cannot be checked because Compose is unavailable\n       fix: install Docker Compose or use `--services none`"
@@ -544,6 +550,75 @@ fn services(project: &Project, policy: RunServices, debug: bool) -> Result<()> {
         )
         .into())
     }
+}
+
+/// Do not launch Spring until a declared postgres accepts TCP connections.
+///
+/// Compose returning means the container process is running, not that the
+/// server inside has opened its socket. This probe deliberately needs no
+/// `psql` installation: `jails run` only needs the same readiness boundary
+/// HikariCP and Flyway need before the JVM starts.
+fn wait_for_postgres(project: &Project) -> Result<()> {
+    let yaml = crate::compose::read(project.root())?;
+    let Some(conn) = crate::compose::postgres_connect(&yaml) else {
+        return Ok(());
+    };
+    let endpoint = format!("{}:{}", conn.host, conn.port);
+    let addresses = endpoint
+        .to_socket_addrs()
+        .map_err(|error| {
+            format!(
+                "could not resolve postgres at {endpoint}: {error}\n       \
+                 fix: correct the postgres host or port in compose.yaml, then retry `jails run`"
+            )
+        })?
+        .collect::<Vec<_>>();
+    if addresses.is_empty() {
+        return Err(format!(
+            "postgres at {endpoint} resolved to no addresses\n       \
+             fix: correct the postgres host in compose.yaml, then retry `jails run`"
+        )
+        .into());
+    }
+
+    wait_for_service(120, Duration::from_millis(250), || {
+        addresses
+            .iter()
+            .find_map(|address| {
+                TcpStream::connect_timeout(address, Duration::from_millis(250)).ok()
+            })
+            .map(drop)
+            .ok_or_else(|| {
+                format!("postgres at {endpoint} is not accepting TCP connections").into()
+            })
+    })
+    .map_err(|last| {
+        format!(
+            "postgres at {endpoint} did not become ready within 30 seconds: {last}\n       \
+             fix: inspect `jails logs db`, then retry `jails run`"
+        )
+        .into()
+    })
+}
+
+fn wait_for_service(
+    attempts: u32,
+    pause: Duration,
+    mut probe: impl FnMut() -> Result<()>,
+) -> Result<()> {
+    assert!(attempts > 0, "a readiness wait needs at least one attempt");
+    let mut last = probe();
+    if last.is_ok() {
+        return last;
+    }
+    for _ in 1..attempts {
+        std::thread::sleep(pause);
+        last = probe();
+        if last.is_ok() {
+            return last;
+        }
+    }
+    last
 }
 
 fn compose_output(
@@ -612,5 +687,31 @@ mod tests {
         assert!(!is_executable_jar_candidate(std::path::Path::new(
             "app.jar.original"
         )));
+    }
+
+    #[test]
+    fn service_readiness_waits_for_a_slow_start() {
+        let mut probes = 0;
+        let result = wait_for_service(4, Duration::ZERO, || {
+            probes += 1;
+            (probes == 3)
+                .then_some(())
+                .ok_or_else(|| "not ready".into())
+        });
+
+        assert!(result.is_ok());
+        assert_eq!(probes, 3);
+    }
+
+    #[test]
+    fn service_readiness_reports_the_last_probe() {
+        let mut probes = 0;
+        let error = wait_for_service(3, Duration::ZERO, || {
+            probes += 1;
+            Err(format!("probe {probes}").into())
+        })
+        .unwrap_err();
+
+        assert_eq!(error.to_string(), "probe 3");
     }
 }
