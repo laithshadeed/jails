@@ -33,7 +33,7 @@ class JdbcMessageRepositoryIT {
                 Instant.parse("2024-01-01T00:00:00Z"));
         repository.save(message);
 
-        String key = String.valueOf(message.id());
+        UUID key = message.id();
         assertThat(repository.findById(key)).contains(message);
         assertThat(repository.findAll()).contains(message);
 

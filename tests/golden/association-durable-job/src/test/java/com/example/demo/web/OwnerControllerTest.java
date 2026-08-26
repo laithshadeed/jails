@@ -8,6 +8,7 @@ import static org.mockito.Mockito.mock;
 import com.example.demo.service.OwnerService;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -66,15 +67,17 @@ class OwnerControllerTest {
 
     @Test
     void aMissingItemIs404() {
-        given(service.findById("nope")).willReturn(Optional.empty());
+        UUID missing = UUID.fromString("00000000-0000-0000-0000-000000000002");
+        given(service.findById(missing)).willReturn(Optional.empty());
 
-        assertThat(mvc.get().uri(OwnerController.PATH + "/nope")).hasStatus(404);
+        assertThat(mvc.get().uri(OwnerController.PATH + "/" + missing)).hasStatus(404);
     }
 
     @Test
     void aDeleteThatRemovedNothingIs404() {
-        given(service.deleteById("nope")).willReturn(false);
+        UUID missing = UUID.fromString("00000000-0000-0000-0000-000000000002");
+        given(service.deleteById(missing)).willReturn(false);
 
-        assertThat(mvc.delete().uri(OwnerController.PATH + "/nope")).hasStatus(404);
+        assertThat(mvc.delete().uri(OwnerController.PATH + "/" + missing)).hasStatus(404);
     }
 }

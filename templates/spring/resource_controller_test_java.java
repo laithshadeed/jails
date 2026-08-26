@@ -1,6 +1,6 @@
 package {{pkg}};
 
-{{extra}}import java.util.List;
+{{extra}}{{key_import}}import java.util.List;
 import java.util.Optional;
 {{disabled_import}}import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -60,15 +60,17 @@ class {{name}}ControllerTest {
 
     @Test
     void aMissingItemIs404() {
-        given(service.findById("nope")).willReturn(Optional.empty());
+        {{key}} missing = {{absent}};
+        given(service.findById(missing)).willReturn(Optional.empty());
 
-        assertThat(mvc.get().uri({{name}}Controller.PATH + "/nope")).hasStatus(404);
+        assertThat(mvc.get().uri({{name}}Controller.PATH + "/" + missing)).hasStatus(404);
     }
 
     @Test
     void aDeleteThatRemovedNothingIs404() {
-        given(service.deleteById("nope")).willReturn(false);
+        {{key}} missing = {{absent}};
+        given(service.deleteById(missing)).willReturn(false);
 
-        assertThat(mvc.delete().uri({{name}}Controller.PATH + "/nope")).hasStatus(404);
+        assertThat(mvc.delete().uri({{name}}Controller.PATH + "/" + missing)).hasStatus(404);
     }
 }

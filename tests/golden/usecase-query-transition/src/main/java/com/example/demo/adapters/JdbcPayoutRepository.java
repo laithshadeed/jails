@@ -36,7 +36,7 @@ public final class JdbcPayoutRepository implements PayoutRepository {
                 version,
                 created_at
             from payouts
-            where id = cast(? as uuid)
+            where id = ?
             """;
     private static final String FIND_ALL =
             """
@@ -57,7 +57,7 @@ public final class JdbcPayoutRepository implements PayoutRepository {
     private static final String DELETE_BY_ID =
             """
             delete from payouts
-            where id = cast(? as uuid)
+            where id = ?
             """;
 
     private final Connection connection;
@@ -67,10 +67,10 @@ public final class JdbcPayoutRepository implements PayoutRepository {
     }
 
     @Override
-    public Optional<Payout> findById(String id) {
+    public Optional<Payout> findById(UUID id) {
         Objects.requireNonNull(id, "id is required");
         try (var query = connection.prepareStatement(FIND_BY_ID)) {
-            query.setString(1, id);
+            query.setObject(1, id);
             try (var rows = query.executeQuery()) {
                 return rows.next() ? Optional.of(map(rows)) : Optional.empty();
             }
@@ -106,10 +106,10 @@ public final class JdbcPayoutRepository implements PayoutRepository {
     }
 
     @Override
-    public boolean deleteById(String id) {
+    public boolean deleteById(UUID id) {
         Objects.requireNonNull(id, "id is required");
         try (var delete = connection.prepareStatement(DELETE_BY_ID)) {
-            delete.setString(1, id);
+            delete.setObject(1, id);
             return delete.executeUpdate() > 0;
         } catch (SQLException error) {
             throw new IllegalStateException("could not delete from payouts " + id, error);

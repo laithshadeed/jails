@@ -211,7 +211,12 @@ pub(crate) fn scaffold_artifacts_from_fields(
         Artifact {
             kind: "repository port",
             path: main_dir(root, &repository).join(format!("{name}Repository.java")),
-            contents: repository_port(&repository, name, &domain_in(&repository)),
+            contents: repository_port(
+                &repository,
+                name,
+                &domain_in(&repository),
+                &super::repository::key_type(&columns),
+            ),
         },
         Artifact {
             kind: "JDBC adapter",
@@ -257,10 +262,8 @@ pub(crate) fn scaffold_artifacts_from_fields(
                     domain_in(&adapters),
                     import_of(&adapters, &repository, &format!("{name}Repository"))
                 ),
-                parsed
-                    .iter()
-                    .find(|f| f.name == "id")
-                    .map(|f| f.name.as_str()),
+                super::repository::key_component(parsed, &columns),
+                &super::repository::key_type(&columns),
                 repository_wiring(slice.project()) != RepositoryWiring::JdbcClientBean,
             ),
         },
@@ -299,6 +302,7 @@ pub(crate) fn scaffold_artifacts_from_fields(
                     domain_in(&service),
                     import_of(&service, &repository, &format!("{name}Repository"))
                 ),
+                &super::repository::key_type(&columns),
             ),
         },
         Artifact {
@@ -308,6 +312,7 @@ pub(crate) fn scaffold_artifacts_from_fields(
                 &service,
                 name,
                 &import_of(&service, &repository, &format!("{name}Repository")),
+                &super::repository::key_type(&columns),
             ),
         },
         Artifact {
@@ -323,6 +328,7 @@ pub(crate) fn scaffold_artifacts_from_fields(
                 ),
                 parsed.iter().any(|f| f.name == "id"),
                 parsed,
+                &super::repository::key_type(&columns),
             ),
         },
         Artifact {
@@ -334,6 +340,7 @@ pub(crate) fn scaffold_artifacts_from_fields(
                 &import_of(&web, &service, &format!("{name}Service")),
                 parsed,
                 (&sample.0, &sample.1[..]),
+                &super::repository::key_type(&columns),
             ),
         },
     ]);

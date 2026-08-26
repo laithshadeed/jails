@@ -216,7 +216,7 @@ pub(crate) fn durable_job_files(
         Artifact {
             kind: "durable worker",
             path: main_jobs.join(format!("{name}Worker.java")),
-            contents: durable_worker_java(slice, name, usecase, target, fields),
+            contents: durable_worker_java(slice, name, usecase, target, fields, &target_fields),
         },
         Artifact {
             kind: "durable job controller",
@@ -226,7 +226,7 @@ pub(crate) fn durable_job_files(
         Artifact {
             kind: "durable job integration test",
             path: test_jobs.join(format!("{name}JobIT.java")),
-            contents: durable_job_it_java(slice, name, target, &table, fields),
+            contents: durable_job_it_java(slice, name, target, &table, fields, &target_fields),
         },
         Artifact {
             kind: "durable job migration",
@@ -344,10 +344,17 @@ fn durable_worker_java(
     usecase: &str,
     target: &str,
     fields: &[crate::generate::Field],
+    target_fields: &[crate::generate::Field],
 ) -> String {
     let pkg: &str = &slice.placed(Layer::Jobs);
     let service: &str = &slice.owned(Layer::Service);
     let app: &str = &slice.owned(Layer::App);
+    let domain: &str = &slice.owned(Layer::Domain);
+    // The target's port is typed on the target's own key. plan.md P3.3.
+    let key_argument = crate::generate::key_argument(
+        "work.id()",
+        &crate::generate::key_type_of(target_fields, slice.project(), domain),
+    );
     let command_import = crate::generate::import_of(pkg, service, &format!("{usecase}Command"));
     let usecase_import = crate::generate::import_of(pkg, service, &format!("{usecase}UseCase"));
     let repo_import = crate::generate::import_of(pkg, app, &format!("{target}Repository"));
@@ -369,6 +376,7 @@ fn durable_worker_java(
             ("target", target),
             ("property", &*property),
             ("args", &*args),
+            ("key_argument", &*key_argument),
         ],
     )
 }
@@ -420,11 +428,17 @@ fn durable_job_it_java(
     target: &str,
     table: &str,
     fields: &[crate::generate::Field],
+    target_fields: &[crate::generate::Field],
 ) -> String {
     let project = slice.project();
     let pkg: &str = &slice.placed(Layer::Jobs);
     let app: &str = &slice.owned(Layer::App);
     let domain: &str = &slice.owned(Layer::Domain);
+    // The target's port is typed on the target's own key. plan.md P3.3.
+    let key_argument = crate::generate::key_argument(
+        "work.id()",
+        &crate::generate::key_type_of(target_fields, project, domain),
+    );
     let samples = fields
         .iter()
         .map(|field| crate::generate::sample_value(field, project, domain))
@@ -490,6 +504,7 @@ fn durable_job_it_java(
             ("imports", &*imports),
             ("disabled_import", disabled_import),
             ("annotation", annotation),
+            ("key_argument", &*key_argument),
             ("name", name),
             ("target", target),
             ("args", &*args),

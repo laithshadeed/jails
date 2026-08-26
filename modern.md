@@ -814,24 +814,6 @@ The follow-on question jails would then have to answer — what happens to that
 rather than avoiding: `g enum` adding a constant should generate the
 `alter table … drop constraint … add constraint …` migration in the same step.
 
-### 13.5 `findById(String)` in 11 of 12 generated ports
-
-| domain component | port signature |
-|---|---|
-| `Conversation(long id, …)` | `findById(String)` |
-| `Message(long id, …)` ×5 | `findById(String)` |
-| `Ticket(UUID id, …)` | `findById(String)` |
-| `Issue(long id, …)` | `findById(String)` |
-| `User(long id, …)` ×2 | `findById(String)` |
-| `User(UUID id, …)` — `my-minicom` | `findById(UUID)` |
-
-Neither `long` nor `UUID` survives to the port. The one exception is in
-`my-minicom`, where `UserRepository` takes a `UUID` and `MessageRepository`
-takes a `String` — **two ports in one application, over two tables, disagreeing
-about how identity is typed.** Everything downstream inherits it:
-`repository.findById(String.valueOf(created.id()))` appears in every generated
-test, and the JDBC adapter has to `cast(:id as uuid)` to undo it.
-
 ### 13.6 `g client` generates a plausible shape nobody asked for
 
 *The unbounded-call half is closed: the generator writes a base URL and both

@@ -48,12 +48,12 @@ public final class JdbcItemRepository implements ItemRepository {
     }
 
     @Override
-    public Optional<Item> findById(String id) {
+    public Optional<Item> findById(UUID id) {
         Objects.requireNonNull(id, "id is required");
         return db.sql("""
                         select %s
                         from items
-                        where id = cast(:id as uuid)
+                        where id = :id
                         """.formatted(COLUMNS))
                 .param("id", id)
                 .query(JdbcItemRepository::map)
@@ -87,11 +87,11 @@ public final class JdbcItemRepository implements ItemRepository {
     }
 
     @Override
-    public boolean deleteById(String id) {
+    public boolean deleteById(UUID id) {
         Objects.requireNonNull(id, "id is required");
         return db.sql("""
                         delete from items
-                        where id = cast(:id as uuid)
+                        where id = :id
                         """)
                 .param("id", id)
                 .update()

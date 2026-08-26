@@ -452,7 +452,11 @@ fn usecase_test_java(
     } else {
         "        assertThat(created.id()).isNotNull();"
     };
-    let _ = target_fields;
+    // The scaffolded target's port is typed on its own key. plan.md P3.3.
+    let key_argument = crate::generate::key_argument(
+        "created.id()",
+        &crate::generate::key_type_of(target_fields, project, domain),
+    );
     crate::template::render(
         crate::template_here!("spring/usecase_test_java.java"),
         &[
@@ -466,6 +470,7 @@ fn usecase_test_java(
             ("target", target),
             ("args", &*args),
             ("id_assertion", id_assertion),
+            ("key_argument", &*key_argument),
             ("copied", &*copied),
         ],
     )

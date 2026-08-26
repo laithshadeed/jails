@@ -34,7 +34,7 @@ class JdbcItemRepositoryIT {
                 Instant.parse("2024-01-01T00:00:00Z"));
         repository.save(item);
 
-        String key = String.valueOf(item.id());
+        UUID key = item.id();
         assertThat(repository.findById(key)).contains(item);
         assertThat(repository.findAll()).contains(item);
 

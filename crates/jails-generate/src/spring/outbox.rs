@@ -149,7 +149,14 @@ pub(crate) fn outbox_files(
         Artifact {
             kind: "transactional outbox integration test",
             path: test_jobs.join(format!("{usecase}OutboxIT.java")),
-            contents: outbox_it_java(slice, usecase, target, &property, command_fields),
+            contents: outbox_it_java(
+                slice,
+                usecase,
+                target,
+                &property,
+                command_fields,
+                &target_fields,
+            ),
         },
         Artifact {
             kind: "transactional outbox migration",
@@ -297,6 +304,7 @@ fn outbox_it_java(
     target: &str,
     property: &str,
     fields: &[crate::generate::Field],
+    target_fields: &[crate::generate::Field],
 ) -> String {
     let project = slice.project();
     let pkg: &str = &slice.owned(Layer::Jobs);
@@ -330,6 +338,11 @@ fn outbox_it_java(
     } else {
         ""
     };
+    // The target's port is typed on the target's own key. plan.md P3.3.
+    let key_argument = crate::generate::key_argument(
+        "result.id()",
+        &crate::generate::key_type_of(target_fields, project, domain),
+    );
     crate::template::render(
         crate::template_here!("spring/outbox_it_java.java"),
         &[
@@ -343,6 +356,7 @@ fn outbox_it_java(
             ("imports", &*imports),
             ("disabled_import", disabled_import),
             ("annotation", annotation),
+            ("key_argument", &*key_argument),
             ("property", property),
             ("usecase", usecase),
             ("target", target),

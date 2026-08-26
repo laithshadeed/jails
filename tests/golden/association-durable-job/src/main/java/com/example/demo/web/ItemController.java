@@ -6,6 +6,7 @@ import jakarta.validation.Valid;
 import java.net.URI;
 import java.util.List;
 import java.util.Objects;
+import java.util.UUID;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -47,7 +48,7 @@ public class ItemController {
 
     /** 404 rather than an empty 200: "no such thing" and "here is nothing" differ. */
     @GetMapping("/{id}")
-    public ResponseEntity<ItemResponse> byId(@PathVariable String id) {
+    public ResponseEntity<ItemResponse> byId(@PathVariable UUID id) {
         return service.findById(id)
                 .map(ItemResponse::from)
                 .map(ResponseEntity::ok)
@@ -63,7 +64,7 @@ public class ItemController {
 
     /** 204 when something was removed, 404 when there was nothing to remove. */
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> delete(@PathVariable String id) {
+    public ResponseEntity<Void> delete(@PathVariable UUID id) {
         return service.deleteById(id)
                 ? ResponseEntity.noContent().build()
                 : ResponseEntity.notFound().build();

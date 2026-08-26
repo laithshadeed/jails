@@ -5,13 +5,15 @@ import com.example.demo.domain.Message;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * {@link MessageRepository} in memory, so the application runs before it has
  * a database.
  *
- * <p>Keyed on the record's own {@code id} component.
+ * <p>Keyed on the {@code id} component -- the same one the JDBC
+ * adapter's {@code where} clause uses.
  *
  * <p>{@link ConcurrentHashMap} rather than {@link java.util.HashMap}: a web
  * application serves requests on many threads at once, and an unsynchronised
@@ -24,10 +26,10 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class InMemoryMessageRepository implements MessageRepository {
 
-    private final Map<String, Message> items = new ConcurrentHashMap<>();
+    private final Map<UUID, Message> items = new ConcurrentHashMap<>();
 
     @Override
-    public Optional<Message> findById(String id) {
+    public Optional<Message> findById(UUID id) {
         return Optional.ofNullable(items.get(id));
     }
 
@@ -38,11 +40,11 @@ public class InMemoryMessageRepository implements MessageRepository {
 
     @Override
     public void save(Message message) {
-        items.put(String.valueOf(message.id()), message);
+        items.put(message.id(), message);
     }
 
     @Override
-    public boolean deleteById(String id) {
+    public boolean deleteById(UUID id) {
         return items.remove(id) != null;
     }
 }

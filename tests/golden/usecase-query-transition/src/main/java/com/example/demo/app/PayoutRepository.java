@@ -3,6 +3,7 @@ package com.example.demo.app;
 import com.example.demo.domain.Payout;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 /**
  * Storage for {@link Payout}, as the application sees it.
@@ -16,7 +17,7 @@ import java.util.Optional;
  */
 public interface PayoutRepository {
 
-    Optional<Payout> findById(String id);
+    Optional<Payout> findById(UUID id);
 
     List<Payout> findAll();
 
@@ -24,5 +25,5 @@ public interface PayoutRepository {
     void save(Payout payout);
 
     /** @return true when a row was actually removed. */
-    boolean deleteById(String id);
+    boolean deleteById(UUID id);
 }

@@ -1,6 +1,6 @@
 package {{pkg}};
 
-{{extra}}import static org.mockito.ArgumentMatchers.any;
+{{extra}}{{key_import}}import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -67,15 +67,17 @@ class {{name}}ControllerTest {
 
     @Test
     void aMissingItemIs404() throws Exception {
-        given(service.findById("nope")).willReturn(Optional.empty());
+        {{key}} missing = {{absent}};
+        given(service.findById(missing)).willReturn(Optional.empty());
 
-        mvc.perform(get({{name}}Controller.PATH + "/nope")).andExpect(status().isNotFound());
+        mvc.perform(get({{name}}Controller.PATH + "/" + missing)).andExpect(status().isNotFound());
     }
 
     @Test
     void aDeleteThatRemovedNothingIs404() throws Exception {
-        given(service.deleteById("nope")).willReturn(false);
+        {{key}} missing = {{absent}};
+        given(service.deleteById(missing)).willReturn(false);
 
-        mvc.perform(delete({{name}}Controller.PATH + "/nope")).andExpect(status().isNotFound());
+        mvc.perform(delete({{name}}Controller.PATH + "/" + missing)).andExpect(status().isNotFound());
     }
 }

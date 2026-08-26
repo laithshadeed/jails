@@ -5,6 +5,7 @@ import com.example.demo.domain.Note;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.stereotype.Component;
 
@@ -12,7 +13,8 @@ import org.springframework.stereotype.Component;
  * {@link NoteRepository} in memory, so the application runs before it has
  * a database.
  *
- * <p>Keyed on the record's own {@code id} component.
+ * <p>Keyed on the {@code id} component -- the same one the JDBC
+ * adapter's {@code where} clause uses.
  *
  * <p>{@link ConcurrentHashMap} rather than {@link java.util.HashMap}: a web
  * application serves requests on many threads at once, and an unsynchronised
@@ -27,10 +29,10 @@ import org.springframework.stereotype.Component;
 @Component
 public class InMemoryNoteRepository implements NoteRepository {
 
-    private final Map<String, Note> items = new ConcurrentHashMap<>();
+    private final Map<UUID, Note> items = new ConcurrentHashMap<>();
 
     @Override
-    public Optional<Note> findById(String id) {
+    public Optional<Note> findById(UUID id) {
         return Optional.ofNullable(items.get(id));
     }
 
@@ -41,11 +43,11 @@ public class InMemoryNoteRepository implements NoteRepository {
 
     @Override
     public void save(Note note) {
-        items.put(String.valueOf(note.id()), note);
+        items.put(note.id(), note);
     }
 
     @Override
-    public boolean deleteById(String id) {
+    public boolean deleteById(UUID id) {
         return items.remove(id) != null;
     }
 }

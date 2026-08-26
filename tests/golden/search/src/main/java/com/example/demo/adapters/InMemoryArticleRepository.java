@@ -5,13 +5,15 @@ import com.example.demo.domain.Article;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * {@link ArticleRepository} in memory, so the application runs before it has
  * a database.
  *
- * <p>Keyed on the record's own {@code id} component.
+ * <p>Keyed on the {@code id} component -- the same one the JDBC
+ * adapter's {@code where} clause uses.
  *
  * <p>{@link ConcurrentHashMap} rather than {@link java.util.HashMap}: a web
  * application serves requests on many threads at once, and an unsynchronised
@@ -24,10 +26,10 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class InMemoryArticleRepository implements ArticleRepository {
 
-    private final Map<String, Article> items = new ConcurrentHashMap<>();
+    private final Map<UUID, Article> items = new ConcurrentHashMap<>();
 
     @Override
-    public Optional<Article> findById(String id) {
+    public Optional<Article> findById(UUID id) {
         return Optional.ofNullable(items.get(id));
     }
 
@@ -38,11 +40,11 @@ public class InMemoryArticleRepository implements ArticleRepository {
 
     @Override
     public void save(Article article) {
-        items.put(String.valueOf(article.id()), article);
+        items.put(article.id(), article);
     }
 
     @Override
-    public boolean deleteById(String id) {
+    public boolean deleteById(UUID id) {
         return items.remove(id) != null;
     }
 }

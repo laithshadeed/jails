@@ -1,6 +1,6 @@
 package {{pkg}};
 
-{{extra}}{{location_import}}import {{validation}}.validation.Valid;
+{{extra}}{{key_import}}{{location_import}}import {{validation}}.validation.Valid;
 import java.util.List;
 import java.util.Objects;
 {{status_import}}import org.springframework.http.ResponseEntity;
@@ -44,7 +44,7 @@ public class {{name}}Controller {
 
     /** 404 rather than an empty 200: "no such thing" and "here is nothing" differ. */
     @GetMapping("/{id}")
-    public ResponseEntity<{{name}}Response> byId(@PathVariable String id) {
+    public ResponseEntity<{{name}}Response> byId(@PathVariable {{key}} id) {
         return service.findById(id)
                 .map({{name}}Response::from)
                 .map(ResponseEntity::ok)
@@ -59,7 +59,7 @@ public class {{name}}Controller {
 
     /** 204 when something was removed, 404 when there was nothing to remove. */
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> delete(@PathVariable String id) {
+    public ResponseEntity<Void> delete(@PathVariable {{key}} id) {
         return service.deleteById(id)
                 ? ResponseEntity.noContent().build()
                 : ResponseEntity.notFound().build();

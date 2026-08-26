@@ -20,13 +20,20 @@ use super::*;
 /// repository, so the day one of these operations grows a rule (a permission
 /// check, an event to publish) there is somewhere for it to go that is not a
 /// controller method.
-pub(crate) fn resource_service_java(pkg: &str, name: &str, extra: &str) -> String {
+pub(crate) fn resource_service_java(
+    pkg: &str,
+    name: &str,
+    extra: &str,
+    key: &crate::generate::KeyType,
+) -> String {
     let var = crate::generate::lower_first(name);
     crate::template::render(
         crate::template_here!("spring/resource_service_java.java"),
         &[
             ("pkg", pkg),
             ("extra", extra),
+            ("key", &key.java),
+            ("key_import", &key.import),
             ("name", name),
             ("var", &*var),
         ],
@@ -47,9 +54,13 @@ pub(crate) fn resource_controller_java(
     extra: &str,
     has_id: bool,
     fields: &[crate::generate::Field],
+    key: &crate::generate::KeyType,
 ) -> String {
     let pkg: &str = &slice.placed(Layer::Web);
     if fields.iter().any(|field| field.constraints.scoped) {
+        // The scoped controller has no id lookup and no delete -- a plain
+        // repository operation cannot prove a tenant boundary -- so it never
+        // names the key type and must not import it either.
         return scoped_resource_controller_java(slice, name, extra, has_id, fields);
     }
     let path = format!("/{}", crate::sql::table_name(name).replace('_', "-"));
@@ -90,6 +101,8 @@ pub(crate) fn resource_controller_java(
             ("extra", extra),
             ("location_import", location_import),
             ("status_import", status_import),
+            ("key", &key.java),
+            ("key_import", &key.import),
             ("name", name),
             ("path", &*path),
             ("created", &*created),
@@ -173,6 +186,7 @@ pub(crate) fn resource_controller_test_java(
     extra: &str,
     fields: &[crate::generate::Field],
     sample: (&str, &[String]),
+    key: &crate::generate::KeyType,
 ) -> String {
     let security: &str = slice.base();
     let pkg: &str = &slice.placed(Layer::Web);
@@ -232,6 +246,9 @@ pub(crate) fn resource_controller_test_java(
         &[
             ("pkg", pkg),
             ("extra", extra),
+            ("key", &key.java),
+            ("key_import", &key.import),
+            ("absent", &key.samples.1),
             ("name", name),
             ("route_file", &*route_file),
             ("create_body", &*create_body),
@@ -251,10 +268,23 @@ pub(crate) fn resource_controller_test_java(
 /// What it pins is delegation and the two boolean-ish outcomes that are easy
 /// to get backwards -- an absent item is `Optional.empty()`, and a delete
 /// reports whether anything was actually removed.
-pub(crate) fn resource_service_test_java(pkg: &str, name: &str, extra: &str) -> String {
+pub(crate) fn resource_service_test_java(
+    pkg: &str,
+    name: &str,
+    extra: &str,
+    key: &crate::generate::KeyType,
+) -> String {
     crate::template::render(
         crate::template_here!("spring/resource_service_test_java.java"),
-        &[("pkg", pkg), ("extra", extra), ("name", name)],
+        &[
+            ("pkg", pkg),
+            ("extra", extra),
+            ("name", name),
+            ("key", &key.java),
+            ("key_import", &key.import),
+            ("present", &key.samples.0),
+            ("absent", &key.samples.1),
+        ],
     )
 }
 
@@ -282,27 +312,45 @@ pub(crate) fn in_memory_repository_java(
     pkg: &str,
     name: &str,
     extra: &str,
-    id_accessor: Option<&str>,
+    key: Option<&crate::generate::Field>,
+    key_type: &crate::generate::KeyType,
     is_bean: bool,
 ) -> String {
     let var = crate::generate::lower_first(name);
-    let (find_by_id, delete_by_id, save_body, note) = match id_accessor {
-        Some(accessor) => (
-            "        return Optional.ofNullable(items.get(id));".to_string(),
-            "        return items.remove(id) != null;".to_string(),
-            format!("        items.put(String.valueOf({var}.{accessor}()), {var});"),
-            " * <p>Keyed on the record's own {@code id} component.\n",
-        ),
+    let (find_by_id, delete_by_id, save_body, note) = match key {
+        Some(field) => {
+            let accessor = &field.name;
+            // Keyed on the *repository's* key component, and stored as the
+            // value rather than a rendering of it. Two things were wrong
+            // before: this keyed on `id` while the JDBC adapter's `where`
+            // clause keyed on the declared `@pk`, and it stringified the
+            // value so `findById` could never match a typed lookup.
+            let stored = if key_type.is_opaque() {
+                format!("String.valueOf({var}.{accessor}())")
+            } else {
+                format!("{var}.{accessor}()")
+            };
+            (
+                "        return Optional.ofNullable(items.get(id));".to_string(),
+                "        return items.remove(id) != null;".to_string(),
+                format!("        items.put({stored}, {var});"),
+                format!(
+                    " * <p>Keyed on the {{@code {accessor}}} component -- the same one the JDBC\n \
+                     * adapter's {{@code where}} clause uses.\n"
+                ),
+            )
+        }
         None => (
-            "        // TODO: this type has no `id` component, so jails cannot\n\
-             \x20       // tell which part of it is the identity. Pick one and key\n\
-             \x20       // `items` on it.\n\
+            "        // TODO: jails cannot see which component of this type is\n\
+             \x20       // its identity -- no `@pk`, and no component it has a\n\
+             \x20       // storage mapping for. Pick one and key `items` on it.\n\
              \x20       return Optional.empty();"
                 .to_string(),
             "        return items.remove(id) != null;".to_string(),
             format!("        items.put(String.valueOf(items.size()), {var});"),
-            " * <p>This type declares no {@code id} component, so lookups by id are\n\
-             \x20* left unimplemented -- see the TODO in {@code findById}.\n",
+            " * <p>This type declares no key jails can see, so lookups by id are\n\
+             \x20* left unimplemented -- see the TODO in {@code findById}.\n"
+                .to_string(),
         ),
     };
     // Exactly one adapter is the bean. When the JDBC one is, this is a fake
@@ -331,7 +379,9 @@ pub(crate) fn in_memory_repository_java(
             ("extra", extra),
             ("repository_import", repository_import),
             ("name", name),
-            ("note", note),
+            ("note", &*note),
+            ("key", &key_type.java),
+            ("key_import", &key_type.import),
             ("role_note", &*role_note),
             ("repository_annotation", repository_annotation),
             ("find_by_id", &*find_by_id),

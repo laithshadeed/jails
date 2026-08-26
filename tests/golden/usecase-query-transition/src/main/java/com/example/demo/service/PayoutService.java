@@ -5,6 +5,7 @@ import com.example.demo.domain.Payout;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import org.springframework.stereotype.Component;
 
 /**
@@ -26,7 +27,7 @@ public class PayoutService {
         return repository.findAll();
     }
 
-    public Optional<Payout> findById(String id) {
+    public Optional<Payout> findById(UUID id) {
         return repository.findById(id);
     }
 
@@ -36,7 +37,7 @@ public class PayoutService {
     }
 
     /** @return true when a row was actually removed. */
-    public boolean deleteById(String id) {
+    public boolean deleteById(UUID id) {
         return repository.deleteById(id);
     }
 }

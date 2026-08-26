@@ -10,14 +10,178 @@ use super::*;
 // ---- repo: a port the application depends on, and the JDBC adapter that
 // implements it. The one pattern java.md names by name. ----
 
-pub(super) fn repository_port(pkg: &str, name: &str, extra: &str) -> String {
+/// The Java type a repository port is keyed on, and the import it costs.
+///
+/// **Derived once and passed down**, never recomputed per template. plan.md
+/// P3.3: eleven of twelve generated ports declared `findById(String)` over a
+/// `UUID` primary key, and in one real project two ports over two tables in
+/// one application disagreed about it -- so every caller had to spell
+/// `String.valueOf(x.id())` and the compiler could not say when that was
+/// wrong.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct KeyType {
+    /// The parameter type, **boxed**: a `Map<K, V>` and an `Optional<K>` need
+    /// a reference type, and `long@pk` would otherwise produce neither.
+    pub(crate) java: String,
+    /// `import java.util.UUID;\n`, or empty. Rendered rather than returned as
+    /// a name because every template splices it into an import block.
+    pub(crate) import: String,
+    /// Two distinct key values, for the generated tests that have to say
+    /// "this one is there and that one is not".
+    ///
+    /// **They are part of the type, not a lookup beside it**, because a key
+    /// type with no way to write one down produces a test that does not
+    /// compile -- so [`key_type`] declines to leave `String` at all unless it
+    /// can also supply these.
+    pub(crate) samples: (String, String),
+}
+
+impl KeyType {
+    /// The fallback, and the one honest answer when jails cannot see the key:
+    /// `g repo` on a type it has never had a field spec for, or a key column
+    /// whose type it has no mapping for.
+    fn opaque() -> Self {
+        Self {
+            java: "String".to_string(),
+            import: String::new(),
+            samples: (
+                sample_literal("String").to_string(),
+                alternate_sample_literal("String")
+                    .expect("String has an alternate sample")
+                    .to_string(),
+            ),
+        }
+    }
+
+    /// True when the key is the historical untyped one, so a caller that has
+    /// to render a conversion knows it still needs one.
+    pub(crate) fn is_opaque(&self) -> bool {
+        self.java == "String"
+    }
+}
+
+/// Which type the repository's `findById` takes, read off the same columns
+/// [`repository_key`] picks the key column from -- so the port's signature
+/// and the adapter's `where` clause cannot disagree about which component is
+/// the identity.
+pub(crate) fn key_type(columns: &[crate::sql::Column]) -> KeyType {
+    let RepositoryKey::Single(Some(column)) = repository_key(columns) else {
+        // Composite. The port cannot represent it and says so; a key type
+        // would be a second, quieter lie beside the explicit one.
+        return KeyType::opaque();
+    };
+    if !column.mapped() {
+        return KeyType::opaque();
+    }
+    match builtin_by_java_name(&column.java_type) {
+        Some((boxed, import)) => {
+            let Some(alternate) = alternate_sample_literal(boxed) else {
+                // A type jails cannot write two distinct values of has no
+                // usable generated test, and a port typed on it would produce
+                // one that does not compile. Staying opaque is the honest
+                // trade.
+                return KeyType::opaque();
+            };
+            KeyType {
+                java: boxed.to_string(),
+                import: import
+                    .map(|import| format!("import {import};\n"))
+                    .unwrap_or_default(),
+                samples: (sample_literal(boxed).to_string(), alternate.to_string()),
+            }
+        }
+        // An owned type -- a project enum, say. Its identity is a value jails
+        // knows nothing about beyond the name it is stored under, so the port
+        // keeps the text form rather than naming a type it cannot construct.
+        None => KeyType::opaque(),
+    }
+}
+
+/// A second sample of a key type, distinct from [`sample_literal`]'s.
+///
+/// **Deliberately narrower than [`builtin_by_java_name`]'s table.** A typed
+/// port is not free: the same value has to survive a `@PathVariable`, a
+/// `Map` key and a JDBC parameter, and it has to be writable twice so a test
+/// can say "this one is there and that one is not". These six do all of that.
+/// A `Duration`, a `URI` or a `Path` primary key would reach a URL path
+/// segment and lose, and `boolean`/`double` are not identities -- so those
+/// keep the text port they have today rather than getting a typed one that
+/// fails at the edge.
+fn alternate_sample_literal(java_type: &str) -> Option<&'static str> {
+    Some(match java_type {
+        "String" => "\"other\"",
+        "Integer" | "int" => "2",
+        "Long" | "long" => "2L",
+        "UUID" => "UUID.fromString(\"00000000-0000-0000-0000-000000000002\")",
+        "LocalDate" => "LocalDate.of(2024, 1, 2)",
+        "Instant" => "Instant.parse(\"2024-01-02T00:00:00Z\")",
+        _ => return None,
+    })
+}
+
+/// The component a repository is keyed on, as the field it came from.
+///
+/// `sql::columns` derives one column per field in declaration order, so the
+/// index that picks the key column out of one picks the key component out of
+/// the other. This is what lets the in-memory adapter key on the same thing
+/// the JDBC adapter's `where` clause does -- they used to disagree, the
+/// in-memory one keying on `String.valueOf(x.id())` or, with no `id`
+/// component at all, on a collision-prone counter while its Javadoc claimed
+/// otherwise. plan.md P3.3.
+pub(crate) fn key_component<'a>(
+    fields: &'a [Field],
+    columns: &[crate::sql::Column],
+) -> Option<&'a Field> {
+    let RepositoryKey::Single(Some(key)) = repository_key(columns) else {
+        return None;
+    };
+    let index = columns
+        .iter()
+        .position(|column| column.name == key.name)
+        .expect("the selected repository key came from this column slice");
+    fields.get(index)
+}
+
+/// The same key type, asked about a field list rather than a column list.
+///
+/// The renderers for `usecase`, `transition`, `durable-job` and the outbox
+/// all call a scaffolded resource's port and have the target's *fields*, not
+/// its columns. Deriving the columns here rather than letting each of them
+/// guess is what keeps their `findById` argument in step with the port's
+/// parameter -- five templates spelled `String.valueOf(x.id())` because the
+/// port was untyped, and any one of them left behind would be a compile
+/// error in a freshly generated project. plan.md P3.3.
+pub(crate) fn key_type_of(
+    fields: &[Field],
+    project: &crate::model::Project,
+    domain: &str,
+) -> KeyType {
+    key_type(&crate::sql::columns(fields, project, domain, "value"))
+}
+
+/// How a caller that holds the record hands its identity to the port.
+///
+/// One helper rather than a conditional at each site: an opaque port still
+/// takes text, and the conversion has to appear exactly where it is needed
+/// and nowhere else.
+pub(crate) fn key_argument(expression: &str, key: &KeyType) -> String {
+    if key.is_opaque() {
+        format!("String.valueOf({expression})")
+    } else {
+        expression.to_string()
+    }
+}
+
+pub(super) fn repository_port(pkg: &str, name: &str, extra: &str, key: &KeyType) -> String {
     let var = lower_first(name);
+    let key_import = &key.import;
+    let key_java = &key.java;
     format!(
         r#"package {pkg};
 
 {extra}import java.util.List;
 import java.util.Optional;
-
+{key_import}
 /**
  * Storage for {{@link {name}}}, as the application sees it.
  *
@@ -30,7 +194,7 @@ import java.util.Optional;
  */
 public interface {name}Repository {{
 
-    Optional<{name}> findById(String id);
+    Optional<{name}> findById({key_java} id);
 
     List<{name}> findAll();
 
@@ -38,7 +202,7 @@ public interface {name}Repository {{
     void save({name} {var});
 
     /** @return true when a row was actually removed. */
-    boolean deleteById(String id);
+    boolean deleteById({key_java} id);
 }}
 "#
     )
@@ -114,11 +278,14 @@ pub(super) fn jdbc_repository_for(
     columns: &[crate::sql::Column],
     owner: &str,
 ) -> String {
+    // Derived here and handed to whichever adapter is chosen, so the two
+    // shapes cannot disagree with each other or with the port. plan.md P3.3.
+    let key = key_type(columns);
     match repository_wiring(project) {
         RepositoryWiring::JdbcClientBean => {
-            jdbc_client_repository(pkg, name, extra, columns, owner)
+            jdbc_client_repository(pkg, name, extra, columns, owner, &key)
         }
-        RepositoryWiring::PlainJdbc => jdbc_repository(pkg, name, extra, columns, owner),
+        RepositoryWiring::PlainJdbc => jdbc_repository(pkg, name, extra, columns, owner, &key),
     }
 }
 
@@ -178,6 +345,7 @@ pub(super) fn jdbc_client_repository(
     extra: &str,
     columns: &[crate::sql::Column],
     owner: &str,
+    key_type: &KeyType,
 ) -> String {
     let var = lower_first(name);
     let table = crate::sql::table_name(name);
@@ -206,15 +374,19 @@ pub(super) fn jdbc_client_repository(
     let id_column = key
         .map(|c| c.name.clone())
         .unwrap_or_else(|| "id".to_string());
-    // The port takes a String id, so a non-text key column needs the cast
-    // spelled out -- Postgres will not compare a uuid column to a text
-    // parameter on its own.
+    // The cast exists for the *opaque* port only. With a typed key the
+    // parameter is already the column's own type -- a `UUID` binds as `uuid`,
+    // a `Long` as `bigint` -- and casting it would be noise. When the port
+    // fell back to text, Postgres will not compare a uuid column to a text
+    // parameter on its own, so the cast is spelled out. plan.md P3.3.
     let key_placeholder = match key {
-        Some(column) if column.sql_type != "text" => {
+        Some(column) if key_type.is_opaque() && column.sql_type != "text" => {
             format!("cast(:id as {})", column.sql_type)
         }
         _ => ":id".to_string(),
     };
+    let key_java = &key_type.java;
+    let key_import = &key_type.import;
     let key_note = if composite_key {
         " * <p>The declared primary key is composite. The current {@code String id} port cannot\n * represent it, so the two single-key operations fail explicitly until the port is modelled.\n"
             .to_string()
@@ -337,7 +509,7 @@ pub(super) fn jdbc_client_repository(
     format!(
         r#"package {pkg};
 
-{extra}{sql_imports}import java.sql.ResultSet;
+{extra}{sql_imports}{key_import}import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.Objects;
@@ -374,7 +546,7 @@ public final class Jdbc{name}Repository implements {name}Repository {{
     }}
 
     @Override
-    public Optional<{name}> findById(String id) {{
+    public Optional<{name}> findById({key_java} id) {{
 {find_by_id_body}
     }}
 
@@ -402,7 +574,7 @@ public final class Jdbc{name}Repository implements {name}Repository {{
     }}
 
     @Override
-    public boolean deleteById(String id) {{
+    public boolean deleteById({key_java} id) {{
 {delete_by_id_body}
     }}
 
@@ -424,6 +596,7 @@ pub(super) fn jdbc_repository(
     // `valueOf` on can be imported. Without this the adapter compiles only
     // when it happens to sit in the same package as the enum.
     owner: &str,
+    key_type: &KeyType,
 ) -> String {
     let var = lower_first(name);
     let table = crate::sql::table_name(name);
@@ -457,15 +630,19 @@ pub(super) fn jdbc_repository(
     let id_column = key
         .map(|c| c.name.clone())
         .unwrap_or_else(|| "id".to_string());
-    // The port takes a String id, so a non-text key column needs the cast
-    // spelled out -- Postgres will not compare a uuid column to a text
-    // parameter on its own.
+    // The cast exists for the *opaque* port only. With a typed key the
+    // parameter is already the column's own type -- a `UUID` binds as `uuid`,
+    // a `Long` as `bigint` -- and casting it would be noise. When the port
+    // fell back to text, Postgres will not compare a uuid column to a text
+    // parameter on its own, so the cast is spelled out. plan.md P3.3.
     let key_placeholder = match key {
-        Some(column) if column.sql_type != "text" => {
+        Some(column) if key_type.is_opaque() && column.sql_type != "text" => {
             format!("cast(? as {})", column.sql_type)
         }
         _ => "?".to_string(),
     };
+    let key_java = &key_type.java;
+    let key_import = &key_type.import;
     let key_note = if composite_key {
         " * <p>The declared primary key is composite. The current {@code String id} port cannot\n              * represent it, so the two single-key operations fail explicitly until the port is modelled.\n"
             .to_string()
@@ -534,6 +711,14 @@ pub(super) fn jdbc_repository(
             "        throw new UnsupportedOperationException(\"TODO: bind {name} to the insert\");"
         )
     };
+    // `setString` binds text; a typed key binds as itself. `setObject` is
+    // the one setter that takes both a `UUID` and a `Long`, and pgjdbc maps
+    // each to the column type the statement expects. plan.md P3.3.
+    let key_setter = if key_type.is_opaque() {
+        "setString"
+    } else {
+        "setObject"
+    };
     let find_by_id_body = if composite_key {
         "        throw new UnsupportedOperationException(\"findById requires a composite-key repository port\");"
             .to_string()
@@ -541,7 +726,7 @@ pub(super) fn jdbc_repository(
         format!(
             r#"        Objects.requireNonNull(id, "id is required");
         try (var query = connection.prepareStatement(FIND_BY_ID)) {{
-            query.setString(1, id);
+            query.{key_setter}(1, id);
             try (var rows = query.executeQuery()) {{
                 return rows.next() ? Optional.of(map(rows)) : Optional.empty();
             }}
@@ -557,7 +742,7 @@ pub(super) fn jdbc_repository(
         format!(
             r#"        Objects.requireNonNull(id, "id is required");
         try (var delete = connection.prepareStatement(DELETE_BY_ID)) {{
-            delete.setString(1, id);
+            delete.{key_setter}(1, id);
             return delete.executeUpdate() > 0;
         }} catch (SQLException error) {{
             throw new IllegalStateException("could not delete from {table} " + id, error);
@@ -594,7 +779,7 @@ pub(super) fn jdbc_repository(
     format!(
         r#"package {pkg};
 
-{extra}{sql_imports}import java.sql.Connection;
+{extra}{sql_imports}{key_import}import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -644,7 +829,7 @@ public final class Jdbc{name}Repository implements {name}Repository {{
     }}
 
     @Override
-    public Optional<{name}> findById(String id) {{
+    public Optional<{name}> findById({key_java} id) {{
 {find_by_id_body}
     }}
 
@@ -675,7 +860,7 @@ public final class Jdbc{name}Repository implements {name}Repository {{
     }}
 
     @Override
-    public boolean deleteById(String id) {{
+    public boolean deleteById({key_java} id) {{
 {delete_by_id_body}
     }}
 
@@ -906,17 +1091,24 @@ fn jdbc_repository_test_with_wiring(
         .collect::<Vec<_>>()
         .join(",\n                ");
     let var = lower_first(name);
+    // The port is keyed on the component's own type now, so the round trip
+    // hands it that value rather than a rendering of it. An opaque key is
+    // still text -- an owned type reaches the port as its name. plan.md P3.3.
+    let key_type = key_type(columns);
     let key = if key_field.owned {
         format!("{var}.{}().name()", key_field.name)
-    } else {
+    } else if key_type.is_opaque() {
         format!("String.valueOf({var}.{}())", key_field.name)
+    } else {
+        format!("{var}.{}()", key_field.name)
     };
+    let key_java = &key_type.java;
     let body = format!(
         r#"        var {var} = new {name}(
                 {samples});
         repository.save({var});
 
-        String key = {key};
+        {key_java} key = {key};
         assertThat(repository.findById(key)).contains({var});
         assertThat(repository.findAll()).contains({var});
 
@@ -1074,6 +1266,7 @@ mod repository_test_generation_tests {
             "",
             &columns,
             "com.example.demo.domain",
+            &key_type(&columns),
         );
         let test = jdbc_repository_test_with_wiring(
             RepositoryWiring::JdbcClientBean,
@@ -1112,6 +1305,7 @@ mod repository_test_generation_tests {
             "",
             &columns,
             "com.example.demo.domain",
+            &key_type(&columns),
         );
         let test = jdbc_repository_test_with_wiring(
             RepositoryWiring::JdbcClientBean,
@@ -1183,12 +1377,15 @@ mod repository_test_generation_tests {
             "",
             &columns,
             "com.example.app.domain",
+            &key_type(&columns),
         );
+        let fields = parse_fields(&["id:string!".to_string(), "title:string".to_string()]).unwrap();
         let in_memory_fake = crate::spring::in_memory_repository_java(
             "com.example.app.adapters",
             "Note",
             "",
-            Some("id"),
+            key_component(&fields, &columns),
+            &key_type(&columns),
             false,
         );
         // The annotation on the declaration, not the word in the Javadoc.
@@ -1210,7 +1407,8 @@ mod repository_test_generation_tests {
             "com.example.app.adapters",
             "Note",
             "",
-            Some("id"),
+            key_component(&fields, &columns),
+            &key_type(&columns),
             true,
         );
         assert!(
@@ -1241,6 +1439,7 @@ mod repository_test_generation_tests {
             "",
             &columns,
             "com.example.app.domain",
+            &key_type(&columns),
         );
         assert!(src.contains("JdbcClient"), "{src}");
         assert!(!src.contains("PreparedStatement"), "{src}");
@@ -1262,6 +1461,7 @@ mod repository_test_generation_tests {
             "com.example.demo.app",
             "Transaction",
             "import com.example.demo.domain.Transaction;\n",
+            &key_type(&[]),
         );
 
         assert!(
@@ -1284,6 +1484,7 @@ mod repository_test_generation_tests {
             "",
             &[],
             "com.example.demo.domain",
+            &key_type(&[]),
         );
 
         assert!(src.contains("implements TransactionRepository"), "{src}");

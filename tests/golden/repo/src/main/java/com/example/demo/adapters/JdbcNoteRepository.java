@@ -29,7 +29,7 @@ public final class JdbcNoteRepository implements NoteRepository {
                 id,
                 title
             from notes
-            where id = cast(? as uuid)
+            where id = ?
             """;
     private static final String FIND_ALL =
             """
@@ -47,7 +47,7 @@ public final class JdbcNoteRepository implements NoteRepository {
     private static final String DELETE_BY_ID =
             """
             delete from notes
-            where id = cast(? as uuid)
+            where id = ?
             """;
 
     private final Connection connection;
@@ -57,10 +57,10 @@ public final class JdbcNoteRepository implements NoteRepository {
     }
 
     @Override
-    public Optional<Note> findById(String id) {
+    public Optional<Note> findById(UUID id) {
         Objects.requireNonNull(id, "id is required");
         try (var query = connection.prepareStatement(FIND_BY_ID)) {
-            query.setString(1, id);
+            query.setObject(1, id);
             try (var rows = query.executeQuery()) {
                 return rows.next() ? Optional.of(map(rows)) : Optional.empty();
             }
@@ -96,10 +96,10 @@ public final class JdbcNoteRepository implements NoteRepository {
     }
 
     @Override
-    public boolean deleteById(String id) {
+    public boolean deleteById(UUID id) {
         Objects.requireNonNull(id, "id is required");
         try (var delete = connection.prepareStatement(DELETE_BY_ID)) {
-            delete.setString(1, id);
+            delete.setObject(1, id);
             return delete.executeUpdate() > 0;
         } catch (SQLException error) {
             throw new IllegalStateException("could not delete from notes " + id, error);

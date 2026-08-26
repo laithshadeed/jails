@@ -3,6 +3,7 @@ package com.example.demo.app;
 import com.example.demo.domain.Owner;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 /**
  * Storage for {@link Owner}, as the application sees it.
@@ -16,7 +17,7 @@ import java.util.Optional;
  */
 public interface OwnerRepository {
 
-    Optional<Owner> findById(String id);
+    Optional<Owner> findById(UUID id);
 
     List<Owner> findAll();
 
@@ -24,5 +25,5 @@ public interface OwnerRepository {
     void save(Owner owner);
 
     /** @return true when a row was actually removed. */
-    boolean deleteById(String id);
+    boolean deleteById(UUID id);
 }

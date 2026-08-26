@@ -23,6 +23,6 @@ class RequestPayoutUseCaseTest {
         assertThat(created.id()).isNotNull();
         assertThat(created.id()).isEqualTo(command.id());
         assertThat(created.amount()).isEqualTo(command.amount());
-        assertThat(repository.findById(String.valueOf(created.id()))).contains(created);
+        assertThat(repository.findById(created.id())).contains(created);
     }
 }

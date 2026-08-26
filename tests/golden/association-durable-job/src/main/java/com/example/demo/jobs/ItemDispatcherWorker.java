@@ -45,7 +45,7 @@ public final class ItemDispatcherWorker {
             // A process can die after the use-case transaction commits and
             // before this queue row is acknowledged. The stable shared id is
             // the recovery proof: do not repeat an already-visible effect.
-            if (results.findById(String.valueOf(work.id())).isEmpty()) {
+            if (results.findById(work.id()).isEmpty()) {
                 useCase.execute(new AddItemCommand(
                     work.id(),
                     work.ownerId(),

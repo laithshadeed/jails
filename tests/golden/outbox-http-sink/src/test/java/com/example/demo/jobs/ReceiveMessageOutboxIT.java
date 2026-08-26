@@ -36,7 +36,7 @@ class ReceiveMessageOutboxIT {
 
         var result = useCase.execute(command);
 
-        assertThat(results.findById(String.valueOf(result.id())))
+        assertThat(results.findById(result.id()))
                 .get().extracting(Message::id).isEqualTo(result.id());
         assertThat(outbox.status(result.id())).get()
                 .extracting(JdbcReceiveMessageOutbox.Status::state)

@@ -493,7 +493,12 @@ pub(crate) fn artifacts_for(
             artifacts.push(Artifact {
                 kind: "repository port",
                 path: main_dir(&root, &app).join(format!("{name}Repository.java")),
-                contents: repository_port(&app, name, &import_of(&app, &domain, name)),
+                contents: repository_port(
+                    &app,
+                    name,
+                    &import_of(&app, &domain, name),
+                    &repository::key_type(&columns),
+                ),
             });
             artifacts.push(Artifact {
                 kind: "JDBC adapter",

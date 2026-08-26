@@ -32,7 +32,7 @@ class JdbcArticleRepositoryIT {
                 "sample");
         repository.save(article);
 
-        String key = String.valueOf(article.id());
+        UUID key = article.id();
         assertThat(repository.findById(key)).contains(article);
         assertThat(repository.findAll()).contains(article);
 

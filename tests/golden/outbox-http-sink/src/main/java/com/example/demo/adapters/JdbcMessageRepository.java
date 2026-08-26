@@ -47,12 +47,12 @@ public final class JdbcMessageRepository implements MessageRepository {
     }
 
     @Override
-    public Optional<Message> findById(String id) {
+    public Optional<Message> findById(UUID id) {
         Objects.requireNonNull(id, "id is required");
         return db.sql("""
                         select %s
                         from messages
-                        where id = cast(:id as uuid)
+                        where id = :id
                         """.formatted(COLUMNS))
                 .param("id", id)
                 .query(JdbcMessageRepository::map)
@@ -85,11 +85,11 @@ public final class JdbcMessageRepository implements MessageRepository {
     }
 
     @Override
-    public boolean deleteById(String id) {
+    public boolean deleteById(UUID id) {
         Objects.requireNonNull(id, "id is required");
         return db.sql("""
                         delete from messages
-                        where id = cast(:id as uuid)
+                        where id = :id
                         """)
                 .param("id", id)
                 .update()

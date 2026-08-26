@@ -25,6 +25,6 @@ class AddItemUseCaseTest {
         assertThat(created.id()).isEqualTo(command.id());
         assertThat(created.ownerId()).isEqualTo(command.ownerId());
         assertThat(created.name()).isEqualTo(command.name());
-        assertThat(repository.findById(String.valueOf(created.id()))).contains(created);
+        assertThat(repository.findById(created.id())).contains(created);
     }
 }

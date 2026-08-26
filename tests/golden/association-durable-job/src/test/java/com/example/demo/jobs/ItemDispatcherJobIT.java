@@ -33,7 +33,7 @@ class ItemDispatcherJobIT {
         queue.enqueue(work);
         worker.runOnce();
 
-        assertThat(results.findById(String.valueOf(work.id()))).isPresent();
+        assertThat(results.findById(work.id())).isPresent();
         assertThat(queue.status(work.id())).get()
                 .extracting(ItemDispatcherQueue.Status::state)
                 .isEqualTo(ItemDispatcherQueue.State.SUCCEEDED);

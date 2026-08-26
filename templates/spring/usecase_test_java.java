@@ -18,6 +18,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 {{id_assertion}}
 {{copied}}
-        assertThat(repository.findById(String.valueOf(created.id()))).contains(created);
+        assertThat(repository.findById({{key_argument}})).contains(created);
     }
 }

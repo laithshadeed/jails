@@ -33,7 +33,7 @@ class JdbcOwnerRepositoryIT {
                 Instant.parse("2024-01-01T00:00:00Z"));
         repository.save(owner);
 
-        String key = String.valueOf(owner.id());
+        UUID key = owner.id();
         assertThat(repository.findById(key)).contains(owner);
         assertThat(repository.findAll()).contains(owner);
 

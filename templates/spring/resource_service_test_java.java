@@ -1,6 +1,6 @@
 package {{pkg}};
 
-{{extra}}import java.util.List;
+{{extra}}{{key_import}}import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
@@ -22,17 +22,20 @@ class {{name}}ServiceTest {
 
     @Test
     void aMissingIdIsEmptyRatherThanNull() {
-        given(repository.findById("nope")).willReturn(Optional.empty());
+        {{key}} missing = {{absent}};
+        given(repository.findById(missing)).willReturn(Optional.empty());
 
-        assertThat(service.findById("nope")).isEmpty();
+        assertThat(service.findById(missing)).isEmpty();
     }
 
     @Test
     void deleteReportsWhetherAnythingWasRemoved() {
-        given(repository.deleteById("gone")).willReturn(true);
-        given(repository.deleteById("never-existed")).willReturn(false);
+        {{key}} removed = {{present}};
+        {{key}} neverExisted = {{absent}};
+        given(repository.deleteById(removed)).willReturn(true);
+        given(repository.deleteById(neverExisted)).willReturn(false);
 
-        assertThat(service.deleteById("gone")).isTrue();
-        assertThat(service.deleteById("never-existed")).isFalse();
+        assertThat(service.deleteById(removed)).isTrue();
+        assertThat(service.deleteById(neverExisted)).isFalse();
     }
 }

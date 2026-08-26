@@ -23,6 +23,6 @@ class ReceiveMessageUseCaseTest {
         assertThat(created.id()).isNotNull();
         assertThat(created.id()).isEqualTo(command.id());
         assertThat(created.body()).isEqualTo(command.body());
-        assertThat(repository.findById(String.valueOf(created.id()))).contains(created);
+        assertThat(repository.findById(created.id())).contains(created);
     }
 }

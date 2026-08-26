@@ -44,12 +44,12 @@ public final class JdbcArticleRepository implements ArticleRepository {
     }
 
     @Override
-    public Optional<Article> findById(String id) {
+    public Optional<Article> findById(UUID id) {
         Objects.requireNonNull(id, "id is required");
         return db.sql("""
                         select %s
                         from articles
-                        where id = cast(:id as uuid)
+                        where id = :id
                         """.formatted(COLUMNS))
                 .param("id", id)
                 .query(JdbcArticleRepository::map)
@@ -82,11 +82,11 @@ public final class JdbcArticleRepository implements ArticleRepository {
     }
 
     @Override
-    public boolean deleteById(String id) {
+    public boolean deleteById(UUID id) {
         Objects.requireNonNull(id, "id is required");
         return db.sql("""
                         delete from articles
-                        where id = cast(:id as uuid)
+                        where id = :id
                         """)
                 .param("id", id)
                 .update()

@@ -3,6 +3,7 @@ package com.example.demo.app;
 import com.example.demo.domain.Note;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 /**
  * Storage for {@link Note}, as the application sees it.
@@ -16,7 +17,7 @@ import java.util.Optional;
  */
 public interface NoteRepository {
 
-    Optional<Note> findById(String id);
+    Optional<Note> findById(UUID id);
 
     List<Note> findAll();
 
@@ -24,5 +25,5 @@ public interface NoteRepository {
     void save(Note note);
 
     /** @return true when a row was actually removed. */
-    boolean deleteById(String id);
+    boolean deleteById(UUID id);
 }

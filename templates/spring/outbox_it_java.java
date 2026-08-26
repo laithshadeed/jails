@@ -28,7 +28,7 @@ class {{usecase}}OutboxIT {
 
         var result = useCase.execute(command);
 
-        assertThat(results.findById(String.valueOf(result.id())))
+        assertThat(results.findById({{key_argument}}))
                 .get().extracting({{target}}::id).isEqualTo(result.id());
         assertThat(outbox.status(result.id())).get()
                 .extracting(Jdbc{{usecase}}Outbox.Status::state)

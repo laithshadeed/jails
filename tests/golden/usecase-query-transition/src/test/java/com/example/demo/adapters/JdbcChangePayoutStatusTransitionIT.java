@@ -39,7 +39,7 @@ class JdbcChangePayoutStatusTransitionIT {
         assertThat(updated.version()).isEqualTo(command.version() + 1);
         assertThatThrownBy(() -> useCase.execute(command))
                 .isInstanceOf(ChangePayoutStatusUseCase.StaleVersionException.class);
-        assertThat(repository.findById(String.valueOf(command.id())))
+        assertThat(repository.findById(command.id()))
                 .get().extracting(Payout::version)
                 .isEqualTo(updated.version());
     }

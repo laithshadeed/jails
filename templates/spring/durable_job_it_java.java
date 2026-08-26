@@ -26,7 +26,7 @@ class {{name}}JobIT {
         queue.enqueue(work);
         worker.runOnce();
 
-        assertThat(results.findById(String.valueOf(work.id()))).isPresent();
+        assertThat(results.findById({{key_argument}})).isPresent();
         assertThat(queue.status(work.id())).get()
                 .extracting({{name}}Queue.Status::state)
                 .isEqualTo({{name}}Queue.State.SUCCEEDED);

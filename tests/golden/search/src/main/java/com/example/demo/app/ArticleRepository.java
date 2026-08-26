@@ -3,6 +3,7 @@ package com.example.demo.app;
 import com.example.demo.domain.Article;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 /**
  * Storage for {@link Article}, as the application sees it.
@@ -16,7 +17,7 @@ import java.util.Optional;
  */
 public interface ArticleRepository {
 
-    Optional<Article> findById(String id);
+    Optional<Article> findById(UUID id);
 
     List<Article> findAll();
 
@@ -24,5 +25,5 @@ public interface ArticleRepository {
     void save(Article article);
 
     /** @return true when a row was actually removed. */
-    boolean deleteById(String id);
+    boolean deleteById(UUID id);
 }

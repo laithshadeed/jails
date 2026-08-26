@@ -394,6 +394,11 @@ fn jdbc_transition_it_java(
     let app: &str = &slice.owned(Layer::App);
     let target_fields: &[crate::generate::Field] = &resource.fields;
     let target: &str = &resource.name;
+    // The scaffolded target's port is typed on its own key, so this test
+    // hands it that value rather than a rendering of it. plan.md P3.3.
+    let key = crate::generate::key_type_of(target_fields, project, domain);
+    let key_argument = crate::generate::key_argument("stored.id()", &key);
+    let command_key_argument = crate::generate::key_argument("command.id()", &key);
     let command_samples = fields
         .iter()
         .map(|field| crate::generate::sample_value(field, project, domain))
@@ -443,7 +448,7 @@ fn jdbc_transition_it_java(
 
         assertThatThrownBy(() -> useCase.execute(wrongScope))
                 .isInstanceOf({name}UseCase.NotFoundException.class);
-        assertThat(repository.findById(String.valueOf(stored.id()))).contains(stored);
+        assertThat(repository.findById({key_argument})).contains(stored);
     }}
 "#
             )
@@ -484,6 +489,7 @@ fn jdbc_transition_it_java(
             ("target", target),
             ("target_args", &*target_args),
             ("command_args", &*command_args),
+            ("key_argument", &*command_key_argument),
             ("wrong_scope_test", &*wrong_scope_test),
         ],
     )

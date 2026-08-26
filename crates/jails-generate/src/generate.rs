@@ -36,7 +36,7 @@ use closed::*;
 pub(crate) use domain::*;
 
 mod repository;
-use repository::*;
+pub(crate) use repository::*;
 
 mod recipes;
 mod write;

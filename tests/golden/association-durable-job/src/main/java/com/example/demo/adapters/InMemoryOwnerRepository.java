@@ -5,13 +5,15 @@ import com.example.demo.domain.Owner;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * {@link OwnerRepository} in memory, so the application runs before it has
  * a database.
  *
- * <p>Keyed on the record's own {@code id} component.
+ * <p>Keyed on the {@code id} component -- the same one the JDBC
+ * adapter's {@code where} clause uses.
  *
  * <p>{@link ConcurrentHashMap} rather than {@link java.util.HashMap}: a web
  * application serves requests on many threads at once, and an unsynchronised
@@ -24,10 +26,10 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class InMemoryOwnerRepository implements OwnerRepository {
 
-    private final Map<String, Owner> items = new ConcurrentHashMap<>();
+    private final Map<UUID, Owner> items = new ConcurrentHashMap<>();
 
     @Override
-    public Optional<Owner> findById(String id) {
+    public Optional<Owner> findById(UUID id) {
         return Optional.ofNullable(items.get(id));
     }
 
@@ -38,11 +40,11 @@ public class InMemoryOwnerRepository implements OwnerRepository {
 
     @Override
     public void save(Owner owner) {
-        items.put(String.valueOf(owner.id()), owner);
+        items.put(owner.id(), owner);
     }
 
     @Override
-    public boolean deleteById(String id) {
+    public boolean deleteById(UUID id) {
         return items.remove(id) != null;
     }
 }

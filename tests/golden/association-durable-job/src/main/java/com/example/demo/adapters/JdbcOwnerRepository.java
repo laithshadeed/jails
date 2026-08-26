@@ -47,12 +47,12 @@ public final class JdbcOwnerRepository implements OwnerRepository {
     }
 
     @Override
-    public Optional<Owner> findById(String id) {
+    public Optional<Owner> findById(UUID id) {
         Objects.requireNonNull(id, "id is required");
         return db.sql("""
                         select %s
                         from owners
-                        where id = cast(:id as uuid)
+                        where id = :id
                         """.formatted(COLUMNS))
                 .param("id", id)
                 .query(JdbcOwnerRepository::map)
@@ -85,11 +85,11 @@ public final class JdbcOwnerRepository implements OwnerRepository {
     }
 
     @Override
-    public boolean deleteById(String id) {
+    public boolean deleteById(UUID id) {
         Objects.requireNonNull(id, "id is required");
         return db.sql("""
                         delete from owners
-                        where id = cast(:id as uuid)
+                        where id = :id
                         """)
                 .param("id", id)
                 .update()

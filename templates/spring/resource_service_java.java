@@ -1,6 +1,6 @@
 package {{pkg}};
 
-{{extra}}import java.util.List;
+{{extra}}{{key_import}}import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import org.springframework.stereotype.Component;
@@ -24,7 +24,7 @@ public class {{name}}Service {
         return repository.findAll();
     }
 
-    public Optional<{{name}}> findById(String id) {
+    public Optional<{{name}}> findById({{key}} id) {
         return repository.findById(id);
     }
 
@@ -34,7 +34,7 @@ public class {{name}}Service {
     }
 
     /** @return true when a row was actually removed. */
-    public boolean deleteById(String id) {
+    public boolean deleteById({{key}} id) {
         return repository.deleteById(id);
     }
 }

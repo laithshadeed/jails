@@ -272,12 +272,25 @@ commit as the change that causes it.
       each. The ledger payload codec is `-3`; `-1` and `-2` are refused by
       name, since a payload carrying only the Java half has no second value
       to promote.
-- [ ] **P3.3** `findById` is typed on the primary key, not on `String` (modern
+- [x] **P3.3** `findById` is typed on the primary key, not on `String` (modern
       §13.5 — 11 of 12 generated ports, and in `my-minicom` two ports over two
       tables in one app disagree). Thread the `@pk` field's Java type through
       `crates/jails-generate/src/generate/repository.rs` and the ~10 templates
       under `templates/spring/` that hardcode `findById(String)` /
-      `String.valueOf(x.id())`.
+      `String.valueOf(x.id())`. Landed as `KeyType`, derived once per resource
+      and handed down, because the port, both adapters, the in-memory fake,
+      the service, the controller and five dependent templates all have to
+      agree and none of them can see the others. Three things fell out of it.
+      The type carries **two sample values**, since a generated test has to
+      say "this one is there and that one is not" and a key type with no way
+      to write one down produces a test that does not compile — so a key stays
+      untyped unless a pair exists, which is also what keeps `Duration`,
+      `URI`, `Path`, `boolean` and `double` out (none is a sane URL path
+      segment). The in-memory adapter now keys on the **repository's** key
+      component rather than on `id`, so it and the JDBC `where` clause stop
+      disagreeing. And `cast(:id as uuid)` / `setString` are gone wherever the
+      parameter is already the column's own type — they existed only to undo
+      the text port.
 - [ ] **P3.4** Names that carry no meaning (modern §3.2): the
       `Message_userAssociation` underscore, `Default…UseCase`, `…QueryPort`.
       `backend.md` §8 bans `Helper`/`Manager`/`Util` for the same reason.
