@@ -853,15 +853,11 @@ pub(crate) enum Command {
         #[arg(last = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    /// jshell with the project's classpath (not a Spring-booted REPL)
+    /// Boot the Spring application in JShell with context helpers
     #[command(visible_alias = "c")]
     Console {
-        /// Skip `mvn compile` -- use whatever is already in target/
-        #[arg(long)]
-        no_build: bool,
-        /// Extra arguments forwarded to jshell
-        #[arg(last = true, allow_hyphen_values = true)]
-        args: Vec<String>,
+        #[command(flatten)]
+        console: ConsoleArgs,
     },
     /// Rename a type and every reference to it (files, companions, call sites)
     Rename {

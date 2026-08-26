@@ -9,6 +9,13 @@ pub(crate) enum DatabaseClientArg {
     Psql,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum WebModeArg {
+    None,
+    Random,
+    Configured,
+}
+
 #[derive(Subcommand)]
 pub(crate) enum DbCommand {
     /// Open a real PostgreSQL client against a declared datasource
@@ -91,8 +98,28 @@ pub(crate) struct RunnerArgs {
     pub(crate) profiles: Vec<String>,
     #[arg(long)]
     pub(crate) main: Option<String>,
+    #[arg(long, value_enum, default_value = "none")]
+    pub(crate) web: WebModeArg,
     #[arg(long)]
     pub(crate) compile: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct ConsoleArgs {
+    #[arg(long = "profile")]
+    pub(crate) profiles: Vec<String>,
+    #[arg(long)]
+    pub(crate) main: Option<String>,
+    #[arg(long, value_enum, default_value = "none")]
+    pub(crate) web: WebModeArg,
+    #[arg(long)]
+    pub(crate) compile: bool,
+    /// Compatibility spelling for the default existing-output mode.
+    #[arg(long, hide = true, conflicts_with = "compile")]
+    pub(crate) no_build: bool,
+    /// Extra arguments forwarded verbatim to JShell.
+    #[arg(last = true, allow_hyphen_values = true)]
+    pub(crate) args: Vec<String>,
 }
 
 #[derive(Args)]

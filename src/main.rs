@@ -155,6 +155,7 @@ fn main() -> std::process::ExitCode {
             &runner.file,
             &runner.profiles,
             runner.main.as_deref(),
+            runner.web,
             runner.compile,
             invocation,
         ),
@@ -489,7 +490,14 @@ fn main() -> std::process::ExitCode {
             ),
             None => console::db(file.as_deref(), no_start, &args, debug),
         },
-        Command::Console { no_build, args } => console::console(no_build, &args, debug),
+        Command::Console { console } => tool_command::console(
+            &console.profiles,
+            console.main.as_deref(),
+            console.web,
+            console.compile,
+            &console.args,
+            invocation,
+        ),
         Command::Test {
             requested,
             scope,

@@ -158,7 +158,15 @@ fn runner_boots_one_spring_main_with_private_startup_and_project_script() {
     write_fake_maven(&fake, &["mvn", "jshell"], &log);
 
     let output = jails_cmd(&root, Some(&fake))
-        .args(["runner", "--file", "scripts/check.jsh", "--profile", "test"])
+        .args([
+            "runner",
+            "--file",
+            "scripts/check.jsh",
+            "--profile",
+            "test",
+            "--web",
+            "random",
+        ])
         .output()
         .unwrap();
     assert!(

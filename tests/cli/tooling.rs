@@ -769,7 +769,7 @@ fn console_launches_jshell_with_the_project_classpath() {
     write_fake_maven(&fake, &["mvn", "jshell"], &log);
     assert!(
         jails_cmd(&root, Some(&fake))
-            .args(["console", "--no-build"])
+            .args(["console", "--no-build", "--main", "com.example.demo.App",])
             .status()
             .unwrap()
             .success()
@@ -780,7 +780,9 @@ fn console_launches_jshell_with_the_project_classpath() {
         "{invocation}"
     );
     assert!(
-        invocation.contains("jshell") && invocation.contains("--class-path"),
+        invocation.contains("jshell")
+            && invocation.contains("--class-path")
+            && invocation.contains("--startup"),
         "{invocation}"
     );
     assert!(

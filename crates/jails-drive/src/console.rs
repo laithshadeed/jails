@@ -1,10 +1,8 @@
-//! `jails db` / `jails console` -- the Rails-shaped interactive commands.
+//! Rails-shaped database, Spring console, and runner commands.
 //!
 //! `db` is `rails dbconsole`: exec `psql` against the compose postgres
 //! `add db` started, or `sqlite3` when given a file. `console` is `jshell`
-//! with the project's classpath. That is not a Spring-booted REPL -- Java
-//! has no equivalent -- but it is the closest thing that does not invent
-//! a framework.
+//! with the project's classpath and a booted application context.
 
 use crate::compose;
 use crate::generate::find_project_root;
@@ -108,23 +106,50 @@ fn db_client(name: &str) -> Result<PathBuf> {
     Err(format!("{name} not on PATH -- install the {name} client and try again").into())
 }
 
-/// `jshell` with compiled classes and Maven dependencies on the classpath.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WebMode {
+    None,
+    Random,
+    Configured,
+}
+
+/// Compatibility entry point for the former console API.
 pub fn console(no_build: bool, args: &[String], debug: bool) -> Result<()> {
+    spring_console(&[], None, WebMode::None, !no_build, args, debug)
+}
+
+/// Boot the selected Spring application and enter an interactive JShell.
+pub fn spring_console(
+    profiles: &[String],
+    main: Option<&str>,
+    web: WebMode,
+    compile: bool,
+    args: &[String],
+    debug: bool,
+) -> Result<()> {
     let root = find_project_root()?;
-    // The classpath comes from `mvn dependency:build-classpath`; without it
-    // jshell starts with nothing of the project on it.
     crate::build::require_maven_at(&root, "console")?;
     let jshell = find_jshell().ok_or_else(|| {
         "jshell not on PATH -- it ships with the JDK (`JAVA_HOME/bin/jshell`)".to_string()
     })?;
-    if !no_build {
+    if compile {
         let mut compile = Command::new(crate::maven::binary(&root));
         compile.arg("compile").current_dir(&root);
         run::run_inherited(compile, debug)?;
     }
     let classpath = project_classpath(&root, debug)?;
+    let main = main
+        .map(str::to_owned)
+        .map_or_else(|| spring_main(&root), Ok)?;
+    let temp = tempfile::Builder::new()
+        .prefix("jails-console-")
+        .tempdir()
+        .map_err(|error| format!("could not reserve console scratch space: {error}"))?;
+    let startup = temp.path().join("startup.jsh");
+    write_private(&startup, spring_startup(&main, profiles, web).as_bytes())?;
     let mut cmd = Command::new(&jshell);
-    cmd.args(["--class-path", &classpath])
+    cmd.args(["--class-path", &classpath, "--startup"])
+        .arg(startup)
         .args(args)
         .current_dir(&root);
     run::run_inherited(cmd, debug)
@@ -136,6 +161,7 @@ pub fn runner(
     file: &Path,
     profiles: &[String],
     main: Option<&str>,
+    web: WebMode,
     compile: bool,
     debug: bool,
 ) -> Result<()> {
@@ -155,26 +181,13 @@ pub fn runner(
         Some(main) => main.to_string(),
         None => spring_main(&root)?,
     };
-    let profile_list = if profiles.is_empty() {
-        "\"dev\"".to_string()
-    } else {
-        profiles
-            .iter()
-            .map(|profile| format!("\"{}\"", java_string(profile)))
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
     let temp = tempfile::Builder::new()
         .prefix("jails-runner-")
         .tempdir()
         .map_err(|error| format!("could not reserve runner scratch space: {error}"))?;
     let startup = temp.path().join("startup.jsh");
     let script = temp.path().join("script.jsh");
-    let startup_body = format!(
-        "import java.util.function.Supplier;\nimport java.util.stream.Stream;\nimport org.springframework.boot.WebApplicationType;\nimport org.springframework.boot.builder.SpringApplicationBuilder;\nimport org.springframework.context.ConfigurableApplicationContext;\nimport org.springframework.core.env.Environment;\nimport org.springframework.transaction.PlatformTransactionManager;\nimport org.springframework.transaction.support.TransactionTemplate;\nvar ctx = new SpringApplicationBuilder(Class.forName(\"{}\")).profiles({}).web(WebApplicationType.NONE).run();\nRuntime.getRuntime().addShutdownHook(new Thread(ctx::close));\n<T> T bean(Class<T> type) {{ return ctx.getBean(type); }}\nObject bean(String name) {{ return ctx.getBean(name); }}\nStream<String> beans() {{ return java.util.Arrays.stream(ctx.getBeanDefinitionNames()).sorted(); }}\nEnvironment env() {{ return ctx.getEnvironment(); }}\n<T> T tx(Supplier<T> work) {{ return new TransactionTemplate(ctx.getBean(PlatformTransactionManager.class)).execute(status -> work.get()); }}\n",
-        java_string(&main),
-        profile_list
-    );
+    let startup_body = spring_startup(&main, profiles, web);
     write_private(&startup, startup_body.as_bytes())?;
     let mut body = Vec::new();
     if file == Path::new("-") {
@@ -201,6 +214,33 @@ pub fn runner(
         .arg(script)
         .current_dir(root);
     run::run_inherited(command, debug)
+}
+
+fn spring_startup(main: &str, profiles: &[String], web: WebMode) -> String {
+    let profile_list = if profiles.is_empty() {
+        "\"dev\"".to_string()
+    } else {
+        profiles
+            .iter()
+            .map(|profile| format!("\"{}\"", java_string(profile)))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let web_application_type = match web {
+        WebMode::None => "NONE",
+        WebMode::Random | WebMode::Configured => "SERVLET",
+    };
+    let random_port = match web {
+        WebMode::Random => "builder.properties(\"server.port=0\");\n",
+        WebMode::None | WebMode::Configured => "",
+    };
+    format!(
+        "import java.util.function.Supplier;\nimport java.util.stream.Stream;\nimport org.springframework.boot.WebApplicationType;\nimport org.springframework.boot.builder.SpringApplicationBuilder;\nimport org.springframework.context.ConfigurableApplicationContext;\nimport org.springframework.core.env.Environment;\nimport org.springframework.transaction.PlatformTransactionManager;\nimport org.springframework.transaction.support.TransactionTemplate;\nvar builder = new SpringApplicationBuilder(Class.forName(\"{}\")).profiles({}).web(WebApplicationType.{});\n{}var ctx = builder.run();\nRuntime.getRuntime().addShutdownHook(new Thread(ctx::close));\n<T> T bean(Class<T> type) {{ return ctx.getBean(type); }}\nObject bean(String name) {{ return ctx.getBean(name); }}\nStream<String> beans() {{ return java.util.Arrays.stream(ctx.getBeanDefinitionNames()).sorted(); }}\nEnvironment env() {{ return ctx.getEnvironment(); }}\n<T> T tx(Supplier<T> work) {{ return new TransactionTemplate(ctx.getBean(PlatformTransactionManager.class)).execute(status -> work.get()); }}\n",
+        java_string(main),
+        profile_list,
+        web_application_type,
+        random_port
+    )
 }
 
 fn spring_main(project_root: &Path) -> Result<String> {
@@ -269,4 +309,40 @@ fn project_classpath(root: &Path, debug: bool) -> Result<String> {
     Ok(std::env::join_paths(entries)
         .map(|p| p.to_string_lossy().into_owned())
         .map_err(|e| format!("failed to join classpath: {e}"))?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spring_startup_exposes_only_the_documented_helpers() {
+        let startup = spring_startup(
+            "com.example.DemoApplication",
+            &["test".into()],
+            WebMode::Random,
+        );
+        for helper in [
+            "var ctx = builder.run()",
+            "bean(Class<T> type)",
+            "bean(String name)",
+            "Stream<String> beans()",
+            "Environment env()",
+            "tx(Supplier<T> work)",
+        ] {
+            assert!(startup.contains(helper), "missing `{helper}`:\n{startup}");
+        }
+        assert!(startup.contains("profiles(\"test\")"));
+        assert!(startup.contains("WebApplicationType.SERVLET"));
+        assert!(startup.contains("server.port=0"));
+        assert!(startup.contains("addShutdownHook"));
+    }
+
+    #[test]
+    fn console_defaults_to_dev_without_a_web_server() {
+        let startup = spring_startup("com.example.DemoApplication", &[], WebMode::None);
+        assert!(startup.contains("profiles(\"dev\")"));
+        assert!(startup.contains("WebApplicationType.NONE"));
+        assert!(!startup.contains("server.port=0"));
+    }
 }

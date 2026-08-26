@@ -1,6 +1,6 @@
 //! Transparent adapters for curl, database clients, JShell, and Compose logs.
 
-use crate::cli::{DatabaseClientArg, Output};
+use crate::cli::{DatabaseClientArg, Output, WebModeArg};
 use crate::{console, inspect, model};
 use jails_support::Result;
 use jails_support::process::{CommandSpec, Diagnostics, OutputMode};
@@ -224,11 +224,46 @@ pub(crate) fn runner(
     file: &Path,
     profiles: &[String],
     main: Option<&str>,
+    web: WebModeArg,
     compile: bool,
     invocation: crate::Invocation,
 ) -> Result<()> {
     transparent_output(invocation.output, "runner")?;
-    console::runner(file, profiles, main, compile, invocation.debug)
+    console::runner(
+        file,
+        profiles,
+        main,
+        web_mode(web),
+        compile,
+        invocation.debug,
+    )
+}
+
+pub(crate) fn console(
+    profiles: &[String],
+    main: Option<&str>,
+    web: WebModeArg,
+    compile: bool,
+    args: &[String],
+    invocation: crate::Invocation,
+) -> Result<()> {
+    transparent_output(invocation.output, "console")?;
+    console::spring_console(
+        profiles,
+        main,
+        web_mode(web),
+        compile,
+        args,
+        invocation.debug,
+    )
+}
+
+fn web_mode(mode: WebModeArg) -> console::WebMode {
+    match mode {
+        WebModeArg::None => console::WebMode::None,
+        WebModeArg::Random => console::WebMode::Random,
+        WebModeArg::Configured => console::WebMode::Configured,
+    }
 }
 
 pub(crate) fn logs(
