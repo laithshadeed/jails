@@ -1,3 +1,4 @@
+use super::Name;
 use crate::Result;
 use jails_support::codec::{Codec, Decoder, Encoder};
 
@@ -30,6 +31,14 @@ impl SqlName {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// The one conventional physical table spelling for a logical entity.
+    ///
+    /// Storage adoption and generators both call this function so a rename
+    /// cannot preserve one inferred table while generated SQL uses another.
+    pub fn conventional_table(entity: &Name) -> Self {
+        Self(plural_snake_case(entity.as_str()))
+    }
 }
 
 impl Codec for SqlName {
@@ -40,4 +49,80 @@ impl Codec for SqlName {
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
         Self::parse(&decoder.string()?)
     }
+}
+
+fn plural_snake_case(value: &str) -> String {
+    let chars: Vec<char> = value.chars().collect();
+    let mut base = String::with_capacity(value.len() + 4);
+    for (index, &character) in chars.iter().enumerate() {
+        if character.is_uppercase() {
+            let starts_run = index > 0 && !chars[index - 1].is_uppercase();
+            let ends_run = index > 0
+                && chars[index - 1].is_uppercase()
+                && chars.get(index + 1).is_some_and(|next| next.is_lowercase());
+            if starts_run || ends_run {
+                base.push('_');
+            }
+            base.extend(character.to_lowercase());
+        } else {
+            base.push(character);
+        }
+    }
+    let (prefix, last) = match base.rfind('_') {
+        Some(at) => base.split_at(at + 1),
+        None => ("", base.as_str()),
+    };
+    if let Some(plural) = irregular_plural(last) {
+        return format!("{prefix}{plural}");
+    }
+    if base.ends_with("fe") {
+        return format!("{}ves", &base[..base.len() - 2]);
+    }
+    if base.ends_with('f') && !base.ends_with("ff") {
+        return format!("{}ves", &base[..base.len() - 1]);
+    }
+    if base.ends_with("ss")
+        || base.ends_with('x')
+        || base.ends_with('z')
+        || base.ends_with("ch")
+        || base.ends_with("sh")
+    {
+        format!("{base}es")
+    } else if base.ends_with('s') {
+        base
+    } else if base.ends_with('y')
+        && base
+            .chars()
+            .rev()
+            .nth(1)
+            .is_some_and(|before| !matches!(before, 'a' | 'e' | 'i' | 'o' | 'u'))
+    {
+        format!("{}ies", &base[..base.len() - 1])
+    } else {
+        format!("{base}s")
+    }
+}
+
+fn irregular_plural(word: &str) -> Option<&'static str> {
+    Some(match word {
+        "person" => "people",
+        "child" => "children",
+        "man" => "men",
+        "woman" => "women",
+        "foot" => "feet",
+        "tooth" => "teeth",
+        "goose" => "geese",
+        "mouse" => "mice",
+        "equipment" => "equipment",
+        "information" => "information",
+        "money" => "money",
+        "news" => "news",
+        "series" => "series",
+        "species" => "species",
+        "staff" => "staff",
+        "audio" => "audio",
+        "metadata" => "metadata",
+        "data" => "data",
+        _ => return None,
+    })
 }

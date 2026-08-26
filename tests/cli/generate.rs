@@ -448,6 +448,113 @@ fn task_scaffold_cannot_rewrite_or_delete_its_published_v001() {
 }
 
 #[test]
+fn coordinated_preserve_table_rename_keeps_storage_and_moves_lifecycle_lineage() {
+    let root = temp_dir("resource-rename-preserve-table");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+
+    let generated = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(generated.status.success(), "{generated:?}");
+    let migration = root.join("src/main/resources/db/migration/V001__create_tasks.sql");
+    let sealed = fs::read(&migration).unwrap();
+
+    let renamed = jails_cmd(&root, None)
+        .args([
+            "rename",
+            "resource",
+            "Billing.Task",
+            "WorkItem",
+            "--strategy",
+            "preserve-table",
+            "--force",
+        ])
+        .output()
+        .unwrap();
+    assert!(renamed.status.success(), "{renamed:?}");
+    let stdout = String::from_utf8_lossy(&renamed.stdout);
+    assert!(
+        stdout.contains("physical-table-preserved: tasks"),
+        "{stdout}"
+    );
+    assert_eq!(fs::read(&migration).unwrap(), sealed);
+    assert!(
+        !root
+            .join("src/main/resources/db/migration/V002__rename_tasks.sql")
+            .exists()
+    );
+    assert!(
+        root.join("src/main/java/com/example/demo/domain/WorkItem.java")
+            .is_file()
+    );
+    assert!(
+        !root
+            .join("src/main/java/com/example/demo/domain/Task.java")
+            .exists()
+    );
+    let controller =
+        fs::read_to_string(root.join("src/main/java/com/example/demo/web/WorkItemController.java"))
+            .unwrap();
+    assert!(controller.contains("/tasks"), "{controller}");
+
+    let store = jails_commit::store::Store::at(&root)
+        .observe()
+        .unwrap()
+        .ledger
+        .unwrap();
+    let [lifecycle] = store.lifecycles.as_slice() else {
+        panic!("expected one lifecycle: {:?}", store.lifecycles);
+    };
+    assert_eq!(lifecycle.expected_path.name().as_str(), "WorkItem");
+    assert_eq!(lifecycle.table.as_ref().unwrap().table.as_str(), "tasks");
+    assert_eq!(lifecycle.migrations.len(), 1);
+    let jails_protocol::entity::EntityId::Intent(id) = &lifecycle.entity else {
+        panic!("expected direct intent identity: {:?}", lifecycle.entity);
+    };
+    assert_eq!(id.name.as_str(), "WorkItem");
+}
+
+#[test]
+fn coordinated_resource_rename_reports_reader_owned_java_without_rewriting_it() {
+    let root = temp_dir("resource-rename-manual-java");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    let generated = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(generated.status.success(), "{generated:?}");
+    let manual = root.join("src/main/java/com/example/demo/Manual.java");
+    fs::write(
+        &manual,
+        "package com.example.demo;\nimport com.example.demo.domain.Task;\nfinal class Manual { Task task; }\n",
+    )
+    .unwrap();
+    let before = snapshot_tree(&root);
+
+    let refused = jails_cmd(&root, None)
+        .args([
+            "rename",
+            "resource",
+            "Billing.Task",
+            "WorkItem",
+            "--strategy",
+            "preserve-table",
+            "--force",
+        ])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success(), "{refused:?}");
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(stderr.contains("manual-edit-required"), "{stderr}");
+    assert!(stderr.contains("Manual.java"), "{stderr}");
+    assert_eq!(snapshot_tree(&root), before, "refusal wrote project files");
+    assert!(fs::read_to_string(manual).unwrap().contains("Task task"));
+}
+
+#[test]
 fn resource_repair_restores_sealed_history_and_missing_owned_projections() {
     let root = temp_dir("resource-repair");
     write_spring_fixture(&root);

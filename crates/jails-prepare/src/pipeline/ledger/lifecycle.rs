@@ -88,8 +88,11 @@ pub(in crate::pipeline) fn record_lifecycle(
     store: &mut jails_protocol::envelope::LedgerV2,
     mut context: LifecycleContext<'_>,
 ) -> Result<()> {
+    if let PlannedSubject::RenameResource(request) = context.subject {
+        return record_resource_rename(store, &context, request);
+    }
     let Some(target) = Target::from_subject(context.subject) else {
-        return Ok(());
+        return adopt_new_scaffolds(store, &mut context);
     };
 
     let existing = store
@@ -180,6 +183,149 @@ pub(in crate::pipeline) fn record_lifecycle(
         Some(held) => *held = lifecycle,
         None => store.lifecycles.push(lifecycle),
     }
+    store
+        .lifecycles
+        .sort_by(|left, right| left.entity.cmp(&right.entity));
+    Ok(())
+}
+
+fn adopt_new_scaffolds(
+    store: &mut jails_protocol::envelope::LedgerV2,
+    context: &mut LifecycleContext<'_>,
+) -> Result<()> {
+    let candidates = context
+        .intent
+        .entities_after
+        .iter()
+        .filter_map(|row| match (&row.id, &row.spec) {
+            (EntityId::Intent(id), EntitySpec::Intent(_))
+                if id.recipe == jails_spec::spec::kind::ArtifactKind::Scaffold =>
+            {
+                Some((row.id.clone(), id.clone(), row.spec.clone()))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    for (entity, id, spec) in candidates {
+        if store
+            .lifecycles
+            .iter()
+            .any(|lifecycle| lifecycle.entity == entity)
+        {
+            continue;
+        }
+        let mut lifecycle = ResourceLifecycleV1 {
+            entity: entity.clone(),
+            expected_path: owned_scaffold_type(context.intent, &entity, &id)
+                .unwrap_or_else(|| JavaType::new(id.package.clone(), id.name.clone())),
+            last_spec: spec,
+            state: ResourceState::Active,
+            table: Some(TableBinding {
+                table: SqlName::conventional_table(&id.name),
+            }),
+            migrations: Vec::new(),
+        };
+        seal_migrations(&entity, &mut lifecycle.migrations, store, context)?;
+        store.lifecycles.push(lifecycle);
+    }
+    store
+        .lifecycles
+        .sort_by(|left, right| left.entity.cmp(&right.entity));
+    Ok(())
+}
+
+fn owned_scaffold_type(
+    intent: &LedgerIntent,
+    entity: &EntityId,
+    id: &jails_protocol::entity::IntentId,
+) -> Option<JavaType> {
+    let suffix = format!("/{}.java", id.name.as_str());
+    let path = intent.resources_after.iter().find_map(|resource| {
+        let ResourceKey::WholeFile(path) = &resource.key else {
+            return None;
+        };
+        (resource
+            .owners
+            .contains(&ResourceOwner::Entity(entity.clone()))
+            && path.as_str().ends_with(&suffix))
+        .then_some(path)
+    })?;
+    let relative = path.as_str().strip_prefix("src/main/java/")?;
+    let (package, _) = relative.rsplit_once('/')?;
+    Some(JavaType::new(
+        jails_protocol::identity::Package::parse(&package.replace('/', ".")).ok()?,
+        id.name.clone(),
+    ))
+}
+
+fn record_resource_rename(
+    store: &mut jails_protocol::envelope::LedgerV2,
+    context: &LifecycleContext<'_>,
+    request: &jails_protocol::request::RenameResourceRequestV1,
+) -> Result<()> {
+    use jails_protocol::request::RenameStrategy;
+
+    let position = store
+        .lifecycles
+        .iter()
+        .position(|lifecycle| lifecycle.entity == request.entity)
+        .ok_or_else(|| {
+            format!(
+                "rename target {:?} has no adopted resource lifecycle.\n       fix: rerun `jails resource status` and prepare the rename from its current identity",
+                request.entity
+            )
+        })?;
+    let mut lifecycle = store.lifecycles[position].clone();
+    if lifecycle.expected_path != request.expected_path {
+        return Err(format!(
+            "rename plan is stale: expected `{}`, found `{}`.\n       fix: prepare the rename again from the current resource path",
+            request.expected_path.qualified(),
+            lifecycle.expected_path.qualified()
+        )
+        .into());
+    }
+    require_active(&lifecycle.state, "rename")?;
+
+    let mut after = context
+        .intent
+        .entities_after
+        .iter()
+        .filter(|candidate| !context.intent.entities_removed.contains(&candidate.id));
+    let renamed = after.next().ok_or(
+        "resource rename did not declare its renamed entity.\n       fix: prepare the coordinated rename again",
+    )?;
+    if after.next().is_some() {
+        return Err("resource rename declared more than one replacement entity.\n       fix: prepare one resolved entity rename at a time".into());
+    }
+    if store
+        .lifecycles
+        .iter()
+        .enumerate()
+        .any(|(index, held)| index != position && held.entity == renamed.id)
+    {
+        return Err("the renamed identity already has lifecycle state.\n       fix: choose an unused logical name or reconcile the conflicting resource first".into());
+    }
+
+    match request.strategy {
+        RenameStrategy::PreserveTable => {
+            if request.target_table.is_some() {
+                return Err("preserve-table may not replace the physical binding.\n       fix: omit the target table and prepare the rename again".into());
+            }
+        }
+        RenameStrategy::SingleCutover | RenameStrategy::Rolling => {
+            return Err("storage rename state reached the preserve-only lifecycle recorder.\n       fix: prepare the coordinated storage plan again".into());
+        }
+    }
+    let EntityId::Intent(id) = &renamed.id else {
+        return Err("direct resource rename produced a non-intent identity.\n       fix: reconcile the application manifest before retrying".into());
+    };
+    let EntitySpec::Intent(spec) = &renamed.spec else {
+        return Err("direct resource rename produced a non-intent specification.\n       fix: reconcile the resource declaration before retrying".into());
+    };
+    lifecycle.entity = renamed.id.clone();
+    lifecycle.expected_path = JavaType::new(id.package.clone(), id.name.clone());
+    lifecycle.last_spec = EntitySpec::Intent(spec.clone());
+    store.lifecycles[position] = lifecycle;
     store
         .lifecycles
         .sort_by(|left, right| left.entity.cmp(&right.entity));

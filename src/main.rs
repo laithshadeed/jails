@@ -297,9 +297,41 @@ fn main() -> std::process::ExitCode {
                 jails_engine::route::undeclare(run, id.clone())
             })
         }),
-        Command::Rename { old, new, force } => dispatch::mutate(invocation, false, |run| {
-            jails_engine::route::rename(run, &old, &new, force)
-        }),
+        Command::Rename {
+            command,
+            old,
+            new,
+            force,
+        } => match command {
+            Some(cli::RenameCommand::Resource {
+                from,
+                to,
+                strategy,
+                table,
+                api,
+                route,
+                force,
+            }) => dispatch::mutate(invocation, false, |run| {
+                jails_engine::route::rename_resource(
+                    run,
+                    jails_engine::route::RenameResourceInvocation {
+                        selector: &from,
+                        new: &to,
+                        strategy: strategy.into(),
+                        target_table: table.as_deref(),
+                        api: api.into(),
+                        target_route: route.as_deref(),
+                        force,
+                    },
+                )
+            }),
+            None => match (old, new) {
+                (Some(old), Some(new)) => dispatch::mutate(invocation, false, |run| {
+                    jails_engine::route::rename(run, &old, &new, force)
+                }),
+                _ => Err("legacy rename requires OLD and NEW.\n       fix: use `jails rename resource <slice>.<current-name> <new-name> --strategy preserve-table|single-cutover|rolling`".into()),
+            },
+        },
         Command::Destroy {
             kind,
             name,

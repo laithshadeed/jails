@@ -98,7 +98,9 @@ pub use field::{
     rename_field, set_field_nullability, set_field_nullability_with_data,
 };
 pub use lifecycle::{repair, revive};
-pub use maintenance::{adopt_layout, app_init, format, rename};
+pub use maintenance::{
+    RenameResourceInvocation, adopt_layout, app_init, format, rename, rename_resource,
+};
 pub use oneshot::{cases, migration};
 pub use query::sql_generate;
 pub(crate) use session::PreparedOutcome;

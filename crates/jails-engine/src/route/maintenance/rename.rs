@@ -38,6 +38,16 @@ use super::*;
 /// A file added under `src/` between planning and committing changes a
 /// captured listing, and a rename that would silently skip it fails instead.
 pub fn rename(run: &Run, old: &str, new: &str, force: bool) -> Result<Outcome> {
+    rename_with(run, old, new, force, None)
+}
+
+fn rename_with(
+    run: &Run,
+    old: &str,
+    new: &str,
+    force: bool,
+    resource_request: Option<(String, jails_protocol::request::RenameResourceRequestV1)>,
+) -> Result<Outcome> {
     let project = run.project();
     // Refused by name before anything is read. `JavaType::parse` accepts a
     // qualified name by splitting at the last dot, so without this a
@@ -47,6 +57,7 @@ pub fn rename(run: &Run, old: &str, new: &str, force: bool) -> Result<Outcome> {
     validate(old, new)?;
     let from = jails_protocol::identity::JavaType::parse(old)?;
     let to = jails_protocol::identity::JavaType::parse(new)?;
+    let store = observed(project)?;
 
     // The walk that finds the sources is not itself a read the snapshot can
     // guard -- something has to look first. What it finds is then declared,
@@ -62,7 +73,15 @@ pub fn rename(run: &Run, old: &str, new: &str, force: bool) -> Result<Outcome> {
         // silently replaced -- which is only possible if the emptiness was
         // recorded in the first place. Every destination is derivable from
         // the source path alone, so this costs no second walk.
-        reads = reads.file(destination_of(&relative, old, new)?);
+        reads = reads.file(rename_destination(
+            &store,
+            &relative,
+            old,
+            new,
+            resource_request
+                .as_ref()
+                .map(|(_, request)| &request.entity),
+        )?);
         reads = reads.file(relative.clone());
         sources.push(relative);
     }
@@ -79,13 +98,16 @@ pub fn rename(run: &Run, old: &str, new: &str, force: bool) -> Result<Outcome> {
     // strands the file it claims to delete. plan.md §R2.5 permits exactly
     // this: a maintenance change may propose rows owned by real entities when
     // its `LedgerIntent` describes the exact identity transition.
-    let store = observed(project)?;
     let mut renamed_entities = BTreeMap::new();
     for applied in store.ledger.iter().flat_map(|ledger| ledger.applied.iter()) {
         let EntityId::Intent(id) = &applied.id else {
             continue;
         };
-        if id.name.as_str() != old {
+        if id.name.as_str() != old
+            || resource_request
+                .as_ref()
+                .is_some_and(|(_, request)| request.entity != applied.id)
+        {
             continue;
         }
         let mut renamed = id.clone();
@@ -104,6 +126,7 @@ pub fn rename(run: &Run, old: &str, new: &str, force: bool) -> Result<Outcome> {
     let mut moved = 0usize;
     let mut occurrences = 0usize;
     let mut in_literals = 0usize;
+    let mut manual_java = BTreeSet::new();
     for source in &sources {
         let jails_protocol::snapshot::Captured::Present(file) = snapshot.read(source)? else {
             continue;
@@ -112,12 +135,28 @@ pub fn rename(run: &Run, old: &str, new: &str, force: bool) -> Result<Outcome> {
             continue;
         };
         let (updated, hits) = jails_java::identifier::replace_identifier(text, old, new);
-        let destination = destination_of(source, old, new)?;
+        let literal_hits = jails_java::identifier::literal_mentions(text, old);
+        if let Some((_, request)) = &resource_request
+            && !owned_by(&store, source, &request.entity)
+            && (hits > 0 || literal_hits > 0)
+        {
+            manual_java.insert(source.clone());
+            continue;
+        }
+        let destination = rename_destination(
+            &store,
+            source,
+            old,
+            new,
+            resource_request
+                .as_ref()
+                .map(|(_, request)| &request.entity),
+        )?;
         if hits == 0 && &destination == source {
             continue;
         }
         occurrences += hits;
-        in_literals += jails_java::identifier::literal_mentions(text, old);
+        in_literals += literal_hits;
         if &destination != source {
             // Refused from the capture, so a destination that appears between
             // planning and committing fails the precondition rather than
@@ -160,6 +199,18 @@ pub fn rename(run: &Run, old: &str, new: &str, force: bool) -> Result<Outcome> {
         });
     }
 
+    if !manual_java.is_empty() {
+        let paths = manual_java
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n         ");
+        return Err(format!(
+            "manual-edit-required: reader-owned Java references the renamed resource:\n         {paths}\n       fix: update those references through a Java-aware rename, then rerun this exact resource rename"
+        )
+        .into());
+    }
+
     if change.files.is_empty() {
         return Err(format!(
             "no .java file under src/ mentions `{old}` -- check the spelling, or the type may \
@@ -180,6 +231,14 @@ pub fn rename(run: &Run, old: &str, new: &str, force: bool) -> Result<Outcome> {
         change.files.len()
     );
 
+    let subject = match &resource_request {
+        Some((_, request)) => PlannedSubject::RenameResource(Box::new(request.clone())),
+        None => PlannedSubject::Rename {
+            from: from.clone(),
+            to: to.clone(),
+            force,
+        },
+    };
     let set = DesiredChangeSet {
         ledger_intent: LedgerIntent {
             generation_before: store.generation(),
@@ -203,18 +262,37 @@ pub fn rename(run: &Run, old: &str, new: &str, force: bool) -> Result<Outcome> {
             entities_removed: renamed_entities.keys().cloned().collect(),
         },
         ordered: vec![change],
-        subject: PlannedSubject::Rename {
-            from: from.clone(),
-            to: to.clone(),
-            force,
-        },
+        subject,
     };
     set.validate()?;
-    commit_set(
-        run,
-        set,
-        &reads,
-        &Asked::new(
+    let asked = match resource_request {
+        Some((selector, request)) => {
+            let mut options = BTreeMap::from([(
+                "strategy".to_string(),
+                vec![rename_strategy_name(request.strategy).to_string()],
+            )]);
+            if let Some(table) = &request.target_table {
+                options.insert("table".to_string(), vec![table.as_str().to_string()]);
+            }
+            options.insert(
+                "api".to_string(),
+                vec![external_policy_name(request.api).to_string()],
+            );
+            if let Some(route) = &request.target_route {
+                options.insert("route".to_string(), vec![route.as_str().to_string()]);
+            }
+            Asked::new(
+                CanonicalMutationRequest::RenameResource(request),
+                &["rename", "resource"],
+                vec![selector, new.to_string()],
+                options,
+                match force {
+                    true => BTreeSet::from(["force".to_string()]),
+                    false => BTreeSet::new(),
+                },
+            )
+        }
+        None => Asked::new(
             CanonicalMutationRequest::Rename {
                 from: from.clone(),
                 to: to.clone(),
@@ -228,7 +306,166 @@ pub fn rename(run: &Run, old: &str, new: &str, force: bool) -> Result<Outcome> {
                 false => BTreeSet::new(),
             },
         ),
-    )
+    };
+    commit_set(run, set, &reads, &asked)
+}
+
+/// Resource-oriented spelling of rename.
+///
+/// The selector is deliberately parsed before the legacy identifier planner
+/// runs, so `Billing.Task` cannot be mistaken for a Java package-qualified
+/// textual rename. The storage-specific plan is added by the coordinated
+/// planner; until then only the already-complete preserve-table transition is
+/// accepted here.
+pub struct RenameResourceInvocation<'a> {
+    pub selector: &'a str,
+    pub new: &'a str,
+    pub strategy: jails_protocol::request::RenameStrategy,
+    pub target_table: Option<&'a str>,
+    pub api: jails_protocol::request::ExternalRenamePolicy,
+    pub target_route: Option<&'a str>,
+    pub force: bool,
+}
+
+pub fn rename_resource(run: &Run, invocation: RenameResourceInvocation<'_>) -> Result<Outcome> {
+    let RenameResourceInvocation {
+        selector,
+        new,
+        strategy,
+        target_table,
+        api,
+        target_route,
+        force,
+    } = invocation;
+    let (slice, current) = selector.split_once('.').ok_or_else(|| {
+        format!(
+            "`{selector}` is not a resource selector.\n       fix: use `<slice>.<current-name>`, for example `Billing.Task`"
+        )
+    })?;
+    if slice.is_empty() || current.is_empty() || current.contains('.') {
+        return Err(format!(
+            "`{selector}` is not a resource selector.\n       fix: use exactly `<slice>.<current-name>`, for example `Billing.Task`"
+        )
+        .into());
+    }
+    validate(current, new)?;
+    let target_table = target_table
+        .map(jails_protocol::identity::SqlName::parse)
+        .transpose()?;
+    let route = target_route
+        .map(jails_protocol::application::RoutePath::parse)
+        .transpose()?;
+    let project = run.project();
+    let store = observed(project)?;
+    let mut candidates = store
+        .ledger
+        .iter()
+        .flat_map(|ledger| ledger.applied.iter())
+        .filter_map(|applied| match (&applied.id, &applied.version.spec) {
+            (EntityId::Intent(id), EntitySpec::Intent(_)) if id.name.as_str() == current => {
+                let path = store
+                    .lifecycles()
+                    .iter()
+                    .find(|lifecycle| lifecycle.entity == applied.id)
+                    .map(|lifecycle| lifecycle.expected_path.clone())
+                    .unwrap_or_else(|| JavaType::new(id.package.clone(), id.name.clone()));
+                Some((applied.id.clone(), path))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if candidates.len() > 1 {
+        let wanted = slice.to_ascii_lowercase();
+        candidates.retain(|(_, path)| {
+            path.package()
+                .as_str()
+                .rsplit('.')
+                .any(|part| part.eq_ignore_ascii_case(&wanted))
+        });
+    }
+    let [(entity, expected_path)] = candidates.as_slice() else {
+        return Err(match candidates.len() {
+            0 => format!(
+                "no managed resource matches `{selector}`.\n       fix: inspect `jails resource status`, then use its exact slice and current name"
+            ),
+            count => format!(
+                "`{selector}` matches {count} managed resources.\n       fix: use the slice that uniquely identifies the resource"
+            ),
+        }
+        .into());
+    };
+    let lifecycle = store
+        .lifecycles()
+        .iter()
+        .find(|lifecycle| lifecycle.entity == *entity)
+        .ok_or_else(|| {
+            format!(
+                "`{selector}` has no adopted resource lifecycle.\n       fix: run `jails resource status {current}` to adopt and inspect its storage binding"
+            )
+        })?;
+    let current_table = lifecycle.table.as_ref().ok_or_else(|| {
+        format!(
+            "`{selector}` has no explicit table binding.\n       fix: adopt its storage binding before a coordinated rename"
+        )
+    })?;
+    if lifecycle.expected_path != *expected_path {
+        return Err(format!(
+            "`{selector}` is stale: the lifecycle path is `{}`.\n       fix: rerun the rename with the current resource path",
+            lifecycle.expected_path.qualified()
+        )
+        .into());
+    }
+    let request = jails_protocol::request::RenameResourceRequestV1 {
+        entity: entity.clone(),
+        expected_path: expected_path.clone(),
+        new_name: Name::parse(new)?,
+        strategy,
+        target_table: target_table.clone(),
+        api,
+        target_route: route,
+    };
+    request.validate()?;
+    if api == jails_protocol::request::ExternalRenamePolicy::Rename {
+        return Err("`--api rename` requires the contract compatibility planner.\n       fix: omit it to preserve routes, JSON names, operation IDs, events, and error codes".into());
+    }
+    match strategy {
+        jails_protocol::request::RenameStrategy::PreserveTable => {
+            if target_table.is_some() {
+                return Err("`--table` is not used by `preserve-table`.\n       fix: omit `--table`; the current physical binding will be retained".into());
+            }
+            println!("physical-table-preserved: {}", current_table.table.as_str());
+            rename_with(
+                run,
+                current,
+                new,
+                force,
+                Some((selector.to_string(), request)),
+            )
+        }
+        jails_protocol::request::RenameStrategy::SingleCutover => Err(
+            "`single-cutover` requires the coordinated storage planner.\n       fix: use `--strategy preserve-table`, or prepare the cutover after upgrading jails"
+                .into(),
+        ),
+        jails_protocol::request::RenameStrategy::Rolling => Err(
+            "`rolling` requires a durable expand/contract campaign.\n       fix: use `--strategy preserve-table`, or prepare the rolling campaign after upgrading jails"
+                .into(),
+        ),
+    }
+}
+
+fn rename_strategy_name(strategy: jails_protocol::request::RenameStrategy) -> &'static str {
+    match strategy {
+        jails_protocol::request::RenameStrategy::PreserveTable => "preserve-table",
+        jails_protocol::request::RenameStrategy::SingleCutover => "single-cutover",
+        jails_protocol::request::RenameStrategy::Rolling => "rolling",
+    }
+}
+
+fn external_policy_name(policy: jails_protocol::request::ExternalRenamePolicy) -> &'static str {
+    match policy {
+        jails_protocol::request::ExternalRenamePolicy::Preserve => "preserve",
+        jails_protocol::request::ExternalRenamePolicy::Rename => "rename",
+    }
 }
 
 /// One simple Java type name, in and out.
@@ -299,6 +536,46 @@ fn destination_of(source: &ProjectPath, old: &str, new: &str) -> Result<ProjectP
             .to_str()
             .ok_or_else(|| format!("`{}` is not valid UTF-8", renamed.display()))?,
     )
+}
+
+fn rename_destination(
+    store: &ObservedStore,
+    source: &ProjectPath,
+    old: &str,
+    new: &str,
+    resource: Option<&EntityId>,
+) -> Result<ProjectPath> {
+    let Some(entity) = resource else {
+        return destination_of(source, old, new);
+    };
+    let owned = owned_by(store, source, entity);
+    if !owned {
+        return Ok(source.clone());
+    }
+    let path = std::path::Path::new(source.as_str());
+    let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+        return Ok(source.clone());
+    };
+    let Some(position) = stem.find(old) else {
+        return Ok(source.clone());
+    };
+    let mut renamed = stem.to_string();
+    renamed.replace_range(position..position + old.len(), new);
+    let destination = path.with_file_name(format!("{renamed}.java"));
+    ProjectPath::parse(
+        destination
+            .to_str()
+            .ok_or_else(|| format!("`{}` is not valid UTF-8", destination.display()))?,
+    )
+}
+
+fn owned_by(store: &ObservedStore, source: &ProjectPath, entity: &EntityId) -> bool {
+    store
+        .ledger
+        .iter()
+        .flat_map(|ledger| ledger.resources.iter())
+        .find(|row| row.key == ResourceKey::WholeFile(source.clone()))
+        .is_some_and(|row| row.owners.contains(&ResourceOwner::Entity(entity.clone())))
 }
 
 /// Every directory the walk passed through, so its membership is guarded too.

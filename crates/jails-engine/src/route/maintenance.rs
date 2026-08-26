@@ -23,6 +23,6 @@ mod rename;
 pub use adopt::adopt_layout;
 pub use app_init::app_init;
 pub use format::format;
-pub use rename::rename;
+pub use rename::{RenameResourceInvocation, rename, rename_resource};
 
 use super::*;

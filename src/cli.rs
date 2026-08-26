@@ -31,12 +31,8 @@ mod tools;
 pub(crate) use tools::*;
 mod sql;
 pub(crate) use sql::*;
-
-#[derive(Clone, Copy, Debug, ValueEnum)]
-pub(crate) enum StoragePolicy {
-    Preserve,
-    Drop,
-}
+mod rename;
+pub(crate) use rename::*;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub(crate) enum TestScopeArg {
@@ -866,12 +862,14 @@ pub(crate) enum Command {
         #[command(flatten)]
         console: ConsoleArgs,
     },
-    /// Rename a type and every reference to it (files, companions, call sites)
+    /// Rename a managed resource, or use the legacy two-name type spelling
     Rename {
-        /// The type's current simple name
-        old: String,
-        /// The name to give it
-        new: String,
+        #[command(subcommand)]
+        command: Option<RenameCommand>,
+        /// Legacy current simple type name
+        old: Option<String>,
+        /// Legacy replacement simple type name
+        new: Option<String>,
         /// Skip the confirmation prompt
         #[arg(long)]
         force: bool,

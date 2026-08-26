@@ -347,43 +347,6 @@ pub(crate) fn imports(columns: &[Column]) -> Vec<&'static str> {
     found
 }
 
-/// The short list. Anything not here is pluralised by rule or left alone --
-/// a long dictionary in a scaffolding tool is a maintenance burden that pays
-/// only in surprise.
-fn irregular_plural(word: &str) -> Option<&'static str> {
-    Some(match word {
-        "person" => "people",
-        "child" => "children",
-        "man" => "men",
-        "woman" => "women",
-        "foot" => "feet",
-        "tooth" => "teeth",
-        "goose" => "geese",
-        "mouse" => "mice",
-        // Uncountable, or identical in both numbers: appending `s` is wrong
-        // rather than merely ugly.
-        "equipment" | "information" | "money" | "news" | "series" | "species" | "staff"
-        | "audio" | "metadata" | "data" => return Some(word_as_is(word)),
-        _ => return None,
-    })
-}
-
-/// The uncountables above map to themselves; this keeps the borrow static.
-fn word_as_is(word: &str) -> &'static str {
-    match word {
-        "equipment" => "equipment",
-        "information" => "information",
-        "money" => "money",
-        "news" => "news",
-        "series" => "series",
-        "species" => "species",
-        "staff" => "staff",
-        "audio" => "audio",
-        "metadata" => "metadata",
-        _ => "data",
-    }
-}
-
 /// The table a type maps to: snake_case plus conservative regular-English
 /// pluralisation.
 ///
@@ -400,41 +363,11 @@ fn word_as_is(word: &str) -> &'static str {
 /// appending `s` is simply wrong. `jails.toml` gets no override for either:
 /// derivability is what lets `destroy` find what `generate` wrote.
 pub fn table_name(type_name: &str) -> String {
-    let base = snake_case(type_name);
-    // Matched on the last word, so `SupportPerson` -> `support_people`.
-    let (prefix, last) = match base.rfind('_') {
-        Some(at) => base.split_at(at + 1),
-        None => ("", base.as_str()),
-    };
-    if let Some(plural) = irregular_plural(last) {
-        return format!("{prefix}{plural}");
-    }
-    if base.ends_with("fe") {
-        return format!("{}ves", &base[..base.len() - 2]);
-    }
-    if base.ends_with('f') && !base.ends_with("ff") {
-        return format!("{}ves", &base[..base.len() - 1]);
-    }
-    if base.ends_with("ss")
-        || base.ends_with('x')
-        || base.ends_with('z')
-        || base.ends_with("ch")
-        || base.ends_with("sh")
-    {
-        format!("{base}es")
-    } else if base.ends_with('s') {
-        base
-    } else if base.ends_with('y')
-        && base
-            .chars()
-            .rev()
-            .nth(1)
-            .is_some_and(|before| !matches!(before, 'a' | 'e' | 'i' | 'o' | 'u'))
-    {
-        format!("{}ies", &base[..base.len() - 1])
-    } else {
-        format!("{base}s")
-    }
+    let entity = jails_protocol::identity::Name::parse(type_name)
+        .expect("generated type names are validated before SQL projection");
+    jails_protocol::identity::SqlName::conventional_table(&entity)
+        .as_str()
+        .to_string()
 }
 
 /// `transactionId` -> `transaction_id`. Runs of capitals stay together
