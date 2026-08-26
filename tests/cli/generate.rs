@@ -39,7 +39,14 @@ fn generate_scaffold_writes_a_raw_jdbc_slice() {
     write_spring_fixture(&root);
 
     let status = jails_cmd(&root, None)
-        .args(["generate", "scaffold", "Post", "title:string", "body:text"])
+        .args([
+            "generate",
+            "scaffold",
+            "Post",
+            "id:uuid@pk",
+            "title:string",
+            "body:text",
+        ])
         .status()
         .unwrap();
     assert!(status.success());
@@ -58,6 +65,41 @@ fn generate_scaffold_writes_a_raw_jdbc_slice() {
         root.join("src/test/java/com/example/demo/web/PostControllerTest.java")
             .is_file()
     );
+}
+
+#[test]
+fn scaffold_refuses_an_implicit_or_composite_identity_before_writing() {
+    let root = temp_dir("scaffold-primary-key-contract");
+    write_spring_fixture(&root);
+
+    for (name, fields, expected) in [
+        (
+            "Book",
+            vec!["title:string!", "author:string"],
+            "needs exactly one `@pk` field",
+        ),
+        (
+            "OrgMember",
+            vec!["orgId:uuid@pk", "userId:uuid@pk", "role:string"],
+            "composite primary key",
+        ),
+    ] {
+        let before = snapshot_tree(&root);
+        let output = jails_cmd(&root, None)
+            .args(
+                ["generate", "scaffold", name]
+                    .into_iter()
+                    .chain(fields)
+                    .collect::<Vec<_>>(),
+            )
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{name} unexpectedly succeeded");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(expected), "{name}: {stderr}");
+        assert!(stderr.contains("fix:"), "{name}: {stderr}");
+        assert_eq!(snapshot_tree(&root), before, "{name} refusal wrote files");
+    }
 }
 
 #[test]
@@ -1026,13 +1068,19 @@ fn scaffold_reuses_an_existing_record_and_destroy_preserves_it() {
     write_spring_fixture(&root);
 
     let record = jails_cmd(&root, None)
-        .args(["generate", "record", "Post", "id:uuid", "title:string!"])
+        .args(["generate", "record", "Post", "id:uuid@pk", "title:string!"])
         .status()
         .unwrap();
     assert!(record.success());
 
     let scaffold = jails_cmd(&root, None)
-        .args(["generate", "scaffold", "Post"])
+        .args([
+            "generate",
+            "scaffold",
+            "Post",
+            "id:uuid@pk",
+            "title:string!",
+        ])
         .status()
         .unwrap();
     assert!(scaffold.success());
@@ -1935,6 +1983,7 @@ fn generate_scaffold_produces_a_project_that_compiles_and_passes_tests() {
             "generate",
             "scaffold",
             "Post",
+            "id:uuid@pk",
             "title:string",
             "body:text",
             "published:boolean",
@@ -2271,7 +2320,7 @@ fn a_scaffold_with_database_types_compiles_including_its_derived_jdbc_adapter() 
             "generate",
             "scaffold",
             "Payout",
-            "id:uuid",
+            "id:uuid@pk",
             "amount:bigdecimal",
             "currency:Currency",
             "paidAt:instant",
@@ -2342,7 +2391,7 @@ fn a_scaffold_emits_a_migration_whose_columns_match_the_adapter() {
             "generate",
             "scaffold",
             "Payout",
-            "id:uuid",
+            "id:uuid@pk",
             "amount:bigdecimal",
             "paidAt:instant",
             "note:string?",
@@ -2459,6 +2508,7 @@ fn a_scaffold_writes_a_two_row_fixture_keyed_by_column_name() {
             "generate",
             "scaffold",
             "Payout",
+            "id:uuid@pk",
             "paidAt:instant",
             "currency:Currency",
             "note:string?",

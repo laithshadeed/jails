@@ -30,6 +30,7 @@ pub(crate) fn scaffold_artifacts(
     let domain = slice.placed(Layer::Domain);
     let (parsed, reusing_record) =
         fields_from_spec_or_record(slice.project(), &domain, name, fields)?;
+    require_single_primary_key(name, &parsed)?;
     // The unmapped-component refusal deliberately lives in
     // `scaffold_artifacts_from_fields`, which reads the referenced record's
     // stored `@pk` and names the two commands that do the job. A generic
@@ -38,6 +39,28 @@ pub(crate) fn scaffold_artifacts(
         scaffold_artifacts_from_fields(slice, name, &parsed, indexes, !reusing_record)?;
     artifacts.extend(crate::architecture::artifacts(slice.project()));
     Ok(artifacts)
+}
+
+fn require_single_primary_key(name: &str, fields: &[Field]) -> Result<()> {
+    let keys = fields
+        .iter()
+        .filter(|field| field.constraints.primary_key)
+        .map(|field| field.name.as_str())
+        .collect::<Vec<_>>();
+    match keys.as_slice() {
+        [_] => Ok(()),
+        [] => Err(format!(
+            "scaffold {name} needs exactly one `@pk` field; repository item routes cannot safely guess an identity.\n       \
+             fix: declare one stable key, for example `id:uuid@pk`."
+        )
+        .into()),
+        _ => Err(format!(
+            "scaffold {name} declares a composite primary key ({}) that the repository and HTTP ports cannot represent.\n       \
+             fix: declare exactly one `@pk` field, or generate a record while modelling the composite-key port by hand.",
+            keys.join(", ")
+        )
+        .into()),
+    }
 }
 
 pub(crate) fn scaffold_artifacts_from_fields(
