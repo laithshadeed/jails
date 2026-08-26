@@ -299,6 +299,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-project", "project", 5),
     ("jails-project", "projection", 5),
     ("jails-project", "properties", 5),
+    ("jails-project", "query_compiler", 5),
     ("jails-project", "generated_files", 5),
     ("jails-project", "inspect", 5),
     // jails-generate: everything that decides what Java to write.

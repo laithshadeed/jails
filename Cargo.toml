@@ -20,6 +20,7 @@ clap_complete = "4.6.7"
 fs2 = "0.4.3"
 nix = { version = "0.31.3", default-features = false, features = ["process", "signal"] }
 tempfile = "3.27"
+sqlparser = { version = "0.62.0", default-features = false, features = ["std"] }
 
 jails-commit = { path = "crates/jails-commit" }
 jails-drive = { path = "crates/jails-drive" }

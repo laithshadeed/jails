@@ -32,6 +32,7 @@ pub mod pom;
 pub mod project;
 pub mod projection;
 pub mod properties;
+pub mod query_compiler;
 pub mod synonyms;
 
 // The lower crates, re-exported so every module in this one keeps saying
