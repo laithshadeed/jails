@@ -52,6 +52,14 @@ pub struct Column {
     /// The table constraints declared on the field spec. Carried through
     /// unchanged -- `create_table` is the only reader.
     pub constraints: crate::generate::Constraints,
+    /// The constants of the project enum this column stores, if it stores one.
+    ///
+    /// **The closed set, carried into the schema.** plan.md P5.1: the reader
+    /// declared `g enum`, jails generated the Java enum and the column, jails
+    /// held the constant list -- and still wrote a `text` column that accepts
+    /// `'banana'`. Zero `check (` appeared in twenty migrations across seven
+    /// real projects, and nothing was missing except the emit.
+    pub closed_set: Vec<String>,
 }
 
 impl Column {
@@ -209,6 +217,7 @@ fn column(field: &Field, project: &crate::model::Project, pkg: &str, receiver: &
             write: None,
             java_type: field.java_type.clone(),
             constraints: field.constraints,
+            closed_set: Vec::new(),
         };
     }
 
@@ -227,12 +236,14 @@ fn column(field: &Field, project: &crate::model::Project, pkg: &str, receiver: &
                 write: Some(write),
                 java_type: inner.clone(),
                 constraints: field.constraints,
+                closed_set: Vec::new(),
             },
             optional,
         );
     }
 
-    // The one owned type with a knowable representation.
+    // The one owned type with a knowable representation -- and the one whose
+    // *values* jails also knows, which is what the schema gets to say.
     if field.owned && project.declares_enum(pkg, &inner) {
         let read = format!("{inner}.valueOf(rows.getString(\"{name}\"))");
         let write = if optional {
@@ -250,6 +261,8 @@ fn column(field: &Field, project: &crate::model::Project, pkg: &str, receiver: &
                 write: Some(write),
                 java_type: inner.clone(),
                 constraints: field.constraints,
+                closed_set: crate::generate::enum_constants(project, pkg, &inner)
+                    .unwrap_or_default(),
             },
             optional,
         );
@@ -264,6 +277,7 @@ fn column(field: &Field, project: &crate::model::Project, pkg: &str, receiver: &
         write: None,
         java_type: inner,
         constraints: field.constraints,
+        closed_set: Vec::new(),
     }
 }
 
@@ -286,6 +300,7 @@ fn finish(column: Column, optional: bool) -> Column {
         write,
         java_type: inner,
         constraints,
+        closed_set,
         ..
     } = column;
     let read = read.expect("a mapped column carries its read expression");
@@ -317,6 +332,7 @@ fn finish(column: Column, optional: bool) -> Column {
         write: Some(write),
         java_type: inner.to_string(),
         constraints,
+        closed_set,
     }
 }
 
@@ -451,6 +467,38 @@ pub(crate) fn imports(columns: &[Column]) -> Vec<&'static str> {
     }
     found.sort_unstable();
     found
+}
+
+/// `check (status in ('OPEN', 'CLOSED'))`, where the column stores a project
+/// enum.
+///
+/// **The highest-value line in a generated schema, and it was never emitted.**
+/// plan.md P5.1: the reader declared the closed set, jails generated the Java
+/// enum, the column and the `valueOf` on read -- and wrote a `text` column
+/// that accepts anything. `backend.md` §5 puts it plainly: the schema is the
+/// last line of defence and the cheapest one.
+///
+/// Empty when jails cannot see the constants, which is the same rule
+/// `sample_value` follows: a guessed list would reject a value the Java enum
+/// accepts, at `flyway migrate`, on whichever machine runs it first.
+/// **Named**, and at the table level rather than on the column, because
+/// adding a constant to the enum has to be able to replace it:
+/// `alter table … drop constraint …` needs a name, and PostgreSQL's automatic
+/// one is an implementation detail. plan.md P5.2 is the command that uses it.
+pub(crate) fn closed_set_constraint(table: &str, column: &Column) -> Option<(String, String)> {
+    if column.closed_set.is_empty() {
+        return None;
+    }
+    let values = column
+        .closed_set
+        .iter()
+        .map(|constant| format!("'{constant}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some((
+        format!("{table}_{}_allowed", column.name),
+        format!("check ({} in ({values}))", column.name),
+    ))
 }
 
 /// The `order by` clause a list of this table's rows gets.
@@ -621,13 +669,23 @@ pub(crate) fn create_table(
     } else {
         marked.iter().map(|c| c.name.as_str()).collect()
     };
-    let constraint = if key_columns.is_empty() {
-        String::new()
-    } else {
-        format!(
+    // The closed set the reader already declared, said in the schema. Named
+    // and table-level so `g enum` adding a constant can replace it.
+    let mut constraint = columns
+        .iter()
+        .filter_map(|column| closed_set_constraint(&table, column))
+        .map(|(name, predicate)| format!("\n  constraint {name}\n    {predicate},\n"))
+        .collect::<String>();
+    if !key_columns.is_empty() {
+        constraint.push_str(&format!(
             "\n  constraint {table}_pk\n    primary key ({})\n",
             key_columns.join(", ")
-        )
+        ));
+    }
+    // The last one carries no comma, whichever it is.
+    let constraint = match constraint.strip_suffix(",\n") {
+        Some(trimmed) => format!("{trimmed}\n"),
+        None => constraint,
     };
     // Trailing comma removed only when no constraint follows it.
     let body = if constraint.is_empty() {
@@ -762,6 +820,15 @@ pub fn add_column(type_name: &str, column: &Column) -> Result<String> {
              alter table {table}\n\
                alter column {} drop default;\n",
             column.name
+        ));
+    }
+    // A column added later gets the same closed set a column declared at
+    // create time does. Without this the schema's guarantee depends on when
+    // the field was declared, which is not a fact about the domain.
+    // plan.md P5.1.
+    if let Some((name, predicate)) = closed_set_constraint(&table, column) {
+        out.push_str(&format!(
+            "\nalter table {table}\n  add constraint {name}\n  {predicate};\n"
         ));
     }
     if column.constraints.indexed {
@@ -939,6 +1006,52 @@ mod tests {
     use super::*;
     use crate::generate::parse_fields as parse;
     use std::path::PathBuf;
+
+    /// plan.md P5.1. The reader declared the closed set, jails generated the
+    /// Java enum and the column, jails held the constant list -- and wrote a
+    /// `text` column that accepts `'banana'`.
+    #[test]
+    fn an_enum_column_carries_its_closed_set_into_the_schema() {
+        let (dir, project) =
+            crate::spring::scratch_project("sql-closed-set", "<project></project>");
+        let domain = crate::generate::main_dir(&dir, "com.example.domain");
+        std::fs::create_dir_all(&domain).unwrap();
+        std::fs::write(
+            domain.join("Direction.java"),
+            "package com.example.domain;\n\npublic enum Direction { TO_USER, FROM_USER }\n",
+        )
+        .unwrap();
+        let fields = parse(&["id:uuid@pk".to_string(), "direction:Direction".to_string()]).unwrap();
+        let columns = columns(&fields, &project, "com.example.domain", "value");
+
+        let ddl = create_table("Message", &columns, &[]);
+        assert!(
+            ddl.contains("constraint messages_direction_allowed"),
+            "named so `g enum` can replace it: {ddl}"
+        );
+        assert!(
+            ddl.contains("check (direction in ('TO_USER', 'FROM_USER'))"),
+            "{ddl}"
+        );
+
+        // A column added later gets the same guarantee: when the field was
+        // declared is not a fact about the domain.
+        let added = add_column("Message", &columns[1]).unwrap();
+        assert!(
+            added.contains("add constraint messages_direction_allowed"),
+            "{added}"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A guessed constant list would reject a value the Java enum accepts, at
+    /// `flyway migrate`, on whichever machine runs it first.
+    #[test]
+    fn a_type_jails_cannot_read_gets_no_check_at_all() {
+        let columns = cols(&["id:uuid@pk", "direction:Direction"]);
+        let ddl = create_table("Message", &columns, &[]);
+        assert!(!ddl.contains("_allowed"), "{ddl}");
+    }
 
     fn cols(specs: &[&str]) -> Vec<Column> {
         let fields = parse(&specs.iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap();

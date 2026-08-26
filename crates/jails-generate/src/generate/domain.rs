@@ -448,6 +448,19 @@ pub(crate) fn fields_from_spec_or_record(
 /// file rather than guessing: a made-up constant produces a fixture that
 /// looks right and fails on the first `valueOf`.
 pub(crate) fn first_enum_constant(project: &Project, pkg: &str, type_name: &str) -> Option<String> {
+    enum_constants(project, pkg, type_name)?.into_iter().next()
+}
+
+/// Every constant of a project enum, in declaration order.
+///
+/// Read off the file rather than remembered, for the same reason the sample
+/// is: jails holds no type model, and a made-up constant produces SQL that
+/// looks right and rejects a value the Java enum accepts.
+///
+/// `None` means "not an enum jails can see", which is different from "an enum
+/// with no constants" -- the caller must not emit a `check (... in ())` for
+/// either, and only the first is a case where jails simply does not know.
+pub(crate) fn enum_constants(project: &Project, pkg: &str, type_name: &str) -> Option<Vec<String>> {
     let source = project.source_of(pkg, type_name)?;
     let source = source.as_str();
     let text = crate::java::blanked(source);
@@ -458,11 +471,11 @@ pub(crate) fn first_enum_constant(project: &Project, pkg: &str, type_name: &str)
         .find([';', '}'])
         .map(|o| open + o)
         .unwrap_or(text.len());
-    source
+    let constants: Vec<String> = source
         .get(open..end)?
         .split(',')
         .map(str::trim)
-        .find(|token| {
+        .filter(|token| {
             !token.is_empty()
                 && token
                     .chars()
@@ -478,11 +491,10 @@ pub(crate) fn first_enum_constant(project: &Project, pkg: &str, type_name: &str)
                 .unwrap_or(token)
                 .to_string()
         })
+        .collect();
+    (!constants.is_empty()).then_some(constants)
 }
 
-/// Whether `<Type>.java` in this package declares an enum. Reading the file is
-/// the only honest way to know: jails has no type model, and guessing from the
-/// name would be worse than admitting ignorance.
 pub(super) fn sample_literal(java_type: &str) -> &'static str {
     match java_type {
         "String" => "\"sample\"",

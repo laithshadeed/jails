@@ -610,29 +610,6 @@ possible argument for §11.2: the input that produces a table with no primary
 key should be refused, because the same tool given one more character produces
 this.
 
-### 13.4 The closed set is still never enforced in the schema — 0 checks in 20 migrations
-
-`grep -c "check (" */src/main/resources/db/migration/*.sql` → **zero**, across
-all six projects and `my-minicom`. Every enum column is bare `text`:
-
-```sql
-sender       text not null,   -- Sender { CUSTOMER, BOT, AGENT }
-sender_type  text not null,   -- SenderType { ADMIN, … }
-status       text not null,   -- IssueStatus { OPEN, IN_PROGRESS, … }
-```
-
-This is not an input problem. The user declared `g enum`, jails generated the
-Java enum, jails generated the column, and jails knows the constant list —
-and still wrote a column that accepts `'banana'`. A one-line
-`check (sender in ('CUSTOMER','BOT','AGENT'))` is derivable from information
-jails already holds, and `backend.md` §5 makes it the highest-value line in the
-file.
-
-The follow-on question jails would then have to answer — what happens to that
-`check` when a constant is added — is a real design problem, and worth solving
-rather than avoiding: `g enum` adding a constant should generate the
-`alter table … drop constraint … add constraint …` migration in the same step.
-
 ### 13.6 `g client` generates a plausible shape nobody asked for
 
 *The unbounded-call half is closed: the generator writes a base URL and both

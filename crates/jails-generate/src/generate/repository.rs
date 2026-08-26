@@ -1127,6 +1127,7 @@ mod repository_test_generation_tests {
                 write: Some("write".to_string()),
                 java_type: field.java_type.clone(),
                 constraints: field.constraints,
+                closed_set: Vec::new(),
             })
             .collect()
     }

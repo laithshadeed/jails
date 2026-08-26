@@ -429,12 +429,20 @@ commit as the change that causes it.
 
 ## P5 — the closed set, in SQL (cause C)
 
-- [ ] **P5.1** An enum column emits `check (col in (…))`. Zero `check (`
+- [x] **P5.1** An enum column emits `check (col in (…))`. Zero `check (`
       appears in 20 migrations across all seven projects, and this is **not** an
       input problem: the user declared `g enum`, jails generated the Java enum
       and the column, jails holds the constant list, and still wrote a column
       that accepts `'banana'` (modern §13.4). `backend.md` §5 makes it the
-      highest-value line in the file.
+      highest-value line in the file. The constraint is **named and
+      table-level** rather than an inline column check, because P5.2 has to be
+      able to replace it and PostgreSQL's automatic name is an implementation
+      detail. `add_column` emits it too: when a field was declared is not a
+      fact about the domain. An enum jails cannot read gets no check at all —
+      a guessed list would reject a value the Java enum accepts, at
+      `flyway migrate`, on whichever machine runs it first. The association
+      probe's row had to stop using `'association-probe'` for such a column,
+      which is the constraint doing exactly its job on the first run.
 - [ ] **P5.2** `g enum` adding a constant generates the
       `alter table … drop constraint … add constraint …` migration in the same
       step — the follow-on question P5.1 creates, answered rather than avoided,

@@ -239,7 +239,13 @@ fn migrations_declare_unique_key(
     })
 }
 
-fn association_sql_literal(column: &crate::sql::Column) -> &'static str {
+fn association_sql_literal(column: &crate::sql::Column) -> String {
+    // A column with a closed set only takes one of its constants now, so the
+    // probe uses one rather than a string that reads well. plan.md P5.1 --
+    // and the probe failing on it is the check doing exactly its job.
+    if let Some(constant) = column.closed_set.first() {
+        return format!("'{constant}'");
+    }
     match column.sql_type.as_str() {
         "uuid" => "'90000000-0000-0000-0000-000000000009'::uuid",
         "integer" | "bigint" | "double precision" | "numeric" => "1",
@@ -251,6 +257,7 @@ fn association_sql_literal(column: &crate::sql::Column) -> &'static str {
         "jsonb" => "'{}'::jsonb",
         _ => "'association-probe'",
     }
+    .to_string()
 }
 
 // ---------------------------------------------------------------------------
